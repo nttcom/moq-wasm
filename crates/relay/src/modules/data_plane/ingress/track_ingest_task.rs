@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use tokio::{
     sync::{mpsc, watch},
@@ -8,7 +8,7 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     data_plane::{
-        cache::{store::TrackCacheStore, track_cache::TrackCache},
+        cache::{cached_object::CacheStamp, store::TrackCacheStore, track_cache::TrackCache},
         ingress::{datagram_reader::read_datagrams, stream_reader::accept_streams},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
@@ -56,7 +56,7 @@ pub(crate) struct IngestStart {
     pub(crate) track_key: TrackKey,
     pub(crate) publisher_session_id: SessionId,
     pub(crate) source: IngestSource,
-    pub(crate) max_cache_duration: Option<Duration>,
+    pub(crate) stamp: CacheStamp,
 }
 
 pub(crate) enum IngestCommand {
@@ -74,8 +74,7 @@ pub(crate) struct TrackIngest {
     pub(crate) cache: Arc<TrackCache>,
     pub(crate) session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     pub(crate) stop_receiver: watch::Receiver<bool>,
-    /// The upstream subscription's MAX_CACHE_DURATION, stamped on every object.
-    pub(crate) max_cache_duration: Option<Duration>,
+    pub(crate) stamp: CacheStamp,
 }
 
 type IngestKey = (TrackKey, SessionId, IngestKind);
@@ -113,7 +112,7 @@ impl TrackIngestTask {
                                 publisher_session_id: start.publisher_session_id,
                                 session_event_sender: session_event_sender.clone(),
                                 stop_receiver,
-                                max_cache_duration: start.max_cache_duration,
+                                stamp: start.stamp,
                             };
                             ingests.spawn(async move {
                                 Self::ingest(ingest, start.source).await;
@@ -254,7 +253,7 @@ mod tests {
                         factory: Box::new(ChannelStreamReceiverFactory { stream_receiver }),
                         track_span: Span::none(),
                     },
-                    max_cache_duration: None,
+                    stamp: CacheStamp::default(),
                 }))
                 .await
                 .unwrap();

@@ -2,10 +2,17 @@ use std::{sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 
-use crate::modules::{data_plane::cache::track_cache::TrackCache, domain::track_key::TrackKey};
+use crate::modules::{
+    data_plane::cache::{
+        disk_cache::{DiskCache, DiskSink},
+        track_cache::TrackCache,
+    },
+    domain::track_key::TrackKey,
+};
 
 pub(crate) struct TrackCacheStore {
     caches: DashMap<TrackKey, Arc<TrackCache>>,
+    disk: Option<DiskCache>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -16,9 +23,15 @@ pub(crate) struct StoreOccupancy {
 }
 
 impl TrackCacheStore {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::with_disk(None)
+    }
+
+    pub(crate) fn with_disk(disk: Option<DiskCache>) -> Self {
         Self {
             caches: DashMap::new(),
+            disk,
         }
     }
 
@@ -30,7 +43,15 @@ impl TrackCacheStore {
     pub(crate) fn get_or_create(&self, track_key: &TrackKey) -> Arc<TrackCache> {
         self.caches
             .entry(track_key.clone())
-            .or_insert_with(|| Arc::new(TrackCache::new()))
+            .or_insert_with(|| {
+                Arc::new_cyclic(|cache| {
+                    TrackCache::with_disk(self.disk.clone().map(|disk| DiskSink {
+                        disk,
+                        track_key: track_key.clone(),
+                        cache: cache.clone(),
+                    }))
+                })
+            })
             .clone()
     }
 

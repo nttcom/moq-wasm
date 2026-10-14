@@ -119,6 +119,7 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),
             },
             relay_token: "unused-relay-token".to_string(),
+            disk_cache: None,
         },
     );
     let handler = server.spawn_client_transport::<QUIC>(port);

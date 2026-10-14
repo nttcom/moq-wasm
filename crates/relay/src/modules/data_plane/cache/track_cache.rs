@@ -14,7 +14,10 @@ use tokio::{
 
 use moqt::object::ForwardingPreference;
 
-use crate::modules::data_plane::cache::cached_object::CachedObject;
+use crate::modules::data_plane::cache::{
+    cached_object::CachedObject,
+    disk_cache::{DiskSink, StoredPayload},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
@@ -50,6 +53,7 @@ pub(crate) struct TrackCache {
     subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
     ingress_stats: IngressStats,
     payload_bytes: AtomicU64,
+    disk: Option<DiskSink>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -59,7 +63,12 @@ pub(crate) struct CacheOccupancy {
 }
 
 impl TrackCache {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::with_disk(None)
+    }
+
+    pub(crate) fn with_disk(disk: Option<DiskSink>) -> Self {
         Self {
             ledger: RwLock::new(Ledger::default()),
             notify: Notify::new(),
@@ -70,6 +79,7 @@ impl TrackCache {
             subgroup_opened_sender: broadcast::channel(256).0,
             ingress_stats: IngressStats::default(),
             payload_bytes: AtomicU64::new(0),
+            disk,
         }
     }
 
@@ -137,16 +147,18 @@ impl TrackCache {
 
     fn insert_with_knowledge(
         &self,
-        object: CachedObject,
+        mut object: CachedObject,
         registers_knowledge: bool,
     ) -> Result<(), TrackMalformed> {
         if self.is_malformed() {
             return Err(TrackMalformed);
         }
+        object.persisted &= self.disk.is_some();
         let payload_bytes = object.object.payload.len();
         self.ingress_stats.record_object(payload_bytes);
         let at = object.object.location;
         let mut ledger = self.write();
+        let mut to_persist = None;
         let inserted = match ledger.objects.entry(at) {
             Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
                 drop(ledger);
@@ -166,7 +178,11 @@ impl TrackCache {
                 false
             }
             Entry::Vacant(slot) => {
-                slot.insert(Arc::new(object));
+                let object = Arc::new(object);
+                if object.persisted {
+                    to_persist = Some(object.clone());
+                }
+                slot.insert(object);
                 self.payload_bytes
                     .fetch_add(payload_bytes as u64, AtomicOrdering::Relaxed);
                 true
@@ -176,10 +192,33 @@ impl TrackCache {
             ledger.register_live_object(at);
         }
         drop(ledger);
+        if let (Some(object), Some(disk)) = (to_persist, &self.disk) {
+            disk.write(&object);
+        }
         if inserted {
             self.notify.notify_waiters();
         }
         Ok(())
+    }
+
+    /// The disk cache wrote the payload of the object at `at`. Ignored when
+    /// the object left the cache, or was replaced, in the meantime.
+    pub(crate) fn record_stored(&self, at: moqt::object::Location, stored: StoredPayload) {
+        let mut ledger = self.write();
+        if let Some(object) = ledger.objects.get_mut(&at)
+            && object.stored.is_none()
+            && object.object.payload.len() == stored.len
+        {
+            *object = Arc::new(object.with_stored(stored));
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_stored_payload(&self, at: moqt::object::Location) -> bool {
+        self.read()
+            .objects
+            .get(&at)
+            .is_some_and(|object| object.stored.is_some())
     }
 
     pub(crate) fn groups_at_or_after(&self, group_id: u64) -> Vec<u64> {
@@ -208,27 +247,41 @@ impl TrackCache {
                 .then(|| ledger.largest_location())
                 .flatten();
             let mut removed = Vec::new();
-            let mut removed_payload_bytes = 0u64;
+            let mut freed_payload_bytes = 0u64;
             let now = Instant::now();
             ledger.objects.retain(|location, object| {
-                // A publisher's MAX_CACHE_DURATION replaces the relay TTL,
-                // longer or shorter, and the newest-object exception does
-                // not apply to it (draft-14 §9.2.1.3).
-                let keep = match object.expires_at {
-                    Some(expires_at) => now < expires_at,
-                    None => {
-                        Some(*location) == newest_of_live_track
-                            || object.received_at.elapsed() <= ttl
+                let keep = if object.is_expired(now) {
+                    false
+                } else if now.saturating_duration_since(object.received_at) <= ttl {
+                    true
+                } else if object.stored.is_some() {
+                    // Past the memory TTL only the disk copy is kept.
+                    if !object.object.payload.is_empty() {
+                        freed_payload_bytes += object.object.payload.len() as u64;
+                        *object = Arc::new(object.without_memory_payload());
+                    }
+                    true
+                } else if object.persisted && object.object.payload.is_empty() {
+                    // A status object needs no disk copy to stay with its
+                    // neighbours on disk.
+                    true
+                } else {
+                    // A publisher's MAX_CACHE_DURATION replaces the relay TTL,
+                    // longer or shorter, and the newest-object exception does
+                    // not apply to it (draft-14 §9.2.1.3).
+                    match object.expires_at {
+                        Some(_) => true,
+                        None => Some(*location) == newest_of_live_track,
                     }
                 };
                 if !keep {
                     removed.push(*location);
-                    removed_payload_bytes += object.object.payload.len() as u64;
+                    freed_payload_bytes += object.object.payload.len() as u64;
                 }
                 keep
             });
             self.payload_bytes
-                .fetch_sub(removed_payload_bytes, AtomicOrdering::Relaxed);
+                .fetch_sub(freed_payload_bytes, AtomicOrdering::Relaxed);
             for &at in &removed {
                 ledger.known_ranges.remove_range(at, after(at));
             }
@@ -1353,18 +1406,27 @@ mod fetch_tests {
 #[cfg(test)]
 mod max_cache_duration_tests {
     use super::*;
+    use crate::modules::data_plane::cache::cached_object::{CacheStamp, RETENTION_LIMIT};
     use crate::modules::test_support::relay_harness::fixtures::cached_object::{
         fetch_all, stream_key, stream_object,
     };
 
     const MAX_CACHE_DURATION: Duration = Duration::from_secs(2);
+
+    fn expiring_after(object: CachedObject, max_cache_duration: Duration) -> CachedObject {
+        CacheStamp {
+            max_cache_duration: Some(max_cache_duration),
+            persist: false,
+        }
+        .apply(object)
+    }
     const RELAY_TTL: Duration = Duration::from_secs(10);
 
     /// Group 0 closed with objects 0 and 1, both expiring `after` their receipt.
     fn closed_expiring_group(cache: &TrackCache, after: Duration) {
         let open = cache.open_subgroup(stream_key(0));
-        let _ = open.insert(stream_object(0, 0).expiring_after(Some(after)));
-        let _ = open.insert(stream_object(0, 1).expiring_after(Some(after)));
+        let _ = open.insert(expiring_after(stream_object(0, 0), after));
+        let _ = open.insert(expiring_after(stream_object(0, 1), after));
         open.finish();
     }
 
@@ -1373,7 +1435,7 @@ mod max_cache_duration_tests {
         // Arrange: object 0 expires, object 1 was received without a limit
         let cache = TrackCache::new();
         let open = cache.open_subgroup(stream_key(0));
-        let _ = open.insert(stream_object(0, 0).expiring_after(Some(MAX_CACHE_DURATION)));
+        let _ = open.insert(expiring_after(stream_object(0, 0), MAX_CACHE_DURATION));
         let _ = open.insert(stream_object(0, 1));
         tokio::time::advance(MAX_CACHE_DURATION).await;
 
@@ -1460,11 +1522,25 @@ mod max_cache_duration_tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn evict_caps_a_longer_max_cache_duration_at_the_retention_limit() {
+        // Arrange
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, RETENTION_LIMIT * 2);
+        tokio::time::advance(RETENTION_LIMIT + Duration::from_secs(1)).await;
+
+        // Act
+        cache.evict(RELAY_TTL);
+
+        // Assert
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn evict_drops_the_newest_object_of_a_live_track_at_its_max_cache_duration() {
         // Arrange: well within the relay TTL, and the newest object of a live track
         let cache = TrackCache::new();
         cache.begin_live_ingest();
-        let _ = cache.insert_live(stream_object(0, 0).expiring_after(Some(MAX_CACHE_DURATION)));
+        let _ = cache.insert_live(expiring_after(stream_object(0, 0), MAX_CACHE_DURATION));
         tokio::time::advance(MAX_CACHE_DURATION).await;
 
         // Act

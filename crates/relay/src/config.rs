@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::bail;
 
@@ -19,14 +19,17 @@ struct AuthEnv {
     clock_leeway_seconds: Option<String>,
 }
 
-fn seconds(value: Option<String>, name: &str, default: Duration) -> anyhow::Result<Duration> {
+fn non_negative_integer(value: Option<String>, name: &str, default: u64) -> anyhow::Result<u64> {
     match value {
         None => Ok(default),
         Some(text) => text
             .parse::<u64>()
-            .map(Duration::from_secs)
             .map_err(|_| anyhow::anyhow!("{name} must be a non-negative integer, got {text:?}")),
     }
+}
+
+fn seconds(value: Option<String>, name: &str, default: Duration) -> anyhow::Result<Duration> {
+    non_negative_integer(value, name, default.as_secs()).map(Duration::from_secs)
 }
 
 impl AuthConfig {
@@ -57,6 +60,38 @@ impl AuthConfig {
     }
 }
 
+/// Disk tier for the payloads of objects received from client publishers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiskCacheConfig {
+    pub dir: PathBuf,
+    /// Cap on the segments of all tracks together; the oldest segments go
+    /// first once it is exceeded.
+    pub max_bytes: u64,
+}
+
+const DEFAULT_DISK_CACHE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+impl DiskCacheConfig {
+    /// `None` without a directory: the cache then stays in memory only.
+    fn from_env_values(
+        dir: Option<String>,
+        max_bytes: Option<String>,
+    ) -> anyhow::Result<Option<Self>> {
+        let Some(dir) = dir else {
+            return Ok(None);
+        };
+        let max_bytes = non_negative_integer(
+            max_bytes,
+            "RELAY_DISK_CACHE_BYTES",
+            DEFAULT_DISK_CACHE_BYTES,
+        )?;
+        Ok(Some(Self {
+            dir: PathBuf::from(dir),
+            max_bytes,
+        }))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RelayConfig {
     pub relay_id: String,
@@ -71,6 +106,7 @@ pub struct RelayConfig {
     /// before closing them with GOAWAY_TIMEOUT.
     pub drain_timeout: Duration,
     pub auth: AuthConfig,
+    pub disk_cache: Option<DiskCacheConfig>,
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -106,6 +142,10 @@ impl RelayConfig {
             max_token_ttl_seconds: non_empty_env("AUTH_MAX_TOKEN_TTL_SECONDS"),
             clock_leeway_seconds: non_empty_env("AUTH_CLOCK_LEEWAY_SECONDS"),
         })?;
+        let disk_cache = DiskCacheConfig::from_env_values(
+            non_empty_env("RELAY_DISK_CACHE_DIR"),
+            non_empty_env("RELAY_DISK_CACHE_BYTES"),
+        )?;
 
         Ok(Self {
             relay_id,
@@ -116,6 +156,7 @@ impl RelayConfig {
             redis_url,
             drain_timeout,
             auth,
+            disk_cache,
         })
     }
 }
@@ -124,7 +165,7 @@ impl RelayConfig {
 mod tests {
     use std::time::Duration;
 
-    use super::{AuthConfig, AuthEnv};
+    use super::{AuthConfig, AuthEnv, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig};
     use crate::modules::auth::token_claims::ClaimPolicy;
 
     fn vts_env() -> AuthEnv {
@@ -208,5 +249,37 @@ mod tests {
     fn missing_configuration_refuses_to_start() {
         // Act / Assert
         assert!(AuthConfig::from_env_values(AuthEnv::default()).is_err());
+    }
+
+    #[test]
+    fn disk_cache_is_off_without_a_directory() {
+        // Act
+        let config = DiskCacheConfig::from_env_values(None, Some("1024".to_string())).unwrap();
+
+        // Assert
+        assert_eq!(config, None);
+    }
+
+    #[test]
+    fn disk_cache_defaults_its_byte_cap() {
+        // Act
+        let config = DiskCacheConfig::from_env_values(Some("/var/cache/relay".to_string()), None)
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert_eq!(config.max_bytes, DEFAULT_DISK_CACHE_BYTES);
+    }
+
+    #[test]
+    fn disk_cache_rejects_a_byte_cap_that_is_not_a_number() {
+        // Act
+        let result = DiskCacheConfig::from_env_values(
+            Some("/var/cache/relay".to_string()),
+            Some("10G".to_string()),
+        );
+
+        // Assert
+        assert!(result.is_err());
     }
 }

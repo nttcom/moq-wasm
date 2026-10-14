@@ -4,7 +4,31 @@ use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus, SubgroupStart};
 use tokio::time::Instant;
 
-use crate::modules::data_plane::cache::subgroup_key::SubgroupKey;
+use crate::modules::data_plane::cache::{disk_cache::StoredPayload, subgroup_key::SubgroupKey};
+
+/// How long the disk cache keeps a payload, and the cap on any
+/// MAX_CACHE_DURATION (draft-14 §8.1 makes caching optional).
+pub(crate) const RETENTION_LIMIT: Duration = Duration::from_secs(3600);
+
+/// How an ingest stamps the objects it caches.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CacheStamp {
+    /// The upstream subscription's or fetch's MAX_CACHE_DURATION.
+    pub(crate) max_cache_duration: Option<Duration>,
+    /// The upstream is a client publisher; the payload goes to disk when
+    /// this relay has a disk cache.
+    pub(crate) persist: bool,
+}
+
+impl CacheStamp {
+    pub(crate) fn apply(self, mut object: CachedObject) -> CachedObject {
+        object.expires_at = self
+            .max_cache_duration
+            .map(|duration| object.received_at + duration.min(RETENTION_LIMIT));
+        object.persisted = self.persist;
+        object
+    }
+}
 
 /// draft-14 §10.2.1 canonical object as stored by the relay cache.
 #[derive(Clone, Debug)]
@@ -15,6 +39,13 @@ pub(crate) struct CachedObject {
     /// be forwarded. Set when the subscription or fetch it arrived on carried
     /// MAX_CACHE_DURATION.
     pub(crate) expires_at: Option<Instant>,
+    /// From a client publisher on a relay with a disk cache: the payload goes
+    /// to disk on insert. A status object of such a track outlives the memory
+    /// TTL without a disk copy.
+    pub(crate) persisted: bool,
+    /// Where the disk cache wrote the payload. Past the memory TTL
+    /// `object.payload` is emptied and `load` reads it from here.
+    pub(crate) stored: Option<StoredPayload>,
 }
 
 impl CachedObject {
@@ -23,25 +54,62 @@ impl CachedObject {
             object,
             received_at: Instant::now(),
             expires_at: None,
+            persisted: false,
+            stored: None,
         }
     }
 
-    pub(crate) fn expiring_after(mut self, max_cache_duration: Option<Duration>) -> Self {
-        self.expires_at = max_cache_duration.map(|duration| self.received_at + duration);
-        self
+    /// The object to send downstream, read back from disk if its payload
+    /// left memory.
+    pub(crate) async fn load(&self) -> anyhow::Result<Object> {
+        let mut object = self.object.clone();
+        if self.object.payload.is_empty()
+            && let Some(stored) = &self.stored
+        {
+            object.payload = stored.read().await?;
+        }
+        Ok(object)
     }
 
-    /// The object to send downstream.
-    pub(crate) async fn load(&self) -> anyhow::Result<Object> {
-        Ok(self.object.clone())
+    fn is_on_disk_only(&self) -> bool {
+        self.stored.is_some() && self.object.payload.is_empty()
     }
 
     pub(crate) fn payload_len(&self) -> usize {
-        self.object.payload.len()
+        self.stored
+            .as_ref()
+            .map_or(self.object.payload.len(), |stored| stored.len)
     }
 
+    pub(crate) fn with_stored(&self, stored: StoredPayload) -> Self {
+        let mut object = self.clone();
+        object.stored = Some(stored);
+        object
+    }
+
+    /// The copy that keeps only `stored`, freeing the payload in memory.
+    pub(crate) fn without_memory_payload(&self) -> Self {
+        let mut object = self.clone();
+        object.object.payload = Bytes::new();
+        object
+    }
+
+    /// How long the disk cache keeps the payload: MAX_CACHE_DURATION, at
+    /// most `RETENTION_LIMIT`.
+    pub(crate) fn retained_until(&self) -> Instant {
+        self.expires_at
+            .unwrap_or(self.received_at + RETENTION_LIMIT)
+    }
+
+    /// Past MAX_CACHE_DURATION, or a disk copy past the retention limit or
+    /// already deleted: such an object is never handed out again, and a
+    /// FETCH over it goes upstream.
     pub(crate) fn is_expired(&self, now: Instant) -> bool {
         self.expires_at.is_some_and(|expires_at| now >= expires_at)
+            || self
+                .stored
+                .as_ref()
+                .is_some_and(|stored| stored.is_lost() || now >= self.received_at + RETENTION_LIMIT)
     }
 
     /// The End of Group status object a FIN implies for `start`'s subgroup.
@@ -91,7 +159,17 @@ impl CachedObject {
         {
             return false;
         }
-        self.object.status != other.object.status || self.object.payload != other.object.payload
+        self.object.status != other.object.status || self.payload_differs(other)
+    }
+
+    /// A payload on disk is compared by length only: reading it back for a
+    /// duplicate that arrives after the memory TTL is not worth the I/O.
+    fn payload_differs(&self, other: &Self) -> bool {
+        if !self.is_on_disk_only() && !other.is_on_disk_only() {
+            self.object.payload != other.object.payload
+        } else {
+            self.payload_len() != other.payload_len()
+        }
     }
 
     /// FETCH carries no forwarding preference; a fetched copy of a datagram
