@@ -19,6 +19,7 @@ use crate::{
             verified_token::{VerifiedToken, parse_namespace_path},
         },
         cascading::route_registry::NoopRelayRouteRegistry,
+        session::session_repository::SessionRepository,
     },
     relay_server::{server::RelayServerDeps, session_handler::SessionHandler},
 };
@@ -112,6 +113,7 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
         &key_path,
         &cert_path,
         RelayServerDeps {
+            repo: SessionRepository::new(),
             route_registry: Arc::new(NoopRelayRouteRegistry),
             authenticator: SessionAuthenticator {
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),

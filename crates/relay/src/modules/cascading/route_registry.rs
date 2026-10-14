@@ -31,8 +31,8 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
     /// Marks this relay as draining (draft-14 §3.5): other relays stop routing
     /// new subscriptions to it and no longer name it as a migration target.
     async fn mark_draining(&self) -> anyhow::Result<()>;
-    /// The client-facing `host[:port]` of another active relay a client can
-    /// migrate to, `None` when no other relay is active.
+    /// The client-facing `host[:port]` of the other active relay with the
+    /// fewest client sessions, `None` when no other relay is active.
     async fn find_migration_target(&self) -> anyhow::Result<Option<String>>;
     async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()>;
     async fn register_namespace_subscriber(

@@ -22,6 +22,7 @@ use crate::{
 };
 
 pub(crate) struct RelayServerDeps {
+    pub(crate) repo: SessionRepository,
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) authenticator: SessionAuthenticator,
     pub(crate) relay_token: String,
@@ -49,9 +50,16 @@ impl RelayServer {
             host: config.advertise_host,
             port: config.inner_port,
         };
+        let repo = SessionRepository::new();
         let route_registry: Arc<dyn RelayRouteRegistry> = if let Some(redis_url) = config.redis_url
         {
-            RedisRelayRouteRegistry::connect(&redis_url, relay, config.public_host).await?
+            RedisRelayRouteRegistry::connect(
+                &redis_url,
+                relay,
+                config.public_host,
+                repo.client_session_count(),
+            )
+            .await?
         } else {
             Arc::new(NoopRelayRouteRegistry)
         };
@@ -60,6 +68,7 @@ impl RelayServer {
             key_path,
             cert_path,
             RelayServerDeps {
+                repo,
                 route_registry,
                 authenticator,
                 relay_token: config.auth.relay_token,
@@ -69,11 +78,12 @@ impl RelayServer {
 
     pub(crate) fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
         let RelayServerDeps {
+            repo,
             route_registry,
             authenticator,
             relay_token,
         } = deps;
-        let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let repo = Arc::new(tokio::sync::Mutex::new(repo));
         let (sender, runtime) = RelayRuntime::new(
             repo.clone(),
             route_registry.clone(),
