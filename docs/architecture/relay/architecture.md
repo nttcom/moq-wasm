@@ -75,9 +75,9 @@ the inner endpoint keeps accepting) and calls
 1. marks the relay `draining` in the route registry, so other relays stop
    routing new cascaded subscriptions to it and no longer pick it as a
    migration target;
-2. asks the registry for a migration target: the `public_host` of the
-   lowest-id other `active` relay, or none standalone / when every other relay
-   is draining;
+2. asks the registry for a migration target: the `public_host` of the other
+   `active` relay with the fewest client sessions (lowest id among equals),
+   or none standalone / when every other relay is draining;
 3. sends GOAWAY to every `SessionPeer::Client` session with the target in the
    scheme the client connected with (`moqt://host` for raw QUIC,
    `https://host` for WebTransport, from `Session::url_scheme`), or with
@@ -720,9 +720,11 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   is `active` until `mark_draining` turns it into `draining` for the rest of
   the process (the heartbeat keeps writing it): the route lookups and the Lua
   scripts only return `active` relays, so a draining relay receives no new
-  cascaded subscriptions, and `find_migration_target` names the `public_host`
-  of the lowest-id other `active` relay for the GOAWAY a draining relay sends
-  (see "Shutdown").
+  cascaded subscriptions. The heartbeat also writes `client_sessions`, the
+  relay's current number of client sessions (`SessionRepository`'s watch,
+  handed to the registry when `RelayServer` connects it), and `find_migration_target` names
+  the `public_host` of the other `active` relay with the fewest of them for
+  the GOAWAY a draining relay sends (see "Shutdown").
 - Only **client-origin** namespaces register routes: `PublishNamespace`
   registers the publisher route and notifies remote subscriber relays;
   `SubscribeNamespace` registers the subscriber route when the first client
