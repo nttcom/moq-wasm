@@ -121,14 +121,6 @@ pub(crate) fn stream_reset_code_to_wire(code: DataStreamResetCode) -> u64 {
         })
 }
 
-pub(crate) fn stream_reset_code_from_wire(value: u64) -> DataStreamResetCode {
-    STREAM_RESET
-        .iter()
-        .find(|(_, defined)| *defined == value)
-        .map(|(code, _)| *code)
-        .unwrap_or(DataStreamResetCode::InternalError)
-}
-
 /// §15.10.1.
 pub(crate) fn termination_code_to_wire(code: TerminationErrorCode) -> u32 {
     match code {
@@ -161,11 +153,9 @@ mod tests {
     use super::{
         PUBLISH_DONE, REQUEST_ERROR, STREAM_RESET, publish_done_code_from_wire,
         publish_done_code_to_wire, request_error_code_from_wire, request_error_code_to_wire,
-        stream_reset_code_from_wire, stream_reset_code_to_wire,
+        stream_reset_code_to_wire,
     };
-    use crate::modules::moqt::control_plane::error_codes::{
-        DataStreamResetCode, PublishDoneCode, RequestErrorCode,
-    };
+    use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
     #[test]
     fn every_listed_code_round_trips() {
@@ -182,7 +172,6 @@ mod tests {
         for (code, value) in STREAM_RESET {
             // Act / Assert
             assert_eq!(stream_reset_code_to_wire(code), value, "{code:?}");
-            assert_eq!(stream_reset_code_from_wire(value), code, "{value:#x}");
         }
     }
 
@@ -213,10 +202,6 @@ mod tests {
         assert_eq!(
             publish_done_code_from_wire(0x7),
             PublishDoneCode::InternalError
-        );
-        assert_eq!(
-            stream_reset_code_from_wire(0x8),
-            DataStreamResetCode::InternalError
         );
     }
 }

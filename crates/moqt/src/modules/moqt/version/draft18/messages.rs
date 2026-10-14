@@ -252,7 +252,12 @@ pub(crate) enum Message {
     Subscribe(Subscribe),
     SubscribeOk(SubscribeOkMessage),
     RequestUpdate(RequestUpdateMessage),
-    Publish(Publish),
+    /// The Track Properties stay alongside for the Mandatory Track
+    /// Property check of §2.5.1.
+    Publish {
+        publish: Publish,
+        track_properties: Vec<KeyValuePair>,
+    },
     PublishDone(PublishDoneMessage),
     Fetch(Fetch),
     FetchOk(FetchOkMessage),
@@ -301,7 +306,13 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
             request_id: get_vi64(buf)?,
             parameters: get_checked_parameters(buf, REQUEST_UPDATE_PARAMETERS)?,
         }),
-        PUBLISH => Message::Publish(decode_publish(buf)?),
+        PUBLISH => {
+            let (publish, track_properties) = decode_publish(buf)?;
+            Message::Publish {
+                publish,
+                track_properties,
+            }
+        }
         PUBLISH_DONE => Message::PublishDone(PublishDoneMessage {
             code: publish_done_code_from_wire(get_vi64(buf)?),
             stream_count: get_vi64(buf)?,
@@ -659,7 +670,7 @@ fn largest_object(content_exists: &ContentExists) -> Option<Parameter> {
     }
 }
 
-fn decode_publish(buf: &mut Bytes) -> Result<Publish, DecodeError> {
+fn decode_publish(buf: &mut Bytes) -> Result<(Publish, Vec<KeyValuePair>), DecodeError> {
     let request_id = get_vi64(buf)?;
     let (track_namespace_tuple, track_name) = get_full_track_name(buf)?;
     let track_alias = get_vi64(buf)?;
@@ -672,7 +683,7 @@ fn decode_publish(buf: &mut Bytes) -> Result<Publish, DecodeError> {
             _ => None,
         })
         .unwrap_or(true);
-    Ok(Publish {
+    let publish = Publish {
         request_id,
         track_namespace_tuple,
         track_name,
@@ -683,7 +694,8 @@ fn decode_publish(buf: &mut Bytes) -> Result<Publish, DecodeError> {
         authorization_tokens: tokens(parameters),
         delivery_timeout: varint_property_value(&properties, OBJECT_DELIVERY_TIMEOUT_PROPERTY),
         max_duration: varint_property_value(&properties, MAX_CACHE_DURATION_PROPERTY),
-    })
+    };
+    Ok((publish, properties))
 }
 
 pub(crate) fn encode_publish(publish: &Publish) -> anyhow::Result<BytesMut> {
@@ -842,12 +854,6 @@ pub(crate) fn encode_subscribe_namespace(message: &SubscribeNamespace) -> anyhow
         &message.track_namespace_prefix,
         &message.authorization_token,
     )
-}
-
-pub(crate) fn encode_namespace(message_type: u64, suffix: &[String]) -> anyhow::Result<BytesMut> {
-    let mut payload = BytesMut::new();
-    put_track_namespace(&mut payload, suffix);
-    frame(message_type, &payload)
 }
 
 pub(crate) fn encode_subscribe_ok(subscribe_ok: &SubscribeOk) -> anyhow::Result<BytesMut> {
@@ -1240,10 +1246,14 @@ mod tests {
             decode(encode_subscribe(&subscribe()).unwrap()),
             Message::Subscribe(subscribe())
         );
-        assert_eq!(
-            decode(encode_publish(&publish).unwrap()),
-            Message::Publish(publish)
-        );
+        let Message::Publish {
+            publish: decoded_publish,
+            ..
+        } = decode(encode_publish(&publish).unwrap())
+        else {
+            panic!("expected PUBLISH");
+        };
+        assert_eq!(decoded_publish, publish);
         assert_eq!(decode(encode_fetch(&fetch).unwrap()), Message::Fetch(fetch));
         assert_eq!(
             decode(encode_fetch(&joining).unwrap()),

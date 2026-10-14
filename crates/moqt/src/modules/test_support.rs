@@ -21,7 +21,9 @@ use crate::{
         },
         domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
+        version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
     },
+    modules::transport::application_protocol::ApplicationProtocols,
     object::{DataReceiver, StreamDataSenderFactory, SubgroupObjectSender},
     publish::PublishOption,
     server::Handshake,
@@ -79,8 +81,15 @@ pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
 pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
+    spawn_dual_server_handshake_offering(name, APPLICATION_PROTOCOLS)
+}
+
+fn spawn_dual_server_handshake_offering(
+    name: &str,
+    protocols: ApplicationProtocols,
+) -> (u16, tokio::task::JoinHandle<Handshake>) {
     let server_config = self_signed_server_config(name);
-    let server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
+    let server = Endpoint::<DUAL>::create_server_offering(&server_config, protocols).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)
@@ -147,6 +156,27 @@ pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Sessi
         .unwrap()
 }
 
+/// Connects a DUAL client and server that offer only draft-18, over raw
+/// QUIC for `moqt` or WebTransport for `https`.
+pub(crate) async fn spawn_connected_draft18_sessions(
+    name: &str,
+    scheme: &str,
+) -> (Session, Session) {
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
+    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    let client =
+        Endpoint::<DUAL>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
+            .unwrap();
+    let path = if scheme == "https" { "/moq" } else { "" };
+    connect_sessions_from(
+        &client,
+        &format!("{scheme}://127.0.0.1:{port}{path}"),
+        accept,
+    )
+    .await
+    .unwrap()
+}
+
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
 pub(crate) async fn accept_publish(server: &Session) -> Subscription {
@@ -167,6 +197,11 @@ pub(crate) struct PublishedTrack {
 
 pub(crate) async fn published_track(name: &str) -> PublishedTrack {
     let (client, server) = spawn_connected_dual_sessions(name).await;
+    published_track_between(client, server).await
+}
+
+/// The client publishes `ns/track` and the server accepts it.
+pub(crate) async fn published_track_between(client: Session, server: Session) -> PublishedTrack {
     let publisher = client.publisher();
     let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         tokio::join!(

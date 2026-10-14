@@ -46,7 +46,6 @@ impl Publisher {
         let request_id = self.session.control.next_request_id();
         let pending = self
             .session
-            .control
             .send_request(OutgoingRequest::PublishNamespace(PublishNamespace::new(
                 request_id,
                 vec_namespace,
@@ -137,7 +136,6 @@ impl Publisher {
         // but receives no objects.
         let response = self
             .session
-            .control
             .send_request(OutgoingRequest::Publish(publish))
             .await?
             .response()

@@ -9,12 +9,12 @@ use std::{
 };
 
 use crate::{
-    SessionEvent,
+    RequestFailure, SessionEvent,
     modules::moqt::{
         control_plane::{constants::TerminationErrorCode, enums::RequestId},
         data_plane::stream::fetch_data_receiver::FetchDataReceiver,
         runtime::dispatch::incoming_object::IncomingObject,
-        version::ControlChannel,
+        version::{ControlChannel, OutgoingRequest, PendingResponse},
     },
 };
 
@@ -247,6 +247,13 @@ impl SessionContext {
             .lock()
             .expect("fetch_receiver_map poisoned")
             .remove(&request_id);
+    }
+
+    pub(crate) async fn send_request(
+        self: &Arc<Self>,
+        request: OutgoingRequest,
+    ) -> Result<PendingResponse, RequestFailure> {
+        self.control.send_request(self, request).await
     }
 
     /// A close for a protocol violation is reported at once as

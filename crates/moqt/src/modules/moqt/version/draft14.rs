@@ -100,7 +100,9 @@ impl ControlChannel {
     }
 
     fn of(session: &SessionContext) -> &Self {
-        let version::ControlChannel::Draft14(channel) = &session.control;
+        let version::ControlChannel::Draft14(channel) = &session.control else {
+            unreachable!("draft-14 tasks run only on draft-14 sessions")
+        };
         channel
     }
 

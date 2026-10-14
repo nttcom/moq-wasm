@@ -22,12 +22,14 @@ impl Handshake {
 
     #[cfg(test)]
     pub(crate) fn client_setup(&self) -> &ClientSetup {
-        let ServerHandshake::Draft14(handshake) = &self.setup;
+        let ServerHandshake::Draft14(handshake) = &self.setup else {
+            panic!("the CLIENT_SETUP of a draft-14 handshake");
+        };
         &handshake.client_setup
     }
 
     pub async fn accept(self) -> anyhow::Result<Session> {
-        let (control, control_receiver) = self.setup.accept().await?;
+        let (control, control_receiver) = self.setup.accept(&self.transport_connection).await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
         let context = SessionContext::new(self.transport_connection, control, true, event_sender);
         tracing::info!("Session established");

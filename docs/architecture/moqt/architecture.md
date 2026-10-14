@@ -118,9 +118,10 @@ subprotocol support reports none.
 ## Version adapter (`modules/moqt/version`)
 
 Everything above the adapter states what to send and receive; the adapter
-decides how a draft carries it. Only draft-14 is implemented: the adapter
-exists ahead of draft-18 support, as a deliberate exception to the
-coding-style rule that an abstraction waits for its second concrete use.
+decides how a draft carries it. draft-14 and draft-18 are implemented;
+`APPLICATION_PROTOCOLS` offers only draft-14 until draft-18 has been checked
+against other implementations, so draft-18 is reached only by the tests
+that offer it (`version::DRAFT18_PROTOCOLS`).
 
 - `Version` names the draft a session speaks.
 - `ControlChannel` is an enum with one variant per draft, matched in place
@@ -160,12 +161,41 @@ coding-style rule that an abstraction waits for its second concrete use.
   `version::connect` / `accept` pick the `Version` from the connection's
   `negotiated_protocol()` before running that draft's SETUP exchange: ALPN
   `moq-00` (draft-14 §3.1.2) and a WebTransport session without a subprotocol
-  (draft-14 defines none, §3.1.1) are draft-14; anything else fails the
-  session.
+  (draft-14 defines none, §3.1.1) are draft-14; ALPN or subprotocol `moqt-18`
+  is draft-18; anything else fails the session.
+- `draft18` (docs/spec/draft-ietf-moq-transport-18.txt) keeps a
+  unidirectional control stream per endpoint (SETUP, then only GOAWAY) and a
+  bidirectional stream per request, which carries the response; requests
+  have no Request ID pairing and no late-response handling. The adapter maps
+  the streams onto the same model draft-14 uses:
+  - `ControlChannel` registers each request stream by Request ID and kind;
+    `respond` writes on the peer's stream, a rejection and TRACK_STATUS_OK
+    end it with FIN, and the cancelling notifications (UNSUBSCRIBE,
+    FETCH_CANCEL, PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE)
+    reset the stream. Dropping a `PendingResponse` before a success response
+    resets the stream too (§3.3.2).
+  - `request_streams` reads the streams. A request the peer opens becomes
+    the draft-14 event (its Request ID checked for parity and reuse, §10.1);
+    the peer ending a still-open request becomes the event its draft-14
+    cancellation would raise (`Unsubscribe`, `FetchCancel`,
+    `PublishNamespaceDone`, `UnsubscribeNamespace`, `PublishDone`).
+  - `messages` / `parameters` encode the control messages on the draft-14
+    structs as the shared model: Message Parameters and Track Properties
+    carry what draft-14 had as fields, absent ones take their draft-18
+    defaults, and responses get their Request ID from the stream.
+  - `objects` covers the draft-18 data plane; FETCH objects are delta
+    encoded against the previous one, so `FetchDataSender` keeps a
+    `FetchEncoder` and `accept_fetch_receiver` hands the FETCH's group order
+    to the reader.
+  - Not mapped yet: NAMESPACE / NAMESPACE_DONE on a SUBSCRIBE_NAMESPACE
+    stream (logged), SUBSCRIBE_TRACKS (rejected with NOT_SUPPORTED) and
+    per-request GOAWAY; a REQUEST_UPDATE becomes a `SubscribeUpdate` whose
+    absent fields take their defaults.
 - Error codes cross the seam as the typed enums of `error_codes.rs` and
-  `constants.rs`. `draft14::error_codes` holds their draft-14 values: `draft14`
-  uses them to encode and decode messages, and `Version::termination_code` /
-  `data_stream_reset_code` return them for transport closes and stream resets.
+  `constants.rs`. `draft14::error_codes` and `draft18::error_codes` hold each
+  draft's values: the drafts use them to encode and decode messages, and
+  `Version::termination_code` / `data_stream_reset_code` return them for
+  transport closes and stream resets.
 
 ## Session establishment (`modules/moqt/domains`)
 

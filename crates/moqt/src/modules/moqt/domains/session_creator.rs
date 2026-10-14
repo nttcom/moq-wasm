@@ -25,7 +25,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let authorization_token = self.authorization_token.clone();
         let handshake = async move {
             let (control, control_receiver, server_setup) =
-                match version::connect(&transport_conn, authorization_token.as_deref()).await {
+                match version::connect(&transport_conn, authorization_token.as_deref(), &target)
+                    .await
+                {
                     Ok(established) => established,
                     Err(error) => {
                         return Err(Self::explain_rejected_setup(&transport_conn, error).await);

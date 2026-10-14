@@ -50,7 +50,6 @@ impl Subscriber {
         let request_id = self.session.control.next_request_id();
         let pending = self
             .session
-            .control
             .send_request(OutgoingRequest::SubscribeNamespace(
                 SubscribeNamespace::new(request_id, vec_namespace, vec![]),
             ))
@@ -110,7 +109,6 @@ impl Subscriber {
         };
         let response = self
             .session
-            .control
             .send_request(OutgoingRequest::Subscribe(subscribe))
             .await?
             .response()
@@ -196,7 +194,6 @@ impl Subscriber {
         };
         let response = self
             .session
-            .control
             .send_request(OutgoingRequest::TrackStatus(track_status))
             .await?
             .response()
@@ -258,7 +255,6 @@ impl Subscriber {
         };
         let response = self
             .session
-            .control
             .send_request(OutgoingRequest::Fetch(fetch))
             .await?
             .response()
@@ -329,7 +325,6 @@ impl Subscriber {
         };
         let response = self
             .session
-            .control
             .send_request(OutgoingRequest::Fetch(fetch))
             .await?
             .response()

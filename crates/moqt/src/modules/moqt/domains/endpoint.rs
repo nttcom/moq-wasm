@@ -2,6 +2,7 @@ use crate::{
     Connecting, TransportProtocol,
     modules::{
         moqt::{domains::session_creator::SessionCreator, version::APPLICATION_PROTOCOLS},
+        transport::application_protocol::ApplicationProtocols,
         transport::transport_connection_creator::TransportConnectionCreator,
     },
     server::Accepting,
@@ -37,11 +38,15 @@ pub struct Endpoint<T: TransportProtocol> {
 
 impl<T: TransportProtocol> Endpoint<T> {
     pub fn create_client(config: &ClientConfig) -> anyhow::Result<Self> {
-        let client = T::ConnectionCreator::client(
-            config.port,
-            config.verify_certificate,
-            APPLICATION_PROTOCOLS,
-        )?;
+        Self::create_client_offering(config, APPLICATION_PROTOCOLS)
+    }
+
+    pub(crate) fn create_client_offering(
+        config: &ClientConfig,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        let client =
+            T::ConnectionCreator::client(config.port, config.verify_certificate, protocols)?;
         let session_creator = SessionCreator {
             transport_creator: client,
             authorization_token: config.authorization_token.clone(),
@@ -66,12 +71,19 @@ impl<T: TransportProtocol> Endpoint<T> {
     }
 
     pub fn create_server(server_config: &ServerConfig) -> anyhow::Result<Self> {
+        Self::create_server_offering(server_config, APPLICATION_PROTOCOLS)
+    }
+
+    pub(crate) fn create_server_offering(
+        server_config: &ServerConfig,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
         let server = T::ConnectionCreator::server(
             &server_config.cert_path,
             &server_config.key_path,
             server_config.port,
             server_config.keep_alive_interval_sec,
-            APPLICATION_PROTOCOLS,
+            protocols,
         )?;
         let session_creator = SessionCreator {
             transport_creator: server,
