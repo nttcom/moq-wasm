@@ -1,5 +1,4 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../pkg/moqt'
 import { SubgroupWriter } from '@moqt/subgroupWriter'
 import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpDjevBotPage } from '../../utils/djevBot'
 import { timeSeededGroupId } from '../../utils/media/clock'
@@ -25,7 +24,7 @@ class GopSender {
   private readonly writer: SubgroupWriter
 
   constructor(
-    client: MOQTClient,
+    client: MoqtClientWrapper,
     readonly requestId: bigint,
     trackAlias: bigint
   ) {
@@ -79,7 +78,7 @@ setUpDjevBotPage({
   afterConnect: async () => startEncoder(mediaStream!),
   onSubscriber: async ({ trackName, requestId, trackAlias }) => {
     if (trackName === VIDEO_TRACK) {
-      setVideoSender(new GopSender(session.getRawClient()!, requestId, trackAlias))
+      setVideoSender(new GopSender(session, requestId, trackAlias))
       encoderWorker?.postMessage({ type: 'forceKeyframe' })
     } else {
       promptPublisher = new SingleObjectGroupPublisher(session, requestId, trackAlias)

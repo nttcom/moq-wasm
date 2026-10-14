@@ -62,6 +62,34 @@ Rules:
   top of the pictures.
 - L1 does not connect. It is given a connected `MoqtClientWrapper`, so a page
   can share one session with a publisher or with other players.
+- Relay switchover is the wrapper's, not the player's. On GOAWAY
+  (draft-14 §3.5, §8.3.1, §8.4.2) `MoqtClientWrapper` opens a second session
+  to the relay the GOAWAY names (or its current URL when it names none) and
+  re-sends PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE, every active SUBSCRIBE and
+  every `publish()` there under the same request ids, repeating a request the
+  new relay rejects every 500 ms; a failed switchover keeps the old session.
+  Each session has its own alias map, filled as soon as that session answers,
+  so an object from the new relay reaches its track before the switch
+  completes. While both sessions are open, each carried subscription has a
+  cutover group: the first group the new relay delivers, or the group after
+  the newest one the old relay delivered. Earlier groups are taken from the
+  old session only and later ones from the new session only, so a group is
+  neither duplicated nor cut short. On the sending side an object goes to the
+  session its group started on, and the next group starts on the new
+  session. The old session is closed once every subscription has passed its
+  cutover (or its relay sent PUBLISH_DONE, which the wrapper otherwise
+  ignores from a relay that sent GOAWAY) and no published group is open
+  there, or 5 s after the switch. A FETCH still in flight is re-issued for
+  what it has not delivered yet and from then on taken from the new session
+  only: an absolute range resumes after the last object received, a joining
+  FETCH that delivered nothing yet is repeated against the re-issued
+  subscription, one that did is completed as an absolute range up to the
+  Largest Location its subscription started from, and in descending group
+  order the range is cut to end after the group being delivered, whose
+  repeated objects are skipped. Incoming SUBSCRIBEs accepted on the old
+  session are reported through the incoming-unsubscribe handler. The alias in
+  `SubgroupHeaderMessage` / datagram messages is the wire alias of the
+  session that delivered it.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
   `setOnConnectionClosedHandler`); they have one slot per client and belong to
   the page. It registers per-alias and per-request handlers only.

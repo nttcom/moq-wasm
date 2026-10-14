@@ -1,4 +1,4 @@
-import init, {
+import type {
   FetchMessage,
   FetchObjectMessage,
   FetchOkMessage,
@@ -33,6 +33,77 @@ export interface ConnectionCloseInfo {
   reason?: string
 }
 type ConnectionClosedHandler = ((info: ConnectionCloseInfo) => void) | null
+
+/** Creates the raw client; tests substitute a fake. */
+export type RawClientFactory = (url: string) => Promise<MOQTClient>
+
+/// The wasm package is loaded on first use so that this module can be
+/// imported where it cannot be instantiated.
+const defaultRawClientFactory: RawClientFactory = async (url) => {
+  const { default: init, MOQTClient } = await import('../../pkg/moqt')
+  await init()
+  return new MOQTClient(url)
+}
+
+type NamespaceRequest = { trackNamespace: string[]; authInfo: string }
+type Location = { groupId: bigint; objectId: bigint }
+type ActiveSubscription = {
+  trackNamespace: string[]
+  trackName: string
+  authInfo: string
+  options: SubscribeOptions
+  /** The alias the application knows; it survives a relay switchover. */
+  trackAlias: bigint
+  /** Largest Location of the first SUBSCRIBE_OK; the end a joining FETCH ran up to. */
+  largest?: Location
+}
+type FetchRequest =
+  | { kind: 'absolute'; trackNamespace: string[]; trackName: string; start: Location; end: Location }
+  | { kind: 'joining'; joiningRequestId: bigint; joiningStart: bigint }
+type InFlightFetch = {
+  request: FetchRequest
+  groupOrder: GroupOrder
+  /** The session the FETCH is running on; objects from any other are dropped. */
+  client: MOQTClient
+  lastDelivered?: Location
+  /** Objects of this group up to this id were delivered by the old session; the new session repeats them. */
+  skipThrough?: Location
+}
+type FetchRemainder = { request: FetchRequest; skipThrough?: Location }
+type PublishedTrack = {
+  trackNamespace: string[]
+  trackName: string
+  authInfo: string
+  /** The alias the application sends on; it survives a relay switchover. */
+  trackAlias: bigint
+}
+/** The aliases of one session that differ from the application's, keyed both ways. */
+type AliasMaps = { appAliasByWireAlias: Map<bigint, bigint>; wireAliasByAppAlias: Map<bigint, bigint> }
+const emptyAliasMaps = (): AliasMaps => ({ appAliasByWireAlias: new Map(), wireAliasByAppAlias: new Map() })
+/**
+ * Where one carried subscription switches from the previous session to the
+ * next: groups before `group` come from the previous session, the rest from
+ * the next one.
+ */
+type Cutover = { group?: bigint; previousNewestGroup?: bigint; passed: boolean }
+/** A switchover from `previous` to `next`, kept until `previous` is closed. */
+type Switchover = {
+  previous: MOQTClient
+  next: MOQTClient
+  /** Keyed by the application's track alias. */
+  cutovers: Map<bigint, Cutover>
+  swapped: boolean
+}
+
+/// Grace for the relay named by GOAWAY to accept the session and the
+/// subscriptions before the switchover is given up.
+const MIGRATION_TIMEOUT_MS = 10_000
+/// A publisher moves at the same time as its subscribers, so a request the new
+/// relay rejects is repeated at this interval until the switchover times out.
+const MIGRATION_RETRY_INTERVAL_MS = 500
+/// How long the previous session stays open after the switch for groups that
+/// started there and have not ended.
+const PREVIOUS_SESSION_GRACE_MS = 5_000
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
 type PublishDoneHandler = (message: PublishDoneMessage) => void
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
@@ -175,6 +246,24 @@ type IncomingFetchHandler = (ctx: IncomingFetchContext) => Promise<void> | void
 
 export class MoqtClientWrapper {
   client: MOQTClient | null = null
+  private connectUrl = ''
+  private connectOptions: ConnectOptions = {}
+  private readonly announcedNamespaces = new Map<string, NamespaceRequest>()
+  private readonly subscribedNamespaces = new Map<string, NamespaceRequest>()
+  private readonly activeSubscriptions = new Map<bigint, ActiveSubscription>()
+  private readonly publishedTracks = new Map<bigint, PublishedTrack>()
+  private readonly inFlightFetches = new Map<bigint, InFlightFetch>()
+  /** Incoming SUBSCRIBEs accepted on the current session; they end with it. */
+  private readonly incomingSubscribeRequestIds = new Set<bigint>()
+  /** A session missing here uses the application's aliases. */
+  private readonly aliasesByClient = new WeakMap<MOQTClient, AliasMaps>()
+  /** The session each published track's open group started on, by application alias. */
+  private readonly openGroupClients = new Map<bigint, MOQTClient>()
+  private readonly retiredClients = new WeakSet<MOQTClient>()
+  /** The newest group delivered on each subscription, by application alias. */
+  private readonly newestGroups = new Map<bigint, bigint>()
+  private switchover: Switchover | null = null
+  private migrating = false
   private pendingServerSetup: { resolve: () => void; reject: (error: Error) => void } | null = null
   private onPublishNamespaceHandler: IncomingPublishNamespaceHandler | null = null
   private onPublishNamespaceDoneHandler: IncomingPublishNamespaceDoneHandler | null = null
@@ -205,6 +294,8 @@ export class MoqtClientWrapper {
   private readonly publishDoneHandlers = new Map<bigint, PublishDoneHandler>()
   private nextRequestId = 0n
 
+  constructor(private readonly createRawClient: RawClientFactory = defaultRawClientFactory) {}
+
   async connect(url: string, options: ConnectOptions = {}): Promise<void> {
     if (this.getConnectionStatus()) {
       return
@@ -212,27 +303,23 @@ export class MoqtClientWrapper {
 
     let wtConnectStartedAtMs: number | null = null
     try {
-      await init()
-      this.client = new MOQTClient(url)
+      this.connectUrl = url
+      this.connectOptions = options
+      this.client = await this.createRawClient(url)
       wtConnectStartedAtMs = performance.now()
       await this.client.start()
       console.info('[moqt][wt] connected', {
         url,
         elapsedMs: Math.round((performance.now() - wtConnectStartedAtMs) * 100) / 100
       })
-      this.setupCallbacks()
+      this.setupCallbacks(this.client)
 
       if (options.sendSetup === false) {
         this.pendingServerSetup = null
         return
       }
 
-      const receiveServerSetup = this.waitForServerSetup()
-
-      const versions = options.versions ?? new BigUint64Array([0xff00000en])
-      const maxRequestId = options.maxRequestId ?? 100n
-      await this.client.sendClientSetup(versions, maxRequestId, options.authToken)
-      await receiveServerSetup
+      await this.sendSetup(this.client, options)
     } catch (error) {
       this.cleanupClient()
       if (wtConnectStartedAtMs !== null) {
@@ -251,6 +338,262 @@ export class MoqtClientWrapper {
     const receiveServerSetup = this.waitForServerSetup()
     await client.sendClientSetup(versions, maxRequestId, authToken)
     await receiveServerSetup
+  }
+
+  private async sendSetup(client: MOQTClient, options: ConnectOptions): Promise<void> {
+    const receiveServerSetup = this.waitForServerSetup()
+    const versions = options.versions ?? new BigUint64Array([0xff00000en])
+    const maxRequestId = options.maxRequestId ?? 100n
+    await client.sendClientSetup(versions, maxRequestId, options.authToken)
+    await receiveServerSetup
+  }
+
+  /// draft-14 §3.5 / §8.3.1: a second session is opened to the relay the
+  /// GOAWAY names (or the current URL when it names none). The announced
+  /// namespaces and every active subscription are re-sent there under the same
+  /// request ids; once they are all accepted the old session is closed. The
+  /// application keeps its request ids, track aliases and handlers. On any
+  /// failure the current session is kept until the relay closes it.
+  private async migrate(newSessionUri: string): Promise<void> {
+    const previous = this.client
+    if (!previous || this.migrating) {
+      return
+    }
+    this.migrating = true
+    const url = newSessionUri || this.connectUrl
+    let next: MOQTClient | null = null
+    try {
+      next = await this.createRawClient(url)
+      await next.start()
+      this.switchover = { previous, next, cutovers: new Map(), swapped: false }
+      for (const { trackAlias } of this.activeSubscriptions.values()) {
+        this.switchover.cutovers.set(trackAlias, {
+          passed: false,
+          previousNewestGroup: this.newestGroups.get(trackAlias)
+        })
+      }
+      this.setupCallbacks(next)
+      const deadline = Date.now() + MIGRATION_TIMEOUT_MS
+      const migrated = this.migrateState(previous, next, deadline)
+      const timedOut = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('relay switchover timed out')), MIGRATION_TIMEOUT_MS)
+      })
+      await Promise.race([migrated, timedOut])
+      this.client = next
+      this.connectUrl = url
+      this.switchover.swapped = true
+      setTimeout(() => this.retirePrevious(previous), PREVIOUS_SESSION_GRACE_MS)
+      console.info('[moqt] moved to the relay named by GOAWAY', { url })
+      // The subscriptions the old relay held on this publisher end with its
+      // session; the new relay sends its own SUBSCRIBEs.
+      const endedIncoming = [...this.incomingSubscribeRequestIds]
+      this.incomingSubscribeRequestIds.clear()
+      for (const requestId of endedIncoming) {
+        this.incomingUnsubscribeHandler?.(requestId)
+      }
+      this.retireIfMoved()
+    } catch (error) {
+      console.warn('[moqt] relay switchover failed; staying on the current session', { url, error })
+      this.switchover = null
+      for (const fetch of this.inFlightFetches.values()) {
+        if (fetch.client === next) {
+          fetch.client = previous
+        }
+      }
+      await next?.close().catch(() => undefined)
+    } finally {
+      this.migrating = false
+    }
+  }
+
+  /// The previous session is closed once every carried subscription has
+  /// passed its cutover and no published group is still open there.
+  private retireIfMoved(): void {
+    const switchover = this.switchover
+    if (!switchover?.swapped) {
+      return
+    }
+    const subscriptionsMoved = [...switchover.cutovers.values()].every((cutover) => cutover.passed)
+    const groupsMoved = ![...this.openGroupClients.values()].includes(switchover.previous)
+    if (subscriptionsMoved && groupsMoved) {
+      this.retirePrevious(switchover.previous)
+    }
+  }
+
+  private retirePrevious(previous: MOQTClient): void {
+    if (this.switchover?.previous !== previous) {
+      return
+    }
+    this.switchover = null
+    this.retiredClients.add(previous)
+    for (const [trackAlias, client] of this.openGroupClients) {
+      if (client === previous) {
+        this.openGroupClients.delete(trackAlias)
+      }
+    }
+    void previous.close().catch(() => undefined)
+  }
+
+  /// Whether an object of `trackAlias` (the application's) from `client`
+  /// is delivered while a switchover has both sessions open.
+  private acceptsObject(client: MOQTClient, trackAlias: bigint, groupId: bigint): boolean {
+    if (this.retiredClients.has(client)) {
+      return false
+    }
+    const newest = this.newestGroups.get(trackAlias)
+    if (newest === undefined || groupId > newest) {
+      this.newestGroups.set(trackAlias, groupId)
+    }
+    const switchover = this.switchover
+    const cutover = switchover?.cutovers.get(trackAlias)
+    if (!switchover || !cutover) {
+      return true
+    }
+    if (client === switchover.previous) {
+      if (cutover.group !== undefined && groupId >= cutover.group) {
+        cutover.passed = true
+        this.retireIfMoved()
+        return false
+      }
+      if (cutover.previousNewestGroup === undefined || groupId > cutover.previousNewestGroup) {
+        cutover.previousNewestGroup = groupId
+      }
+      return true
+    }
+    if (client === switchover.next) {
+      if (cutover.group === undefined) {
+        const newest = cutover.previousNewestGroup
+        cutover.group = newest !== undefined && groupId <= newest ? newest + 1n : groupId
+      }
+      return groupId >= cutover.group
+    }
+    return true
+  }
+
+  private async migrateState(previous: MOQTClient, next: MOQTClient, deadline: number): Promise<void> {
+    const aliases = emptyAliasMaps()
+    this.aliasesByClient.set(next, aliases)
+    await this.sendSetup(next, this.connectOptions)
+    for (const { trackNamespace, authInfo } of this.announcedNamespaces.values()) {
+      const requestId = this.issueRequestId()
+      const response = expectResponse(this.pendingPublishNamespace, requestId)
+      await next.sendPublishNamespace(requestId, trackNamespace, authInfo)
+      await response
+    }
+    for (const { trackNamespace, authInfo } of this.subscribedNamespaces.values()) {
+      const requestId = this.issueRequestId()
+      const response = expectResponse(this.pendingSubscribeNamespace, requestId)
+      await next.sendSubscribeNamespace(requestId, trackNamespace, authInfo)
+      await response
+    }
+    for (const [requestId, subscription] of this.activeSubscriptions) {
+      const subscribeOk = await retryUntil(deadline, async () => {
+        const response = expectResponse(this.pendingSubscribe, requestId)
+        await this.sendSubscribeOn(next, requestId, subscription)
+        return response
+      })
+      aliases.appAliasByWireAlias.set(subscribeOk.trackAlias, subscription.trackAlias)
+      this.subscriptionTrackAliases.set(requestId, subscription.trackAlias)
+      if (subscription.options.forward === false) {
+        await next.sendSubscribeForward(this.issueRequestId(), requestId, false)
+      }
+    }
+    for (const [requestId, track] of this.publishedTracks) {
+      const response = expectResponse(this.pendingPublish, requestId)
+      const wireAlias = await this.sendPublishOn(next, requestId, track)
+      await response
+      aliases.wireAliasByAppAlias.set(track.trackAlias, wireAlias)
+    }
+    for (const [requestId, fetch] of this.inFlightFetches) {
+      const remainder = remainingFetch(fetch, this.activeSubscriptions)
+      if (!remainder) {
+        continue
+      }
+      // The remainder starts after what the previous session delivered so
+      // far, so nothing more is taken from it.
+      fetch.client = next
+      fetch.skipThrough = remainder.skipThrough
+      try {
+        await retryUntil(deadline, async () => {
+          const response = expectResponse(this.pendingFetch, requestId)
+          await this.sendFetchOn(next, requestId, remainder.request, fetch.groupOrder)
+          return response
+        })
+      } catch (error) {
+        fetch.client = previous
+        fetch.skipThrough = undefined
+        console.warn('[moqt] FETCH not carried over to the new relay', { requestId: requestId.toString(), error })
+      }
+    }
+  }
+
+  private sendFetchOn(
+    client: MOQTClient,
+    requestId: bigint,
+    request: FetchRequest,
+    groupOrder: GroupOrder
+  ): Promise<void> {
+    if (request.kind === 'joining') {
+      return client.sendRelativeJoiningFetch(requestId, request.joiningRequestId, request.joiningStart, groupOrder)
+    }
+    return client.sendFetch(
+      requestId,
+      request.trackNamespace,
+      request.trackName,
+      request.start.groupId,
+      request.start.objectId,
+      request.end.groupId,
+      request.end.objectId,
+      groupOrder
+    )
+  }
+
+  private sendPublishOn(
+    client: MOQTClient,
+    requestId: bigint,
+    { trackNamespace, trackName, authInfo }: Omit<PublishedTrack, 'trackAlias'>
+  ): Promise<bigint> {
+    return client.sendPublish(
+      requestId,
+      trackNamespace,
+      trackName,
+      undefined,
+      GroupOrder.Ascending,
+      false,
+      undefined,
+      undefined,
+      true,
+      authInfo
+    )
+  }
+
+  private sendSubscribeOn(
+    client: MOQTClient,
+    requestId: bigint,
+    { trackNamespace, trackName, authInfo, options }: Omit<ActiveSubscription, 'trackAlias'>
+  ): Promise<void> {
+    return client.sendSubscribe(
+      requestId,
+      trackNamespace,
+      trackName,
+      options.subscriberPriority ?? 0,
+      options.groupOrder ?? GroupOrder.Publisher,
+      options.filterType ?? FilterType.NextGroupStart,
+      options.startGroup,
+      options.startObject,
+      options.endGroup,
+      authInfo,
+      options.forward ?? false,
+      options.deliveryTimeout
+    )
+  }
+
+  private appAlias(client: MOQTClient, wireAlias: bigint): bigint {
+    return this.aliasesByClient.get(client)?.appAliasByWireAlias.get(wireAlias) ?? wireAlias
+  }
+
+  private wireAlias(client: MOQTClient, appAlias: bigint): bigint {
+    return this.aliasesByClient.get(client)?.wireAliasByAppAlias.get(appAlias) ?? appAlias
   }
 
   private waitForServerSetup(): Promise<void> {
@@ -360,6 +703,7 @@ export class MoqtClientWrapper {
     const response = expectResponse(this.pendingPublishNamespace, requestId)
     await client.sendPublishNamespace(requestId, trackNamespace, authInfo)
     await response
+    this.announcedNamespaces.set(trackNamespace.join('/'), { trackNamespace, authInfo })
   }
 
   async subscribeNamespace(
@@ -372,6 +716,7 @@ export class MoqtClientWrapper {
     const response = expectResponse(this.pendingSubscribeNamespace, requestId)
     await client.sendSubscribeNamespace(requestId, trackNamespacePrefix, authInfo)
     await response
+    this.subscribedNamespaces.set(trackNamespacePrefix.join('/'), { trackNamespace: trackNamespacePrefix, authInfo })
   }
 
   async publish(trackNamespace: string[], trackName: string, authInfo: string): Promise<bigint> {
@@ -379,19 +724,9 @@ export class MoqtClientWrapper {
     const requestId = this.issueRequestId()
     const response = expectResponse(this.pendingPublish, requestId)
     try {
-      const trackAlias = await client.sendPublish(
-        requestId,
-        trackNamespace,
-        trackName,
-        undefined,
-        GroupOrder.Ascending,
-        false,
-        undefined,
-        undefined,
-        true,
-        authInfo
-      )
+      const trackAlias = await this.sendPublishOn(client, requestId, { trackNamespace, trackName, authInfo })
       await response
+      this.publishedTracks.set(requestId, { trackNamespace, trackName, authInfo, trackAlias })
       return trackAlias
     } catch (error) {
       this.pendingPublish.delete(requestId)
@@ -434,21 +769,20 @@ export class MoqtClientWrapper {
       }
 
       const response = expectResponse(this.pendingSubscribe, requestId)
-      await client.sendSubscribe(
-        requestId,
+      await this.sendSubscribeOn(client, requestId, { trackNamespace, trackName, authInfo, options })
+      const subscribeOk = await response
+      this.activeSubscriptions.set(requestId, {
         trackNamespace,
         trackName,
-        options.subscriberPriority ?? 0,
-        options.groupOrder ?? GroupOrder.Publisher,
-        options.filterType ?? FilterType.NextGroupStart,
-        options.startGroup,
-        options.startObject,
-        options.endGroup,
         authInfo,
-        options.forward ?? false,
-        options.deliveryTimeout
-      )
-      return { requestId, subscribeOk: await response }
+        options,
+        trackAlias: subscribeOk.trackAlias,
+        largest:
+          subscribeOk.largestGroupId === undefined
+            ? undefined
+            : { groupId: subscribeOk.largestGroupId, objectId: subscribeOk.largestObjectId ?? 0n }
+      })
+      return { requestId, subscribeOk }
     } catch (error) {
       this.publishDoneHandlers.delete(requestId)
       throw error
@@ -464,18 +798,13 @@ export class MoqtClientWrapper {
     endObjectId: bigint,
     options: FetchOptions = {}
   ): Promise<FetchResult> {
-    return this.sendFetchRequest(options, (client, requestId, groupOrder) =>
-      client.sendFetch(
-        requestId,
-        trackNamespace,
-        trackName,
-        startGroupId,
-        startObjectId,
-        endGroupId,
-        endObjectId,
-        groupOrder
-      )
-    )
+    return this.sendFetchRequest(options, {
+      kind: 'absolute',
+      trackNamespace,
+      trackName,
+      start: { groupId: startGroupId, objectId: startObjectId },
+      end: { groupId: endGroupId, objectId: endObjectId }
+    })
   }
 
   relativeJoiningFetch(
@@ -483,9 +812,7 @@ export class MoqtClientWrapper {
     joiningStart: bigint,
     options: FetchOptions = {}
   ): Promise<FetchResult> {
-    return this.sendFetchRequest(options, (client, requestId, groupOrder) =>
-      client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart, groupOrder)
-    )
+    return this.sendFetchRequest(options, { kind: 'joining', joiningRequestId, joiningStart })
   }
 
   /// Hands the objects and the stream end of a FETCH sent through the raw
@@ -496,25 +823,25 @@ export class MoqtClientWrapper {
     this.fetchStreamEndHandlers.set(requestId, onStreamEnd)
   }
 
-  private async sendFetchRequest(
-    options: FetchOptions,
-    send: (client: MOQTClient, requestId: bigint, groupOrder: GroupOrder) => Promise<void>
-  ): Promise<FetchResult> {
+  private async sendFetchRequest(options: FetchOptions, request: FetchRequest): Promise<FetchResult> {
     const client = this.requireConnectedClient()
     const requestId = options.requestId ?? this.issueRequestId()
+    const groupOrder = options.groupOrder ?? GroupOrder.Ascending
     if (options.onObject) {
       this.fetchObjectHandlers.set(requestId, options.onObject)
     }
     if (options.onStreamEnd) {
       this.fetchStreamEndHandlers.set(requestId, options.onStreamEnd)
     }
+    this.inFlightFetches.set(requestId, { request, groupOrder, client })
     const response = expectResponse(this.pendingFetch, requestId)
     try {
-      await send(client, requestId, options.groupOrder ?? GroupOrder.Ascending)
+      await this.sendFetchOn(client, requestId, request, groupOrder)
       return { requestId, fetchOk: await response }
     } catch (error) {
       this.fetchObjectHandlers.delete(requestId)
       this.fetchStreamEndHandlers.delete(requestId)
+      this.inFlightFetches.delete(requestId)
       this.pendingFetch.delete(requestId)
       throw error
     }
@@ -539,6 +866,7 @@ export class MoqtClientWrapper {
     await client.sendUnsubscribe(requestId)
     this.subscriptionTrackAliases.delete(requestId)
     this.publishDoneHandlers.delete(requestId)
+    this.activeSubscriptions.delete(requestId)
     if (trackAlias !== undefined) {
       this.clearSubgroupObjectHandler(trackAlias)
     }
@@ -547,6 +875,10 @@ export class MoqtClientWrapper {
   async setSubscriptionForward(subscriptionRequestId: bigint, forward: boolean): Promise<void> {
     const client = this.requireConnectedClient()
     await client.sendSubscribeForward(this.issueRequestId(), subscriptionRequestId, forward)
+    const subscription = this.activeSubscriptions.get(subscriptionRequestId)
+    if (subscription) {
+      subscription.options = { ...subscription.options, forward }
+    }
   }
 
   /// A LargestObject SUBSCRIBE delivers only what follows the current largest
@@ -585,8 +917,49 @@ export class MoqtClientWrapper {
     return result
   }
 
+  /// The subgroup header and objects of a track this client publishes.
+  /// `trackAlias` is the alias the application holds (from `publish()` or an
+  /// accepted incoming SUBSCRIBE); it is sent on the current session.
+  async sendSubgroupHeader(
+    trackAlias: bigint,
+    groupId: bigint,
+    subgroupId: bigint,
+    publisherPriority: number
+  ): Promise<void> {
+    const client = this.requireConnectedClient()
+    this.openGroupClients.set(trackAlias, client)
+    await client.sendSubgroupHeader(this.wireAlias(client, trackAlias), groupId, subgroupId, publisherPriority)
+    this.retireIfMoved()
+  }
+
+  async sendSubgroupObject(
+    trackAlias: bigint,
+    groupId: bigint,
+    subgroupId: bigint,
+    objectId: bigint,
+    objectStatus: number | undefined,
+    payload: Uint8Array,
+    locHeader: unknown
+  ): Promise<void> {
+    // An object belongs to the session its group started on; a group whose
+    // session was closed is not continued on another.
+    const client = this.openGroupClients.get(trackAlias) ?? this.requireConnectedClient()
+    if (this.retiredClients.has(client)) {
+      return
+    }
+    await client.sendSubgroupObject(
+      this.wireAlias(client, trackAlias),
+      groupId,
+      subgroupId,
+      objectId,
+      objectStatus,
+      payload,
+      locHeader
+    )
+  }
+
   async sendSingleObjectGroup(trackAlias: bigint, groupId: bigint, payload: Uint8Array): Promise<void> {
-    const writer = new SubgroupWriter(this.requireConnectedClient(), trackAlias)
+    const writer = new SubgroupWriter(this, trackAlias)
     await writer.openGroup(groupId)
     await writer.send(payload)
     await writer.closeGroup()
@@ -605,10 +978,9 @@ export class MoqtClientWrapper {
     }
   }
 
-  private setupCallbacks(): void {
-    if (!this.client) return
-
-    this.client.onServerSetup((setup: ServerSetupMessage) => {
+  private setupCallbacks(client: MOQTClient): void {
+    let departing = false
+    client.onServerSetup((setup: ServerSetupMessage) => {
       if (this.pendingServerSetup) {
         this.pendingServerSetup.resolve()
         this.pendingServerSetup = null
@@ -616,7 +988,7 @@ export class MoqtClientWrapper {
       this.onServerSetupHandler?.(setup)
     })
 
-    this.client.onPublishNamespace((publishNamespace: PublishNamespaceMessage) => {
+    client.onPublishNamespace((publishNamespace: PublishNamespaceMessage) => {
       const handler = this.onPublishNamespaceHandler ?? defaultIncomingPublishNamespaceHandler
       void handler({
         publishNamespace,
@@ -626,38 +998,46 @@ export class MoqtClientWrapper {
       })
     })
 
-    this.client.onPublishNamespaceDone((message: PublishNamespaceDoneMessage) => {
+    client.onPublishNamespaceDone((message: PublishNamespaceDoneMessage) => {
       this.onPublishNamespaceDoneHandler?.(message)
     })
 
-    this.client.onPublishNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
+    client.onPublishNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
       this.onPublishNamespaceResponseHandler?.(response)
       settle(this.pendingPublishNamespace, 'PUBLISH_NAMESPACE_ERROR', response)
     })
 
-    this.client.onSubscribeNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
+    client.onSubscribeNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
       this.onSubscribeNamespaceResponseHandler?.(response)
       settle(this.pendingSubscribeNamespace, 'SUBSCRIBE_NAMESPACE_ERROR', response)
     })
 
-    this.client.onPublishResponse((response: PublishOkMessage | RequestErrorMessage) => {
+    client.onPublishResponse((response: PublishOkMessage | RequestErrorMessage) => {
       settle(this.pendingPublish, 'PUBLISH_ERROR', response)
     })
 
-    this.client.onSubscribe(async (subscribe: SubscribeMessage, isSuccess: boolean, code: number) => {
+    client.onSubscribe(async (subscribe: SubscribeMessage, isSuccess: boolean, code: number) => {
       const handler = this.incomingSubscribeHandler ?? defaultIncomingSubscribeHandler
       await handler({
         subscribe,
         isSuccess,
         code,
-        respondOk: async (expires = 0n, deliveryTimeout, maxDuration) =>
-          this.requireConnectedClient().sendSubscribeOk(subscribe.requestId, expires, deliveryTimeout, maxDuration),
+        respondOk: async (expires = 0n, deliveryTimeout, maxDuration) => {
+          const trackAlias = await this.requireConnectedClient().sendSubscribeOk(
+            subscribe.requestId,
+            expires,
+            deliveryTimeout,
+            maxDuration
+          )
+          this.incomingSubscribeRequestIds.add(subscribe.requestId)
+          return trackAlias
+        },
         respondError: (errorCode, reasonPhrase) =>
           this.requireConnectedClient().sendSubscribeError(subscribe.requestId, errorCode, reasonPhrase)
       })
     })
 
-    this.client.onSubscribeResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
+    client.onSubscribeResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
       if (isRequestError(response)) {
         this.subscriptionTrackAliases.delete(response.requestId)
       } else {
@@ -667,17 +1047,30 @@ export class MoqtClientWrapper {
       this.onSubscribeResponseHandler?.(response)
     })
 
-    this.client.onIncomingUnsubscribe((requestId: bigint) => {
+    client.onIncomingUnsubscribe((requestId: bigint) => {
+      this.incomingSubscribeRequestIds.delete(requestId)
       this.incomingUnsubscribeHandler?.(requestId)
     })
 
-    this.client.onPublishDone((message: PublishDoneMessage) => {
+    client.onPublishDone((message: PublishDoneMessage) => {
       const requestId = message.requestId
       console.info('[moqt] received PUBLISH_DONE', {
         requestId: requestId.toString(),
         statusCode: message.statusCode.toString(),
         errorReason: message.errorReason
       })
+      // A relay that sent GOAWAY ends its subscriptions when the publisher
+      // moves away first; the switchover carries them to the new relay.
+      if (departing) {
+        const trackAlias = this.subscriptionTrackAliases.get(requestId)
+        const cutover = trackAlias === undefined ? undefined : this.switchover?.cutovers.get(trackAlias)
+        if (cutover && this.switchover?.previous === client) {
+          cutover.passed = true
+          this.retireIfMoved()
+        }
+        return
+      }
+      this.activeSubscriptions.delete(requestId)
       const trackAlias = this.subscriptionTrackAliases.get(requestId)
       this.subscriptionTrackAliases.delete(requestId)
       if (trackAlias !== undefined) {
@@ -688,13 +1081,13 @@ export class MoqtClientWrapper {
       handler?.(message)
     })
 
-    this.client.onObjectDatagram((message: ObjectDatagramMessage) => {
+    client.onObjectDatagram((message: ObjectDatagramMessage) => {
       this.onObjectDatagramHandler?.(message)
     })
-    this.client.onObjectDatagramStatus((message: ObjectDatagramStatusMessage) => {
+    client.onObjectDatagramStatus((message: ObjectDatagramStatusMessage) => {
       this.onObjectDatagramStatusHandler?.(message)
     })
-    this.client.onSubgroupHeader((header: SubgroupHeaderMessage) => {
+    client.onSubgroupHeader((header: SubgroupHeaderMessage) => {
       console.debug('[moqt] received subgroup header', {
         trackAlias: header.trackAlias.toString(),
         groupId: header.groupId.toString(),
@@ -703,7 +1096,11 @@ export class MoqtClientWrapper {
       })
       this.onSubgroupHeaderHandler?.(header)
     })
-    this.client.onSubgroupObject((trackAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
+    client.onSubgroupObject((wireAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
+      const trackAlias = this.appAlias(client, wireAlias)
+      if (!this.acceptsObject(client, trackAlias, groupId)) {
+        return
+      }
       const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
       if (handler) {
         handler(groupId, subgroupObject)
@@ -711,7 +1108,7 @@ export class MoqtClientWrapper {
       }
       this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
     })
-    this.client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
+    client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
       const handler = this.incomingTrackStatusHandler ?? defaultIncomingTrackStatusHandler
       await handler({
         trackStatus,
@@ -720,11 +1117,11 @@ export class MoqtClientWrapper {
           this.requireConnectedClient().sendTrackStatusError(trackStatus.requestId, errorCode, reasonPhrase)
       })
     })
-    this.client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
+    client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
       this.onTrackStatusResponseHandler?.(response)
       settle(this.pendingTrackStatus, 'TRACK_STATUS_ERROR', response)
     })
-    this.client.onFetch(async (fetch: FetchMessage) => {
+    client.onFetch(async (fetch: FetchMessage) => {
       const handler = this.incomingFetchHandler ?? defaultIncomingFetchHandler
       const requestId = fetch.requestId
       const cancellation = new AbortController()
@@ -753,26 +1150,52 @@ export class MoqtClientWrapper {
         this.incomingFetchCancellations.delete(requestId)
       }
     })
-    this.client.onFetchCancel((requestId: bigint) => {
+    client.onFetchCancel((requestId: bigint) => {
       this.incomingFetchCancellations.get(requestId)?.abort()
     })
-    this.client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
+    client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
       settle(this.pendingFetch, 'FETCH_ERROR', response)
     })
-    this.client.onFetchObject((message: FetchObjectMessage) => {
-      const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
-      handler?.(message)
-    })
-    this.client.onFetchStreamEnd((message: FetchStreamEndMessage) => {
+    client.onFetchObject((message: FetchObjectMessage) => {
       const requestId = BigInt(message.requestId)
+      const fetch = this.inFlightFetches.get(requestId)
+      if (fetch && fetch.client !== client) {
+        return
+      }
+      if (fetch) {
+        const skip = fetch.skipThrough
+        if (skip && message.groupId === skip.groupId && message.objectId <= skip.objectId) {
+          return
+        }
+        fetch.lastDelivered = { groupId: message.groupId, objectId: message.objectId }
+      }
+      this.fetchObjectHandlers.get(requestId)?.(message)
+    })
+    client.onFetchStreamEnd((message: FetchStreamEndMessage) => {
+      const requestId = BigInt(message.requestId)
+      const fetch = this.inFlightFetches.get(requestId)
+      if (fetch && fetch.client !== client) {
+        return
+      }
+      this.inFlightFetches.delete(requestId)
       const handler = this.fetchStreamEndHandlers.get(requestId)
       this.fetchStreamEndHandlers.delete(requestId)
       handler?.(message)
     })
-    this.client.onGoAway((newSessionUri: string) => {
+    client.onGoAway((newSessionUri: string) => {
       console.info('[moqt] received GOAWAY', { newSessionUri })
+      departing = true
+      if (this.client === client) {
+        void this.migrate(newSessionUri)
+      }
     })
-    this.client.onConnectionClosed((info: ConnectionCloseInfo | null) => this.handleConnectionClosed(info ?? {}))
+    client.onConnectionClosed((info: ConnectionCloseInfo | null) => {
+      // A session replaced by a switchover may still close later; only the
+      // current session's close ends the wrapper.
+      if (this.client === client) {
+        this.handleConnectionClosed(info ?? {})
+      }
+    })
   }
 
   private async sendSubgroupTextForAlias(trackAlias: bigint, text: string): Promise<void> {
@@ -825,6 +1248,15 @@ export class MoqtClientWrapper {
     this.fetchStreamEndHandlers.clear()
     this.subscriptionTrackAliases.clear()
     this.publishDoneHandlers.clear()
+    this.activeSubscriptions.clear()
+    this.publishedTracks.clear()
+    this.inFlightFetches.clear()
+    this.incomingSubscribeRequestIds.clear()
+    this.announcedNamespaces.clear()
+    this.subscribedNamespaces.clear()
+    this.openGroupClients.clear()
+    this.newestGroups.clear()
+    this.switchover = null
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
     this.onPublishNamespaceDoneHandler = null
@@ -893,6 +1325,77 @@ const defaultIncomingTrackStatusHandler: IncomingTrackStatusHandler = async ({ r
 
 const defaultIncomingFetchHandler: IncomingFetchHandler = async ({ respondError }) => {
   await respondError(RequestErrorCode.NotSupported, 'fetch not supported')
+}
+
+/// What a FETCH still has to deliver after a relay switchover, as a request for
+/// the new relay. Ascending: an absolute range resumes after the last object
+/// delivered. Descending: the range is cut to end after the group being
+/// delivered, and that group's objects already received are skipped when the
+/// new relay repeats them. A joining FETCH that delivered nothing yet is
+/// repeated against the re-issued subscription; one that did is completed as
+/// an absolute range over what its subscription's Largest Location implied.
+function remainingFetch(
+  fetch: InFlightFetch,
+  subscriptions: Map<bigint, ActiveSubscription>
+): FetchRemainder | undefined {
+  const { request, groupOrder, lastDelivered } = fetch
+  const descending = groupOrder === GroupOrder.Descending
+  let range: { trackNamespace: string[]; trackName: string; start: Location; end: Location }
+  if (request.kind === 'absolute') {
+    range = request
+  } else {
+    const subscription = subscriptions.get(request.joiningRequestId)
+    if (!subscription) {
+      return undefined
+    }
+    if (!lastDelivered) {
+      return { request }
+    }
+    if (!subscription.largest) {
+      return undefined
+    }
+    const { largest } = subscription
+    range = {
+      trackNamespace: subscription.trackNamespace,
+      trackName: subscription.trackName,
+      start: {
+        groupId: largest.groupId > request.joiningStart ? largest.groupId - request.joiningStart : 0n,
+        objectId: 0n
+      },
+      end: { groupId: largest.groupId, objectId: largest.objectId + 1n }
+    }
+  }
+  if (!lastDelivered) {
+    return { request: { kind: 'absolute', ...range } }
+  }
+  if (descending) {
+    const end = { groupId: lastDelivered.groupId + 1n, objectId: 0n }
+    if (!isBefore(range.start, end)) {
+      return undefined
+    }
+    return { request: { kind: 'absolute', ...range, end }, skipThrough: lastDelivered }
+  }
+  const start = { groupId: lastDelivered.groupId, objectId: lastDelivered.objectId + 1n }
+  return isBefore(start, range.end) ? { request: { kind: 'absolute', ...range, start } } : undefined
+}
+
+/// Repeats a request the relay rejected until `deadline`; any other failure
+/// is reported at once.
+async function retryUntil<T>(deadline: number, request: () => Promise<T>): Promise<T> {
+  for (;;) {
+    try {
+      return await request()
+    } catch (error) {
+      if (!(error instanceof RequestError) || Date.now() + MIGRATION_RETRY_INTERVAL_MS > deadline) {
+        throw error
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, MIGRATION_RETRY_INTERVAL_MS))
+    }
+  }
+}
+
+function isBefore(a: Location, b: Location): boolean {
+  return a.groupId < b.groupId || (a.groupId === b.groupId && a.objectId < b.objectId)
 }
 
 function describeConnectionClose(info: ConnectionCloseInfo): string {
