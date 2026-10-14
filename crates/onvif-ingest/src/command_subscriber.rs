@@ -5,8 +5,8 @@ use moqt::{
     object::{DataReceiver, GroupOrder},
     publish::PublishHandler,
     subscribe::{FilterType, SubscribeOption},
-    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, Subscriber, Subscription,
-    TrackReader, DUAL,
+    ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session, SessionEvent, Subscriber,
+    Subscription, TrackReader, DUAL,
 };
 use tokio::task::JoinHandle;
 
@@ -91,7 +91,7 @@ async fn follow_commands(
                     continue;
                 }
                 command_receiver =
-                    Some(subscribe_command_track(&session, &command_track, &command_sender).await?);
+                    subscribe_command_track(&session, &command_track, &command_sender).await?;
             }
             SessionEvent::Publish(handler) => {
                 if let Some(receiver) = accept_command_publish(
@@ -132,13 +132,15 @@ async fn follow_commands(
     }
 }
 
+/// `None` is not fatal: the viewer may have left before answering, and the
+/// next announcement subscribes again.
 async fn subscribe_command_track(
     session: &Session,
     command_track: &CommandTrack,
     command_sender: &Sender<Command>,
-) -> Result<CommandReceiver> {
+) -> Result<Option<CommandReceiver>> {
     let mut subscriber = session.subscriber();
-    let subscription = subscriber
+    let result = subscriber
         .subscribe(
             command_track.namespace.clone(),
             command_track.track.clone(),
@@ -149,24 +151,37 @@ async fn subscribe_command_track(
                 filter_type: FilterType::NextGroupStart,
             },
         )
-        .await
-        .with_context(|| {
-            format!(
-                "subscribe command track after namespace announce: {}/{}",
-                command_track.namespace, command_track.track
-            )
-        })?;
+        .await;
+    let subscription = match result {
+        Ok(subscription) => subscription,
+        Err(err @ (RequestFailure::Rejected { .. } | RequestFailure::Timeout)) => {
+            log::warn!(
+                "command track not subscribed: {}/{}: {err}",
+                command_track.namespace,
+                command_track.track
+            );
+            return Ok(None);
+        }
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "subscribe command track after namespace announce: {}/{}",
+                    command_track.namespace, command_track.track
+                )
+            })
+        }
+    };
     log::info!(
         "Command track subscribed after namespace announce: ns={} track={} alias={}",
         command_track.namespace,
         command_track.track,
         subscription.track_alias()
     );
-    Ok(CommandReceiver::run(
+    Ok(Some(CommandReceiver::run(
         subscriber,
         subscription,
         command_sender.clone(),
-    ))
+    )))
 }
 
 async fn accept_command_publish(
