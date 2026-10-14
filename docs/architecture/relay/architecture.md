@@ -90,11 +90,12 @@ calls `RelayServer::drain(RELAY_DRAIN_TIMEOUT_SECS)`, which
 `main.rs` then waits up to 3 s for the client endpoint to go idle
 (`SessionHandler::wait_idle`), so the CONNECTION_CLOSE of a session closed at
 the timeout leaves the socket before the process exits. A second Ctrl+C
-during the drain exits at once. Relay-peer sessions receive no GOAWAY: the
-remote relay does not act on one, and it reaches the publisher again through
-the registry once this relay is gone. A client whose handshake completes
-between the accept loop stopping and the GOAWAYs being sent is closed at the
-timeout like a client that ignored its GOAWAY.
+during the drain exits at once. Relay-peer sessions receive a GOAWAY with an
+empty URI and are not waited for: the remote relay answers it by subscribing
+the other publishers of the tracks this relay feeds it (see "GOAWAY
+sequence"), so those tracks survive the close. A client whose handshake
+completes between the accept loop stopping and the GOAWAYs being sent is
+closed at the timeout like a client that ignored its GOAWAY.
 
 ## Control plane
 
@@ -221,10 +222,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   registrations end with it, handed the received status code and reason (see
   "Egress"); otherwise the remaining publishers keep feeding them. No UNSUBSCRIBE is sent, since the publisher
   already ended the subscription.
-- Events for control messages without relay-side logic yet (GOAWAY,
-  MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are
-  logged in the event span and dropped by the worker; they have no
-  `sequences` entry.
+- Events for control messages without relay-side logic yet (MAX_REQUEST_ID,
+  REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are logged in the
+  event span and dropped by the worker; they have no `sequences` entry.
 - Two relay-internal events exist, both reported by the ingest path (not by
   a peer) and routed to the upstream publisher session's worker:
   - `MalformedTrackDetected(session_id, track_key)`, raised by the reader that
@@ -435,6 +435,19 @@ subscriptions). Any other track
 is answered TRACK_STATUS_ERROR `NOT_SUPPORTED (0x3)`: draft-14 §9.20 lets a
 relay without an active subscription forward the request or subscribe
 upstream (MAY), and this relay does neither.
+
+### GOAWAY sequence
+`sequences::go_away::GoAway`, draft-14 §3.5. A GOAWAY from a client is only
+logged: the client is leaving and its state goes with its session. A GOAWAY
+from a relay-peer session means that relay is draining and will close the
+session, so for every track that session feeds the sequence resolves the
+publishers again through `UpstreamPublisherResolver` (local client publishers
+and the relays still `active` in the route registry; the draining relay is no
+longer active there) and subscribes those not already feeding the track through
+`send_upstream_subscribes` / `UpstreamJoinTask`, like a newly announced
+publisher. The departing session's own subscriptions end through the ordinary
+cleanup when it closes; a track another publisher joined in the meantime keeps
+its downstream subscribers.
 
 ## Authentication and authorization (`modules/auth`)
 

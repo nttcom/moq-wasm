@@ -15,7 +15,7 @@ use crate::modules::{
     },
     control_plane::sequences::{
         CascadingRelayContext, downstream_publish::DownstreamPublish, fetch::Fetch,
-        malformed_track::MalformedTrackCleanup, publish::Publish,
+        go_away::GoAway, malformed_track::MalformedTrackCleanup, publish::Publish,
         publish_namespace::PublishNamespace, publish_namespace_done::PublishNamespaceDone,
         subscribe::Subscribe, subscribe_namespace::SubscribeNameSpace,
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
@@ -330,8 +330,20 @@ impl SessionWorker {
                     .instrument(event_span)
                     .await;
             }
-            MoqtSessionEvent::GoAway(..)
-            | MoqtSessionEvent::MaxRequestId(..)
+            MoqtSessionEvent::GoAway(..) => {
+                GoAway
+                    .handle(
+                        session_id,
+                        &session_span,
+                        &deps.local_pub_sub_directory,
+                        &deps.control_message_forwarder,
+                        &deps.ingress_sender,
+                        &deps.upstream_publisher_resolver,
+                    )
+                    .instrument(event_span)
+                    .await;
+            }
+            MoqtSessionEvent::MaxRequestId(..)
             | MoqtSessionEvent::RequestsBlocked(..)
             | MoqtSessionEvent::PublishNamespaceCancel(..)
             | MoqtSessionEvent::FetchCancel(..) => {

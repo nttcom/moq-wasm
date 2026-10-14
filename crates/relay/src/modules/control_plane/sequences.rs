@@ -1,5 +1,6 @@
 pub(crate) mod downstream_publish;
 pub(crate) mod fetch;
+pub(crate) mod go_away;
 pub(crate) mod malformed_track;
 pub(crate) mod publish;
 pub(crate) mod publish_namespace;
