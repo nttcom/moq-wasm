@@ -1,6 +1,8 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { type LiveStats, LocLive } from '@player/locLive'
 import { createPictureCanvas, createPictureVideo } from '@player/pictureElements'
+import { RenditionSplice } from '@player/renditionSplice'
+import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import type { MediaKind } from '@player/trackContext'
 import type { TrackMediaConfig } from '../types/catalog'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
@@ -21,7 +23,14 @@ type TrackRegistration = {
   kind: MediaKind
   trackName: string
   config: TrackMediaConfig | undefined
+  /// Unsubscribes the track once another video track has taken over its picture.
+  retire?: () => void
+  newestGroupId?: bigint
 }
+
+/// A video track of a picture being replaced by another one of the same codec:
+/// the outgoing track plays until the incoming one starts a group.
+type VideoSwitch = { splice: RenditionSplice; outgoing: bigint; incoming: bigint }
 
 /// The camera pipeline also carries the member's audio; a screen share plays
 /// on its own pipeline with the picture as the clock's master.
@@ -31,6 +40,7 @@ export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
   private readonly pipelines = new Map<string, MemberPipelines>()
   private readonly registrations = new Map<bigint, TrackRegistration>()
+  private readonly videoSwitches = new Map<string, VideoSwitch>()
   private readonly playoutSettingsByUserId = new Map<string, PlayoutSettings>()
 
   constructor(private readonly client: MoqtClientWrapper) {}
@@ -39,9 +49,33 @@ export class MediaSubscriber {
     this.handlers = handlers
   }
 
-  registerVideoTrack(userId: string, trackName: string, trackAlias: bigint, config?: TrackMediaConfig): void {
+  /// A video track registered while the picture plays another one of the same
+  /// codec replaces it without a gap; see `canReplaceVideo`.
+  registerVideoTrack(
+    userId: string,
+    trackName: string,
+    trackAlias: bigint,
+    config: TrackMediaConfig | undefined,
+    retire: () => void
+  ): void {
     const source: RemoteVideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
-    this.register(trackAlias, { userId, source, kind: 'video', trackName, config })
+    const outgoing = this.videoRegistration(userId, source)
+    if (outgoing && !this.registrations.has(trackAlias)) {
+      const [outgoingAlias, outgoingRegistration] = outgoing
+      this.videoSwitches.set(pictureKey(userId, source), {
+        splice: new RenditionSplice(outgoingRegistration.newestGroupId),
+        outgoing: outgoingAlias,
+        incoming: trackAlias
+      })
+    }
+    this.register(trackAlias, { userId, source, kind: 'video', trackName, config, retire })
+  }
+
+  /// The video decoder keeps the configuration of the first track it decodes,
+  /// so only a track of the same codec can take over a playing picture.
+  canReplaceVideo(trackAlias: bigint, config: TrackMediaConfig | undefined): boolean {
+    const registration = this.registrations.get(trackAlias)
+    return registration?.kind === 'video' && registration.config?.codec === config?.codec
   }
 
   registerAudioTrack(userId: string, trackName: string, trackAlias: bigint, config?: TrackMediaConfig): void {
@@ -61,6 +95,9 @@ export class MediaSubscriber {
     )
     if (remaining.length === 0) {
       this.closePipeline(userId, source)
+      return
+    }
+    if (kind === 'video' && this.settleVideoSwitch(userId, source, trackAlias)) {
       return
     }
     // The video worker keeps the decoder state of the track that left, so the
@@ -116,17 +153,83 @@ export class MediaSubscriber {
     this.attach(trackAlias, registration)
   }
 
-  private attach(trackAlias: bigint, { userId, source, kind, trackName, config }: TrackRegistration): void {
+  private attach(trackAlias: bigint, registration: TrackRegistration): void {
+    const { userId, source, kind } = registration
     const pipeline = this.ensurePipeline(userId, source)
-    pipeline.configureTrack(kind, {
-      name: trackName,
-      label: trackName,
-      codec: config?.codec,
-      initData: config?.initData,
-      samplerate: config?.samplerate,
-      channelConfig: config?.channelConfig
-    })
-    this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => pipeline.push(kind, groupId, message))
+    if (this.videoSwitches.get(pictureKey(userId, source))?.incoming !== trackAlias) {
+      configurePipeline(pipeline, registration)
+    }
+    if (kind === 'audio') {
+      this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => pipeline.push(kind, groupId, message))
+      return
+    }
+    this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
+      this.pushVideo(trackAlias, registration, pipeline, groupId, message)
+    )
+  }
+
+  private pushVideo(
+    trackAlias: bigint,
+    registration: TrackRegistration,
+    pipeline: LocLive,
+    groupId: bigint,
+    message: SubgroupObjectMessageWithLoc
+  ): void {
+    const key = pictureKey(registration.userId, registration.source)
+    const videoSwitch = this.videoSwitches.get(key)
+    if (videoSwitch?.outgoing === trackAlias && videoSwitch.splice.acceptOutgoing(groupId) === 'retire') {
+      this.retireOutgoing(key, videoSwitch)
+      return
+    }
+    if (videoSwitch?.incoming === trackAlias) {
+      const verdict = videoSwitch.splice.acceptIncoming(groupId, message.objectId)
+      if (verdict.start) {
+        configurePipeline(pipeline, registration)
+      }
+      if (verdict.retireOutgoing) {
+        this.retireOutgoing(key, videoSwitch)
+      }
+      if (!verdict.play) {
+        return
+      }
+    }
+    if (registration.newestGroupId === undefined || groupId > registration.newestGroupId) {
+      registration.newestGroupId = groupId
+    }
+    pipeline.push('video', groupId, message)
+  }
+
+  private retireOutgoing(key: string, videoSwitch: VideoSwitch): void {
+    if (this.videoSwitches.get(key) !== videoSwitch) {
+      return
+    }
+    this.videoSwitches.delete(key)
+    this.registrations.get(videoSwitch.outgoing)?.retire?.()
+  }
+
+  /// Returns true when the pipeline stays: the track that left took part in a
+  /// switch, or another video track already plays on it. An incoming track
+  /// that had not started is configured now.
+  private settleVideoSwitch(userId: string, source: RemoteVideoSource, trackAlias: bigint): boolean {
+    const key = pictureKey(userId, source)
+    const videoSwitch = this.videoSwitches.get(key)
+    if (videoSwitch) {
+      this.videoSwitches.delete(key)
+      const incoming = this.registrations.get(videoSwitch.incoming)
+      const pipeline = this.pipelines.get(userId)?.[source]
+      if (videoSwitch.outgoing === trackAlias && incoming && pipeline && videoSwitch.splice.start === undefined) {
+        configurePipeline(pipeline, incoming)
+      }
+      return true
+    }
+    return this.videoRegistration(userId, source) !== undefined
+  }
+
+  private videoRegistration(userId: string, source: RemoteVideoSource): [bigint, TrackRegistration] | undefined {
+    return Array.from(this.registrations).find(
+      ([, registration]) =>
+        registration.userId === userId && registration.source === source && registration.kind === 'video'
+    )
   }
 
   private ensurePipeline(userId: string, source: RemoteVideoSource): LocLive {
@@ -164,6 +267,21 @@ export class MediaSubscriber {
     }
     this.handlers.onRemotePictureClosed?.(userId, source)
   }
+}
+
+function pictureKey(userId: string, source: RemoteVideoSource): string {
+  return `${userId}:${source}`
+}
+
+function configurePipeline(pipeline: LocLive, { kind, trackName, config }: TrackRegistration): void {
+  pipeline.configureTrack(kind, {
+    name: trackName,
+    label: trackName,
+    codec: config?.codec,
+    initData: config?.initData,
+    samplerate: config?.samplerate,
+    channelConfig: config?.channelConfig
+  })
 }
 
 function applyPlayoutSettings(pipeline: LocLive, settings: PlayoutSettings): void {

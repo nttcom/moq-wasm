@@ -14,7 +14,8 @@ import {
   type CatalogSelections,
   type CatalogSubscribeRole,
   type EditableMeetingCatalogTrack,
-  type MeetingCatalogTrack
+  type MeetingCatalogTrack,
+  isSwitchableRole
 } from '../types/catalog'
 import { catalogTracksForRole } from '../media/meetingCatalog'
 import { buildTrackActionKey } from '../utils/state/roomState'
@@ -1216,7 +1217,7 @@ function RemoteCatalogSubscribePanel({
             title={SUBSCRIBE_ROW_TITLES[row.role]}
             tracks={row.tracks}
             selected={row.selectedTrack}
-            disabled={!isCatalogSubscribed || row.subscribed || busy}
+            disabled={!isCatalogSubscribed || busy || (row.subscribed && !isSwitchableRole(row.role))}
             statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
             statusTestId={`track-status-${row.role}-${memberName}`}
             subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}

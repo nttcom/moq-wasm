@@ -14,7 +14,8 @@ import {
   type CatalogSelections,
   type MeetingCatalogTrack,
   type CatalogSubscribeRole,
-  type TrackMediaConfig
+  type TrackMediaConfig,
+  isSwitchableRole
 } from '../types/catalog'
 import { catalogTracksForRole, pickHighestBitrateTrack } from '../media/meetingCatalog'
 import { checkCodecSupport } from '../utils/codecSupport'
@@ -312,6 +313,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     room.remoteMembers
   ])
 
+  /// A subscribed video role switches to the selected track at once.
   const handleSelectCatalogTrack = (memberId: string, role: CatalogSubscribeRole, trackName: string) => {
     setRemoteCatalogSelections((prev) => {
       const next = new Map(prev)
@@ -319,17 +321,20 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       next.set(memberId, { ...current, [role]: trackName })
       return next
     })
+    const member = room.remoteMembers.get(memberId)
+    if (member && isSwitchableRole(role) && member.subscribedTracks[role].isSubscribed) {
+      void switchCatalogTrack(member, role, trackName).catch((error) => {
+        console.error(`Failed to switch ${role} track for ${memberId}:`, error)
+      })
+    }
   }
 
-  const subscribeCatalogTrack = async (
-    member: RemoteMember,
+  /// Returns undefined, after telling the user, when the browser cannot decode the track.
+  const resolveTrackMediaConfig = async (
+    memberId: string,
     role: CatalogSubscribeRole,
-    trackName: string | undefined
-  ) => {
-    if (!trackName) {
-      return
-    }
-    const memberId = member.id
+    trackName: string
+  ): Promise<{ config: TrackMediaConfig | undefined } | undefined> => {
     const selectedTrack =
       role === 'chat'
         ? undefined
@@ -345,18 +350,91 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           track: selectedTrack
         })
         window.alert(`Subscribe blocked: ${unsupportedReason}`)
-        return
+        return undefined
       }
     }
-    const trackMediaConfig: TrackMediaConfig | undefined =
-      role !== 'chat'
-        ? {
-            codec: selectedTrack?.codec,
-            samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
-            channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
-            initData: selectedTrack?.initData
-          }
-        : undefined
+    return {
+      config:
+        role !== 'chat'
+          ? {
+              codec: selectedTrack?.codec,
+              samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
+              channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
+              initData: selectedTrack?.initData
+            }
+          : undefined
+    }
+  }
+
+  const subscriptionEnded = (memberId: string, role: CatalogSubscribeRole) => (endedId: bigint) =>
+    setRoom((currentRoom) =>
+      updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) =>
+        track.subscribeId === endedId
+          ? { ...track, subscribeId: undefined, isSubscribing: false, isSubscribed: false }
+          : track
+      )
+    )
+
+  const switchCatalogTrack = async (member: RemoteMember, role: CatalogSubscribeRole, trackName: string) => {
+    const memberId = member.id
+    const trackState = member.subscribedTracks[role]
+    const previousId = trackState.subscribeId
+    if (typeof previousId !== 'bigint' || trackState.isSubscribing) {
+      return
+    }
+    const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
+    if (!resolved) {
+      return
+    }
+    setRoom((currentRoom) =>
+      updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({ ...track, isSubscribing: true }))
+    )
+    try {
+      const requestId = await session.switchTrack(
+        previousId,
+        member.trackNamespace,
+        trackName,
+        role,
+        resolved.config,
+        subscriptionEnded(memberId, role)
+      )
+      setRoom((currentRoom) =>
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
+          ...track,
+          subscribeId: requestId,
+          isSubscribing: false,
+          isSubscribed: true
+        }))
+      )
+    } catch (error) {
+      // The previous track still plays unless the switch had to unsubscribe it first.
+      const stillSubscribed = session.isSubscribed(previousId)
+      setRoom((currentRoom) =>
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
+          ...track,
+          isSubscribing: false,
+          isSubscribed: stillSubscribed,
+          subscribeId: stillSubscribed ? previousId : undefined
+        }))
+      )
+      throw error
+    }
+  }
+
+  const subscribeCatalogTrack = async (
+    member: RemoteMember,
+    role: CatalogSubscribeRole,
+    trackName: string | undefined
+  ) => {
+    if (!trackName) {
+      return
+    }
+    const memberId = member.id
+    const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
+    if (!resolved) {
+      return
+    }
+    const trackMediaConfig = resolved.config
     const trackState = member.subscribedTracks[role]
     const trackKey = buildTrackActionKey(memberId, role)
     if (trackState.isSubscribed || trackState.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
@@ -374,14 +452,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     )
 
     try {
-      const requestId = await session.subscribe(member.trackNamespace, trackName, role, trackMediaConfig, (endedId) =>
-        setRoom((currentRoom) =>
-          updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) =>
-            track.subscribeId === endedId
-              ? { ...track, subscribeId: undefined, isSubscribing: false, isSubscribed: false }
-              : track
-          )
-        )
+      const requestId = await session.subscribe(
+        member.trackNamespace,
+        trackName,
+        role,
+        trackMediaConfig,
+        subscriptionEnded(memberId, role)
       )
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
