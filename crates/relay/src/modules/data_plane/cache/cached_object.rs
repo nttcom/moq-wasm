@@ -31,6 +31,15 @@ impl CachedObject {
         self
     }
 
+    /// The object to send downstream.
+    pub(crate) async fn load(&self) -> anyhow::Result<Object> {
+        Ok(self.object.clone())
+    }
+
+    pub(crate) fn payload_len(&self) -> usize {
+        self.object.payload.len()
+    }
+
     pub(crate) fn is_expired(&self, now: Instant) -> bool {
         self.expires_at.is_some_and(|expires_at| now >= expires_at)
     }
