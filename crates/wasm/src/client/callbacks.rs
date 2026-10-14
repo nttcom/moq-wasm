@@ -22,6 +22,7 @@ pub(crate) struct Callbacks {
     pub(crate) subscribe: Option<Function>,
     pub(crate) subscribe_response: Option<Function>,
     pub(crate) incoming_unsubscribe: Option<Function>,
+    pub(crate) publish_done: Option<Function>,
     pub(crate) object_datagram: Option<Function>,
     pub(crate) object_datagram_status: Option<Function>,
     pub(crate) subgroup_header: Option<Function>,
