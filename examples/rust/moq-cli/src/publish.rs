@@ -115,9 +115,9 @@ async fn publish_stdin(
     // Maps each frame's relative PTS onto a Unix-epoch capture timestamp.
     let mut capture_origin: Option<i64> = None;
     let mut pending_move: Option<JoinHandle<Result<Publishing>>> = None;
-    // The new relay's track starts at a keyframe, so frames up to the next
-    // one are not sent after a move.
-    let mut awaiting_keyframe = false;
+    // After a move the group open on the previous relay is finished there,
+    // and the new relay's track starts at the next keyframe.
+    let mut previous: Option<Publishing> = None;
 
     loop {
         let session = publishing.connection.session.clone();
@@ -144,12 +144,10 @@ async fn publish_stdin(
                 pending_move = None;
                 match moved? {
                     Ok(next) => {
-                        let previous = std::mem::replace(&mut publishing, next);
-                        awaiting_keyframe = true;
-                        drop(session);
-                        if let Err(error) = previous.finish().await {
-                            tracing::warn!(%error, "failed to withdraw the tracks from the old relay");
+                        if let Some(older) = previous.take() {
+                            withdraw(older);
                         }
+                        previous = Some(std::mem::replace(&mut publishing, next));
                         info!(relay = %relay.url, "moved to the relay named by GOAWAY");
                     }
                     Err(error) => {
@@ -171,16 +169,18 @@ async fn publish_stdin(
         };
 
         for frame in frames {
-            if awaiting_keyframe && !frame.keyframe {
-                continue;
+            if frame.keyframe
+                && let Some(previous) = previous.take()
+            {
+                withdraw(previous);
             }
-            awaiting_keyframe = false;
+            let target = previous.as_mut().unwrap_or(&mut publishing);
             let codec = framer
                 .codec_string()
                 .context("first frame is not a keyframe (no SPS yet)")?;
-            publishing.catalog.maybe_publish(&frame, &codec).await?;
+            target.catalog.maybe_publish(&frame, &codec).await?;
             if frame.keyframe {
-                publishing.media.start_group().await?;
+                target.media.start_group().await?;
             }
             let origin =
                 *capture_origin.get_or_insert_with(|| unix_micros_now() - frame.timestamp.0);
@@ -188,7 +188,7 @@ async fn publish_stdin(
                 CAPTURE_TIMESTAMP_ID,
                 (origin + frame.timestamp.0).max(0) as u64,
             );
-            publishing
+            target
                 .media
                 .write_with_extension_headers(
                     frame.payload,
@@ -205,6 +205,11 @@ async fn publish_stdin(
 
     if let Some(pending_move) = pending_move {
         pending_move.abort();
+    }
+    if let Some(previous) = previous
+        && let Err(error) = previous.finish().await
+    {
+        tracing::warn!(%error, "failed to withdraw the tracks from the old relay");
     }
     info!(frames = frame_index, "input ended");
     publishing.finish().await
@@ -245,4 +250,14 @@ impl CatalogPublisher {
     async fn finish(self) -> Result<()> {
         self.writer.finish().await
     }
+}
+
+/// Finishes the tracks on a relay the publisher moved away from without
+/// holding up the frames that follow.
+fn withdraw(previous: Publishing) {
+    tokio::spawn(async move {
+        if let Err(error) = previous.finish().await {
+            tracing::warn!(%error, "failed to withdraw the tracks from the old relay");
+        }
+    });
 }
