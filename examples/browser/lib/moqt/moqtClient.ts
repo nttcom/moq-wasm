@@ -60,7 +60,14 @@ type ActiveSubscription = {
 type FetchRequest =
   | { kind: 'absolute'; trackNamespace: string[]; trackName: string; start: Location; end: Location }
   | { kind: 'joining'; joiningRequestId: bigint; joiningStart: bigint }
-type InFlightFetch = { request: FetchRequest; groupOrder: GroupOrder; lastDelivered?: Location }
+type InFlightFetch = {
+  request: FetchRequest
+  groupOrder: GroupOrder
+  lastDelivered?: Location
+  /** Objects of this group up to this id were delivered by the old session; the new session repeats them. */
+  skipThrough?: Location
+}
+type FetchRemainder = { request: FetchRequest; skipThrough?: Location }
 type PublishedTrack = {
   trackNamespace: string[]
   trackName: string
@@ -399,8 +406,9 @@ export class MoqtClientWrapper {
       }
       const response = expectResponse(this.pendingFetch, requestId)
       try {
-        await this.sendFetchOn(next, requestId, remainder, fetch.groupOrder)
+        await this.sendFetchOn(next, requestId, remainder.request, fetch.groupOrder)
         await response
+        fetch.skipThrough = remainder.skipThrough
         this.carriedFetches.add(requestId)
       } catch (error) {
         console.warn('[moqt] FETCH not carried over to the new relay', { requestId: requestId.toString(), error })
@@ -1037,6 +1045,10 @@ export class MoqtClientWrapper {
       }
       const fetch = this.inFlightFetches.get(requestId)
       if (fetch) {
+        const skip = fetch.skipThrough
+        if (skip && message.groupId === skip.groupId && message.objectId <= skip.objectId) {
+          return
+        }
         fetch.lastDelivered = { groupId: message.groupId, objectId: message.objectId }
       }
       this.fetchObjectHandlers.get(requestId)?.(message)
@@ -1197,44 +1209,55 @@ const defaultIncomingFetchHandler: IncomingFetchHandler = async ({ respondError 
 }
 
 /// What a FETCH still has to deliver after a relay switchover, as a request for
-/// the new relay: an absolute range resumes after the last object delivered,
-/// a joining FETCH that delivered nothing yet is repeated against the
-/// re-issued subscription, and one that did is completed as an absolute range
-/// up to the Largest Location its subscription started from. Only ascending
-/// group order can be resumed from the last object.
+/// the new relay. Ascending: an absolute range resumes after the last object
+/// delivered. Descending: the range is cut to end after the group being
+/// delivered, and that group's objects already received are skipped when the
+/// new relay repeats them. A joining FETCH that delivered nothing yet is
+/// repeated against the re-issued subscription; one that did is completed as
+/// an absolute range over what its subscription's Largest Location implied.
 function remainingFetch(
   fetch: InFlightFetch,
   subscriptions: Map<bigint, ActiveSubscription>
-): FetchRequest | undefined {
-  if (fetch.groupOrder !== GroupOrder.Ascending) {
-    return undefined
-  }
-  const { request, lastDelivered } = fetch
-  const resumeAt = lastDelivered && { groupId: lastDelivered.groupId, objectId: lastDelivered.objectId + 1n }
+): FetchRemainder | undefined {
+  const { request, groupOrder, lastDelivered } = fetch
+  const descending = groupOrder === GroupOrder.Descending
+  let range: { trackNamespace: string[]; trackName: string; start: Location; end: Location }
   if (request.kind === 'absolute') {
-    const start = resumeAt ?? request.start
-    return isBefore(start, request.end) ? { ...request, start } : undefined
+    range = request
+  } else {
+    const subscription = subscriptions.get(request.joiningRequestId)
+    if (!subscription) {
+      return undefined
+    }
+    if (!lastDelivered) {
+      return { request }
+    }
+    if (!subscription.largest) {
+      return undefined
+    }
+    const { largest } = subscription
+    range = {
+      trackNamespace: subscription.trackNamespace,
+      trackName: subscription.trackName,
+      start: {
+        groupId: largest.groupId > request.joiningStart ? largest.groupId - request.joiningStart : 0n,
+        objectId: 0n
+      },
+      end: { groupId: largest.groupId, objectId: largest.objectId + 1n }
+    }
   }
-  const subscription = subscriptions.get(request.joiningRequestId)
-  if (!subscription) {
-    return undefined
+  if (!lastDelivered) {
+    return { request: { kind: 'absolute', ...range } }
   }
-  if (!resumeAt) {
-    return request
+  if (descending) {
+    const end = { groupId: lastDelivered.groupId + 1n, objectId: 0n }
+    if (!isBefore(range.start, end)) {
+      return undefined
+    }
+    return { request: { kind: 'absolute', ...range, end }, skipThrough: lastDelivered }
   }
-  if (!subscription.largest) {
-    return undefined
-  }
-  const end = { groupId: subscription.largest.groupId, objectId: subscription.largest.objectId + 1n }
-  return isBefore(resumeAt, end)
-    ? {
-        kind: 'absolute',
-        trackNamespace: subscription.trackNamespace,
-        trackName: subscription.trackName,
-        start: resumeAt,
-        end
-      }
-    : undefined
+  const start = { groupId: lastDelivered.groupId, objectId: lastDelivered.objectId + 1n }
+  return isBefore(start, range.end) ? { request: { kind: 'absolute', ...range, start } } : undefined
 }
 
 function isBefore(a: Location, b: Location): boolean {

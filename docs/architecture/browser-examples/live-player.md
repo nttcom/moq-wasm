@@ -80,10 +80,11 @@ Rules:
   joining FETCH that delivered nothing yet is repeated against the re-issued
   subscription, and one that did is completed as an absolute range up to the
   Largest Location its subscription started from; the old session's late
-  objects and end for a carried FETCH are dropped. A FETCH in descending
-  group order is not carried and ends with the old session. The alias in
-  `SubgroupHeaderMessage` / datagram messages is the wire alias of the
-  current session.
+  objects and end for a carried FETCH are dropped. In descending group order
+  the range is cut to end after the group being delivered and the objects of
+  that group already received are skipped when the new relay repeats them.
+  The alias in `SubgroupHeaderMessage` / datagram messages is the wire alias
+  of the current session.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
   `setOnConnectionClosedHandler`); they have one slot per client and belong to
   the page. It registers per-alias and per-request handlers only.
