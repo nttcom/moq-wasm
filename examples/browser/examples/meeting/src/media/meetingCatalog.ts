@@ -20,6 +20,8 @@ type E2ECameraSettings = {
   framerate: number
   bitrate: number
   codec: string | null
+  /// A second, lower rendition of the same codec for the track switch tests.
+  lowHeight: number | null
 }
 
 function readPositiveIntegerParam(params: URLSearchParams, name: string): number | null {
@@ -60,10 +62,11 @@ function resolveE2ECameraSettings(): E2ECameraSettings | null {
   const framerate = readPositiveIntegerParam(params, 'e2eVideoFramerate')
   const bitrate = readPositiveIntegerParam(params, 'e2eVideoBitrate')
   const codec = readNonEmptyStringParam(params, 'e2eVideoCodec')
+  const lowHeight = readPositiveIntegerParam(params, 'e2eVideoLowHeight')
   if (!width || !height || !framerate || !bitrate) {
     return null
   }
-  return { width, height, framerate, bitrate, codec }
+  return { width, height, framerate, bitrate, codec, lowHeight }
 }
 
 const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
@@ -98,7 +101,21 @@ const CAMERA_RESOLUTIONS = E2E_CAMERA_SETTINGS
         width: E2E_CAMERA_SETTINGS.width,
         height: E2E_CAMERA_SETTINGS.height,
         bitrate: E2E_CAMERA_SETTINGS.bitrate
-      }
+      },
+      ...(E2E_CAMERA_SETTINGS.lowHeight
+        ? [
+            {
+              id: 'e2e_low',
+              label: 'E2E low',
+              width:
+                Math.round(
+                  (E2E_CAMERA_SETTINGS.width * E2E_CAMERA_SETTINGS.lowHeight) / E2E_CAMERA_SETTINGS.height / 2
+                ) * 2,
+              height: E2E_CAMERA_SETTINGS.lowHeight,
+              bitrate: E2E_CAMERA_SETTINGS.bitrate / 2
+            }
+          ]
+        : [])
     ]
   : DEFAULT_CAMERA_RESOLUTIONS
 const CAMERA_FRAMERATE = E2E_CAMERA_SETTINGS?.framerate ?? 30

@@ -1,7 +1,10 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { type LiveStats, LocLive } from '@player/locLive'
 import { createPictureCanvas, createPictureVideo } from '@player/pictureElements'
+import { AdaptiveBitrate, type Rung, capLadderToHeight } from '@player/adaptiveBitrate'
 import { RenditionSplice } from '@player/renditionSplice'
+import { monotonicUnixMicros } from '../../../../utils/media/clock'
+import { readLocHeader } from '../../../../utils/media/loc'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import type { MediaKind } from '@player/trackContext'
 import type { TrackMediaConfig } from '../types/catalog'
@@ -11,6 +14,12 @@ import { isScreenShareTrackName } from '../utils/catalogTrackName'
 export type RemoteVideoSource = 'camera' | 'screenshare'
 export type RemotePlaybackStats = Partial<Record<RemoteVideoSource, LiveStats>>
 export type RemotePictures = Partial<Record<RemoteVideoSource, HTMLElement>>
+
+const ADAPT_INTERVAL_MS = 500
+/// After asking for another track, the next choice waits for the switch.
+const SWITCH_WAIT_MS = 3_000
+
+export type VideoAdaptation = { ladder: Rung[]; onPreferred: (trackName: string) => void }
 
 export interface MediaSubscriberHandlers {
   onRemotePicture?: (userId: string, source: RemoteVideoSource, picture: HTMLElement) => void
@@ -25,7 +34,15 @@ type TrackRegistration = {
   config: TrackMediaConfig | undefined
   /// Unsubscribes the track once another video track has taken over its picture.
   retire?: () => void
+  adaptation?: VideoAdaptation
   newestGroupId?: bigint
+}
+
+type PictureAdaptation = {
+  bitrate: AdaptiveBitrate
+  resizeObserver: ResizeObserver
+  heightPx?: number
+  nextChoiceAtMs: number
 }
 
 /// A video track of a picture being replaced by another one of the same codec:
@@ -41,6 +58,7 @@ export class MediaSubscriber {
   private readonly pipelines = new Map<string, MemberPipelines>()
   private readonly registrations = new Map<bigint, TrackRegistration>()
   private readonly videoSwitches = new Map<string, VideoSwitch>()
+  private readonly pictureAdaptations = new Map<string, PictureAdaptation>()
   private readonly playoutSettingsByUserId = new Map<string, PlayoutSettings>()
 
   constructor(private readonly client: MoqtClientWrapper) {}
@@ -49,14 +67,18 @@ export class MediaSubscriber {
     this.handlers = handlers
   }
 
-  /// A video track registered while the picture plays another one of the same
-  /// codec replaces it without a gap; see `canReplaceVideo`.
+  /// A video track registered while the picture plays another one takes over
+  /// without a gap; call `canReplaceVideo` first and unsubscribe the playing
+  /// track when it returns false. With `adaptation`, the picture asks for the
+  /// ladder track that fits its shown height and the delivery: no taller than
+  /// the picture, lower when the capture-to-arrival lag rises (see `AdaptiveBitrate`).
   registerVideoTrack(
     userId: string,
     trackName: string,
     trackAlias: bigint,
     config: TrackMediaConfig | undefined,
-    retire: () => void
+    retire: () => void,
+    adaptation?: VideoAdaptation
   ): void {
     const source: RemoteVideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
     const outgoing = this.videoRegistration(userId, source)
@@ -68,7 +90,7 @@ export class MediaSubscriber {
         incoming: trackAlias
       })
     }
-    this.register(trackAlias, { userId, source, kind: 'video', trackName, config, retire })
+    this.register(trackAlias, { userId, source, kind: 'video', trackName, config, retire, adaptation })
   }
 
   /// The video decoder keeps the configuration of the first track it decodes,
@@ -185,6 +207,7 @@ export class MediaSubscriber {
       const verdict = videoSwitch.splice.acceptIncoming(groupId, message.objectId)
       if (verdict.start) {
         configurePipeline(pipeline, registration)
+        this.pictureAdaptations.get(key)?.bitrate.restart(nowMs())
       }
       if (verdict.retireOutgoing) {
         this.retireOutgoing(key, videoSwitch)
@@ -197,6 +220,38 @@ export class MediaSubscriber {
       registration.newestGroupId = groupId
     }
     pipeline.push('video', groupId, message)
+    this.adapt(key, registration, message)
+  }
+
+  private adapt(key: string, registration: TrackRegistration, message: SubgroupObjectMessageWithLoc): void {
+    const picture = this.pictureAdaptations.get(key)
+    const adaptation = registration.adaptation
+    if (!picture || !adaptation) {
+      return
+    }
+    const arrivedAtMs = nowMs()
+    const captureMicros = readLocHeader(message.locHeader).captureTimestampMicros
+    picture.bitrate.observe({
+      arrivedAtMs,
+      bytes: message.objectPayloadLength,
+      lagMs: captureMicros === undefined ? undefined : arrivedAtMs - captureMicros / 1_000
+    })
+    if (this.videoSwitches.has(key) || arrivedAtMs < picture.nextChoiceAtMs) {
+      return
+    }
+    picture.nextChoiceAtMs = arrivedAtMs + ADAPT_INTERVAL_MS
+    const current = registration.trackName
+    if (!adaptation.ladder.some((rung) => rung.name === current)) {
+      return
+    }
+    const ladder = capLadderToHeight(adaptation.ladder, picture.heightPx)
+    const choice = ladder.some((rung) => rung.name === current)
+      ? picture.bitrate.decide(arrivedAtMs, ladder, current, false)
+      : ladder.at(-1)?.name
+    if (choice && choice !== current) {
+      picture.nextChoiceAtMs = arrivedAtMs + SWITCH_WAIT_MS
+      adaptation.onPreferred(choice)
+    }
   }
 
   private retireOutgoing(key: string, videoSwitch: VideoSwitch): void {
@@ -225,6 +280,22 @@ export class MediaSubscriber {
     return this.videoRegistration(userId, source) !== undefined
   }
 
+  /// The shown height is in device pixels, the unit a rendition's height compares to.
+  private observePicture(key: string, element: HTMLElement): void {
+    const bitrate = new AdaptiveBitrate()
+    bitrate.restart(nowMs())
+    const picture: PictureAdaptation = {
+      bitrate,
+      nextChoiceAtMs: 0,
+      resizeObserver: new ResizeObserver(([entry]) => {
+        const heightPx = entry.contentRect.height * window.devicePixelRatio
+        picture.heightPx = heightPx > 0 ? heightPx : undefined
+      })
+    }
+    picture.resizeObserver.observe(element)
+    this.pictureAdaptations.set(key, picture)
+  }
+
   private videoRegistration(userId: string, source: RemoteVideoSource): [bigint, TrackRegistration] | undefined {
     return Array.from(this.registrations).find(
       ([, registration]) =>
@@ -246,6 +317,7 @@ export class MediaSubscriber {
       { onPresented: () => {}, onFrameShown: () => {} }
     )
     pipeline.picture.element.hidden = false
+    this.observePicture(pictureKey(userId, source), pipeline.picture.element)
     applyPlayoutSettings(pipeline, this.playoutSettingsByUserId.get(userId) ?? DEFAULT_PLAYOUT_SETTINGS)
     this.pipelines.set(userId, { ...pipelines, [source]: pipeline })
     this.handlers.onRemotePicture?.(userId, source, pipeline.picture.element)
@@ -259,6 +331,9 @@ export class MediaSubscriber {
       return
     }
     pipeline.dispose()
+    const key = pictureKey(userId, source)
+    this.pictureAdaptations.get(key)?.resizeObserver.disconnect()
+    this.pictureAdaptations.delete(key)
     const { [source]: _closed, ...rest } = pipelines
     if (Object.keys(rest).length === 0) {
       this.pipelines.delete(userId)
@@ -267,6 +342,10 @@ export class MediaSubscriber {
     }
     this.handlers.onRemotePictureClosed?.(userId, source)
   }
+}
+
+function nowMs(): number {
+  return monotonicUnixMicros() / 1_000
 }
 
 function pictureKey(userId: string, source: RemoteVideoSource): string {

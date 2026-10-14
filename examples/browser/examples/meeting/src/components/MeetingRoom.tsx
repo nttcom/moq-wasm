@@ -15,11 +15,12 @@ import {
   type MeetingCatalogTrack,
   type CatalogSubscribeRole,
   type TrackMediaConfig,
+  AUTO_TRACK_SELECTION,
   isSwitchableRole
 } from '../types/catalog'
 import { catalogTracksForRole, pickHighestBitrateTrack } from '../media/meetingCatalog'
 import { checkCodecSupport } from '../utils/codecSupport'
-import type { RemotePlaybackStats } from '../media/mediaSubscriber'
+import type { RemotePlaybackStats, VideoAdaptation } from '../media/mediaSubscriber'
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 
@@ -53,6 +54,11 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const [catalogLoadingMemberIds, setCatalogLoadingMemberIds] = useState<Set<string>>(new Set())
   const [catalogSubscribedMemberIds, setCatalogSubscribedMemberIds] = useState<Set<string>>(new Set())
   const [catalogUnsubscribingTrackKeys, setCatalogUnsubscribingTrackKeys] = useState<Set<string>>(new Set())
+  /// Switchable roles follow their picture's adaptation unless a track was picked by hand.
+  const [manualTrackKeys, setManualTrackKeys] = useState<Set<string>>(new Set())
+  /// The `onPreferred` callback is fixed at SUBSCRIBE; this ref routes it to
+  /// the latest render's handler.
+  const adaptiveChoiceRef = useRef<(memberId: string, role: CatalogSubscribeRole, trackName: string) => void>(() => {})
   const { backoff: chatSubscribeBackoff, retryTick: chatSubscribeRetryTick } = useRetryBackoff('chat-auto-subscribe')
   const { backoff: catalogSubscribeBackoff, retryTick: catalogSubscribeRetryTick } =
     useRetryBackoff('catalog-auto-subscribe')
@@ -313,8 +319,29 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     room.remoteMembers
   ])
 
-  /// A subscribed video role switches to the selected track at once.
   const handleSelectCatalogTrack = (memberId: string, role: CatalogSubscribeRole, trackName: string) => {
+    const trackKey = buildTrackActionKey(memberId, role)
+    if (trackName === AUTO_TRACK_SELECTION) {
+      setManualTrackKeys((prev) => {
+        const next = new Set(prev)
+        next.delete(trackKey)
+        return next
+      })
+      return
+    }
+    if (isSwitchableRole(role)) {
+      setManualTrackKeys((prev) => new Set(prev).add(trackKey))
+    }
+    selectAndSwitchTrack(memberId, role, trackName)
+  }
+
+  adaptiveChoiceRef.current = (memberId, role, trackName) => {
+    if (!manualTrackKeys.has(buildTrackActionKey(memberId, role))) {
+      selectAndSwitchTrack(memberId, role, trackName)
+    }
+  }
+
+  const selectAndSwitchTrack = (memberId: string, role: CatalogSubscribeRole, trackName: string) => {
     setRemoteCatalogSelections((prev) => {
       const next = new Map(prev)
       const current = next.get(memberId) ?? {}
@@ -327,6 +354,27 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         console.error(`Failed to switch ${role} track for ${memberId}:`, error)
       })
     }
+  }
+
+  /// The ladder is the role's tracks of the same codec as `trackName`, the
+  /// ones a picture can switch between without a gap.
+  const buildVideoAdaptation = (
+    memberId: string,
+    role: CatalogSubscribeRole,
+    trackName: string
+  ): VideoAdaptation | undefined => {
+    if (!isSwitchableRole(role)) {
+      return undefined
+    }
+    const roleTracks = catalogTracksForRole(remoteCatalogTracks.get(memberId) ?? [], role)
+    const codec = roleTracks.find((track) => track.name === trackName)?.codec
+    const ladder = roleTracks
+      .filter((track) => track.codec === codec && track.bitrate !== undefined)
+      .map((track) => ({ name: track.name, bitrate: track.bitrate ?? 0, height: track.height }))
+      .sort((a, b) => a.bitrate - b.bitrate)
+    return ladder.length > 1
+      ? { ladder, onPreferred: (choice) => adaptiveChoiceRef.current(memberId, role, choice) }
+      : undefined
   }
 
   /// Returns undefined, after telling the user, when the browser cannot decode the track.
@@ -396,7 +444,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         trackName,
         role,
         resolved.config,
-        subscriptionEnded(memberId, role)
+        subscriptionEnded(memberId, role),
+        buildVideoAdaptation(memberId, role, trackName)
       )
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
@@ -457,7 +506,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         trackName,
         role,
         trackMediaConfig,
-        subscriptionEnded(memberId, role)
+        subscriptionEnded(memberId, role),
+        buildVideoAdaptation(memberId, role, trackName)
       )
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
@@ -606,6 +656,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onRemoveCatalogTrack={removeCatalogTrack}
             remoteCatalogTracks={remoteCatalogTracks}
             remoteCatalogSelections={remoteCatalogSelections}
+            manualTrackKeys={manualTrackKeys}
             catalogLoadingMemberIds={catalogLoadingMemberIds}
             catalogSubscribedMemberIds={catalogSubscribedMemberIds}
             catalogUnsubscribingTrackKeys={catalogUnsubscribingTrackKeys}

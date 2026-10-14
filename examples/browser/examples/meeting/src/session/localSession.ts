@@ -4,6 +4,7 @@ import { CATALOG_TRACK_NAME } from '../../../../lib/msf/catalog'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'
+import type { VideoAdaptation } from '../media/mediaSubscriber'
 import { parseMeetingCatalogTracks } from '../media/meetingCatalog'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import { readMeetingAuth } from './authToken'
@@ -177,7 +178,8 @@ export class LocalSession {
     trackName: string,
     role: CatalogSubscribeRole,
     config: TrackMediaConfig | undefined,
-    onEnded: (requestId: bigint) => void
+    onEnded: (requestId: bigint) => void,
+    adaptation?: VideoAdaptation
   ): Promise<bigint> {
     this.assertReady('subscribe')
     const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO, {
@@ -214,9 +216,16 @@ export class LocalSession {
     } else if (role === 'audio') {
       this.mediaController.subscriber.registerAudioTrack(remoteUser, trackName, trackAlias, config)
     } else {
-      this.mediaController.subscriber.registerVideoTrack(remoteUser, trackName, trackAlias, config, () => {
-        this.unsubscribe(requestId).catch((error) => console.error('Failed to unsubscribe a replaced track:', error))
-      })
+      this.mediaController.subscriber.registerVideoTrack(
+        remoteUser,
+        trackName,
+        trackAlias,
+        config,
+        () => {
+          this.unsubscribe(requestId).catch((error) => console.error('Failed to unsubscribe a replaced track:', error))
+        },
+        adaptation
+      )
     }
 
     return requestId
@@ -231,13 +240,14 @@ export class LocalSession {
     trackName: string,
     role: CatalogSubscribeRole,
     config: TrackMediaConfig | undefined,
-    onEnded: (requestId: bigint) => void
+    onEnded: (requestId: bigint) => void,
+    adaptation?: VideoAdaptation
   ): Promise<bigint> {
     const previousAlias = this.subscribeTrackAliases.get(previousId)
     if (previousAlias === undefined || !this.mediaController.subscriber.canReplaceVideo(previousAlias, config)) {
       await this.unsubscribe(previousId)
     }
-    return this.subscribe(trackNamespace, trackName, role, config, onEnded)
+    return this.subscribe(trackNamespace, trackName, role, config, onEnded, adaptation)
   }
 
   /// `onEnded` is called when the publisher ends the catalog with PUBLISH_DONE.

@@ -1,6 +1,10 @@
 export type CatalogTrackRole = 'video' | 'audio' | 'chat'
 export type CatalogSubscribeRole = 'video' | 'screenshare' | 'audio' | 'chat'
 
+/// The selection of a switchable role that leaves the track to the picture's
+/// adaptation; track names never start with `@`.
+export const AUTO_TRACK_SELECTION = '@auto'
+
 /// The roles whose track can change while subscribed; see `LocalSession.switchTrack`.
 export function isSwitchableRole(role: CatalogSubscribeRole): boolean {
   return role === 'video' || role === 'screenshare'
