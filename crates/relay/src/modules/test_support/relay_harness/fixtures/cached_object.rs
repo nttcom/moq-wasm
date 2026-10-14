@@ -45,6 +45,7 @@ pub(crate) fn stream_object_with_payload(
         status: ObjectStatus::Normal,
         extension_headers: ExtensionHeaders::default(),
         payload,
+        ends_group: false,
     })
 }
 

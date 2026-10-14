@@ -115,6 +115,7 @@ impl StreamDataReceiver {
             status,
             extension_headers: field.extension_headers,
             payload,
+            ends_group: false,
         }))
     }
 }

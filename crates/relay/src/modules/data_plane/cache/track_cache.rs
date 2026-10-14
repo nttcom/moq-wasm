@@ -152,10 +152,12 @@ impl TrackCache {
             }
             Entry::Occupied(mut existing) => {
                 if object.is_datagram() && !existing.get().is_datagram() {
-                    // A fetched copy arrived first; the live datagram fixes the
-                    // forwarding preference so datagram egress can find it.
+                    // A fetched copy arrived first; the live datagram supplies the
+                    // forwarding preference, so datagram egress can find it, and
+                    // the End of Group type, which FETCH cannot carry.
                     let mut upgraded = (**existing.get()).clone();
                     upgraded.object.forwarding = ForwardingPreference::Datagram;
+                    upgraded.object.ends_group = object.object.ends_group;
                     *existing.get_mut() = Arc::new(upgraded);
                 }
                 false
@@ -467,6 +469,28 @@ mod tests {
         assert!(!cache.is_malformed());
         let key = SubgroupKey::Datagram { group_id: 0 };
         assert!(cache.read().next_subgroup_object(key, 0).is_some());
+    }
+
+    #[test]
+    fn fetched_copy_of_an_end_of_group_datagram_is_the_same_object() {
+        // Arrange: FETCH cannot carry End of Group, so the fetched copy lacks `ends_group`
+        let mut live = datagram_object(0, 5);
+        live.object.ends_group = true;
+        let fetched = stream_object_in_subgroup(0, 5, 5);
+        let live_first = TrackCache::new();
+        let fetched_first = TrackCache::new();
+        // Act
+        let _ = live_first.insert_live(live.clone());
+        let _ = live_first.insert(fetched.clone());
+        let _ = fetched_first.insert(fetched);
+        let _ = fetched_first.insert_live(live);
+        // Assert
+        for cache in [&live_first, &fetched_first] {
+            assert!(!cache.is_malformed());
+            let cached = cache.read().objects[&location(0, 5)].clone();
+            assert_eq!(cached.object.forwarding, ForwardingPreference::Datagram);
+            assert!(cached.object.ends_group);
+        }
     }
 
     #[test]

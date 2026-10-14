@@ -978,6 +978,7 @@ mod tests {
             status,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::from_static(payload),
+            ends_group: false,
         }
     }
 

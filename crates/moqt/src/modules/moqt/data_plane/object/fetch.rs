@@ -116,6 +116,7 @@ impl FetchObjectField {
             status,
             extension_headers: self.extension_headers,
             payload,
+            ends_group: false,
         }
     }
 
@@ -334,6 +335,7 @@ mod conversion_tests {
             status: ObjectStatus::Normal,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::from_static(payload),
+            ends_group: false,
         }
     }
 

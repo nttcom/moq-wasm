@@ -60,6 +60,7 @@ fn payload_object(group_id: u64, object_id: u64, priority: u8, payload: String) 
         status: ObjectStatus::Normal,
         extension_headers: ExtensionHeaders::default(),
         payload: payload.into(),
+        ends_group: false,
     }
 }
 

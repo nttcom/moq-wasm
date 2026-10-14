@@ -33,7 +33,7 @@ impl ObjectDatagram {
             publisher_priority: object.publisher_priority,
             extension_headers: (!object.extension_headers.key_value_pairs.is_empty())
                 .then(|| object.extension_headers.clone()),
-            end_of_group: !object.payload.is_empty() && object.status == ObjectStatus::EndOfGroup,
+            end_of_group: !object.payload.is_empty() && object.ends_group,
             payload,
         };
         Self::new(track_alias, object.location.group_id, field)
@@ -43,9 +43,6 @@ impl ObjectDatagram {
         let object_id = self.field.resolve_object_id();
         let field = self.field;
         let (status, payload) = match field.payload {
-            ObjectDatagramPayload::Payload(payload) if field.end_of_group => {
-                (ObjectStatus::EndOfGroup, payload)
-            }
             ObjectDatagramPayload::Payload(payload) => (ObjectStatus::Normal, payload),
             ObjectDatagramPayload::Status(status) => (status, bytes::Bytes::new()),
         };
@@ -59,6 +56,7 @@ impl ObjectDatagram {
             status,
             extension_headers: field.extension_headers.unwrap_or_default(),
             payload,
+            ends_group: field.end_of_group,
         }
     }
 
@@ -154,11 +152,12 @@ mod conversion_tests {
             status,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::from_static(payload),
+            ends_group: false,
         }
     }
 
     #[test]
-    fn end_of_group_object_with_payload_keeps_both_on_round_trip() {
+    fn end_of_group_type_with_payload_is_a_normal_object_ending_its_group() {
         // Arrange
         let received = ObjectDatagram::new(
             0,
@@ -176,7 +175,8 @@ mod conversion_tests {
         let object = received.into_object();
         let regenerated = ObjectDatagram::from_object(11, &object);
 
-        // Assert: canonical status plus payload, re-emitted with an explicit id
+        // Assert: Normal per §10.2.1.1; re-emitted with an explicit object id and
+        // its End of Group type
         assert_eq!(object, object_at_zero_ending_the_group());
         assert_eq!(regenerated.track_alias, 11);
         assert_eq!(
@@ -192,7 +192,10 @@ mod conversion_tests {
     }
 
     fn object_at_zero_ending_the_group() -> Object {
-        object(0, ObjectStatus::EndOfGroup, b"last")
+        Object {
+            ends_group: true,
+            ..object(0, ObjectStatus::Normal, b"last")
+        }
     }
 
     #[test]

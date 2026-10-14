@@ -670,6 +670,7 @@ mod tests {
             status: ObjectStatus::Normal,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::from_static(b"object"),
+            ends_group: false,
         }
     }
 

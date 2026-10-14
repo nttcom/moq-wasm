@@ -702,6 +702,7 @@ fn group_zero_object(object_id: u64, payload: Bytes) -> Object {
         status: ObjectStatus::Normal,
         extension_headers: ExtensionHeaders::default(),
         payload,
+        ends_group: false,
     }
 }
 

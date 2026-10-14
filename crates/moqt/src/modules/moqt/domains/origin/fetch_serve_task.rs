@@ -65,6 +65,7 @@ async fn respond(
                 status: ObjectStatus::Normal,
                 extension_headers: object.extension_headers,
                 payload: object.payload,
+                ends_group: false,
             })
             .await?;
     }
