@@ -1,3 +1,4 @@
+pub(crate) mod application_protocol;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod browser;
 #[cfg(not(target_arch = "wasm32"))]

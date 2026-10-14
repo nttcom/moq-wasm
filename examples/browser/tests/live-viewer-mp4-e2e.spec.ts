@@ -25,6 +25,9 @@ const LARGEST_VARINT = '4611686018427387903'
 /// The MP3 test closes its page without stopping the publish, so the relay keeps that publisher's
 /// upstream subscriptions on the shared namespace until the QUIC idle timeout.
 const FETCH_NAMESPACE = `${liveViewerE2EConfig.mp4Namespace}-fetch`
+const LATE_PUBLISHER_NAMESPACE = `${liveViewerE2EConfig.mp4Namespace}-late`
+/// The viewer SUBSCRIBEs again every 2 s while nobody publishes.
+const PUBLISHER_RETURN_TIMEOUT_MS = 10_000
 
 test('live viewer publishes an uploaded MP4 from the browser and plays it back', async ({ browser }) => {
   // Arrange
@@ -109,6 +112,44 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     await expect(viewer.publishStatus).toHaveText('Publish stopped')
     await expect(viewer.publishStreams).toBeHidden()
     await expect(viewer.publishPreview).toBeHidden()
+    // Assert: the relay ends the viewer's subscriptions with PUBLISH_DONE once the publisher left
+    await expect(viewer.playbackStatus).toHaveText(/^Publisher ended the (video|audio) track/)
+    await expect(viewer.logPanel).toContainText('video ended by the publisher')
+    await expect(viewer.logPanel).toContainText('catalog ended by the publisher')
+    await expect(viewer.catalogStatus).toHaveText('Waiting for the publisher to return')
+
+    // Act: the publisher comes back
+    await viewer.publishButton.click()
+
+    // Assert: the viewer follows it without being restarted
+    await expect(viewer.catalogStatus).toHaveText('Catalog loaded: 1 video / 1 audio', {
+      timeout: PUBLISHER_RETURN_TIMEOUT_MS
+    })
+    await expect(viewer.playbackStatus).toContainText('Playing video', { timeout: PUBLISHER_RETURN_TIMEOUT_MS })
+  } finally {
+    await closeLiveViewerE2ESession(session)
+  }
+})
+
+test('a viewer started before the publisher plays once it publishes', async ({ browser }) => {
+  // Arrange
+  const fixturePath = ensureMp4Fixture('aac')
+  const session = await arrangeLiveViewerE2ESession(browser, LATE_PUBLISHER_NAMESPACE)
+  const { viewer } = session
+
+  try {
+    await viewer.watchButton.click()
+    await expect(viewer.catalogStatus).toHaveText('Waiting for the publisher')
+
+    // Act
+    await viewer.mp4FileInput.setInputFiles(fixturePath)
+    await viewer.publishButton.click()
+
+    // Assert
+    await expect(viewer.catalogStatus).toHaveText('Catalog loaded: 1 video / 1 audio', {
+      timeout: PUBLISHER_RETURN_TIMEOUT_MS
+    })
+    await expectVideoDecoded(viewer.video)
   } finally {
     await closeLiveViewerE2ESession(session)
   }

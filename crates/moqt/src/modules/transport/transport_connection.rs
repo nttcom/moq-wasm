@@ -3,7 +3,8 @@ use std::fmt::{self, Debug};
 use crate::modules::{
     executor::{MaybeSend, MaybeSync},
     transport::{
-        transport_addresses::TransportAddresses, transport_receive_stream::TransportReceiveStream,
+        application_protocol::NegotiatedProtocol, transport_addresses::TransportAddresses,
+        transport_receive_stream::TransportReceiveStream,
         transport_send_stream::TransportSendStream, transport_stats::TransportStats,
     },
 };
@@ -44,4 +45,5 @@ pub(crate) trait TransportConnection: MaybeSend + MaybeSync + Debug {
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut>;
     fn stats(&self) -> TransportStats;
     fn addresses(&self) -> TransportAddresses;
+    fn negotiated_protocol(&self) -> NegotiatedProtocol;
 }

@@ -9,6 +9,7 @@ bytes = "1"
 clap = { version = "4.6.1", features = ["derive", "env"] }
 tokio = { version = "1.52.3", features = ["full"] }
 rml_rtmp = "0.8.0"
+socket2 = "0.6"
 srt-tokio = "0.4.4"
 futures = "0.3.32"
 broadcast = { path = "../broadcast" }

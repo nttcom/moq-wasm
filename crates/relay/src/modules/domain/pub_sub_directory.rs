@@ -221,6 +221,10 @@ impl InMemoryLocalPubSubDirectory {
         unregister_peer(&self.publisher_namespaces, session_id, track_namespace)
     }
 
+    pub(crate) fn has_namespace_publishers(&self, track_namespace: &str) -> bool {
+        self.publisher_namespaces.contains_key(track_namespace)
+    }
+
     /// Drops relay-origin publisher namespaces under the prefix once no
     /// client subscriber covers them anymore. Relay-learned namespaces are
     /// only withdrawn by a best-effort PUBLISH_NAMESPACE_DONE, which can be

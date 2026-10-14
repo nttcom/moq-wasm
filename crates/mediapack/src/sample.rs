@@ -35,8 +35,10 @@ impl Timestamp {
         self.micros / 1_000
     }
 
+    /// Rounds to the nearest tick, so a timestamp made by `from_ticks` gives
+    /// back the tick it came from although the microseconds were truncated.
     pub fn ticks(self, timescale: u32) -> u64 {
-        (self.micros as u128 * timescale as u128 / 1_000_000) as u64
+        ((self.micros as u128 * timescale as u128 + 500_000) / 1_000_000) as u64
     }
 
     pub fn saturating_add(self, other: Self) -> Self {
@@ -156,8 +158,20 @@ mod tests {
         // Assert
         assert_eq!(timestamp.micros(), 1_421_333);
         assert_eq!(timestamp.millis(), 1_421);
-        assert_eq!(timestamp.ticks(90_000), 127_919);
+        assert_eq!(timestamp.ticks(90_000), 127_920);
         assert_eq!(Timestamp::from_millis(1_421).ticks(48_000), 68_208);
+    }
+
+    #[test]
+    fn gives_back_the_tick_a_timestamp_was_made_from() {
+        // Arrange: one AAC frame at 48 kHz and one 30 fps frame at 90 kHz
+        let aac_frame = Timestamp::from_ticks(1_024, 48_000);
+        let video_frame = Timestamp::from_ticks(3_000, 90_000);
+
+        // Act / Assert
+        assert_eq!(aac_frame.micros(), 21_333);
+        assert_eq!(aac_frame.ticks(48_000), 1_024);
+        assert_eq!(video_frame.ticks(90_000), 3_000);
     }
 
     #[test]

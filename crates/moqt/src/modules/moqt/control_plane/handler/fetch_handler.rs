@@ -1,12 +1,12 @@
+use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
     modules::{
         moqt::{
             control_plane::{
-                control_messages::{
-                    control_message_type::ControlMessageType,
-                    messages::{fetch::Fetch, fetch_ok::FetchOk, parameters::location::Location},
+                control_messages::messages::{
+                    fetch::Fetch, fetch_ok::FetchOk, parameters::location::Location,
                 },
                 error_codes::{RequestErrorCode, RequestKind},
                 handler::response_guard::ResponseGuard,
@@ -55,8 +55,8 @@ impl FetchHandler {
             max_cache_duration: None,
         };
         self.session_context
-            .send_stream
-            .send(ControlMessageType::FetchOk, fetch_ok.encode())
+            .control
+            .respond(OutgoingResponse::FetchOk(fetch_ok))
             .await
     }
 

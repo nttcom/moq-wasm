@@ -1,37 +1,27 @@
 use std::sync::Arc;
 
-use crate::modules::moqt::control_plane::error_codes::{
-    PublishDoneCode, RequestErrorCode, RequestKind,
-};
+use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
 use crate::{
     RequestFailure,
     modules::moqt::{
         control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{
-                    publish::Publish, publish_done::PublishDone,
-                    publish_namespace::PublishNamespace,
-                    publish_namespace_cancel::PublishNamespaceCancel,
-                    publish_namespace_done::PublishNamespaceDone,
-                },
+            control_messages::messages::{
+                publish::Publish, publish_namespace::PublishNamespace,
+                publish_namespace_done::PublishNamespaceDone,
             },
             enums::ResponseMessage,
             options::PublishOption,
         },
-        data_plane::{
-            object::fetch::FetchHeader,
-            stream::{
-                fetch_data_sender::FetchDataSender,
-                stream_data_sender_factory::StreamDataSenderFactory,
-            },
+        data_plane::stream::{
+            fetch_data_sender::FetchDataSender, stream_data_sender_factory::StreamDataSenderFactory,
         },
         domains::{
             pending_publish_namespace::PendingPublishNamespace,
-            session_context::{LateResponseAction, SessionContext},
+            session_context::SessionContext,
             subscription::{PublisherInitiatedSubscription, Subscription},
         },
+        version::{Notification, OutgoingRequest},
     },
     object::DatagramSender,
 };
@@ -53,28 +43,19 @@ impl Publisher {
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
-        let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
-        let request_id = self.session.get_request_id();
-        let registered_sender = self.session.register_response_sender(
-            request_id,
-            sender,
-            LateResponseAction::PublishNamespaceDone {
-                namespace: vec_namespace.clone(),
-            },
-        );
-        let publish_namespace = PublishNamespace::new(request_id, vec_namespace, vec![]);
-        self.session
-            .send_stream
-            .send(
-                ControlMessageType::PublishNamespace,
-                publish_namespace.encode(),
-            )
+        let request_id = self.session.control.next_request_id();
+        let pending = self
+            .session
+            .control
+            .send_request(OutgoingRequest::PublishNamespace(PublishNamespace::new(
+                request_id,
+                vec_namespace,
+                vec![],
+            )))
             .await?;
         Ok(PendingPublishNamespace {
-            session: self.session.clone(),
             request_id,
-            receiver,
-            _registered_sender: registered_sender,
+            pending,
         })
     }
 
@@ -82,13 +63,11 @@ impl Publisher {
     /// defines no response message for PUBLISH_NAMESPACE_DONE.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
-        let publish_namespace_done = PublishNamespaceDone::new(vec_namespace);
         self.session
-            .send_stream
-            .send(
-                ControlMessageType::PublishNamespaceDone,
-                publish_namespace_done.encode(),
-            )
+            .control
+            .notify(Notification::PublishNamespaceDone(
+                PublishNamespaceDone::new(vec_namespace),
+            ))
             .await?;
         Ok(())
     }
@@ -101,19 +80,13 @@ impl Publisher {
         code: RequestErrorCode,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
-        // draft-14 §9.27: PUBLISH_NAMESPACE_CANCEL uses the PUBLISH_NAMESPACE_ERROR codes.
-        let publish_namespace_cancel = PublishNamespaceCancel::new(
-            vec_namespace,
-            code.wire_value(RequestKind::PublishNamespace),
-            error_reason,
-        );
         self.session
-            .send_stream
-            .send(
-                ControlMessageType::PublishNamespaceCancel,
-                publish_namespace_cancel.encode(),
-            )
+            .control
+            .notify(Notification::PublishNamespaceCancel {
+                namespace: namespace.split('/').map(|s| s.to_string()).collect(),
+                code,
+                reason: error_reason,
+            })
             .await?;
         Ok(())
     }
@@ -126,15 +99,14 @@ impl Publisher {
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        let publish_done = PublishDone::new(
-            subscription.request_id(),
-            status_code.into(),
-            stream_count,
-            error_reason,
-        );
         self.session
-            .send_stream
-            .send(ControlMessageType::PublishDone, publish_done.encode())
+            .control
+            .notify(Notification::PublishDone {
+                request_id: subscription.request_id(),
+                code: status_code,
+                stream_count,
+                reason: error_reason,
+            })
             .await?;
         Ok(())
     }
@@ -147,14 +119,7 @@ impl Publisher {
     ) -> Result<Subscription, RequestFailure> {
         let track_alias = self.session.get_track_alias();
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
-        let request_id = self.session.get_request_id();
-        // A late PUBLISH_OK is discarded: the peer keeps subscription state
-        // but receives no objects; see LateResponseAction::Discard for why
-        // no PUBLISH_DONE is sent yet.
-        let _registered_sender =
-            self.session
-                .register_response_sender(request_id, sender, LateResponseAction::Discard);
+        let request_id = self.session.control.next_request_id();
         let content_exists = option.content_exists;
         let publish = Publish {
             request_id,
@@ -168,12 +133,15 @@ impl Publisher {
             delivery_timeout: None,
             max_duration: None,
         };
-        let bytes = publish.encode();
-        self.session
-            .send_stream
-            .send(ControlMessageType::Publish, bytes)
+        // A late PUBLISH_OK is discarded: the peer keeps subscription state
+        // but receives no objects.
+        let response = self
+            .session
+            .control
+            .send_request(OutgoingRequest::Publish(publish))
+            .await?
+            .response()
             .await?;
-        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::PublishOk(message) => {
                 if request_id != message.request_id {
@@ -195,12 +163,11 @@ impl Publisher {
             }
             ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Publish error");
-                Err(RequestFailure::rejected(
-                    RequestKind::Publish,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -218,7 +185,7 @@ impl Publisher {
 
     pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender> {
         let send_stream = self.session.transport_connection.open_uni().await?;
-        FetchDataSender::new(send_stream, FetchHeader::new(request_id)).await
+        FetchDataSender::new(self.session.control.version(), send_stream, request_id).await
     }
 }
 
