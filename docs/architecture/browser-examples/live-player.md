@@ -81,12 +81,14 @@ Rules:
   is in a group the old session has not delivered, a joining FETCH of the
   current group supplies it from its start, and the subscription's objects
   are held until the FETCH ends (at most 2 s) so the group stays in order.
-  On the sending side an object goes to the
-  session its group started on, and the next group starts on the new
-  session. The old session is closed once every subscription has passed its
-  cutover (or its relay sent PUBLISH_DONE, which the wrapper otherwise
-  ignores from a relay that sent GOAWAY) and no published group is open
-  there, or 5 s after the switch. A FETCH still in flight is re-issued for
+  On the sending side a published track goes to both sessions
+  (draft-22 §7.6.1): a group starts on the new session and, while the old
+  relay still subscribes to the track, on the old one too, and its objects go
+  wherever it started. The old session is closed once every subscription has
+  passed its cutover (or its relay sent PUBLISH_DONE, which the wrapper
+  otherwise ignores from a relay that sent GOAWAY; subscriptions give up
+  after 5 s) and its relay has unsubscribed from every published track, or
+  when that session ends. A FETCH still in flight is re-issued for
   what it has not delivered yet and from then on taken from the new session
   only: an absolute range resumes after the last object received, a joining
   FETCH that delivered nothing yet is repeated against the re-issued

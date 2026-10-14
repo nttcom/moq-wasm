@@ -180,6 +180,10 @@ class FakeRawClient {
     this.emit('subscribe', { requestId, trackNamespace, trackName }, true, 0)
   }
 
+  receiveUnsubscribe(requestId: bigint): void {
+    this.emit('incomingUnsubscribe', requestId)
+  }
+
   receivePublishDone(requestId: bigint): void {
     this.emit('publishDone', { requestId, statusCode: 0x2n, errorReason: 'publisher moved away' })
   }
@@ -531,26 +535,39 @@ test('a group the old relay started is taken from it, and later groups only from
   expect(relayA.closed).toBe(true)
 })
 
-test('a published group open on the old relay ends there and the next group starts on the new one', async () => {
+test('a published track goes to both relays until the old one unsubscribes', async () => {
   // Arrange: group 3 is open on relay A when the switch completes
   const { clients, wrapper } = fakeRelays()
   await wrapper.connect('https://relay-a.example:4433')
   const appAlias = await wrapper.publish(['room', 'me'], 'video', '')
   await wrapper.sendSubgroupHeader(appAlias, 3n, 0n, 0)
   const [relayA] = clients
+  const publishRequestId = BigInt(relayA.sent.find((line) => line.startsWith('PUBLISH '))?.split(' ')[1] ?? '-1')
   relayA.receiveGoAway('https://relay-b.example:4433')
   await settled()
   const relayB = clients[1]
 
-  // Act
+  // Act: the rest of group 3 and all of group 4, then relay A unsubscribes
   await wrapper.sendSubgroupObject(appAlias, 3n, 0n, 1n, undefined, new Uint8Array(1), undefined)
-  const closedWithGroupOpen = relayA.closed
   await wrapper.sendSubgroupHeader(appAlias, 4n, 0n, 0)
+  await wrapper.sendSubgroupObject(appAlias, 4n, 0n, 0n, undefined, new Uint8Array(1), undefined)
+  const closedWhileSubscribed = relayA.closed
+  relayA.receiveUnsubscribe(publishRequestId)
+  await settled()
 
-  // Assert
-  expect(relayA.sent).toContain('OBJECT alias=7 group=3 object=1')
-  expect(closedWithGroupOpen).toBe(false)
-  expect(relayB.sent).toContain('SUBGROUP_HEADER alias=40 group=4')
+  // Assert: relay A got every object, relay B the groups that started after the switch
+  expect(relayA.sent).toEqual(
+    expect.arrayContaining([
+      'OBJECT alias=7 group=3 object=1',
+      'SUBGROUP_HEADER alias=7 group=4',
+      'OBJECT alias=7 group=4 object=0'
+    ])
+  )
+  expect(relayB.sent).toEqual(
+    expect.arrayContaining(['SUBGROUP_HEADER alias=40 group=4', 'OBJECT alias=40 group=4 object=0'])
+  )
+  expect(relayB.sent).not.toContain('OBJECT alias=40 group=3 object=1')
+  expect(closedWhileSubscribed).toBe(false)
   expect(relayA.closed).toBe(true)
 })
 
