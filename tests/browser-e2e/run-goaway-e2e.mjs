@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
 // Two relays sharing a Redis route registry, live-ingest publishing an RTMP
 // stream to relay A and the live viewer watching it there. The spec stops
 // relay A with SIGINT, which makes it send GOAWAY naming relay B.
@@ -30,6 +33,7 @@ import {
 import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const redisPort = "6399";
+const redisContainer = `goaway-e2e-redis-${process.pid}`;
 const rtmpAddress = "127.0.0.1:1935";
 const srtAddress = "127.0.0.1:9000";
 const relays = [
@@ -55,6 +59,16 @@ function spawnRelay({ id, port, innerPort }) {
   });
 }
 
+/// The digest-pinned Redis image of docker-compose.yml.
+function composeRedisImage() {
+  const compose = readFileSync(`${repoRoot}/docker-compose.yml`, "utf8");
+  const image = compose.match(/^ {2}redis:\n {4}image: (\S+)$/m)?.[1];
+  if (!image) {
+    throw new Error("docker-compose.yml has no redis image");
+  }
+  return image;
+}
+
 async function main() {
   ensureLinuxEnvironment();
   assertE2EPrerequisites();
@@ -67,22 +81,46 @@ async function main() {
     await Promise.allSettled(
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
+    try {
+      execFileSync("docker", ["rm", "-f", redisContainer], { stdio: "ignore" });
+    } catch {
+      // Already removed with the stopped container.
+    }
   };
   registerSignalHandlers(cleanup);
 
   try {
-    await runCommand("cargo", ["build", "-p", "relay", "-p", "live-ingest"], {
-      cwd: repoRoot,
-      env: process.env,
-    });
+    // One build per package, as CI builds them: a combined build unifies
+    // features differently and recompiles the dependencies.
+    for (const pkg of ["relay", "live-ingest"]) {
+      await runCommand("cargo", ["build", "-p", pkg], {
+        cwd: repoRoot,
+        env: process.env,
+      });
+    }
+    // A Redis of its own: relays registered in a shared one would be
+    // candidates for the GOAWAY target.
     const redis = spawnProcess(
       "redis",
-      "redis-server",
-      ["--port", redisPort, "--save", "", "--appendonly", "no"],
+      resolveCommandName("docker"),
+      [
+        "run",
+        "--rm",
+        "--name",
+        redisContainer,
+        "-p",
+        `127.0.0.1:${redisPort}:6379`,
+        composeRedisImage(),
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+      ],
       { cwd: repoRoot },
     );
     childProcesses.push(redis);
-    await waitForOutput(redis, /Ready to accept connections/, "redis", 30_000);
+    await waitForOutput(redis, /Ready to accept connections/, "redis", 120_000);
     const vts = await startVts();
     childProcesses.push(vts);
     const [relayA, relayB] = relays.map(spawnRelay);
