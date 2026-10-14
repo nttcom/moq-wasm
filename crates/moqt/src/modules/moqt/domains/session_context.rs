@@ -4,7 +4,7 @@ use std::{
     fmt,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -23,6 +23,8 @@ const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 pub(crate) struct SessionContext {
     pub(crate) transport_connection: BoxedConnection,
     pub(crate) control: ControlChannel,
+    is_server: bool,
+    go_away_received: AtomicBool,
     track_alias: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) receiver_map:
@@ -90,11 +92,14 @@ impl SessionContext {
     pub(crate) fn new(
         transport_connection: BoxedConnection,
         control: ControlChannel,
+        is_server: bool,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         Self {
             transport_connection,
             control,
+            is_server,
+            go_away_received: AtomicBool::new(false),
             track_alias: AtomicU64::new(0),
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
@@ -102,6 +107,18 @@ impl SessionContext {
             fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// draft-14 §9.4: a second GOAWAY, or a New Session URI sent to a
+    /// server, is a protocol violation.
+    pub(crate) fn note_go_away_received(&self, new_session_uri: &str) -> Result<(), &'static str> {
+        if self.go_away_received.swap(true, Ordering::SeqCst) {
+            return Err("received a second GOAWAY");
+        }
+        if self.is_server && !new_session_uri.is_empty() {
+            return Err("GOAWAY sent to a server carries a New Session URI");
+        }
+        Ok(())
     }
 
     pub(crate) fn get_track_alias(&self) -> u64 {
