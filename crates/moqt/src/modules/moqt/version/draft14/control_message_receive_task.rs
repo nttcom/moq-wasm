@@ -27,7 +27,8 @@ use crate::{
         data_plane::stream::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
-        domains::session_context::{InflightRequest, SessionContext},
+        domains::session_context::SessionContext,
+        version::draft14::{ControlChannel, InflightRequest, handle_late_response},
     },
 };
 
@@ -70,8 +71,8 @@ impl ControlMessageReceiveTask {
                                 }
                                 DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    let inflight_request =
-                                        session.take_inflight_request(request_id);
+                                    let inflight_request = ControlChannel::of(&session)
+                                        .take_inflight_request(request_id);
                                     match inflight_request {
                                         Some(InflightRequest::Waiting {
                                             sender,
@@ -81,19 +82,20 @@ impl ControlMessageReceiveTask {
                                             // arrival and this send; fall back to the
                                             // late-response withdrawal in that case.
                                             if let Err(message) = sender.send(message) {
-                                                session
-                                                    .handle_late_response(
-                                                        request_id,
-                                                        on_late_response,
-                                                        message,
-                                                    )
-                                                    .await;
+                                                handle_late_response(
+                                                    &session,
+                                                    request_id,
+                                                    on_late_response,
+                                                    message,
+                                                )
+                                                .await;
                                             }
                                         }
                                         Some(InflightRequest::Abandoned(action)) => {
-                                            session
-                                                .handle_late_response(request_id, action, message)
-                                                .await;
+                                            handle_late_response(
+                                                &session, request_id, action, message,
+                                            )
+                                            .await;
                                         }
                                         None => {
                                             tracing::error!(
@@ -115,7 +117,7 @@ impl ControlMessageReceiveTask {
                         }
                     }
                     if let Some(session) = session_context.upgrade() {
-                        session.fail_inflight_requests();
+                        ControlChannel::of(&session).fail_inflight_requests();
                     }
                 }
             .instrument(receiver_span),

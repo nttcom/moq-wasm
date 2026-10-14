@@ -11,6 +11,7 @@ use crate::modules::{
             error_codes::{RequestErrorCode, RequestKind},
         },
         domains::session_context::SessionContext,
+        version::OutgoingResponse,
     },
     transport::transport_send_stream::TransportSendError,
 };
@@ -75,8 +76,8 @@ async fn send_request_error(
         reason_phrase,
     };
     session_context
-        .send_stream
-        .send(kind.error_message_type(), err.encode())
+        .control
+        .respond(OutgoingResponse::Error(kind, err))
         .await
 }
 

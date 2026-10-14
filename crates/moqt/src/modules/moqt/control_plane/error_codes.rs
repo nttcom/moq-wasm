@@ -1,7 +1,5 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
-
 /// The request a `RequestErrorCode` is sent or received for. draft-14 numbers
 /// the codes per `*_ERROR` message, so the wire value depends on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,19 +10,6 @@ pub enum RequestKind {
     TrackStatus,
     PublishNamespace,
     SubscribeNamespace,
-}
-
-impl RequestKind {
-    pub(crate) fn error_message_type(self) -> ControlMessageType {
-        match self {
-            Self::Subscribe => ControlMessageType::SubscribeError,
-            Self::Publish => ControlMessageType::PublishError,
-            Self::Fetch => ControlMessageType::FetchError,
-            Self::TrackStatus => ControlMessageType::TrackStatusError,
-            Self::PublishNamespace => ControlMessageType::PublishNamespaceError,
-            Self::SubscribeNamespace => ControlMessageType::SubscribeNamespaceError,
-        }
-    }
 }
 
 type CodeTable = &'static [(RequestErrorCode, u64)];

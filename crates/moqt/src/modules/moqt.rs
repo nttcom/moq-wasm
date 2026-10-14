@@ -3,3 +3,4 @@ pub(crate) mod data_plane;
 pub(crate) mod domains;
 pub(crate) mod protocol;
 pub(crate) mod runtime;
+pub(crate) mod version;
