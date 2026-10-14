@@ -58,6 +58,12 @@ pub(crate) struct DiskCache {
     dropped_writes: Arc<AtomicU64>,
 }
 
+impl DiskCache {
+    pub(crate) fn stored_bytes(&self) -> u64 {
+        self.stored_bytes.load(Ordering::Relaxed)
+    }
+}
+
 /// A track's link to the disk cache, held by its `TrackCache`.
 pub(crate) struct DiskSink {
     pub(crate) disk: DiskCache,

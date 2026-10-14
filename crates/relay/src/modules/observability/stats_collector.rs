@@ -83,6 +83,7 @@ impl StatsCollector {
                 cache_tracks: occupancy.tracks,
                 cache_objects: occupancy.objects,
                 cache_payload_bytes: occupancy.payload_bytes,
+                disk_cache_bytes: occupancy.disk_payload_bytes,
             },
             sessions: sessions
                 .into_iter()

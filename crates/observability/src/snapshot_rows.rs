@@ -70,6 +70,7 @@ mod tests {
                 cache_tracks: 2,
                 cache_objects: 3,
                 cache_payload_bytes: 4,
+                disk_cache_bytes: 5,
             },
             sessions: vec![],
             tracks: vec![],
@@ -89,6 +90,7 @@ mod tests {
                 "cache_tracks": 2,
                 "cache_objects": 3,
                 "cache_payload_bytes": 4,
+                "disk_cache_bytes": 5,
             }])
         );
     }

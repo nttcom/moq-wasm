@@ -28,7 +28,7 @@ const PERSIST: CacheStamp = CacheStamp {
 
 struct DiskBackedTrack {
     harness: RelayHarness,
-    _store: TrackCacheStore,
+    store: TrackCacheStore,
     _disk: DiskCacheTask,
     dir: TempDir,
 }
@@ -40,7 +40,7 @@ fn disk_backed_track(name: &str, max_bytes: u64, stamp: CacheStamp) -> DiskBacke
     let cache = store.get_or_create(&TrackKey::new("ns", "track"));
     DiskBackedTrack {
         harness: RelayHarness::with_cache(cache, stamp),
-        _store: store,
+        store,
         _disk: disk,
         dir,
     }
@@ -214,4 +214,22 @@ async fn a_publisher_returning_within_the_grace_period_keeps_the_persisted_objec
         track.harness.cache().largest_location(),
         Some(location(0, 0))
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn store_occupancy_reports_the_bytes_on_disk() {
+    // Arrange
+    let track = disk_backed_track("occupancy", u64::MAX, PERSIST);
+
+    // Act
+    ingest_group(&track.harness, 0, b"nine byte").await;
+
+    // Assert
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while track.store.occupancy().disk_payload_bytes != 9 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the stored bytes should be reported");
 }

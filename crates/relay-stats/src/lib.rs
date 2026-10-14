@@ -24,6 +24,10 @@ pub struct ProcessStats {
     pub cache_tracks: u64,
     pub cache_objects: u64,
     pub cache_payload_bytes: u64,
+    /// Payload bytes in the relay's disk cache segments; 0 without one.
+    /// Defaulted so snapshots stored before the field existed still decode.
+    #[serde(default)]
+    pub disk_cache_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +107,7 @@ mod tests {
                 cache_tracks: 1,
                 cache_objects: 2,
                 cache_payload_bytes: 3,
+                disk_cache_bytes: 4,
             },
             sessions: vec![SessionStats {
                 session_id: 7,
@@ -156,6 +161,19 @@ mod tests {
 
         // Assert
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn a_snapshot_without_disk_cache_bytes_decodes_as_zero() {
+        // Arrange: a payload written before the field existed
+        let json =
+            r#"{"rss_bytes":null,"cache_tracks":1,"cache_objects":2,"cache_payload_bytes":3}"#;
+
+        // Act
+        let process: ProcessStats = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(process.disk_cache_bytes, 0);
     }
 
     #[test]
