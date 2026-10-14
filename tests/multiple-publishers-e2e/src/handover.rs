@@ -15,10 +15,7 @@ use crate::{connect, object_payload};
 use anyhow::{Context as _, bail};
 use moqt::{
     Session, SessionEvent, Subscription,
-    object::{
-        ContentExists, DataReceiver, ExtensionHeaders, GroupOrder, Subgroup, SubgroupId,
-        SubgroupObject,
-    },
+    object::{ContentExists, DataReceiver, GroupOrder, Subgroup},
     subscribe::{FilterType, SubscribeOption},
 };
 use tokio::{
@@ -102,15 +99,13 @@ async fn send_clock_groups(
         }
         last_group_id = Some(group_id);
         let uninitialized = stream_factory.next().await?;
-        let header = uninitialized.create_header(group_id, SubgroupId::None, 128, false, false);
-        let mut stream = uninitialized.send_header(header).await?;
+        let mut stream = uninitialized
+            .start(crate::subgroup_zero(group_id, 128))
+            .await?;
         for object_id in 0..OBJECTS_PER_GROUP {
-            let object = stream.create_object_field(
-                if object_id == 0 { 0 } else { 1 },
-                ExtensionHeaders::default(),
-                SubgroupObject::new_payload(object_payload(group_id, object_id).into()),
-            );
-            stream.send(object).await?;
+            let payload = object_payload(group_id, object_id);
+            let object = crate::payload_object(group_id, object_id, 128, payload);
+            stream.send_object(&object).await?;
         }
         stream.close().await?;
     }

@@ -38,8 +38,8 @@ use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
-        ContentExists, ExtensionHeaders, GroupOrder, Location, StreamDataSenderFactory, SubgroupId,
-        SubgroupObject,
+        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
+        ObjectStatus, StreamDataSenderFactory, SubgroupStart,
     },
     subscribe::{FilterType, SubscribeOption},
 };
@@ -89,18 +89,39 @@ async fn publisher(namespace: &'static str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A Normal object of subgroup 0, the only subgroup this test publishes.
+fn payload_object(group_id: u64, object_id: u64, priority: u8, payload: String) -> Object {
+    Object {
+        location: Location {
+            group_id,
+            object_id,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: priority,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::default(),
+        payload: payload.into(),
+    }
+}
+
+fn subgroup_zero(group_id: u64, priority: u8) -> SubgroupStart {
+    SubgroupStart {
+        group_id,
+        subgroup_id: 0,
+        publisher_priority: priority,
+        ends_group: false,
+    }
+}
+
 async fn send_group(factory: &StreamDataSenderFactory, group_id: u64) -> anyhow::Result<()> {
     let sender = factory.next().await?;
-    let header = sender.create_header(group_id, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
-    let mut stream = sender.send_header(header).await?;
+    let mut stream = sender
+        .start(subgroup_zero(group_id, PUBLISHER_PRIORITY))
+        .await?;
     for obj_id in 0..OBJECTS_PER_GROUP {
         let payload = format!("g{}:o{}", group_id, obj_id);
-        let obj = stream.create_object_field(
-            0,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_payload(payload.into()),
-        );
-        stream.send(obj).await?;
+        let object = payload_object(group_id, obj_id, PUBLISHER_PRIORITY, payload);
+        stream.send_object(&object).await?;
     }
     // Closing the stream FINs the subgroup, so the relay marks the group closed.
     stream.close().await

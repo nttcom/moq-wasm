@@ -200,6 +200,23 @@ pub(crate) async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'s
     sender.send(field).await.unwrap();
 }
 
+/// The first subgroup stream of `subscription`; resolves once a header has
+/// arrived.
+pub(crate) async fn first_subgroup_stream(
+    server: &Session,
+    subscription: &Subscription,
+) -> crate::object::StreamDataReceiver {
+    let DataReceiver::Stream(mut factory) = server
+        .subscriber()
+        .accept_data_receiver(subscription)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a subgroup stream receiver");
+    };
+    factory.next().await.unwrap()
+}
+
 /// The data receiver resolves only once the first object has arrived, so
 /// this must run after the publisher has sent something.
 pub(crate) async fn subscribed_track_reader(

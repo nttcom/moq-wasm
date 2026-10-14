@@ -1,3 +1,4 @@
+pub mod canonical_object;
 pub mod datagram_field;
 pub mod decode_error;
 pub mod extension_headers;

@@ -1,10 +1,13 @@
 mod subgroup_state;
 
 use mediapack::loc::{LocExtension, from_extension_headers};
-use moqt::wire::{
-    ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk, ObjectStatus,
-    Publish, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup,
-    SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
+use moqt::{
+    object::{ForwardingPreference, Object},
+    wire::{
+        ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk,
+        ObjectStatus, Publish, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError,
+        ServerSetup, Subscribe, SubscribeNamespace, SubscribeOk,
+    },
 };
 pub use subgroup_state::SubgroupState;
 
@@ -538,7 +541,7 @@ impl From<&SubscribeOk> for SubscribeOkMessage {
 pub struct SubgroupHeaderMessage {
     track_alias: u64,
     group_id: u64,
-    subgroup_id: Option<u64>,
+    subgroup_id: u64,
     publisher_priority: u8,
 }
 
@@ -555,7 +558,7 @@ impl SubgroupHeaderMessage {
     }
 
     #[wasm_bindgen(getter, js_name = subgroupId)]
-    pub fn subgroup_id(&self) -> Option<u64> {
+    pub fn subgroup_id(&self) -> u64 {
         self.subgroup_id
     }
 
@@ -569,7 +572,7 @@ impl SubgroupHeaderMessage {
     pub(crate) fn new(
         track_alias: u64,
         group_id: u64,
-        subgroup_id: Option<u64>,
+        subgroup_id: u64,
         publisher_priority: u8,
     ) -> Self {
         Self {
@@ -721,8 +724,7 @@ impl ObjectDatagramStatusMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct SubgroupObjectMessage {
-    subgroup_id: Option<u64>,
-    object_id_delta: u64,
+    subgroup_id: u64,
     object_id: u64,
     object_status: Option<u8>,
     object_payload_length: u32,
@@ -733,13 +735,8 @@ pub struct SubgroupObjectMessage {
 #[wasm_bindgen]
 impl SubgroupObjectMessage {
     #[wasm_bindgen(getter, js_name = subgroupId)]
-    pub fn subgroup_id(&self) -> Option<u64> {
+    pub fn subgroup_id(&self) -> u64 {
         self.subgroup_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectIdDelta)]
-    pub fn object_id_delta(&self) -> u64 {
-        self.object_id_delta
     }
 
     #[wasm_bindgen(getter, js_name = objectId)]
@@ -770,22 +767,18 @@ impl SubgroupObjectMessage {
 }
 
 impl SubgroupObjectMessage {
-    pub(crate) fn new(
-        subgroup_id: Option<u64>,
-        object_id: u64,
-        field: SubgroupObjectField,
-        loc_header: Vec<LocExtension>,
-    ) -> Self {
-        let (object_status, object_payload) = match field.subgroup_object {
-            SubgroupObject::Payload { data, .. } => (None, data.to_vec()),
-            SubgroupObject::Status { code, .. } => {
-                (ObjectStatus::try_from(code as u8).ok(), Vec::new())
-            }
+    pub(crate) fn new(object: Object, loc_header: Vec<LocExtension>) -> Self {
+        let ForwardingPreference::Subgroup { subgroup_id } = object.forwarding else {
+            unreachable!("a subgroup stream carries subgroup objects")
+        };
+        let (object_status, object_payload) = if object.payload.is_empty() {
+            (Some(object.status), Vec::new())
+        } else {
+            (None, object.payload.to_vec())
         };
         Self {
             subgroup_id,
-            object_id_delta: field.object_id_delta,
-            object_id,
+            object_id: object.location.object_id,
             object_status: object_status.map(|value| value as u8),
             object_payload_length: object_payload.len() as u32,
             object_payload,
@@ -976,33 +969,32 @@ impl FetchStreamEndMessage {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use moqt::wire::{ExtensionHeaders, SubgroupHeader, SubgroupId};
+    use moqt::object::{ExtensionHeaders, Location};
 
-    fn subgroup_object_field(
-        object_id_delta: u64,
-        subgroup_object: SubgroupObject,
-    ) -> SubgroupObjectField {
-        let header = SubgroupHeader::new(1, 2, SubgroupId::Value(0), 0, false, false);
-        SubgroupObjectField {
-            message_type: header.message_type,
-            object_id_delta,
+    fn subgroup_object(object_id: u64, status: ObjectStatus, payload: &'static [u8]) -> Object {
+        Object {
+            location: Location {
+                group_id: 2,
+                object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 0,
+            status,
             extension_headers: ExtensionHeaders::default(),
-            subgroup_object,
+            payload: Bytes::from_static(payload),
         }
     }
 
     #[test]
-    fn reports_the_absolute_object_id_next_to_the_delta() {
+    fn reports_the_absolute_object_id_and_its_payload() {
         // Arrange
-        let field =
-            subgroup_object_field(2, SubgroupObject::new_payload(Bytes::from_static(b"ab")));
+        let object = subgroup_object(7, ObjectStatus::Normal, b"ab");
 
         // Act
-        let message = SubgroupObjectMessage::new(Some(0), 7, field, Vec::new());
+        let message = SubgroupObjectMessage::new(object, Vec::new());
 
         // Assert
         assert_eq!(message.object_id(), 7);
-        assert_eq!(message.object_id_delta(), 2);
         assert_eq!(message.object_status(), None);
         assert_eq!(message.object_payload(), b"ab".to_vec());
         assert_eq!(message.object_payload_length(), 2);
@@ -1011,13 +1003,10 @@ mod tests {
     #[test]
     fn carries_a_status_object_without_payload() {
         // Arrange
-        let field = subgroup_object_field(
-            0,
-            SubgroupObject::new_status(ObjectStatus::EndOfGroup as u64),
-        );
+        let object = subgroup_object(30, ObjectStatus::EndOfGroup, b"");
 
         // Act
-        let message = SubgroupObjectMessage::new(None, 30, field, Vec::new());
+        let message = SubgroupObjectMessage::new(object, Vec::new());
 
         // Assert
         assert_eq!(

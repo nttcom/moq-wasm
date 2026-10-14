@@ -92,12 +92,8 @@ impl Publisher for moqt::Publisher {
         &self,
         downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory> {
-        let subscriber_track_alias = downstream_subscription.track_alias();
         let inner = self.create_stream(downstream_subscription.as_moqt());
-        Box::new(ConcreteStreamSenderFactory::new(
-            inner,
-            subscriber_track_alias,
-        ))
+        Box::new(ConcreteStreamSenderFactory::new(inner))
     }
 
     fn new_datagram(

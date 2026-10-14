@@ -14,6 +14,9 @@ pub(crate) type UniStreamReceiver = StreamReceiver<{ 64 * 1024 }, UniStreamDecod
 pub enum StreamReceiveError {
     Closed(String),
     Decode(String),
+    /// The stream decoded but violates the protocol, e.g. an unknown Object
+    /// Status (draft-14 §10.2.1.1). The caller should close the session.
+    ProtocolViolation(String),
 }
 
 impl std::fmt::Display for StreamReceiveError {
@@ -21,6 +24,7 @@ impl std::fmt::Display for StreamReceiveError {
         match self {
             Self::Closed(error) => write!(f, "stream closed: {error}"),
             Self::Decode(error) => write!(f, "failed to decode stream data: {error}"),
+            Self::ProtocolViolation(error) => write!(f, "protocol violation: {error}"),
         }
     }
 }

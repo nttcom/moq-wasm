@@ -8,17 +8,12 @@ enum SenderInner {
 
 pub(crate) struct StreamSender {
     inner: Option<SenderInner>,
-    subscriber_track_alias: u64,
 }
 
 impl StreamSender {
-    pub(crate) fn new(
-        inner: moqt::object::SubgroupHeaderSender,
-        subscriber_track_alias: u64,
-    ) -> Self {
+    pub(crate) fn new(inner: moqt::object::SubgroupHeaderSender) -> Self {
         Self {
             inner: Some(SenderInner::Uninitialized(inner)),
-            subscriber_track_alias,
         }
     }
 }
@@ -27,23 +22,20 @@ impl StreamSender {
 impl DataSender for StreamSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         match object {
-            DataObject::SubgroupObject(field) => match self.inner.as_mut() {
-                Some(SenderInner::HeaderSent(sender)) => sender.send(field).await,
+            DataObject::SubgroupObject(object) => match self.inner.as_mut() {
+                Some(SenderInner::HeaderSent(sender)) => sender.send_object(&object).await,
                 _ => Err(anyhow::anyhow!("Header not set for StreamSender")),
             },
-            DataObject::SubgroupHeader(mut header) => {
-                header.track_alias = self.subscriber_track_alias;
-                match self.inner.take() {
-                    Some(SenderInner::Uninitialized(sender)) => {
-                        let sent = sender.send_header(header).await?;
-                        self.inner = Some(SenderInner::HeaderSent(sent));
-                        Ok(())
-                    }
-                    _ => Err(anyhow::anyhow!(
-                        "StreamSender already initialized or in invalid state"
-                    )),
+            DataObject::SubgroupHeader(start) => match self.inner.take() {
+                Some(SenderInner::Uninitialized(sender)) => {
+                    let sent = sender.start(start).await?;
+                    self.inner = Some(SenderInner::HeaderSent(sent));
+                    Ok(())
                 }
-            }
+                _ => Err(anyhow::anyhow!(
+                    "StreamSender already initialized or in invalid state"
+                )),
+            },
             _ => Err(anyhow::anyhow!("Invalid object type for StreamSender")),
         }
     }

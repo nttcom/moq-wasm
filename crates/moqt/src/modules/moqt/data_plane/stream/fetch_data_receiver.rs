@@ -41,7 +41,7 @@ impl FetchDataReceiver {
             Ok(None) => Ok(Fetch::End),
             Err(error) => {
                 match &error {
-                    StreamReceiveError::Decode(_) => {
+                    StreamReceiveError::Decode(_) | StreamReceiveError::ProtocolViolation(_) => {
                         tracing::error!(%error, "Failed to decode the fetch stream")
                     }
                     StreamReceiveError::Closed(_) => tracing::debug!(%error, "Fetch stream ended"),

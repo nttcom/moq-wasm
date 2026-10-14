@@ -2,9 +2,9 @@ use std::cell::RefCell;
 
 use js_sys::Function;
 use mediapack::loc::from_extension_headers;
-use moqt::wire::{
-    FetchObjectField, ObjectDatagram, ObjectDatagramPayload, SubgroupHeader, SubgroupId,
-    SubgroupObjectField,
+use moqt::{
+    object::{Object, SubgroupStart},
+    wire::{FetchObjectField, ObjectDatagram, ObjectDatagramPayload},
 };
 use wasm_bindgen::JsValue;
 
@@ -88,38 +88,34 @@ pub(crate) fn emit_object_datagram(callbacks: &RefCell<Callbacks>, datagram: Obj
     }
 }
 
-fn subgroup_id_value(header: &SubgroupHeader) -> Option<u64> {
-    match header.subgroup_id {
-        SubgroupId::Value(value) => Some(value),
-        _ => None,
-    }
-}
-
-pub(crate) fn emit_subgroup_header(callbacks: &RefCell<Callbacks>, header: &SubgroupHeader) {
+pub(crate) fn emit_subgroup_header(
+    callbacks: &RefCell<Callbacks>,
+    track_alias: u64,
+    start: &SubgroupStart,
+) {
     let message = SubgroupHeaderMessage::new(
-        header.track_alias,
-        header.group_id,
-        subgroup_id_value(header),
-        header.publisher_priority,
+        track_alias,
+        start.group_id,
+        start.subgroup_id,
+        start.publisher_priority,
     );
     emit(callbacks, |c| &c.subgroup_header, &[message.into()]);
 }
 
 pub(crate) fn emit_subgroup_object(
     callbacks: &RefCell<Callbacks>,
-    header: &SubgroupHeader,
-    field: SubgroupObjectField,
-    object_id: u64,
+    track_alias: u64,
+    object: Object,
 ) {
-    let loc_header = from_extension_headers(&field.extension_headers);
-    let message =
-        SubgroupObjectMessage::new(subgroup_id_value(header), object_id, field, loc_header);
+    let loc_header = from_extension_headers(&object.extension_headers);
+    let group_id = object.location.group_id;
+    let message = SubgroupObjectMessage::new(object, loc_header);
     emit(
         callbacks,
         |c| &c.subgroup_object,
         &[
-            js_sys::BigInt::from(header.track_alias).into(),
-            js_sys::BigInt::from(header.group_id).into(),
+            js_sys::BigInt::from(track_alias).into(),
+            js_sys::BigInt::from(group_id).into(),
             message.into(),
         ],
     );

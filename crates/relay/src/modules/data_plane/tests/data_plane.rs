@@ -4,10 +4,9 @@ use std::time::Duration;
 use crate::modules::session::data_object::DataObject;
 
 use crate::modules::test_support::relay_harness::{
-    OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery,
+    OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery, downstream_object_ids,
     fixtures::{cached_object::FIXTURE_PRIORITY, location},
     ordered_payload, payloads_of, receive_objects_until_close, receive_objects_until_end,
-    resolve_downstream_object_ids,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -84,7 +83,7 @@ async fn next_group_start_delivers_a_first_group_with_nonzero_id_cached_before_e
         ),
         "downstream stream should start with the first group's subgroup header"
     );
-    assert_eq!(resolve_downstream_object_ids(&objects), vec![0]);
+    assert_eq!(downstream_object_ids(&objects), vec![0]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -141,7 +140,7 @@ async fn egress_started_mid_subgroup_delivers_absolute_object_ids() {
     let objects = receive_objects_until_close(&mut egress).await;
     let expected: Vec<u64> =
         (LARGEST_OBJECT_ID_AT_SUBSCRIBE as u64 + 1..OBJECT_COUNT as u64).collect();
-    assert_eq!(resolve_downstream_object_ids(&objects), expected);
+    assert_eq!(downstream_object_ids(&objects), expected);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -179,7 +178,7 @@ async fn downstream_header_is_regenerated_from_the_cached_objects() {
         panic!("downstream stream should start with a subgroup header");
     };
     assert_eq!(header.group_id, 0);
-    assert_eq!(header.subgroup_id, moqt::object::SubgroupId::Value(0));
+    assert_eq!(header.subgroup_id, 0);
     assert_eq!(header.publisher_priority, FIXTURE_PRIORITY);
 }
 
@@ -229,7 +228,7 @@ async fn upstream_reset_is_relayed_as_a_downstream_reset() {
     // Assert
     let (objects, end) = receive_objects_until_end(&mut egress).await;
     assert_eq!(
-        resolve_downstream_object_ids(&objects),
+        downstream_object_ids(&objects),
         vec![0, 1, 2],
         "objects received before the reset are still forwarded"
     );
@@ -308,14 +307,14 @@ async fn subscriber_joining_after_an_upstream_reset_receives_the_reopened_subgro
     // Act
     let reopened_stream = harness.open_upstream_stream();
     reopened_stream.header(0);
-    reopened_stream.object_with_delta(3, 3);
+    reopened_stream.object_with_gap(3, 3);
     reopened_stream.object(4);
     reopened_stream.object(5);
     reopened_stream.fin();
 
     // Assert
     let objects = receive_objects_until_close(&mut egress).await;
-    assert_eq!(resolve_downstream_object_ids(&objects), vec![3, 4, 5]);
+    assert_eq!(downstream_object_ids(&objects), vec![3, 4, 5]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -334,13 +333,13 @@ async fn upstream_reopen_after_a_reset_is_relayed_on_a_new_downstream_stream() {
     // Act: the reopened stream skips object 3
     let reopened_stream = harness.open_upstream_stream();
     reopened_stream.header(0);
-    reopened_stream.object_with_delta(4, 4);
+    reopened_stream.object_with_gap(4, 4);
     reopened_stream.object(5);
     reopened_stream.fin();
 
     // Assert
     let reopened_objects = receive_objects_until_close(&mut egress).await;
-    assert_eq!(resolve_downstream_object_ids(&reset_objects), vec![0, 1, 2]);
+    assert_eq!(downstream_object_ids(&reset_objects), vec![0, 1, 2]);
     assert!(
         matches!(reset_end, Sent::Reset(DataStreamResetCode::InternalError)),
         "got {reset_end:?}"
@@ -349,7 +348,7 @@ async fn upstream_reopen_after_a_reset_is_relayed_on_a_new_downstream_stream() {
         reopened_objects.first(),
         Some(DataObject::SubgroupHeader(_))
     ));
-    assert_eq!(resolve_downstream_object_ids(&reopened_objects), vec![4, 5]);
+    assert_eq!(downstream_object_ids(&reopened_objects), vec![4, 5]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -369,7 +368,7 @@ async fn upstream_reopen_racing_the_reset_relays_each_object_once_on_two_streams
         reset_stream.wait_reader_end().await;
         let reopened_stream = harness.open_upstream_stream();
         reopened_stream.header(0);
-        reopened_stream.object_with_delta(4, 4);
+        reopened_stream.object_with_gap(4, 4);
         reopened_stream.object(5);
         reopened_stream.fin();
 
@@ -423,7 +422,7 @@ async fn a_lagging_publisher_does_not_hold_back_the_subgroup_another_publisher_f
 
     // Assert
     let (objects, end) = receive_objects_until_end(&mut egress).await;
-    assert_eq!(resolve_downstream_object_ids(&objects), vec![0, 1]);
+    assert_eq!(downstream_object_ids(&objects), vec![0, 1]);
     assert!(matches!(end, Sent::Closed), "expected a FIN, got {end:?}");
 }
 
@@ -454,6 +453,6 @@ async fn a_publisher_reset_is_not_relayed_while_another_publisher_finishes_the_s
 
     // Assert
     let (objects, end) = receive_objects_until_end(&mut egress).await;
-    assert_eq!(resolve_downstream_object_ids(&objects), vec![0, 1]);
+    assert_eq!(downstream_object_ids(&objects), vec![0, 1]);
     assert!(matches!(end, Sent::Closed), "expected a FIN, got {end:?}");
 }

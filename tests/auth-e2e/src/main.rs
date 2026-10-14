@@ -22,7 +22,10 @@ use bytes::Bytes;
 use moqt::{
     AuthorizationToken, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session,
     SessionEvent, Subscription,
-    object::{DataReceiver, ExtensionHeaders, GroupOrder, Subgroup, SubgroupId, SubgroupObject},
+    object::{
+        DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
+        ObjectStatus, Subgroup, SubgroupStart,
+    },
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
 };
@@ -380,14 +383,26 @@ fn expect_unauthorized(error: RequestFailure, label: &str) -> anyhow::Result<()>
 async fn send_test_object(session: Arc<Session>, subscription: Subscription) -> anyhow::Result<()> {
     let stream_factory = session.publisher().create_stream(&subscription);
     let uninitialized = stream_factory.next().await?;
-    let header = uninitialized.create_header(0, SubgroupId::None, 128, false, false);
-    let mut stream = uninitialized.send_header(header).await?;
-    let object = stream.create_object_field(
-        0,
-        ExtensionHeaders::default(),
-        SubgroupObject::new_payload(Bytes::from_static(TEST_PAYLOAD)),
-    );
-    stream.send(object).await?;
+    let mut stream = uninitialized
+        .start(SubgroupStart {
+            group_id: 0,
+            subgroup_id: 0,
+            publisher_priority: 128,
+            ends_group: false,
+        })
+        .await?;
+    let object = Object {
+        location: Location {
+            group_id: 0,
+            object_id: 0,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: 128,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::default(),
+        payload: Bytes::from_static(TEST_PAYLOAD),
+    };
+    stream.send_object(&object).await?;
     stream.close().await?;
     Ok(())
 }
@@ -427,10 +442,10 @@ where
         let Some(subgroup) = stream.receive().await? else {
             bail!("stream ended before receiving an object");
         };
-        if let Subgroup::Object(field) = subgroup
-            && let SubgroupObject::Payload { data, .. } = field.subgroup_object
+        if let Subgroup::Object(object) = subgroup
+            && !object.payload.is_empty()
         {
-            return Ok(data.to_vec());
+            return Ok(object.payload.to_vec());
         }
     }
 }

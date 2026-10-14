@@ -18,17 +18,13 @@ use crate::modules::{
     },
 };
 
-/// What the SUBGROUP_HEADER told us; the subgroup id of Type 0x12/0x13/0x1A/0x1B
-/// headers is only known once the first object arrives.
 struct ReceivedHeader {
-    group_id: u64,
-    publisher_priority: u8,
+    fields: SubgroupHeaderFields,
     ends_group_on_fin: bool,
     prev_object_id: Option<u64>,
 }
 
 struct SubgroupIngest<'a> {
-    header: SubgroupHeaderFields,
     open: OpenSubgroupGuard<'a>,
 }
 
@@ -102,71 +98,33 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
         };
 
         match receive_result {
-            Ok(Some(DataObject::SubgroupHeader(received))) => {
-                ingest = None;
-                span.record("group_id", received.group_id);
-                let subgroup_id = match received.subgroup_id {
-                    moqt::object::SubgroupId::None => Some(0),
-                    moqt::object::SubgroupId::Value(subgroup_id) => Some(subgroup_id),
-                    moqt::object::SubgroupId::FirstObjectIdDelta => None,
-                };
-                let received = ReceivedHeader {
-                    group_id: received.group_id,
-                    publisher_priority: received.publisher_priority,
-                    ends_group_on_fin: received.message_type.has_end_of_group(),
+            Ok(Some(DataObject::SubgroupHeader(start))) => {
+                span.record("group_id", start.group_id);
+                let fields = SubgroupHeaderFields::from(start);
+                ingest = Some(open_subgroup(&cache, &span, fields));
+                header = Some(ReceivedHeader {
+                    fields,
+                    ends_group_on_fin: start.ends_group,
                     prev_object_id: None,
-                };
-                if let Some(subgroup_id) = subgroup_id {
-                    ingest = Some(open_subgroup(
-                        &cache,
-                        &span,
-                        received.with_subgroup_id(subgroup_id),
-                    ));
-                }
-                header = Some(received);
+                });
             }
-            Ok(Some(DataObject::SubgroupObject(field))) => {
-                let Some(header) = header.as_mut() else {
+            Ok(Some(DataObject::SubgroupObject(object))) => {
+                let (Some(header), Some(current)) = (header.as_mut(), ingest.as_mut()) else {
                     span.record("end_reason", "object_before_header");
                     tracing::error!(%track_key, "subgroup object received before its header");
                     return;
                 };
-                let object_id = field.resolve_object_id(header.prev_object_id);
-                header.prev_object_id = Some(object_id);
-                let current = ingest.get_or_insert_with(|| {
-                    open_subgroup(&cache, &span, header.with_subgroup_id(object_id))
-                });
-                let end_reason = match &field.subgroup_object {
-                    moqt::object::SubgroupObject::Status { code, .. }
-                        if *code == ObjectStatus::EndOfGroup as u64 =>
-                    {
-                        Some("end_of_group")
-                    }
-                    moqt::object::SubgroupObject::Status { code, .. }
-                        if *code == ObjectStatus::EndOfTrack as u64 =>
-                    {
-                        Some("end_of_track")
-                    }
+                header.prev_object_id = Some(object.location.object_id);
+                let end_reason = match object.status {
+                    ObjectStatus::EndOfGroup => Some("end_of_group"),
+                    ObjectStatus::EndOfTrack => Some("end_of_track"),
                     _ => None,
                 };
-                let object =
-                    match CachedObject::from_subgroup_object(&current.header, object_id, field) {
-                        Ok(object) => object,
-                        Err(error) => {
-                            // draft-14 §10.2.1.1: an unknown Object Status is a
-                            // protocol error; the upstream session is terminated.
-                            span.record("end_reason", "protocol_violation");
-                            tracing::error!(%track_key, %error, object_id, "invalid object status");
-                            let _ = session_event_sender.send(
-                                SessionEvent::protocol_violation_detected(
-                                    publisher_session_id,
-                                    format!("{error} on object {object_id}"),
-                                ),
-                            );
-                            return;
-                        }
-                    };
-                if current.open.insert(object).is_err() {
+                if current
+                    .open
+                    .insert(CachedObject::from_object(object))
+                    .is_err()
+                {
                     report_malformed_track(
                         &span,
                         &session_event_sender,
@@ -196,7 +154,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
                     if ingest
                         .open
-                        .insert(CachedObject::end_of_group(&ingest.header, end_of_group_id))
+                        .insert(CachedObject::end_of_group(&header.fields, end_of_group_id))
                         .is_err()
                     {
                         report_malformed_track(
@@ -224,6 +182,15 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 tracing::error!(%track_key, %error, "failed to decode stream data");
                 return;
             }
+            Err(moqt::object::StreamReceiveError::ProtocolViolation(error)) => {
+                span.record("end_reason", "protocol_violation");
+                tracing::error!(%track_key, %error, "protocol violation on the stream");
+                let _ = session_event_sender.send(SessionEvent::protocol_violation_detected(
+                    publisher_session_id,
+                    error,
+                ));
+                return;
+            }
         }
     }
 }
@@ -249,34 +216,24 @@ fn open_subgroup<'a>(
 ) -> SubgroupIngest<'a> {
     span.record("subgroup_id", header.subgroup_id);
     let open = cache.open_subgroup(header.key());
-    SubgroupIngest { header, open }
-}
-
-impl ReceivedHeader {
-    fn with_subgroup_id(&self, subgroup_id: u64) -> SubgroupHeaderFields {
-        SubgroupHeaderFields {
-            group_id: self.group_id,
-            subgroup_id,
-            publisher_priority: self.publisher_priority,
-        }
-    }
+    SubgroupIngest { open }
 }
 
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use moqt::object::{ObjectStatus, SubgroupId};
+    use moqt::object::ObjectStatus;
 
     use super::*;
     use crate::modules::{
-        data_plane::cache::{subgroup_key::SubgroupKey, track_cache::NextObject},
+        data_plane::cache::track_cache::NextObject,
         session::session_event::EventKind,
         test_support::relay_harness::{
             FailingUpstream, PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
             fixtures::{
                 cached_object::stream_key,
                 data_object::{
-                    make_header, make_header_with, make_payload_object, make_raw_status_object,
+                    make_header, make_header_with, make_object_in_subgroup, make_payload_object,
                     make_status_object,
                 },
                 location,
@@ -284,8 +241,8 @@ mod tests {
         },
     };
 
-    fn payload(object_id_delta: u64) -> DataObject {
-        make_payload_object(object_id_delta, Bytes::from_static(b"payload"))
+    fn payload(object_id: u64) -> DataObject {
+        make_payload_object(0, object_id, Bytes::from_static(b"payload"))
     }
 
     fn send_all(upstream_stream: &UpstreamSubgroupStream, objects: Vec<DataObject>) {
@@ -306,7 +263,7 @@ mod tests {
             vec![
                 make_header(0),
                 payload(0),
-                make_status_object(0, ObjectStatus::EndOfGroup),
+                make_status_object(0, 1, ObjectStatus::EndOfGroup),
             ],
         );
         upstream_stream.wait_reader_end().await;
@@ -383,28 +340,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolves_absolute_object_ids_from_deltas() {
-        // Arrange: deltas 0, 0, 1 resolve to absolute ids 0, 1, 3
-        let harness = RelayHarness::new();
-        let mut upstream_stream = harness.open_upstream_stream();
-        // Act
-        send_all(
-            &upstream_stream,
-            vec![make_header(0), payload(0), payload(0), payload(1)],
-        );
-        upstream_stream.fin();
-        upstream_stream.wait_reader_end().await;
-        // Assert
-        let ids: Vec<u64> = harness
-            .cached_object_ids(stream_key(0))
-            .await
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        assert_eq!(ids, vec![0, 1, 3]);
-    }
-
-    #[tokio::test]
     async fn end_of_group_header_type_synthesizes_status_object_on_fin() {
         // Arrange: Type 0x18 header (last object before FIN ends the group)
         let harness = RelayHarness::new();
@@ -412,11 +347,7 @@ mod tests {
         // Act
         send_all(
             &upstream_stream,
-            vec![
-                make_header_with(0, SubgroupId::None, true),
-                payload(0),
-                payload(0),
-            ],
+            vec![make_header_with(0, 0, true), payload(0), payload(1)],
         );
         upstream_stream.fin();
         upstream_stream.wait_reader_end().await;
@@ -437,14 +368,17 @@ mod tests {
         // for subgroup 1 ends after object 0, so its End of Group lands on id 1
         let mut harness = RelayHarness::new();
         let mut first_stream = harness.open_upstream_stream();
-        send_all(&first_stream, vec![make_header(0), payload(0), payload(0)]);
+        send_all(&first_stream, vec![make_header(0), payload(0), payload(1)]);
         first_stream.fin();
         first_stream.wait_reader_end().await;
         let mut second_stream = harness.open_upstream_stream();
         // Act
         send_all(
             &second_stream,
-            vec![make_header_with(0, SubgroupId::Value(1), true), payload(0)],
+            vec![
+                make_header_with(0, 1, true),
+                make_object_in_subgroup(0, 1, 0),
+            ],
         );
         second_stream.fin();
         second_stream.wait_reader_end().await;
@@ -482,14 +416,12 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_object_status_terminates_the_publisher_session() {
-        // Arrange: status code 0x2 is not defined by draft-14 §10.2.1.1
+        // Arrange: moqt rejects a status draft-14 §10.2.1.1 does not define
         let mut harness = RelayHarness::new();
         let mut upstream_stream = harness.open_upstream_stream();
         // Act
-        send_all(
-            &upstream_stream,
-            vec![make_header(0), payload(0), make_raw_status_object(0, 0x2)],
-        );
+        send_all(&upstream_stream, vec![make_header(0), payload(0)]);
+        upstream_stream.protocol_violation();
         upstream_stream.wait_reader_end().await;
         // Assert: the object is not cached and the session is reported for termination
         assert_eq!(
@@ -512,7 +444,7 @@ mod tests {
         // Act
         send_all(
             &upstream_stream,
-            vec![make_header_with(0, SubgroupId::None, true), payload(0)],
+            vec![make_header_with(0, 0, true), payload(0)],
         );
         upstream_stream.reset();
         upstream_stream.wait_reader_end().await;
@@ -521,40 +453,5 @@ mod tests {
             harness.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal)]
         );
-    }
-
-    #[tokio::test]
-    async fn first_object_id_delta_header_takes_subgroup_id_from_first_object() {
-        // Arrange: Type 0x12 header; the first object arrives with id 5
-        let harness = RelayHarness::new();
-        let mut subgroup_opened_receiver = harness.subscribe_subgroup_opened();
-        let mut upstream_stream = harness.open_upstream_stream();
-        // Act
-        send_all(
-            &upstream_stream,
-            vec![
-                make_header_with(0, SubgroupId::FirstObjectIdDelta, false),
-                payload(5),
-                payload(0),
-            ],
-        );
-        upstream_stream.fin();
-        upstream_stream.wait_reader_end().await;
-        // Assert: the subgroup is opened, and announced, only once its id is known
-        let key = SubgroupKey::Stream {
-            group_id: 0,
-            subgroup_id: 5,
-        };
-        assert_eq!(
-            subgroup_opened_receiver.try_recv().map(|run| run.key),
-            Ok(key)
-        );
-        let ids: Vec<u64> = harness
-            .cached_object_ids(key)
-            .await
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        assert_eq!(ids, vec![5, 6]);
     }
 }

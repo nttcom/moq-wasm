@@ -16,11 +16,11 @@ impl StreamReceiver for moqt::object::StreamDataReceiver {
     ) -> Result<Option<DataObject>, moqt::object::StreamReceiveError> {
         let object = self.receive().await?;
         Ok(object.map(|object| match object {
-            moqt::object::Subgroup::Header(header) => {
-                tracing::debug!(subgroup_header = ?header, "Received subgroup header");
-                DataObject::SubgroupHeader(header)
+            moqt::object::Subgroup::Header(start) => {
+                tracing::debug!(subgroup_header = ?start, "Received subgroup header");
+                DataObject::SubgroupHeader(start)
             }
-            moqt::object::Subgroup::Object(field) => DataObject::SubgroupObject(field),
+            moqt::object::Subgroup::Object(object) => DataObject::SubgroupObject(object),
         }))
     }
 }

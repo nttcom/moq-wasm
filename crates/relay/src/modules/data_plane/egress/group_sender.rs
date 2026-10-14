@@ -36,7 +36,6 @@ pub(crate) struct GroupSender {
 }
 
 struct StreamSendTask {
-    track_alias: u64,
     key: SubgroupKey,
     generation: usize,
     object_id: u64,
@@ -100,7 +99,6 @@ impl GroupSender {
                             );
                             joinset.spawn(
                                 Self::send_stream_task(StreamSendTask {
-                                    track_alias,
                                     key: task.key,
                                     generation: task.generation,
                                     object_id: task.object_id,
@@ -188,33 +186,25 @@ impl GroupSender {
         };
         task.delivery_stats.record_stream_opened();
 
-        // The header is regenerated from the object's canonical properties;
-        // extensions are always declared present so no later object can lose
-        // its extension headers on the wire.
-        let header = moqt::object::SubgroupHeader::new(
-            task.track_alias,
+        let start = moqt::object::SubgroupStart {
             group_id,
-            moqt::object::SubgroupId::Value(subgroup_id),
-            first.publisher_priority,
-            true,
-            false,
-        );
-        let message_type = header.message_type;
+            subgroup_id,
+            publisher_priority: first.publisher_priority,
+            ends_group: false,
+        };
         tracing::debug!("egress sending subgroup header");
-        if let Err(error) = sender.send_object(DataObject::SubgroupHeader(header)).await {
+        if let Err(error) = sender.send_object(DataObject::SubgroupHeader(start)).await {
             tracing::error!(?error, "failed to send subgroup header");
             return (0, "send_header_failed");
         }
 
         let mut object_count = 0u64;
-        let mut prev_sent_object_id = None;
         let mut next = NextObject::Object(first);
         while let NextObject::Object(object) = next {
             let object_id = object.location.object_id;
             tracing::debug!(object_id, "egress sending subgroup object");
-            let field = object.to_subgroup_object_field(message_type, prev_sent_object_id);
             if sender
-                .send_object(DataObject::SubgroupObject(field))
+                .send_object(DataObject::SubgroupObject(object.to_object()))
                 .await
                 .is_err()
             {
@@ -224,7 +214,6 @@ impl GroupSender {
             task.delivery_stats
                 .record_object_sent(object.payload.len(), object.received_at);
             object_count += 1;
-            prev_sent_object_id = Some(object_id);
             next = match task
                 .cache
                 .next_subgroup_object_or_wait(

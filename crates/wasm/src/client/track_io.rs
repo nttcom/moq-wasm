@@ -4,7 +4,6 @@ use moqt::{
     Session, Subscription,
     fetch::{Fetch as FetchData, FetchHandle},
     object::{DataReceiver, StreamDataReceiver, Subgroup},
-    wire::SubgroupHeader,
 };
 use wasm_bindgen_futures::spawn_local;
 
@@ -47,21 +46,14 @@ pub(crate) async fn read_track(
 }
 
 async fn read_subgroup_stream(shared: Rc<ClientShared>, mut stream: StreamDataReceiver) {
-    let mut header: Option<SubgroupHeader> = None;
-    let mut last_object_id = None;
+    let track_alias = stream.track_alias;
     loop {
         match stream.receive().await {
-            Ok(Some(Subgroup::Header(received))) => {
-                emit_subgroup_header(&shared.callbacks, &received);
-                header = Some(received);
+            Ok(Some(Subgroup::Header(start))) => {
+                emit_subgroup_header(&shared.callbacks, track_alias, &start);
             }
-            Ok(Some(Subgroup::Object(field))) => {
-                let Some(header) = &header else {
-                    continue;
-                };
-                let object_id = field.resolve_object_id(last_object_id);
-                last_object_id = Some(object_id);
-                emit_subgroup_object(&shared.callbacks, header, field, object_id);
+            Ok(Some(Subgroup::Object(object))) => {
+                emit_subgroup_object(&shared.callbacks, track_alias, object);
             }
             Ok(None) | Err(_) => break,
         }

@@ -5,6 +5,9 @@ pub use crate::modules::moqt::control_plane::control_messages::key_value_pair::V
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
 pub use crate::modules::moqt::data_plane::datagram::datagram_receiver::DatagramReceiver;
+pub use crate::modules::moqt::data_plane::object::canonical_object::ForwardingPreference;
+pub use crate::modules::moqt::data_plane::object::canonical_object::Object;
+pub use crate::modules::moqt::data_plane::object::canonical_object::SubgroupStart;
 pub use crate::modules::moqt::data_plane::datagram::datagram_sender::DatagramSender;
 pub use crate::modules::moqt::data_plane::malformed_track_error::MalformedTrackError;
 pub use crate::modules::moqt::data_plane::object::datagram_field::DatagramField;

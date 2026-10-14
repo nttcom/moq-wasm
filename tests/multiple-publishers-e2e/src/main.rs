@@ -24,8 +24,8 @@ use std::time::Duration;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
     object::{
-        DataReceiver, ExtensionHeaders, GroupOrder, StreamDataReceiverFactory,
-        StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject,
+        DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
+        ObjectStatus, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupStart,
     },
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
@@ -48,6 +48,30 @@ pub(crate) fn object_payload(group_id: u64, object_id: u64) -> String {
     format!("g{group_id}:o{object_id}")
 }
 
+/// A Normal object of subgroup 0, the only subgroup this test publishes.
+fn payload_object(group_id: u64, object_id: u64, priority: u8, payload: String) -> Object {
+    Object {
+        location: Location {
+            group_id,
+            object_id,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: priority,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::default(),
+        payload: payload.into(),
+    }
+}
+
+fn subgroup_zero(group_id: u64, priority: u8) -> SubgroupStart {
+    SubgroupStart {
+        group_id,
+        subgroup_id: 0,
+        publisher_priority: priority,
+        ends_group: false,
+    }
+}
+
 fn relay_url() -> String {
     env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string())
 }
@@ -67,16 +91,13 @@ async fn send_group(
     group_id: u64,
 ) -> anyhow::Result<()> {
     let sender = factory.next().await?;
-    let header = sender.create_header(group_id, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
-    let mut stream = sender.send_header(header).await?;
+    let mut stream = sender
+        .start(subgroup_zero(group_id, PUBLISHER_PRIORITY))
+        .await?;
     for obj_id in 0..OBJECTS_PER_GROUP {
         let payload = object_payload(group_id, obj_id);
-        let obj = stream.create_object_field(
-            0,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_payload(payload.into()),
-        );
-        stream.send(obj).await?;
+        let object = payload_object(group_id, obj_id, PUBLISHER_PRIORITY, payload);
+        stream.send_object(&object).await?;
         tracing::info!("[{}] sent g{}:o{}", who, group_id, obj_id);
     }
     stream.close().await
@@ -186,9 +207,9 @@ async fn bob(
                         tracing::info!("[bob] live group {}", h.group_id);
                         max_group = max_group.max(h.group_id);
                     }
-                    Ok(Some(Subgroup::Object(field))) => {
-                        if let SubgroupObject::Payload { data, .. } = field.subgroup_object {
-                            let payload = String::from_utf8_lossy(&data).to_string();
+                    Ok(Some(Subgroup::Object(object))) => {
+                        if !object.payload.is_empty() {
+                            let payload = String::from_utf8_lossy(&object.payload).to_string();
                             tracing::info!("[bob] recv {}", payload);
                             *received.entry(payload).or_default() += 1;
                             if let Some(tx) = carol_go_tx.take() {

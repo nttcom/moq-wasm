@@ -16,8 +16,8 @@ use moqt::{
     namespace::PublishNamespaceHandler,
     object::DataStreamResetCode,
     object::{
-        ContentExists, GroupOrder, Location, ObjectStatus, SubgroupId, SubgroupObject,
-        SubgroupObjectSender,
+        ContentExists, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus,
+        SubgroupObjectSender, SubgroupStart,
     },
     publish::{PublishDoneCode, PublishHandler, PublishOption},
     subscribe::{
@@ -82,7 +82,6 @@ pub(crate) struct ClientShared {
     /// Subscriptions this client sends objects on, keyed by track alias.
     track_subscriptions: RefCell<HashMap<u64, Subscription>>,
     stream_senders: RefCell<HashMap<WriterKey, Rc<Mutex<SubgroupObjectSender>>>>,
-    stream_object_numbers: RefCell<HashMap<WriterKey, u64>>,
     fetch_senders: RefCell<HashMap<u64, Rc<Mutex<FetchDataSender>>>>,
 }
 
@@ -101,7 +100,6 @@ impl ClientShared {
         self.fetch_requests.borrow_mut().clear();
         self.track_subscriptions.borrow_mut().clear();
         self.stream_senders.borrow_mut().clear();
-        self.stream_object_numbers.borrow_mut().clear();
         self.fetch_senders.borrow_mut().clear();
     }
 
@@ -1253,22 +1251,19 @@ impl MOQTClient {
             .next()
             .await
             .map_err(anyhow_error)?;
-        let header = sender.create_header(
-            group_id,
-            SubgroupId::Value(subgroup_id),
-            publisher_priority,
-            true,
-            true,
-        );
-        let sender = sender.send_header(header).await.map_err(anyhow_error)?;
+        let sender = sender
+            .start(SubgroupStart {
+                group_id,
+                subgroup_id,
+                publisher_priority,
+                ends_group: true,
+            })
+            .await
+            .map_err(anyhow_error)?;
         self.shared
             .stream_senders
             .borrow_mut()
             .insert(writer_key, Rc::new(Mutex::new(sender)));
-        self.shared
-            .stream_object_numbers
-            .borrow_mut()
-            .remove(&writer_key);
         Ok(())
     }
 
@@ -1292,53 +1287,31 @@ impl MOQTClient {
             .get(&writer_key)
             .cloned()
             .ok_or_else(|| js_error("subgroup writer is None"))?;
-        let extension_headers = crate::loc::parse_loc_header(loc_header)?;
-        let object_id_delta = {
-            let previous = self
-                .shared
-                .stream_object_numbers
-                .borrow()
-                .get(&writer_key)
-                .copied();
-            match previous {
-                Some(previous_object_number) => previous_object_number
-                    .checked_add(1)
-                    .and_then(|next_object_number| object_number.checked_sub(next_object_number)),
-                None => Some(object_number),
-            }
-            .ok_or_else(|| {
-                js_error("object number must increase monotonically within a subgroup stream")
-            })?
+        let (status, payload) = status_and_payload(
+            object_status.map(object_status_from).transpose()?,
+            object_payload,
+        );
+        let location = Location {
+            group_id,
+            object_id: object_number,
         };
-        let status = object_status.map(object_status_from).transpose()?;
-        let subgroup_object = match status {
-            Some(status) => SubgroupObject::new_status(status as u64),
-            None => SubgroupObject::new_payload(Bytes::from(object_payload)),
+        let object = Object {
+            location,
+            forwarding: ForwardingPreference::Subgroup { subgroup_id },
+            publisher_priority: 0,
+            status,
+            extension_headers: crate::loc::parse_loc_header(loc_header)?,
+            payload,
         };
         let mut sender = sender.lock().await;
-        let field = sender.create_object_field(object_id_delta, extension_headers, subgroup_object);
-        sender.send(field).await.map_err(anyhow_error)?;
-        self.shared.state.borrow_mut().record_published_object(
-            track_alias,
-            Location {
-                group_id,
-                object_id: object_number,
-            },
-        );
+        sender.send_object(&object).await.map_err(anyhow_error)?;
         self.shared
-            .stream_object_numbers
+            .state
             .borrow_mut()
-            .insert(writer_key, object_number);
-        if matches!(
-            status,
-            Some(ObjectStatus::EndOfGroup | ObjectStatus::EndOfTrack)
-        ) {
+            .record_published_object(track_alias, location);
+        if matches!(status, ObjectStatus::EndOfGroup | ObjectStatus::EndOfTrack) {
             let _ = sender.close().await;
             self.shared.stream_senders.borrow_mut().remove(&writer_key);
-            self.shared
-                .stream_object_numbers
-                .borrow_mut()
-                .remove(&writer_key);
         }
         Ok(())
     }
@@ -1547,6 +1520,15 @@ fn content_exists_from_fields(
 
 fn group_order_from(value: u8) -> Result<GroupOrder, JsValue> {
     GroupOrder::try_from(value).map_err(|_| js_error("invalid group order"))
+}
+
+/// JavaScript passes either a status or a payload; a status object carries no
+/// payload.
+fn status_and_payload(status: Option<ObjectStatus>, payload: Vec<u8>) -> (ObjectStatus, Bytes) {
+    match status {
+        Some(status) => (status, Bytes::new()),
+        None => (ObjectStatus::Normal, Bytes::from(payload)),
+    }
 }
 
 fn object_status_from(value: u8) -> Result<ObjectStatus, JsValue> {

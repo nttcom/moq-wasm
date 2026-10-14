@@ -185,9 +185,7 @@ mod tests {
             HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
             subscribed_track_reader,
         },
-        object::{
-            DataReceiver, ExtensionHeaders, KeyValuePair, Subgroup, SubgroupObject, VariantType,
-        },
+        object::{DataReceiver, ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
         publish::PublishOption,
     };
 
@@ -371,10 +369,6 @@ mod tests {
         let Some(Subgroup::Object(object)) = object else {
             panic!("expected the next group's first object");
         };
-        assert!(
-            matches!(&object.subgroup_object, SubgroupObject::Payload { data, .. } if *data == Bytes::from_static(b"b")),
-            "{:?}",
-            object.subgroup_object
-        );
+        assert_eq!(object.payload, Bytes::from_static(b"b"));
     }
 }
