@@ -18,6 +18,7 @@ cargo run -p recorder -- \
 | `--video-track` | `video` | LOC video track to record (`video_720p`, `video/profile_1`, ...) |
 | `--audio-track` | `audio` | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
+| `--from-cache` | off | Start with what the relay or the publisher still caches (60 s by default), then continue live |
 | `--segment-seconds` | — | Start the next numbered file at the first keyframe after this many seconds |
 | `--auth-token` (`MOQT_AUTH_TOKEN`) | — | JWT for namespaces outside `anon/**` |
 | `--auth-token-file` (`MOQT_AUTH_TOKEN_FILE`) | — | File holding the JWT; re-read every 10 s and a changed token is sent to the relay |
@@ -25,7 +26,8 @@ cargo run -p recorder -- \
 
 ## Behaviour
 
-- Recording starts at the next group, i.e. the next keyframe, and ends on
+- Recording starts at the next group, i.e. the next keyframe, or with
+  `--from-cache` at the oldest keyframe still cached, and ends on
   Ctrl-C, when the relay closes the session, or 10 s after the publisher ends
   a recorded track (PUBLISH_DONE), the time `moqt` waits for late streams.
 - The file is fragmented MP4, so it plays even if the recorder is killed; the

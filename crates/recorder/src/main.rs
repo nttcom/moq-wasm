@@ -38,6 +38,10 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) output: Option<PathBuf>,
 
+    /// Start with what the relay or the publisher still caches, then continue live
+    #[arg(long)]
+    pub(crate) from_cache: bool,
+
     /// Start a new numbered file at the first keyframe after this many seconds
     #[arg(long, value_name = "SECONDS")]
     pub(crate) segment_seconds: Option<u64>,

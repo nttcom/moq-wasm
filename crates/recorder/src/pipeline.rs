@@ -33,6 +33,9 @@ pub(crate) struct Pipeline {
     video_config: Option<AvcDecoderConfigurationRecord>,
     audio_config: Option<AudioConfig>,
     file_started: bool,
+    /// Video before the first keyframe cannot be decoded and is dropped; a
+    /// relay's oldest cached group can start mid-group.
+    keyframe_seen: bool,
     /// Presentation time of the current file's first video sample.
     file_start: Option<Timestamp>,
     segment_length: Option<Duration>,
@@ -57,6 +60,7 @@ impl Pipeline {
             video_config: None,
             audio_config,
             file_started: false,
+            keyframe_seen: false,
             file_start: None,
             segment_length,
             current_group: None,
@@ -110,6 +114,12 @@ impl Pipeline {
         let mut tail: Option<BytesMut> = None;
         let mut data = BytesMut::new();
         for event in events {
+            if let MediaEvent::Video(sample) = &event {
+                self.keyframe_seen |= sample.is_keyframe;
+                if !self.keyframe_seen {
+                    continue;
+                }
+            }
             let changed = match &event {
                 MediaEvent::Streams(_) => continue,
                 MediaEvent::VideoConfig(config) => self.video_config.as_ref() != Some(config),
@@ -511,6 +521,31 @@ mod tests {
         let recorded = demux(&next_file);
         assert!(recorded.contains(&MediaEvent::VideoConfig(changed)));
         assert_eq!(video_samples(&recorded).len(), 2);
+    }
+
+    #[test]
+    fn video_before_the_first_keyframe_is_dropped() {
+        // Arrange: the recording joins the fixture's first group after its keyframe
+        let fixture = fixture();
+        let mut pipeline = Pipeline::new(&selection(None), None).unwrap();
+        let second_keyframe = fixture
+            .video
+            .iter()
+            .position(|object| object.group_id == 2)
+            .unwrap();
+        let mut file = BytesMut::new();
+
+        // Act
+        for object in &fixture.video[1..] {
+            file.extend_from_slice(&pipeline.push_video(object).unwrap().data);
+        }
+        file.extend_from_slice(&pipeline.finish().unwrap());
+
+        // Assert
+        let recorded = demux(&file);
+        let video = video_samples(&recorded);
+        assert_eq!(video.len(), fixture.video.len() - second_keyframe);
+        assert!(video[0].is_keyframe);
     }
 
     #[test]

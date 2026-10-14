@@ -14,8 +14,8 @@ layout of its own and follows the one `crates/broadcast` publishes (see
 
 It is the first half of persisting what flows through a relay. The second
 half, the relay spilling its object cache to disk and answering FETCH from
-there, is a relay change and does not depend on this crate; once it exists a
-recorder that joined late can also FETCH the part it missed.
+there, is a relay change and does not depend on this crate; once it exists,
+`--from-cache` reaches back as far as the relay keeps.
 
 ## Why the LOC tracks and not the CMAF siblings
 The CMAF siblings are already fMP4, and copying their fragments into a file
@@ -40,7 +40,15 @@ both tracks into one init segment and one fragment stream.
    way `broadcast::build_catalog` writes it. While the catalog lists no video
    track yet, the recorder waits for the next catalog object.
 3. Both media tracks are subscribed with `NextGroupStart`, so the recording
-   begins on a keyframe, and read with one `TrackReader` each.
+   begins on a keyframe, and read with one `TrackReader` each. With
+   `--from-cache` they are subscribed with `LargestObject` instead, and a
+   standalone FETCH per track from `{0, 0}` through the Largest Location in
+   SUBSCRIBE_OK is written first, in arrival order across the two tracks. The
+   FETCH ends at that object and the subscription starts after it, so the
+   two parts join without a gap or an overlap; the relay serves the range
+   from its cache and FETCHes what it lacks from the publisher. The live
+   objects wait in the readers' bounded channels, so QUIC flow control holds
+   them back meanwhile.
 4. `pipeline::Pipeline` converts each `TrackObject` to a `LocObject`, runs the
    track's `loc::Demuxer` and feeds the events to the `Fmp4Muxer`. It pushes
    one `Streams { has_video, has_audio }` itself and drops the single-track
@@ -89,6 +97,9 @@ the same; neither shares the code because draft-14 has no refresh message and
 the convention is the relay's.
 
 ## Limits
-- Recording starts live; there is no FETCH of the past yet.
+- `--from-cache` reaches only as far back as the relay's and the
+  publisher's caches, 60 s for a `broadcast` publisher. A relay that started
+  caching mid-group returns that group without its keyframe, and the pipeline
+  drops video until the first keyframe.
 - Audio outside AAC, Opus, G.711 A-law and MP3, or an AAC track whose
   configuration is not in the catalog yet, is skipped with a warning.
