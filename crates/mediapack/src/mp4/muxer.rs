@@ -145,7 +145,7 @@ impl Fmp4Muxer {
         if let Some(config) = &self.audio_config {
             tracks.push(TrackInit {
                 track_id: AUDIO_TRACK_ID,
-                trak: isobmff::audio_trak(AUDIO_TRACK_ID, config)?,
+                trak: isobmff::audio_trak(AUDIO_TRACK_ID, config),
             });
         }
         ensure!(

@@ -2,12 +2,15 @@ use anyhow::{Context, Result, bail, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
-    aac::{AudioSpecificConfig, asc::SAMPLES_PER_FRAME},
+    aac::asc::SAMPLES_PER_FRAME,
     h264::{AvcDecoderConfigurationRecord, annexb::annexb_to_avcc_without_parameter_sets},
+    mp4::track::{MPEG1_AUDIO_OBJECT_TYPE_INDICATION, MPEG2_AUDIO_OBJECT_TYPE_INDICATION},
     sample::{AudioConfig, AudioSample, VideoSample},
 };
 
 pub(super) const VIDEO_TIMESCALE: u32 = 90_000;
+/// ISO/IEC 14496-1 Table 5: objectTypeIndication of MPEG-4 audio.
+const AAC_OBJECT_TYPE_INDICATION: u8 = 0x40;
 /// Opus in ISO BMFF (the Opus-in-ISOBMFF binding §4.3.2) always counts
 /// samples at 48 kHz, whatever rate the encoder was fed.
 const OPUS_TIMESCALE: u32 = 48_000;
@@ -63,7 +66,8 @@ pub(super) fn video_fragment(
     )
 }
 
-/// Fails for MP3, an empty or truncated Opus packet, or A-law with no channels.
+/// Fails for an MP3 frame without a valid header, an empty or truncated Opus
+/// packet, or A-law with no channels.
 pub(super) fn audio_fragment(
     sequence_number: u32,
     track_id: u32,
@@ -97,8 +101,20 @@ fn audio_sample_duration(config: &AudioConfig, data: &[u8]) -> Result<u32> {
             ensure!(*channels > 0, "A-law audio without channels");
             Ok((data.len() / *channels as usize) as u32)
         }
-        AudioConfig::Mp3 { .. } => bail!("MP3 audio cannot be muxed into fMP4"),
+        AudioConfig::Mp3 { .. } => mp3_frame_duration(data),
     }
+}
+
+/// ISO/IEC 11172-3 §2.4.1.3 and ISO/IEC 13818-3: a Layer III frame holds
+/// 1152 samples, 576 in MPEG-2 and 2.5.
+fn mp3_frame_duration(frame: &[u8]) -> Result<u32> {
+    let &[0xFF, second @ 0xE0..=0xFF, ..] = frame else {
+        bail!("MP3 frame does not start with a sync word");
+    };
+    let version = (second >> 3) & 0x03;
+    ensure!(version != 0b01, "MP3 frame has the reserved version");
+    ensure!((second >> 1) & 0x03 == 0b01, "MP3 frame is not Layer III");
+    Ok(if version == 0b11 { 1_152 } else { 576 })
 }
 
 /// RFC 6716 §3.1: the TOC byte's configuration number gives the frame size
@@ -190,13 +206,17 @@ pub(super) fn video_trak(track_id: u32, config: &AvcDecoderConfigurationRecord) 
     ))
 }
 
-/// Fails for MP3, which has no sample entry here.
-pub(super) fn audio_trak(track_id: u32, config: &AudioConfig) -> Result<Bytes> {
+pub(super) fn audio_trak(track_id: u32, config: &AudioConfig) -> Bytes {
     let timescale = audio_timescale(config);
     let sample_entry = match config {
         AudioConfig::Aac(config) => plain_box(
             b"mp4a",
-            &audio_sample_entry(config.channel_count(), 16, timescale, &esds(config)),
+            &audio_sample_entry(
+                config.channel_count(),
+                16,
+                timescale,
+                &esds(AAC_OBJECT_TYPE_INDICATION, Some(&config.to_bytes())),
+            ),
         ),
         AudioConfig::Opus {
             sample_rate,
@@ -210,16 +230,35 @@ pub(super) fn audio_trak(track_id: u32, config: &AudioConfig) -> Result<Bytes> {
         AudioConfig::Pcma { channels, .. } => {
             plain_box(b"alaw", &audio_sample_entry(*channels, 8, timescale, &[]))
         }
-        AudioConfig::Mp3 { .. } => bail!("MP3 audio cannot be muxed into fMP4"),
+        // MPEG-1 audio covers 32 kHz and up; lower rates are MPEG-2 LSF.
+        AudioConfig::Mp3 {
+            sample_rate,
+            channels,
+        } => {
+            let object_type_indication = if *sample_rate >= 32_000 {
+                MPEG1_AUDIO_OBJECT_TYPE_INDICATION
+            } else {
+                MPEG2_AUDIO_OBJECT_TYPE_INDICATION
+            };
+            plain_box(
+                b"mp4a",
+                &audio_sample_entry(
+                    *channels,
+                    16,
+                    timescale,
+                    &esds(object_type_indication, None),
+                ),
+            )
+        }
     };
     let smhd = full_box(b"smhd", 0, 0, &[0; 4]);
-    Ok(trak(
+    trak(
         tkhd(track_id, 0x0100, 0, 0),
         mdhd(timescale),
         hdlr(b"soun", "SoundHandler"),
         smhd,
         stbl(&sample_entry),
-    ))
+    )
 }
 
 /// ISO/IEC 14496-12 §12.2.3 AudioSampleEntry followed by the codec's boxes.
@@ -381,14 +420,18 @@ fn descriptor(tag: u8, payload: &[u8]) -> Bytes {
     out.freeze()
 }
 
-fn esds(config: &AudioSpecificConfig) -> Bytes {
+/// ISO/IEC 14496-1 §7.2.6.6: stream type 0x05 (audio) with the upstream flag
+/// clear and the reserved bit set.
+fn esds(object_type_indication: u8, decoder_specific_info: Option<&[u8]>) -> Bytes {
     let mut decoder_config = BytesMut::new();
-    decoder_config.put_u8(0x40);
+    decoder_config.put_u8(object_type_indication);
     decoder_config.put_u8(0x15);
     decoder_config.put_bytes(0, 3);
     decoder_config.put_u32(0);
     decoder_config.put_u32(0);
-    decoder_config.put_slice(&descriptor(0x05, &config.to_bytes()));
+    if let Some(info) = decoder_specific_info {
+        decoder_config.put_slice(&descriptor(0x05, info));
+    }
     let mut es = BytesMut::new();
     es.put_u16(0);
     es.put_u8(0);
@@ -442,7 +485,7 @@ mod tests {
             sample_rate: 24_000,
             channels: 2,
         };
-        let trak = audio_trak(2, &config).unwrap();
+        let trak = audio_trak(2, &config);
         let trak = child(&trak, &["trak"]);
 
         // Assert: the entry runs at 48 kHz while dOps keeps the 24 kHz input rate
@@ -462,7 +505,7 @@ mod tests {
             sample_rate: 8_000,
             channels: 1,
         };
-        let trak = audio_trak(2, &config).unwrap();
+        let trak = audio_trak(2, &config);
         let trak = child(&trak, &["trak"]);
 
         // Assert
@@ -476,15 +519,48 @@ mod tests {
     }
 
     #[test]
-    fn mp3_audio_has_no_sample_entry() {
-        // Arrange
-        let config = AudioConfig::Mp3 {
-            sample_rate: 44_100,
-            channels: 2,
-        };
+    fn mp3_track_is_an_mp4a_entry_with_the_mpeg_audio_object_type() {
+        // Arrange: (sample rate, objectTypeIndication)
+        let cases = [(44_100, 0x6B), (22_050, 0x69)];
+
+        for (sample_rate, object_type_indication) in cases {
+            // Act
+            let config = AudioConfig::Mp3 {
+                sample_rate,
+                channels: 2,
+            };
+            let trak = audio_trak(2, &config);
+            let trak = child(&trak, &["trak"]);
+
+            // Assert: ES_Descriptor (3 bytes) then the DecoderConfigDescriptor tag, size and OTI
+            assert_eq!(mdhd_timescale(trak), sample_rate);
+            let (kind, entry) = sample_entry(trak);
+            assert_eq!(kind, "mp4a");
+            let esds = child(&entry[28..], &["esds"]);
+            let es = &esds[4..];
+            assert_eq!(es[0], 0x03);
+            let decoder_config = &es[2 + 3..];
+            assert_eq!(decoder_config[0], 0x04);
+            assert_eq!(decoder_config[2], object_type_indication, "{sample_rate}");
+        }
+    }
+
+    #[test]
+    fn mp3_frame_duration_follows_the_version_bits() {
+        // Arrange: (second header byte, expected samples) for MPEG-1, 2 and 2.5 Layer III
+        let cases = [(0xFB, 1_152), (0xF3, 576), (0xE3, 576)];
 
         // Act / Assert
-        assert!(audio_trak(2, &config).is_err());
+        for (second, expected) in cases {
+            assert_eq!(
+                mp3_frame_duration(&[0xFF, second, 0x90, 0x64]).unwrap(),
+                expected
+            );
+        }
+        assert!(mp3_frame_duration(&[0x00, 0xFB]).is_err());
+        assert!(mp3_frame_duration(&[0xFF, 0xE9]).is_err());
+        assert!(mp3_frame_duration(&[0xFF, 0xFD]).is_err());
+        assert!(mp3_frame_duration(&[0xFF]).is_err());
     }
 
     #[test]

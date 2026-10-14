@@ -53,7 +53,7 @@ impl Fmp4TrackMuxer {
     pub fn init_segment(&self) -> Result<Bytes> {
         let trak = match &self.track {
             Track::Video(config) => isobmff::video_trak(TRACK_ID, config)?,
-            Track::Audio(config) => isobmff::audio_trak(TRACK_ID, config)?,
+            Track::Audio(config) => isobmff::audio_trak(TRACK_ID, config),
         };
         Ok(isobmff::init_segment(&[TrackInit {
             track_id: TRACK_ID,
