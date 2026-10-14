@@ -19,7 +19,7 @@ use crate::{
             enums::ResponseMessage,
         },
         data_plane::stream::{
-            fetch_data_receiver::FetchDataReceiver, stream_data_receiver::StreamDataReceiver,
+            fetch_data_receiver::FetchDataReceiver,
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
         domains::{fetch_handle::FetchHandle, session_context::SessionContext},
@@ -571,7 +571,7 @@ impl Subscriber {
             .instrument(span.clone())
             .await?;
             match stream_with_object {
-                IncomingObject::StreamHeader { .. } => {
+                IncomingObject::Subgroup(_) => {
                     span.record("object_kind", "stream_header");
                 }
                 IncomingObject::Datagram(_) => {
@@ -581,16 +581,14 @@ impl Subscriber {
             stream_with_object
         };
         match stream_with_object {
-            IncomingObject::StreamHeader { stream, header } => {
-                let first = StreamDataReceiver::new(stream, header);
-                Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
-                    first, receiver,
-                )))
-            }
-            IncomingObject::Datagram(object) => {
-                let data_receiver = DatagramReceiver::new(object, receiver).await;
-                Ok(DataReceiver::Datagram(data_receiver))
-            }
+            IncomingObject::Subgroup(first) => Ok(DataReceiver::Stream(
+                StreamDataReceiverFactory::new(first, receiver),
+            )),
+            IncomingObject::Datagram(object) => Ok(DataReceiver::Datagram(DatagramReceiver::new(
+                track_alias,
+                object,
+                receiver,
+            ))),
         }
     }
 }

@@ -207,8 +207,8 @@ mod tests {
     use crate::modules::{
         moqt::runtime::dispatch::incoming_object::IncomingObject,
         test_support::{
-            notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
-            subscription,
+            datagram_object, notify_datagram, register_and_take_data_receiver,
+            spawn_connected_dual_sessions, subscription,
         },
     };
 
@@ -257,7 +257,7 @@ mod tests {
         // Assert
         let received = receiver.try_recv();
         assert!(
-            matches!(&received, Ok(IncomingObject::Datagram(object)) if object.track_alias == TRACK_ALIAS),
+            matches!(&received, Ok(IncomingObject::Datagram(object)) if *object == datagram_object()),
             "{received:?}"
         );
     }

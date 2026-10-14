@@ -16,12 +16,8 @@ use crate::{
             enums::ResponseMessage,
             options::PublishOption,
         },
-        data_plane::{
-            object::fetch::FetchHeader,
-            stream::{
-                fetch_data_sender::FetchDataSender,
-                stream_data_sender_factory::StreamDataSenderFactory,
-            },
+        data_plane::stream::{
+            fetch_data_sender::FetchDataSender, stream_data_sender_factory::StreamDataSenderFactory,
         },
         domains::{
             pending_publish_namespace::PendingPublishNamespace,
@@ -199,7 +195,7 @@ impl Publisher {
 
     pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender> {
         let send_stream = self.session.transport_connection.open_uni().await?;
-        FetchDataSender::new(send_stream, FetchHeader::new(request_id)).await
+        FetchDataSender::new(self.session.control.version(), send_stream, request_id).await
     }
 }
 

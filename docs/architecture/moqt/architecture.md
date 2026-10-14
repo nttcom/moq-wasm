@@ -111,6 +111,7 @@ decides how a draft carries it. Only draft-14 is implemented: the adapter
 exists ahead of draft-18 support, as a deliberate exception to the
 coding-style rule that an abstraction waits for its second concrete use.
 
+- `Version` names the draft a session speaks.
 - `ControlChannel` is an enum with one variant per draft, matched in place
   instead of a trait object: the set of drafts is closed, the match is
   checked for exhaustiveness when a draft is added, and async methods need no
@@ -128,9 +129,17 @@ coding-style rule that an abstraction waits for its second concrete use.
   (withdraw or discard a late response), the 10 s response timeout,
   `ControlMessageReceiveTask` and the CLIENT_SETUP / SERVER_SETUP exchange
   (`draft14::setup`).
-- Not behind the adapter yet: the data-plane codecs (subgroup, datagram and
-  FETCH formats), the ALPN `moq-00` in `modules/transport`, and the error code
-  tables in `error_codes.rs`.
+- The data plane goes through the same seam. `SubgroupEncoder` and
+  `Version::encode_datagram` / `encode_fetch_header` / `encode_fetch_object`
+  lay out outgoing `Object`s. `Version::accept_uni_stream` reads the header
+  that tells a subgroup stream from a FETCH response and returns an
+  `IncomingStream`, `SubgroupReader` / `FetchReader` turn the rest of the
+  stream into `Object`s, and `Version::decode_datagram` decodes a datagram.
+  `draft14::objects` holds the draft-14 side (Object ID Deltas, Subgroup ID
+  forms, status codes) on top of the wire structs in `data_plane/object` and
+  the decoders in `data_plane/codec`.
+- Not behind the adapter yet: the ALPN `moq-00` in `modules/transport` and the
+  error code tables in `error_codes.rs`.
 
 ## Session establishment (`modules/moqt/domains`)
 
@@ -164,8 +173,8 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 | Task | Role |
 | --- | --- |
 | control receiver (`ControlReceiver::spawn`; draft-14: `ControlMessageReceiveTask`) | reads the control stream, decodes messages, routes them (see below). Holds only a `Weak<SessionContext>` so it cannot keep the session alive. |
-| `UniStreamReceiveTask` | accepts incoming unidirectional streams; the first frame must be a subgroup header (→ `SubscriptionNotifier`) or fetch header (→ `FetchNotifier`). |
-| `DatagramReceiveTask` | receives datagrams, decodes `ObjectDatagram`, dispatches via `SubscriptionNotifier`. |
+| `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `SubscriptionNotifier`, a FETCH response to `FetchNotifier`. |
+| `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
 
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
@@ -359,14 +368,15 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `tokio_reader`.
 - `stream/*` — send/receive wrappers:
   - `StreamDataSenderFactory::next()` opens one uni stream per subgroup and
-    returns a `StreamDataSender`.
+    returns a `StreamDataSender` for the session's `Version`.
   - `StreamDataSender` uses a **typestate** (`Uninitialized` → `start()`
     → `HeaderSent`) so "header before objects" is enforced at compile time.
-    `start(SubgroupStart)` always declares extensions present and encodes the
-    subgroup id explicitly; `send_object(&Object)` computes the Object ID
-    Delta from the previous object and rejects ids that do not increase. The
-    raw `send_header` / `send` stay crate-private for `TrackWriter`, which
-    picks its header type itself.
+    For draft-14, `start(SubgroupStart)` always declares extensions present
+    and omits the Subgroup ID field for subgroup 0; `send_object(&Object)`
+    computes the Object ID Delta from the previous object and rejects ids that
+    do not increase. `TrackWriter` sends through the same two calls. Raw
+    header and object-field sends exist only in tests of how a receiver
+    resolves each header type and delta.
   - `StreamDataReceiver::receive()` returns `Subgroup::Header(SubgroupStart)`
     and then `Subgroup::Object(Object)` with absolute ids: header types
     without a Subgroup ID field mean subgroup 0, and the "first object id"
@@ -407,8 +417,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `SessionContext::object_sinks`.
 - `FetchNotifier` routes FETCH streams by request id as a
   `FetchDataReceiver`.
-- `IncomingObject` is the per-track-alias envelope (`StreamHeader` /
-  `Datagram`); FETCH streams never enter the per-track channel.
+- `IncomingObject` is the per-track-alias envelope (`Subgroup` holding a
+  `StreamDataReceiver` / `Datagram` holding an `Object`); FETCH streams never
+  enter the per-track channel.
 
 ## Key invariants
 
