@@ -21,8 +21,12 @@ const RECENT_LAG_WINDOW_MS = 1_000
 const THROUGHPUT_SAFETY = 0.8
 const INITIAL_UP_HOLD_MS = 10_000
 const MAX_UP_HOLD_MS = 120_000
+/// Each spell this long without congestion halves a doubled calm spell, down to
+/// `INITIAL_UP_HOLD_MS`.
+const UP_HOLD_DECAY_MS = 60_000
 /// A step down this soon after a step up means the higher rendition did not fit.
 const FAILED_UP_MS = 20_000
+const RAISE_BLOCK_MS = 10_000
 
 /// The renditions of `current`'s `altGroup`, lowest bitrate first. A track
 /// without a catalog bitrate, such as the untranscoded source, is estimated
@@ -83,7 +87,9 @@ export class AdaptiveBitrate {
   private baselineLagMs: number | undefined
   private calmSinceMs = 0
   private upHoldMs = INITIAL_UP_HOLD_MS
+  private upHoldChangedAtMs = 0
   private lastUpAtMs: number | undefined
+  private lastCongestedAtMs: number | undefined
 
   /// A rendition started playing.
   restart(nowMs: number): void {
@@ -115,13 +121,37 @@ export class AdaptiveBitrate {
     }
     if (stalled || this.congested(nowMs)) {
       this.calmSinceMs = nowMs
+      this.lastCongestedAtMs = nowMs
       return this.stepDown(nowMs, ladder, index)
     }
+    this.relaxUpHold(nowMs)
     if (index + 1 < ladder.length && nowMs - this.calmSinceMs >= this.upHoldMs) {
       this.lastUpAtMs = nowMs
       return ladder[index + 1].name
     }
     return undefined
+  }
+
+  /// Returns the top of `ladder` when it lies above `current`, after something other than
+  /// the path raised the ladder's ceiling, such as a picture shown taller. Counts as a step up.
+  /// Returns undefined while the path was congested in the last `RAISE_BLOCK_MS`.
+  raiseTo(nowMs: number, ladder: Rung[], current: string): string | undefined {
+    const index = ladder.findIndex((rung) => rung.name === current)
+    const top = ladder.at(-1)
+    const congestedRecently = this.lastCongestedAtMs !== undefined && nowMs - this.lastCongestedAtMs < RAISE_BLOCK_MS
+    if (!top || index < 0 || index === ladder.length - 1 || congestedRecently) {
+      return undefined
+    }
+    this.lastUpAtMs = nowMs
+    return top.name
+  }
+
+  private relaxUpHold(nowMs: number): void {
+    const calmFromMs = Math.max(this.lastCongestedAtMs ?? 0, this.upHoldChangedAtMs)
+    if (this.upHoldMs > INITIAL_UP_HOLD_MS && nowMs - calmFromMs >= UP_HOLD_DECAY_MS) {
+      this.upHoldMs = Math.max(INITIAL_UP_HOLD_MS, this.upHoldMs / 2)
+      this.upHoldChangedAtMs = nowMs
+    }
   }
 
   private congested(nowMs: number): boolean {
@@ -143,6 +173,7 @@ export class AdaptiveBitrate {
     }
     if (this.lastUpAtMs !== undefined && nowMs - this.lastUpAtMs < FAILED_UP_MS) {
       this.upHoldMs = Math.min(this.upHoldMs * 2, MAX_UP_HOLD_MS)
+      this.upHoldChangedAtMs = nowMs
     }
     this.lastUpAtMs = undefined
     const fits = THROUGHPUT_SAFETY * this.throughputBps(nowMs)

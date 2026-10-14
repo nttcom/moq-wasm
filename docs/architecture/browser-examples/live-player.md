@@ -414,7 +414,8 @@ second standing more than 400 ms above the least lag since the rendition
 started, or a stall. It then picks the highest rendition at or below 80 % of the
 throughput of the last 2 s, which while the path is the bottleneck is what the
 path carries. A step up is a trial of the next rendition after a calm spell of
-10 s; a trial that has to step down within 20 s doubles the spell, up to 120 s.
+10 s; a trial that has to step down within 20 s doubles the spell, up to 120 s,
+and each minute without congestion halves it again.
 The first 3 s after a switch are left out, since the lag of the two renditions
 differs by the transcoding delay. Every change goes through the rendition
 switch above, so a step costs no picture gap; CMAF mode and review do not adapt.

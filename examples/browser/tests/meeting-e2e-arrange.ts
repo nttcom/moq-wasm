@@ -27,14 +27,14 @@ const FORWARDED_CONSOLE_TEXT_PATTERN =
 
 async function openMeetingPage(page: Page, jwt: string | undefined, extra: Record<string, string>): Promise<void> {
   const params = new URLSearchParams({
-    ...extra,
     keyframeInterval: String(KEYFRAME_INTERVAL),
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
     e2eVideoHeight: String(E2E_VIDEO_HEIGHT),
     e2eVideoFramerate: String(E2E_VIDEO_FRAMERATE),
     e2eVideoBitrate: String(E2E_VIDEO_BITRATE),
     relayAUrl: RELAY_A_URL,
-    relayBUrl: RELAY_B_URL
+    relayBUrl: RELAY_B_URL,
+    ...extra
   })
   if (jwt) {
     params.set('jwt', jwt)
@@ -119,14 +119,30 @@ export async function enableMedia(model: MeetingClientPageModel): Promise<void> 
   await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
 }
 
+// Locate the header chip of a remote member, which carries its catalog and track states.
+function getMemberChip(page: Page, memberName: string): Locator {
+  return page.getByTestId(`member-chip-${memberName}`)
+}
+
 // Locate the member card for a remote member by name.
 export function getMemberCard(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-card-${memberName}`)
 }
 
-// Locate the catalog status span inside a member card.
-export function getCatalogStatus(page: Page, memberName: string): Locator {
-  return page.getByTestId(`catalog-status-${memberName}`)
+// Wait until a remote member's header chip reports its catalog state (e.g. 'Subscribed').
+export async function expectCatalogStatus(page: Page, memberName: string, status: string, timeout = 15_000) {
+  await expect(getMemberChip(page, memberName)).toHaveAttribute('data-catalog-status', status, { timeout })
+}
+
+// Open the details of a remote member, where its tracks are selected and subscribed.
+export async function openMemberDetails(page: Page, memberName: string): Promise<void> {
+  await page.getByTestId(`member-menu-${memberName}`).click()
+}
+
+export async function openChat(model: MeetingClientPageModel): Promise<void> {
+  if (!(await model.chatInput.isVisible())) {
+    await model.page.getByTestId('chat-toggle-button').click()
+  }
 }
 
 // Locate the video element inside a remote member card.
@@ -139,32 +155,25 @@ export function getMemberStats(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-stats-${memberName}`)
 }
 
-// Locate the subscribe-video button for a remote member.
-export function getSubscribeVideoButton(page: Page, memberName: string): Locator {
-  return page.getByTestId(`subscribe-video-button-${memberName}`)
-}
-
-// Locate the subscribe-audio button for a remote member.
-export function getSubscribeAudioButton(page: Page, memberName: string): Locator {
-  return page.getByTestId(`subscribe-audio-button-${memberName}`)
-}
-
 // Locate a remote member's track select for a video role.
 export function getTrackSelect(page: Page, role: 'video' | 'screenshare', memberName: string): Locator {
   return page.getByTestId(`track-select-${role}-${memberName}`)
 }
 
-// Locate a remote member's per-role subscription status (e.g. 'Subscribed').
-export function getTrackStatus(
+// Wait until a remote member's header chip reports a per-role subscription state (e.g. 'Subscribed').
+export async function expectTrackStatus(
   page: Page,
   role: 'video' | 'audio' | 'chat' | 'screenshare',
-  memberName: string
-): Locator {
-  return page.getByTestId(`track-status-${role}-${memberName}`)
+  memberName: string,
+  status: string,
+  timeout = 15_000
+): Promise<void> {
+  await expect(getMemberChip(page, memberName)).toHaveAttribute(`data-${role}-status`, status, { timeout })
 }
 
 // Send a chat message from this client.
 export async function sendChatMessage(model: MeetingClientPageModel, text: string): Promise<void> {
+  await openChat(model)
   await model.chatInput.fill(text)
   await model.chatSendButton.click()
 }

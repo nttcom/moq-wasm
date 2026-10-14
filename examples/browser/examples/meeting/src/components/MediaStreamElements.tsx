@@ -5,9 +5,11 @@ interface MediaStreamVideoProps {
   muted?: boolean
   footer?: ReactNode
   testId?: string
+  /// Fills the parent instead of a 16:9 frame, without media controls.
+  fill?: boolean
 }
 
-export function MediaStreamVideo({ stream, muted = false, footer, testId }: MediaStreamVideoProps) {
+export function MediaStreamVideo({ stream, muted = false, footer, testId, fill = false }: MediaStreamVideoProps) {
   const ref = useRef<HTMLVideoElement | null>(null)
   const [hasFirstFrame, setHasFirstFrame] = useState(false)
 
@@ -19,8 +21,8 @@ export function MediaStreamVideo({ stream, muted = false, footer, testId }: Medi
   }, [stream])
 
   return (
-    <div className="w-full">
-      <div className="relative w-full aspect-video overflow-hidden rounded-lg bg-black">
+    <div className={fill ? 'h-full w-full' : 'w-full'}>
+      <div className={`relative w-full overflow-hidden bg-black ${fill ? 'h-full' : 'aspect-video rounded-lg'}`}>
         <video
           ref={ref}
           data-testid={testId}
@@ -28,7 +30,7 @@ export function MediaStreamVideo({ stream, muted = false, footer, testId }: Medi
           autoPlay
           playsInline
           muted={muted}
-          controls={hasFirstFrame}
+          controls={!fill && hasFirstFrame}
           onLoadedData={() => setHasFirstFrame(true)}
         />
       </div>
@@ -39,13 +41,15 @@ export function MediaStreamVideo({ stream, muted = false, footer, testId }: Medi
 
 interface PictureFrameProps {
   picture?: HTMLElement | null
-  placeholder: string
+  placeholder: ReactNode
   footer?: ReactNode
+  /// Fills the parent instead of a 16:9 frame, without media controls.
+  fill?: boolean
 }
 
 /// Shows a picture element the live pipeline owns (a `<video>` fed by a
 /// MediaStreamTrackGenerator, or a `<canvas>` where the generator is missing).
-export function PictureFrame({ picture, placeholder, footer }: PictureFrameProps) {
+export function PictureFrame({ picture, placeholder, footer, fill = false }: PictureFrameProps) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const [hasFirstFrame, setHasFirstFrame] = useState(false)
 
@@ -78,16 +82,16 @@ export function PictureFrame({ picture, placeholder, footer }: PictureFrameProps
 
   useEffect(() => {
     if (picture instanceof HTMLVideoElement) {
-      picture.controls = hasFirstFrame
+      picture.controls = !fill && hasFirstFrame
     }
-  }, [picture, hasFirstFrame])
+  }, [picture, hasFirstFrame, fill])
 
   return (
-    <div className="w-full">
-      <div className="relative w-full aspect-video overflow-hidden rounded-lg bg-black">
+    <div className={fill ? 'h-full w-full' : 'w-full'}>
+      <div className={`relative w-full overflow-hidden bg-black ${fill ? 'h-full' : 'aspect-video rounded-lg'}`}>
         <div ref={frameRef} className="h-full w-full" />
         {!hasFirstFrame && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-blue-200/70">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-slate-300">
             {placeholder}
           </div>
         )}

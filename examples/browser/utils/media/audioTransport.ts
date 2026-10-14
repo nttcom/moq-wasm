@@ -1,11 +1,12 @@
 import type { MOQTClient } from '../../pkg/moqt'
 import { MediaTransportState } from './transportState'
-import { buildLocHeader } from './loc'
+import { type AudioLevel, buildLocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
 
 export interface AudioChunkSendOptions {
   chunk: EncodedAudioChunk
   captureTimestampMicros?: number
+  audioLevel?: AudioLevel
   trackAliases: bigint[]
   client: MOQTClient
   transportState: MediaTransportState
@@ -14,6 +15,7 @@ export interface AudioChunkSendOptions {
 export async function sendAudioChunkViaMoqt({
   chunk,
   captureTimestampMicros,
+  audioLevel,
   trackAliases,
   client,
   transportState
@@ -37,7 +39,8 @@ export async function sendAudioChunkViaMoqt({
       ? Math.round(captureTimestampMicros)
       : monotonicUnixMicros()
   const locHeader = buildLocHeader({
-    captureTimestampMicros: resolvedCaptureTimestampMicros
+    captureTimestampMicros: resolvedCaptureTimestampMicros,
+    audioLevel
   })
 
   for (const alias of trackAliases) {

@@ -3,16 +3,16 @@ import {
   MEETING_JWT,
   arrangeMeetingClient,
   enableMedia,
-  getCatalogStatus,
+  expectCatalogStatus,
+  expectTrackStatus,
   getChatMessageByText,
   getMemberCard,
   getMemberStats,
   getMemberVideo,
-  getSubscribeAudioButton,
-  getSubscribeVideoButton,
   getTrackSelect,
-  getTrackStatus,
   joinRoom,
+  openChat,
+  openMemberDetails,
   sendChatMessage
 } from './meeting-e2e-arrange'
 
@@ -51,18 +51,14 @@ async function expectAudioPlaying(stats: import('@playwright/test').Locator): Pr
 
 // Wait until a remote member's catalog is fully subscribed on the viewer's screen.
 async function expectCatalogSubscribed(viewer: import('@playwright/test').Page, memberName: string): Promise<void> {
-  await expect(getCatalogStatus(viewer, memberName)).toHaveText('Subscribed', { timeout: 60_000 })
+  await expectCatalogStatus(viewer, memberName, 'Subscribed', 60_000)
 }
 
-// Click subscribe on a remote member's video+audio (no assertion).
-// Subscribing early — close to when publishers start — lets the subscriber catch a
-// fresh keyframe quickly; subscribing long after start would wait up to one keyframe
-// interval before the first frame can be decoded.
+// Wait until the viewer has subscribed a remote member's video+audio, which it does
+// on its own while the member's tile is on the stage.
 async function subscribeMedia(viewer: import('@playwright/test').Page, memberName: string): Promise<void> {
-  await getSubscribeVideoButton(viewer, memberName).click()
-  await getSubscribeAudioButton(viewer, memberName).click()
-  await expect(getTrackStatus(viewer, 'video', memberName)).toHaveText('Subscribed', { timeout: 60_000 })
-  await expect(getTrackStatus(viewer, 'audio', memberName)).toHaveText('Subscribed', { timeout: 60_000 })
+  await expectTrackStatus(viewer, 'video', memberName, 'Subscribed', 60_000)
+  await expectTrackStatus(viewer, 'audio', memberName, 'Subscribed', 60_000)
 }
 
 // Assert a remote member's video is playing and audio is being heard.
@@ -98,9 +94,9 @@ test('cross-relay: two clients on different relays see each other and receive vi
     await expect(client2.page.roomName).toHaveText(roomName)
 
     // Assert: Client1 側に bob のメンバーカードが現れ、カタログが自動購読されることを確認する。
-    await expect(getCatalogStatus(client1.page.page, 'bob')).toHaveText('Subscribed', { timeout: 60_000 })
+    await expectCatalogStatus(client1.page.page, 'bob', 'Subscribed', 60_000)
     // Assert: Client2 側に alice のメンバーカードが現れ、カタログが自動購読されることを確認する。
-    await expect(getCatalogStatus(client2.page.page, 'alice')).toHaveText('Subscribed', { timeout: 60_000 })
+    await expectCatalogStatus(client2.page.page, 'alice', 'Subscribed', 60_000)
 
     // Act: Client1/Client2 が相手の映像・音声を明示的に購読する。
     await subscribeMedia(client1.page.page, 'bob')
@@ -290,12 +286,13 @@ test('a viewer switches a member camera between renditions on the same picture',
     })
 
     // Act
+    await openMemberDetails(bob.page.page, 'alice')
     await getTrackSelect(bob.page.page, 'video', 'alice').selectOption('camera_e2e_e2e_low')
 
     // Assert: the same picture element plays the lower rendition, so the pipeline was kept
     await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(106)
     await expect(video).toHaveAttribute('data-before-switch', 'true')
-    await expect(getTrackStatus(bob.page.page, 'video', 'alice')).toHaveText('Subscribed')
+    await expectTrackStatus(bob.page.page, 'video', 'alice', 'Subscribed')
     await expectInterFramesDecoded(video)
 
     // Act
@@ -307,6 +304,91 @@ test('a viewer switches a member camera between renditions on the same picture',
   } finally {
     await alice.context.close()
     await bob.context.close()
+  }
+})
+
+test('Auto follows the size of a member tile when the view changes', async ({ browser }) => {
+  // Arrange: bob publishes 640x360 and 320x180, a filmstrip tile is 126 px tall, and carol speaks so she takes the focus
+  const params = {
+    e2eVideoCodec: 'avc1.42001F',
+    e2eVideoWidth: '640',
+    e2eVideoHeight: '360',
+    e2eVideoLowHeight: '180',
+    e2eVideoBitrate: '300000'
+  }
+  const alice = await arrangeMeetingClient(browser, { params })
+  const bob = await arrangeMeetingClient(browser, { params })
+  const carol = await arrangeMeetingClient(browser, { params })
+  const videoWidth = (video: import('@playwright/test').Locator) =>
+    video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
+
+  try {
+    const roomName = `e2e-tile-size-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await enableMedia(bob.page)
+    await bob.page.toggleMicrophoneButton.click()
+    await joinRoom(carol.page, roomName, 'carol', 'a')
+    await enableMedia(carol.page)
+    const bobVideo = getMemberVideo(alice.page.page, 'bob')
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 30_000 }).toBe(640)
+    await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+
+    // Act
+    await alice.page.page.getByTestId('stage-view-button').click()
+
+    // Assert: bob's filmstrip tile is shorter than 180 px, so Auto drops him to 320x180
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 20_000 }).toBe(320)
+
+    // Act
+    await alice.page.page.getByTestId('stage-view-button').click()
+
+    // Assert: the gallery tile raises the ceiling and Auto takes it without the calm spell of a network step up
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 8_000 }).toBe(640)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
+  }
+})
+
+test('closing the filmstrip unsubscribes the video of the members it hid', async ({ browser }) => {
+  // Arrange: carol turns her microphone off, so alice's speaker view focuses bob
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-filmstrip-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await enableMedia(bob.page)
+    await joinRoom(carol.page, roomName, 'carol', 'a')
+    await enableMedia(carol.page)
+    await carol.page.toggleMicrophoneButton.click()
+    await subscribeMedia(alice.page.page, 'bob')
+    await expectTrackStatus(alice.page.page, 'video', 'carol', 'Subscribed', 60_000)
+    // Assert: the beeps of bob's fake microphone carry voice activity in their LOC Audio Level
+    await expect(alice.page.page.getByTestId('member-chip-bob')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+    await alice.page.page.getByTestId('stage-view-button').click()
+
+    // Act
+    await alice.page.page.getByTestId('filmstrip-button').click()
+
+    // Assert: only the focused speaker's video is still received, and his audio with it
+    await expectTrackStatus(alice.page.page, 'video', 'carol', 'Not subscribed')
+    await expectTrackStatus(alice.page.page, 'video', 'bob', 'Subscribed')
+    await expectTrackStatus(alice.page.page, 'audio', 'bob', 'Subscribed')
+
+    // Act
+    await alice.page.page.getByTestId('filmstrip-button').click()
+
+    // Assert
+    await expectTrackStatus(alice.page.page, 'video', 'carol', 'Subscribed', 60_000)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
   }
 })
 
@@ -377,13 +459,14 @@ test('chat message sent by one client is displayed on the receiving client', asy
     await expectCatalogSubscribed(alice.page.page, 'bob')
     await expectCatalogSubscribed(bob.page.page, 'alice')
     // Assert: 送信前に bob が alice の chat トラックを自動購読し終えるまで待つ（メッセージ取りこぼし防止）。
-    await expect(getTrackStatus(bob.page.page, 'chat', 'alice')).toHaveText('Subscribed', { timeout: 60_000 })
+    await expectTrackStatus(bob.page.page, 'chat', 'alice', 'Subscribed', 60_000)
 
     // Act: alice が一意なチャットメッセージを送信する。
     const message = `hello-from-alice-${Date.now()}`
     await sendChatMessage(alice.page, message)
 
     // Assert: 受信側 bob のチャットに alice からのメッセージが表示される。
+    await openChat(bob.page)
     await expect(getChatMessageByText(bob.page.page, message)).toBeVisible({ timeout: 30_000 })
     // Assert: 送信側 alice のチャットにも自分のメッセージが表示される。
     await expect(getChatMessageByText(alice.page.page, message)).toBeVisible()

@@ -151,3 +151,43 @@ test('a picture shown 500 pixels tall caps the ladder at the first rendition tha
   expect(capLadderToHeight(ladder, 2_000)).toEqual(ladder)
   expect(capLadderToHeight(ladder, undefined)).toEqual(ladder)
 })
+
+test('a raised ceiling jumps to the top rendition at once', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 5_000, 4_000, () => 100)
+
+  // Act / Assert
+  expect(abr.raiseTo(5_000, LADDER, 'video_360p')).toBe('video')
+})
+
+test('a raised ceiling waits while the path was congested recently', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 5_000, 4_000, () => 100)
+  abr.decide(5_000, LADDER, 'video_480p', true)
+
+  // Act / Assert
+  expect(abr.raiseTo(6_000, LADDER, 'video_360p')).toBeUndefined()
+  expect(abr.raiseTo(15_000, LADDER, 'video_360p')).toBe('video')
+})
+
+test('a minute without congestion halves a lengthened calm spell again', () => {
+  // Arrange: a step up at 13 s fails at 18 s, doubling the spell to 20 s; the decision at 78 s, a minute later, halves it
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 13_000, 4_000, () => 100)
+  abr.decide(13_000, LADDER, 'video_360p', false)
+  abr.restart(13_000)
+  abr.decide(18_000, LADDER, 'video_480p', true)
+  abr.decide(78_000, LADDER, 'video', false)
+  abr.restart(78_000)
+
+  // Act: the spell after the switch at 78 s settles at 81 s
+  const choice = abr.decide(91_000, LADDER, 'video_720p', false)
+
+  // Assert: a 20 s spell would not have stepped up yet
+  expect(choice).toBe('video')
+})

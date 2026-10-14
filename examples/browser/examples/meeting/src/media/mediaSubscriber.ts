@@ -4,7 +4,7 @@ import { createPictureCanvas, createPictureVideo } from '@player/pictureElements
 import { AdaptiveBitrate, type Rung, capLadderToHeight } from '@player/adaptiveBitrate'
 import { RenditionSplice } from '@player/renditionSplice'
 import { monotonicUnixMicros } from '../../../../utils/media/clock'
-import { readLocHeader } from '../../../../utils/media/loc'
+import { type AudioLevel, readLocHeader } from '../../../../utils/media/loc'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import type { MediaKind } from '@player/trackContext'
 import type { TrackMediaConfig } from '../types/catalog'
@@ -24,6 +24,7 @@ export type VideoAdaptation = { ladder: Rung[]; onPreferred: (trackName: string)
 export interface MediaSubscriberHandlers {
   onRemotePicture?: (userId: string, source: RemoteVideoSource, picture: HTMLElement) => void
   onRemotePictureClosed?: (userId: string, source: RemoteVideoSource) => void
+  onAudioLevel?: (userId: string, audioLevel: AudioLevel) => void
 }
 
 type TrackRegistration = {
@@ -42,6 +43,8 @@ type PictureAdaptation = {
   bitrate: AdaptiveBitrate
   resizeObserver: ResizeObserver
   heightPx?: number
+  /// The bitrate of the top rendition the shown height allowed at the last choice.
+  ceilingBitrate?: number
   nextChoiceAtMs: number
 }
 
@@ -182,7 +185,13 @@ export class MediaSubscriber {
       configurePipeline(pipeline, registration)
     }
     if (kind === 'audio') {
-      this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => pipeline.push(kind, groupId, message))
+      this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => {
+        pipeline.push(kind, groupId, message)
+        const audioLevel = readLocHeader(message.locHeader).audioLevel
+        if (audioLevel) {
+          this.handlers.onAudioLevel?.(userId, audioLevel)
+        }
+      })
       return
     }
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
@@ -245,9 +254,14 @@ export class MediaSubscriber {
       return
     }
     const ladder = capLadderToHeight(adaptation.ladder, picture.heightPx)
-    const choice = ladder.some((rung) => rung.name === current)
-      ? picture.bitrate.decide(arrivedAtMs, ladder, current, false)
-      : ladder.at(-1)?.name
+    const ceilingBitrate = ladder.at(-1)?.bitrate
+    const raised =
+      picture.ceilingBitrate !== undefined && ceilingBitrate !== undefined && ceilingBitrate > picture.ceilingBitrate
+    picture.ceilingBitrate = ceilingBitrate
+    const choice = !ladder.some((rung) => rung.name === current)
+      ? ladder.at(-1)?.name
+      : ((raised ? picture.bitrate.raiseTo(arrivedAtMs, ladder, current) : undefined) ??
+        picture.bitrate.decide(arrivedAtMs, ladder, current, false))
     if (choice && choice !== current) {
       picture.nextChoiceAtMs = arrivedAtMs + SWITCH_WAIT_MS
       adaptation.onPreferred(choice)

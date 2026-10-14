@@ -1,9 +1,10 @@
 import { LocalMember, RemoteMember } from '../types/member'
-import { MediaStreamVideo, PictureFrame } from './MediaStreamElements'
-import { ReactNode, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
-import { BarChart3, Mic, MicOff, Minus, Monitor, Plus, Settings2, Video, VideoOff } from 'lucide-react'
+import { ControlBar } from './ControlBar'
+import { ParticipantTile } from './ParticipantTile'
+import { LOCAL_MEMBER_ID, type StageArrangement, type StageTile, galleryTileWidth } from '../utils/stageLayout'
 import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
@@ -100,9 +101,16 @@ interface MemberGridProps {
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
   onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
-  onUnsubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
   statsHistory: Map<string, SidebarStatsSample[]>
+  stage: StageArrangement
+  speakingMemberIds: Set<string>
+  filmstripOpen: boolean
+  onToggleView: () => void
+  onToggleFilmstrip: () => void
+  chatOpen: boolean
+  onToggleChat: () => void
+  onLeave: () => void
+  onTileHeight: (tileKey: string, heightPx: number) => void
 }
 
 export function MemberGrid({
@@ -150,77 +158,128 @@ export function MemberGrid({
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
   onSelectCatalogTrack,
-  onSubscribeTrack,
-  onUnsubscribeTrack,
-  statsHistory
+  statsHistory,
+  stage,
+  speakingMemberIds,
+  filmstripOpen,
+  onToggleView,
+  onToggleFilmstrip,
+  chatOpen,
+  onToggleChat,
+  onLeave,
+  onTileHeight
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false)
-  const [playoutModalTarget, setPlayoutModalTarget] = useState<string | null>(null)
-  const [statsModalTarget, setStatsModalTarget] = useState<string | null>(null)
+  const [detailsTarget, setDetailsTarget] = useState<string | null>(null)
+  const detailsMember = remoteMembers.find((member) => member.id === detailsTarget)
+  const [galleryRef, gallerySize] = useElementSize()
+  const galleryTile = galleryTileWidth(stage.others.length, gallerySize.width, gallerySize.height, GALLERY_GAP_PX)
 
-  const localPrimaryVideoStream = localVideoStream ?? localScreenShareStream ?? null
-  const localSecondaryVideoStream = localVideoStream && localScreenShareStream ? localScreenShareStream : null
+  const renderTile = (tile: StageTile) => {
+    if (tile.memberId === LOCAL_MEMBER_ID) {
+      const share = tile.source === 'screenshare'
+      return (
+        <ParticipantTile
+          name={localMember.name}
+          testId={share ? 'member-share-local' : 'member-card-local'}
+          stream={share ? localScreenShareStream : localVideoStream}
+          label={share ? 'Screen' : 'You'}
+          speaking={false}
+          onOpenDetails={() => setDetailsTarget(LOCAL_MEMBER_ID)}
+        />
+      )
+    }
+    const member = remoteMembers.find((candidate) => candidate.id === tile.memberId)
+    if (!member) {
+      return null
+    }
+    const pictures = remotePictures.get(member.id)
+    if (tile.source === 'screenshare') {
+      return (
+        <ParticipantTile
+          name={member.name}
+          testId={`member-share-${member.name}`}
+          picture={pictures?.screenshare ?? null}
+          label="Screen"
+          speaking={false}
+          onHeight={(heightPx) => onTileHeight(tile.key, heightPx)}
+          onOpenDetails={() => setDetailsTarget(member.id)}
+        />
+      )
+    }
+    const stats = remoteStats.get(member.id)?.camera
+    return (
+      <ParticipantTile
+        name={member.name}
+        testId={`member-card-${member.name}`}
+        menuTestId={`member-menu-${member.name}`}
+        picture={pictures?.camera ?? null}
+        speaking={speakingMemberIds.has(member.id)}
+        onHeight={(heightPx) => onTileHeight(tile.key, heightPx)}
+        footer={
+          <span data-testid={`member-stats-${member.name}`}>{stats ? formatLiveStats(stats) : 'Awaiting media'}</span>
+        }
+        onOpenDetails={() => setDetailsTarget(member.id)}
+      />
+    )
+  }
 
   return (
-    <section className="mt-8 grid gap-6 md:grid-cols-2 xl:grid-cols-2">
-      <MemberCard
-        key="local-member"
-        testId="member-card-local"
-        title={localMember.name}
-        headerActions={
-          <div className="flex items-center gap-2">
-            <ControlButton
-              active={cameraEnabled}
-              disabled={cameraBusy}
-              onClick={onToggleCamera}
-              activeLabel="Turn camera off"
-              inactiveLabel="Turn camera on"
-              IconOn={Video}
-              IconOff={VideoOff}
-              testId="toggle-camera-button"
-            />
-            <ControlButton
-              active={screenShareEnabled}
-              disabled={cameraBusy}
-              onClick={onToggleScreenShare}
-              activeLabel="Stop screen share"
-              inactiveLabel="Start screen share"
-              IconOn={Monitor}
-              IconOff={Monitor}
-            />
-            <ControlButton
-              active={microphoneEnabled}
-              disabled={microphoneBusy}
-              onClick={onToggleMicrophone}
-              activeLabel="Turn microphone off"
-              inactiveLabel="Turn microphone on"
-              IconOn={Mic}
-              IconOff={MicOff}
-              testId="toggle-microphone-button"
-            />
-            <IconButton ariaLabel="Select devices" onClick={() => setIsDeviceModalOpen(true)} title="Device settings">
-              <Settings2 className="h-4 w-4" />
-            </IconButton>
-            <IconButton ariaLabel="Show stats" title="Show stats" onClick={() => setStatsModalTarget(localMember.id)}>
-              <BarChart3 className="h-4 w-4" />
-            </IconButton>
-            <button
-              type="button"
-              onClick={() => setIsCatalogModalOpen(true)}
-              className="rounded-lg bg-white/10 px-2 py-2 text-xs font-semibold text-blue-100 transition hover:bg-white/20"
-            >
-              Catalog
-            </button>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-h-0 flex-1 gap-3 p-3">
+        {stage.view === 'gallery' ? (
+          <div
+            ref={galleryRef}
+            className="flex min-h-0 flex-1 flex-wrap content-center items-center justify-center overflow-hidden"
+            style={{ gap: GALLERY_GAP_PX }}
+          >
+            {stage.others.map((tile) => (
+              <div key={tile.key} className="aspect-video" style={{ width: galleryTile }}>
+                {renderTile(tile)}
+              </div>
+            ))}
           </div>
-        }
-        videoStream={localPrimaryVideoStream}
-        secondaryVideoStream={localSecondaryVideoStream}
-        secondaryVideoTitle={localSecondaryVideoStream ? 'Screen Share' : undefined}
-        muted
-        placeholder="Camera disabled"
-        secondaryPlaceholder="Screen share disabled"
-        details={<CatalogsPanel subscribedTracks={subscribedCatalogTracks} />}
+        ) : (
+          <>
+            <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
+              {stage.focus && (
+                <div key={stage.focus.key} className="h-full w-full">
+                  {renderTile(stage.focus)}
+                </div>
+              )}
+            </div>
+            {filmstripOpen && stage.others.length > 0 && (
+              <div className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto" data-testid="filmstrip">
+                {stage.others.map((tile) => (
+                  <div key={tile.key} className="aspect-video w-full shrink-0">
+                    {renderTile(tile)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <ControlBar
+        cameraEnabled={cameraEnabled}
+        microphoneEnabled={microphoneEnabled}
+        screenShareEnabled={screenShareEnabled}
+        cameraBusy={cameraBusy}
+        microphoneBusy={microphoneBusy}
+        onToggleCamera={onToggleCamera}
+        onToggleMicrophone={onToggleMicrophone}
+        onToggleScreenShare={onToggleScreenShare}
+        onOpenDevices={() => setIsDeviceModalOpen(true)}
+        onOpenCatalog={() => setIsCatalogModalOpen(true)}
+        onOpenStats={() => setDetailsTarget(LOCAL_MEMBER_ID)}
+        view={stage.view}
+        onToggleView={onToggleView}
+        filmstripOpen={stage.view === 'speaker' ? filmstripOpen : undefined}
+        onToggleFilmstrip={onToggleFilmstrip}
+        chatOpen={chatOpen}
+        onToggleChat={onToggleChat}
+        onLeave={onLeave}
       />
       {isDeviceModalOpen && (
         <DeviceModal title="Select Devices" onClose={() => setIsDeviceModalOpen(false)}>
@@ -278,214 +337,82 @@ export function MemberGrid({
           />
         </DeviceModal>
       )}
-      {remoteMembers.map((member) => {
-        const pictures = remotePictures.get(member.id)
-        const stats = remoteStats.get(member.id)
-        const primaryPicture = pictures?.camera ?? pictures?.screenshare ?? null
-        const primaryStats = pictures?.camera ? stats?.camera : stats?.screenshare
-        const secondaryPicture = pictures?.camera && pictures?.screenshare ? pictures.screenshare : null
-        return (
-          <MemberCard
-            key={member.id}
-            testId={`member-card-${member.name}`}
-            title={member.name}
-            headerActions={
-              <div className="flex items-center gap-2">
-                <IconButton
-                  ariaLabel="Configure playout"
-                  title="Playout settings"
-                  onClick={() => setPlayoutModalTarget(member.id)}
-                >
-                  <Settings2 className="h-4 w-4" />
-                </IconButton>
-                <IconButton ariaLabel="Show stats" title="Show stats" onClick={() => setStatsModalTarget(member.id)}>
-                  <BarChart3 className="h-4 w-4" />
-                </IconButton>
-              </div>
-            }
-            picture={primaryPicture}
-            videoFooter={
-              <div
-                data-testid={`member-stats-${member.name}`}
-                className="mt-1 break-words font-mono text-[11px] leading-relaxed text-blue-200/90"
-              >
-                {primaryStats ? formatLiveStats(primaryStats) : 'Awaiting media'}
-              </div>
-            }
-            secondaryPicture={secondaryPicture}
-            secondaryVideoTitle={secondaryPicture ? 'Screen Share' : undefined}
-            placeholder="Awaiting video"
-            secondaryPlaceholder="Awaiting screen share"
-            details={
-              <RemoteCatalogSubscribePanel
-                member={member}
-                tracks={remoteCatalogTracks.get(member.id) ?? []}
-                selected={remoteCatalogSelections.get(member.id)}
-                manualTrackKeys={manualTrackKeys}
-                isLoading={catalogLoadingMemberIds.has(member.id)}
-                isCatalogSubscribed={catalogSubscribedMemberIds.has(member.id)}
-                unsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
-                onSelectTrack={(role, trackName) => onSelectCatalogTrack(member.id, role, trackName)}
-                onSubscribe={(role) => onSubscribeTrack(member.id, role)}
-                onUnsubscribe={(role) => onUnsubscribeTrack(member.id, role)}
-              />
-            }
-          />
-        )
-      })}
-      {playoutModalTarget && (
-        <DeviceModal title="Playout" onClose={() => setPlayoutModalTarget(null)}>
-          <div className="space-y-3">
-            <h4 className="text-base font-semibold text-white">
-              Playout ({findMemberName(remoteMembers, playoutModalTarget)})
-            </h4>
-            <PlayoutControls
-              value={playoutSettings.get(playoutModalTarget)}
-              onChange={(settings) => onChangePlayoutSettings(playoutModalTarget, settings)}
-            />
-          </div>
-        </DeviceModal>
-      )}
-      {statsModalTarget && (
-        <DeviceModal
-          title={`Stats (${statsModalTarget === localMember.id ? localMember.name : findMemberName(remoteMembers, statsModalTarget)})`}
-          onClose={() => setStatsModalTarget(null)}
-          size="wide"
-        >
+      {detailsTarget === LOCAL_MEMBER_ID && (
+        <DeviceModal title={`${localMember.name} (You)`} onClose={() => setDetailsTarget(null)} size="wide">
           <div className="space-y-4">
-            <MemberStatsCharts samples={statsHistory.get(statsModalTarget) ?? []} />
+            <CatalogsPanel subscribedTracks={subscribedCatalogTracks} />
+            <MemberStatsCharts samples={statsHistory.get(localMember.id) ?? []} />
           </div>
         </DeviceModal>
       )}
-    </section>
-  )
-}
-
-interface MemberCardProps {
-  title: string
-  testId?: string
-  headerActions?: ReactNode
-  videoStream?: MediaStream | null
-  picture?: HTMLElement | null
-  videoFooter?: ReactNode
-  secondaryVideoStream?: MediaStream | null
-  secondaryPicture?: HTMLElement | null
-  secondaryVideoTitle?: string
-  placeholder: string
-  secondaryPlaceholder?: string
-  muted?: boolean
-  details: ReactNode
-}
-
-/// A remote card shows the picture elements its live pipelines own; the
-/// local card shows the capture streams.
-function MemberCard({
-  title,
-  testId,
-  headerActions,
-  videoStream,
-  picture,
-  videoFooter,
-  secondaryVideoStream,
-  secondaryPicture,
-  secondaryVideoTitle,
-  placeholder,
-  secondaryPlaceholder = 'Video unavailable',
-  muted = false,
-  details
-}: MemberCardProps) {
-  return (
-    <div data-testid={testId} className="rounded-2xl border border-white/10 bg-white/10 p-6 shadow-xl backdrop-blur">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-xl font-semibold text-white">{title}</h3>
-        {headerActions}
-      </div>
-      {picture !== undefined ? (
-        <PictureFrame picture={picture} placeholder={placeholder} footer={videoFooter} />
-      ) : (
-        <MediaStreamVideo stream={videoStream} muted={muted} footer={videoFooter} />
+      {detailsMember && (
+        <DeviceModal title={detailsMember.name} onClose={() => setDetailsTarget(null)} size="wide">
+          <div className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <RemoteCatalogSubscribePanel
+                member={detailsMember}
+                tracks={remoteCatalogTracks.get(detailsMember.id) ?? []}
+                selected={remoteCatalogSelections.get(detailsMember.id)}
+                manualTrackKeys={manualTrackKeys}
+                isLoading={catalogLoadingMemberIds.has(detailsMember.id)}
+                isCatalogSubscribed={catalogSubscribedMemberIds.has(detailsMember.id)}
+                unsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
+                onSelectTrack={(role, trackName) => onSelectCatalogTrack(detailsMember.id, role, trackName)}
+              />
+              <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
+                <div className="text-sm font-semibold text-blue-100">Playout</div>
+                <PlayoutControls
+                  value={playoutSettings.get(detailsMember.id)}
+                  onChange={(settings) => onChangePlayoutSettings(detailsMember.id, settings)}
+                />
+              </div>
+            </div>
+            <MemberStatsCharts samples={statsHistory.get(detailsMember.id) ?? []} />
+          </div>
+        </DeviceModal>
       )}
-      {(secondaryPicture || secondaryVideoStream) && (
-        <div className="mt-2 space-y-1">
-          {secondaryVideoTitle ? (
-            <div className="text-xs font-semibold text-blue-200">{secondaryVideoTitle}</div>
-          ) : null}
-          {secondaryPicture ? (
-            <PictureFrame picture={secondaryPicture} placeholder={secondaryPlaceholder} />
-          ) : (
-            <MediaStreamVideo stream={secondaryVideoStream} muted={muted} />
-          )}
-        </div>
-      )}
-      <div className="mt-4 space-y-3 text-sm text-blue-100">{details}</div>
     </div>
   )
 }
 
-interface ControlButtonProps {
-  active: boolean
-  disabled: boolean
-  onClick: () => void
-  activeLabel: string
-  inactiveLabel: string
-  IconOn: typeof Mic
-  IconOff: typeof MicOff
-  testId?: string
+const GALLERY_GAP_PX = 12
+
+function useElementSize(): [(element: HTMLDivElement | null) => void, { width: number; height: number }] {
+  const [element, setElement] = useState<HTMLDivElement | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    if (!element) {
+      return
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      setSize({ width: entry.contentRect.width, height: entry.contentRect.height })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element])
+  return [setElement, size]
 }
 
-function ControlButton({
-  active,
-  disabled,
-  onClick,
-  activeLabel,
-  inactiveLabel,
-  IconOn,
-  IconOff,
-  testId
-}: ControlButtonProps) {
-  const Icon = active ? IconOn : IconOff
-  const label = active ? activeLabel : inactiveLabel
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      data-testid={testId}
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg p-2 transition ${
-        active ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-white/10 text-blue-100 hover:bg-white/20'
-      } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
-    >
-      <Icon className="h-4 w-4" />
-    </button>
-  )
-}
-
-function IconButton({
-  ariaLabel,
-  onClick,
-  children,
-  title,
-  className
-}: {
-  ariaLabel: string
-  onClick: () => void
-  children: ReactNode
-  title?: string
-  className?: string
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={ariaLabel}
-      title={title}
-      onClick={onClick}
-      className={className ?? 'rounded-lg bg-white/10 px-2 py-2 text-blue-100 transition hover:bg-white/20'}
-    >
-      {children}
-    </button>
-  )
+/// The catalog and per-role subscription state of a remote member as `data-*`
+/// attributes, which the E2E tests read.
+export function memberStates(
+  member: RemoteMember,
+  isCatalogLoading: boolean,
+  isCatalogSubscribed: boolean,
+  unsubscribingTrackKeys: Set<string>
+): Record<string, string> {
+  const states: Record<string, string> = {
+    'data-catalog-status': isCatalogLoading ? 'Loading...' : isCatalogSubscribed ? 'Subscribed' : 'Waiting...'
+  }
+  for (const role of CATALOG_SUBSCRIBE_ROLES) {
+    const { isSubscribed, isSubscribing } = member.subscribedTracks[role]
+    states[`data-${role}-status`] = formatSubscribeStatus(
+      isSubscribed,
+      isSubscribing,
+      unsubscribingTrackKeys.has(buildTrackActionKey(member.id, role))
+    )
+  }
+  return states
 }
 
 function DeviceModal({
@@ -509,6 +436,7 @@ function DeviceModal({
           <h4 className="text-lg font-semibold">{title}</h4>
           <button
             onClick={onClose}
+            data-testid="modal-close-button"
             className="rounded-md bg-white/10 px-3 py-1 text-sm text-blue-100 transition hover:bg-white/20"
           >
             Close
@@ -518,10 +446,6 @@ function DeviceModal({
       </div>
     </div>
   )
-}
-
-function findMemberName(members: RemoteMember[], id: string): string {
-  return members.find((m) => m.id === id)?.name ?? id
 }
 
 function CatalogTrackEditor({
@@ -1174,9 +1098,7 @@ function RemoteCatalogSubscribePanel({
   isCatalogSubscribed,
   unsubscribingTrackKeys,
   manualTrackKeys,
-  onSelectTrack,
-  onSubscribe,
-  onUnsubscribe
+  onSelectTrack
 }: {
   member: RemoteMember
   tracks: MeetingCatalogTrack[]
@@ -1186,8 +1108,6 @@ function RemoteCatalogSubscribePanel({
   unsubscribingTrackKeys: Set<string>
   manualTrackKeys: Set<string>
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribe: (role: CatalogSubscribeRole) => void
-  onUnsubscribe: (role: CatalogSubscribeRole) => void
 }) {
   const memberName = member.name
   const trackRows = CATALOG_SUBSCRIBE_ROLES.map((role) => {
@@ -1216,8 +1136,6 @@ function RemoteCatalogSubscribePanel({
       </div>
       {visibleTrackRows.map((row) => {
         const busy = row.subscribing || row.unsubscribing
-        const canSubscribe = isCatalogSubscribed && Boolean(row.selectedTrack) && !row.subscribed && !busy
-        const canUnsubscribe = isCatalogSubscribed && row.subscribed && !busy
         return (
           <TrackSubscribeRow
             key={row.role}
@@ -1225,20 +1143,11 @@ function RemoteCatalogSubscribePanel({
             tracks={row.tracks}
             selected={row.selectedTrack}
             auto={row.auto}
-            disabled={!isCatalogSubscribed || busy || (row.subscribed && !isSwitchableRole(row.role))}
+            disabled={!isCatalogSubscribed || busy || row.role === 'chat'}
             statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
             statusTestId={`track-status-${row.role}-${memberName}`}
             selectTestId={`track-select-${row.role}-${memberName}`}
-            subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}
-            unsubscribeLabel={row.unsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
-            subscribeTestId={`subscribe-${row.role}-button-${memberName}`}
-            unsubscribeTestId={`unsubscribe-${row.role}-button-${memberName}`}
-            canSubscribe={canSubscribe}
-            canUnsubscribe={canUnsubscribe}
-            busy={busy}
             onChange={(trackName) => onSelectTrack(row.role, trackName)}
-            onSubscribe={() => onSubscribe(row.role)}
-            onUnsubscribe={() => onUnsubscribe(row.role)}
           />
         )
       })}
@@ -1257,16 +1166,7 @@ function TrackSubscribeRow({
   statusText,
   statusTestId,
   selectTestId,
-  subscribeLabel,
-  unsubscribeLabel,
-  subscribeTestId,
-  unsubscribeTestId,
-  canSubscribe,
-  canUnsubscribe,
-  busy,
-  onChange,
-  onSubscribe,
-  onUnsubscribe
+  onChange
 }: {
   title: string
   tracks: MeetingCatalogTrack[]
@@ -1276,16 +1176,7 @@ function TrackSubscribeRow({
   statusText: string
   statusTestId?: string
   selectTestId?: string
-  subscribeLabel: string
-  unsubscribeLabel: string
-  subscribeTestId?: string
-  unsubscribeTestId?: string
-  canSubscribe: boolean
-  canUnsubscribe: boolean
-  busy: boolean
   onChange: (trackName: string) => void
-  onSubscribe: () => void
-  onUnsubscribe: () => void
 }) {
   return (
     <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.03] p-2">
@@ -1295,7 +1186,7 @@ function TrackSubscribeRow({
           {statusText}
         </span>
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+      <div>
         <select
           value={auto ? AUTO_TRACK_SELECTION : selected}
           disabled={disabled}
@@ -1322,34 +1213,6 @@ function TrackSubscribeRow({
             </>
           )}
         </select>
-        <button
-          type="button"
-          disabled={!canSubscribe}
-          onClick={onSubscribe}
-          aria-label={subscribeLabel}
-          title={subscribeLabel}
-          data-testid={subscribeTestId}
-          className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
-            canSubscribe ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-500/70'
-          } ${busy ? 'cursor-wait opacity-70' : ''} ${!canSubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
-        >
-          <Plus className="h-4 w-4" />
-          <span className="sr-only">{subscribeLabel}</span>
-        </button>
-        <button
-          type="button"
-          disabled={!canUnsubscribe}
-          onClick={onUnsubscribe}
-          aria-label={unsubscribeLabel}
-          title={unsubscribeLabel}
-          data-testid={unsubscribeTestId}
-          className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
-            canUnsubscribe ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-500/70'
-          } ${busy ? 'cursor-wait opacity-70' : ''} ${!canUnsubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
-        >
-          <Minus className="h-4 w-4" />
-          <span className="sr-only">{unsubscribeLabel}</span>
-        </button>
       </div>
     </div>
   )

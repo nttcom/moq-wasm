@@ -1,24 +1,33 @@
+export type HeaderMember = { id: string; name: string; speaking: boolean; states: Record<string, string> }
+
 interface RoomHeaderProps {
   roomName: string
-  onLeave: () => void
+  members: HeaderMember[]
 }
 
-export function RoomHeader({ roomName, onLeave }: RoomHeaderProps) {
+/// Every remote member appears here, on the stage or not.
+export function RoomHeader({ roomName, members }: RoomHeaderProps) {
   return (
-    <header className="flex flex-col gap-4 border-b border-white/10 pb-8 md:flex-row md:items-center md:justify-between">
-      <div>
-        <p className="text-sm uppercase tracking-wide text-blue-300">Current Room</p>
-        <h1 className="text-4xl font-bold" data-testid="room-name">
-          {roomName}
-        </h1>
+    <header className="flex items-center gap-3 px-4 py-2 text-sm">
+      <h1 className="font-semibold" data-testid="room-name">
+        {roomName}
+      </h1>
+      <span className="text-slate-400">{members.length + 1} participants</span>
+      <div className="flex -space-x-1">
+        {members.map((member) => (
+          <span
+            key={member.id}
+            title={member.name}
+            data-testid={`member-chip-${member.name}`}
+            {...member.states}
+            className={`flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-[11px] font-semibold ring-2 ${
+              member.speaking ? 'ring-emerald-400' : 'ring-slate-950'
+            }`}
+          >
+            {member.name.slice(0, 1).toUpperCase()}
+          </span>
+        ))}
       </div>
-      <button
-        onClick={onLeave}
-        data-testid="room-leave-button"
-        className="px-6 py-3 rounded-lg bg-red-500 hover:bg-red-600 transition shadow-lg self-start md:self-auto"
-      >
-        Leave Room
-      </button>
     </header>
   )
 }

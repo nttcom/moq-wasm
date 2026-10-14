@@ -4,6 +4,7 @@ import type { MOQTClient } from '../../../../pkg/moqt'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
+import type { AudioLevel } from '../../../../utils/media/loc'
 import type { LocHeader } from '../../../../utils/media/loc'
 import { answerFetch, documentReplayTrack } from '../../../../utils/media/fetchReplay'
 import {
@@ -597,6 +598,7 @@ export class MediaPublisher {
             chunk: EncodedAudioChunk
             metadata: EncodedAudioChunkMetadata | undefined
             captureTimestampMicros?: number
+            audioLevel?: AudioLevel
           }
         | { type: 'bitrate'; media: 'audio'; kbps: number }
         | { type: 'configError'; media: 'audio'; reason: string; config: any }
@@ -620,7 +622,7 @@ export class MediaPublisher {
         return
       }
 
-      this.handleAudioTrackChunk(context, data.chunk, data.captureTimestampMicros)
+      this.handleAudioTrackChunk(context, data.chunk, data.captureTimestampMicros, data.audioLevel)
     }
 
     context.worker.postMessage({ type: 'config', config: this.buildAudioEncoderConfig(config) })
@@ -827,7 +829,8 @@ export class MediaPublisher {
   private handleAudioTrackChunk(
     context: AudioTrackEncoderContext,
     chunk: EncodedAudioChunk,
-    captureTimestampMicros?: number
+    captureTimestampMicros?: number,
+    audioLevel?: AudioLevel
   ): void {
     const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
       context.transportState.resetAlias(alias)
@@ -848,6 +851,7 @@ export class MediaPublisher {
         await sendAudioChunkViaMoqt({
           chunk,
           captureTimestampMicros,
+          audioLevel,
           trackAliases: aliases,
           client,
           transportState: context.transportState

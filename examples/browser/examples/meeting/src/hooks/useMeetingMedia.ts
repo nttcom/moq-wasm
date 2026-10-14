@@ -37,8 +37,18 @@ import {
 } from '../media/meetingCatalog'
 import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
 import type { VideoSendTiming } from '../types/stats'
+import { DominantSpeaker } from '../media/dominantSpeaker'
+
+const SPEAKER_UPDATE_INTERVAL_MS = 250
+
+function sameMembers(a: Set<string>, b: Set<string>): boolean {
+  return a.size === b.size && [...a].every((member) => b.has(member))
+}
 
 interface UseMeetingMediaResult {
+  /// The remote member to focus, from the LOC Audio Level of their audio.
+  activeSpeakerId: string | undefined
+  speakingMemberIds: Set<string>
   cameraEnabled: boolean
   screenShareEnabled: boolean
   microphoneEnabled: boolean
@@ -120,6 +130,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [localCameraVideoSendTiming, setLocalCameraVideoSendTiming] = useState<VideoSendTiming | null>(null)
   const [localScreenShareVideoSendTiming, setLocalScreenShareVideoSendTiming] = useState<VideoSendTiming | null>(null)
   const [remotePictures, setRemotePictures] = useState<Map<string, RemotePictures>>(new Map())
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string | undefined>(undefined)
+  const [speakingMemberIds, setSpeakingMemberIds] = useState<Set<string>>(new Set())
   const [playoutSettings, setPlayoutSettingsState] = useState<Map<string, PlayoutSettings>>(new Map())
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
@@ -235,6 +247,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       onAudioEncodingAdjusted: (settings) => setSelectedAudioEncoding(settings),
       onScreenShareEncodingApplied: (settings) => setSelectedScreenShareEncoding(settings)
     })
+    const dominantSpeaker = new DominantSpeaker()
     subscriber.setHandlers({
       onRemotePicture: (userId, source, picture) =>
         setRemotePictures((prev) => {
@@ -252,10 +265,19 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
           const { [source]: _closed, ...rest } = current
           updated.set(userId, rest)
           return updated
-        })
+        }),
+      onAudioLevel: (userId, audioLevel) => dominantSpeaker.observe(userId, audioLevel, performance.now())
     })
+    const speakerTimer = window.setInterval(() => {
+      const nowMs = performance.now()
+      const current = dominantSpeaker.current(nowMs)
+      setActiveSpeakerId((previous) => (previous === current ? previous : current))
+      const speaking = dominantSpeaker.speaking(nowMs)
+      setSpeakingMemberIds((previous) => (sameMembers(previous, speaking) ? previous : speaking))
+    }, SPEAKER_UPDATE_INTERVAL_MS)
 
     return () => {
+      window.clearInterval(speakerTimer)
       publisher.setHandlers({})
       subscriber.setHandlers({})
       setRemotePictures(new Map())
@@ -625,6 +647,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   )
 
   return {
+    activeSpeakerId,
+    speakingMemberIds,
     cameraEnabled,
     screenShareEnabled,
     microphoneEnabled,
