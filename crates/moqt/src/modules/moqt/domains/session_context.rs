@@ -89,9 +89,9 @@ pub(crate) struct SessionContext {
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
     pub(crate) fetch_notification_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
+        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
     pub(crate) fetch_receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
+        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
 }
 
 enum ObjectSink {
@@ -164,8 +164,8 @@ impl SessionContext {
             inflight_requests: std::sync::Mutex::new(InflightRequests::default()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_notification_map: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_receiver_map: tokio::sync::Mutex::new(HashMap::new()),
+            fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
+            fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -320,9 +320,28 @@ impl SessionContext {
         self.receiver_map.lock().await.remove(&track_alias);
     }
 
-    pub(crate) async fn remove_pending_fetch(&self, request_id: RequestId) {
-        self.fetch_notification_map.lock().await.remove(&request_id);
-        self.fetch_receiver_map.lock().await.remove(&request_id);
+    /// Call before sending the FETCH: its data stream can arrive before FETCH_OK.
+    pub(crate) fn register_pending_fetch(&self, request_id: RequestId) {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
+        self.fetch_notification_map
+            .lock()
+            .expect("fetch_notification_map poisoned")
+            .insert(request_id, sender);
+        self.fetch_receiver_map
+            .lock()
+            .expect("fetch_receiver_map poisoned")
+            .insert(request_id, receiver);
+    }
+
+    pub(crate) fn remove_pending_fetch(&self, request_id: RequestId) {
+        self.fetch_notification_map
+            .lock()
+            .expect("fetch_notification_map poisoned")
+            .remove(&request_id);
+        self.fetch_receiver_map
+            .lock()
+            .expect("fetch_receiver_map poisoned")
+            .remove(&request_id);
     }
 
     /// Awaits a response to a control message with a bounded timeout (§12.2).
@@ -430,7 +449,7 @@ impl SessionContext {
                         request_id,
                         "FETCH_OK arrived after the request was abandoned; sending FETCH_CANCEL"
                     );
-                    self.remove_pending_fetch(request_id).await;
+                    self.remove_pending_fetch(request_id);
                     self.send_stream
                         .send(
                             ControlMessageType::FetchCancel,
@@ -528,7 +547,6 @@ mod tests {
                     },
                     enums::ResponseMessage,
                 },
-                data_plane::stream::fetch_data_receiver::FetchDataReceiver,
                 runtime::dispatch::incoming_object::IncomingObject,
             },
             test_support::{
@@ -758,18 +776,7 @@ mod tests {
         // Arrange: the fetch future was dropped, so its maps were never cleaned up
         let (client, server) = spawn_connected_dual_sessions("late-fetch-ok").await;
         let context = server.subscriber().session;
-        let (fetch_stream_sender, fetch_stream_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
-        context
-            .fetch_notification_map
-            .lock()
-            .await
-            .insert(REQUEST_ID, fetch_stream_sender);
-        context
-            .fetch_receiver_map
-            .lock()
-            .await
-            .insert(REQUEST_ID, fetch_stream_receiver);
+        context.register_pending_fetch(REQUEST_ID);
 
         // Act
         context
@@ -785,14 +792,14 @@ mod tests {
             !context
                 .fetch_notification_map
                 .lock()
-                .await
+                .unwrap()
                 .contains_key(&REQUEST_ID)
         );
         assert!(
             !context
                 .fetch_receiver_map
                 .lock()
-                .await
+                .unwrap()
                 .contains_key(&REQUEST_ID)
         );
     }
