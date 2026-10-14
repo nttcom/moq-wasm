@@ -9,6 +9,8 @@ export const MEETING_JWT = process.env.MEETING_E2E_JWT || undefined
 export interface ArrangeMeetingClientOptions {
   // Overrides the default JWT (MEETING_JWT). Pass an invalid token to exercise rejection.
   jwt?: string
+  // Extra page URL parameters, such as e2eVideoLowHeight for a second camera rendition.
+  params?: Record<string, string>
 }
 
 // Use a short camera keyframe interval (~1s at 15fps) so newly-subscribed clients
@@ -23,8 +25,9 @@ let meetingClientCounter = 0
 const FORWARDED_CONSOLE_TEXT_PATTERN =
   /\[meeting\]\[publisher\]\[video\]|\[meeting\]\[catalog\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
-async function openMeetingPage(page: Page, jwt: string | undefined): Promise<void> {
+async function openMeetingPage(page: Page, jwt: string | undefined, extra: Record<string, string>): Promise<void> {
   const params = new URLSearchParams({
+    ...extra,
     keyframeInterval: String(KEYFRAME_INTERVAL),
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
     e2eVideoHeight: String(E2E_VIDEO_HEIGHT),
@@ -69,7 +72,10 @@ function createMeetingClientPageModel(page: Page) {
 
 export type MeetingClientPageModel = ReturnType<typeof createMeetingClientPageModel>
 
-export async function arrangeMeetingClient(browser: Browser, { jwt = MEETING_JWT }: ArrangeMeetingClientOptions = {}) {
+export async function arrangeMeetingClient(
+  browser: Browser,
+  { jwt = MEETING_JWT, params = {} }: ArrangeMeetingClientOptions = {}
+) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']
@@ -77,7 +83,7 @@ export async function arrangeMeetingClient(browser: Browser, { jwt = MEETING_JWT
   const rawPage = await context.newPage()
   const label = `meeting-client-${++meetingClientCounter}`
   forwardFilteredPageConsole(rawPage, label)
-  await openMeetingPage(rawPage, jwt)
+  await openMeetingPage(rawPage, jwt, params)
   return {
     context,
     page: createMeetingClientPageModel(rawPage)
@@ -141,6 +147,11 @@ export function getSubscribeVideoButton(page: Page, memberName: string): Locator
 // Locate the subscribe-audio button for a remote member.
 export function getSubscribeAudioButton(page: Page, memberName: string): Locator {
   return page.getByTestId(`subscribe-audio-button-${memberName}`)
+}
+
+// Locate a remote member's track select for a video role.
+export function getTrackSelect(page: Page, role: 'video' | 'screenshare', memberName: string): Locator {
+  return page.getByTestId(`track-select-${role}-${memberName}`)
 }
 
 // Locate a remote member's per-role subscription status (e.g. 'Subscribed').

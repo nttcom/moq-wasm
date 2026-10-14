@@ -1,7 +1,7 @@
 import type { MediaCatalogTrack } from '../msf/catalog'
 
 /// A rendition of the switching set and the bitrate it needs, in bits per second.
-export type Rung = { name: string; bitrate: number }
+export type Rung = { name: string; bitrate: number; height?: number }
 
 /// One object of the rendition being played, when it arrived and how far
 /// behind its capture.
@@ -40,10 +40,20 @@ export function bitrateLadder(tracks: MediaCatalogTrack[], current: MediaCatalog
   for (const track of set) {
     const bitrate = track.bitrate ?? estimateBitrate(track, reference)
     if (bitrate !== undefined) {
-      rungs.push({ name: track.name, bitrate })
+      rungs.push({ name: track.name, bitrate, height: track.height })
     }
   }
   return rungs.length > 1 ? rungs.sort((a, b) => a.bitrate - b.bitrate) : []
+}
+
+/// The rungs up to the first one at least `height` pixels tall: a picture shown
+/// that small gains nothing from a taller rendition.
+export function capLadderToHeight(ladder: Rung[], height: number | undefined): Rung[] {
+  if (height === undefined) {
+    return ladder
+  }
+  const fitting = ladder.findIndex((rung) => rung.height !== undefined && rung.height >= height)
+  return fitting < 0 ? ladder : ladder.slice(0, fitting + 1)
 }
 
 function pixels(track: MediaCatalogTrack): number | undefined {

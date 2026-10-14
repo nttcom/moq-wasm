@@ -59,7 +59,10 @@ export async function sendVideoChunkViaMoqt({
 
   if (chunk.type === 'key') {
     await endVideoGroup(client, trackAliases, transportState)
-    transportState.video.advanceGroup()
+    // Numbering groups by the capture time of their keyframe orders the groups of
+    // independently encoded renditions by media time, which a viewer switching
+    // between them relies on.
+    transportState.video.advanceGroup(BigInt(resolvedCaptureTimestampMicros))
     // Send the keyframe to every alias and mark each one as having received a keyframe.
     for (const alias of trackAliases) {
       for (const subgroup of transportState.video.listSubgroups()) {

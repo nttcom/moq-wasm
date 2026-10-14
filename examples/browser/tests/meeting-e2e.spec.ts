@@ -10,6 +10,7 @@ import {
   getMemberVideo,
   getSubscribeAudioButton,
   getSubscribeVideoButton,
+  getTrackSelect,
   getTrackStatus,
   joinRoom,
   sendChatMessage
@@ -56,7 +57,7 @@ async function expectCatalogSubscribed(viewer: import('@playwright/test').Page, 
 // Click subscribe on a remote member's video+audio (no assertion).
 // Subscribing early — close to when publishers start — lets the subscriber catch a
 // fresh keyframe quickly; subscribing long after start would wait up to one keyframe
-// interval (10s by default) before the first frame can be decoded.
+// interval before the first frame can be decoded.
 async function subscribeMedia(viewer: import('@playwright/test').Page, memberName: string): Promise<void> {
   await getSubscribeVideoButton(viewer, memberName).click()
   await getSubscribeAudioButton(viewer, memberName).click()
@@ -260,6 +261,49 @@ test('repeated leave and rejoin keeps reconnecting with the same memberName', as
       await subscribeAndExpectMedia(bob.page.page, 'alice')
       await subscribeAndExpectMedia(alice.page.page, 'bob')
     }
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
+test('a viewer switches a member camera between renditions on the same picture', async ({ browser }) => {
+  // Arrange: alice publishes a 160x90 and a 106x60 rendition of one codec; bob plays the first
+  const params = { e2eVideoCodec: 'avc1.42001F', e2eVideoLowHeight: '60' }
+  const alice = await arrangeMeetingClient(browser, { params })
+  const bob = await arrangeMeetingClient(browser, { params })
+  const videoWidth = (video: import('@playwright/test').Locator) =>
+    video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
+
+  try {
+    const roomName = `e2e-switch-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await expectCatalogSubscribed(bob.page.page, 'alice')
+    await subscribeMedia(bob.page.page, 'alice')
+    const video = getMemberVideo(bob.page.page, 'alice')
+    await expectVideoPlaying(video)
+    await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(160)
+    await video.evaluate((element) => {
+      element.dataset.beforeSwitch = 'true'
+    })
+
+    // Act
+    await getTrackSelect(bob.page.page, 'video', 'alice').selectOption('camera_e2e_e2e_low')
+
+    // Assert: the same picture element plays the lower rendition, so the pipeline was kept
+    await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(106)
+    await expect(video).toHaveAttribute('data-before-switch', 'true')
+    await expect(getTrackStatus(bob.page.page, 'video', 'alice')).toHaveText('Subscribed')
+    await expectInterFramesDecoded(video)
+
+    // Act
+    await getTrackSelect(bob.page.page, 'video', 'alice').selectOption('@auto')
+
+    // Assert: the tile is taller than 90 px and delivery keeps up, so Auto steps back up after its calm spell
+    await expect.poll(async () => videoWidth(video), { timeout: 45_000 }).toBe(160)
+    await expect(video).toHaveAttribute('data-before-switch', 'true')
   } finally {
     await alice.context.close()
     await bob.context.close()

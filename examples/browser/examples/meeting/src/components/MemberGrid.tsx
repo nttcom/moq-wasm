@@ -14,7 +14,9 @@ import {
   type CatalogSelections,
   type CatalogSubscribeRole,
   type EditableMeetingCatalogTrack,
-  type MeetingCatalogTrack
+  type MeetingCatalogTrack,
+  AUTO_TRACK_SELECTION,
+  isSwitchableRole
 } from '../types/catalog'
 import { catalogTracksForRole } from '../media/meetingCatalog'
 import { buildTrackActionKey } from '../utils/state/roomState'
@@ -93,6 +95,7 @@ interface MemberGridProps {
   onRemoveCatalogTrack: (id: string) => void
   remoteCatalogTracks: Map<string, MeetingCatalogTrack[]>
   remoteCatalogSelections: Map<string, CatalogSelections>
+  manualTrackKeys: Set<string>
   catalogLoadingMemberIds: Set<string>
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
@@ -142,6 +145,7 @@ export function MemberGrid({
   onRemoveCatalogTrack,
   remoteCatalogTracks,
   remoteCatalogSelections,
+  manualTrackKeys,
   catalogLoadingMemberIds,
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
@@ -317,6 +321,7 @@ export function MemberGrid({
                 member={member}
                 tracks={remoteCatalogTracks.get(member.id) ?? []}
                 selected={remoteCatalogSelections.get(member.id)}
+                manualTrackKeys={manualTrackKeys}
                 isLoading={catalogLoadingMemberIds.has(member.id)}
                 isCatalogSubscribed={catalogSubscribedMemberIds.has(member.id)}
                 unsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
@@ -1168,6 +1173,7 @@ function RemoteCatalogSubscribePanel({
   isLoading,
   isCatalogSubscribed,
   unsubscribingTrackKeys,
+  manualTrackKeys,
   onSelectTrack,
   onSubscribe,
   onUnsubscribe
@@ -1178,6 +1184,7 @@ function RemoteCatalogSubscribePanel({
   isLoading: boolean
   isCatalogSubscribed: boolean
   unsubscribingTrackKeys: Set<string>
+  manualTrackKeys: Set<string>
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
   onSubscribe: (role: CatalogSubscribeRole) => void
   onUnsubscribe: (role: CatalogSubscribeRole) => void
@@ -1192,7 +1199,8 @@ function RemoteCatalogSubscribePanel({
       selectedTrack: selected?.[role] ?? roleTracks[0]?.name ?? '',
       subscribed: isSubscribed,
       subscribing: isSubscribing,
-      unsubscribing: unsubscribingTrackKeys.has(buildTrackActionKey(member.id, role))
+      unsubscribing: unsubscribingTrackKeys.has(buildTrackActionKey(member.id, role)),
+      auto: isSwitchableRole(role) ? !manualTrackKeys.has(buildTrackActionKey(member.id, role)) : undefined
     }
   })
   const visibleTrackRows = trackRows.filter(
@@ -1216,9 +1224,11 @@ function RemoteCatalogSubscribePanel({
             title={SUBSCRIBE_ROW_TITLES[row.role]}
             tracks={row.tracks}
             selected={row.selectedTrack}
-            disabled={!isCatalogSubscribed || row.subscribed || busy}
+            auto={row.auto}
+            disabled={!isCatalogSubscribed || busy || (row.subscribed && !isSwitchableRole(row.role))}
             statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
             statusTestId={`track-status-${row.role}-${memberName}`}
+            selectTestId={`track-select-${row.role}-${memberName}`}
             subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}
             unsubscribeLabel={row.unsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
             subscribeTestId={`subscribe-${row.role}-button-${memberName}`}
@@ -1236,13 +1246,17 @@ function RemoteCatalogSubscribePanel({
   )
 }
 
+/// `auto` is undefined for a role without adaptation; otherwise the select
+/// offers Auto and `auto` tells whether it is selected.
 function TrackSubscribeRow({
   title,
   tracks,
   selected,
+  auto,
   disabled,
   statusText,
   statusTestId,
+  selectTestId,
   subscribeLabel,
   unsubscribeLabel,
   subscribeTestId,
@@ -1257,9 +1271,11 @@ function TrackSubscribeRow({
   title: string
   tracks: MeetingCatalogTrack[]
   selected: string
+  auto?: boolean
   disabled: boolean
   statusText: string
   statusTestId?: string
+  selectTestId?: string
   subscribeLabel: string
   unsubscribeLabel: string
   subscribeTestId?: string
@@ -1281,8 +1297,9 @@ function TrackSubscribeRow({
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
         <select
-          value={selected}
+          value={auto ? AUTO_TRACK_SELECTION : selected}
           disabled={disabled}
+          data-testid={selectTestId}
           onChange={(event) => onChange(event.target.value)}
           className="w-full min-w-0 rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 disabled:opacity-60"
         >
@@ -1291,11 +1308,18 @@ function TrackSubscribeRow({
               No tracks
             </option>
           ) : (
-            tracks.map((track) => (
-              <option key={track.name} value={track.name} className="bg-slate-900 text-white">
-                {formatCatalogTrackLabel(track)}
-              </option>
-            ))
+            <>
+              {auto !== undefined && (
+                <option value={AUTO_TRACK_SELECTION} className="bg-slate-900 text-white">
+                  {`Auto (${tracks.find((track) => track.name === selected)?.label ?? selected})`}
+                </option>
+              )}
+              {tracks.map((track) => (
+                <option key={track.name} value={track.name} className="bg-slate-900 text-white">
+                  {formatCatalogTrackLabel(track)}
+                </option>
+              ))}
+            </>
           )}
         </select>
         <button

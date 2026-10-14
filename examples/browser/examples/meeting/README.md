@@ -19,9 +19,10 @@ Name and a User Name and join. `?jwt=<token>` connects with an app-scoped JWT
 ## Features
 
 - **Rooms**: participants are discovered through `SUBSCRIBE_NAMESPACE` on `/{RoomName}/`. Joining subscribes to nothing; media is chosen per participant.
-- **Publishing**: camera, microphone and screen share. Enabling a source adds three catalog profiles (camera and screen share: 1080p / 720p / 480p; audio: 128 / 64 / 32 kbps), each encoded by its own worker with the codec and bitrate of the profile. Codecs include H.264 High@5.0 and AV1.
+- **Publishing**: camera, microphone and screen share. Enabling a source adds three catalog profiles (camera and screen share: 1080p / 720p / 480p; audio: 128 / 64 / 32 kbps), each encoded by its own worker with the codec and bitrate of the profile, and only while someone subscribes to it. Codecs include H.264 High@5.0 and AV1. Video sends a keyframe every 2 s by default and numbers each group by the capture time of its keyframe, so the groups of different profiles are ordered by media time.
 - **Catalog editing**: `Catalog Details` adds, removes and edits tracks from presets; each video track has its own keyframe interval; each audio track sends either one stream or a new group every N seconds (default 1 s). Disabling a source keeps its tracks, since disabled may mean muted.
 - **Subscribing**: `Catalog Subscribe` on a participant card lists their tracks; `Subscribe Video` / `Subscribe Audio` pick one of each. The decoder is configured from the catalog codec and catalog updates are applied live.
+- **Quality switching**: the camera and screen share selects stay usable while subscribed. A track of the same codec takes over the picture at its first keyframe while the previous one plays on, then the previous one is unsubscribed; another codec resubscribes. `Auto` (the default) picks among the same-codec tracks itself: no taller than the tile, lower when the capture-to-arrival lag rises, one step higher after a calm spell, as in the Live Viewer. Picking a track turns `Auto` off.
 - **Playback**: each remote participant plays through the Live Player's live pipeline (`lib/player`, `LocLive`): one playout clock keeps the picture and the sound together behind an adaptive jitter buffer, and the sound is scheduled on an `AudioContext`. The playout settings (Min / Max buffer, Catch up) are per participant, as in the Live Viewer.
 - **Stats**: a per-participant modal charts bitrate, the playout buffer against its target, the capture-to-display delay (from the LOC capture timestamp) and the A/V offset. Each remote video shows a stats line with the same numbers.
 - **Chat** sidebar.
@@ -40,7 +41,7 @@ Name and a User Name and join. `?jwt=<token>` connects with an app-scoped JWT
 2. `SUBSCRIBE_NAMESPACE` on `/{RoomName}/`; `PUBLISH_NAMESPACE` arrives for every present and later participant.
 3. `PUBLISH_NAMESPACE` for `/{RoomName}/{UserName}`. The catalog object is sent on each catalog `SUBSCRIBE` and again whenever it changes.
 4. Media `SUBSCRIBE`s from others are answered on the alias of `SUBSCRIBE_OK`; audio tracks in group-update mode start a new group and subgroup stream every N seconds and close the previous one with EndOfGroup.
-5. Receiving mirrors this: catalog `SUBSCRIBE`, then per-track `SUBSCRIBE` and `UNSUBSCRIBE`; audio playback is reset on resubscribe.
+5. Receiving mirrors this: catalog `SUBSCRIBE`, then per-track `SUBSCRIBE` and `UNSUBSCRIBE`; audio playback is reset on resubscribe. A quality switch sends the `SUBSCRIBE` of the new track first and the `UNSUBSCRIBE` of the old one once the new one has taken over. A viewer joining a track the relay already receives starts at its next keyframe, since draft-14 gives the relay no way to ask the publisher for one.
 
 ## Stack
 

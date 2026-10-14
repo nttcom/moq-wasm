@@ -1,5 +1,14 @@
 export type CatalogTrackRole = 'video' | 'audio' | 'chat'
 export type CatalogSubscribeRole = 'video' | 'screenshare' | 'audio' | 'chat'
+
+/// The selection of a switchable role that leaves the track to the picture's
+/// adaptation; track names never start with `@`.
+export const AUTO_TRACK_SELECTION = '@auto'
+
+/// The roles whose track can change while subscribed; see `LocalSession.switchTrack`.
+export function isSwitchableRole(role: CatalogSubscribeRole): boolean {
+  return role === 'video' || role === 'screenshare'
+}
 export const CATALOG_SUBSCRIBE_ROLES: CatalogSubscribeRole[] = ['video', 'screenshare', 'audio', 'chat']
 export type CatalogSelections = Partial<Record<CatalogSubscribeRole, string>>
 export type AudioStreamUpdateMode = 'single' | 'interval'
@@ -44,4 +53,7 @@ export const DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS: AudioStreamUpdateSettings = {
   intervalSeconds: 1
 }
 
-export const DEFAULT_VIDEO_KEYFRAME_INTERVAL = 300
+/// In frames: 2 s at 30 fps. A viewer joining a rendition that the relay already
+/// receives starts at its next keyframe, since the relay does not pass that
+/// SUBSCRIBE on to the publisher.
+export const DEFAULT_VIDEO_KEYFRAME_INTERVAL = 60

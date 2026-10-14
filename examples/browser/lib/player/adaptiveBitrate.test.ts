@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { MediaCatalogTrack } from '../msf/catalog'
-import { AdaptiveBitrate, type Rung, bitrateLadder } from './adaptiveBitrate'
+import { AdaptiveBitrate, type Rung, bitrateLadder, capLadderToHeight } from './adaptiveBitrate'
 
 const LADDER: Rung[] = [
   { name: 'video_360p', bitrate: 700_000 },
@@ -136,4 +136,18 @@ test('a step up that has to step down again doubles the calm spell before the ne
   // Assert: the spell is 20 s from the restart's settling at 21 s
   expect(early).toBeUndefined()
   expect(late).toBe('video_480p')
+})
+
+test('a picture shown 500 pixels tall caps the ladder at the first rendition that tall', () => {
+  // Arrange
+  const ladder: Rung[] = [
+    { name: 'camera_480p', bitrate: 200_000, height: 480 },
+    { name: 'camera_720p', bitrate: 500_000, height: 720 },
+    { name: 'camera_1080p', bitrate: 1_000_000, height: 1080 }
+  ]
+
+  // Act / Assert
+  expect(capLadderToHeight(ladder, 500).map((rung) => rung.name)).toEqual(['camera_480p', 'camera_720p'])
+  expect(capLadderToHeight(ladder, 2_000)).toEqual(ladder)
+  expect(capLadderToHeight(ladder, undefined)).toEqual(ladder)
 })
