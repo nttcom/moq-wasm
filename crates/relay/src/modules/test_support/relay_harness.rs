@@ -106,6 +106,12 @@ impl EgressRunnerHandle {
         );
     }
 
+    /// Call after PUBLISH_DONE; the runner sends it only once its streams are done.
+    pub(crate) fn assert_nothing_more_sent(&mut self) {
+        let sent = self.sent.try_recv();
+        assert!(sent.is_err(), "nothing may follow PUBLISH_DONE: {sent:?}");
+    }
+
     pub(crate) async fn expect_stream_priority(&mut self) -> moqt::object::StreamPriority {
         tokio::time::timeout(RECV_TIMEOUT, self.priorities.recv())
             .await
@@ -118,6 +124,14 @@ impl EgressRunnerHandle {
             Ok(Some(Sent::Object(object))) => object,
             other => panic!("egress should send an object downstream, got {other:?}"),
         }
+    }
+
+    pub(crate) async fn assert_no_publish_done_within(&mut self, window: Duration) {
+        let publish_done = tokio::time::timeout(window, self.publish_done.recv()).await;
+        assert!(
+            publish_done.is_err(),
+            "no PUBLISH_DONE should be sent: {publish_done:?}"
+        );
     }
 
     pub(crate) fn assert_no_publish_done(&mut self) {
@@ -351,7 +365,7 @@ impl RelayHarness {
             },
         );
         let join_handle = tokio::spawn(async move {
-            let _ = runner.run(subscribe_ok_receiver).await;
+            runner.run(subscribe_ok_receiver).await;
         });
         tokio::time::timeout(RECV_TIMEOUT, ready_receiver)
             .await

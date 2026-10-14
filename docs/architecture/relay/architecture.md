@@ -709,7 +709,13 @@ may destroy its state). Removal because the track's last upstream ended — its 
 away (TRACK_ENDED) or it sent PUBLISH_DONE (its status code) — sends a `PublishDoneReason`
 instead, and the runner answers it with PUBLISH_DONE carrying that status and the number
 of streams it opened, after its senders stopped (§9.12: no state is destroyed without
-PUBLISH_DONE). A malformed track ends the runner the same way with MALFORMED_TRACK. The
+PUBLISH_DONE). A malformed track ends the runner the same way with MALFORMED_TRACK. A
+subscription with an End Group ends the runner once its range is delivered (see
+`EgressScheduler`): it sends PUBLISH_DONE SUBSCRIPTION_ENDED after every stream it opened
+was closed or reset (§9.12), and the coordinator then sends
+`EventKind::DownstreamSubscriptionEnded` to the subscriber's session worker, which removes
+the registration through the UNSUBSCRIBE sequence, releasing the upstream subscriptions it
+leaves unneeded. The
 runner sends PUBLISH_DONE only once the subscribe sequence signals that SUBSCRIBE_OK went
 out (`subscribe_ok_receiver`), so it never precedes SUBSCRIBE_OK; a runner stopped before
 readiness drops it, the SUBSCRIBE fails with SUBSCRIBE_ERROR and no PUBLISH_DONE is sent. A
@@ -737,7 +743,14 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   start, not the start group itself. Groups at or past the End Group are never
   scheduled, and an open event reads the current `DeliveryControl`, so a
   SUBSCRIBE_UPDATE's later Start Location or smaller End Group applies to every
-  subgroup opened after it.
+  subgroup opened after it. The range has ended, and the scheduler returns
+  `SchedulerExit::EndGroupReached`, once the start lies at or past the End
+  Group or the cache has opened a group at or past it: live groups arrive in
+  ascending order, so no further group can enter the range (a subgroup of an
+  in-range group that opens after a later group is not delivered). It checks
+  this at start-up, on every open event (also at Forward 0) and on every
+  `DeliveryControl` change. Dropping its task sender then lets `GroupSender`
+  finish once its in-range streams have been delivered to their end.
 - `GroupSender` — one task per subgroup: waits for the first object to send,
   only then opens the downstream uni stream (a subgroup that closes empty
   opens nothing), regenerates the SUBGROUP_HEADER from that object's canonical

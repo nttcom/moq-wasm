@@ -9,12 +9,18 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     data_plane::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
-        egress::{fetch_delivery::deliver_fetch, runner::EgressRunner},
+        egress::{
+            fetch_delivery::deliver_fetch,
+            runner::{EgressRunner, RunnerExit},
+        },
     },
     domain::{
         pub_sub_directory::DownstreamRunnerSignals, session_id::SessionId, track_key::TrackKey,
     },
-    session::{session_repository::SessionRepository, subscription::DownstreamSubscription},
+    session::{
+        session_event::SessionEvent, session_repository::SessionRepository,
+        subscription::DownstreamSubscription,
+    },
 };
 
 pub(crate) struct EgressStartRequest {
@@ -51,9 +57,13 @@ pub(crate) struct EgressCoordinator {
 }
 
 impl EgressCoordinator {
+    /// A runner that ends its subscription itself reports it on
+    /// `session_event_sender`, so the subscriber's session worker removes the
+    /// registration.
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -72,6 +82,7 @@ impl EgressCoordinator {
                                     &mut runners,
                                     session_repo.clone(),
                                     cache_store.clone(),
+                                    session_event_sender.clone(),
                                     *request,
                                 )
                                 .await;
@@ -124,6 +135,7 @@ impl EgressCoordinator {
         runners: &mut JoinSet<()>,
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
         request: EgressStartRequest,
     ) {
         let publisher = session_repo
@@ -162,10 +174,14 @@ impl EgressCoordinator {
         );
 
         let subscribe_ok_receiver = request.subscribe_ok_receiver;
+        let subscription_ended = SessionEvent::downstream_subscription_ended(
+            request.subscriber_session_id,
+            request.downstream_subscribe_id,
+        );
         runners.spawn(
             async move {
-                if let Err(e) = runner.run(subscribe_ok_receiver).await {
-                    tracing::error!(?e, "egress runner finished with error");
+                if let RunnerExit::SubscriptionEnded = runner.run(subscribe_ok_receiver).await {
+                    let _ = session_event_sender.send(subscription_ended);
                 }
             }
             .instrument(egress_track_span),
@@ -186,7 +202,10 @@ mod tests {
     use tokio::sync::watch;
 
     use super::*;
-    use crate::modules::domain::pub_sub_directory::entry::PublishDoneReason;
+    use crate::modules::domain::{
+        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
+    };
+    use crate::modules::session::session_event::EventKind;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::relay_harness::{
         MockPublisherObservers, fixtures::subscription::make_subscription,
@@ -204,6 +223,7 @@ mod tests {
         cache: Arc<TrackCache>,
         idle_cache_reference_count: usize,
         observers: MockPublisherObservers,
+        session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     }
 
     async fn setup() -> TestContext {
@@ -213,19 +233,22 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let idle_cache_reference_count = Arc::strong_count(&cache);
-        let coordinator = EgressCoordinator::new(session_repo, cache_store);
+        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
+        let coordinator = EgressCoordinator::new(session_repo, cache_store, session_event_sender);
         TestContext {
             coordinator,
             track_key,
             cache,
             idle_cache_reference_count,
             observers,
+            session_event_receiver,
         }
     }
 
     async fn start_reader_without_subscribe_ok(
         ctx: &TestContext,
         runner_stop_receiver: oneshot::Receiver<PublishDoneReason>,
+        control: DeliveryControl,
     ) -> (
         Result<anyhow::Result<()>, oneshot::error::RecvError>,
         oneshot::Sender<()>,
@@ -245,7 +268,7 @@ mod tests {
                 ready_sender,
                 runner_signals: DownstreamRunnerSignals {
                     stop_receiver: runner_stop_receiver,
-                    delivery_control_receiver: watch::channel(delivery_control(true)).1,
+                    delivery_control_receiver: watch::channel(control).1,
                     delivery_stats: Arc::default(),
                 },
                 subscribe_ok_receiver,
@@ -264,7 +287,8 @@ mod tests {
         runner_stop_receiver: oneshot::Receiver<PublishDoneReason>,
     ) -> Result<anyhow::Result<()>, oneshot::error::RecvError> {
         let (readiness, subscribe_ok_sender) =
-            start_reader_without_subscribe_ok(ctx, runner_stop_receiver).await;
+            start_reader_without_subscribe_ok(ctx, runner_stop_receiver, delivery_control(true))
+                .await;
         if matches!(readiness, Ok(Ok(()))) {
             let _ = subscribe_ok_sender.send(());
         }
@@ -329,7 +353,8 @@ mod tests {
         let mut ctx = setup().await;
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         let (readiness, subscribe_ok_sender) =
-            start_reader_without_subscribe_ok(&ctx, runner_stop_receiver).await;
+            start_reader_without_subscribe_ok(&ctx, runner_stop_receiver, delivery_control(true))
+                .await;
         readiness
             .expect("runner readiness should not be dropped")
             .expect("runner should start");
@@ -365,5 +390,50 @@ mod tests {
         // Assert
         wait_until_runner_released_cache(&ctx).await;
         assert_no_publish_done_within_window(&mut ctx).await;
+    }
+
+    #[tokio::test]
+    async fn runner_that_delivered_its_range_reports_the_subscription_ended() {
+        // Arrange: a start past the End Group leaves nothing to deliver
+        let mut ctx = setup().await;
+        let (_runner_stop_sender, runner_stop_receiver) = oneshot::channel();
+        let empty_range = DeliveryControl::from_subscribe_update(
+            true,
+            moqt::object::Location {
+                group_id: 1,
+                object_id: 0,
+            },
+            1,
+        );
+
+        // Act
+        let (readiness, subscribe_ok_sender) =
+            start_reader_without_subscribe_ok(&ctx, runner_stop_receiver, empty_range).await;
+        readiness
+            .expect("runner readiness should not be dropped")
+            .expect("runner should start");
+        subscribe_ok_sender.send(()).unwrap();
+
+        // Assert
+        let publish_done = tokio::time::timeout(TEST_TIMEOUT, ctx.observers.publish_done.recv())
+            .await
+            .expect("runner should send PUBLISH_DONE")
+            .expect("runner dropped its publisher");
+        assert_eq!(
+            publish_done.status_code,
+            moqt::publish::PublishDoneCode::SubscriptionEnded
+        );
+        assert_eq!(publish_done.stream_count, 0);
+        let event = tokio::time::timeout(TEST_TIMEOUT, ctx.session_event_receiver.recv())
+            .await
+            .expect("runner should report the ended subscription")
+            .expect("session event channel should stay open");
+        assert_eq!(event.session_id, SUBSCRIBER_SESSION_ID);
+        assert!(matches!(
+            event.kind,
+            EventKind::DownstreamSubscriptionEnded {
+                request_id: DOWNSTREAM_SUBSCRIBE_ID
+            }
+        ));
     }
 }

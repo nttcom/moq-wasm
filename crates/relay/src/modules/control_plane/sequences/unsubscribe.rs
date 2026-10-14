@@ -8,6 +8,9 @@ use tracing::Span;
 pub(crate) struct Unsubscribe;
 
 impl Unsubscribe {
+    /// Removes the downstream subscription `subscribe_id` and releases the
+    /// upstream subscriptions it leaves unneeded; runs for an UNSUBSCRIBE and
+    /// for a subscription whose egress runner delivered its whole range.
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.unsubscribe",

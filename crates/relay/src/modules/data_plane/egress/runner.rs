@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use moqt::publish::PublishDoneCode;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::modules::{
@@ -13,7 +14,18 @@ use crate::modules::{
     session::{publisher::Publisher, subscription::DownstreamSubscription},
 };
 
-use super::{group_sender::GroupSender, scheduler::EgressScheduler};
+use super::{
+    group_sender::GroupSender,
+    scheduler::{EgressScheduler, SchedulerExit},
+};
+
+pub(crate) enum RunnerExit {
+    /// The runner delivered the whole range of its subscription and sent
+    /// PUBLISH_DONE; its registration is still to be removed.
+    SubscriptionEnded,
+    /// The registration was removed, or the track ended delivery.
+    Stopped,
+}
 
 pub(crate) struct EgressRunner {
     stop_receiver: oneshot::Receiver<PublishDoneReason>,
@@ -61,10 +73,7 @@ impl EgressRunner {
         }
     }
 
-    pub(crate) async fn run(
-        self,
-        subscribe_ok_receiver: oneshot::Receiver<()>,
-    ) -> anyhow::Result<()> {
+    pub(crate) async fn run(self, subscribe_ok_receiver: oneshot::Receiver<()>) -> RunnerExit {
         let Self {
             stop_receiver,
             delivery,
@@ -74,13 +83,22 @@ impl EgressRunner {
         let downstream_subscription = delivery.downstream_subscription.clone();
         let delivery_stats = delivery.delivery_stats.clone();
 
-        let reason = tokio::select! {
+        let (reason, exit) = tokio::select! {
             biased;
             reason = stop_receiver => {
                 tracing::debug!("downstream subscription removed; egress runner stopped");
-                reason.ok()
+                (reason.ok(), RunnerExit::Stopped)
             }
-            reason = delivery.run() => reason,
+            reason = delivery.run() => {
+                let exit = match &reason {
+                    Some(reason) if reason.status_code == PublishDoneCode::SubscriptionEnded => {
+                        tracing::info!("downstream subscription reached its End Group");
+                        RunnerExit::SubscriptionEnded
+                    }
+                    _ => RunnerExit::Stopped,
+                };
+                (reason, exit)
+            }
         };
         // PUBLISH_DONE must follow the SUBSCRIBE_OK the subscriber's session worker sends; a
         // subscription that never got one is answered with SUBSCRIBE_ERROR instead.
@@ -96,7 +114,7 @@ impl EgressRunner {
             )
             .await;
         }
-        Ok(())
+        exit
     }
     fn malformed(track_key: &TrackKey) -> PublishDoneReason {
         tracing::warn!(%track_key, "malformed track detected; terminating downstream subscription");
@@ -167,7 +185,15 @@ impl Delivery {
         );
 
         tokio::select! {
-            _ = async { tokio::join!(scheduler.run(ready_sender), group_sender.run()) } => None,
+            (exit, ()) = async { tokio::join!(scheduler.run(ready_sender), group_sender.run()) } => {
+                // The scheduler dropping its task sender lets the group sender
+                // finish only after every stream it opened has been closed or
+                // reset (draft-14 §9.12).
+                match exit {
+                    SchedulerExit::EndGroupReached => Some(PublishDoneReason::subscription_ended()),
+                    SchedulerExit::OpenEventsClosed => None,
+                }
+            }
             _ = cache.malformed_track_detected() => Some(EgressRunner::malformed(&track_key)),
         }
     }

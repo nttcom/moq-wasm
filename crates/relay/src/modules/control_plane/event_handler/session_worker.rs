@@ -141,6 +141,26 @@ impl SessionWorker {
                     .instrument(self.session_span.clone())
                     .await;
             }
+            EventKind::DownstreamSubscriptionEnded { request_id } => {
+                let event_span = tracing::info_span!(
+                    parent: &self.session_span,
+                    "relay.session.event",
+                    session_id = %session_id,
+                    event = "DownstreamSubscriptionEnded",
+                    request_id,
+                );
+                Unsubscribe {}
+                    .handle(
+                        session_id,
+                        &self.session_span,
+                        self.deps.local_pub_sub_directory.as_ref(),
+                        &self.deps.control_message_forwarder,
+                        &self.deps.ingress_sender,
+                        request_id,
+                    )
+                    .instrument(event_span)
+                    .await;
+            }
             EventKind::ProtocolViolationDetected { reason } => {
                 tracing::error!(
                     parent: &self.session_span,

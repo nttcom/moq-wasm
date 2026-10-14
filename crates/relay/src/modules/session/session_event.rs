@@ -12,8 +12,15 @@ pub(crate) enum EventKind {
     SessionRegistered,
     FromSession(MoqtSessionEvent),
     MalformedTrackDetected(TrackKey),
-    ProtocolViolationDetected { reason: String },
+    ProtocolViolationDetected {
+        reason: String,
+    },
     GoAwaySent,
+    /// The egress runner of the session's downstream subscription `request_id`
+    /// delivered its whole range and sent PUBLISH_DONE.
+    DownstreamSubscriptionEnded {
+        request_id: u64,
+    },
 }
 
 impl SessionEvent {
@@ -42,6 +49,13 @@ impl SessionEvent {
         Self {
             session_id,
             kind: EventKind::ProtocolViolationDetected { reason },
+        }
+    }
+
+    pub(crate) fn downstream_subscription_ended(session_id: SessionId, request_id: u64) -> Self {
+        Self {
+            session_id,
+            kind: EventKind::DownstreamSubscriptionEnded { request_id },
         }
     }
 }
