@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-moqt = { path = "../moqt" }
+moqt = { path = "../moqt", features = ["self-signed-cert"] }
 auth-token = { path = "../auth-token" }
 relay-stats = { path = "../relay-stats" }
 tokio = { version = "1.52.3", features = ["full", "tracing"] }
@@ -12,7 +12,6 @@ tracing = "0.1.44"
 async-trait = "0.1.89"
 anyhow = "1.0.102"
 dashmap = "6.2.1"
-rcgen = "0.14.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 bytes = "1"
 opentelemetry = { version = "0.33.1", features = ["trace", "logs"] }

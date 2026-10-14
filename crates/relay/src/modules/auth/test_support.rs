@@ -1,9 +1,11 @@
 use moqt::RequestErrorCode;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use moqt::{ClientConfig, Endpoint, QUIC, RequestFailure, Session};
-use rcgen::{CertifiedKey, generate_simple_self_signed};
+use moqt::{
+    ClientConfig, Endpoint, QUIC, RequestFailure, Session,
+    server::{CertificateFiles, write_self_signed_cert},
+};
 
 use crate::{
     RelayServer,
@@ -77,23 +79,12 @@ pub(crate) struct RunningRelay {
     _cert_dir: TempDir,
 }
 
-fn write_self_signed_cert(dir: &Path) -> (String, String) {
-    let CertifiedKey { cert, signing_key } =
-        generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
-            .unwrap();
-    let cert_path = dir.join("cert.pem");
-    let key_path = dir.join("key.pem");
-    std::fs::write(&cert_path, cert.pem()).unwrap();
-    std::fs::write(&key_path, signing_key.serialize_pem()).unwrap();
-    (
-        key_path.to_string_lossy().into_owned(),
-        cert_path.to_string_lossy().into_owned(),
-    )
-}
-
 pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRelay {
     let cert_dir = TempDir::new("auth-test");
-    let (key_path, cert_path) = write_self_signed_cert(cert_dir.path());
+    let CertificateFiles {
+        cert_path,
+        key_path,
+    } = write_self_signed_cert(cert_dir.path(), &["localhost", "127.0.0.1"]).unwrap();
     let server = RelayServer::new_with_deps(
         &key_path,
         &cert_path,

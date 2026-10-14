@@ -1,11 +1,10 @@
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
 use bytes::Bytes;
-use rcgen::{CertifiedKey, generate_simple_self_signed};
 use tracing_subscriber::EnvFilter;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
@@ -27,7 +26,7 @@ use crate::{
     object::{DataReceiver, StreamDataSenderFactory, SubgroupObjectSender},
     publish::PublishOption,
     server::Handshake,
-    server::ServerConfig,
+    server::{CertificateFiles, ServerConfig, write_self_signed_cert},
     subscribe::FilterType,
     wire::{SubgroupId, SubgroupObject},
 };
@@ -53,28 +52,20 @@ fn unique_cert_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("moqt-test-{name}-{}-{id}", std::process::id()))
 }
 
-fn write_self_signed_cert(dir: &Path) -> ServerConfig {
-    let CertifiedKey { cert, signing_key } =
-        generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
-            .unwrap();
-    std::fs::create_dir_all(dir).unwrap();
-    let cert_path = dir.join("cert.pem");
-    let key_path = dir.join("key.pem");
-    std::fs::write(&cert_path, cert.pem()).unwrap();
-    std::fs::write(&key_path, signing_key.serialize_pem()).unwrap();
-    ServerConfig {
-        port: 0,
-        cert_path: cert_path.to_string_lossy().into_owned(),
-        key_path: key_path.to_string_lossy().into_owned(),
-        keep_alive_interval_sec: 5,
-    }
-}
-
 /// A server config on a free port with a fresh self-signed certificate for
 /// `localhost` and `127.0.0.1`.
 pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
     init_test_tracing();
-    write_self_signed_cert(&unique_cert_dir(name))
+    let CertificateFiles {
+        cert_path,
+        key_path,
+    } = write_self_signed_cert(&unique_cert_dir(name), &["localhost", "127.0.0.1"]).unwrap();
+    ServerConfig {
+        port: 0,
+        cert_path,
+        key_path,
+        keep_alive_interval_sec: 5,
+    }
 }
 
 pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str) -> C {

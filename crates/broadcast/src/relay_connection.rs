@@ -756,10 +756,12 @@ mod tests {
     use std::path::PathBuf;
 
     use moqt::{
-        DUAL, Subscription, TrackReader, object::DataReceiver, publish::GroupBoundary,
-        server::ServerConfig, subscribe::FilterType,
+        DUAL, Subscription, TrackReader,
+        object::DataReceiver,
+        publish::GroupBoundary,
+        server::{CertificateFiles, ServerConfig, write_self_signed_cert},
+        subscribe::FilterType,
     };
-    use rcgen::{CertifiedKey, generate_simple_self_signed};
     use tokio::sync::{mpsc, oneshot};
 
     use super::*;
@@ -768,20 +770,16 @@ mod tests {
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
     fn self_signed_server_config(name: &str) -> ServerConfig {
-        let CertifiedKey { cert, signing_key } =
-            generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
-                .unwrap();
         let dir: PathBuf =
             std::env::temp_dir().join(format!("broadcast-test-{name}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let cert_path = dir.join("cert.pem");
-        let key_path = dir.join("key.pem");
-        std::fs::write(&cert_path, cert.pem()).unwrap();
-        std::fs::write(&key_path, signing_key.serialize_pem()).unwrap();
+        let CertificateFiles {
+            cert_path,
+            key_path,
+        } = write_self_signed_cert(&dir, &["localhost", "127.0.0.1"]).unwrap();
         ServerConfig {
             port: 0,
-            cert_path: cert_path.to_string_lossy().into_owned(),
-            key_path: key_path.to_string_lossy().into_owned(),
+            cert_path,
+            key_path,
             keep_alive_interval_sec: 5,
         }
     }
