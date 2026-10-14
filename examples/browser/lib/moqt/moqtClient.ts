@@ -19,7 +19,11 @@ import type {
   SubscribeMessage,
   SubscribeOkMessage
 } from '../../pkg/moqt'
-import { SubscriptionStateManager, type SubgroupObjectHandler } from './subscriptionStateManager'
+import {
+  SubscriptionStateManager,
+  type SubgroupObjectHandler,
+  type SubgroupObjectMessageWithLoc
+} from './subscriptionStateManager'
 import { SubgroupWriter } from './subgroupWriter'
 
 type PendingResponse<T> = { resolve: (response: T) => void; reject: (error: Error) => void }
@@ -86,6 +90,12 @@ const emptyAliasMaps = (): AliasMaps => ({ appAliasByWireAlias: new Map(), wireA
  * the next one.
  */
 type Cutover = { group?: bigint; previousNewestGroup?: bigint; passed: boolean }
+/**
+ * The group the new relay was in when it accepted a carried live
+ * subscription. A joining FETCH supplies it up to the Largest Location, and
+ * the subscription's own objects on `client` are held until the FETCH ends.
+ */
+type GroupFill = { client: MOQTClient; held: Array<{ groupId: bigint; object: SubgroupObjectMessageWithLoc }> }
 /** A switchover from `previous` to `next`, kept until `previous` is closed. */
 type Switchover = {
   previous: MOQTClient
@@ -104,6 +114,9 @@ const MIGRATION_RETRY_INTERVAL_MS = 500
 /// How long the previous session stays open after the switch for groups that
 /// started there and have not ended.
 const PREVIOUS_SESSION_GRACE_MS = 5_000
+/// How long a carried subscription's objects wait for the joining FETCH that
+/// supplies the start of their group.
+const GROUP_FILL_TIMEOUT_MS = 2_000
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
 type PublishDoneHandler = (message: PublishDoneMessage) => void
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
@@ -262,6 +275,8 @@ export class MoqtClientWrapper {
   private readonly retiredClients = new WeakSet<MOQTClient>()
   /** The newest group delivered on each subscription, by application alias. */
   private readonly newestGroups = new Map<bigint, bigint>()
+  /** By application alias. */
+  private readonly groupFills = new Map<bigint, GroupFill>()
   private switchover: Switchover | null = null
   private migrating = false
   private pendingServerSetup: { resolve: () => void; reject: (error: Error) => void } | null = null
@@ -487,15 +502,30 @@ export class MoqtClientWrapper {
       await response
     }
     for (const [requestId, subscription] of this.activeSubscriptions) {
+      // Largest Object, not Next Group Start: the latter would skip the group
+      // the publisher started on the new relay before this SUBSCRIBE.
+      const live = subscription.options.forward !== false && isLiveFilter(subscription.options.filterType)
+      const carried = live
+        ? { ...subscription, options: { ...subscription.options, filterType: FilterType.LargestObject } }
+        : subscription
       const subscribeOk = await retryUntil(deadline, async () => {
         const response = expectResponse(this.pendingSubscribe, requestId)
-        await this.sendSubscribeOn(next, requestId, subscription)
+        await this.sendSubscribeOn(next, requestId, carried)
         return response
       })
       aliases.appAliasByWireAlias.set(subscribeOk.trackAlias, subscription.trackAlias)
       this.subscriptionTrackAliases.set(requestId, subscription.trackAlias)
       if (subscription.options.forward === false) {
         await next.sendSubscribeForward(this.issueRequestId(), requestId, false)
+      }
+      const newest = this.switchover?.cutovers.get(subscription.trackAlias)?.previousNewestGroup
+      if (
+        live &&
+        subscribeOk.contentExists &&
+        subscribeOk.largestGroupId !== undefined &&
+        (newest === undefined || subscribeOk.largestGroupId > newest)
+      ) {
+        this.fillLargestGroup(next, requestId, subscription.trackAlias)
       }
     }
     for (const [requestId, track] of this.publishedTracks) {
@@ -525,6 +555,57 @@ export class MoqtClientWrapper {
         console.warn('[moqt] FETCH not carried over to the new relay', { requestId: requestId.toString(), error })
       }
     }
+  }
+
+  /// Fetches the new relay's current group from its start (Relative Joining
+  /// FETCH, Joining Start 0, draft-14 §9.16.2), then delivers the objects held
+  /// meanwhile so the group arrives in order.
+  private fillLargestGroup(client: MOQTClient, subscriptionRequestId: bigint, trackAlias: bigint): void {
+    const fill: GroupFill = { client, held: [] }
+    this.groupFills.set(trackAlias, fill)
+    const requestId = this.issueRequestId()
+    const finish = () => {
+      if (this.groupFills.get(trackAlias) !== fill) {
+        return
+      }
+      this.groupFills.delete(trackAlias)
+      this.fetchObjectHandlers.delete(requestId)
+      this.fetchStreamEndHandlers.delete(requestId)
+      for (const { groupId, object } of fill.held) {
+        this.deliverSubgroupObject(client, trackAlias, groupId, object)
+      }
+    }
+    this.watchFetch(
+      requestId,
+      (object) => this.deliverSubgroupObject(client, trackAlias, object.groupId, fetchedAsSubgroupObject(object)),
+      finish
+    )
+    const response = expectResponse(this.pendingFetch, requestId)
+    client
+      .sendRelativeJoiningFetch(requestId, subscriptionRequestId, 0n, GroupOrder.Ascending)
+      .then(() => response)
+      .catch((error) => {
+        console.warn('[moqt] the current group was not fetched from the new relay', { error })
+        finish()
+      })
+    setTimeout(finish, GROUP_FILL_TIMEOUT_MS)
+  }
+
+  private deliverSubgroupObject(
+    client: MOQTClient,
+    trackAlias: bigint,
+    groupId: bigint,
+    object: SubgroupObjectMessageWithLoc
+  ): void {
+    if (!this.acceptsObject(client, trackAlias, groupId)) {
+      return
+    }
+    const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
+    if (handler) {
+      handler(groupId, object)
+      return
+    }
+    this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, object)
   }
 
   private sendFetchOn(
@@ -1098,15 +1179,12 @@ export class MoqtClientWrapper {
     })
     client.onSubgroupObject((wireAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
       const trackAlias = this.appAlias(client, wireAlias)
-      if (!this.acceptsObject(client, trackAlias, groupId)) {
+      const fill = this.groupFills.get(trackAlias)
+      if (fill?.client === client) {
+        fill.held.push({ groupId, object: subgroupObject })
         return
       }
-      const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
-      if (handler) {
-        handler(groupId, subgroupObject)
-        return
-      }
-      this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
+      this.deliverSubgroupObject(client, trackAlias, groupId, subgroupObject)
     })
     client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
       const handler = this.incomingTrackStatusHandler ?? defaultIncomingTrackStatusHandler
@@ -1256,6 +1334,7 @@ export class MoqtClientWrapper {
     this.subscribedNamespaces.clear()
     this.openGroupClients.clear()
     this.newestGroups.clear()
+    this.groupFills.clear()
     this.switchover = null
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
@@ -1392,6 +1471,22 @@ async function retryUntil<T>(deadline: number, request: () => Promise<T>): Promi
       await new Promise<void>((resolve) => setTimeout(resolve, MIGRATION_RETRY_INTERVAL_MS))
     }
   }
+}
+
+function isLiveFilter(filterType: FilterType | undefined): boolean {
+  return filterType === undefined || filterType === FilterType.NextGroupStart || filterType === FilterType.LargestObject
+}
+
+/// FETCH objects carry no status here, so each becomes a normal object.
+function fetchedAsSubgroupObject(object: FetchObjectMessage): SubgroupObjectMessageWithLoc {
+  return {
+    subgroupId: 0n,
+    objectId: object.objectId,
+    objectStatus: undefined,
+    objectPayload: object.objectPayload,
+    objectPayloadLength: object.objectPayload.length,
+    locHeader: object.locHeader
+  } as unknown as SubgroupObjectMessageWithLoc
 }
 
 function isBefore(a: Location, b: Location): boolean {

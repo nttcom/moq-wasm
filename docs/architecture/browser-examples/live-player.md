@@ -74,7 +74,14 @@ Rules:
   cutover group: the first group the new relay delivers, or the group after
   the newest one the old relay delivered. Earlier groups are taken from the
   old session only and later ones from the new session only, so a group is
-  neither duplicated nor cut short. On the sending side an object goes to the
+  neither duplicated nor cut short. A live subscription (Next Group Start or
+  Largest Object, forwarding) is re-sent with the Largest Object filter: the
+  publisher may have started a group on the new relay before the SUBSCRIBE
+  got there, and Next Group Start would skip it. When that Largest Location
+  is in a group the old session has not delivered, a joining FETCH of the
+  current group supplies it from its start, and the subscription's objects
+  are held until the FETCH ends (at most 2 s) so the group stays in order.
+  On the sending side an object goes to the
   session its group started on, and the next group starts on the new
   session. The old session is closed once every subscription has passed its
   cutover (or its relay sent PUBLISH_DONE, which the wrapper otherwise

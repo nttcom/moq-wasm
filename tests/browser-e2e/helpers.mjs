@@ -70,3 +70,44 @@ export async function waitForHttpOk(url, timeoutMs = 60_000) {
     `Timed out waiting for ${url}: ${getErrorMessage(lastError)}`,
   );
 }
+
+/// A 300 s 720p30 H.264 + AAC test pattern streamed to live-ingest over RTMP.
+export function buildLiveIngestFfmpegArgs(rtmpAddress, namespace) {
+  return [
+    "-hide_banner",
+    "-loglevel",
+    "warning",
+    "-re",
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc=size=1280x720:rate=30",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=1000:sample_rate=48000",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-profile:v",
+    "baseline",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "60",
+    "-sc_threshold",
+    "0",
+    "-c:a",
+    "aac",
+    "-ar",
+    "48000",
+    "-ac",
+    "2",
+    "-t",
+    "300",
+    "-f",
+    "flv",
+    `rtmp://${rtmpAddress}/${namespace}/stream`,
+  ];
+}

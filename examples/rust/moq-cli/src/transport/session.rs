@@ -5,7 +5,7 @@ use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, Subscription, TrackReader,
     fetch::{Fetch, FetchOption},
-    object::{DataReceiver, GroupOrder},
+    object::{DataReceiver, GroupOrder, Object},
     subscribe::{FilterType, SubscribeOption},
 };
 use tracing::info;
@@ -79,9 +79,16 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
 /// MSF §5 requires beside the SUBSCRIBE. Falls back to the subscription's
 /// next group when the FETCH fails, e.g. before the first catalog was sent.
 pub async fn read_catalog(session: &Session, subscription: &Subscription) -> Result<Bytes> {
-    match fetch_joining_group(session, subscription).await {
-        Ok(Some(latest)) => return Ok(latest),
-        Ok(None) => {}
+    match fetch_current_group(session, subscription).await {
+        Ok(objects) => {
+            if let Some(latest) = objects
+                .into_iter()
+                .rev()
+                .find(|object| !object.payload.is_empty())
+            {
+                return Ok(latest.payload);
+            }
+        }
         Err(error) => tracing::warn!(%error, "joining FETCH of the catalog failed"),
     }
     let mut updates = track_reader(session, subscription).await?;
@@ -91,12 +98,17 @@ pub async fn read_catalog(session: &Session, subscription: &Subscription) -> Res
     }
 }
 
-pub async fn subscribe(session: &Session, namespace: &str, name: &str) -> Result<Subscription> {
+pub async fn subscribe(
+    session: &Session,
+    namespace: &str,
+    name: &str,
+    filter_type: FilterType,
+) -> Result<Subscription> {
     let option = SubscribeOption {
         subscriber_priority: SUBSCRIBER_PRIORITY,
         group_order: GroupOrder::Ascending,
         forward: true,
-        filter_type: FilterType::NextGroupStart,
+        filter_type,
     };
     session
         .subscriber()
@@ -118,24 +130,22 @@ pub async fn track_reader(session: &Session, subscription: &Subscription) -> Res
     Ok(TrackReader::new(factory))
 }
 
-/// The payload of the last non-empty object in the group of the
-/// subscription's Largest Location, read by a Relative Joining FETCH with
-/// Joining Start 0.
-async fn fetch_joining_group(
+/// Reads the group of the subscription's Largest Location, up to that
+/// location, with a Relative Joining FETCH, Joining Start 0 (draft-14 §9.16.2).
+pub async fn fetch_current_group(
     session: &Session,
     subscription: &Subscription,
-) -> Result<Option<Bytes>> {
+) -> Result<Vec<Object>> {
     let mut subscriber = session.subscriber();
     let handle = subscriber
         .fetch_relative_joining(subscription, 0, FetchOption::default())
         .await?;
     let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-    let mut latest = None;
+    let mut objects = Vec::new();
     loop {
         match receiver.receive().await? {
-            Fetch::Object(object) if !object.payload.is_empty() => latest = Some(object.payload),
-            Fetch::Object(_) => {}
-            Fetch::End => return Ok(latest),
+            Fetch::Object(object) => objects.push(object),
+            Fetch::End => return Ok(objects),
         }
     }
 }
