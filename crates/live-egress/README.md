@@ -1,7 +1,8 @@
 # live-egress
 
 Subscribes to a broadcast on a MoQT relay and sends it as plain RTP: H.264 on
-one port, AAC on another, with an SDP file for the receiver. The broadcast is
+one port, AAC, Opus or G.711 A-law on another, RTCP sender reports beside
+them, and an SDP file for the receiver. The broadcast is
 the one `live-ingest` or `gst-plugin-moqt` publishes, described in
 [`crates/broadcast`](../broadcast/README.md).
 
@@ -42,8 +43,19 @@ cargo run -p live-egress -- \
   --moqt-url https://127.0.0.1:4433 \
   --namespace anon/live/test \
   [--destination 127.0.0.1] [--video-port 5004] [--audio-port 5006] \
+  [--video-payload-type 96] [--audio-payload-type 97] \
+  [--video-ssrc <n>] [--audio-ssrc <n>] [--rtcp-mux] \
   [--sdp-out egress.sdp] [--insecure-skip-tls-verify] [--auth-token <jwt>]
 ```
+
+| Option | Effect |
+| --- | --- |
+| `--video-payload-type` / `--audio-payload-type` | Payload type of each stream, 96–127 |
+| `--video-ssrc` / `--audio-ssrc` | SSRC of each stream; random when absent |
+| `--rtcp-mux` | Send RTCP on each stream's RTP port instead of the port above it |
+
+A receiver configured in advance, such as a mediasoup PlainTransport with
+`rtcpMux`, takes the same payload types, SSRCs and RTCP port as these options.
 
 `--insecure-skip-tls-verify` skips TLS certificate verification of the relay;
 use it only for a local relay with a self-signed certificate.
