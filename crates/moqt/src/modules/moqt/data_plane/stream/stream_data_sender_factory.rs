@@ -20,6 +20,10 @@ impl StreamDataSenderFactory {
 
     pub async fn next(&self) -> anyhow::Result<StreamDataSender> {
         let send_stream = self.session.transport_connection.open_uni().await?;
-        Ok(StreamDataSender::new(self.track_alias, send_stream))
+        Ok(StreamDataSender::new(
+            self.session.control.version(),
+            self.track_alias,
+            send_stream,
+        ))
     }
 }

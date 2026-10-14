@@ -7,6 +7,7 @@ import init, {
   NamespaceOkMessage,
   ObjectDatagramMessage,
   ObjectDatagramStatusMessage,
+  PublishDoneMessage,
   PublishNamespaceDoneMessage,
   PublishNamespaceMessage,
   PublishOkMessage,
@@ -33,6 +34,7 @@ export interface ConnectionCloseInfo {
 }
 type ConnectionClosedHandler = ((info: ConnectionCloseInfo) => void) | null
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
+type PublishDoneHandler = (message: PublishDoneMessage) => void
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
 type ObjectDatagramStatusHandler = ((message: ObjectDatagramStatusMessage) => void) | null
 type SubgroupHeaderHandler = ((header: SubgroupHeaderMessage) => void) | null
@@ -93,6 +95,12 @@ export interface SubscribeOptions {
   endGroup?: bigint
   forward?: boolean
   deliveryTimeout?: bigint
+  /**
+   * The subscription is over when this runs: its object handler is cleared
+   * and objects still arriving on it are dropped, so there is nothing to
+   * unsubscribe.
+   */
+  onPublishDone?: PublishDoneHandler
 }
 
 export interface FetchOptions {
@@ -194,6 +202,7 @@ export class MoqtClientWrapper {
   private readonly pendingSubscribe: PendingResponses<SubscribeOkMessage> = new Map()
   private readonly pendingFetch: PendingResponses<FetchOkMessage> = new Map()
   private readonly subscriptionTrackAliases = new Map<bigint, bigint>()
+  private readonly publishDoneHandlers = new Map<bigint, PublishDoneHandler>()
   private nextRequestId = 0n
 
   async connect(url: string, options: ConnectOptions = {}): Promise<void> {
@@ -390,40 +399,60 @@ export class MoqtClientWrapper {
     }
   }
 
-  async subscribe(
+  subscribe(
     trackNamespace: string[],
     trackName: string,
     authInfo: string,
     options: SubscribeOptions = {}
   ): Promise<SubscribeResult> {
-    const client = this.requireConnectedClient()
     const requestId = options.requestId ?? this.issueRequestId()
-    const existingTrackAlias = this.subscriptionTrackAliases.get(requestId)
-    if (existingTrackAlias !== undefined) {
-      // Only reachable when a caller passes an explicit options.requestId that
-      // collides with an in-flight subscription; internally issued ids never do.
-      throw new Error(`subscribe: requestId ${requestId} already has trackAlias ${existingTrackAlias}`)
+    const result = this.sendSubscribe(requestId, trackNamespace, trackName, authInfo, options)
+    const { onPublishDone } = options
+    if (onPublishDone) {
+      // PUBLISH_DONE can follow SUBSCRIBE_OK before the caller resumes from
+      // the returned promise; chaining on that same promise runs the handler
+      // after the caller's own continuation.
+      this.publishDoneHandlers.set(requestId, (message) => void result.then(() => onPublishDone(message)))
     }
+    return result
+  }
 
-    const response = expectResponse(this.pendingSubscribe, requestId)
+  private async sendSubscribe(
+    requestId: bigint,
+    trackNamespace: string[],
+    trackName: string,
+    authInfo: string,
+    options: SubscribeOptions
+  ): Promise<SubscribeResult> {
+    try {
+      const client = this.requireConnectedClient()
+      const existingTrackAlias = this.subscriptionTrackAliases.get(requestId)
+      if (existingTrackAlias !== undefined) {
+        // Only reachable when a caller passes an explicit options.requestId that
+        // collides with an in-flight subscription; internally issued ids never do.
+        throw new Error(`subscribe: requestId ${requestId} already has trackAlias ${existingTrackAlias}`)
+      }
 
-    await client.sendSubscribe(
-      requestId,
-      trackNamespace,
-      trackName,
-      options.subscriberPriority ?? 0,
-      options.groupOrder ?? GroupOrder.Publisher,
-      options.filterType ?? FilterType.NextGroupStart,
-      options.startGroup,
-      options.startObject,
-      options.endGroup,
-      authInfo,
-      options.forward ?? false,
-      options.deliveryTimeout
-    )
-
-    const subscribeOk = await response
-    return { requestId, subscribeOk }
+      const response = expectResponse(this.pendingSubscribe, requestId)
+      await client.sendSubscribe(
+        requestId,
+        trackNamespace,
+        trackName,
+        options.subscriberPriority ?? 0,
+        options.groupOrder ?? GroupOrder.Publisher,
+        options.filterType ?? FilterType.NextGroupStart,
+        options.startGroup,
+        options.startObject,
+        options.endGroup,
+        authInfo,
+        options.forward ?? false,
+        options.deliveryTimeout
+      )
+      return { requestId, subscribeOk: await response }
+    } catch (error) {
+      this.publishDoneHandlers.delete(requestId)
+      throw error
+    }
   }
 
   fetch(
@@ -509,6 +538,7 @@ export class MoqtClientWrapper {
     const trackAlias = this.subscriptionTrackAliases.get(requestId)
     await client.sendUnsubscribe(requestId)
     this.subscriptionTrackAliases.delete(requestId)
+    this.publishDoneHandlers.delete(requestId)
     if (trackAlias !== undefined) {
       this.clearSubgroupObjectHandler(trackAlias)
     }
@@ -526,7 +556,8 @@ export class MoqtClientWrapper {
     trackNamespace: string[],
     trackName: string,
     authInfo: string,
-    onLatest: (payload: Uint8Array, groupId: bigint) => void
+    onLatest: (payload: Uint8Array, groupId: bigint) => void,
+    options: Pick<SubscribeOptions, 'onPublishDone'> = {}
   ): Promise<SubscribeResult> {
     let newestGroupId: bigint | undefined
     const deliver = (groupId: bigint, payload: Uint8Array) => {
@@ -538,7 +569,8 @@ export class MoqtClientWrapper {
     }
     const result = await this.subscribe(trackNamespace, trackName, authInfo, {
       filterType: FilterType.LargestObject,
-      forward: true
+      forward: true,
+      onPublishDone: options.onPublishDone
     })
     this.setOnSubgroupObjectHandler(result.subscribeOk.trackAlias, (groupId, object) => {
       if (object.objectStatus === undefined) {
@@ -637,6 +669,23 @@ export class MoqtClientWrapper {
 
     this.client.onIncomingUnsubscribe((requestId: bigint) => {
       this.incomingUnsubscribeHandler?.(requestId)
+    })
+
+    this.client.onPublishDone((message: PublishDoneMessage) => {
+      const requestId = message.requestId
+      console.info('[moqt] received PUBLISH_DONE', {
+        requestId: requestId.toString(),
+        statusCode: message.statusCode.toString(),
+        errorReason: message.errorReason
+      })
+      const trackAlias = this.subscriptionTrackAliases.get(requestId)
+      this.subscriptionTrackAliases.delete(requestId)
+      if (trackAlias !== undefined) {
+        this.subscriptionState.endSubscription(trackAlias)
+      }
+      const handler = this.publishDoneHandlers.get(requestId)
+      this.publishDoneHandlers.delete(requestId)
+      handler?.(message)
     })
 
     this.client.onObjectDatagram((message: ObjectDatagramMessage) => {
@@ -772,6 +821,7 @@ export class MoqtClientWrapper {
     this.pendingFetch.clear()
     this.fetchStreamEndHandlers.clear()
     this.subscriptionTrackAliases.clear()
+    this.publishDoneHandlers.clear()
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
     this.onPublishNamespaceDoneHandler = null

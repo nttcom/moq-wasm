@@ -9,6 +9,7 @@ use crate::{
         control_plane::{
             constants::TerminationErrorCode,
             enums::{RequestId, ResponseMessage},
+            error_codes::{PublishDoneCode, RequestKind},
             handler::{
                 fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
                 go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
@@ -27,7 +28,8 @@ use crate::{
         data_plane::stream::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
-        domains::session_context::{InflightRequest, SessionContext},
+        domains::session_context::SessionContext,
+        version::draft14::{ControlChannel, InflightRequest, error_codes, handle_late_response},
     },
 };
 
@@ -74,8 +76,8 @@ impl ControlMessageReceiveTask {
                                 }
                                 DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    let inflight_request =
-                                        session.take_inflight_request(request_id);
+                                    let inflight_request = ControlChannel::of(&session)
+                                        .take_inflight_request(request_id);
                                     match inflight_request {
                                         Some(InflightRequest::Waiting {
                                             sender,
@@ -85,19 +87,20 @@ impl ControlMessageReceiveTask {
                                             // arrival and this send; fall back to the
                                             // late-response withdrawal in that case.
                                             if let Err(message) = sender.send(message) {
-                                                session
-                                                    .handle_late_response(
-                                                        request_id,
-                                                        on_late_response,
-                                                        message,
-                                                    )
-                                                    .await;
+                                                handle_late_response(
+                                                    &session,
+                                                    request_id,
+                                                    on_late_response,
+                                                    message,
+                                                )
+                                                .await;
                                             }
                                         }
                                         Some(InflightRequest::Abandoned(action)) => {
-                                            session
-                                                .handle_late_response(request_id, action, message)
-                                                .await;
+                                            handle_late_response(
+                                                &session, request_id, action, message,
+                                            )
+                                            .await;
                                         }
                                         None => {
                                             tracing::error!(
@@ -119,7 +122,7 @@ impl ControlMessageReceiveTask {
                         }
                     }
                     if let Some(session) = session_context.upgrade() {
-                        session.fail_inflight_requests();
+                        ControlChannel::of(&session).fail_inflight_requests();
                     }
                 }
             .instrument(receiver_span),
@@ -148,7 +151,10 @@ impl ControlMessageReceiveTask {
             ReceivedMessage::SubscribeError(subscribe_error) => {
                 let response = ResponseMessage::SubscribeError(
                     subscribe_error.request_id,
-                    subscribe_error.error_code,
+                    error_codes::request_error_code_from_wire(
+                        subscribe_error.error_code,
+                        RequestKind::Subscribe,
+                    ),
                     subscribe_error.reason_phrase,
                 );
                 DepacketizeResult::ResponseMessage(subscribe_error.request_id, response)
@@ -164,9 +170,15 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::PublishError(publish_error) => {
                 let request_id = publish_error.request_id;
-                let error_code = publish_error.error_code;
-                let reason_phrase = publish_error.reason_phrase.clone();
-                let response = ResponseMessage::PublishError(request_id, error_code, reason_phrase);
+                let error_code = error_codes::request_error_code_from_wire(
+                    publish_error.error_code,
+                    RequestKind::Publish,
+                );
+                let response = ResponseMessage::PublishError(
+                    request_id,
+                    error_code,
+                    publish_error.reason_phrase,
+                );
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::PublishNamespace(publish_namespace) => {
@@ -190,8 +202,11 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::PublishNamespaceError(publish_namespace_error) => {
                 let request_id = publish_namespace_error.request_id;
-                let error_code = publish_namespace_error.error_code;
-                let reason_phrase = publish_namespace_error.reason_phrase.clone();
+                let error_code = error_codes::request_error_code_from_wire(
+                    publish_namespace_error.error_code,
+                    RequestKind::PublishNamespace,
+                );
+                let reason_phrase = publish_namespace_error.reason_phrase;
                 let response =
                     ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase);
                 DepacketizeResult::ResponseMessage(request_id, response)
@@ -210,8 +225,11 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::SubscribeNamespaceError(subscribe_namespace_error) => {
                 let request_id = subscribe_namespace_error.request_id;
-                let error_code = subscribe_namespace_error.error_code;
-                let reason_phrase = subscribe_namespace_error.reason_phrase.clone();
+                let error_code = error_codes::request_error_code_from_wire(
+                    subscribe_namespace_error.error_code,
+                    RequestKind::SubscribeNamespace,
+                );
+                let reason_phrase = subscribe_namespace_error.reason_phrase;
                 let response =
                     ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase);
                 DepacketizeResult::ResponseMessage(request_id, response)
@@ -235,7 +253,10 @@ impl ControlMessageReceiveTask {
             ReceivedMessage::FetchError(fetch_error) => {
                 let response = ResponseMessage::FetchError(
                     fetch_error.request_id,
-                    fetch_error.error_code,
+                    error_codes::request_error_code_from_wire(
+                        fetch_error.error_code,
+                        RequestKind::Fetch,
+                    ),
                     fetch_error.reason_phrase,
                 );
                 DepacketizeResult::ResponseMessage(fetch_error.request_id, response)
@@ -247,7 +268,13 @@ impl ControlMessageReceiveTask {
                 ))
             }
             ReceivedMessage::PublishDone(publish_done) => {
-                let publish_done_handler = PublishDoneHandler::new(publish_done);
+                let publish_done_handler = PublishDoneHandler::new(
+                    publish_done.request_id,
+                    error_codes::publish_done_code_from_wire(publish_done.status_code)
+                        .unwrap_or(PublishDoneCode::InternalError),
+                    publish_done.stream_count,
+                    publish_done.error_reason,
+                );
                 DepacketizeResult::SessionEvent(SessionEvent::PublishDone(publish_done_handler))
             }
             ReceivedMessage::FetchCancel(fetch_cancel) => {
@@ -255,8 +282,15 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionEvent(SessionEvent::FetchCancel(fetch_cancel_handler))
             }
             ReceivedMessage::PublishNamespaceCancel(publish_namespace_cancel) => {
-                let publish_namespace_cancel_handler =
-                    PublishNamespaceCancelHandler::new(publish_namespace_cancel);
+                // §9.27: PUBLISH_NAMESPACE_CANCEL uses the PUBLISH_NAMESPACE_ERROR codes.
+                let publish_namespace_cancel_handler = PublishNamespaceCancelHandler::new(
+                    publish_namespace_cancel.track_namespace.join("/"),
+                    error_codes::request_error_code_from_wire(
+                        publish_namespace_cancel.error_code,
+                        RequestKind::PublishNamespace,
+                    ),
+                    publish_namespace_cancel.error_reason,
+                );
                 DepacketizeResult::SessionEvent(SessionEvent::PublishNamespaceCancel(
                     publish_namespace_cancel_handler,
                 ))
@@ -287,7 +321,10 @@ impl ControlMessageReceiveTask {
             ReceivedMessage::TrackStatusError(track_status_error) => {
                 let response = ResponseMessage::TrackStatusError(
                     track_status_error.request_id,
-                    track_status_error.error_code,
+                    error_codes::request_error_code_from_wire(
+                        track_status_error.error_code,
+                        RequestKind::TrackStatus,
+                    ),
                     track_status_error.reason_phrase,
                 );
                 DepacketizeResult::ResponseMessage(track_status_error.request_id, response)

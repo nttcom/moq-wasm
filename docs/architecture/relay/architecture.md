@@ -234,9 +234,11 @@ Each sequence owns the relay-side protocol logic for one message
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
   to its sender).
 - `InMemoryLocalPubSubDirectory` (`domain/pub_sub_directory.rs`) — the relay's in-memory
-  registry of publish/subscribe namespaces (with `SessionPeer` so client-owned
-  Redis routes are cleaned up when the last *client* leaves), upstream tracks,
-  and downstream subscriptions. An `UpstreamTrack` holds one
+  registry of publish/subscribe namespaces, upstream tracks, and downstream
+  subscriptions. Each namespace entry carries its sessions' `SessionPeer`:
+  client-owned Redis routes are cleaned up when the last *client* leaves, while
+  local namespace subscribers get PUBLISH_NAMESPACE_DONE only once no client or
+  relay session publishes the namespace. An `UpstreamTrack` holds one
   `ActiveUpstreamSubscription` per publisher session feeding the track
   (draft-14 §8.2) and the count of its downstream subscribers; downstream
   subscriptions refer to the track, not to a publisher. The track lives while

@@ -17,6 +17,7 @@ use super::{
     js_value::{js_error, read_next},
 };
 use crate::modules::transport::{
+    application_protocol::NegotiatedProtocol,
     transport_addresses::TransportAddresses,
     transport_connection::{TransportClose, TransportConnection},
     transport_stats::TransportStats,
@@ -158,6 +159,21 @@ impl TransportConnection for BrowserConnection {
     fn addresses(&self) -> TransportAddresses {
         TransportAddresses::default()
     }
+
+    fn negotiated_protocol(&self) -> NegotiatedProtocol {
+        NegotiatedProtocol::WebTransport {
+            protocol: selected_protocol(&self.transport),
+        }
+    }
+}
+
+/// Reads `WebTransport.protocol`, which web-sys does not expose. `None` when
+/// the server selected no subprotocol (`""`) or the browser lacks the attribute.
+fn selected_protocol(transport: &WebTransport) -> Option<String> {
+    js_sys::Reflect::get(transport, &JsValue::from_str("protocol"))
+        .ok()?
+        .as_string()
+        .filter(|protocol| !protocol.is_empty())
 }
 
 /// The WebTransport spec replaced `datagrams.writable` with

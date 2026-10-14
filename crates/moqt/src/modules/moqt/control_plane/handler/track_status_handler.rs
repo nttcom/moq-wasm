@@ -1,17 +1,15 @@
+use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
     modules::moqt::{
         control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{
-                    parameters::{
-                        authorization_token::AuthorizationToken, content_exists::ContentExists,
-                    },
-                    subscribe::Subscribe,
-                    subscribe_ok::SubscribeOk,
+            control_messages::messages::{
+                parameters::{
+                    authorization_token::AuthorizationToken, content_exists::ContentExists,
                 },
+                subscribe::Subscribe,
+                subscribe_ok::SubscribeOk,
             },
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
@@ -77,8 +75,8 @@ impl TrackStatusHandler {
             max_duration: None,
         };
         self.session_context
-            .send_stream
-            .send(ControlMessageType::TrackStatusOk, track_status_ok.encode())
+            .control
+            .respond(OutgoingResponse::TrackStatusOk(track_status_ok))
             .await
     }
 
