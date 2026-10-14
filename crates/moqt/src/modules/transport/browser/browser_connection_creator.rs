@@ -6,6 +6,7 @@ use web_sys::{WebTransport, WebTransportOptions};
 
 use super::{browser_connection::BrowserConnection, js_value::js_error};
 use crate::modules::transport::{
+    accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
     connect_target::{ClientTransport, ConnectTarget},
     transport_connection_creator::TransportConnectionCreator,
@@ -66,8 +67,8 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
         Ok(Box::new(BrowserConnection::new(transport)?))
     }
 
-    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection> {
-        anyhow::bail!("the browser cannot accept connections")
+    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+        Err(anyhow::anyhow!("the browser cannot accept connections").into())
     }
 
     fn refuse_new_connections(&self) {}

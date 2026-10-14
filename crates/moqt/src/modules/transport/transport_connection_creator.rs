@@ -1,8 +1,8 @@
 use crate::modules::{
     executor::{MaybeSend, MaybeSync},
     transport::{
-        application_protocol::ApplicationProtocols, connect_target::ConnectTarget,
-        transport_connection::BoxedConnection,
+        accept_error::AcceptError, application_protocol::ApplicationProtocols,
+        connect_target::ConnectTarget, transport_connection::BoxedConnection,
     },
 };
 use async_trait::async_trait;
@@ -35,7 +35,7 @@ pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
         Self: Sized;
     async fn create_new_transport(&self, target: &ConnectTarget)
     -> anyhow::Result<BoxedConnection>;
-    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection>;
+    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError>;
     /// From now on every connection attempt is refused at the transport
     /// level while `accept_new_transport` is polled; established
     /// connections are unaffected.

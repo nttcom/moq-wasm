@@ -2,7 +2,9 @@ use crate::{
     Connecting, TransportProtocol,
     modules::{
         moqt::{domains::session_creator::SessionCreator, version::APPLICATION_PROTOCOLS},
-        transport::transport_connection_creator::TransportConnectionCreator,
+        transport::{
+            accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
+        },
     },
     server::Accepting,
 };
@@ -88,7 +90,7 @@ impl<T: TransportProtocol> Endpoint<T> {
         self.session_creator.create_new_connection(url).await
     }
 
-    pub async fn accept(&self) -> anyhow::Result<Accepting> {
+    pub async fn accept(&self) -> Result<Accepting, AcceptError> {
         self.session_creator.accept_new_connection().await
     }
 
