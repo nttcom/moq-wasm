@@ -39,10 +39,8 @@ impl Decoder for MessageDecoder {
     }
 }
 
-/// Why a stream stopped before its end.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum MessageReceiveError {
-    /// The transport session ended, which ends every stream with it.
     #[error("the session ended")]
     SessionEnded,
     #[error("the stream was reset")]
@@ -51,7 +49,6 @@ pub(crate) enum MessageReceiveError {
     Malformed(String),
 }
 
-/// The receiving half of a control or request stream.
 #[derive(Debug)]
 pub(crate) struct MessageReceiver {
     framed_read: FramedRead<Reader, MessageDecoder>,
@@ -86,7 +83,6 @@ impl MessageReceiver {
     }
 }
 
-/// The sending half of a control or request stream.
 #[derive(Debug)]
 pub(crate) struct MessageSender {
     stream: tokio::sync::Mutex<BoxedSendStream>,
