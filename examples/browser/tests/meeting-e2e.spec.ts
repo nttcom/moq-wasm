@@ -307,6 +307,51 @@ test('a viewer switches a member camera between renditions on the same picture',
   }
 })
 
+test('Auto follows the size of a member tile when the view changes', async ({ browser }) => {
+  // Arrange: bob publishes 640x360 and 320x180, a filmstrip tile is 126 px tall, and carol speaks so she takes the focus
+  const params = {
+    e2eVideoCodec: 'avc1.42001F',
+    e2eVideoWidth: '640',
+    e2eVideoHeight: '360',
+    e2eVideoLowHeight: '180',
+    e2eVideoBitrate: '300000'
+  }
+  const alice = await arrangeMeetingClient(browser, { params })
+  const bob = await arrangeMeetingClient(browser, { params })
+  const carol = await arrangeMeetingClient(browser, { params })
+  const videoWidth = (video: import('@playwright/test').Locator) =>
+    video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
+
+  try {
+    const roomName = `e2e-tile-size-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await enableMedia(bob.page)
+    await bob.page.toggleMicrophoneButton.click()
+    await joinRoom(carol.page, roomName, 'carol', 'a')
+    await enableMedia(carol.page)
+    const bobVideo = getMemberVideo(alice.page.page, 'bob')
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 30_000 }).toBe(640)
+    await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+
+    // Act
+    await alice.page.page.getByTestId('stage-view-button').click()
+
+    // Assert: bob's filmstrip tile is shorter than 180 px, so Auto drops him to 320x180
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 20_000 }).toBe(320)
+
+    // Act
+    await alice.page.page.getByTestId('stage-view-button').click()
+
+    // Assert: the gallery tile raises the ceiling and Auto takes it without the calm spell of a network step up
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 8_000 }).toBe(640)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
+  }
+})
+
 test('closing the filmstrip unsubscribes the video of the members it hid', async ({ browser }) => {
   // Arrange: carol turns her microphone off, so alice's speaker view focuses bob
   const alice = await arrangeMeetingClient(browser)

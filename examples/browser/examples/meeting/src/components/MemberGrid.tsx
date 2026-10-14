@@ -110,6 +110,7 @@ interface MemberGridProps {
   chatOpen: boolean
   onToggleChat: () => void
   onLeave: () => void
+  onTileHeight: (tileKey: string, heightPx: number) => void
 }
 
 export function MemberGrid({
@@ -165,7 +166,8 @@ export function MemberGrid({
   onToggleFilmstrip,
   chatOpen,
   onToggleChat,
-  onLeave
+  onLeave,
+  onTileHeight
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false)
@@ -201,6 +203,7 @@ export function MemberGrid({
           picture={pictures?.screenshare ?? null}
           label="Screen"
           speaking={false}
+          onHeight={(heightPx) => onTileHeight(tile.key, heightPx)}
           onOpenDetails={() => setDetailsTarget(member.id)}
         />
       )
@@ -213,6 +216,7 @@ export function MemberGrid({
         menuTestId={`member-menu-${member.name}`}
         picture={pictures?.camera ?? null}
         speaking={speakingMemberIds.has(member.id)}
+        onHeight={(heightPx) => onTileHeight(tile.key, heightPx)}
         footer={
           <span data-testid={`member-stats-${member.name}`}>{stats ? formatLiveStats(stats) : 'Awaiting media'}</span>
         }

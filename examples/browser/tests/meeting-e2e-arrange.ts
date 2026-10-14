@@ -27,14 +27,14 @@ const FORWARDED_CONSOLE_TEXT_PATTERN =
 
 async function openMeetingPage(page: Page, jwt: string | undefined, extra: Record<string, string>): Promise<void> {
   const params = new URLSearchParams({
-    ...extra,
     keyframeInterval: String(KEYFRAME_INTERVAL),
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
     e2eVideoHeight: String(E2E_VIDEO_HEIGHT),
     e2eVideoFramerate: String(E2E_VIDEO_FRAMERATE),
     e2eVideoBitrate: String(E2E_VIDEO_BITRATE),
     relayAUrl: RELAY_A_URL,
-    relayBUrl: RELAY_B_URL
+    relayBUrl: RELAY_B_URL,
+    ...extra
   })
   if (jwt) {
     params.set('jwt', jwt)

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
@@ -24,6 +24,7 @@ import type { RemotePlaybackStats, VideoAdaptation } from '../media/mediaSubscri
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 import { type StageView, arrangeStage, tileKey } from '../utils/stageLayout'
+import { capLadderToHeight } from '@player/adaptiveBitrate'
 
 interface MeetingRoomProps {
   session: LocalSession
@@ -51,6 +52,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [stageView, setStageView] = useState<StageView>('gallery')
   const [filmstripOpen, setFilmstripOpen] = useState(true)
+  /// The shown height of every remote tile, in device pixels.
+  const [tileHeights, setTileHeights] = useState<Map<string, number>>(new Map())
+  const handleTileHeight = useCallback(
+    (key: string, heightPx: number) =>
+      setTileHeights((prev) => (prev.get(key) === heightPx ? prev : new Map(prev).set(key, heightPx))),
+    []
+  )
   const [statsHistory, setStatsHistory] = useState<Map<string, SidebarStatsSample[]>>(new Map())
   const [remoteStats, setRemoteStats] = useState<Map<string, RemotePlaybackStats>>(new Map())
   const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, MeetingCatalogTrack[]>>(new Map())
@@ -620,9 +628,21 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           offered &&
           (role === 'audio' || stage.visibleKeys.has(tileKey(member.id, role === 'video' ? 'camera' : 'screenshare')))
         if (wanted && !state.isSubscribed) {
-          mediaSubscribeBackoff.run(trackKey, () =>
-            subscribeCatalogTrack(member, role, remoteCatalogSelections.get(member.id)?.[role])
-          )
+          const selected = remoteCatalogSelections.get(member.id)?.[role]
+          let trackName = selected
+          // Under Auto a video track starts at the rendition its tile fits, once the tile has been laid out.
+          if (selected && isSwitchableRole(role) && !manualTrackKeys.has(trackKey)) {
+            const heightPx = tileHeights.get(tileKey(member.id, role === 'video' ? 'camera' : 'screenshare'))
+            if (heightPx === undefined) {
+              continue
+            }
+            const ladder = buildVideoAdaptation(member.id, role, selected)?.ladder ?? []
+            trackName = capLadderToHeight(ladder, heightPx).at(-1)?.name ?? selected
+            if (trackName !== selected) {
+              selectAndSwitchTrack(member.id, role, trackName)
+            }
+          }
+          mediaSubscribeBackoff.run(trackKey, () => subscribeCatalogTrack(member, role, trackName))
         } else if (!wanted && state.isSubscribed) {
           void handleUnsubscribeCatalogTrack(member.id, role)
         }
@@ -633,11 +653,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     catalogSubscribedMemberIds,
     catalogUnsubscribingTrackKeys,
     mediaSubscribeBackoff,
+    manualTrackKeys,
     mediaSubscribeRetryTick,
     remoteCatalogSelections,
     remoteCatalogTracks,
     room.remoteMembers,
-    stage.visibleKeys
+    stage.visibleKeys,
+    tileHeights
   ])
 
   useEffect(() => {
@@ -742,6 +764,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             chatOpen={isSidebarOpen}
             onToggleChat={() => setIsSidebarOpen((open) => !open)}
             onLeave={onLeave}
+            onTileHeight={handleTileHeight}
           />
         </main>
         {isSidebarOpen && (

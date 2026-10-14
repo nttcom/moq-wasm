@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import { MediaStreamVideo, PictureFrame } from './MediaStreamElements'
 
@@ -12,6 +12,8 @@ interface ParticipantTileProps {
   label?: string
   speaking: boolean
   footer?: ReactNode
+  /// Called with the shown height in device pixels whenever it changes.
+  onHeight?: (heightPx: number) => void
   onOpenDetails: () => void
   menuTestId?: string
 }
@@ -24,12 +26,26 @@ export function ParticipantTile({
   label,
   speaking,
   footer,
+  onHeight,
   onOpenDetails,
   menuTestId
 }: ParticipantTileProps) {
   const avatar = <Avatar name={name} />
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !onHeight) {
+      return
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      onHeight(Math.round(entry.contentRect.height * window.devicePixelRatio))
+    })
+    observer.observe(root)
+    return () => observer.disconnect()
+  }, [onHeight])
   return (
     <div
+      ref={rootRef}
       data-testid={testId}
       className={`group relative h-full w-full overflow-hidden rounded-xl bg-slate-800 ring-2 transition ${
         speaking ? 'ring-emerald-400' : 'ring-white/5'
