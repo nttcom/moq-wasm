@@ -163,6 +163,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await viewer.qualityButton.click()
     await expect(viewer.qualityMenu).toBeVisible()
     await expect(viewer.videoTrackSelect).toHaveValue('@auto')
+    await expect(viewer.playbackStatus).toContainText('Playing ')
     const playing = (await viewer.playbackStatus.innerText()).replace('Playing ', '')
     const rendition = await renditionOption(viewer, playing)
     await viewer.videoTrackSelect.selectOption(rendition)
