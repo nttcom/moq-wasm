@@ -242,6 +242,21 @@ main {
   fill: #555;
 }
 
+.relay.draining .box {
+  stroke: var(--warn);
+  stroke-dasharray: 4 3;
+}
+
+.relay.draining .led-0 {
+  fill: var(--warn);
+}
+
+.graph text.draining-label {
+  fill: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 @keyframes blink {
   50% {
     opacity: 0.35;

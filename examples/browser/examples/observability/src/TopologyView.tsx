@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTER, CLIENT_HALF, ENVIRONMENT_RADIUS, type HalfSize, type Layout, type Point, RELAY_HALF } from './layout'
 import { MESH, type Selection, type Visibility, routesOf } from './selection'
-import { type Link, type Topology, linkMbps } from './topology'
+import { type Link, type Topology, drainingSeconds, linkMbps } from './topology'
 
 interface ViewBox {
   x: number
@@ -393,15 +393,21 @@ export function TopologyView({
             if (!point) return null
             const { w, h } = RELAY_HALF
             const selected = selection?.kind === 'relay' && selection.id === relay.id
+            const draining = drainingSeconds(relay.snapshot)
             return (
               <g
                 key={relay.id}
-                className={`node relay${selected ? ' sel' : ''}${dimmed(activeNodes.has(relay.id))}`}
+                className={`node relay${selected ? ' sel' : ''}${draining === null ? '' : ' draining'}${dimmed(activeNodes.has(relay.id))}`}
                 onClick={(event) => {
                   event.stopPropagation()
                   select({ kind: 'relay', id: relay.id })
                 }}
               >
+                {draining !== null && (
+                  <text x={point.x} y={point.y - h - 8} textAnchor="middle" className="draining-label">
+                    DRAINING {draining}s · {relay.snapshot.process.client_sessions} clients
+                  </text>
+                )}
                 <rect className="box" x={point.x - w} y={point.y - h} width={w * 2} height={h * 2} rx={6} />
                 {[0, 1].map((unit) => {
                   const y = point.y - h + 8 + unit * 17
