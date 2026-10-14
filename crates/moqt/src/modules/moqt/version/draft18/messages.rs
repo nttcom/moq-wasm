@@ -943,8 +943,9 @@ pub(crate) fn encode_publish_ok(publish_ok: &PublishOk) -> anyhow::Result<BytesM
     encode_request_ok(&parameters, &[])
 }
 
-/// TRACK_STATUS_OK has the parameters and Track Properties a SUBSCRIBE_OK
-/// would (§10.14), as a REQUEST_OK.
+/// TRACK_STATUS_OK is a REQUEST_OK with the Track Properties a SUBSCRIBE_OK
+/// would carry (§10.14); of its parameters only LARGEST_OBJECT is allowed
+/// here, EXPIRES is not (§10.2.10).
 pub(crate) fn encode_track_status_ok(track_status_ok: &SubscribeOk) -> anyhow::Result<BytesMut> {
     let parameters: Vec<Parameter> = largest_object(&track_status_ok.content_exists)
         .into_iter()
@@ -1048,7 +1049,7 @@ fn decode_request_error(buf: &mut Bytes) -> Result<RequestErrorMessage, DecodeEr
     })
 }
 
-/// Sent without a Retry Interval: the request should not be retried.
+/// Sent with Retry Interval 0: the request SHOULD NOT be retried (§10.6).
 pub(crate) fn encode_request_error(
     code: RequestErrorCode,
     reason: &str,

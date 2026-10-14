@@ -80,7 +80,7 @@ pub(crate) fn put_location(buf: &mut impl BufMut, location: &Location) {
     put_vi64(buf, location.object_id);
 }
 
-/// §1.4.3: an odd type carries a length-prefixed value.
+/// §1.4.3: the longest value an odd type may carry.
 const MAX_KEY_VALUE_LENGTH: u64 = u16::MAX as u64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

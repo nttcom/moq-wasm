@@ -5,7 +5,7 @@
 //! is cancelled.
 //!
 //! draft-14 and draft-18 are implemented. `APPLICATION_PROTOCOLS` offers
-//! only draft-14 until draft-18 has been checked against other
+//! only draft-14 because draft-18 has not been checked against other
 //! implementations.
 
 pub(crate) mod draft14;
@@ -65,18 +65,18 @@ use crate::{
 /// draft-14 §3.1.2; SETUP then negotiates the version (§3.2).
 const DRAFT14_ALPN: &str = "moq-00";
 
-/// draft-18 §3.1.3 / §3.1.4: the ALPN and the WebTransport subprotocol.
+/// draft-18 §3.1.3 / §3.1.4: the WebTransport subprotocol and the ALPN.
 const DRAFT18_PROTOCOL: &str = "moqt-18";
 
-/// Every draft this crate implements, draft-18 included, for tests that
-/// exercise it before `APPLICATION_PROTOCOLS` offers it.
+/// Offers only draft-18, for tests that exercise it while
+/// `APPLICATION_PROTOCOLS` does not offer it.
 #[cfg(test)]
 pub(crate) const DRAFT18_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
     quic_alpns: &[DRAFT18_PROTOCOL],
     web_transport: &[DRAFT18_PROTOCOL],
 };
 
-/// The ALPN and WebTransport subprotocol of every supported draft.
+/// The ALPN and WebTransport subprotocol of every draft offered to peers.
 pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
     quic_alpns: &[DRAFT14_ALPN],
     // draft-14 defines no WebTransport subprotocol (§3.1.1).

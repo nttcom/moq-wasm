@@ -39,7 +39,7 @@ const PADDING_DATAGRAM: u64 = 0x132B_3E29;
 
 /// The priority an object inherits when its header omits one (§11.3.1,
 /// §11.4.2); the subscription's control message is not visible here, so
-/// the default of §7 stands in.
+/// the default of §12.4 stands in.
 const DEFAULT_PUBLISHER_PRIORITY: u8 = 128;
 
 fn protocol_violation(reason: &'static str) -> DecodeError {
@@ -60,7 +60,7 @@ fn take(buf: &mut impl Buf, len: usize) -> Result<Bytes, DecodeError> {
     Ok(buf.copy_to_bytes(len))
 }
 
-/// Object Properties (§11.2.1.2): a byte length, then Key-Value-Pairs.
+/// Object Properties (§11.2.1.2).
 fn get_properties(buf: &mut impl Buf) -> Result<ExtensionHeaders, DecodeError> {
     let len = get_vi64(buf)? as usize;
     let mut bytes = take(buf, len)?;
@@ -608,8 +608,8 @@ fn violation(error: DecodeError) -> StreamReceiveError {
 }
 
 /// Reads the header that tells a subgroup stream from a FETCH response
-/// (§3.4). `Ok(None)` means the stream finished before its header or is
-/// padding, which is cancelled by dropping it (§11.5.1).
+/// (§3.4). `Ok(None)` means the stream finished before its header, or is a
+/// padding stream read to its FIN with its bytes discarded (§11.5.1).
 pub(crate) async fn accept_uni_stream(
     stream: BoxedReceiveStream,
 ) -> Result<Option<IncomingStream>, StreamReceiveError> {
@@ -689,8 +689,6 @@ impl FetchReader {
     }
 }
 
-/// Encodes one subgroup stream: its header, then its objects as Object ID
-/// Deltas from the previous object.
 pub(crate) struct SubgroupEncoder {
     track_alias: u64,
     prev_object_id: Option<u64>,
@@ -704,8 +702,7 @@ impl SubgroupEncoder {
         }
     }
 
-    /// Subgroup 0 omits the Subgroup ID field. Properties are declared
-    /// present, so every object may carry them.
+    /// Properties are declared present, so every object may carry them.
     pub(crate) fn header(&mut self, start: SubgroupStart) -> BytesMut {
         let mode = match start.subgroup_id {
             0 => 0b00,
@@ -727,8 +724,7 @@ impl SubgroupEncoder {
     }
 
     /// Fails when the object id is not greater than the previous object's
-    /// or the status does not exist in draft-18. An object without payload
-    /// is sent as its status.
+    /// or the status does not exist in draft-18.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         let object_id = object.location.object_id;
         let delta = match self.prev_object_id {
@@ -767,8 +763,7 @@ const DATAGRAM_ZERO_OBJECT_ID: u64 = 0x04;
 const DATAGRAM_DEFAULT_PRIORITY: u64 = 0x08;
 const DATAGRAM_STATUS: u64 = 0x20;
 
-/// Only a Normal object carries properties; a zero-length object is sent
-/// as its status.
+/// Only a Normal object carries properties (§11.2.1.2).
 pub(crate) fn encode_datagram(track_alias: u64, object: &Object) -> anyhow::Result<BytesMut> {
     let status = object.payload.is_empty();
     let properties = !object.extension_headers.key_value_pairs.is_empty()
@@ -875,9 +870,8 @@ pub(crate) fn encode_fetch_header(request_id: u64) -> BytesMut {
     buf
 }
 
-/// Encodes the objects of one FETCH response against the previous object.
-/// The direction of a Group ID Delta follows the order the objects are
-/// written in, which is the FETCH's group order.
+/// The caller writes the objects in the FETCH's group order, which sets the
+/// direction of each Group ID Delta (§11.4.4.1).
 #[derive(Default)]
 pub(crate) struct FetchEncoder {
     location: Option<PriorLocation>,

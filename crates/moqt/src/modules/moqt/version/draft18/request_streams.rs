@@ -439,8 +439,8 @@ async fn acknowledge_update(sender: &MessageSender) {
     }
 }
 
-/// The subscription state an update starts from, as the model's update
-/// states it: the start location and the end group plus 1 (0 for none).
+/// The subscription state a REQUEST_UPDATE applies to, in draft-14's
+/// SUBSCRIBE_UPDATE form: the end group is the last group plus 1, 0 for none.
 /// A relative filter has no absolute start, so it starts at {0, 0}.
 fn update_baseline(
     subscription_request_id: RequestId,
@@ -479,9 +479,9 @@ fn filter_range(filter: FilterType) -> (Location, u64) {
     }
 }
 
-/// §10.9: a REQUEST_UPDATE carries only what changes, so it applies on top
-/// of the subscription's current state, which the model's update states
-/// whole.
+/// §10.9: a REQUEST_UPDATE carries only the parameters that change, while
+/// draft-14's SUBSCRIBE_UPDATE carries the whole state, so the update is
+/// applied to `baseline`.
 fn apply_update(
     baseline: &mut SubscribeUpdate,
     request_id: RequestId,
@@ -504,7 +504,6 @@ fn apply_update(
     baseline.clone()
 }
 
-/// Reads the responses on a request stream this endpoint opened.
 pub(crate) struct OutgoingRequestTask;
 
 impl OutgoingRequestTask {
@@ -688,9 +687,9 @@ impl OutgoingRequestTask {
         );
     }
 
-    /// §10.4: a GOAWAY on a request stream moves that request alone. The
-    /// model has no per-request migration, so the request ends here as if
-    /// the peer had ended it with GOING_AWAY, and its stream is cancelled.
+    /// §10.4: a GOAWAY on a request stream moves that request alone.
+    /// draft-14 events have no per-request migration, so the request ends
+    /// as if the peer had ended it with GOING_AWAY, and its stream is reset.
     async fn moved_away(
         session: &Arc<SessionContext>,
         request_id: RequestId,

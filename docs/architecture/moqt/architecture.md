@@ -118,10 +118,10 @@ subprotocol support reports none.
 ## Version adapter (`modules/moqt/version`)
 
 Everything above the adapter states what to send and receive; the adapter
-decides how a draft carries it. draft-14 and draft-18 are implemented;
-`APPLICATION_PROTOCOLS` offers only draft-14 until draft-18 has been checked
-against other implementations, so draft-18 is reached only by the tests
-that offer it (`version::DRAFT18_PROTOCOLS`).
+decides how a draft carries it. draft-14 and draft-18 are implemented.
+`APPLICATION_PROTOCOLS` offers only draft-14 because draft-18 has not been
+checked against other implementations; only tests reach draft-18, through
+`version::DRAFT18_PROTOCOLS`.
 
 - `Version` names the draft a session speaks.
 - `ControlChannel` is an enum with one variant per draft, matched in place
@@ -148,7 +148,7 @@ that offer it (`version::DRAFT18_PROTOCOLS`).
   - FETCH → FETCH_CANCEL.
   - TRACK_STATUS → nothing; it creates no state.
 - The data plane goes through the same seam. `SubgroupEncoder` and
-  `Version::encode_datagram` / `encode_fetch_header` / `encode_fetch_object`
+  `Version::encode_datagram` / `encode_fetch_header` and `FetchEncoder`
   lay out outgoing `Object`s. `Version::accept_uni_stream` reads the header
   that tells a subgroup stream from a FETCH response and returns an
   `IncomingStream`, `SubgroupReader` / `FetchReader` turn the rest of the
@@ -157,46 +157,45 @@ that offer it (`version::DRAFT18_PROTOCOLS`).
   forms, status codes) on top of the wire structs in `data_plane/object` and
   the decoders in `data_plane/codec`.
 - `version::APPLICATION_PROTOCOLS` lists the ALPN and WebTransport subprotocol
-  of every supported draft; `Endpoint` hands it to its creator.
+  of every draft offered to peers; `Endpoint` hands it to its creator.
   `version::connect` / `accept` pick the `Version` from the connection's
   `negotiated_protocol()` before running that draft's SETUP exchange: ALPN
   `moq-00` (draft-14 §3.1.2) and a WebTransport session without a subprotocol
   (draft-14 defines none, §3.1.1) are draft-14; ALPN or subprotocol `moqt-18`
   is draft-18; anything else fails the session.
-- `draft18` (docs/spec/draft-ietf-moq-transport-18.txt) keeps a
-  unidirectional control stream per endpoint (SETUP, then only GOAWAY) and a
-  bidirectional stream per request, which carries the response; requests
-  have no Request ID pairing and no late-response handling. The adapter maps
-  the streams onto the same model draft-14 uses:
-  - `ControlChannel` registers each request stream by Request ID and kind;
-    `respond` writes on the peer's stream, a rejection and TRACK_STATUS_OK
-    end it with FIN, and the cancelling notifications (UNSUBSCRIBE,
-    FETCH_CANCEL, PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE)
-    reset the stream. Dropping a `PendingResponse` before a success response
-    resets the stream too (§3.3.2).
-  - `request_streams` reads the streams. A request the peer opens becomes
-    the draft-14 event (its Request ID checked for parity and reuse, §10.1);
-    the peer ending a still-open request becomes the event its draft-14
-    cancellation would raise (`Unsubscribe`, `FetchCancel`,
-    `PublishNamespaceDone`, `UnsubscribeNamespace`, `PublishDone`).
-  - `messages` / `parameters` encode the control messages on the draft-14
-    structs as the shared model: Message Parameters and Track Properties
-    carry what draft-14 had as fields, absent ones take their draft-18
-    defaults, and responses get their Request ID from the stream.
-  - `objects` covers the draft-18 data plane; FETCH objects are delta
-    encoded against the previous one, so `FetchDataSender` keeps a
-    `FetchEncoder` and `accept_fetch_receiver` hands the FETCH's group order
-    to the reader.
-  - Messages draft-14 lacks map onto its events. A `publish_namespace`
-    that matches the peer's SUBSCRIBE_NAMESPACE is sent as NAMESPACE on
-    that stream and accepted at once; NAMESPACE / NAMESPACE_DONE received
-    on our SUBSCRIBE_NAMESPACE raise `PublishNamespace` (under a synthetic
-    Request ID counting down from `u64::MAX`, whose responses send nothing)
-    and `PublishNamespaceDone`. SUBSCRIBE_TRACKS raises `SubscribeNameSpace`
-    and gets no NAMESPACE. A per-request GOAWAY ends the request as if the
-    peer had cancelled it with GOING_AWAY, and a REQUEST_UPDATE is applied
-    as a delta to the request's current state (§10.9) before it becomes a
-    `SubscribeUpdate`.
+- `draft18` (docs/spec/draft-ietf-moq-transport-18.txt) has one
+  unidirectional control stream per endpoint (SETUP, then only GOAWAY) and one
+  bidirectional stream per request that carries its response, so there is no
+  Request ID pairing and no late-response handling. It maps these streams onto
+  the draft-14 model:
+  - `ControlChannel` registers each request stream by Request ID and kind.
+    `respond` writes on the peer's stream; a rejection or TRACK_STATUS_OK ends
+    it with FIN. The cancelling notifications (UNSUBSCRIBE, FETCH_CANCEL,
+    PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE) reset it, and so
+    does dropping a `PendingResponse` before a success response (§3.3.2).
+  - `request_streams` reads the streams. A request the peer opens becomes the
+    draft-14 event once its Request ID passes the parity and reuse checks
+    (§10.1). The peer ending an open request raises the event its draft-14
+    cancellation would (`Unsubscribe`, `FetchCancel`, `PublishNamespaceDone`,
+    `UnsubscribeNamespace`, `PublishDone`).
+  - `messages` / `parameters` encode the draft-14 structs: Message Parameters
+    and Track Properties carry the former fields, absent ones take their
+    draft-18 defaults, and responses take their Request ID from the stream.
+  - `objects` is the draft-18 data plane. FETCH objects are delta encoded
+    against the previous one, so `FetchDataSender` keeps a `FetchEncoder` and
+    `accept_fetch_receiver` passes the FETCH's group order to the reader.
+  - Messages draft-14 lacks map onto its events:
+    - A `publish_namespace` matching the peer's SUBSCRIBE_NAMESPACE is sent as
+      NAMESPACE on that stream and accepted at once.
+    - NAMESPACE / NAMESPACE_DONE on our SUBSCRIBE_NAMESPACE raise
+      `PublishNamespace` / `PublishNamespaceDone`. `PublishNamespace` gets a
+      synthetic Request ID counting down from `u64::MAX`; responses to it
+      send nothing.
+    - SUBSCRIBE_TRACKS raises `SubscribeNameSpace` and gets no NAMESPACE.
+    - A per-request GOAWAY ends the request as a peer cancellation with
+      GOING_AWAY.
+    - REQUEST_UPDATE is applied as a delta to the request's current state
+      (§10.9), then raised as `SubscribeUpdate`.
 - Error codes cross the seam as the typed enums of `error_codes.rs` and
   `constants.rs`. `draft14::error_codes` and `draft18::error_codes` hold each
   draft's values: the drafts use them to encode and decode messages, and

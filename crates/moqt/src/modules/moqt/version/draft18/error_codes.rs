@@ -29,7 +29,7 @@ const REQUEST_ERROR: [(RequestErrorCode, u64); 18] = [
 
 pub(crate) fn request_error_code_to_wire(code: RequestErrorCode) -> u64 {
     let code = match code {
-        // draft-18 folds these draft-14 codes into broader ones.
+        // draft-18 has no value for these draft-14 codes; send the closest broader one.
         RequestErrorCode::NamespacePrefixUnknown => RequestErrorCode::TrackDoesNotExist,
         RequestErrorCode::NoObjects => RequestErrorCode::InvalidRange,
         RequestErrorCode::UnknownStatusInRange => RequestErrorCode::InternalError,
@@ -48,7 +48,7 @@ pub(crate) fn request_error_code_to_wire(code: RequestErrorCode) -> u64 {
         })
 }
 
-/// §10.6.2: an unknown code reads as INTERNAL_ERROR.
+/// §14: an unknown code reads as INTERNAL_ERROR.
 pub(crate) fn request_error_code_from_wire(value: u64) -> RequestErrorCode {
     REQUEST_ERROR
         .iter()

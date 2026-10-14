@@ -45,8 +45,8 @@ use message_stream::{MessageReceiver, MessageSender};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What a request stream was opened for, so a notification or the end of
-/// the stream finds its meaning.
+/// What a request stream was opened for; decides which message a
+/// notification becomes and which event the end of the stream raises.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RequestStreamKind {
     Subscribe,
@@ -62,7 +62,6 @@ pub(crate) enum RequestStreamKind {
 }
 
 impl RequestStreamKind {
-    /// The prefix of a namespace subscription, when `namespace` falls under it.
     fn namespace_prefix_of(&self, namespace: &[String]) -> Option<&[String]> {
         match self {
             Self::SubscribeNamespace(prefix) | Self::SubscribeTracks(prefix)
@@ -114,8 +113,6 @@ fn cancelled() -> u64 {
 }
 
 impl ControlChannel {
-    /// A client numbers its requests from 0 and a server from 1, each in
-    /// steps of two.
     fn new(control: MessageSender, first_request_id: RequestId) -> Self {
         Self {
             control,
@@ -143,7 +140,7 @@ impl ControlChannel {
         self.request_id.fetch_add(2, Ordering::SeqCst)
     }
 
-    /// The smallest Request ID the peer has not used yet, for GOAWAY.
+    /// The Request ID after the largest one the peer has used, for GOAWAY.
     fn next_peer_request_id(&self) -> RequestId {
         self.requests()
             .peer_request_ids
@@ -175,7 +172,6 @@ impl ControlChannel {
         request_id
     }
 
-    /// Drops what a peer's namespace subscription was sent once it ends.
     fn forget_advertised(&self, subscription_request_id: RequestId) {
         self.requests()
             .advertised
@@ -600,7 +596,8 @@ fn is_success(response: &ResponseMessage) -> bool {
 }
 
 impl PendingResponse {
-    /// Bounds the wait like draft-14 does; a timeout cancels the request.
+    /// Waits at most `RESPONSE_TIMEOUT`; a timeout or an error response
+    /// resets the request stream.
     pub(super) async fn response(mut self) -> Result<ResponseMessage, RequestFailure> {
         match executor::timeout(RESPONSE_TIMEOUT, &mut self.receiver).await {
             Ok(Ok(response)) => {
@@ -900,7 +897,6 @@ mod tests {
         assert!(matches!(receiver.receive().await.unwrap(), Fetch::End));
     }
 
-    /// A subscription from client to server, answered with SUBSCRIBE_OK.
     async fn subscribed(
         client: &crate::Session,
         server: &crate::Session,
