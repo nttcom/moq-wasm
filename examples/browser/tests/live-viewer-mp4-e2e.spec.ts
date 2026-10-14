@@ -109,6 +109,10 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     await expect(viewer.publishStatus).toHaveText('Publish stopped')
     await expect(viewer.publishStreams).toBeHidden()
     await expect(viewer.publishPreview).toBeHidden()
+    // Assert: the relay ends the viewer's subscriptions with PUBLISH_DONE once the publisher left
+    await expect(viewer.playbackStatus).toHaveText(/^Publisher ended the (video|audio) track/)
+    await expect(viewer.logPanel).toContainText('video ended by the publisher')
+    await expect(viewer.logPanel).toContainText('catalog ended by the publisher')
   } finally {
     await closeLiveViewerE2ESession(session)
   }

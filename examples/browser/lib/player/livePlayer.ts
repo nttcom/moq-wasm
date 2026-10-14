@@ -1,5 +1,5 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
-import { parse_msf_catalog_json } from '../../pkg/moqt'
+import { type PublishDoneMessage, parse_msf_catalog_json } from '../../pkg/moqt'
 import { parseAudioChannelCount } from '../../utils/media/audioChannelConfig'
 import type { MseTrackSource } from '../../utils/media/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
@@ -130,7 +130,7 @@ export class LivePlayer {
       this.textTracks,
       (text) => void this.queueTrackChange(() => this.applyCatalog(text))
     )
-    this.subscriptions = new TrackSubscriptions(this.context)
+    this.subscriptions = new TrackSubscriptions(this.context, (kind, message) => this.publisherEnded(kind, message))
     this.stallWatch = new StallWatch(() => this.changed())
     this.stage = new PictureStage(options.container)
     this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
@@ -578,6 +578,15 @@ export class LivePlayer {
       this.timeline.audio.record(groupId, undefined)
     }
     this.cmafLive.append(kind, object)
+  }
+
+  private publisherEnded(kind: MediaKind, message: PublishDoneMessage): void {
+    if (kind === 'video') {
+      this.stallWatch.clear()
+    }
+    const reason = message.errorReason ? `: ${message.errorReason}` : ''
+    this.playbackStatus = { text: `Publisher ended the ${kind} track${reason}`, state: 'idle' }
+    this.changed()
   }
 
   private notePlaying(trackName: string): void {
