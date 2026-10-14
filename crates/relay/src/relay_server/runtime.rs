@@ -2,26 +2,32 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::modules::{
-    auth::token_verifier::TokenVerifier,
-    cascading::{
-        inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::RelayRouteRegistry, watched_namespace_job::WatchedNamespaceJob,
+use crate::{
+    config::DiskCacheConfig,
+    modules::{
+        auth::token_verifier::TokenVerifier,
+        cascading::{
+            inter_relay_connection_manager::InterRelayConnectionManager,
+            route_registry::RelayRouteRegistry, watched_namespace_job::WatchedNamespaceJob,
+        },
+        control_plane::{
+            control_message_forwarder::ControlMessageForwarder,
+            event_handler::{EventHandler, WorkerDeps},
+            upstream_creation_serializer::UpstreamCreationSerializer,
+            upstream_publisher_resolver::UpstreamPublisherResolver,
+        },
+        data_plane::{
+            cache::{
+                disk_cache::DiskCacheTask, eviction_job::spawn_cache_eviction_job,
+                store::TrackCacheStore,
+            },
+            egress::coordinator::EgressCoordinator,
+            ingress::ingress_coordinator::IngressCoordinator,
+        },
+        domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
+        observability::stats_collector::{StatsCollector, StatsSources},
+        session::{session_event::SessionEvent, session_repository::SessionRepository},
     },
-    control_plane::{
-        control_message_forwarder::ControlMessageForwarder,
-        event_handler::{EventHandler, WorkerDeps},
-        upstream_creation_serializer::UpstreamCreationSerializer,
-        upstream_publisher_resolver::UpstreamPublisherResolver,
-    },
-    data_plane::{
-        cache::{eviction_job::spawn_cache_eviction_job, store::TrackCacheStore},
-        egress::coordinator::EgressCoordinator,
-        ingress::ingress_coordinator::IngressCoordinator,
-    },
-    domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
-    observability::stats_collector::{StatsCollector, StatsSources},
-    session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 
 pub(crate) struct RelayRuntime {
@@ -34,6 +40,7 @@ pub(crate) struct RelayRuntime {
     _manager: EventHandler,
     _evict_job: tokio::task::JoinHandle<()>,
     _watched_namespace_job: WatchedNamespaceJob,
+    _disk_cache: Option<DiskCacheTask>,
 }
 
 impl RelayRuntime {
@@ -42,9 +49,13 @@ impl RelayRuntime {
         route_registry: Arc<dyn RelayRouteRegistry>,
         relay_token: String,
         token_verifier: Arc<dyn TokenVerifier>,
+        disk_cache: Option<DiskCacheConfig>,
     ) -> (UnboundedSender<SessionEvent>, Self) {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
-        let cache_store = Arc::new(TrackCacheStore::new());
+        let disk_cache = disk_cache.map(DiskCacheTask::run);
+        let cache_store = Arc::new(TrackCacheStore::with_disk(
+            disk_cache.as_ref().map(DiskCacheTask::handle),
+        ));
         let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
             repo.clone(),
             sender.clone(),
@@ -93,6 +104,7 @@ impl RelayRuntime {
                 _manager: manager,
                 _evict_job: evict_job,
                 _watched_namespace_job: watched_namespace_job,
+                _disk_cache: disk_cache,
             },
         )
     }

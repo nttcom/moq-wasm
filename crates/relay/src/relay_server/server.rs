@@ -4,12 +4,13 @@ use moqt::server::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    RelayConfig,
+    DiskCacheConfig, RelayConfig,
     modules::{
         auth::session_authenticator::SessionAuthenticator,
         cascading::route_registry::{
             NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
         },
+        data_plane::cache::disk_cache::prepare_directory,
         domain::session_peer::SessionPeer,
         observability::stats_publish_task::{StatsPublishConfig, StatsPublishTask},
         session::{session_event::SessionEvent, session_repository::SessionRepository},
@@ -26,6 +27,8 @@ pub(crate) struct RelayServerDeps {
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) authenticator: SessionAuthenticator,
     pub(crate) relay_token: String,
+    /// `config.dir` must have gone through `prepare_directory`.
+    pub(crate) disk_cache: Option<DiskCacheConfig>,
 }
 
 pub struct RelayServer {
@@ -64,6 +67,10 @@ impl RelayServer {
             Arc::new(NoopRelayRouteRegistry)
         };
         let authenticator = SessionAuthenticator::from_config(&config.auth)?;
+        if let Some(disk_cache) = &config.disk_cache {
+            prepare_directory(&disk_cache.dir).await?;
+            tracing::info!(dir = %disk_cache.dir.display(), max_bytes = disk_cache.max_bytes, "disk cache enabled");
+        }
         Ok(Self::new_with_deps(
             key_path,
             cert_path,
@@ -72,6 +79,7 @@ impl RelayServer {
                 route_registry,
                 authenticator,
                 relay_token: config.auth.relay_token,
+                disk_cache: config.disk_cache,
             },
         ))
     }
@@ -82,6 +90,7 @@ impl RelayServer {
             route_registry,
             authenticator,
             relay_token,
+            disk_cache,
         } = deps;
         let repo = Arc::new(tokio::sync::Mutex::new(repo));
         let (sender, runtime) = RelayRuntime::new(
@@ -89,6 +98,7 @@ impl RelayServer {
             route_registry.clone(),
             relay_token.clone(),
             authenticator.verifier.clone(),
+            disk_cache,
         );
 
         Self {

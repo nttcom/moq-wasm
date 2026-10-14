@@ -8,6 +8,7 @@ use crate::modules::{
     auth::verified_token::VerifiedToken,
     data_plane::{
         cache::{
+            cached_object::CacheStamp,
             subgroup_key::SubgroupKey,
             track_cache::{NextObject, SubgroupRun, TrackCache},
         },
@@ -143,6 +144,13 @@ impl FetchDeliveryHandle {
         }
     }
 
+    pub(crate) async fn expect_object(&mut self) -> moqt::object::Object {
+        match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+            Ok(Some(FetchSent::Object(object))) => object,
+            other => panic!("expected a fetch object, got {other:?}"),
+        }
+    }
+
     pub(crate) async fn expect_end(&mut self) -> FetchSent {
         match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
             Ok(Some(end @ (FetchSent::Closed | FetchSent::Reset(_)))) => end,
@@ -171,16 +179,27 @@ impl RelayHarness {
     }
 
     pub(crate) fn with_max_cache_duration(max_cache_duration: Option<Duration>) -> Self {
+        Self::with_cache(
+            Arc::new(TrackCache::new()),
+            CacheStamp {
+                max_cache_duration,
+                persist: false,
+            },
+        )
+    }
+
+    /// Ingests into `cache`, a store's cache when the test needs its disk.
+    pub(crate) fn with_cache(cache: Arc<TrackCache>, stamp: CacheStamp) -> Self {
         let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = watch::channel(false);
         Self {
             ingest: TrackIngest {
                 track_key: TrackKey::new("ns", "track"),
                 publisher_session_id: PUBLISHER_SESSION_ID,
-                cache: Arc::new(TrackCache::new()),
+                cache,
                 session_event_sender,
                 stop_receiver,
-                max_cache_duration,
+                stamp,
             },
             session_event_receiver,
             stop_sender,

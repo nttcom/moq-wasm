@@ -6,7 +6,9 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use crate::modules::{
     data_plane::{
         cache::{
-            cached_object::CachedObject, duration::duration_from_env, track_cache::TrackCache,
+            cached_object::{CacheStamp, CachedObject},
+            duration::duration_from_env,
+            track_cache::TrackCache,
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
@@ -99,21 +101,28 @@ impl FetchIngest {
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
-        let mut subscriber = {
+        let (mut subscriber, persist) = {
             let session_repo = session_repo.lock().await;
-            session_repo
+            let subscriber = session_repo
                 .subscriber(start.upstream_publisher_session_id)
-                .ok_or_else(|| anyhow::anyhow!("upstream publisher session not found"))?
+                .ok_or_else(|| anyhow::anyhow!("upstream publisher session not found"))?;
+            (
+                subscriber,
+                session_repo.is_client_session(start.upstream_publisher_session_id),
+            )
         };
         let mut receiver = subscriber
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
         let cache = start.egress_start.cache.clone();
         let start_eviction_generation = cache.eviction_generation();
-        let max_cache_duration = start
-            .fetch_handle
-            .max_cache_duration
-            .map(Duration::from_millis);
+        let stamp = CacheStamp {
+            max_cache_duration: start
+                .fetch_handle
+                .max_cache_duration
+                .map(Duration::from_millis),
+            persist,
+        };
 
         loop {
             let received = tokio::select! {
@@ -124,7 +133,7 @@ impl FetchIngest {
             };
             match received {
                 moqt::fetch::Fetch::Object(object) => {
-                    Self::append_fetch_object(&cache, object, max_cache_duration)?;
+                    Self::append_fetch_object(&cache, object, stamp)?;
                 }
                 moqt::fetch::Fetch::End => {
                     if cache.eviction_generation() != start_eviction_generation {
@@ -150,11 +159,11 @@ impl FetchIngest {
     fn append_fetch_object(
         cache: &TrackCache,
         object: moqt::object::Object,
-        max_cache_duration: Option<Duration>,
+        stamp: CacheStamp,
     ) -> anyhow::Result<()> {
         let (group_id, object_id) = (object.location.group_id, object.location.object_id);
         cache
-            .insert(CachedObject::from_object(object).expiring_after(max_cache_duration))
+            .insert(stamp.apply(CachedObject::from_object(object)))
             .map_err(|_| {
                 anyhow::anyhow!(
                     "malformed track detected during fetch fill (group {group_id}, object {object_id})"
@@ -232,7 +241,7 @@ mod tests {
     use moqt::object::ObjectStatus;
 
     fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
-        FetchIngest::append_fetch_object(cache, object.object.clone(), None)
+        FetchIngest::append_fetch_object(cache, object.object.clone(), CacheStamp::default())
     }
 
     #[tokio::test]

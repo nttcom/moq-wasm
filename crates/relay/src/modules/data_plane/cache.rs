@@ -1,4 +1,5 @@
 pub(crate) mod cached_object;
+pub(crate) mod disk_cache;
 pub(crate) mod duration;
 pub(crate) mod eviction_job;
 pub(crate) mod known_ranges;

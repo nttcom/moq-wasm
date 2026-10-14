@@ -31,7 +31,9 @@ on `https://127.0.0.1:4433`. A self-signed certificate is generated under
 | `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays |
 | `AUTH_MAX_TOKEN_TTL_SECONDS` | `3600` | Longest client token lifetime accepted |
 | `AUTH_CLOCK_LEEWAY_SECONDS` | `5` | Tolerance when checking `iat` / `exp` |
-| `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in the cache |
+| `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in memory; with the disk cache, how long a payload stays in memory before only its disk copy is kept |
+| `RELAY_DISK_CACHE_DIR` | unset | Directory for the payloads of objects received from client publishers, kept up to 1 hour; unset keeps the cache in memory only. `*.seg` files in it are deleted at startup |
+| `RELAY_DISK_CACHE_BYTES` | `10737418240` (10 GiB) | Cap on the disk cache; the oldest segments go first |
 | `RELAY_CACHE_EVICT_INTERVAL_SECS` | `5` | How often expired objects are drained |
 | `RELAY_STDOUT_FILTER` | `relay=info,moqt=info` | `tracing` filter for stdout |
 | `RELAY_OTEL_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry traces |

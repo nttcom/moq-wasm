@@ -7,7 +7,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::modules::{
     data_plane::{
-        cache::store::TrackCacheStore,
+        cache::{cached_object::CacheStamp, store::TrackCacheStore},
         ingress::track_ingest_task::{IngestCommand, IngestSource, IngestStart, TrackIngestTask},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
@@ -70,7 +70,7 @@ impl IngressCoordinator {
                             track_name = %track_key.track_name,
                             "ingress start command received"
                         );
-                        let (subscriber, publisher_session_span) = {
+                        let (subscriber, publisher_session_span, persist) = {
                             let session_repo = session_repo.lock().await;
                             let Some(subscriber) = session_repo.subscriber(command.publisher_session_id) else {
                                 tracing::info!(%track_key, "publisher session not found for subscription");
@@ -79,7 +79,10 @@ impl IngressCoordinator {
                             let publisher_session_span = session_repo
                                 .session_span(command.publisher_session_id)
                                 .unwrap_or_else(|| command.parent_span.clone());
-                            (subscriber, publisher_session_span)
+                            // Only the relay a client publishes to keeps the
+                            // payloads on disk; downstream relays fetch from it.
+                            let persist = session_repo.is_client_session(command.publisher_session_id);
+                            (subscriber, publisher_session_span, persist)
                         };
                         tracing::info!(%track_key, "upstream subscriber found; spawning data receiver task");
                         let ingest_tx = ingest_tx.clone();
@@ -155,7 +158,10 @@ impl IngressCoordinator {
                                     track_key: track_key.clone(),
                                     publisher_session_id: command.publisher_session_id,
                                     source,
-                                    max_cache_duration: subscription.max_cache_duration(),
+                                    stamp: CacheStamp {
+                                        max_cache_duration: subscription.max_cache_duration(),
+                                        persist,
+                                    },
                                 }))
                                 .await
                                 .is_ok()

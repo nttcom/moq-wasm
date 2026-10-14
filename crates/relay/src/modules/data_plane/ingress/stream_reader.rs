@@ -79,7 +79,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
         cache,
         session_event_sender,
         mut stop_receiver,
-        max_cache_duration,
+        stamp,
     } = ingest;
     let span = Span::current();
     let mut header: Option<ReceivedHeader> = None;
@@ -115,7 +115,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     ObjectStatus::EndOfTrack => Some("end_of_track"),
                     _ => None,
                 };
-                let object = CachedObject::from_object(object).expiring_after(max_cache_duration);
+                let object = stamp.apply(CachedObject::from_object(object));
                 if current.insert(object).is_err() {
                     report_malformed_track(
                         &span,
@@ -144,8 +144,8 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     && header.start.ends_group
                 {
                     let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
-                    let end_of_group = CachedObject::end_of_group(&header.start, end_of_group_id)
-                        .expiring_after(max_cache_duration);
+                    let end_of_group =
+                        stamp.apply(CachedObject::end_of_group(&header.start, end_of_group_id));
                     if ingest.insert(end_of_group).is_err() {
                         report_malformed_track(
                             &span,

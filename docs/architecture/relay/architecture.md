@@ -646,7 +646,36 @@ per-request authorization gate under "Event pipeline".
   SUBSCRIBE_OK, the forwarded PUBLISH and a FETCH_OK served from cache, and an
   upstream FETCH_OK's value goes into the relayed FETCH_OK. Each relay counts
   from its own receipt, so in a cascade an object can stay cached up to N ms
-  per hop.
+  per hop. A value above `RETENTION_LIMIT` (1 h) is cut to it; caching is
+  optional (§8.1), so keeping an object for less is allowed.
+- Disk cache (`disk_cache.rs`, on when `RELAY_DISK_CACHE_DIR` is set): the
+  relay a client publisher sends to keeps the payloads for up to
+  `RETENTION_LIMIT`; a downstream relay keeps its memory cache only and
+  forwards a FETCH that misses it upstream. The ingress coordinator and
+  `FetchIngest` stamp `CacheStamp.persist` when the upstream session is
+  `SessionPeer::Client`.
+  - Write: `TrackCache` hands each newly inserted persisted object with a
+    payload to `DiskSink::write`, a `try_send` to `DiskCacheTask`, the only
+    task that touches the directory. It appends the payload to the track's
+    current segment file (`<n>.seg`, a new one every 60 s) and reports the
+    location back with `TrackCache::record_stored`, which sets the object's
+    `stored`. A full queue or a failed write leaves the object in memory
+    only, and it leaves at the memory TTL like any other object.
+  - Swap: eviction past the memory TTL empties the payload of an object with
+    `stored`, so the index (location, status, knowledge) stays in memory and
+    `CachedObject::load` reads the bytes back for egress. A persisted status
+    object, which has no payload, stays as it is.
+  - Removal: a disk-backed object counts as expired (`is_expired`) once it is
+    `RETENTION_LIMIT` old or its segment is deleted, exactly like one past
+    MAX_CACHE_DURATION: it is not handed out, a FETCH over it goes upstream,
+    and the next eviction drops it with its knowledge.
+    `DiskCacheTask` deletes a segment once its last object is past
+    `retained_until`, and deletes the oldest segments of any track while the
+    total exceeds `RELAY_DISK_CACHE_BYTES`. A deleted segment is flagged
+    before its file goes; a read already in flight fails, which resets the
+    FETCH stream or makes a live read skip the object.
+  - Nothing survives a restart: the index lives in memory, and startup deletes
+    the `*.seg` files in the directory.
 
 ### Egress (`modules/data_plane/egress`)
 `EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop
