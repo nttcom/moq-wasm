@@ -3,6 +3,7 @@ use crate::modules::moqt::domains::session::Session;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::version;
+use crate::modules::transport::accept_error::AcceptError;
 use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use crate::modules::transport::transport_connection::TransportClose;
@@ -64,7 +65,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         }
     }
 
-    pub(crate) async fn accept_new_connection(&self) -> anyhow::Result<Accepting> {
+    pub(crate) async fn accept_new_connection(&self) -> Result<Accepting, AcceptError> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let handshake = async move {
             let setup = version::accept(&transport_conn).await?;

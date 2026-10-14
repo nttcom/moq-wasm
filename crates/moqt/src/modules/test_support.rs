@@ -9,6 +9,8 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 use tracing_subscriber::EnvFilter;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
+use crate::modules::moqt::version::APPLICATION_PROTOCOLS;
+use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 use crate::{
     ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
@@ -73,6 +75,18 @@ fn write_self_signed_cert(dir: &Path) -> ServerConfig {
 pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
     init_test_tracing();
     write_self_signed_cert(&unique_cert_dir(name))
+}
+
+pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str) -> C {
+    let config = self_signed_server_config(name);
+    C::server(
+        &config.cert_path,
+        &config.key_path,
+        0,
+        config.keep_alive_interval_sec,
+        APPLICATION_PROTOCOLS,
+    )
+    .unwrap()
 }
 
 /// Starts a DUAL server on a free port whose accept loop resolves the first

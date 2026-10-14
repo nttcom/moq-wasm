@@ -13,6 +13,7 @@ use web_transport_quinn::proto::{ConnectRequest, ConnectResponse};
 
 use super::wt_connection::WtConnection;
 use crate::modules::transport::{
+    accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
     client_crypto::{
         client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
@@ -158,17 +159,17 @@ impl TransportConnectionCreator for WtConnectionCreator {
         Ok(Box::new(WtConnection::new(session)))
     }
 
-    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection> {
+    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
         let server = match &self.endpoint {
             WtEndpoint::Server(s) => s,
-            WtEndpoint::Client(_) => {
-                anyhow::bail!("Cannot accept_new_transport on a client endpoint")
-            }
+            WtEndpoint::Client(_) => Err(anyhow::anyhow!(
+                "Cannot accept_new_transport on a client endpoint"
+            ))?,
         };
 
         loop {
             let Some(request) = server.lock().await.accept().await else {
-                anyhow::bail!("Server endpoint closed");
+                return Err(AcceptError::EndpointClosing);
             };
             if self.refusing.load(Ordering::SeqCst) {
                 let _ = request
@@ -196,9 +197,18 @@ impl TransportConnectionCreator for WtConnectionCreator {
 
 #[cfg(test)]
 mod tests {
+    use super::WtConnectionCreator;
     use crate::{
         Endpoint, WEBTRANSPORT,
-        modules::test_support::{connect_sessions_from, insecure_client_config, spawn_dual_server},
+        modules::{
+            test_support::{
+                HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config,
+                server_transport_creator, spawn_dual_server,
+            },
+            transport::{
+                accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
+            },
+        },
     };
 
     #[tokio::test]
@@ -213,5 +223,18 @@ mod tests {
 
         // Assert
         result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn accept_on_a_closed_endpoint_reports_endpoint_closing() {
+        // Arrange
+        let server: WtConnectionCreator = server_transport_creator("wt-closed");
+        server.quic_endpoint.close(0u32.into(), b"");
+
+        // Act
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, server.accept_new_transport()).await;
+
+        // Assert
+        assert!(matches!(result, Ok(Err(AcceptError::EndpointClosing))));
     }
 }

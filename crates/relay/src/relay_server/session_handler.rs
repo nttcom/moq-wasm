@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::{Endpoint, TransportProtocol, server::Accepting};
+use moqt::{AcceptError, Endpoint, TransportProtocol, server::Accepting};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 
@@ -114,12 +114,11 @@ impl SessionHandler {
                         relay_hostname = %relay_hostname,
                     );
                     let accept = async {
-                        endpoint.accept().await.inspect_err(|error| {
-                            if Self::is_endpoint_closing(error) {
+                        endpoint.accept().await.inspect_err(|error| match error {
+                            AcceptError::EndpointClosing => {
                                 tracing::info!(%error, "transport endpoint closed");
-                            } else {
-                                tracing::warn!(%error, "failed to accept transport connection");
                             }
+                            _ => tracing::warn!(%error, "failed to accept transport connection"),
                         })
                     }
                     .instrument(session_span.clone());
@@ -134,12 +133,8 @@ impl SessionHandler {
                     };
                     let connecting = match connecting {
                         Ok(connecting) => connecting,
-                        Err(error) => {
-                            if Self::is_endpoint_closing(&error) {
-                                break;
-                            }
-                            continue;
-                        }
+                        Err(AcceptError::EndpointClosing) => break,
+                        Err(_) => continue,
                     };
 
                     let intake = intake.clone();
@@ -181,12 +176,6 @@ impl SessionHandler {
     pub async fn wait_idle(&mut self) {
         let _ = (&mut self.join_handle).await;
     }
-
-    fn is_endpoint_closing(error: &anyhow::Error) -> bool {
-        error
-            .chain()
-            .any(|cause| cause.to_string() == "Endpoint is closing")
-    }
 }
 
 impl Drop for SessionHandler {
@@ -200,9 +189,6 @@ impl Drop for SessionHandler {
 mod tests {
     use std::time::Duration;
 
-    use anyhow::Context;
-
-    use super::SessionHandler;
     use crate::modules::auth::{
         test_support::{
             client_endpoint, spawn_relay_and_connect_client, spawn_relay_with_verifier,
@@ -250,43 +236,5 @@ mod tests {
         // Assert
         let result = connect.expect("the refusal must arrive within the timeout");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn endpoint_closing_error_stops_accept_loop() {
-        // Arrange
-        let error = anyhow::anyhow!("Endpoint is closing");
-
-        // Act
-        let should_stop = SessionHandler::is_endpoint_closing(&error);
-
-        // Assert
-        assert!(should_stop);
-    }
-
-    #[test]
-    fn wrapped_endpoint_closing_error_stops_accept_loop() {
-        // Arrange
-        let error = Err::<(), _>(anyhow::anyhow!("Endpoint is closing"))
-            .context("accept failed")
-            .unwrap_err();
-
-        // Act
-        let should_stop = SessionHandler::is_endpoint_closing(&error);
-
-        // Assert
-        assert!(should_stop);
-    }
-
-    #[test]
-    fn connection_timeout_error_keeps_accept_loop_running() {
-        // Arrange
-        let error = anyhow::anyhow!("connection error: timed out");
-
-        // Act
-        let should_stop = SessionHandler::is_endpoint_closing(&error);
-
-        // Assert
-        assert!(!should_stop);
     }
 }
