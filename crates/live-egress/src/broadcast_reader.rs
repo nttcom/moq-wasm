@@ -1,33 +1,36 @@
 mod track_receive_task;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use mediapack::{MediaEvent, StreamSet, aac::AudioSpecificConfig};
+use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
 use moqt::Session;
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use tokio::sync::mpsc;
 
 use crate::{
-    broadcast_reader::track_receive_task::{TrackKind, TrackReceiveTask},
+    broadcast_reader::track_receive_task::{StartPoint, TrackKind, TrackReceiveTask},
     relay_session::{read_catalog, subscribe, track_reader},
 };
 
 const MEDIA_CHANNEL_CAPACITY: usize = 256;
+const PCMA_CODEC: &str = "pcma";
+const OPUS_CODEC: &str = "opus";
 
 /// Subscribes to an MSF broadcast and yields its media events: the first
 /// LOC video track and the first LOC audio track of the catalog, demuxed
 /// from one shared capture origin so the two stay aligned.
 pub struct BroadcastReader {
     media_receiver: mpsc::Receiver<MediaEvent>,
+    start: Arc<StartPoint>,
     _tasks: Vec<TrackReceiveTask>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct SelectedTracks {
     pub video: Option<String>,
-    pub audio: Option<(String, AudioSpecificConfig)>,
+    pub audio: Option<(String, AudioConfig)>,
 }
 
 impl BroadcastReader {
@@ -51,7 +54,7 @@ impl BroadcastReader {
             }))
             .await
             .expect("the receiver is held by this reader");
-        let capture_origin = Arc::new(OnceLock::new());
+        let start = Arc::new(StartPoint::new(tracks.video.is_some()));
         let mut kinds = Vec::new();
         if let Some(name) = tracks.video {
             kinds.push((name, TrackKind::Video));
@@ -74,12 +77,13 @@ impl BroadcastReader {
                 name,
                 reader,
                 kind,
-                capture_origin.clone(),
+                start.clone(),
                 media_sender.clone(),
             ));
         }
         Ok(Self {
             media_receiver,
+            start,
             _tasks: tasks,
         })
     }
@@ -88,11 +92,20 @@ impl BroadcastReader {
     pub async fn next_event(&mut self) -> Option<MediaEvent> {
         self.media_receiver.recv().await
     }
+
+    /// The LOC capture timestamp that presentation time zero stands for on
+    /// every track, or `Timestamp::ZERO` when the first admitted object
+    /// carried none; `None` until a track admits an object.
+    pub fn capture_origin(&self) -> Option<Timestamp> {
+        self.start.capture_origin()
+    }
 }
 
-/// The first LOC track of each role in catalog order. An audio track whose
+/// The first LOC track of each role in catalog order. An AAC track whose
 /// `initRef` (draft-ietf-moq-msf-01 §5.2.13) finds no AudioSpecificConfig in
-/// `initDataList` (§5.1.7) is skipped; fails when neither role has a track.
+/// `initDataList` (§5.1.7), or an A-law or Opus track without a readable
+/// `samplerate` and `channelConfig`, is skipped; fails when neither role has a
+/// track.
 pub fn select_tracks(catalog: &Catalog) -> Result<SelectedTracks> {
     let loc_tracks = || {
         catalog
@@ -124,7 +137,55 @@ fn has_role(track: &Track, role: KnownTrackRole) -> bool {
     track.role == Some(TrackRole::Known(role))
 }
 
-fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {
+/// A-law and Opus tracks carry no initialization data: their catalog entry's
+/// `codec`, `samplerate` and `channelConfig` (draft-ietf-moq-msf-01 §5.2.18,
+/// §5.2.28, §5.2.29) are the whole configuration. Any other track is read as
+/// AAC from its `initDataList` entry.
+fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioConfig> {
+    let rate_and_channels = || -> Result<(u32, u8)> {
+        let sample_rate = track.sample_rate.context("audio track has no samplerate")?;
+        let channels = track
+            .channel_config
+            .as_deref()
+            .context("audio track has no channelConfig")?;
+        Ok((sample_rate, channel_count(channels)?))
+    };
+    match track.codec.as_deref() {
+        Some(PCMA_CODEC) => {
+            let (sample_rate, channels) = rate_and_channels()?;
+            Ok(AudioConfig::Pcma {
+                sample_rate,
+                channels,
+            })
+        }
+        Some(OPUS_CODEC) => {
+            let (sample_rate, channels) = rate_and_channels()?;
+            Ok(AudioConfig::Opus {
+                sample_rate,
+                channels,
+            })
+        }
+        _ => Ok(AudioConfig::Aac(aac_config(catalog, track)?)),
+    }
+}
+
+/// `channelConfig` as `broadcast` writes it (`mono`, `stereo`, `<n>ch`) or as
+/// the draft's examples do (`<n>`).
+fn channel_count(label: &str) -> Result<u8> {
+    let count = match label {
+        "mono" => 1,
+        "stereo" => 2,
+        other => other
+            .strip_suffix("ch")
+            .unwrap_or(other)
+            .parse()
+            .with_context(|| format!("unknown channelConfig {other:?}"))?,
+    };
+    ensure!(count > 0, "channelConfig {label:?} names no channel");
+    Ok(count)
+}
+
+fn aac_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {
     let init_ref = track
         .init_ref
         .as_ref()
@@ -176,9 +237,53 @@ mod tests {
             tracks,
             SelectedTracks {
                 video: Some("video".to_owned()),
-                audio: Some(("audio".to_owned(), AudioSpecificConfig::new(2, 48_000, 1))),
+                audio: Some((
+                    "audio".to_owned(),
+                    AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1))
+                )),
             }
         );
+    }
+
+    #[test]
+    fn reads_a_law_and_opus_tracks_from_their_catalog_fields() {
+        // Arrange
+        let audio_catalog = |codec: &str, sample_rate: Option<u32>, channels: Option<&str>| {
+            let mut audio = loc_track("audio", KnownTrackRole::Audio);
+            audio.codec = Some(codec.to_owned());
+            audio.sample_rate = sample_rate;
+            audio.channel_config = channels.map(str::to_owned);
+            catalog_with(vec![audio])
+        };
+
+        // Act
+        let pcma = select_tracks(&audio_catalog("pcma", Some(8_000), Some("mono"))).unwrap();
+        let opus = select_tracks(&audio_catalog("opus", Some(48_000), Some("2"))).unwrap();
+        let rejected = [
+            audio_catalog("opus", Some(48_000), Some("5.1")),
+            audio_catalog("pcma", Some(8_000), Some("0")),
+            audio_catalog("pcma", None, Some("mono")),
+            audio_catalog("opus", Some(48_000), None),
+        ];
+
+        // Assert: a numeric channelConfig is read; a missing samplerate or channelConfig (§5.2.28, §5.2.29), `5.1` and `0` are rejected
+        assert_eq!(
+            pcma.audio.unwrap().1,
+            AudioConfig::Pcma {
+                sample_rate: 8_000,
+                channels: 1
+            }
+        );
+        assert_eq!(
+            opus.audio.unwrap().1,
+            AudioConfig::Opus {
+                sample_rate: 48_000,
+                channels: 2
+            }
+        );
+        for catalog in &rejected {
+            assert!(select_tracks(catalog).is_err());
+        }
     }
 
     #[test]
