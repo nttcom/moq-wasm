@@ -4,17 +4,14 @@
 //! hold control messages, how a response finds its request, how a request
 //! is cancelled.
 //!
-//! Only draft-14 is implemented. The adapter is in place ahead of draft-18
-//! support, a deliberate exception to the coding-style rule that an
-//! abstraction waits for its second concrete use.
+//! draft-14 and draft-18 are implemented. `APPLICATION_PROTOCOLS` offers
+//! only draft-14 until draft-18 has been checked against other
+//! implementations.
 
 pub(crate) mod draft14;
-// Until `APPLICATION_PROTOCOLS` offers `moqt-18`, parts of the draft-18
-// adapter are used only by its tests.
-#[allow(dead_code)]
 pub(crate) mod draft18;
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use bytes::BytesMut;
 
@@ -58,6 +55,7 @@ use crate::{
         },
         transport::{
             application_protocol::{ApplicationProtocols, NegotiatedProtocol},
+            connect_target::ConnectTarget,
             transport_connection::{BoxedConnection, BoxedReceiveStream},
             transport_send_stream::TransportSendError,
         },
@@ -66,6 +64,17 @@ use crate::{
 
 /// draft-14 §3.1.2; SETUP then negotiates the version (§3.2).
 const DRAFT14_ALPN: &str = "moq-00";
+
+/// draft-18 §3.1.3 / §3.1.4: the ALPN and the WebTransport subprotocol.
+const DRAFT18_PROTOCOL: &str = "moqt-18";
+
+/// Every draft this crate implements, draft-18 included, for tests that
+/// exercise it before `APPLICATION_PROTOCOLS` offers it.
+#[cfg(test)]
+pub(crate) const DRAFT18_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
+    quic_alpns: &[DRAFT18_PROTOCOL],
+    web_transport: &[DRAFT18_PROTOCOL],
+};
 
 /// The ALPN and WebTransport subprotocol of every supported draft.
 pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
@@ -102,6 +111,10 @@ impl Version {
         match protocol {
             NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Ok(Self::Draft14),
             NegotiatedProtocol::WebTransport { protocol: None } => Ok(Self::Draft14),
+            NegotiatedProtocol::Quic { alpn } if alpn == DRAFT18_PROTOCOL => Ok(Self::Draft18),
+            NegotiatedProtocol::WebTransport {
+                protocol: Some(protocol),
+            } if protocol == DRAFT18_PROTOCOL => Ok(Self::Draft18),
             other => anyhow::bail!("no supported MoQT version negotiated: {other:?}"),
         }
     }
@@ -326,30 +339,39 @@ pub(crate) enum Notification {
 /// How a session's control messages reach the peer.
 pub(crate) enum ControlChannel {
     Draft14(draft14::ControlChannel),
+    Draft18(draft18::ControlChannel),
 }
 
 impl ControlChannel {
     pub(crate) fn version(&self) -> Version {
         match self {
             Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
         }
     }
 
     pub(crate) fn next_request_id(&self) -> RequestId {
         match self {
             Self::Draft14(channel) => channel.next_request_id(),
+            Self::Draft18(channel) => channel.next_request_id(),
         }
     }
 
     /// Fails with `RequestFailure::Send` when the request cannot be written.
     /// Dropping the returned `PendingResponse` abandons the request.
+    /// `session` owns this channel; draft-18 opens a stream on its
+    /// connection per request.
     pub(crate) async fn send_request(
         &self,
+        session: &Arc<SessionContext>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         match self {
             Self::Draft14(channel) => Ok(PendingResponse::Draft14(
                 channel.send_request(request).await?,
+            )),
+            Self::Draft18(channel) => Ok(PendingResponse::Draft18(
+                channel.send_request(session, request).await?,
             )),
         }
     }
@@ -360,6 +382,7 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         match self {
             Self::Draft14(channel) => channel.respond(response).await,
+            Self::Draft18(channel) => channel.respond(response).await,
         }
     }
 
@@ -369,6 +392,7 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         match self {
             Self::Draft14(channel) => channel.notify(notification).await,
+            Self::Draft18(channel) => channel.notify(notification).await,
         }
     }
 }
@@ -376,6 +400,7 @@ impl ControlChannel {
 /// The receiving half of a control channel, consumed when the session starts.
 pub(crate) enum ControlReceiver {
     Draft14(BiStreamReceiver),
+    Draft18(draft18::message_stream::MessageReceiver),
 }
 
 impl ControlReceiver {
@@ -397,6 +422,9 @@ impl ControlReceiver {
                 publish_done_sender,
                 span,
             ),
+            Self::Draft18(control_stream) => {
+                draft18::request_streams::run_control_receiver(control_stream, connection, span)
+            }
         }
     }
 }
@@ -412,6 +440,7 @@ fn negotiated_version(transport_connection: &BoxedConnection) -> anyhow::Result<
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
     authorization_token: Option<&str>,
+    target: &ConnectTarget,
 ) -> anyhow::Result<(ControlChannel, ControlReceiver, ServerSetup)> {
     match negotiated_version(transport_connection)? {
         Version::Draft14 => {
@@ -423,7 +452,15 @@ pub(crate) async fn connect(
                 server_setup,
             ))
         }
-        Version::Draft18 => unreachable!("`Version::negotiated` never selects draft-18 yet"),
+        Version::Draft18 => {
+            let (channel, receiver, server_setup) =
+                draft18::setup::connect(transport_connection, authorization_token, target).await?;
+            Ok((
+                ControlChannel::Draft18(channel),
+                ControlReceiver::Draft18(receiver),
+                server_setup,
+            ))
+        }
     }
 }
 
@@ -436,18 +473,22 @@ pub(crate) async fn accept(
         Version::Draft14 => Ok(ServerHandshake::Draft14(
             draft14::setup::accept(transport_connection).await?,
         )),
-        Version::Draft18 => unreachable!("`Version::negotiated` never selects draft-18 yet"),
+        Version::Draft18 => Ok(ServerHandshake::Draft18(
+            draft18::setup::accept(transport_connection).await?,
+        )),
     }
 }
 
 pub(crate) enum ServerHandshake {
     Draft14(draft14::setup::ServerHandshake),
+    Draft18(draft18::setup::ServerHandshake),
 }
 
 impl ServerHandshake {
     pub(crate) fn version(&self) -> Version {
         match self {
             Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
         }
     }
 
@@ -456,17 +497,28 @@ impl ServerHandshake {
             Self::Draft14(handshake) => {
                 &handshake.client_setup.setup_parameters.authorization_token
             }
+            Self::Draft18(handshake) => &handshake.client_setup.authorization_tokens,
         }
     }
 
     /// Answers the client's setup and opens the session's control channel.
-    pub(crate) async fn accept(self) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
+    pub(crate) async fn accept(
+        self,
+        transport_connection: &BoxedConnection,
+    ) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
         match self {
             Self::Draft14(handshake) => {
                 let (channel, receiver) = handshake.accept().await?;
                 Ok((
                     ControlChannel::Draft14(channel),
                     ControlReceiver::Draft14(receiver),
+                ))
+            }
+            Self::Draft18(handshake) => {
+                let (channel, receiver) = handshake.accept(transport_connection).await?;
+                Ok((
+                    ControlChannel::Draft18(channel),
+                    ControlReceiver::Draft18(receiver),
                 ))
             }
         }
@@ -476,6 +528,7 @@ impl ServerHandshake {
 #[must_use = "dropping this abandons the request"]
 pub(crate) enum PendingResponse {
     Draft14(draft14::PendingResponse),
+    Draft18(draft18::PendingResponse),
 }
 
 impl PendingResponse {
@@ -485,6 +538,7 @@ impl PendingResponse {
     pub(crate) async fn response(self) -> Result<ResponseMessage, RequestFailure> {
         match self {
             Self::Draft14(pending) => pending.response().await,
+            Self::Draft18(pending) => pending.response().await,
         }
     }
 }
@@ -515,10 +569,25 @@ mod tests {
     }
 
     #[test]
+    fn the_draft18_alpn_and_subprotocol_select_draft18() {
+        // Act
+        let over_quic = Version::negotiated(&NegotiatedProtocol::Quic {
+            alpn: "moqt-18".to_string(),
+        });
+        let over_web_transport = Version::negotiated(&NegotiatedProtocol::WebTransport {
+            protocol: Some("moqt-18".to_string()),
+        });
+
+        // Assert
+        assert_eq!(over_quic.unwrap(), Version::Draft18);
+        assert_eq!(over_web_transport.unwrap(), Version::Draft18);
+    }
+
+    #[test]
     fn an_unsupported_alpn_selects_no_version() {
         // Act
         let version = Version::negotiated(&NegotiatedProtocol::Quic {
-            alpn: "moqt-18".to_string(),
+            alpn: "moqt-99".to_string(),
         });
 
         // Assert

@@ -396,10 +396,6 @@ impl SubgroupState {
         }
     }
 
-    pub(crate) fn track_alias(&self) -> u64 {
-        self.header.track_alias
-    }
-
     /// `None` until the first object arrives, for a header that takes the
     /// subgroup id from it.
     pub(crate) fn start(&self) -> Option<SubgroupStart> {
@@ -1069,7 +1065,7 @@ mod tests {
             .collect();
 
         // Assert: properties come back in ascending type order
-        assert_eq!(state.track_alias(), 9);
+        assert_eq!(state.header.track_alias, 9);
         assert_eq!(
             start,
             Some(SubgroupStart {

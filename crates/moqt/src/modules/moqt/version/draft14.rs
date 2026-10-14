@@ -100,7 +100,9 @@ impl ControlChannel {
     }
 
     fn of(connection: &Connection) -> &Self {
-        let version::ControlChannel::Draft14(channel) = &connection.control;
+        let version::ControlChannel::Draft14(channel) = &connection.control else {
+            unreachable!("draft-14 tasks run only on draft-14 connections")
+        };
         channel
     }
 
