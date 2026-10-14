@@ -204,13 +204,12 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         audio.mime_type = Some(audio_mime_type(&info.config).to_string());
         audio.sample_rate = Some(info.config.sample_rate());
         audio.channel_config = Some(channel_config_label(info.config.channels()));
-        // Only AAC has an fMP4 muxer, so other codecs travel as LOC alone.
         let mut audio_cmaf = None;
         if let AudioConfig::Aac(config) = &info.config {
             let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
             init_data_list.push(audio.set_inline_init_data(audio_specific_config));
             let mut cmaf = cmaf_sibling(&audio, "audio/mp4", None);
-            let init_segment = Fmp4TrackMuxer::audio(config.clone()).init_segment()?;
+            let init_segment = Fmp4TrackMuxer::audio(info.config.clone()).init_segment()?;
             init_data_list
                 .push(cmaf.set_inline_init_data(general_purpose::STANDARD.encode(init_segment)));
             audio_cmaf = Some(cmaf);
@@ -418,8 +417,11 @@ mod tests {
         let audio_cmaf = track_named(&catalog, "audio_cmaf");
         assert_eq!(audio_cmaf.packaging, Packaging::Known(KnownPackaging::Cmaf));
         assert_eq!(audio_cmaf.mime_type.as_deref(), Some("audio/mp4"));
-        let audio_init_segment =
-            general_purpose::STANDARD.encode(Fmp4TrackMuxer::audio(config).init_segment().unwrap());
+        let audio_init_segment = general_purpose::STANDARD.encode(
+            Fmp4TrackMuxer::audio(AudioConfig::Aac(config))
+                .init_segment()
+                .unwrap(),
+        );
         assert_eq!(
             init_data_of(&catalog, audio_cmaf),
             Some(audio_init_segment.as_str())

@@ -2,10 +2,9 @@ use anyhow::{Result, bail, ensure};
 use bytes::Bytes;
 
 use crate::{
-    aac::AudioSpecificConfig,
     h264::AvcDecoderConfigurationRecord,
     mp4::isobmff::{self, TrackInit, VIDEO_TIMESCALE},
-    sample::{MediaEvent, Timestamp, VideoSample},
+    sample::{AudioConfig, MediaEvent, Timestamp, VideoSample},
 };
 
 const TRACK_ID: u32 = 1;
@@ -30,7 +29,7 @@ pub struct Fmp4TrackMuxer {
 
 enum Track {
     Video(AvcDecoderConfigurationRecord),
-    Audio(AudioSpecificConfig),
+    Audio(AudioConfig),
 }
 
 impl Fmp4TrackMuxer {
@@ -38,7 +37,7 @@ impl Fmp4TrackMuxer {
         Self::new(Track::Video(config))
     }
 
-    pub fn audio(config: AudioSpecificConfig) -> Self {
+    pub fn audio(config: AudioConfig) -> Self {
         Self::new(Track::Audio(config))
     }
 
@@ -54,7 +53,7 @@ impl Fmp4TrackMuxer {
     pub fn init_segment(&self) -> Result<Bytes> {
         let trak = match &self.track {
             Track::Video(config) => isobmff::video_trak(TRACK_ID, config)?,
-            Track::Audio(config) => isobmff::audio_trak(TRACK_ID, config),
+            Track::Audio(config) => isobmff::audio_trak(TRACK_ID, config)?,
         };
         Ok(isobmff::init_segment(&[TrackInit {
             track_id: TRACK_ID,
@@ -89,15 +88,9 @@ impl Fmp4TrackMuxer {
                 let Track::Audio(config) = &self.track else {
                     bail!("audio sample pushed into a video track");
                 };
-                let timescale = config.sample_rate;
                 self.sequence_number += 1;
                 Ok(Some(Fragment {
-                    data: isobmff::audio_fragment(
-                        self.sequence_number,
-                        TRACK_ID,
-                        sample,
-                        timescale,
-                    ),
+                    data: isobmff::audio_fragment(self.sequence_number, TRACK_ID, sample, config)?,
                     is_keyframe: true,
                     presentation_time: sample.pts,
                 }))
@@ -117,7 +110,7 @@ impl Fmp4TrackMuxer {
                     bail!("audio configuration pushed into a video track");
                 };
                 ensure!(
-                    config == update.aac()?,
+                    config == update,
                     "audio configuration changed after the init segment"
                 );
                 Ok(None)
@@ -237,7 +230,7 @@ mod tests {
     #[test]
     fn audio_fragments_are_emitted_per_sample() {
         // Arrange
-        let mut muxer = Fmp4TrackMuxer::audio(mono_48k());
+        let mut muxer = Fmp4TrackMuxer::audio(AudioConfig::Aac(mono_48k()));
 
         // Act
         let fragment = muxer.push(&audio(0)).unwrap().unwrap();
@@ -254,7 +247,7 @@ mod tests {
     fn rejects_samples_of_the_other_track_kind() {
         // Arrange
         let mut video_muxer = Fmp4TrackMuxer::video(fixture_record());
-        let mut audio_muxer = Fmp4TrackMuxer::audio(mono_48k());
+        let mut audio_muxer = Fmp4TrackMuxer::audio(AudioConfig::Aac(mono_48k()));
 
         // Act / Assert
         assert!(video_muxer.push(&audio(0)).is_err());

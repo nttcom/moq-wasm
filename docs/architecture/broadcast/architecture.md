@@ -64,7 +64,7 @@ track carries its parameter sets in band.
 
 ## CMAF tracks
 Every media track has a CMAF sibling named with a `_cmaf` suffix, except A-law,
-Opus and MP3 audio, which have no fMP4 muxer here (`video_cmaf`,
+Opus and MP3 audio, which travel as LOC alone (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
 (draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
 and every object is one `moof` + `mdat` fragment holding one sample (§3.3).

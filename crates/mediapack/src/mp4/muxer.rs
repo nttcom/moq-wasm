@@ -2,10 +2,9 @@ use anyhow::{Result, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
-    aac::AudioSpecificConfig,
     h264::AvcDecoderConfigurationRecord,
     mp4::isobmff::{self, TrackInit, VIDEO_TIMESCALE},
-    sample::{MediaEvent, StreamSet, VideoSample},
+    sample::{AudioConfig, MediaEvent, StreamSet, VideoSample},
 };
 
 const VIDEO_TRACK_ID: u32 = 1;
@@ -15,7 +14,7 @@ const AUDIO_TRACK_ID: u32 = 2;
 pub struct Fmp4Muxer {
     expected: StreamSet,
     video_config: Option<AvcDecoderConfigurationRecord>,
-    audio_config: Option<AudioSpecificConfig>,
+    audio_config: Option<AudioConfig>,
     init_written: bool,
     sequence_number: u32,
     buffered: Vec<MediaEvent>,
@@ -45,7 +44,6 @@ impl Fmp4Muxer {
                 Ok(Bytes::new())
             }
             MediaEvent::AudioConfig(config) => {
-                let config = config.aac()?;
                 if self.init_written {
                     ensure!(
                         self.audio_config.as_ref() == Some(config),
@@ -109,18 +107,12 @@ impl Fmp4Muxer {
                 Ok(self.video_fragment(&previous, duration, nal_length_size))
             }
             MediaEvent::Audio(sample) => {
-                let timescale = self
+                let config = self
                     .audio_config
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("audio sample without configuration"))?
-                    .sample_rate;
+                    .ok_or_else(|| anyhow::anyhow!("audio sample without configuration"))?;
                 self.sequence_number += 1;
-                Ok(isobmff::audio_fragment(
-                    self.sequence_number,
-                    AUDIO_TRACK_ID,
-                    sample,
-                    timescale,
-                ))
+                isobmff::audio_fragment(self.sequence_number, AUDIO_TRACK_ID, sample, config)
             }
             _ => Ok(Bytes::new()),
         }
@@ -153,7 +145,7 @@ impl Fmp4Muxer {
         if let Some(config) = &self.audio_config {
             tracks.push(TrackInit {
                 track_id: AUDIO_TRACK_ID,
-                trak: isobmff::audio_trak(AUDIO_TRACK_ID, config),
+                trak: isobmff::audio_trak(AUDIO_TRACK_ID, config)?,
             });
         }
         ensure!(
@@ -168,6 +160,7 @@ impl Fmp4Muxer {
 pub(crate) mod tests {
     use super::*;
     use crate::{
+        aac::AudioSpecificConfig,
         mp4::isobmff::{NON_SYNC_SAMPLE_FLAGS, SYNC_SAMPLE_FLAGS},
         sample::{AudioConfig, AudioSample, Timestamp},
         test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
