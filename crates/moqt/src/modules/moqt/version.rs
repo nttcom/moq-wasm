@@ -50,10 +50,21 @@ use crate::{
             version::draft14::control_message_receive_task::ControlMessageReceiveTask,
         },
         transport::{
+            application_protocol::{ApplicationProtocols, NegotiatedProtocol},
             transport_connection::{BoxedConnection, BoxedReceiveStream},
             transport_send_stream::TransportSendError,
         },
     },
+};
+
+/// draft-14 §3.1.2; SETUP then negotiates the version (§3.2).
+const DRAFT14_ALPN: &str = "moq-00";
+
+/// The ALPN and WebTransport subprotocol of every supported draft.
+pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
+    quic_alpns: &[DRAFT14_ALPN],
+    // draft-14 defines no WebTransport subprotocol (§3.1.1).
+    web_transport: &[],
 };
 
 /// The MoQT draft a session speaks, chosen when it is established.
@@ -64,6 +75,14 @@ pub(crate) enum Version {
 }
 
 impl Version {
+    fn negotiated(protocol: &NegotiatedProtocol) -> anyhow::Result<Self> {
+        match protocol {
+            NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Ok(Self::Draft14),
+            NegotiatedProtocol::WebTransport { protocol: None } => Ok(Self::Draft14),
+            other => anyhow::bail!("no supported MoQT version negotiated: {other:?}"),
+        }
+    }
+
     pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> BytesMut {
         match self {
             Self::Draft14 => draft14::objects::encode_fetch_header(request_id),
@@ -272,18 +291,29 @@ impl ControlReceiver {
     }
 }
 
+fn negotiated_version(transport_connection: &BoxedConnection) -> anyhow::Result<Version> {
+    let protocol = transport_connection.negotiated_protocol();
+    let version = Version::negotiated(&protocol)?;
+    tracing::debug!(?protocol, ?version, "MoQT version negotiated");
+    Ok(version)
+}
+
 /// Opens a client session's control stream and runs the setup exchange.
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
     authorization_token: Option<&str>,
 ) -> anyhow::Result<(ControlChannel, ControlReceiver, ServerSetup)> {
-    let (channel, receiver, server_setup) =
-        draft14::setup::connect(transport_connection, authorization_token).await?;
-    Ok((
-        ControlChannel::Draft14(channel),
-        ControlReceiver::Draft14(receiver),
-        server_setup,
-    ))
+    match negotiated_version(transport_connection)? {
+        Version::Draft14 => {
+            let (channel, receiver, server_setup) =
+                draft14::setup::connect(transport_connection, authorization_token).await?;
+            Ok((
+                ControlChannel::Draft14(channel),
+                ControlReceiver::Draft14(receiver),
+                server_setup,
+            ))
+        }
+    }
 }
 
 /// Reads the client's setup so the server can decide before calling
@@ -291,9 +321,11 @@ pub(crate) async fn connect(
 pub(crate) async fn accept(
     transport_connection: &BoxedConnection,
 ) -> anyhow::Result<ServerHandshake> {
-    Ok(ServerHandshake::Draft14(
-        draft14::setup::accept(transport_connection).await?,
-    ))
+    match negotiated_version(transport_connection)? {
+        Version::Draft14 => Ok(ServerHandshake::Draft14(
+            draft14::setup::accept(transport_connection).await?,
+        )),
+    }
 }
 
 pub(crate) enum ServerHandshake {
@@ -336,5 +368,42 @@ impl PendingResponse {
         match self {
             Self::Draft14(pending) => pending.response().await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Version;
+    use crate::modules::transport::application_protocol::NegotiatedProtocol;
+
+    #[test]
+    fn the_draft14_alpn_selects_draft14() {
+        // Act
+        let version = Version::negotiated(&NegotiatedProtocol::Quic {
+            alpn: "moq-00".to_string(),
+        });
+
+        // Assert
+        assert_eq!(version.unwrap(), Version::Draft14);
+    }
+
+    #[test]
+    fn a_web_transport_session_without_a_subprotocol_selects_draft14() {
+        // Act
+        let version = Version::negotiated(&NegotiatedProtocol::WebTransport { protocol: None });
+
+        // Assert
+        assert_eq!(version.unwrap(), Version::Draft14);
+    }
+
+    #[test]
+    fn an_unsupported_alpn_selects_no_version() {
+        // Act
+        let version = Version::negotiated(&NegotiatedProtocol::Quic {
+            alpn: "moqt-18".to_string(),
+        });
+
+        // Assert
+        assert!(version.is_err());
     }
 }

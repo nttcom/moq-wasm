@@ -17,6 +17,7 @@ use super::{
     js_value::{js_error, read_next},
 };
 use crate::modules::transport::{
+    application_protocol::NegotiatedProtocol,
     transport_addresses::TransportAddresses,
     transport_connection::{TransportClose, TransportConnection},
     transport_stats::TransportStats,
@@ -157,6 +158,11 @@ impl TransportConnection for BrowserConnection {
 
     fn addresses(&self) -> TransportAddresses {
         TransportAddresses::default()
+    }
+
+    /// The browser creator offers no subprotocol, so the session has none.
+    fn negotiated_protocol(&self) -> NegotiatedProtocol {
+        NegotiatedProtocol::WebTransport { protocol: None }
     }
 }
 

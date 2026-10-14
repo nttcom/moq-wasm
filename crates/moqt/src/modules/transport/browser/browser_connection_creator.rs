@@ -5,6 +5,7 @@ use web_sys::WebTransport;
 
 use super::{browser_connection::BrowserConnection, js_value::js_error};
 use crate::modules::transport::{
+    application_protocol::ApplicationProtocols,
     connect_target::{ClientTransport, ConnectTarget},
     transport_connection_creator::TransportConnectionCreator,
 };
@@ -13,15 +14,29 @@ pub struct BrowserConnectionCreator;
 
 #[async_trait(?Send)]
 impl TransportConnectionCreator for BrowserConnectionCreator {
-    fn client(_port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
+    fn client(
+        _port_num: u16,
+        verify_certificate: bool,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             verify_certificate,
             "the browser always verifies the server certificate"
         );
+        // web-sys exposes neither `WebTransportOptions.protocols` nor
+        // `WebTransport.protocol`.
+        anyhow::ensure!(
+            protocols.web_transport.is_empty(),
+            "the browser endpoint cannot offer WebTransport subprotocols"
+        );
         Ok(Self)
     }
 
-    fn client_with_custom_cert(_port_num: u16, _custom_cert_path: &str) -> anyhow::Result<Self> {
+    fn client_with_custom_cert(
+        _port_num: u16,
+        _custom_cert_path: &str,
+        _protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
         anyhow::bail!(
             "the browser cannot load a certificate file; trust the certificate in the browser instead"
         )
@@ -32,6 +47,7 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
         _key_path: &str,
         _port_num: u16,
         _keep_alive_sec: u64,
+        _protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
         anyhow::bail!("the browser cannot accept connections")
     }

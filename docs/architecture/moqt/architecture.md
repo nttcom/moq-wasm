@@ -80,9 +80,9 @@ Four zero-sized markers implement it; the first three are native-only:
 
 | Marker | Implementation | Notes |
 | --- | --- | --- |
-| `QUIC` | quinn, ALPN `moq-00` | raw QUIC; used for inter-relay links and native clients |
+| `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
+| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
@@ -103,6 +103,16 @@ Client-side helpers shared by the three creators:
 - `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
   custom CA file), the `quinn::ClientConfig` per ALPN, and the client
   `quinn::Endpoint`.
+
+The creators do not know MoQT versions. Each takes an
+`ApplicationProtocols` (`application_protocol.rs`): the ALPNs a raw QUIC
+connection offers or accepts, and the WebTransport subprotocols a client
+lists in WT-Available-Protocols. A WebTransport server answers with the first
+of its own subprotocols the client also offered (WT-Protocol), or with none.
+Every connection reports what its handshake settled on through
+`TransportConnection::negotiated_protocol()`.
+`BROWSER` offers no subprotocol: web-sys exposes neither
+`WebTransportOptions.protocols` nor `WebTransport.protocol`.
 
 ## Version adapter (`modules/moqt/version`)
 
@@ -144,8 +154,14 @@ coding-style rule that an abstraction waits for its second concrete use.
   `draft14::objects` holds the draft-14 side (Object ID Deltas, Subgroup ID
   forms, status codes) on top of the wire structs in `data_plane/object` and
   the decoders in `data_plane/codec`.
-- Not behind the adapter yet: the ALPN `moq-00` in `modules/transport` and the
-  error code tables in `error_codes.rs`.
+- `version::APPLICATION_PROTOCOLS` lists the ALPN and WebTransport subprotocol
+  of every supported draft; `Endpoint` hands it to its creator.
+  `version::connect` / `accept` pick the `Version` from the connection's
+  `negotiated_protocol()` before running that draft's SETUP exchange: ALPN
+  `moq-00` (draft-14 §3.1.2) and a WebTransport session without a subprotocol
+  (draft-14 defines none, §3.1.1) are draft-14; anything else fails the
+  session.
+- Not behind the adapter yet: the error code tables in `error_codes.rs`.
 
 ## Session establishment (`modules/moqt/domains`)
 
