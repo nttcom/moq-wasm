@@ -2,16 +2,14 @@ use anyhow::{Context, ensure};
 use bytes::Bytes;
 
 use crate::{
-    object::{ExtensionHeaders, ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender},
-    wire::{SubgroupId, SubgroupObject},
+    object::{
+        ExtensionHeaders, ForwardingPreference, Object, ObjectStatus, StreamDataSenderFactory,
+        SubgroupObjectSender, SubgroupStart,
+    },
+    wire::Location,
 };
 
 const PUBLISHER_PRIORITY: u8 = 128;
-/// draft-14 §10.4.2: extension headers are only encoded when the subgroup
-/// header type says they are present, and `write()` accepts extensions per
-/// object, so every subgroup declares them (objects without any carry a
-/// zero-length extension block).
-const EXTENSIONS_PRESENT: bool = true;
 
 pub struct TrackWriter {
     factory: StreamDataSenderFactory,
@@ -132,22 +130,31 @@ impl TrackWriter {
     }
 
     async fn open_group(&mut self) -> anyhow::Result<GroupSender> {
-        let uninitialized = self.factory.next().await?;
-        let header = uninitialized.create_header(
-            self.next_group_id,
-            SubgroupId::None,
-            PUBLISHER_PRIORITY,
-            false,
-            EXTENSIONS_PRESENT,
-        );
-        let sender = uninitialized.send_header(header).await?;
+        let group_id = self.next_group_id;
+        let sender = self
+            .factory
+            .next()
+            .await?
+            .start(SubgroupStart {
+                group_id,
+                subgroup_id: 0,
+                publisher_priority: PUBLISHER_PRIORITY,
+                ends_group: false,
+            })
+            .await?;
         self.next_group_id += 1;
-        Ok(GroupSender { sender })
+        Ok(GroupSender {
+            sender,
+            group_id,
+            next_object_id: 0,
+        })
     }
 }
 
 struct GroupSender {
     sender: SubgroupObjectSender,
+    group_id: u64,
+    next_object_id: u64,
 }
 
 impl GroupSender {
@@ -156,22 +163,41 @@ impl GroupSender {
         payload: Bytes,
         extension_headers: ExtensionHeaders,
     ) -> anyhow::Result<()> {
-        let field = self.sender.create_object_field(
-            0,
-            extension_headers,
-            SubgroupObject::new_payload(payload),
-        );
-        self.sender.send(field).await
+        self.send(ObjectStatus::Normal, extension_headers, payload)
+            .await
     }
 
     async fn finish(mut self) -> anyhow::Result<()> {
-        let end_of_group = self.sender.create_object_field(
-            0,
+        self.send(
+            ObjectStatus::EndOfGroup,
             ExtensionHeaders::default(),
-            SubgroupObject::new_status(ObjectStatus::EndOfGroup as u64),
-        );
-        self.sender.send(end_of_group).await?;
+            Bytes::new(),
+        )
+        .await?;
         self.sender.close().await
+    }
+
+    async fn send(
+        &mut self,
+        status: ObjectStatus,
+        extension_headers: ExtensionHeaders,
+        payload: Bytes,
+    ) -> anyhow::Result<()> {
+        let object = Object {
+            location: Location {
+                group_id: self.group_id,
+                object_id: self.next_object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: PUBLISHER_PRIORITY,
+            status,
+            extension_headers,
+            payload,
+            ends_group: false,
+        };
+        self.sender.send_object(&object).await?;
+        self.next_object_id += 1;
+        Ok(())
     }
 }
 

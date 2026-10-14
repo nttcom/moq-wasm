@@ -1,16 +1,9 @@
-use bytes::Bytes;
-
 use crate::modules::moqt::{
-    control_plane::control_messages::messages::parameters::location::Location,
     data_plane::{
-        codec::{subgroup_decoder::SubgroupFrame, uni_stream_decoder::UniStreamData},
-        object::{
-            canonical_object::{ForwardingPreference, Object, SubgroupStart},
-            object_status::ObjectStatus,
-            subgroup::{SubgroupHeader, SubgroupId, SubgroupObject},
-        },
-        stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
+        object::canonical_object::{Object, SubgroupStart},
+        stream::stream_receiver::StreamReceiveError,
     },
+    version::SubgroupReader,
 };
 
 #[derive(Debug)]
@@ -21,31 +14,18 @@ pub enum Subgroup {
 
 #[derive(Debug)]
 pub struct StreamDataReceiver {
-    stream_receiver: UniStreamReceiver,
     pub track_alias: u64,
-    header: SubgroupHeader,
-    /// `None` until the first object arrives, for header types that take the
-    /// subgroup id from the first object's id.
-    subgroup_id: Option<u64>,
+    reader: SubgroupReader,
     header_returned: bool,
-    prev_object_id: Option<u64>,
     first_object: Option<Object>,
 }
 
 impl StreamDataReceiver {
-    pub(crate) fn new(stream: UniStreamReceiver, header: SubgroupHeader) -> Self {
-        let subgroup_id = match header.subgroup_id {
-            SubgroupId::None => Some(0),
-            SubgroupId::Value(subgroup_id) => Some(subgroup_id),
-            SubgroupId::FirstObjectIdDelta => None,
-        };
+    pub(crate) fn new(track_alias: u64, reader: SubgroupReader) -> Self {
         Self {
-            stream_receiver: stream,
-            track_alias: header.track_alias,
-            header,
-            subgroup_id,
+            track_alias,
+            reader,
             header_returned: false,
-            prev_object_id: None,
             first_object: None,
         }
     }
@@ -57,80 +37,24 @@ impl StreamDataReceiver {
     /// without a header.
     pub async fn receive(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
         if !self.header_returned {
-            if self.subgroup_id.is_none() {
-                let Some(first) = self.next_object().await? else {
+            if self.reader.start().is_none() {
+                let Some(first) = self.reader.next_object().await? else {
                     return Ok(None);
                 };
                 self.first_object = Some(first);
             }
             self.header_returned = true;
-            return Ok(Some(Subgroup::Header(self.start())));
+            let start = self
+                .reader
+                .start()
+                .expect("the first object has fixed the subgroup id");
+            return Ok(Some(Subgroup::Header(start)));
         }
         if let Some(first) = self.first_object.take() {
             return Ok(Some(Subgroup::Object(first)));
         }
-        Ok(self.next_object().await?.map(Subgroup::Object))
+        Ok(self.reader.next_object().await?.map(Subgroup::Object))
     }
-
-    fn start(&self) -> SubgroupStart {
-        SubgroupStart {
-            group_id: self.header.group_id,
-            subgroup_id: self.subgroup_id.unwrap_or_default(),
-            publisher_priority: self.header.publisher_priority,
-            ends_group: self.header.message_type.has_end_of_group(),
-        }
-    }
-
-    async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
-        let field = match self.stream_receiver.receive().await? {
-            Some(UniStreamData::Subgroup(SubgroupFrame::Object(field))) => field,
-            // The decoder yields the header once, and the stream task took it.
-            Some(UniStreamData::Subgroup(SubgroupFrame::Header(_))) => {
-                unreachable!("a subgroup stream has one header")
-            }
-            Some(UniStreamData::Fetch(_)) => {
-                unreachable!("Unexpected fetch data in subgroup stream")
-            }
-            None => {
-                tracing::debug!("Stream data ended");
-                return Ok(None);
-            }
-        };
-        let object_id = field.resolve_object_id(self.prev_object_id);
-        self.prev_object_id = Some(object_id);
-        let subgroup_id = *self.subgroup_id.get_or_insert(object_id);
-        let (status, payload) = match field.subgroup_object {
-            SubgroupObject::Payload { data, .. } => (ObjectStatus::Normal, data),
-            SubgroupObject::Status { code, .. } => {
-                (status_from_code(code, object_id)?, Bytes::new())
-            }
-        };
-        Ok(Some(Object {
-            location: Location {
-                group_id: self.header.group_id,
-                object_id,
-            },
-            forwarding: ForwardingPreference::Subgroup { subgroup_id },
-            publisher_priority: self.header.publisher_priority,
-            status,
-            extension_headers: field.extension_headers,
-            payload,
-            ends_group: false,
-        }))
-    }
-}
-
-/// draft-14 §10.2.1.1: an Object Status the draft does not define is a
-/// protocol violation.
-fn status_from_code(code: u64, object_id: u64) -> Result<ObjectStatus, StreamReceiveError> {
-    u8::try_from(code)
-        .ok()
-        .and_then(|code| ObjectStatus::try_from(code).ok())
-        .ok_or_else(|| {
-            StreamReceiveError::ProtocolViolation(format!(
-                "invalid object status {code:#x} on object {object_id}"
-            ))
-        })
 }
 
 #[cfg(test)]
@@ -143,15 +67,14 @@ mod tests {
             HANDSHAKE_TIMEOUT, first_subgroup_stream, open_subgroup, published_track,
         },
         object::{
-            ExtensionHeaders, ForwardingPreference, Location, ObjectStatus, StreamReceiveError,
-            SubgroupObjectSender, SubgroupStart,
+            ForwardingPreference, Location, ObjectStatus, StreamReceiveError, SubgroupObjectSender,
+            SubgroupStart,
         },
         wire::{SubgroupId, SubgroupObject},
     };
 
     async fn send_raw(sender: &mut SubgroupObjectSender, delta: u64, object: SubgroupObject) {
-        let field = sender.create_object_field(delta, ExtensionHeaders::default(), object);
-        sender.send(field).await.unwrap();
+        sender.send_raw(delta, object).await.unwrap();
     }
 
     fn payload(bytes: &'static [u8]) -> SubgroupObject {

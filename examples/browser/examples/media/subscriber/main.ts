@@ -93,14 +93,20 @@ function sendSubscribeButtonClickHandler(): void {
     }
 
     const videoTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, 'secret', { requestId: videoSubscribeId })
+      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, 'secret', {
+        requestId: videoSubscribeId,
+        onPublishDone: () => setStatusText('subscriber-track-status', 'Publisher ended the video track')
+      })
     ).subscribeOk.trackAlias
     form['video-track-alias'].value = videoTrackAlias.toString()
     setupClientObjectCallbacks('video', videoTrackAlias)
 
     if (selectedAudioTrack) {
       const audioTrackAlias = (
-        await moqtClient.subscribe(trackNamespace, selectedAudioTrack, 'secret', { requestId: audioSubscribeId })
+        await moqtClient.subscribe(trackNamespace, selectedAudioTrack, 'secret', {
+          requestId: audioSubscribeId,
+          onPublishDone: () => setStatusText('subscriber-track-status', 'Publisher ended the audio track')
+        })
       ).subscribeOk.trackAlias
       form['audio-track-alias'].value = audioTrackAlias.toString()
       setupClientObjectCallbacks('audio', audioTrackAlias)

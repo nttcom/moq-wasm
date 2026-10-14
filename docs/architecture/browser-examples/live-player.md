@@ -220,6 +220,15 @@ already played are left out, since a 2 s audio group can span two windows.
   the picture, the playouts or the state afterwards.
 - A review FETCH never reaches into the open live edge group.
 - Forward updates reach every live subscription in the order they were issued.
+- A subscription the publisher ends with PUBLISH_DONE is dropped as soon as it
+  arrives; moqt keeps it open on the wire for the draft-14 §9.12 grace period,
+  but the objects arriving meanwhile are dropped.
+- The catalog ending, or the video track when the page gave the tracks, means
+  the publisher left: the player forgets its tracks and SUBSCRIBEs again every
+  2 s until a publisher answers, as it does when started before one publishes.
+  The relay answers a SUBSCRIBE nobody publishes with TRACK_DOES_NOT_EXIST, and
+  only a live publisher answers one, so a returning publisher is never
+  mistaken for the relay's cache.
 - A picture that has not presented a frame is never shown.
 - The pre-decode hold stays in the video worker and the playout budget on the
   main thread (see `LivePlayout`); the worker's superseded-group drop stays.

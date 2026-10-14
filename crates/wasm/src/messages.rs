@@ -122,6 +122,43 @@ impl From<&PublishNamespaceDone> for PublishNamespaceDoneMessage {
     }
 }
 
+/// PUBLISH_DONE for an outgoing subscription. `request_id` is the id
+/// JavaScript chose for the SUBSCRIBE, not the one on the wire.
+#[wasm_bindgen]
+pub struct PublishDoneMessage {
+    request_id: u64,
+    status_code: u64,
+    error_reason: String,
+}
+
+impl PublishDoneMessage {
+    pub(crate) fn new(request_id: u64, status_code: u64, error_reason: String) -> Self {
+        Self {
+            request_id,
+            status_code,
+            error_reason,
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl PublishDoneMessage {
+    #[wasm_bindgen(getter, js_name = requestId)]
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    #[wasm_bindgen(getter, js_name = statusCode)]
+    pub fn status_code(&self) -> u64 {
+        self.status_code
+    }
+
+    #[wasm_bindgen(getter, js_name = errorReason)]
+    pub fn error_reason(&self) -> String {
+        self.error_reason.clone()
+    }
+}
+
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct SubscribeNamespaceMessage {

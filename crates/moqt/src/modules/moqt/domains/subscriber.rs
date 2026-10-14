@@ -2,34 +2,27 @@ use std::sync::Arc;
 
 use tracing::Instrument;
 
-use crate::modules::moqt::control_plane::error_codes::RequestKind;
-
 use crate::{
     RequestFailure, SubscriberInitiatedSubscription, Subscription,
     fetch::FetchOption,
     modules::moqt::{
         control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{
-                    fetch::Fetch, fetch::FetchParams, fetch_cancel::FetchCancel,
-                    parameters::authorization_token::AuthorizationToken,
-                    parameters::content_exists::ContentExists, subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace, subscribe_update::SubscribeUpdate,
-                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
-                },
+            control_messages::messages::{
+                fetch::Fetch, fetch::FetchParams, fetch_cancel::FetchCancel,
+                parameters::authorization_token::AuthorizationToken,
+                parameters::content_exists::ContentExists, subscribe::Subscribe,
+                subscribe_namespace::SubscribeNamespace, subscribe_update::SubscribeUpdate,
+                unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
             },
             enums::ResponseMessage,
         },
         data_plane::stream::{
-            fetch_data_receiver::FetchDataReceiver, stream_data_receiver::StreamDataReceiver,
+            fetch_data_receiver::FetchDataReceiver,
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
-        domains::{
-            fetch_handle::FetchHandle,
-            session_context::{LateResponseAction, SessionContext},
-        },
+        domains::{fetch_handle::FetchHandle, session_context::SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
+        version::{Notification, OutgoingRequest},
     },
     object::{DatagramReceiver, GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
@@ -54,25 +47,16 @@ impl Subscriber {
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
-        let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
-        let request_id = self.session.get_request_id();
-        let _registered_sender = self.session.register_response_sender(
-            request_id,
-            sender,
-            LateResponseAction::UnsubscribeNamespace {
-                namespace: vec_namespace.clone(),
-            },
-        );
-        let subscribe_namespace = SubscribeNamespace::new(request_id, vec_namespace, vec![]);
-        self.session
-            .send_stream
-            .send(
-                ControlMessageType::SubscribeNamespace,
-                subscribe_namespace.encode(),
-            )
+        let request_id = self.session.control.next_request_id();
+        let pending = self
+            .session
+            .control
+            .send_request(OutgoingRequest::SubscribeNamespace(
+                SubscribeNamespace::new(request_id, vec_namespace, vec![]),
+            ))
             .await?;
         tracing::info!("Subscribe namespace");
-        let response = self.session.await_response(receiver).await?;
+        let response = pending.response().await?;
         match response {
             ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
                 if request_id != response_request_id {
@@ -86,12 +70,11 @@ impl Subscriber {
             }
             ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe namespace error");
-                Err(RequestFailure::rejected(
-                    RequestKind::SubscribeNamespace,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -113,13 +96,7 @@ impl Subscriber {
     ) -> Result<Subscription, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let filter_type = option.filter_type;
-        let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
-        let request_id = self.session.get_request_id();
-        let _registered_sender = self.session.register_response_sender(
-            request_id,
-            sender,
-            LateResponseAction::Unsubscribe,
-        );
+        let request_id = self.session.control.next_request_id();
         let subscribe = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -131,11 +108,13 @@ impl Subscriber {
             authorization_tokens: vec![],
             delivery_timeout: None,
         };
-        self.session
-            .send_stream
-            .send(ControlMessageType::Subscribe, subscribe.encode())
+        let response = self
+            .session
+            .control
+            .send_request(OutgoingRequest::Subscribe(subscribe))
+            .await?
+            .response()
             .await?;
-        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::SubscribeOk(message) => {
                 if request_id != message.request_id {
@@ -178,12 +157,11 @@ impl Subscriber {
             }
             ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe error");
-                Err(RequestFailure::rejected(
-                    RequestKind::Subscribe,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -204,11 +182,7 @@ impl Subscriber {
         authorization_tokens: Vec<AuthorizationToken>,
     ) -> Result<TrackStatusOk, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
-        let request_id = self.session.get_request_id();
-        let _registered_sender =
-            self.session
-                .register_response_sender(request_id, sender, LateResponseAction::Discard);
+        let request_id = self.session.control.next_request_id();
         let track_status = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -220,11 +194,13 @@ impl Subscriber {
             authorization_tokens,
             delivery_timeout: None,
         };
-        self.session
-            .send_stream
-            .send(ControlMessageType::TrackStatus, track_status.encode())
+        let response = self
+            .session
+            .control
+            .send_request(OutgoingRequest::TrackStatus(track_status))
+            .await?
+            .response()
             .await?;
-        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::TrackStatusOk(message) => {
                 if request_id != message.request_id {
@@ -237,12 +213,11 @@ impl Subscriber {
             }
             ResponseMessage::TrackStatusError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Track status error");
-                Err(RequestFailure::rejected(
-                    RequestKind::TrackStatus,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -265,31 +240,10 @@ impl Subscriber {
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.get_request_id();
+        let request_id = self.session.control.next_request_id();
 
-        let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
-        self.session
-            .fetch_notification_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_tx);
-        self.session
-            .fetch_receiver_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_rx);
+        let pending_fetch = self.session.register_pending_fetch(request_id);
 
-        let (fetch_message_tx, fetch_message_rx) =
-            tokio::sync::oneshot::channel::<ResponseMessage>();
-        // A late FETCH_OK is discarded (its data stream is dropped by
-        // FetchNotifier); see LateResponseAction::Discard for why no
-        // FETCH_CANCEL is sent yet.
-        let _registered_sender = self.session.register_response_sender(
-            request_id,
-            fetch_message_tx,
-            LateResponseAction::Discard,
-        );
         let fetch = Fetch {
             request_id,
             subscriber_priority: option.subscriber_priority,
@@ -302,33 +256,24 @@ impl Subscriber {
             },
             authorization_tokens: vec![],
         };
-        let result = async {
-            self.session
-                .send_stream
-                .send(ControlMessageType::Fetch, fetch.encode())
-                .await?;
-            self.session.await_response(fetch_message_rx).await
-        }
-        .await;
-        let response = match result {
-            Ok(response) => response,
-            Err(error) => {
-                // Request-scoped failure (send error or timeout): drop the
-                // pending fetch state so nothing leaks. The session stays open.
-                self.remove_pending_fetch(request_id).await;
-                return Err(error);
-            }
-        };
+        let response = self
+            .session
+            .control
+            .send_request(OutgoingRequest::Fetch(fetch))
+            .await?
+            .response()
+            .await?;
         match response {
-            ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
+            ResponseMessage::FetchOk(fetch_ok) => {
+                pending_fetch.keep();
+                Ok(FetchHandle::new(fetch_ok))
+            }
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.remove_pending_fetch(request_id).await;
-                Err(RequestFailure::rejected(
-                    RequestKind::Fetch,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -344,26 +289,12 @@ impl Subscriber {
     )]
     pub async fn fetch_cancel(&self, fetch: &FetchHandle) -> anyhow::Result<()> {
         let request_id = fetch.request_id;
-        self.remove_pending_fetch(request_id).await;
-        let fetch_cancel = FetchCancel::new(request_id);
+        self.session.remove_pending_fetch(request_id);
         self.session
-            .send_stream
-            .send(ControlMessageType::FetchCancel, fetch_cancel.encode())
+            .control
+            .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
             .await?;
         Ok(())
-    }
-
-    async fn remove_pending_fetch(&self, request_id: u64) {
-        self.session
-            .fetch_notification_map
-            .lock()
-            .await
-            .remove(&request_id);
-        self.session
-            .fetch_receiver_map
-            .lock()
-            .await
-            .remove(&request_id);
     }
 
     #[tracing::instrument(
@@ -382,31 +313,10 @@ impl Subscriber {
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
         let joining_request_id = subscription.request_id();
-        let request_id = self.session.get_request_id();
+        let request_id = self.session.control.next_request_id();
 
-        let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
-        self.session
-            .fetch_notification_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_tx);
-        self.session
-            .fetch_receiver_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_rx);
+        let pending_fetch = self.session.register_pending_fetch(request_id);
 
-        let (fetch_message_tx, fetch_message_rx) =
-            tokio::sync::oneshot::channel::<ResponseMessage>();
-        // A late FETCH_OK is discarded (its data stream is dropped by
-        // FetchNotifier); see LateResponseAction::Discard for why no
-        // FETCH_CANCEL is sent yet.
-        let _registered_sender = self.session.register_response_sender(
-            request_id,
-            fetch_message_tx,
-            LateResponseAction::Discard,
-        );
         let fetch = Fetch {
             request_id,
             subscriber_priority: option.subscriber_priority,
@@ -417,33 +327,24 @@ impl Subscriber {
             },
             authorization_tokens: vec![],
         };
-        let result = async {
-            self.session
-                .send_stream
-                .send(ControlMessageType::Fetch, fetch.encode())
-                .await?;
-            self.session.await_response(fetch_message_rx).await
-        }
-        .await;
-        let response = match result {
-            Ok(response) => response,
-            Err(error) => {
-                // Request-scoped failure (send error or timeout): drop the
-                // pending fetch state so nothing leaks. The session stays open.
-                self.remove_pending_fetch(request_id).await;
-                return Err(error);
-            }
-        };
+        let response = self
+            .session
+            .control
+            .send_request(OutgoingRequest::Fetch(fetch))
+            .await?
+            .response()
+            .await?;
         match response {
-            ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
+            ResponseMessage::FetchOk(fetch_ok) => {
+                pending_fetch.keep();
+                Ok(FetchHandle::new(fetch_ok))
+            }
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.remove_pending_fetch(request_id).await;
-                Err(RequestFailure::rejected(
-                    RequestKind::Fetch,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -467,7 +368,7 @@ impl Subscriber {
     ) -> anyhow::Result<()> {
         let subscription_request_id = subscription.request_id();
         let subscribe_update = SubscribeUpdate {
-            request_id: self.session.get_request_id(),
+            request_id: self.session.control.next_request_id(),
             subscription_request_id,
             start_location: option.start_location,
             end_group: option.end_group,
@@ -477,11 +378,8 @@ impl Subscriber {
             delivery_timeout: None,
         };
         self.session
-            .send_stream
-            .send(
-                ControlMessageType::SubscribeUpdate,
-                subscribe_update.encode(),
-            )
+            .control
+            .notify(Notification::SubscribeUpdate(subscribe_update))
             .await?;
         Ok(())
     }
@@ -523,10 +421,9 @@ impl Subscriber {
     pub async fn unsubscribe(&self, subscription: &Subscription) -> anyhow::Result<()> {
         let request_id = subscription.request_id();
         self.session.cancel_subscription(request_id).await;
-        let unsubscribe = Unsubscribe { request_id };
         self.session
-            .send_stream
-            .send(ControlMessageType::UnSubscribe, unsubscribe.encode())
+            .control
+            .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
             .await?;
         Ok(())
     }
@@ -539,13 +436,11 @@ impl Subscriber {
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
-        let unsubscribe_namespace = UnsubscribeNamespace::new(vec_namespace);
         self.session
-            .send_stream
-            .send(
-                ControlMessageType::UnSubscribeNamespace,
-                unsubscribe_namespace.encode(),
-            )
+            .control
+            .notify(Notification::UnsubscribeNamespace(
+                UnsubscribeNamespace::new(vec_namespace),
+            ))
             .await?;
         Ok(())
     }
@@ -565,7 +460,7 @@ impl Subscriber {
             .session
             .fetch_receiver_map
             .lock()
-            .await
+            .expect("fetch_receiver_map poisoned")
             .remove(&request_id)
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -612,7 +507,7 @@ impl Subscriber {
             .instrument(span.clone())
             .await?;
             match stream_with_object {
-                IncomingObject::StreamHeader { .. } => {
+                IncomingObject::Subgroup(_) => {
                     span.record("object_kind", "stream_header");
                 }
                 IncomingObject::Datagram(_) => {
@@ -622,16 +517,14 @@ impl Subscriber {
             stream_with_object
         };
         match stream_with_object {
-            IncomingObject::StreamHeader { stream, header } => {
-                let first = StreamDataReceiver::new(stream, header);
-                Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
-                    first, receiver,
-                )))
-            }
-            IncomingObject::Datagram(object) => {
-                let data_receiver = DatagramReceiver::new(object, receiver).await;
-                Ok(DataReceiver::Datagram(data_receiver))
-            }
+            IncomingObject::Subgroup(first) => Ok(DataReceiver::Stream(
+                StreamDataReceiverFactory::new(first, receiver),
+            )),
+            IncomingObject::Datagram(object) => Ok(DataReceiver::Datagram(DatagramReceiver::new(
+                track_alias,
+                object,
+                receiver,
+            ))),
         }
     }
 }
@@ -640,13 +533,12 @@ impl Subscriber {
 mod tests {
     use bytes::Bytes;
 
+    use tokio::task::JoinHandle;
+
     use crate::{
-        SessionEvent,
-        fetch::{Fetch, FetchOption},
-        modules::test_support::{
-            DISCONNECT_TIMEOUT, connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
-            subscription,
-        },
+        RequestErrorCode, RequestFailure, Session, SessionEvent,
+        fetch::{Fetch, FetchHandle, FetchHandler, FetchOption},
+        modules::test_support::{DISCONNECT_TIMEOUT, spawn_connected_dual_sessions, subscription},
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         },
@@ -674,13 +566,13 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("subscriber-fetch-sender");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
+    async fn start_fetch(
+        client: &Session,
+        server: &Session,
+    ) -> (
+        JoinHandle<Result<FetchHandle, RequestFailure>>,
+        FetchHandler,
+    ) {
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
@@ -696,6 +588,28 @@ mod tests {
         let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
             panic!("expected FETCH from the client");
         };
+        (request, handler)
+    }
+
+    fn has_pending_fetch(client: &Session, request_id: u64) -> bool {
+        let session = client.subscriber().session;
+        session
+            .fetch_notification_map
+            .lock()
+            .unwrap()
+            .contains_key(&request_id)
+            || session
+                .fetch_receiver_map
+                .lock()
+                .unwrap()
+                .contains_key(&request_id)
+    }
+
+    #[tokio::test]
+    async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-sender").await;
+        let (request, handler) = start_fetch(&client, &server).await;
         handler.ok(false, END).await.unwrap();
         let fetch_sender = server
             .publisher()
@@ -720,13 +634,45 @@ mod tests {
                 .session
                 .fetch_notification_map
                 .lock()
-                .await
+                .unwrap()
                 .contains_key(&fetch_handle.request_id)
         );
         assert!(
             matches!(&object, Fetch::Object(received) if *received == fetch_object()),
             "{object:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn rejected_fetch_releases_its_pending_state() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-rejected").await;
+        let (request, handler) = start_fetch(&client, &server).await;
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, "rejected".to_string())
+            .await
+            .unwrap();
+        let result = request.await.unwrap();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(!has_pending_fetch(&client, handler.request_id));
+    }
+
+    #[tokio::test]
+    async fn abandoned_fetch_releases_its_pending_state() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-abandoned").await;
+        let (request, handler) = start_fetch(&client, &server).await;
+
+        // Act
+        request.abort();
+        let _ = request.await;
+
+        // Assert
+        assert!(!has_pending_fetch(&client, handler.request_id));
     }
 
     #[tokio::test]

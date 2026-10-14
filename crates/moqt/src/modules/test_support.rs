@@ -22,7 +22,7 @@ use crate::{
         domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
-    object::{DataReceiver, ExtensionHeaders, StreamDataSenderFactory, SubgroupObjectSender},
+    object::{DataReceiver, StreamDataSenderFactory, SubgroupObjectSender},
     publish::PublishOption,
     server::Handshake,
     server::ServerConfig,
@@ -68,12 +68,18 @@ fn write_self_signed_cert(dir: &Path) -> ServerConfig {
     }
 }
 
+/// A server config on a free port with a fresh self-signed certificate for
+/// `localhost` and `127.0.0.1`.
+pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
+    init_test_tracing();
+    write_self_signed_cert(&unique_cert_dir(name))
+}
+
 /// Starts a DUAL server on a free port whose accept loop resolves the first
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
 pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    init_test_tracing();
-    let server_config = write_self_signed_cert(&unique_cert_dir(name));
+    let server_config = self_signed_server_config(name);
     let mut server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
@@ -183,19 +189,20 @@ pub(crate) async fn open_subgroup(
     group_id: u64,
     subgroup_id: SubgroupId,
 ) -> SubgroupObjectSender {
-    let uninitialized = factory.next().await.unwrap();
-    let header =
-        uninitialized.create_header(group_id, subgroup_id, PUBLISHER_PRIORITY, false, false);
-    uninitialized.send_header(header).await.unwrap()
+    factory
+        .next()
+        .await
+        .unwrap()
+        .start_raw(group_id, subgroup_id, PUBLISHER_PRIORITY)
+        .await
+        .unwrap()
 }
 
 pub(crate) async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'static [u8]) {
-    let field = sender.create_object_field(
-        0,
-        ExtensionHeaders::default(),
-        SubgroupObject::new_payload(Bytes::from_static(payload)),
-    );
-    sender.send(field).await.unwrap();
+    sender
+        .send_raw(0, SubgroupObject::new_payload(Bytes::from_static(payload)))
+        .await
+        .unwrap();
 }
 
 /// The first subgroup stream of `subscription`; resolves once a header has
@@ -268,10 +275,7 @@ pub(crate) async fn notify_datagram(
     track_alias: u64,
 ) -> IncomingObjectNotification {
     context
-        .notify_incoming_object(
-            track_alias,
-            IncomingObject::Datagram(object_datagram(track_alias)),
-        )
+        .notify_incoming_object(track_alias, IncomingObject::Datagram(datagram_object()))
         .await
 }
 

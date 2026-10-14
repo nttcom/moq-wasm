@@ -1,11 +1,11 @@
+use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
     modules::moqt::{
         control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{namespace_ok::NamespaceOk, subscribe_namespace::SubscribeNamespace},
+            control_messages::messages::{
+                namespace_ok::NamespaceOk, subscribe_namespace::SubscribeNamespace,
             },
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
@@ -49,11 +49,8 @@ impl SubscribeNamespaceHandler {
             request_id: self.request_id,
         };
         self.session_context
-            .send_stream
-            .send(
-                ControlMessageType::SubscribeNamespaceOk,
-                publish_namespace_ok.encode(),
-            )
+            .control
+            .respond(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
             .await?;
         Ok(())
     }

@@ -2,6 +2,7 @@ use crate::modules::moqt::control_plane::{
     control_messages::messages::{
         fetch_ok::FetchOk, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
     },
+    error_codes::RequestErrorCode,
     handler::{
         fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
         go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
@@ -20,7 +21,6 @@ use crate::modules::moqt::control_plane::{
 // message aliases
 pub type RequestId = u64;
 
-pub(crate) type ErrorCode = u64;
 pub(crate) type ErrorPhrase = String;
 
 #[derive(Clone, Debug)]
@@ -48,15 +48,15 @@ pub enum SessionEvent {
 #[derive(Clone, Debug)]
 pub(crate) enum ResponseMessage {
     SubscribeNameSpaceOk(RequestId),
-    SubscribeNameSpaceError(RequestId, ErrorCode, ErrorPhrase),
+    SubscribeNameSpaceError(RequestId, RequestErrorCode, ErrorPhrase),
     PublishNamespaceOk(RequestId),
-    PublishNamespaceError(RequestId, ErrorCode, ErrorPhrase),
+    PublishNamespaceError(RequestId, RequestErrorCode, ErrorPhrase),
     PublishOk(PublishOk),
-    PublishError(RequestId, ErrorCode, ErrorPhrase),
+    PublishError(RequestId, RequestErrorCode, ErrorPhrase),
     SubscribeOk(SubscribeOk),
-    SubscribeError(RequestId, ErrorCode, ErrorPhrase),
+    SubscribeError(RequestId, RequestErrorCode, ErrorPhrase),
     FetchOk(FetchOk),
-    FetchError(RequestId, ErrorCode, ErrorPhrase),
+    FetchError(RequestId, RequestErrorCode, ErrorPhrase),
     TrackStatusOk(SubscribeOk),
-    TrackStatusError(RequestId, ErrorCode, ErrorPhrase),
+    TrackStatusError(RequestId, RequestErrorCode, ErrorPhrase),
 }
