@@ -57,7 +57,10 @@ impl PublishDoneExpiryTask {
 mod tests {
     use std::time::Duration;
 
-    use tokio::sync::mpsc::{UnboundedReceiver, error::TryRecvError};
+    use tokio::{
+        sync::mpsc::{UnboundedReceiver, error::TryRecvError},
+        time::Instant,
+    };
 
     use super::PUBLISH_DONE_GRACE_PERIOD;
     use crate::{
@@ -80,6 +83,9 @@ mod tests {
         _client: Session,
         _server: Session,
         object_receiver: UnboundedReceiver<IncomingObject>,
+        /// Taken before PUBLISH_DONE is sent, so the grace period ends at least
+        /// `PUBLISH_DONE_GRACE_PERIOD` after this instant.
+        publish_done_sent_at: Instant,
     }
 
     /// Returns with tokio time paused, so the test's sleeps advance the clock
@@ -89,6 +95,7 @@ mod tests {
         let object_receiver =
             register_and_take_data_receiver(&server.subscriber().session, REQUEST_ID, TRACK_ALIAS)
                 .await;
+        let publish_done_sent_at = Instant::now();
         client
             .publisher()
             .publish_done(
@@ -107,6 +114,7 @@ mod tests {
             _client: client,
             _server: server,
             object_receiver,
+            publish_done_sent_at,
         }
     }
 
@@ -116,7 +124,11 @@ mod tests {
         let mut subscription = subscription_ended_by_publish_done("publish-done-grace").await;
 
         // Act
-        tokio::time::sleep(PUBLISH_DONE_GRACE_PERIOD - Duration::from_millis(1)).await;
+        tokio::time::sleep_until(
+            subscription.publish_done_sent_at + PUBLISH_DONE_GRACE_PERIOD
+                - Duration::from_millis(1),
+        )
+        .await;
 
         // Assert
         assert!(matches!(
