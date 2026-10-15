@@ -50,6 +50,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const [chatMessage, setChatMessage] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [readChatMessageCount, setReadChatMessageCount] = useState(0)
+  const unreadChatMessageCount = isSidebarOpen ? 0 : chatMessages.length - readChatMessageCount
   const [stageView, setStageView] = useState<StageView>('gallery')
   const [filmstripOpen, setFilmstripOpen] = useState(true)
   /// The shown height of every remote tile, in device pixels.
@@ -136,6 +138,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     localMember: session.localMember,
     remoteMembers: new Map()
   }))
+
+  useEffect(() => {
+    if (isSidebarOpen) {
+      setReadChatMessageCount(chatMessages.length)
+    }
+  }, [isSidebarOpen, chatMessages.length])
 
   const handleSendChatMessage = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -762,6 +770,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onToggleView={() => setStageView(stage.view === 'gallery' ? 'speaker' : 'gallery')}
             onToggleFilmstrip={() => setFilmstripOpen((open) => !open)}
             chatOpen={isSidebarOpen}
+            unreadChatMessageCount={unreadChatMessageCount}
             onToggleChat={() => setIsSidebarOpen((open) => !open)}
             onLeave={onLeave}
             onTileHeight={handleTileHeight}
