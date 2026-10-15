@@ -235,7 +235,14 @@ path for live and history, and no relay tokens in the browser.
 Every table is `PARTITION BY toYYYYMMDD(ts)` with
 `TTL toDateTime(ts) + INTERVAL 7 DAY` and `ttl_only_drop_parts = 1`, so old
 data leaves a whole day partition at a time; there is no capacity-based
-deletion. Inserts use `async_insert` with a fixed ten-second window
+deletion. `snapshots` also sets `index_granularity = 64`: its payloads of a
+few KB make the default granule about 1500 rows, so a `?at=` lookup of one row
+per relay decompressed thousands of payloads, and a seek bar drag sends one
+lookup per step. ClickHouse cannot change `index_granularity` on an existing
+table, so `schema::apply` rebuilds a table whose `engine_full` lacks its
+settings at startup, before ingestion starts: it copies the rows into
+`<table>_rebuild`, swaps the two with `EXCHANGE TABLES` and drops the old
+data. The copy needs free disk for a second copy of the table. Inserts use `async_insert` with a fixed ten-second window
 (`async_insert_busy_timeout_max_ms = 10000`, adaptive timeout off), so the
 relays' once-per-second snapshots land as one part per table every ten
 seconds instead of a part per insert; one part per second kept merges busy on
