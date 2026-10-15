@@ -93,8 +93,18 @@ async function getJson<T>(path: string, params: Record<string, string | number>)
   return (await response.json()) as T
 }
 
-export function fetchSnapshots(atMs?: number): Promise<RelaySnapshot[]> {
-  return getJson('/api/snapshots', atMs === undefined ? {} : { at: atMs })
+export function fetchSnapshots(): Promise<RelaySnapshot[]> {
+  return getJson('/api/snapshots', {})
+}
+
+export interface PastSnapshots {
+  snapshots: RelaySnapshot[]
+  previous: RelaySnapshot[]
+}
+
+/** `previousMs` is at most 10 s before `atMs`. */
+export function fetchPastSnapshots(atMs: number, previousMs: number): Promise<PastSnapshots> {
+  return getJson('/api/snapshots', { at: atMs, previous: previousMs })
 }
 
 export function fetchSeries(

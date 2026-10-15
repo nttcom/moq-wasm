@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { type RelaySnapshot, fetchSnapshots } from './api'
+import { type RelaySnapshot, fetchPastSnapshots, fetchSnapshots } from './api'
 import type { NamespaceSummary } from './api'
 import { ChartDrawer } from './ChartDrawer'
 import { NAMESPACE_PANEL_WIDTH, NamespacePanel } from './NamespacePanel'
@@ -110,8 +110,8 @@ export default function App() {
     if (atMs === null) return
     let stopped = false
     const target = atMs
-    Promise.all([fetchSnapshots(target), fetchSnapshots(target - PAST_RATE_WINDOW_MS)])
-      .then(([current, before]) => {
+    fetchPastSnapshots(target, target - PAST_RATE_WINDOW_MS)
+      .then(({ snapshots: current, previous: before }) => {
         if (stopped) return
         setPrevious(byRelay(before))
         latestRef.current = current

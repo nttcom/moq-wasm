@@ -25,9 +25,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let config = ObservabilityConfig::from_env()?;
     let clickhouse = ClickHouse::new(config.clickhouse.clone());
-    for statement in schema::statements(clickhouse.database()) {
-        clickhouse.execute(&statement).await?;
-    }
+    schema::apply(&clickhouse).await?;
 
     let latest = LatestSnapshots::default();
     let (snapshot_sender, snapshot_receiver) = mpsc::channel(SNAPSHOT_QUEUE);
