@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tokio::{
     sync::mpsc::{Sender, UnboundedSender},
@@ -31,6 +31,7 @@ pub(super) struct UpstreamFetchStart {
     pub(super) cache_store: Arc<TrackCacheStore>,
     pub(super) egress_sender: Sender<EgressCommand>,
     pub(super) session_event_sender: UnboundedSender<SessionEvent>,
+    pub(super) fill_timeout: Duration,
 }
 
 /// Off the session worker so a publisher that never answers FETCH does not stall the session.
@@ -91,6 +92,7 @@ impl UpstreamFetchTask {
                 upstream_publisher_session_id: prepared.upstream_publisher_session_id,
                 fetch_handle: prepared.handle,
                 egress_start,
+                fill_timeout: start.fill_timeout,
             },
         );
     }

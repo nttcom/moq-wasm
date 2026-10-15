@@ -47,6 +47,10 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    verify. `AUTH_MAX_TOKEN_TTL_SECONDS` (default 86400) and
    `AUTH_CLOCK_LEEWAY_SECONDS` (default 60) form the `ClaimPolicy` the relay
    applies to token times.
+   `CacheConfig` (`RELAY_CACHE_TTL_SECS`, `RELAY_CACHE_EVICT_INTERVAL_SECS`),
+   the disk cache settings and `MOQT_FETCH_FILL_TIMEOUT_SECS` reach the
+   eviction job, the disk cache task and FETCH ingest through
+   `DataPlaneConfig`; the data plane reads no environment variable itself.
 4. `RelayServer::new_with_config(...)` then:
    - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.

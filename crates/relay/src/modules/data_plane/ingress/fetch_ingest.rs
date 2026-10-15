@@ -7,7 +7,6 @@ use crate::modules::{
     data_plane::{
         cache::{
             cached_object::{CacheStamp, CachedObject},
-            duration::duration_from_env,
             track_cache::TrackCache,
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
@@ -16,13 +15,12 @@ use crate::modules::{
     session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 
-const DEFAULT_FETCH_FILL_TIMEOUT_SECS: u64 = 20;
-
 pub(crate) struct FetchIngestStart {
     pub(crate) track_key: TrackKey,
     pub(crate) upstream_publisher_session_id: SessionId,
     pub(crate) fetch_handle: moqt::fetch::FetchHandle,
     pub(crate) egress_start: EgressFetchRequest,
+    pub(crate) fill_timeout: Duration,
 }
 
 /// Strict store-and-forward: delivery starts only after the whole response
@@ -84,10 +82,7 @@ impl FetchIngest {
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
-        let timeout = duration_from_env(
-            "MOQT_FETCH_FILL_TIMEOUT_SECS",
-            DEFAULT_FETCH_FILL_TIMEOUT_SECS,
-        );
+        let timeout = start.fill_timeout;
         tokio::time::timeout(
             timeout,
             Self::ingest_fetch_stream(session_repo, egress_sender, start),
@@ -226,6 +221,7 @@ impl FetchIngest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::{
         data_plane::cache::track_cache::FetchRangeResolution,
         session::session_event::EventKind,
@@ -285,6 +281,7 @@ mod tests {
                 end_location: location(0, 1),
                 group_order: moqt::object::GroupOrder::Ascending,
             },
+            fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
         };
 
         // Act: the receiver pends forever, so only the malformed latch can

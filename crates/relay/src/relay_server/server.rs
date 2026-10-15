@@ -4,7 +4,7 @@ use moqt::server::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    DiskCacheConfig, RelayConfig,
+    RelayConfig,
     modules::{
         auth::session_authenticator::SessionAuthenticator,
         cascading::route_registry::{
@@ -17,7 +17,7 @@ use crate::{
     },
     relay_server::{
         drain::drain_client_sessions,
-        runtime::RelayRuntime,
+        runtime::{DataPlaneConfig, RelayRuntime},
         session_handler::{SessionHandler, SessionIntake},
     },
 };
@@ -27,8 +27,7 @@ pub(crate) struct RelayServerDeps {
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) authenticator: SessionAuthenticator,
     pub(crate) relay_token: String,
-    /// `config.dir` must have gone through `prepare_directory`.
-    pub(crate) disk_cache: Option<DiskCacheConfig>,
+    pub(crate) data_plane: DataPlaneConfig,
 }
 
 pub struct RelayServer {
@@ -79,7 +78,11 @@ impl RelayServer {
                 route_registry,
                 authenticator,
                 relay_token: config.auth.relay_token,
-                disk_cache: config.disk_cache,
+                data_plane: DataPlaneConfig {
+                    cache: config.cache,
+                    disk_cache: config.disk_cache,
+                    fetch_fill_timeout: config.fetch_fill_timeout,
+                },
             },
         ))
     }
@@ -90,7 +93,7 @@ impl RelayServer {
             route_registry,
             authenticator,
             relay_token,
-            disk_cache,
+            data_plane,
         } = deps;
         let repo = Arc::new(tokio::sync::Mutex::new(repo));
         let (sender, runtime) = RelayRuntime::new(
@@ -98,7 +101,7 @@ impl RelayServer {
             route_registry.clone(),
             relay_token.clone(),
             authenticator.verifier.clone(),
-            disk_cache,
+            data_plane,
         );
 
         Self {

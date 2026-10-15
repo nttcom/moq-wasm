@@ -80,6 +80,50 @@ pub struct DiskCacheConfig {
 
 const DEFAULT_DISK_CACHE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
+/// How long the in-memory cache keeps objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CacheConfig {
+    /// Age at which eviction drops an object, or with the disk cache only its
+    /// in-memory payload.
+    pub ttl: Duration,
+    /// Must be non-zero: zero panics the eviction task and the cache is then
+    /// never evicted.
+    pub evict_interval: Duration,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            ttl: Duration::from_secs(60),
+            evict_interval: Duration::from_secs(5),
+        }
+    }
+}
+
+impl CacheConfig {
+    fn from_env_values(
+        ttl: Option<String>,
+        evict_interval: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let defaults = Self::default();
+        let ttl = seconds(ttl, "RELAY_CACHE_TTL_SECS", defaults.ttl)?;
+        let evict_interval = seconds(
+            evict_interval,
+            "RELAY_CACHE_EVICT_INTERVAL_SECS",
+            defaults.evict_interval,
+        )?;
+        if evict_interval.is_zero() {
+            bail!("RELAY_CACHE_EVICT_INTERVAL_SECS must be at least 1");
+        }
+        Ok(Self {
+            ttl,
+            evict_interval,
+        })
+    }
+}
+
+pub(crate) const DEFAULT_FETCH_FILL_TIMEOUT: Duration = Duration::from_secs(20);
+
 impl DiskCacheConfig {
     /// `None` without a directory: the cache then stays in memory only.
     fn from_env_values(
@@ -115,7 +159,11 @@ pub struct RelayConfig {
     /// before closing them with GOAWAY_TIMEOUT.
     pub drain_timeout: Duration,
     pub auth: AuthConfig,
+    pub cache: CacheConfig,
     pub disk_cache: Option<DiskCacheConfig>,
+    /// How long the relay waits for an upstream FETCH to complete before it
+    /// resets the downstream FETCH.
+    pub fetch_fill_timeout: Duration,
 }
 
 /// `KEY=` in an env file and compose `${KEY:-}` set the variable to an empty
@@ -156,9 +204,18 @@ impl RelayConfig {
             max_token_ttl_seconds: non_empty_env("AUTH_MAX_TOKEN_TTL_SECONDS"),
             clock_leeway_seconds: non_empty_env("AUTH_CLOCK_LEEWAY_SECONDS"),
         })?;
+        let cache = CacheConfig::from_env_values(
+            non_empty_env("RELAY_CACHE_TTL_SECS"),
+            non_empty_env("RELAY_CACHE_EVICT_INTERVAL_SECS"),
+        )?;
         let disk_cache = DiskCacheConfig::from_env_values(
             non_empty_env("RELAY_DISK_CACHE_DIR"),
             non_empty_env("RELAY_DISK_CACHE_BYTES"),
+        )?;
+        let fetch_fill_timeout = seconds(
+            non_empty_env("MOQT_FETCH_FILL_TIMEOUT_SECS"),
+            "MOQT_FETCH_FILL_TIMEOUT_SECS",
+            DEFAULT_FETCH_FILL_TIMEOUT,
         )?;
 
         Ok(Self {
@@ -170,7 +227,9 @@ impl RelayConfig {
             redis_url,
             drain_timeout,
             auth,
+            cache,
             disk_cache,
+            fetch_fill_timeout,
         })
     }
 }
@@ -179,7 +238,9 @@ impl RelayConfig {
 mod tests {
     use std::time::Duration;
 
-    use super::{AuthConfig, AuthEnv, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig, port_number};
+    use super::{
+        AuthConfig, AuthEnv, CacheConfig, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig, port_number,
+    };
     use crate::modules::auth::token_claims::ClaimPolicy;
 
     fn vts_env() -> AuthEnv {
@@ -292,6 +353,33 @@ mod tests {
             Some("/var/cache/relay".to_string()),
             Some("10G".to_string()),
         );
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cache_defaults_without_values() {
+        // Act
+        let config = CacheConfig::from_env_values(None, None).unwrap();
+
+        // Assert
+        assert_eq!(config, CacheConfig::default());
+    }
+
+    #[test]
+    fn cache_ttl_that_is_not_a_number_is_an_error() {
+        // Act
+        let result = CacheConfig::from_env_values(Some("1m".to_string()), None);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cache_evict_interval_of_zero_is_an_error() {
+        // Act
+        let result = CacheConfig::from_env_values(None, Some("0".to_string()));
 
         // Assert
         assert!(result.is_err());

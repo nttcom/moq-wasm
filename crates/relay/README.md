@@ -36,7 +36,8 @@ An empty value counts as unset and selects the default.
 | `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in memory; with the disk cache, how long a payload stays in memory before only its disk copy is kept |
 | `RELAY_DISK_CACHE_DIR` | unset | Directory for the payloads of objects received from client publishers, kept up to 1 hour; unset keeps the cache in memory only. `*.seg` files in it are deleted at startup |
 | `RELAY_DISK_CACHE_BYTES` | `10737418240` (10 GiB) | Cap on the disk cache; the oldest segments go first |
-| `RELAY_CACHE_EVICT_INTERVAL_SECS` | `5` | How often expired objects are drained |
+| `RELAY_CACHE_EVICT_INTERVAL_SECS` | `5` | How often expired objects are drained; at least 1 |
+| `MOQT_FETCH_FILL_TIMEOUT_SECS` | `20` | How long an upstream FETCH may take to complete before the relay resets the downstream FETCH |
 | `RELAY_STDOUT_FILTER` | `relay=info,moqt=info` | `tracing` filter for stdout |
 | `RELAY_OTEL_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry traces |
 | `RELAY_LOG_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry logs |

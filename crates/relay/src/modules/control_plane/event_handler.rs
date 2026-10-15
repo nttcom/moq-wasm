@@ -4,6 +4,7 @@ mod session_worker;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use self::session_worker::SessionWorker;
@@ -47,6 +48,7 @@ pub(crate) struct WorkerDeps {
     pub(crate) cache_store: Arc<TrackCacheStore>,
     pub(crate) upstream_serializer: UpstreamCreationSerializer,
     pub(crate) token_verifier: Arc<dyn TokenVerifier>,
+    pub(crate) fetch_fill_timeout: Duration,
 }
 
 impl EventHandler {
@@ -128,6 +130,7 @@ impl Drop for EventHandler {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::mpsc;
@@ -214,6 +217,7 @@ mod tests {
                     cache_store: cache_store.clone(),
                     upstream_serializer: UpstreamCreationSerializer::default(),
                     token_verifier: Arc::new(StubVerifier(StubOutcome::Unauthorized)),
+                    fetch_fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
                 },
             );
             let cache_store_references_without_workers = Arc::strong_count(&cache_store);

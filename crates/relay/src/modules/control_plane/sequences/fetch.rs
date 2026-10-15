@@ -3,7 +3,7 @@ mod upstream_fetch_task;
 use moqt::RequestErrorCode;
 use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use moqt::fetch::FetchParams;
 use tracing::Span;
@@ -27,7 +27,9 @@ use crate::modules::{
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
 };
 
-pub(crate) struct Fetch;
+pub(crate) struct Fetch {
+    pub(crate) fill_timeout: Duration,
+}
 
 struct CacheTarget {
     cache: Arc<TrackCache>,
@@ -165,6 +167,7 @@ impl Fetch {
                     cache_store: cache_store.clone(),
                     egress_sender: egress_sender.clone(),
                     session_event_sender: session_event_sender.clone(),
+                    fill_timeout: self.fill_timeout,
                 });
             }
         }
@@ -460,6 +463,7 @@ impl Fetch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
@@ -475,6 +479,10 @@ mod tests {
                 location,
             },
         },
+    };
+
+    const FETCH: Fetch = Fetch {
+        fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
     };
 
     fn standalone_fetch_params(
@@ -501,7 +509,7 @@ mod tests {
                 active_upstream(UpstreamSubscriptionOrigin::Subscribe),
             );
         }
-        let target = Fetch
+        let target = FETCH
             .resolve_fetch_target(
                 2,
                 standalone_fetch_params(location(0, 0), location(1, 0)),
@@ -548,7 +556,7 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        let target = Fetch
+        let target = FETCH
             .resolve_fetch_target(
                 2,
                 standalone_fetch_params(location(0, 0), location(1, 0)),
@@ -601,7 +609,7 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        let target = Fetch
+        let target = FETCH
             .resolve_fetch_target(
                 2,
                 standalone_fetch_params(location(0, 0), location(1, 0)),
@@ -670,7 +678,7 @@ mod tests {
         };
 
         // Act
-        let (target, source) = Fetch
+        let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
                 standalone_fetch_params(start, end),
@@ -706,7 +714,7 @@ mod tests {
         };
 
         // Act
-        let (_, source) = Fetch
+        let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
                 standalone_fetch_params(start, end),
@@ -736,7 +744,7 @@ mod tests {
         };
 
         // Act
-        let (_, source) = Fetch
+        let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
                 standalone_fetch_params(start, end),
@@ -766,7 +774,7 @@ mod tests {
         };
 
         // Act
-        let (target, source) = Fetch
+        let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
                 standalone_fetch_params(start, end),
@@ -804,7 +812,7 @@ mod tests {
         };
 
         // Act
-        let (_, source) = Fetch
+        let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
                 standalone_fetch_params(start, requested_end),
@@ -840,7 +848,7 @@ mod tests {
         cache.begin_live_ingest();
 
         // Act
-        let result = Fetch.resolve_target_and_source(
+        let result = FETCH.resolve_target_and_source(
             2,
             standalone_fetch_params(
                 moqt::object::Location {
@@ -871,7 +879,7 @@ mod tests {
         let _open_g2 = open_group(&cache, 2, &[0]);
 
         // Act
-        let result = Fetch.resolve_target_and_source(
+        let result = FETCH.resolve_target_and_source(
             2,
             standalone_fetch_params(
                 moqt::object::Location {
@@ -908,7 +916,7 @@ mod tests {
         };
 
         // Act
-        let (_, source) = Fetch
+        let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
                 standalone_fetch_params(start, end),
@@ -942,7 +950,7 @@ mod tests {
         let table = InMemoryLocalPubSubDirectory::new();
 
         // Act
-        let result = Fetch.resolve_fetch_target(1, relative_joining_fetch_params(999), &table);
+        let result = FETCH.resolve_fetch_target(1, relative_joining_fetch_params(999), &table);
 
         // Assert
         assert!(matches!(result, Err(FetchError::UnknownJoiningRequestId)));
@@ -962,7 +970,7 @@ mod tests {
         );
 
         // Act
-        let result = Fetch.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
+        let result = FETCH.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
 
         // Assert
         assert!(matches!(result, Err(FetchError::NoObjectsPublished)));
@@ -986,7 +994,7 @@ mod tests {
         );
 
         // Act
-        let target = Fetch
+        let target = FETCH
             .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
             .unwrap();
 
@@ -1024,7 +1032,7 @@ mod tests {
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
 
         // Act
-        let (target, source) = Fetch
+        let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
                 FetchParams::RelativeJoining {
@@ -1080,7 +1088,7 @@ mod tests {
         );
 
         // Act
-        let (target, source) = Fetch
+        let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
                 FetchParams::AbsoluteJoining {
@@ -1132,7 +1140,7 @@ mod tests {
         );
 
         // Act
-        let (target, source) = Fetch
+        let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
                 FetchParams::RelativeJoining {
@@ -1184,7 +1192,7 @@ mod tests {
         );
 
         // Act
-        let result = Fetch.resolve_target_and_source(
+        let result = FETCH.resolve_target_and_source(
             2,
             FetchParams::AbsoluteJoining {
                 joining_request_id: 100,

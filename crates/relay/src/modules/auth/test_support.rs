@@ -8,7 +8,8 @@ use moqt::{
 };
 
 use crate::{
-    RelayServer,
+    CacheConfig, RelayServer,
+    config::DEFAULT_FETCH_FILL_TIMEOUT,
     modules::{
         auth::{
             session_authenticator::SessionAuthenticator,
@@ -19,7 +20,9 @@ use crate::{
         session::session_repository::SessionRepository,
         test_support::relay_harness::fixtures::disk_cache::TempDir,
     },
-    relay_server::{server::RelayServerDeps, session_handler::SessionHandler},
+    relay_server::{
+        runtime::DataPlaneConfig, server::RelayServerDeps, session_handler::SessionHandler,
+    },
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -95,7 +98,11 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),
             },
             relay_token: "unused-relay-token".to_string(),
-            disk_cache: None,
+            data_plane: DataPlaneConfig {
+                cache: CacheConfig::default(),
+                disk_cache: None,
+                fetch_fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
+            },
         },
     );
     let handler = server.spawn_client_transport::<QUIC>(0).unwrap();
