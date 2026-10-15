@@ -16,10 +16,18 @@ export interface ChartSpec {
   totalLabel?: string
 }
 
+export interface ChartGroup {
+  name: string
+  charts: ChartSpec[]
+}
+
 const UP = '↑'
 const DOWN = '↓'
 
-const present = (specs: (ChartSpec | null)[]) => specs.filter((spec): spec is ChartSpec => spec !== null)
+const groups = (entries: [string, (ChartSpec | null)[]][]): ChartGroup[] =>
+  entries
+    .map(([name, specs]) => ({ name, charts: specs.filter((spec): spec is ChartSpec => spec !== null) }))
+    .filter((group) => group.charts.length > 0)
 
 function chart(title: string, unit: string, lines: (LineRef | null | false)[]): ChartSpec | null {
   const present = lines.filter((line): line is LineRef => Boolean(line))
@@ -62,31 +70,41 @@ function trackLines(topology: Topology, relayId: string, publisherSessionId: Id,
     }))
 }
 
-function relayCharts(relayId: string): ChartSpec[] {
+function relayCharts(relayId: string): ChartGroup[] {
   const process: SeriesTarget = { target: 'process' }
   const relay: SeriesTarget = { target: 'relay' }
   const line = (label: string, target: SeriesTarget, metric: string): LineRef => ({ label, relayId, target, metric })
-  return present([
-    chart('Memory', 'MB', [line('RSS', process, 'rss_mb'), line('Cache payload', process, 'cache_mb')]),
-    chart('Throughput', 'Mbps', [line('Ingress', relay, 'ingress_mbps'), line('Egress', relay, 'egress_mbps')]),
-    chart('Egress loss (bitrate-weighted)', '%', [line('Loss', relay, 'egress_loss_percent')]),
-    chart('Sessions', '', [line('Sessions', relay, 'sessions')]),
-    chart('Client sessions', '', [line('Clients', process, 'client_sessions')]),
-    chart('Cache objects', '', [line('Objects', process, 'cache_objects')]),
-    chart('Disk cache', 'MB', [line('Disk cache', process, 'disk_cache_mb')]),
-    chart('Flow-control blocked', '/s', [
-      line('Peers by relay window', relay, 'peers_blocked_per_s'),
-      line('Relay by peer windows', relay, 'relay_blocked_per_s')
-    ]),
-    chart('Streams reset by peers', '/s', [line('Resets', relay, 'peer_resets_per_s')]),
-    chart('Congestion events', '/s', [line('Events', relay, 'congestion_per_s')])
+  return groups([
+    [
+      'Resources',
+      [
+        chart('Memory', 'MB', [line('Memory', process, 'rss_mb'), line('Cache payload', process, 'cache_mb')]),
+        chart('Storage', 'MB', [line('Used', process, 'disk_cache_mb'), line('Limit', process, 'disk_cache_max_mb')]),
+        chart('Cache objects', '', [line('Objects', process, 'cache_objects')])
+      ]
+    ],
+    [
+      'Network',
+      [
+        chart('Throughput', 'Mbps', [line('Ingress', relay, 'ingress_mbps'), line('Egress', relay, 'egress_mbps')]),
+        chart('Egress loss (bitrate-weighted)', '%', [line('Loss', relay, 'egress_loss_percent')]),
+        chart('Congestion events', '/s', [line('Events', relay, 'congestion_per_s')]),
+        chart('Flow-control blocked', '/s', [
+          line('Peers by relay window', relay, 'peers_blocked_per_s'),
+          line('Relay by peer windows', relay, 'relay_blocked_per_s')
+        ]),
+        chart('Streams reset by peers', '/s', [line('Resets', relay, 'peer_resets_per_s')])
+      ]
+    ],
+    ['Sessions', [chart('Sessions', '', [line('All', relay, 'sessions'), line('Clients', process, 'client_sessions')])]]
   ])
 }
 
 interface Direction {
   uplink: boolean
   downlink: boolean
-  sessionBitrate: boolean
+  /** 'session' charts the whole session's bitrate. */
+  bitrate: 'session' | ChartSpec | null
   peer: 'client' | 'peer relay'
 }
 
@@ -97,56 +115,93 @@ function sessionCharts(
   visible: Visibility,
   received: Route[],
   direction: Direction
-): ChartSpec[] {
+): ChartGroup[] {
   const session: SeriesTarget = { target: 'session', session_id: sessionId }
   const line = (label: string, metric: string): LineRef => ({ label, relayId, target: session, metric })
-  const { uplink, downlink, sessionBitrate, peer } = direction
-  return present([
-    sessionBitrate
-      ? chart('Bitrate', 'Mbps', [
-          uplink && line(`${UP} received by relay`, 'received_mbps'),
-          downlink && line(`${DOWN} sent by relay`, 'sent_mbps')
-        ])
-      : null,
-    chart('RTT', 'ms', [line('RTT', 'rtt_ms')]),
-    downlink ? chart('Downlink loss', '%', [line('Loss', 'loss_percent')]) : null,
-    downlink ? chart('cwnd', 'KB', [line('cwnd', 'cwnd_kb')]) : null,
-    downlink ? chart('Congestion events', '/s', [line('Events', 'congestion_per_s')]) : null,
-    uplink
-      ? chart('Max object arrival gap', 'ms', trackLines(topology, relayId, sessionId, visible, 'max_arrival_gap_ms'))
-      : null,
-    chart('Flow-control blocked', '/s', [
-      uplink && line(`${UP} ${peer} by relay window`, 'peer_blocked_per_s'),
-      downlink && line(`${DOWN} relay by ${peer} window`, 'relay_blocked_per_s')
-    ]),
-    chart(`Stream signals from ${peer}`, '/s', [
-      uplink && line(`${UP} RESET_STREAM`, 'peer_resets_per_s'),
-      downlink && line(`${DOWN} STOP_SENDING`, 'stop_sending_per_s')
-    ]),
-    downlink ? chart('Streams reset by relay', '/s', subscriptionLines(received, 'resets_per_s')) : null,
-    downlink ? chart('Delivery lag', 'ms', subscriptionLines(received, 'lag_ms')) : null
+  const { uplink, downlink, bitrate, peer } = direction
+  return groups([
+    [
+      'Media',
+      [
+        bitrate === 'session'
+          ? chart('Bitrate', 'Mbps', [
+              uplink && line(`${UP} received by relay`, 'received_mbps'),
+              downlink && line(`${DOWN} sent by relay`, 'sent_mbps')
+            ])
+          : bitrate,
+        uplink
+          ? chart(
+              'Max object arrival gap',
+              'ms',
+              trackLines(topology, relayId, sessionId, visible, 'max_arrival_gap_ms')
+            )
+          : null,
+        downlink ? chart('Delivery lag', 'ms', subscriptionLines(received, 'lag_ms')) : null
+      ]
+    ],
+    [
+      'Transport',
+      [
+        chart('RTT', 'ms', [line('RTT', 'rtt_ms')]),
+        downlink ? chart('Downlink loss', '%', [line('Loss', 'loss_percent')]) : null,
+        downlink ? chart('cwnd', 'KB', [line('cwnd', 'cwnd_kb')]) : null,
+        downlink ? chart('Congestion events', '/s', [line('Events', 'congestion_per_s')]) : null
+      ]
+    ],
+    [
+      'Streams',
+      [
+        chart('Flow-control blocked', '/s', [
+          uplink && line(`${UP} ${peer} by relay window`, 'peer_blocked_per_s'),
+          downlink && line(`${DOWN} relay by ${peer} window`, 'relay_blocked_per_s')
+        ]),
+        chart(`Stream signals from ${peer}`, '/s', [
+          uplink && line(`${UP} RESET_STREAM`, 'peer_resets_per_s'),
+          downlink && line(`${DOWN} STOP_SENDING`, 'stop_sending_per_s')
+        ]),
+        downlink ? chart('Streams reset by relay', '/s', subscriptionLines(received, 'resets_per_s')) : null
+      ]
+    ]
   ])
 }
 
-function meshCharts(topology: Topology): ChartSpec[] {
+function meshCharts(topology: Topology): ChartGroup[] {
   const relayIds = topology.relays.map((relay) => relay.id).sort()
   const perRelay = (target: SeriesTarget, metric: string): LineRef[] =>
     relayIds.map((relayId) => ({ label: relayId, relayId, target, metric }))
   const process: SeriesTarget = { target: 'process' }
   const relay: SeriesTarget = { target: 'relay' }
-  return [
-    { title: 'Egress', unit: 'Mbps', lines: perRelay(relay, 'egress_mbps'), totalLabel: 'All relays' },
-    { title: 'Ingress', unit: 'Mbps', lines: perRelay(relay, 'ingress_mbps'), totalLabel: 'All relays' },
-    { title: 'Egress loss (bitrate-weighted)', unit: '%', lines: perRelay(relay, 'egress_loss_percent') },
-    { title: 'Sessions', unit: '', lines: perRelay(relay, 'sessions'), totalLabel: 'All relays' },
-    { title: 'RSS', unit: 'MB', lines: perRelay(process, 'rss_mb') },
-    { title: 'Cache payload', unit: 'MB', lines: perRelay(process, 'cache_mb'), totalLabel: 'All relays' },
-    { title: 'Disk cache', unit: 'MB', lines: perRelay(process, 'disk_cache_mb'), totalLabel: 'All relays' },
-    { title: 'Congestion events', unit: '/s', lines: perRelay(relay, 'congestion_per_s'), totalLabel: 'All relays' }
-  ]
+  const total = 'All relays'
+  return groups([
+    [
+      'Resources',
+      [
+        { title: 'Memory', unit: 'MB', lines: perRelay(process, 'rss_mb') },
+        { title: 'Cache payload', unit: 'MB', lines: perRelay(process, 'cache_mb'), totalLabel: total },
+        { title: 'Storage used', unit: 'MB', lines: perRelay(process, 'disk_cache_mb'), totalLabel: total },
+        { title: 'Storage limit', unit: 'MB', lines: perRelay(process, 'disk_cache_max_mb'), totalLabel: total }
+      ]
+    ],
+    [
+      'Network',
+      [
+        { title: 'Egress', unit: 'Mbps', lines: perRelay(relay, 'egress_mbps'), totalLabel: total },
+        { title: 'Ingress', unit: 'Mbps', lines: perRelay(relay, 'ingress_mbps'), totalLabel: total },
+        { title: 'Egress loss (bitrate-weighted)', unit: '%', lines: perRelay(relay, 'egress_loss_percent') },
+        { title: 'Congestion events', unit: '/s', lines: perRelay(relay, 'congestion_per_s'), totalLabel: total }
+      ]
+    ],
+    [
+      'Sessions',
+      [
+        { title: 'Sessions', unit: '', lines: perRelay(relay, 'sessions'), totalLabel: total },
+        { title: 'Client sessions', unit: '', lines: perRelay(process, 'client_sessions'), totalLabel: total }
+      ]
+    ]
+  ])
 }
 
-export function chartSpecs(topology: Topology, selection: Selection, visible: Visibility): ChartSpec[] {
+export function chartGroups(topology: Topology, selection: Selection, visible: Visibility): ChartGroup[] {
   if (!selection) return []
   if (selection.kind === 'mesh') return meshCharts(topology)
   if (selection.kind === 'relay') return relayCharts(selection.id)
@@ -157,7 +212,7 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
     return sessionCharts(topology, client.relayId, client.session.session_id, visible, received, {
       uplink: client.trackCount > 0,
       downlink: received.length > 0,
-      sessionBitrate: true,
+      bitrate: 'session',
       peer: 'client'
     })
   }
@@ -166,26 +221,20 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
   const { relayId, session, bySender } = link.measured
   const carried = visible.routes.filter((route) => link.routes.includes(route.key))
   if (link.kind === 'uplink') {
-    return present([
-      chart('Bitrate', 'Mbps', trackLines(topology, relayId, session.session_id, visible, 'received_mbps')),
-      ...sessionCharts(topology, relayId, session.session_id, visible, [], {
-        uplink: true,
-        downlink: false,
-        sessionBitrate: false,
-        peer: 'client'
-      })
-    ])
+    return sessionCharts(topology, relayId, session.session_id, visible, [], {
+      uplink: true,
+      downlink: false,
+      bitrate: chart('Bitrate', 'Mbps', trackLines(topology, relayId, session.session_id, visible, 'received_mbps')),
+      peer: 'client'
+    })
   }
   if (link.kind === 'downlink') {
-    return present([
-      chart('Bitrate', 'Mbps', subscriptionLines(carried, 'sent_mbps')),
-      ...sessionCharts(topology, relayId, session.session_id, visible, carried, {
-        uplink: false,
-        downlink: true,
-        sessionBitrate: false,
-        peer: 'client'
-      })
-    ])
+    return sessionCharts(topology, relayId, session.session_id, visible, carried, {
+      uplink: false,
+      downlink: true,
+      bitrate: chart('Bitrate', 'Mbps', subscriptionLines(carried, 'sent_mbps')),
+      peer: 'client'
+    })
   }
   const sender = topology.relays.find((relay) => relay.id === relayId)?.snapshot
   const carriedTracks = new Set(carried.map((route) => route.trackKey))
@@ -205,13 +254,10 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
       },
       metric: 'sent_mbps'
     }))
-  return present([
-    bySender ? chart('Bitrate', 'Mbps', relayedSubscriptions) : null,
-    ...sessionCharts(topology, relayId, session.session_id, visible, [], {
-      uplink: !bySender,
-      downlink: bySender,
-      sessionBitrate: !bySender,
-      peer: 'peer relay'
-    })
-  ])
+  return sessionCharts(topology, relayId, session.session_id, visible, [], {
+    uplink: !bySender,
+    downlink: bySender,
+    bitrate: bySender ? chart('Bitrate', 'Mbps', relayedSubscriptions) : 'session',
+    peer: 'peer relay'
+  })
 }

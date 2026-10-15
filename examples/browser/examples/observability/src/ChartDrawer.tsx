@@ -1,10 +1,10 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { type RelaySnapshot, type Series, fetchSeries } from './api'
-import { type ChartSpec, chartSpecs } from './charts'
+import { type ChartGroup, type ChartSpec, chartGroups } from './charts'
 import { type ChartLine, LineChart, formatValue } from './LineChart'
 import { type Selection, type Visibility, routesOf } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
-import { type Link, type Topology, drainingSeconds, isStatsSession, linkMbps, relativeNamespace } from './topology'
+import { type Topology, drainingSeconds, isStatsSession, linkMbps, relativeNamespace } from './topology'
 
 const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
@@ -86,12 +86,32 @@ function ScopeNote({ visible, namespacePrefix }: { visible: Visibility; namespac
 
 const nodeLabel = (topology: Topology, id: string) => topology.clients.get(id)?.label ?? id
 
+function Tabs({ groups, active, onPick }: { groups: ChartGroup[]; active: string; onPick: (name: string) => void }) {
+  if (groups.length < 2) return null
+  return (
+    <div className="tabs" role="tablist">
+      {groups.map((group) => (
+        <button
+          key={group.name}
+          role="tab"
+          aria-selected={group.name === active}
+          className={group.name === active ? 'on' : ''}
+          onClick={() => onPick(group.name)}
+        >
+          {group.name}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function Details({
   topology,
   selection,
   visible,
-  namespacePrefix
-}: Pick<Props, 'topology' | 'selection' | 'visible'> & { namespacePrefix: string }) {
+  namespacePrefix,
+  tabs
+}: Pick<Props, 'topology' | 'selection' | 'visible'> & { namespacePrefix: string; tabs: ReactNode }) {
   if (!selection) return null
   const routes = routesOf(topology, selection, visible)
   const routeRows = routes.map((route): [ReactNode, ReactNode] => [
@@ -112,6 +132,7 @@ function Details({
           {topology.relays.length} relays · {visible.clients.size} clients · {visible.routes.length} subscriptions
         </div>
         <ScopeNote visible={visible} namespacePrefix={namespacePrefix} />
+        {tabs}
         {topology.relays.map((relay) => (
           <Section key={relay.id} title={relay.id}>
             <Rows
@@ -126,7 +147,7 @@ function Details({
                 ['Ingress', mbps(throughput(relay.id, 'to'))],
                 ['Egress', mbps(throughput(relay.id, 'from'))],
                 [
-                  'RSS',
+                  'Memory',
                   relay.snapshot.process.rss_bytes === null
                     ? '—'
                     : `${Math.round(relay.snapshot.process.rss_bytes / 1024 / 1024)} MB`
@@ -141,14 +162,6 @@ function Details({
   if (selection.kind === 'relay') {
     const relay = topology.relays.find((candidate) => candidate.id === selection.id)
     if (!relay) return null
-    const incoming = [...topology.links.values()].filter((link) => visible.links.has(link.key) && link.to === relay.id)
-    const outgoing = [...topology.links.values()].filter(
-      (link) => visible.links.has(link.key) && link.from === relay.id
-    )
-    const total = (links: Link[]) => links.reduce((sum, link) => sum + linkMbps(link, visible.trackKeys), 0)
-    const attached = [...topology.clients.values()].filter(
-      (client) => client.relayId === relay.id && visible.clients.has(client.key)
-    )
     return (
       <>
         <div className="sub">
@@ -156,34 +169,7 @@ function Details({
           {relayState(relay.snapshot)}
         </div>
         <ScopeNote visible={visible} namespacePrefix={namespacePrefix} />
-        <Section title="Ingress" direction={`received by ${relay.id}`}>
-          <Rows
-            rows={[
-              [`from clients`, mbps(total(incoming.filter((link) => link.kind === 'uplink')))],
-              ...incoming
-                .filter((link) => link.kind === 'inter-relay')
-                .map((link): [ReactNode, ReactNode] => [`from ${link.from}`, mbps(linkMbps(link, visible.trackKeys))])
-            ]}
-          />
-        </Section>
-        <Section title="Egress" direction={`sent by ${relay.id}`}>
-          <Rows
-            rows={[
-              [`to clients`, mbps(total(outgoing.filter((link) => link.kind === 'downlink')))],
-              ...outgoing
-                .filter((link) => link.kind === 'inter-relay')
-                .map((link): [ReactNode, ReactNode] => [`to ${link.to}`, mbps(linkMbps(link, visible.trackKeys))])
-            ]}
-          />
-        </Section>
-        <Section title="Clients" direction={String(attached.length)}>
-          <Rows
-            rows={attached.map((client): [ReactNode, ReactNode] => [
-              client.label,
-              `${Math.round(client.session.rtt_us / 1000)} ms`
-            ])}
-          />
-        </Section>
+        {tabs}
       </>
     )
   }
@@ -204,6 +190,7 @@ function Details({
           app {client.appId}
         </div>
         <ScopeNote visible={visible} namespacePrefix={namespacePrefix} />
+        {tabs}
         {published.length > 0 && (
           <Section title="↑ Publishes" direction={`${client.label} → ${client.relayId}`}>
             <Rows
@@ -239,6 +226,7 @@ function Details({
         {link.kind} · {measuredBy}
       </div>
       <ScopeNote visible={visible} namespacePrefix={namespacePrefix} />
+      {tabs}
       <Section title="Tracks" direction={`${nodeLabel(topology, link.from)} → ${nodeLabel(topology, link.to)}`}>
         <Rows rows={tracks.map((track): [ReactNode] => [track])} />
       </Section>
@@ -256,7 +244,10 @@ export function ChartDrawer(props: Props & { namespacePrefix: string }) {
   const [hoverMs, setHoverMs] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const specs: ChartSpec[] = useMemo(() => chartSpecs(topology, selection, visible), [topology, selection, visible])
+  const [groupName, setGroupName] = useState<string | null>(null)
+  const groups = useMemo(() => chartGroups(topology, selection, visible), [topology, selection, visible])
+  const group = groups.find((candidate) => candidate.name === groupName) ?? groups[0]
+  const specs: ChartSpec[] = useMemo(() => group?.charts ?? [], [group])
   const requests = useMemo(() => {
     const unique = new Map<string, { relayId: string; target: ChartSpec['lines'][number]['target'] }>()
     for (const spec of specs) {
@@ -326,7 +317,13 @@ export function ChartDrawer(props: Props & { namespacePrefix: string }) {
       </div>
       <div className="drawer-body">
         <div className="details">
-          <Details topology={topology} selection={selection} visible={visible} namespacePrefix={namespacePrefix} />
+          <Details
+            topology={topology}
+            selection={selection}
+            visible={visible}
+            namespacePrefix={namespacePrefix}
+            tabs={group && <Tabs groups={groups} active={group.name} onPick={setGroupName} />}
+          />
         </div>
         <div className="charts">
           {specs.map((spec) => (
