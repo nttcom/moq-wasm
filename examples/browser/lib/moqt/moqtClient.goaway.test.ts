@@ -338,8 +338,8 @@ test('a published track keeps its alias for the application while the new relay 
   expect(relayB.sent).toContain('OBJECT alias=40 group=3 object=0')
 })
 
-test('subscriptions the old relay held on this publisher are reported ended by the switchover', async () => {
-  // Arrange: relay A subscribed to a track this client serves
+test('a subscribed track goes to both relays until the old relay unsubscribes', async () => {
+  // Arrange: relay A subscribed to a track this client serves (alias 7) before the switch, relay B after it (alias 40)
   const { clients, wrapper } = fakeRelays()
   await wrapper.connect('https://relay-a.example:4433')
   wrapper.setOnIncomingSubscribeHandler(async ({ respondOk }) => {
@@ -347,16 +347,69 @@ test('subscriptions the old relay held on this publisher are reported ended by t
   })
   const ended: bigint[] = []
   wrapper.setOnIncomingUnsubscribeHandler((requestId) => ended.push(requestId))
-  clients[0].receiveSubscribe(11n, ['room', 'me'], 'video')
+  const [relayA] = clients
+  relayA.receiveSubscribe(11n, ['room', 'me'], 'video')
   await settled()
-  expect(clients[0].sent).toContain('SUBSCRIBE_OK 11')
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  const relayB = clients[1]
+  relayB.receiveSubscribe(13n, ['room', 'me'], 'video')
+  await settled()
 
   // Act
-  clients[0].receiveGoAway('https://relay-b.example:4433')
+  const aliases = wrapper.trackSubscribers(['room', 'me'], 'video')
+  for (const alias of aliases) {
+    await wrapper.sendSubgroupHeader(alias, 5n, 0n, 0)
+    await wrapper.sendSubgroupObject(alias, 5n, 0n, 0n, undefined, new Uint8Array(1), undefined)
+  }
+  const closedWhileSubscribed = relayA.closed
+  relayA.receiveUnsubscribe(11n)
   await settled()
 
   // Assert
+  expect(aliases).toEqual([7n, 40n])
+  expect(relayA.sent).toEqual(
+    expect.arrayContaining(['SUBGROUP_HEADER alias=7 group=5', 'OBJECT alias=7 group=5 object=0'])
+  )
+  expect(relayB.sent).toEqual(
+    expect.arrayContaining(['SUBGROUP_HEADER alias=40 group=5', 'OBJECT alias=40 group=5 object=0'])
+  )
+  expect(closedWhileSubscribed).toBe(false)
   expect(ended).toEqual([11n])
+  expect(wrapper.trackSubscribers(['room', 'me'], 'video')).toEqual([40n])
+  expect(relayA.closed).toBe(true)
+})
+
+test('an alias the new relay gives a subscriber that the application already sends on is replaced', async () => {
+  // Arrange: a published track holds alias 7; relay B maps it to 40 and gives 7 to a new subscriber
+  const clients: FakeRawClient[] = []
+  const wrapper = new MoqtClientWrapper(async (url) => {
+    const client = new FakeRawClient(url, url.includes('relay-b') ? [40n, 7n] : [7n])
+    clients.push(client)
+    return client as unknown as MOQTClient
+  })
+  await wrapper.connect('https://relay-a.example:4433')
+  wrapper.setOnIncomingSubscribeHandler(async ({ respondOk }) => {
+    await respondOk()
+  })
+  const published = await wrapper.publish(['room', 'me'], 'video', '')
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  const relayB = clients[1]
+  relayB.receiveSubscribe(13n, ['room', 'me'], 'audio')
+  await settled()
+
+  // Act
+  const [subscribed] = wrapper.trackSubscribers(['room', 'me'], 'audio')
+  await wrapper.sendSubgroupHeader(subscribed, 2n, 0n, 0)
+  await wrapper.sendSubgroupHeader(published, 2n, 0n, 0)
+
+  // Assert
+  expect(published).toBe(7n)
+  expect(subscribed).not.toBe(published)
+  expect(relayB.sent).toEqual(
+    expect.arrayContaining(['SUBGROUP_HEADER alias=7 group=2', 'SUBGROUP_HEADER alias=40 group=2'])
+  )
 })
 
 test('an in-flight FETCH resumes on the new relay after the last object delivered', async () => {
