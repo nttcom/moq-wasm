@@ -43,6 +43,7 @@ class FakeRawClient {
   readonly onObjectDatagramStatus = this.on('objectDatagramStatus')
   readonly onSubgroupHeader = this.on('subgroupHeader')
   readonly onSubgroupObject = this.on('subgroupObject')
+  readonly onSubgroupEnd = this.on('subgroupEnd')
   readonly onTrackStatus = this.on('trackStatus')
   readonly onTrackStatusResponse = this.on('trackStatusResponse')
   readonly onFetch = this.on('fetch')
@@ -192,6 +193,14 @@ class FakeRawClient {
     this.emit('goAway', newSessionUri)
   }
 
+  receiveSubgroupHeader(wireAlias: bigint, groupId: bigint): void {
+    this.emit('subgroupHeader', { trackAlias: wireAlias, groupId, subgroupId: 0n, publisherPriority: 0 })
+  }
+
+  receiveSubgroupEnd(wireAlias: bigint, groupId: bigint): void {
+    this.emit('subgroupEnd', wireAlias, groupId, 0n)
+  }
+
   receiveSubgroupObject(wireAlias: bigint, groupId: bigint, objectId: bigint): void {
     this.emit('subgroupObject', wireAlias, groupId, { objectId } as unknown as SubgroupObjectMessage)
   }
@@ -221,7 +230,7 @@ function fakeRelays(options: { relayBRejectsSubscribes?: number; relayBLargest?:
 }
 
 test('GOAWAY moves the namespaces and subscriptions to the named relay under the same ids and aliases', async () => {
-  // Arrange: announced, subscribed to a prefix and to one track (alias 7 on relay A)
+  // Arrange: announced, subscribed to a prefix and to one track (alias 7 on relay A), group 4 arriving
   const { clients, wrapper } = fakeRelays()
   await wrapper.connect('https://relay-a.example:4433')
   await wrapper.publishNamespace(['room', 'me'], '')
@@ -230,6 +239,8 @@ test('GOAWAY moves the namespaces and subscriptions to the named relay under the
   const received: bigint[] = []
   wrapper.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId) => received.push(groupId))
   const [relayA] = clients
+  relayA.receiveSubgroupHeader(7n, 4n)
+  await settled()
 
   // Act
   relayA.receiveGoAway('https://relay-b.example:4433')
@@ -569,6 +580,7 @@ test('a group the old relay started is taken from it, and later groups only from
     received.push(`${groupId}:${object.objectId}`)
   )
   const [relayA] = clients
+  relayA.receiveSubgroupHeader(7n, 4n)
   relayA.receiveSubgroupObject(7n, 4n, 0n)
   relayA.receiveSubgroupObject(7n, 4n, 1n)
   await settled()
@@ -653,4 +665,44 @@ test('a group the new relay started before the subscription moved is fetched fro
   expect(relayB.subscribeFilters).toEqual([0x2])
   expect(fetchLine).toBe(`JOINING_FETCH ${fetchRequestId} ${requestId} 0`)
   expect(received).toEqual(['4:0', '5:0', '5:1', '5:2'])
+})
+
+test('a subscription with nothing arriving on the old relay leaves it at once', async () => {
+  // Arrange
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  await wrapper.subscribe(['room', 'them'], 'chat', '')
+  const [relayA] = clients
+  relayA.receiveSubgroupHeader(7n, 1n)
+  relayA.receiveSubgroupObject(7n, 1n, 0n)
+  relayA.receiveSubgroupEnd(7n, 1n)
+  await settled()
+
+  // Act
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+
+  // Assert
+  expect(relayA.closed).toBe(true)
+})
+
+test('the old relay is left once its open subgroup ends', async () => {
+  // Arrange
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  await wrapper.subscribe(['room', 'them'], 'video', '')
+  const [relayA] = clients
+  relayA.receiveSubgroupHeader(7n, 3n)
+  await settled()
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  const openAfterSwitch = !relayA.closed
+
+  // Act
+  relayA.receiveSubgroupEnd(7n, 3n)
+  await settled()
+
+  // Assert
+  expect(openAfterSwitch).toBe(true)
+  expect(relayA.closed).toBe(true)
 })

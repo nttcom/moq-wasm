@@ -27,6 +27,7 @@ pub(crate) struct Callbacks {
     pub(crate) object_datagram_status: Option<Function>,
     pub(crate) subgroup_header: Option<Function>,
     pub(crate) subgroup_object: Option<Function>,
+    pub(crate) subgroup_end: Option<Function>,
     pub(crate) fetch: Option<Function>,
     pub(crate) fetch_cancel: Option<Function>,
     pub(crate) fetch_response: Option<Function>,
@@ -96,6 +97,23 @@ pub(crate) fn emit_subgroup_header(
         start.publisher_priority,
     );
     emit(callbacks, |c| &c.subgroup_header, &[message.into()]);
+}
+
+pub(crate) fn emit_subgroup_end(
+    callbacks: &RefCell<Callbacks>,
+    track_alias: u64,
+    group_id: u64,
+    subgroup_id: u64,
+) {
+    emit(
+        callbacks,
+        |c| &c.subgroup_end,
+        &[
+            js_sys::BigInt::from(track_alias).into(),
+            js_sys::BigInt::from(group_id).into(),
+            js_sys::BigInt::from(subgroup_id).into(),
+        ],
+    );
 }
 
 pub(crate) fn emit_subgroup_object(

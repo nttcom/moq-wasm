@@ -84,7 +84,11 @@ Rules:
   On the sending side a published track goes to both sessions
   (draft-22 §7.6.1): a group starts on the new session and, while the old
   relay still subscribes to the track, on the old one too, and its objects go
-  wherever it started. The old session is closed once every subscription has
+  wherever it started. A subscription with no subgroup still arriving on
+  the old session (the wasm client reports each stream's end with
+  `onSubgroupEnd`) passes its cutover at once, since the publisher sends every
+  later group to the new relay too; this lets a quiet track such as chat leave
+  without the 5 s grace. The old session is closed once every subscription has
   passed its cutover (or its relay sent PUBLISH_DONE, which the wrapper
   otherwise ignores from a relay that sent GOAWAY; subscriptions give up
   after 5 s) and its relay has unsubscribed from every published track, or

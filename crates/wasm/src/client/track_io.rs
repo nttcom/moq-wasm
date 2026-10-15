@@ -10,8 +10,8 @@ use wasm_bindgen_futures::spawn_local;
 use super::{
     ClientShared,
     callbacks::{
-        emit_fetch_object, emit_fetch_stream_end, emit_object_datagram, emit_subgroup_header,
-        emit_subgroup_object,
+        emit_fetch_object, emit_fetch_stream_end, emit_object_datagram, emit_subgroup_end,
+        emit_subgroup_header, emit_subgroup_object,
     },
 };
 use crate::messages::FetchStreamEndMessage;
@@ -48,9 +48,11 @@ pub(crate) async fn read_track(
 
 async fn read_subgroup_stream(shared: Rc<ClientShared>, mut stream: StreamDataReceiver) {
     let track_alias = stream.track_alias;
+    let mut subgroup = None;
     loop {
         match stream.receive().await {
             Ok(Some(Subgroup::Header(start))) => {
+                subgroup = Some((start.group_id, start.subgroup_id));
                 emit_subgroup_header(&shared.callbacks, track_alias, &start);
             }
             Ok(Some(Subgroup::Object(object))) => {
@@ -58,6 +60,9 @@ async fn read_subgroup_stream(shared: Rc<ClientShared>, mut stream: StreamDataRe
             }
             Ok(None) | Err(_) => break,
         }
+    }
+    if let Some((group_id, subgroup_id)) = subgroup {
+        emit_subgroup_end(&shared.callbacks, track_alias, group_id, subgroup_id);
     }
 }
 
