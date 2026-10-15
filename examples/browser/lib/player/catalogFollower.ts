@@ -1,5 +1,6 @@
 import { type TextTracks, fetchLatestText } from './textTrack'
 import type { TrackContext } from './trackContext'
+import type { PublishDoneMessage } from '../../pkg/moqt'
 import { CATALOG_TRACK_NAME } from '../msf/catalog'
 
 /// A SUBSCRIBE delivers objects published after the largest one and the bridge
@@ -16,7 +17,7 @@ export class CatalogFollower {
     private readonly context: TrackContext,
     private readonly textTracks: TextTracks,
     private readonly onCatalog: (text: string) => void,
-    private readonly onEnded: () => void
+    private readonly onEnded: (message: PublishDoneMessage) => void
   ) {}
 
   async follow(): Promise<void> {

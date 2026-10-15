@@ -25,6 +25,7 @@ import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManage
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../../utils/page'
 import {
+  CATALOG_TRACK_NAME,
   type MediaCatalogTrack,
   extractCatalogAudioTracks,
   extractCatalogCmafTracks,
@@ -154,7 +155,7 @@ export class LivePlayer {
       this.context,
       this.textTracks,
       (text) => void this.queueTrackChange(() => this.applyCatalog(text)),
-      () => void this.publisherLeft()
+      (message) => void this.publisherLeft(publisherEndedText(CATALOG_TRACK_NAME, message))
     )
     this.subscriptions = new TrackSubscriptions(this.context, (kind, message) => this.publisherEnded(kind, message))
     this.stallWatch = new StallWatch(() => {
@@ -304,12 +305,14 @@ export class LivePlayer {
   }
 
   /// Called when the catalog, or the video track when the page gave the
-  /// tracks, ends with PUBLISH_DONE.
-  private async publisherLeft(): Promise<void> {
+  /// tracks, ends with PUBLISH_DONE. `playbackText` reports that PUBLISH_DONE:
+  /// the wasm client drops the other tracks' PUBLISH_DONE once
+  /// `forgetPublisher` has unsubscribed them.
+  private async publisherLeft(playbackText: string): Promise<void> {
     const generation = this.watchGeneration
     await this.queueTrackChange(async () => {
       if (generation === this.watchGeneration) {
-        await this.forgetPublisher('Waiting for the publisher to return', this.playbackStatus.text)
+        await this.forgetPublisher('Waiting for the publisher to return', playbackText)
       }
     })
     void this.waitForPublisher(generation)
@@ -858,11 +861,11 @@ export class LivePlayer {
     if (kind === 'video') {
       this.stallWatch.clear()
     }
-    const reason = message.errorReason ? `: ${message.errorReason}` : ''
-    this.playbackStatus = { text: `Publisher ended the ${kind} track${reason}`, state: 'idle' }
+    const playbackText = publisherEndedText(kind, message)
+    this.playbackStatus = { text: playbackText, state: 'idle' }
     this.changed()
     if (kind === 'video' && this.givenTracks) {
-      void this.publisherLeft()
+      void this.publisherLeft(playbackText)
     }
   }
 
@@ -1099,6 +1102,11 @@ export class LivePlayer {
       this.cmafReview.sink.element.playbackRate = this.playbackRate
     }
   }
+}
+
+function publisherEndedText(trackName: string, message: PublishDoneMessage): string {
+  const reason = message.errorReason ? `: ${message.errorReason}` : ''
+  return `Publisher ended the ${trackName} track${reason}`
 }
 
 /// The bridge lists a CMAF sibling next to every LOC track; the WebCodecs

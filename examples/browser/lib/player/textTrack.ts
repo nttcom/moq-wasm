@@ -1,5 +1,5 @@
 import { type TrackContext, observedObjectHandler } from './trackContext'
-import type { SubscribeOkMessage } from '../../pkg/moqt'
+import type { PublishDoneMessage, SubscribeOkMessage } from '../../pkg/moqt'
 import { getErrorMessage } from '../../utils/page'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
@@ -10,11 +10,15 @@ export class TextTracks {
   constructor(private readonly context: TrackContext) {}
 
   /// `onEnded` is called when the publisher ends the track with PUBLISH_DONE.
-  async subscribe(name: string, onText: TextTrackHandler, onEnded?: () => void): Promise<SubscribeOkMessage> {
+  async subscribe(
+    name: string,
+    onText: TextTrackHandler,
+    onEnded?: (message: PublishDoneMessage) => void
+  ): Promise<SubscribeOkMessage> {
     const { client, namespace, authInfo } = this.context
     const { requestId, subscribeOk } = await client.subscribe(namespace, name, authInfo, {
       forward: true,
-      onPublishDone: (message) => this.end(name, message.requestId, onEnded)
+      onPublishDone: (message) => this.end(name, message, onEnded)
     })
     this.subscribed.push({ requestId, trackAlias: subscribeOk.trackAlias })
     client.setOnSubgroupObjectHandler(
@@ -27,14 +31,18 @@ export class TextTracks {
     return subscribeOk
   }
 
-  private end(name: string, requestId: bigint, onEnded: (() => void) | undefined): void {
-    const index = this.subscribed.findIndex((subscription) => subscription.requestId === requestId)
+  private end(
+    name: string,
+    message: PublishDoneMessage,
+    onEnded: ((message: PublishDoneMessage) => void) | undefined
+  ): void {
+    const index = this.subscribed.findIndex((subscription) => subscription.requestId === message.requestId)
     if (index < 0) {
       return
     }
     this.subscribed.splice(index, 1)
     this.context.log('info', `${name} ended by the publisher`)
-    onEnded?.()
+    onEnded?.(message)
   }
 
   async unsubscribeAll(): Promise<void> {

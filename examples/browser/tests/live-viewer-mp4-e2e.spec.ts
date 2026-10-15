@@ -118,9 +118,8 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     await expect(viewer.publishStatus).toHaveText('Publish stopped')
     await expect(viewer.publishStreams).toBeHidden()
     await expect(viewer.publishPreview).toBeHidden()
-    // Assert: the relay ends the viewer's subscriptions with PUBLISH_DONE once the publisher left; the catalog, which has no stream open, can end first and the player then unsubscribes the other track
-    await expect(viewer.playbackStatus).toHaveText(/^Publisher ended the (video|audio) track/)
-    await expect(viewer.logPanel).toContainText(/(video|audio) ended by the publisher/)
+    // Assert: the catalog's PUBLISH_DONE sets the status, whichever track's PUBLISH_DONE arrives first
+    await expect(viewer.playbackStatus).toHaveText('Publisher ended the catalog track: publisher session closed')
     await expect(viewer.logPanel).toContainText('catalog ended by the publisher')
     await expect(viewer.catalogStatus).toHaveText('Waiting for the publisher to return')
 
