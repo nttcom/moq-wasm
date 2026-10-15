@@ -106,7 +106,9 @@ function holdReleaseAtMs(entry: VideoJitterBufferEntry): number {
 
 const jitterBuffer = new VideoJitterBuffer()
 let popTimer: ReturnType<typeof setTimeout> | undefined
-type FrameIds = { groupId: bigint; objectId: bigint }
+/// `receivedAtUnixMs` is Unix time, because the page and this worker have
+/// different `performance.now()` origins.
+type FrameIds = { groupId: bigint; objectId: bigint; receivedAtUnixMs: number }
 const outputPendingIds = new Map<number, FrameIds[]>()
 let lastOutputMetaResetAtMs = Number.NEGATIVE_INFINITY
 
@@ -156,12 +158,12 @@ function decodeBufferedEntry(entry: VideoJitterBufferEntry): void {
 }
 
 async function submitForDecode(entry: VideoJitterBufferEntry): Promise<void> {
-  const { groupId, objectId, chunk } = entry
+  const { groupId, objectId, receivedAtMs, chunk } = entry
   if (waitingForKeyFrame && chunk.type !== 'key') {
     return
   }
   const pending = outputPendingIds.get(chunk.timestamp) ?? []
-  pending.push({ groupId, objectId })
+  pending.push({ groupId, objectId, receivedAtUnixMs: performance.timeOrigin + receivedAtMs })
   outputPendingIds.set(chunk.timestamp, pending)
   await decode(entry)
 }
