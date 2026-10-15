@@ -1,5 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../../pkg/moqt'
+import { MoqtClientWrapper, type SubgroupSender } from '@moqt/moqtClient'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'
@@ -52,7 +51,7 @@ const sendMoqObject = async (
   groupId: bigint,
   objectId: bigint,
   data: Uint8Array,
-  client: MOQTClient,
+  client: SubgroupSender,
   objectStatus?: number
 ): Promise<void> => {
   await client.sendSubgroupObject(trackAlias, groupId, 0n, objectId, objectStatus, data, undefined)
@@ -109,9 +108,8 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
       console.error('mediaStream is null')
       return
     }
-    let client: MOQTClient
     try {
-      client = moqtClient.requireConnectedClient()
+      moqtClient.requireConnectedClient()
     } catch (error) {
       console.error(error)
       return
@@ -170,14 +168,14 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
           advanceGroup()
           const groupId = getGroupId()
           for (const alias of trackAliases) {
-            await client.sendSubgroupHeader(alias, groupId, 0n, publisherPriority)
+            await moqtClient.sendSubgroupHeader(alias, groupId, 0n, publisherPriority)
             setMoqSendVisualizationState(type, groupId, 0n)
-            await sendMoqObject(alias, groupId, 0n, initSegment, client)
+            await sendMoqObject(alias, groupId, 0n, initSegment, moqtClient)
             setMoqSendVisualizationState(type, groupId, 1n)
-            await sendMoqObject(alias, groupId, 1n, fragment, client)
+            await sendMoqObject(alias, groupId, 1n, fragment, moqtClient)
             // Explicitly terminate each group stream so the stream writer can be closed.
             setMoqSendVisualizationState(type, groupId, 2n)
-            await sendMoqObject(alias, groupId, 2n, new Uint8Array(0), client, 3)
+            await sendMoqObject(alias, groupId, 2n, new Uint8Array(0), moqtClient, 3)
           }
         }
       }
@@ -190,7 +188,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
         fastStart: 'fragmented',
         ...buildMp4Callbacks(
           'video',
-          () => getTrackAliases(client, getTrackNamespace(), videoTrackNames),
+          () => getTrackAliases(moqtClient, getTrackNamespace(), videoTrackNames),
           () => transportState.video.advanceGroup(),
           () => transportState.video.groupId
         )
@@ -204,7 +202,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
         fastStart: 'fragmented',
         ...buildMp4Callbacks(
           'audio',
-          () => getTrackAliases(client, getTrackNamespace(), audioTrackNames),
+          () => getTrackAliases(moqtClient, getTrackNamespace(), audioTrackNames),
           () => transportState.audio.advanceGroup(),
           () => transportState.audio.groupId
         )

@@ -1,4 +1,4 @@
-import type { MOQTClient } from '../../pkg/moqt'
+import type { SubgroupSender } from '@moqt/moqtClient'
 import { MediaTransportState } from './transportState'
 import { type AudioLevel, buildLocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
@@ -8,7 +8,7 @@ export interface AudioChunkSendOptions {
   captureTimestampMicros?: number
   audioLevel?: AudioLevel
   trackAliases: bigint[]
-  client: MOQTClient
+  client: SubgroupSender
   transportState: MediaTransportState
 }
 

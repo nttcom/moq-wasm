@@ -1,4 +1,4 @@
-import type { MOQTClient } from '../../pkg/moqt'
+import type { SubgroupSender } from '@moqt/moqtClient'
 import { MediaTransportState } from './transportState'
 import { buildLocHeader, type LocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
@@ -10,7 +10,7 @@ export type VideoChunkSender = (
   subgroupId: bigint,
   objectNumber: bigint,
   payload: Uint8Array,
-  client: MOQTClient,
+  client: SubgroupSender,
   locHeader?: LocHeader
 ) => Promise<void>
 
@@ -20,7 +20,7 @@ export interface VideoChunkSendOptions {
   captureTimestampMicros?: number
   trackAliases: bigint[]
   publisherPriority: number
-  client: MOQTClient
+  client: SubgroupSender
   transportState: MediaTransportState
   sender?: VideoChunkSender
 }
@@ -131,7 +131,7 @@ async function sendVideoObject(
   subgroupId: bigint,
   objectNumber: bigint,
   payload: Uint8Array,
-  client: MOQTClient,
+  client: SubgroupSender,
   locHeader?: LocHeader
 ): Promise<void> {
   await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectNumber, undefined, payload, locHeader)
@@ -140,7 +140,7 @@ async function sendVideoObject(
 /// An alias with subgroup 0 open received every object of the group from its
 /// keyframe on, so the next object number ends the group for all of them.
 async function endVideoGroup(
-  client: MOQTClient,
+  client: SubgroupSender,
   trackAliases: bigint[],
   transportState: MediaTransportState
 ): Promise<void> {

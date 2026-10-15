@@ -195,14 +195,13 @@ export class CameraPublisher {
     const aliases = this.collectVideoAliases()
     if (aliases.length === 0) return
 
-    const rawClient = this.session.getRawClient()
     await sendVideoChunkViaMoqt({
       chunk,
       metadata,
       captureTimestampMicros,
       trackAliases: aliases,
       publisherPriority: 0,
-      client: rawClient,
+      client: this.session.sender,
       transportState: this.transportState
     })
   }

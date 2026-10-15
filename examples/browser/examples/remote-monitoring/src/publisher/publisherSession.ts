@@ -1,5 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../../../pkg/moqt'
+import { MoqtClientWrapper, type SubgroupSender } from '@moqt/moqtClient'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)
@@ -37,12 +36,11 @@ export class PublisherSession {
   }
 
   getVideoTrackAliases(): bigint[] {
-    const raw = this.getRawClient()
-    return Array.from(raw.getTrackSubscribers(this.namespace, 'video'), (v) => BigInt(v))
+    return this.client.trackSubscribers(this.namespace, 'video')
   }
 
-  getRawClient(): MOQTClient {
-    return this.client.getRawClient()!
+  get sender(): SubgroupSender {
+    return this.client
   }
 
   async disconnect(): Promise<void> {

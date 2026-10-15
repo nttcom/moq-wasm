@@ -1,5 +1,4 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../../pkg/moqt'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
 import { buildMediaCatalogJson, getMediaVideoProfiles } from '../catalog'
@@ -153,9 +152,8 @@ function sendSubgroupObjectButtonClickHandler(): void {
       setStatusText('publisher-send-status', 'Publishing already started')
       return
     }
-    let client: MOQTClient
     try {
-      client = moqtClient.requireConnectedClient()
+      moqtClient.requireConnectedClient()
     } catch (error) {
       setStatusText('publisher-send-status', `Publish failed: ${getErrorMessage(error)}`)
       console.error(error)
@@ -172,7 +170,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
       const { chunk, metadata, captureTimestampMicros } = data
       const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
       const publisherPriority = Number(form['video-publisher-priority'].value)
-      const trackAliases = getTrackAliases(client, trackNamespace, videoTrackNames)
+      const trackAliases = getTrackAliases(moqtClient, trackNamespace, videoTrackNames)
       if (!trackAliases.length) {
         return
       }
@@ -187,7 +185,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
         captureTimestampMicros,
         trackAliases,
         publisherPriority,
-        client,
+        client: moqtClient,
         transportState
       })
     }

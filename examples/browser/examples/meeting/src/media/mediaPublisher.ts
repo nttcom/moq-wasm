@@ -1,6 +1,5 @@
-import { type IncomingFetchContext, MoqtClientWrapper } from '@moqt/moqtClient'
+import { type IncomingFetchContext, MoqtClientWrapper, type SubgroupSender } from '@moqt/moqtClient'
 import { SubgroupWriter } from '@moqt/subgroupWriter'
-import type { MOQTClient } from '../../../../pkg/moqt'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
@@ -124,13 +123,9 @@ export class MediaPublisher {
   }
 
   getSubscribedCatalogTracks(): SubscribedCatalogTrack[] {
-    const client = this.client.getRawClient()
-    if (!client) {
-      return []
-    }
     const tracks: SubscribedCatalogTrack[] = []
     for (const track of this.catalogTracks) {
-      const subscriberCount = Array.from(client.getTrackSubscribers(this.trackNamespace, track.name)).length
+      const subscriberCount = this.client.trackSubscribers(this.trackNamespace, track.name).length
       if (subscriberCount <= 0) {
         continue
       }
@@ -778,13 +773,12 @@ export class MediaPublisher {
     context.sendQueue = context.sendQueue
       .then(async () => {
         const sendStartedAtMs = performance.now()
-        const client = this.client.getRawClient()
-        if (!client) {
+        if (!this.client.getConnectionStatus()) {
           return
         }
         const timingAcc: VideoSendTimingAccumulator = { objectSendMs: 0, objectBytes: 0 }
-        const sender: VideoChunkSender = async (trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc) => {
-          await this.sendVideoObject(trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc, timingAcc)
+        const sender: VideoChunkSender = async (trackAlias, groupId, subgroupId, objectId, payload, client, loc) => {
+          await this.sendVideoObject(trackAlias, groupId, subgroupId, objectId, payload, client, loc, timingAcc)
         }
         const { needsKeyframe } = await sendVideoChunkViaMoqt({
           chunk,
@@ -792,7 +786,7 @@ export class MediaPublisher {
           captureTimestampMicros,
           trackAliases: aliases,
           publisherPriority: 0,
-          client,
+          client: this.client,
           transportState: context.transportState,
           sender
         })
@@ -844,8 +838,7 @@ export class MediaPublisher {
 
     context.sendQueue = context.sendQueue
       .then(async () => {
-        const client = this.client.getRawClient()
-        if (!client) {
+        if (!this.client.getConnectionStatus()) {
           return
         }
         await sendAudioChunkViaMoqt({
@@ -853,7 +846,7 @@ export class MediaPublisher {
           captureTimestampMicros,
           audioLevel,
           trackAliases: aliases,
-          client,
+          client: this.client,
           transportState: context.transportState
         })
       })
@@ -868,7 +861,7 @@ export class MediaPublisher {
     subgroupId: bigint,
     objectId: bigint,
     payload: Uint8Array,
-    client: MOQTClient,
+    client: SubgroupSender,
     locHeader: LocHeader | undefined,
     timingAcc: VideoSendTimingAccumulator
   ): Promise<void> {
@@ -883,11 +876,7 @@ export class MediaPublisher {
     activeAliases: Set<string>,
     onAliasRemoved: (alias: string) => void
   ): bigint[] {
-    const client = this.client.getRawClient()
-    if (!client) {
-      return []
-    }
-    const aliasList = Array.from(client.getTrackSubscribers(this.trackNamespace, trackName), (value) => BigInt(value))
+    const aliasList = this.client.trackSubscribers(this.trackNamespace, trackName)
     const latestKeys = new Set(aliasList.map((alias) => alias.toString()))
 
     for (const key of activeAliases) {
@@ -1104,17 +1093,13 @@ export class MediaPublisher {
     if (!aliases.length) {
       return
     }
-    const client = this.client.getRawClient()
-    if (!client) {
-      return
-    }
     const currentGroupId = context.transportState.audio.groupId
     const endObjectId = context.transportState.audio.nextObjectId
     if (endObjectId === 0n) {
       return
     }
     for (const alias of aliases) {
-      await client.sendSubgroupObject(
+      await this.client.sendSubgroupObject(
         alias,
         currentGroupId,
         0n,
@@ -1127,14 +1112,7 @@ export class MediaPublisher {
   }
 
   private async broadcastCatalog(): Promise<void> {
-    const client = this.client.getRawClient()
-    if (!client) {
-      return
-    }
-
-    const aliases = Array.from(client.getTrackSubscribers(this.trackNamespace, CATALOG_TRACK_NAME), (value) =>
-      BigInt(value)
-    )
+    const aliases = this.client.trackSubscribers(this.trackNamespace, CATALOG_TRACK_NAME)
     console.info('[meeting][catalog] broadcast', {
       subscribers: aliases.length,
       tracks: this.catalogTracks.map((t) => t.role)
