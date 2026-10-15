@@ -42,6 +42,20 @@ impl TrackWriter {
     /// draft-ietf-moq-transport-14; a writer that has not opened a group yet
     /// may start anywhere.
     pub async fn start_group_at(&mut self, group_id: u64) -> anyhow::Result<()> {
+        self.skip_to_group(group_id)?;
+        self.start_group().await
+    }
+
+    pub(crate) async fn write_group_at(
+        &mut self,
+        group_id: u64,
+        payload: Bytes,
+    ) -> anyhow::Result<()> {
+        self.skip_to_group(group_id)?;
+        self.write_group(payload).await
+    }
+
+    fn skip_to_group(&mut self, group_id: u64) -> anyhow::Result<()> {
         if self.groups() == 0 {
             self.first_group_id = group_id;
         } else {
@@ -55,7 +69,7 @@ impl TrackWriter {
             }
         }
         self.next_group_id = group_id;
-        self.start_group().await
+        Ok(())
     }
 
     pub async fn write(
@@ -73,11 +87,9 @@ impl TrackWriter {
     pub async fn write_with_extension_headers(
         &mut self,
         payload: Bytes,
-        mut extension_headers: ExtensionHeaders,
+        extension_headers: ExtensionHeaders,
     ) -> anyhow::Result<()> {
-        if let Some(gap) = self.pending_group_gap.take() {
-            extension_headers.push_prior_group_id_gap(gap);
-        }
+        let extension_headers = self.with_pending_group_gap(extension_headers);
         let result = self
             .group
             .as_mut()
@@ -93,9 +105,8 @@ impl TrackWriter {
     pub async fn write_group(&mut self, payload: Bytes) -> anyhow::Result<()> {
         self.finish_current_group().await;
         let mut group = self.open_group().await?;
-        group
-            .write_object(payload, ExtensionHeaders::default())
-            .await?;
+        let extension_headers = self.with_pending_group_gap(ExtensionHeaders::default());
+        group.write_object(payload, extension_headers).await?;
         group.finish().await
     }
 
@@ -116,6 +127,16 @@ impl TrackWriter {
 
     pub fn current_group_id(&self) -> Option<u64> {
         self.group.as_ref().map(|_| self.next_group_id - 1)
+    }
+
+    fn with_pending_group_gap(
+        &mut self,
+        mut extension_headers: ExtensionHeaders,
+    ) -> ExtensionHeaders {
+        if let Some(gap) = self.pending_group_gap.take() {
+            extension_headers.push_prior_group_id_gap(gap);
+        }
+        extension_headers
     }
 
     /// A group the subscriber stopped or the transport reset cannot be
