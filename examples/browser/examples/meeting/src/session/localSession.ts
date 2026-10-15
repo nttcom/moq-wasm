@@ -17,6 +17,9 @@ interface LocalSessionOptions {
 }
 
 const AUTH_INFO = 'secret'
+/// draft-14 §7.2: the relay sends a lower subscriber priority first, so
+/// video yields the downlink to audio when the two compete.
+const VIDEO_SUBSCRIBER_PRIORITY = 128
 const CATALOG_SUBSCRIBE_TIMEOUT_MS = 5000
 
 export enum LocalSessionState {
@@ -183,6 +186,7 @@ export class LocalSession {
   ): Promise<bigint> {
     this.assertReady('subscribe')
     const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO, {
+      subscriberPriority: role === 'video' || role === 'screenshare' ? VIDEO_SUBSCRIBER_PRIORITY : 0,
       onPublishDone: ({ requestId }) => {
         this.forgetSubscription(requestId)
         onEnded(requestId)
