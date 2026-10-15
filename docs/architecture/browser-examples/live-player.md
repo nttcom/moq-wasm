@@ -95,8 +95,13 @@ Rules:
   subscription, one that did is completed as an absolute range up to the
   Largest Location its subscription started from, and in descending group
   order the range is cut to end after the group being delivered, whose
-  repeated objects are skipped. Incoming SUBSCRIBEs accepted on the old
-  session are reported through the incoming-unsubscribe handler. The alias in
+  repeated objects are skipped. Incoming SUBSCRIBEs stay with the session
+  they arrived on: `trackSubscribers` lists those of both sessions, so a
+  track served on SUBSCRIBE also goes to both relays, and the old relay's are
+  reported through the incoming-unsubscribe handler when it unsubscribes or
+  its session is closed. The wrapper hands out the aliases the application
+  sends on, so an alias a later session reuses for another track is replaced
+  rather than shared. The alias in
   `SubgroupHeaderMessage` / datagram messages is the wire alias of the
   session that delivered it.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
