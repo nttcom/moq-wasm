@@ -124,6 +124,7 @@ pub(crate) struct ConnectedRelay {
     session: Arc<Session>,
     origin: Origin,
     state: Arc<Mutex<RelayState>>,
+    catalog_send: Mutex<()>,
     ledger: StreamLedger,
     event_task: JoinHandle,
 }
@@ -306,6 +307,7 @@ impl ConnectedRelay {
             session,
             origin,
             state,
+            catalog_send: Mutex::new(()),
             ledger,
             event_task,
         })
@@ -665,7 +667,12 @@ impl ConnectedRelay {
     /// here. CMAF tracks
     /// wait for that SUBSCRIBE, so the uplink carries them only while someone
     /// watches them.
+    ///
+    /// Sends do not overlap: `Origin::write_group` does not send a group
+    /// placed while another write on the track is in flight, and a snapshot
+    /// built earlier could otherwise be written last.
     async fn send_catalog(&self, namespace_path: &str) -> Result<()> {
+        let _sending = self.catalog_send.lock().await;
         let catalog = {
             let guard = self.state.lock().await;
             if guard.disconnected {
@@ -756,7 +763,7 @@ mod tests {
     use std::path::PathBuf;
 
     use moqt::{
-        DUAL, Subscription, TrackReader,
+        DUAL, Subscription, TrackObject, TrackReader,
         object::DataReceiver,
         publish::GroupBoundary,
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
@@ -784,34 +791,40 @@ mod tests {
         }
     }
 
-    /// A relay that accepts one publisher session, answers its
-    /// PUBLISH_NAMESPACE and PUBLISH, and reports every request it received
-    /// and the group of every video object.
+    /// A relay that accepts one publisher session and answers its
+    /// PUBLISH_NAMESPACE and PUBLISH.
     struct FakeRelay {
         url: String,
         session: oneshot::Receiver<Arc<Session>>,
         requests: mpsc::UnboundedReceiver<String>,
         published: mpsc::UnboundedReceiver<Subscription>,
-        video_groups: mpsc::UnboundedReceiver<u64>,
+        video_objects: mpsc::UnboundedReceiver<TrackObject>,
+        catalog_objects: mpsc::UnboundedReceiver<TrackObject>,
     }
 
     impl FakeRelay {
         fn spawn(name: &str) -> Self {
-            Self::spawn_gated(name, None)
+            Self::spawn_gated(name, None, None)
         }
 
-        /// PUBLISH_NAMESPACE is answered only once `gate` fires, which holds
-        /// a publisher moving here in the middle of the move.
-        fn spawn_gated(name: &str, gate: Option<oneshot::Receiver<()>>) -> Self {
+        /// PUBLISH_NAMESPACE is answered only once `namespace_gate` fires,
+        /// which holds a publisher moving here in the middle of the move. The
+        /// catalog track is read only once `catalog_gate` fires.
+        fn spawn_gated(
+            name: &str,
+            namespace_gate: Option<oneshot::Receiver<()>>,
+            catalog_gate: Option<oneshot::Receiver<()>>,
+        ) -> Self {
             let endpoint =
                 Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
             let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
             let (session_sender, session) = oneshot::channel();
             let (request_sender, requests) = mpsc::unbounded_channel();
             let (published_sender, published) = mpsc::unbounded_channel();
-            let (video_group_sender, video_groups) = mpsc::unbounded_channel();
+            let (video_object_sender, video_objects) = mpsc::unbounded_channel();
+            let (catalog_object_sender, catalog_objects) = mpsc::unbounded_channel();
             tokio::spawn(async move {
-                let mut gate = gate;
+                let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
                 let handshake = endpoint.accept().await.unwrap().await.unwrap();
                 let session = Arc::new(handshake.accept().await.unwrap());
                 let _ = session_sender.send(session.clone());
@@ -820,7 +833,7 @@ mod tests {
                         SessionEvent::PublishNamespace(handler) => {
                             let _ = request_sender
                                 .send(format!("PUBLISH_NAMESPACE {}", handler.track_namespace));
-                            if let Some(gate) = gate.take() {
+                            if let Some(gate) = namespace_gate.take() {
                                 let _ = gate.await;
                             }
                             handler.ok().await.unwrap();
@@ -830,17 +843,26 @@ mod tests {
                                 "PUBLISH {}/{}",
                                 handler.track_namespace, handler.track_name
                             ));
-                            let watch_video = handler.track_name == VIDEO_TRACK_NAME;
-                            if watch_video {
+                            let object_sender = match handler.track_name.as_str() {
+                                VIDEO_TRACK_NAME => Some(video_object_sender.clone()),
+                                CATALOG_TRACK_NAME => Some(catalog_object_sender.clone()),
+                                _ => None,
+                            };
+                            if object_sender.is_some() {
                                 handler.accept_data_receiver().await;
                             }
                             let subscription =
                                 handler.ok(0, FilterType::LargestObject, 0).await.unwrap();
-                            if watch_video {
-                                let (session, sender) =
-                                    (session.clone(), video_group_sender.clone());
+                            if let Some(sender) = object_sender {
+                                let session = session.clone();
                                 let subscription = subscription.clone();
+                                let gate = (handler.track_name == CATALOG_TRACK_NAME)
+                                    .then(|| catalog_gate.take())
+                                    .flatten();
                                 tokio::spawn(async move {
+                                    if let Some(gate) = gate {
+                                        let _ = gate.await;
+                                    }
                                     let Ok(DataReceiver::Stream(factory)) = session
                                         .subscriber()
                                         .accept_data_receiver(&subscription)
@@ -850,7 +872,7 @@ mod tests {
                                     };
                                     let mut reader = TrackReader::new(factory);
                                     while let Ok(Some(object)) = reader.next_object().await {
-                                        let _ = sender.send(object.group_id);
+                                        let _ = sender.send(object);
                                     }
                                 });
                             }
@@ -866,7 +888,8 @@ mod tests {
                 session,
                 requests,
                 published,
-                video_groups,
+                video_objects,
+                catalog_objects,
             }
         }
 
@@ -884,9 +907,9 @@ mod tests {
         async fn wait_for_video_group(&mut self, group_id: u64) {
             let mut seen = Vec::new();
             let arrived = tokio::time::timeout(TEST_TIMEOUT, async {
-                while let Some(group) = self.video_groups.recv().await {
-                    seen.push(group);
-                    if group == group_id {
+                while let Some(object) = self.video_objects.recv().await {
+                    seen.push(object.group_id);
+                    if object.group_id == group_id {
                         return;
                     }
                 }
@@ -904,6 +927,31 @@ mod tests {
                 .await
                 .expect("the publisher must connect")
                 .unwrap()
+        }
+
+        async fn wait_for_request(&mut self, expected: &str) {
+            let mut seen = Vec::new();
+            let arrived = tokio::time::timeout(TEST_TIMEOUT, async {
+                while let Some(request) = self.requests.recv().await {
+                    let found = request == expected;
+                    seen.push(request);
+                    if found {
+                        return;
+                    }
+                }
+            })
+            .await;
+            assert!(arrived.is_ok(), "{expected} must arrive, saw {seen:?}");
+        }
+
+        async fn received_catalogs(&mut self) -> Vec<TrackObject> {
+            let mut catalogs = Vec::new();
+            while let Ok(Some(object)) =
+                tokio::time::timeout(Duration::from_millis(300), self.catalog_objects.recv()).await
+            {
+                catalogs.push(object);
+            }
+            catalogs
         }
 
         fn received_requests(&mut self) -> Vec<String> {
@@ -1132,11 +1180,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_catalog_update_during_a_catalog_send_is_the_newest_group() {
+        // Arrange: the first catalog exceeds the stream window, so its send
+        // waits until the relay reads the catalog track
+        let (release_catalog, catalog_gate) = oneshot::channel();
+        let mut relay = FakeRelay::spawn_gated("catalog-concurrent", None, Some(catalog_gate));
+        let broadcast = Broadcast::new(
+            RelayConnection::new(Some(MoqtTarget {
+                url: relay.url.clone(),
+                auth_token: None,
+                verify_certificate: false,
+            })),
+            vec!["live".to_string(), "cam".to_string()],
+        );
+        let large_video = VideoTrackInfo {
+            init_segment: "A".repeat(2 * 1024 * 1024),
+            ..video_track_info()
+        };
+        let update = |track_name: &'static str, info: VideoTrackInfo| {
+            let broadcast = broadcast.clone();
+            tokio::spawn(async move { broadcast.update_video_catalog(track_name, info).await })
+        };
+        let first = update("video_1080p", large_video);
+        relay
+            .wait_for_request(&format!("PUBLISH live/cam/{CATALOG_TRACK_NAME}"))
+            .await;
+
+        // Act
+        let second = update("video_360p", video_track_info());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = release_catalog.send(());
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+
+        // Assert
+        let catalogs = relay.received_catalogs().await;
+        let newest = catalogs
+            .iter()
+            .max_by_key(|object| object.group_id)
+            .expect("a catalog must arrive");
+        let catalog = String::from_utf8_lossy(&newest.payload);
+        assert!(
+            catalog.contains("\"video_1080p\"") && catalog.contains("\"video_360p\""),
+            "the newest of groups {:?} lacks a track",
+            catalogs
+                .iter()
+                .map(|object| object.group_id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
     async fn sends_keep_going_to_the_old_relay_while_the_new_one_is_slow() {
         // Arrange: relay B holds its PUBLISH_NAMESPACE answer
         let mut relay_a = FakeRelay::spawn("goaway-slow-a");
         let (release_b, gate) = oneshot::channel();
-        let relay_b = FakeRelay::spawn_gated("goaway-slow-b", Some(gate));
+        let relay_b = FakeRelay::spawn_gated("goaway-slow-b", Some(gate), None);
         let (connection, broadcast) = connected_broadcast(&relay_a).await;
         broadcast
             .send_object(VIDEO_TRACK_NAME, keyframe_object(1))
