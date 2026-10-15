@@ -1,4 +1,5 @@
 use crate::modules::transport::{read_error::ReadError, transport_connection::BoxedReceiveStream};
+use thiserror::Error;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, FramedRead};
 
@@ -10,26 +11,17 @@ use crate::modules::moqt::data_plane::codec::{
 pub(crate) type BiStreamReceiver = StreamReceiver<1024, ControlMessageDecoder>;
 pub(crate) type UniStreamReceiver = StreamReceiver<{ 64 * 1024 }, UniStreamDecoder>;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum StreamReceiveError {
+    #[error("stream closed: {0}")]
     Closed(ReadError),
+    #[error("failed to decode stream data: {0}")]
     Decode(String),
     /// The stream decoded but violates the protocol, e.g. an unknown Object
     /// Status (draft-14 §10.2.1.1). The caller should close the session.
+    #[error("protocol violation: {0}")]
     ProtocolViolation(String),
 }
-
-impl std::fmt::Display for StreamReceiveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Closed(error) => write!(f, "stream closed: {error}"),
-            Self::Decode(error) => write!(f, "failed to decode stream data: {error}"),
-            Self::ProtocolViolation(error) => write!(f, "protocol violation: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for StreamReceiveError {}
 
 #[derive(Debug)]
 pub struct StreamReceiver<const U: usize, D: Decoder> {
