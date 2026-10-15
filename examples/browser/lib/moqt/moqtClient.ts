@@ -284,6 +284,8 @@ export class MoqtClientWrapper {
   private readonly newestGroups = new Map<bigint, bigint>()
   /** By application alias. */
   private readonly groupFills = new Map<bigint, GroupFill>()
+  /** The subgroups still arriving on each session, as `appAlias/group/subgroup`. */
+  private readonly openSubgroups = new WeakMap<MOQTClient, Set<string>>()
   private switchover: Switchover | null = null
   private migrating = false
   private pendingServerSetup: { resolve: () => void; reject: (error: Error) => void } | null = null
@@ -411,6 +413,7 @@ export class MoqtClientWrapper {
       this.connectUrl = url
       this.switchover.swapped = true
       setTimeout(() => this.passCutovers(previous), PREVIOUS_SESSION_GRACE_MS)
+      this.passIdleCutovers()
       console.info('[moqt] moved to the relay named by GOAWAY', { url })
       this.retireIfMoved()
     } catch (error) {
@@ -437,6 +440,23 @@ export class MoqtClientWrapper {
     if (subscriptionsMoved && switchover.publishing.size === 0 && !servedThere) {
       this.retirePrevious(switchover.previous)
     }
+  }
+
+  /// A carried subscription with no subgroup still arriving on the previous
+  /// session has nothing more to take from it: the publisher sends every
+  /// later group to the new relay too.
+  private passIdleCutovers(): void {
+    const switchover = this.switchover
+    if (!switchover?.swapped) {
+      return
+    }
+    const open = [...(this.openSubgroups.get(switchover.previous) ?? [])]
+    for (const [trackAlias, cutover] of switchover.cutovers) {
+      if (!open.some((key) => key.startsWith(`${trackAlias}/`))) {
+        cutover.passed = true
+      }
+    }
+    this.retireIfMoved()
   }
 
   private passCutovers(previous: MOQTClient): void {
@@ -515,6 +535,9 @@ export class MoqtClientWrapper {
       return true
     }
     if (client === switchover.previous) {
+      if (cutover.passed) {
+        return false
+      }
       if (cutover.group !== undefined && groupId >= cutover.group) {
         cutover.passed = true
         this.retireIfMoved()
@@ -1279,7 +1302,19 @@ export class MoqtClientWrapper {
     client.onObjectDatagramStatus((message: ObjectDatagramStatusMessage) => {
       this.onObjectDatagramStatusHandler?.(message)
     })
+    client.onSubgroupEnd((wireAlias: bigint, groupId: bigint, subgroupId: bigint) => {
+      this.openSubgroups.get(client)?.delete(`${this.appAlias(client, wireAlias)}/${groupId}/${subgroupId}`)
+      if (client === this.switchover?.previous) {
+        this.passIdleCutovers()
+      }
+    })
     client.onSubgroupHeader((header: SubgroupHeaderMessage) => {
+      let open = this.openSubgroups.get(client)
+      if (!open) {
+        open = new Set()
+        this.openSubgroups.set(client, open)
+      }
+      open.add(`${this.appAlias(client, header.trackAlias)}/${header.groupId}/${header.subgroupId}`)
       console.debug('[moqt] received subgroup header', {
         trackAlias: header.trackAlias.toString(),
         groupId: header.groupId.toString(),
