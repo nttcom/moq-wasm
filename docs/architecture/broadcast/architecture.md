@@ -54,7 +54,11 @@ TRACK_DOES_NOT_EXIST.
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the
 codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law, Opus or MP3 frames,
-and the capture timestamp travels as MoQT extension header 2. A track's
+and the capture timestamp travels as MoQT extension header 2. The capture
+timestamp is the wall clock at which `BroadcastWriter::push` received the first
+sample, advanced by each later sample's presentation time offset from that
+sample, so the time the publish task spends connecting to the relay does not
+move it into the future. A track's
 initialization data is a Base64-encoded entry of the catalog `initDataList` that
 the track's `initRef` names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13); each entry
 takes the name of its track as its id, which keeps the ids unique. An AAC audio
