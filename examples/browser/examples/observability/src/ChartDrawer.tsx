@@ -343,11 +343,13 @@ export function ChartDrawer(props: Props & { namespacePrefix: string }) {
               lines={withTotal(
                 spec.lines.map((line, index) => {
                   const series = loaded.get(requestKey(line.relayId, line.target))
+                  // Servers older than the metric omit it.
+                  const values = series?.series[line.metric]
                   return {
                     label: line.label,
                     color: PALETTE[index % PALETTE.length],
-                    t: series?.t ?? [],
-                    v: series?.series[line.metric] ?? []
+                    t: values ? series.t : [],
+                    v: values ?? []
                   }
                 }),
                 spec.totalLabel
