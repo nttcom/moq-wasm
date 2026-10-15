@@ -1,4 +1,4 @@
-import { type Channels, crossfadeSamples, joinAfterSkip, trimRepetition } from './audioSplice'
+import { type Channels, crossfadeSamples, insertRepetition, joinAfterSkip, trimRepetition } from './audioSplice'
 
 const MILLIS_PER_SECOND = 1_000
 const MICROS_PER_MILLI = 1_000
@@ -47,9 +47,10 @@ type Scheduled = {
 /// Chunks that are skipped are not heard; the chunk played after them fades
 /// in from the head of the first one, which is what the sound heard so far
 /// continues into. A compression rate above 1 removes repetitions of the
-/// waveform from the chunks until they are that much shorter. A chunk that
-/// ends before the next one is due reports the difference as drift, which
-/// pulls the clock in by what the compression removed.
+/// waveform from the chunks until they are that much shorter; a rate below 1
+/// plays repetitions again until they are that much longer. A chunk that
+/// ends before or after the next one is due reports the difference as drift,
+/// so the clock follows what was removed or added.
 export class AudioPlayout {
   private output: Output | undefined
   private volume = 1
@@ -190,12 +191,15 @@ export class AudioPlayout {
     const originalSamples = chunk.channels[0].length
     let channels =
       continues && chunk.joinFrom ? joinAfterSkip(chunk.joinFrom, chunk.channels, chunk.sampleRate) : chunk.channels
-    if (this.compressionRate > 1) {
+    if (this.compressionRate !== 1) {
       this.compressionDebtSamples += channels[0].length * (1 - 1 / this.compressionRate)
-      const trimmed = trimRepetition(channels, chunk.sampleRate, Math.floor(this.compressionDebtSamples))
-      if (trimmed) {
-        this.compressionDebtSamples -= channels[0].length - trimmed[0].length
-        channels = trimmed
+      const resized =
+        this.compressionDebtSamples > 0
+          ? trimRepetition(channels, chunk.sampleRate, Math.floor(this.compressionDebtSamples))
+          : insertRepetition(channels, chunk.sampleRate, Math.floor(-this.compressionDebtSamples))
+      if (resized) {
+        this.compressionDebtSamples -= channels[0].length - resized[0].length
+        channels = resized
       }
     }
     this.shedMs += ((originalSamples - channels[0].length) * MILLIS_PER_SECOND) / chunk.sampleRate
