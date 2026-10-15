@@ -269,10 +269,6 @@ pub struct SubgroupObjectField {
 }
 
 impl SubgroupObjectField {
-    pub fn is_end_of_group(&self) -> bool {
-        self.message_type.has_end_of_group()
-    }
-
     pub fn resolve_object_id(&self, prev: Option<u64>) -> u64 {
         match prev {
             None => self.object_id_delta,

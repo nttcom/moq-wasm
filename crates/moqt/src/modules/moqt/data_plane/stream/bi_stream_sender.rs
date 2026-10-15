@@ -30,11 +30,4 @@ impl BiStreamSender {
         let mut stream_sender = self.stream_sender.lock().await;
         stream_sender.send(&message_bytes).await
     }
-
-    // GoAway message is implemented then we can use this function to send GoAway message.
-    #[allow(dead_code)]
-    pub(crate) async fn close(&self) -> Result<(), TransportSendError> {
-        let mut stream_sender = self.stream_sender.lock().await;
-        stream_sender.close().await
-    }
 }

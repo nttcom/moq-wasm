@@ -140,7 +140,7 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionEvent(SessionEvent::Subscribe(subscribe_handler))
             }
             ReceivedMessage::Unsubscribe(unsubscribe) => {
-                let unsubscribe_handler = UnsubscribeHandler::new(session.clone(), unsubscribe);
+                let unsubscribe_handler = UnsubscribeHandler::new(unsubscribe);
                 DepacketizeResult::SessionEvent(SessionEvent::Unsubscribe(unsubscribe_handler))
             }
             ReceivedMessage::SubscribeOk(subscribe_ok) => {

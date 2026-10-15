@@ -103,10 +103,6 @@ impl Session {
         }
     }
 
-    pub fn publisher_subscriber_pair(&self) -> (Publisher, Subscriber) {
-        (self.publisher(), self.subscriber())
-    }
-
     /// Terminates the session (draft-14 §3.4): the peer receives `code` and
     /// `reason` on the transport close, and this side observes
     /// `SessionEvent::ProtocolViolation`.
