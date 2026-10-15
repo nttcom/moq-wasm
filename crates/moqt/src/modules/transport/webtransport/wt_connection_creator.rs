@@ -1,6 +1,5 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Context;
-use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
@@ -20,6 +19,7 @@ use crate::modules::transport::{
     },
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
+    dual_stack_bind::bind_dual_stack,
     transport_connection_creator::TransportConnectionCreator,
 };
 
@@ -120,10 +120,11 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let key = PrivateKeyDer::from_pem_file(key_path)
             .context("failed to read the private key file")?;
 
-        let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
-        let server = web_transport_quinn::ServerBuilder::new()
-            .with_addr(addr)
-            .with_certificate(certs, key)?;
+        let server = bind_dual_stack(port_num, |address| {
+            Ok(web_transport_quinn::ServerBuilder::new()
+                .with_addr(address)
+                .with_certificate(certs, key)?)
+        })?;
 
         tracing::info!("Server ready! for WebTransport port: {}", port_num);
 

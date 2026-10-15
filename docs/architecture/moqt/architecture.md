@@ -104,6 +104,9 @@ Client-side helpers shared by the three creators:
   custom CA file), the `quinn::ClientConfig` per ALPN, and the client
   `quinn::Endpoint`.
 
+The three creators bind server endpoints to `[::]:port` through
+`bind_dual_stack` (`dual_stack_bind.rs`).
+
 The creators do not know MoQT versions. Each takes an
 `ApplicationProtocols` (`application_protocol.rs`): the ALPNs a raw QUIC
 connection offers or accepts, and the WebTransport subprotocols a client

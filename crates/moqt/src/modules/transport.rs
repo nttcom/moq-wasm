@@ -10,6 +10,8 @@ pub(crate) mod crypto_provider;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod dual;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod dual_stack_bind;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod quic;
 pub(crate) mod read_error;
 #[cfg(not(target_arch = "wasm32"))]

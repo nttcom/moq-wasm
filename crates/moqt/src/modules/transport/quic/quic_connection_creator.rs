@@ -1,11 +1,8 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Context;
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{
-    net::{Ipv6Addr, SocketAddr},
-    sync::Arc,
-};
 
 use quinn::rustls::{
     self,
@@ -20,6 +17,7 @@ use crate::modules::transport::{
     },
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
+    dual_stack_bind::bind_dual_stack,
     quic::quic_connection::QUICConnection,
     server_transport_config::server_transport_config,
     transport_connection_creator::TransportConnectionCreator,
@@ -108,9 +106,11 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
         let server_config = Self::config_builder(cert_path, key_path, keep_alive_sec, protocols)?;
-        let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
-        let endpoint = quinn::Endpoint::server(server_config, address)?;
-        tracing::info!("Server ready! for QUIC: {:?}", address);
+        let endpoint = bind_dual_stack(port_num, |address| {
+            let endpoint = quinn::Endpoint::server(server_config, address)?;
+            tracing::info!("Server ready! for QUIC: {:?}", address);
+            Ok(endpoint)
+        })?;
         Ok(QUICConnectionCreator {
             endpoint,
             refusing: AtomicBool::new(false),

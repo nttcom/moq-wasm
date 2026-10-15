@@ -1,11 +1,8 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Context;
-use std::{
-    net::{Ipv6Addr, SocketAddr},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use async_trait::async_trait;
@@ -22,6 +19,7 @@ use crate::modules::transport::{
     },
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
+    dual_stack_bind::bind_dual_stack,
     quic::quic_connection::{QUICConnection, negotiated_alpn},
     server_transport_config::server_transport_config,
     transport_connection_creator::TransportConnectionCreator,
@@ -138,9 +136,11 @@ impl TransportConnectionCreator for DualProtocolCreator {
         let transport_arc = Arc::new(server_transport_config(keep_alive_sec));
         server_config.transport_config(transport_arc);
 
-        let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
-        let endpoint = quinn::Endpoint::server(server_config, address)?;
-        tracing::info!("Server ready! for Dual Protocol: {:?}", address);
+        let endpoint = bind_dual_stack(port_num, |address| {
+            let endpoint = quinn::Endpoint::server(server_config, address)?;
+            tracing::info!("Server ready! for Dual Protocol: {:?}", address);
+            Ok(endpoint)
+        })?;
 
         Ok(DualProtocolCreator {
             endpoint: DualEndpoint::Server(endpoint),
