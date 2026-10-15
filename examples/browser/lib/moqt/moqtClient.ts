@@ -1107,9 +1107,14 @@ export class MoqtClientWrapper {
     await writer.closeGroup()
   }
 
+  /// The aliases to send a track on, one per SUBSCRIBE the relay sent for it.
+  trackSubscribers(trackNamespace: string[], trackName: string): bigint[] {
+    return Array.from(this.client?.getTrackSubscribers(trackNamespace, trackName) ?? [], (alias) => BigInt(alias))
+  }
+
   async sendSubgroupTextForTrack(trackNamespace: string[], trackName: string, text: string): Promise<void> {
-    const client = this.requireConnectedClient()
-    const aliases = client.getTrackSubscribers(trackNamespace, trackName)
+    this.requireConnectedClient()
+    const aliases = this.trackSubscribers(trackNamespace, trackName)
     if (!aliases.length) {
       console.warn(`No subscribers registered for track ${trackNamespace.join('/')}/${trackName}`)
       return
@@ -1569,3 +1574,5 @@ function describeConnectionClose(info: ConnectionCloseInfo): string {
   const reason = info.reason ? `: ${info.reason}` : ''
   return `relay closed the connection before SERVER_SETUP (code ${info.closeCode}${reason})`
 }
+
+export type SubgroupSender = Pick<MoqtClientWrapper, 'sendSubgroupHeader' | 'sendSubgroupObject'>

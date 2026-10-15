@@ -1,6 +1,5 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupWriter } from '@moqt/subgroupWriter'
-import type { MOQTClient } from '../../pkg/moqt'
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 import { timeSeededGroupId } from '../../utils/media/clock'
 
@@ -12,8 +11,8 @@ type MediaPublication = {
   onMediaSubscriber?: (trackName: string) => void
 }
 
-export function getTrackAliases(client: MOQTClient, trackNamespace: string[], trackNames: string[]): bigint[] {
-  return [...new Set(trackNames.flatMap((name) => [...client.getTrackSubscribers(trackNamespace, name)]))]
+export function getTrackAliases(client: MoqtClientWrapper, trackNamespace: string[], trackNames: string[]): bigint[] {
+  return [...new Set(trackNames.flatMap((name) => client.trackSubscribers(trackNamespace, name)))]
 }
 
 export function serveSubscribes(moqtClient: MoqtClientWrapper, publication: MediaPublication): void {
