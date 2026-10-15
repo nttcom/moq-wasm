@@ -284,7 +284,8 @@ stack's API on port 8095; anywhere else, the deployed
 
 ### Topology
 - One circle for the hosting environment (e.g. GCP) holding the relays,
-  drawn as server icons with RSS and cache size. A draining relay has a
+  drawn as server icons with memory (RSS), cache size and the bytes in the
+  disk cache (storage). A draining relay has a
   dashed amber frame and an amber LED, under a `DRAINING <s>s · <n> clients`
   label giving the time since the drain began and the client sessions still
   connected, as of the snapshot shown. Every client — publisher or

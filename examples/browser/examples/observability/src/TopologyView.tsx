@@ -438,10 +438,13 @@ export function TopologyView({
                   {relay.id}
                 </text>
                 <text x={point.x} y={point.y + 24} textAnchor="middle" className="muted">
-                  RSS {formatMegabytes(relay.snapshot.process.rss_bytes)}
+                  memory {formatMegabytes(relay.snapshot.process.rss_bytes)}
                 </text>
                 <text x={point.x} y={point.y + 38} textAnchor="middle" className="muted">
                   cache {formatMegabytes(relay.snapshot.process.cache_payload_bytes)}
+                </text>
+                <text x={point.x} y={point.y + 52} textAnchor="middle" className="muted">
+                  storage {formatMegabytes(relay.snapshot.process.disk_cache_bytes ?? null)}
                 </text>
               </g>
             )
