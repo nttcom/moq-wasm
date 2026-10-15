@@ -34,6 +34,17 @@ import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const redisPort = "6399";
 const redisContainer = `goaway-e2e-redis-${process.pid}`;
+/// A bridged container adds a veth interface to a Linux host, and Chromium
+/// aborts in-flight requests with ERR_NETWORK_CHANGED when it appears.
+/// Docker Desktop keeps its interfaces in its VM.
+const redisNetworkArgs =
+  process.platform === "linux"
+    ? ["--network", "host"]
+    : ["-p", `127.0.0.1:${redisPort}:6379`];
+const redisPortArgs =
+  process.platform === "linux"
+    ? ["--port", redisPort, "--bind", "127.0.0.1"]
+    : [];
 const rtmpAddress = "127.0.0.1:1935";
 const srtAddress = "127.0.0.1:9000";
 const relays = [
@@ -108,10 +119,10 @@ async function main() {
         "--rm",
         "--name",
         redisContainer,
-        "-p",
-        `127.0.0.1:${redisPort}:6379`,
+        ...redisNetworkArgs,
         composeRedisImage(),
         "redis-server",
+        ...redisPortArgs,
         "--save",
         "",
         "--appendonly",
