@@ -189,8 +189,11 @@ out of the topology page.
     in the last 10 s (`RELAY_SILENCE`, timed by arrival here), from memory, so
     a stopped relay leaves the live view instead of freezing on its last
     state.
-  - `GET /api/snapshots?at=<ms>` — each relay's last snapshot at or before
-    `at`, if it published one in the 10 s before.
+  - `GET /api/snapshots?at=<ms>&previous=<ms>` — `{ snapshots, previous }`:
+    each relay's last snapshot at or before `at`, and at or before
+    `previous`, if it published one in the 10 s before that time. The page
+    sends `previous` 2 s before `at` to derive rates. One scan reads both, so
+    `previous` must lie within 10 s before `at` (400 otherwise).
   - `GET /api/namespaces?from=…&to=…[&app_id=…]` — every namespace with a
     track in the range (from `track_stats`, at most 1000, `observability/…`
     excluded), with its tracks, relays, first / last time seen and the
