@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use bytes::{Buf, TryGetError};
 
 pub trait BufGetExt {
@@ -10,22 +10,10 @@ impl<T: Buf> BufGetExt for T {
         if let Some(head) = self.chunk().first() {
             let def_head = *head;
             match def_head >> 6 {
-                0 => match self.try_get_u8() {
-                    Ok(v) => Ok(v as u64),
-                    Err(e) => Err(e),
-                },
-                1 => match self.try_get_u16() {
-                    Ok(v) => Ok((v & 0x3FFF) as u64),
-                    Err(e) => Err(e),
-                },
-                2 => match self.try_get_u32() {
-                    Ok(v) => Ok((v & 0x3FFF_FFFF) as u64),
-                    Err(e) => Err(e),
-                },
-                3 => match self.try_get_u64() {
-                    Ok(v) => Ok(v & 0x3FFF_FFFF_FFFF_FFFF),
-                    Err(e) => Err(e),
-                },
+                0 => self.try_get_u8().map(u64::from),
+                1 => self.try_get_u16().map(|v| (v & 0x3FFF) as u64),
+                2 => self.try_get_u32().map(|v| (v & 0x3FFF_FFFF) as u64),
+                3 => self.try_get_u64().map(|v| v & 0x3FFF_FFFF_FFFF_FFFF),
                 _ => unreachable!(),
             }
         } else {
@@ -37,12 +25,9 @@ impl<T: Buf> BufGetExt for T {
     }
 
     fn try_get_string(&mut self) -> anyhow::Result<String> {
-        let length = match self.try_get_varint() {
-            Ok(v) => v,
-            Err(e) => {
-                bail!("Failed to get string length: {:?}", e)
-            }
-        };
+        let length = self
+            .try_get_varint()
+            .map_err(|e| anyhow!("Failed to get string length: {:?}", e))?;
         // copy_to_bytes panics when the buffer is shorter than the
         // peer-controlled length, so reject truncated input first.
         if self.remaining() < length as usize {
