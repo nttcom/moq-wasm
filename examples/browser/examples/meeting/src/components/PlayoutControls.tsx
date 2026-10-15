@@ -2,8 +2,8 @@ import type { CatchUp } from '@player/livePlayout'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 
 const CATCH_UP_OPTIONS: { value: CatchUp; label: string }[] = [
-  { value: 'skip', label: 'Skip (trim + crossfade)' },
   { value: 'speed-up', label: 'Speed up (WSOLA)' },
+  { value: 'skip', label: 'Skip (trim + crossfade)' },
   { value: 'off', label: 'Off' }
 ]
 
