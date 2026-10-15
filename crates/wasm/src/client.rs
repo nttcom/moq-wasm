@@ -232,6 +232,13 @@ impl MOQTClient {
         self.shared.callbacks.borrow_mut().subgroup_object = Some(callback);
     }
 
+    /// Called with `(trackAlias, groupId, subgroupId)` once a subgroup stream
+    /// ended, by FIN or reset.
+    #[wasm_bindgen(js_name = onSubgroupEnd)]
+    pub fn set_subgroup_end_callback(&mut self, callback: js_sys::Function) {
+        self.shared.callbacks.borrow_mut().subgroup_end = Some(callback);
+    }
+
     #[wasm_bindgen(js_name = onFetch)]
     pub fn set_fetch_callback(&mut self, callback: js_sys::Function) {
         self.shared.callbacks.borrow_mut().fetch = Some(callback);
