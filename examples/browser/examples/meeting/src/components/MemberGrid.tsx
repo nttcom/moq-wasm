@@ -108,6 +108,7 @@ interface MemberGridProps {
   onToggleView: () => void
   onToggleFilmstrip: () => void
   chatOpen: boolean
+  unreadChatMessageCount: number
   onToggleChat: () => void
   onLeave: () => void
   onTileHeight: (tileKey: string, heightPx: number) => void
@@ -165,6 +166,7 @@ export function MemberGrid({
   onToggleView,
   onToggleFilmstrip,
   chatOpen,
+  unreadChatMessageCount,
   onToggleChat,
   onLeave,
   onTileHeight
@@ -278,6 +280,7 @@ export function MemberGrid({
         filmstripOpen={stage.view === 'speaker' ? filmstripOpen : undefined}
         onToggleFilmstrip={onToggleFilmstrip}
         chatOpen={chatOpen}
+        unreadChatMessageCount={unreadChatMessageCount}
         onToggleChat={onToggleChat}
         onLeave={onLeave}
       />

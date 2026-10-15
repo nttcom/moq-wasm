@@ -35,6 +35,7 @@ interface ControlBarProps {
   filmstripOpen: boolean | undefined
   onToggleFilmstrip: () => void
   chatOpen: boolean
+  unreadChatMessageCount: number
   onToggleChat: () => void
   onLeave: () => void
 }
@@ -114,6 +115,11 @@ export function ControlBar(props: ControlBarProps) {
           onClick={props.onToggleChat}
         >
           <MessageSquare className="h-5 w-5" />
+          {props.unreadChatMessageCount > 0 && (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-xs font-semibold">
+              {props.unreadChatMessageCount}
+            </span>
+          )}
         </BarButton>
       </div>
     </div>
@@ -150,7 +156,7 @@ function BarButton({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-white transition ${tone} ${
+      className={`relative inline-flex h-12 w-12 items-center justify-center rounded-full text-white transition ${tone} ${
         disabled ? 'cursor-not-allowed opacity-60' : ''
       }`}
     >
