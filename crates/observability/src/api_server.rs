@@ -117,7 +117,7 @@ async fn snapshots(
     params: &HashMap<String, String>,
 ) -> anyhow::Result<JsonResponse> {
     let snapshots = match params.get("at") {
-        None => state.latest.all(),
+        None => state.latest.current(),
         Some(_) => snapshots_at(&state.clickhouse, number(params, "at")?).await?,
     };
     Ok(json_response(

@@ -182,7 +182,10 @@ out of the topology page.
   `LatestSnapshots` and writes every snapshot to ClickHouse
   (`snapshot_rows::store`).
 - `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
-  - `GET /api/snapshots` — the newest snapshot of every relay, from memory.
+  - `GET /api/snapshots` — the newest snapshot of every relay that sent one
+    in the last 10 s (`RELAY_SILENCE`, timed by arrival here), from memory, so
+    a stopped relay leaves the live view instead of freezing on its last
+    state.
   - `GET /api/snapshots?at=<ms>` — each relay's last snapshot at or before
     `at`, if it published one in the 10 s before.
   - `GET /api/namespaces?from=…&to=…[&app_id=…]` — every namespace with a
