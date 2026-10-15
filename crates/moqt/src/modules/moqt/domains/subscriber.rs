@@ -239,46 +239,13 @@ impl Subscriber {
         end_location: Location,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
-        let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.control.next_request_id();
-
-        let pending_fetch = self.session.register_pending_fetch(request_id);
-
-        let fetch = Fetch {
-            request_id,
-            subscriber_priority: option.subscriber_priority,
-            group_order: option.group_order,
-            fetch_params: FetchParams::Standalone {
-                track_namespace: vec_namespace,
-                track_name,
-                start_location,
-                end_location,
-            },
-            authorization_tokens: vec![],
+        let fetch_params = FetchParams::Standalone {
+            track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
+            track_name,
+            start_location,
+            end_location,
         };
-        let response = self
-            .session
-            .control
-            .send_request(OutgoingRequest::Fetch(fetch))
-            .await?
-            .response()
-            .await?;
-        match response {
-            ResponseMessage::FetchOk(fetch_ok) => {
-                pending_fetch.keep();
-                Ok(FetchHandle::new(fetch_ok))
-            }
-            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                Err(RequestFailure::Rejected {
-                    request_id,
-                    code: error_code,
-                    reason: reason_phrase,
-                })
-            }
-            _ => Err(RequestFailure::ProtocolViolation(
-                "response type does not match the request",
-            )),
-        }
+        self.send_fetch(fetch_params, option).await
     }
 
     #[tracing::instrument(
@@ -312,7 +279,18 @@ impl Subscriber {
         joining_start: u64,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
-        let joining_request_id = subscription.request_id();
+        let fetch_params = FetchParams::RelativeJoining {
+            joining_request_id: subscription.request_id(),
+            joining_start,
+        };
+        self.send_fetch(fetch_params, option).await
+    }
+
+    async fn send_fetch(
+        &self,
+        fetch_params: FetchParams,
+        option: FetchOption,
+    ) -> Result<FetchHandle, RequestFailure> {
         let request_id = self.session.control.next_request_id();
 
         let pending_fetch = self.session.register_pending_fetch(request_id);
@@ -321,10 +299,7 @@ impl Subscriber {
             request_id,
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order,
-            fetch_params: FetchParams::RelativeJoining {
-                joining_request_id,
-                joining_start,
-            },
+            fetch_params,
             authorization_tokens: vec![],
         };
         let response = self
