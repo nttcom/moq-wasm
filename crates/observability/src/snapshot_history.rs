@@ -1,9 +1,7 @@
 use relay_stats::RelaySnapshot;
 use serde::Deserialize;
 
-use crate::{clickhouse::ClickHouse, schema::SNAPSHOTS};
-
-const RELAY_SILENCE_MS: u64 = 10_000;
+use crate::{clickhouse::ClickHouse, latest_snapshots::RELAY_SILENCE, schema::SNAPSHOTS};
 
 #[derive(Deserialize)]
 struct PayloadRow {
@@ -24,7 +22,12 @@ pub async fn snapshots_at(
             ),
             &[
                 ("at", at_ms.to_string()),
-                ("since", at_ms.saturating_sub(RELAY_SILENCE_MS).to_string()),
+                (
+                    "since",
+                    at_ms
+                        .saturating_sub(RELAY_SILENCE.as_millis() as u64)
+                        .to_string(),
+                ),
             ],
         )
         .await?;
