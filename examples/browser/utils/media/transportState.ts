@@ -6,6 +6,9 @@ type TrackAlias = bigint | string
 class TrackTransportState {
   groupId = timeSeededGroupId() - 1n
   nextObjectId = 0n
+  /// Where the capture timeline continues when an encoder output lost its
+  /// capture time: the previous object's stamp plus its duration.
+  nextCaptureTimestampMicros: number | undefined
   private readonly headerSentAliases = new Map<SubgroupId, Set<string>>([[0, new Set()]])
 
   ensureSubgroup(subgroupId: SubgroupId): void {
