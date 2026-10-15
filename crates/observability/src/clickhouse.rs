@@ -1,5 +1,5 @@
 use anyhow::{Context, bail};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 
 use crate::config::ClickHouseConfig;
 
@@ -25,14 +25,11 @@ impl ClickHouse {
         self.post(&[], sql.to_string()).await.map(drop)
     }
 
-    pub async fn insert<T: Serialize>(&self, table: &str, rows: &[T]) -> anyhow::Result<()> {
-        if rows.is_empty() {
+    /// Inserts `body`, one JSON object per line, in a single synchronous INSERT, so a failed
+    /// insert is returned to the caller. An empty body sends nothing.
+    pub async fn insert_json_lines(&self, table: &str, body: String) -> anyhow::Result<()> {
+        if body.is_empty() {
             return Ok(());
-        }
-        let mut body = String::new();
-        for row in rows {
-            body.push_str(&serde_json::to_string(row)?);
-            body.push('\n');
         }
         let query = format!(
             "INSERT INTO {}.{table} FORMAT JSONEachRow",
@@ -41,16 +38,6 @@ impl ClickHouse {
         self.post(
             &[
                 ("query", query.as_str()),
-                ("async_insert", "1"),
-                // Every relay inserts into each table once per second. A fixed ten-second
-                // window folds those inserts into one part per table every ten seconds; the
-                // adaptive window shrinks under frequent inserts to about one part per insert,
-                // and a part per second kept merges busy on most of two vCPUs.
-                // Waiting for the flush would hold each store for the whole window, so a
-                // failed flush shows only in the ClickHouse log.
-                ("wait_for_async_insert", "0"),
-                ("async_insert_use_adaptive_busy_timeout", "0"),
-                ("async_insert_busy_timeout_max_ms", "10000"),
                 ("input_format_skip_unknown_fields", "1"),
             ],
             body,
