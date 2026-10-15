@@ -179,6 +179,11 @@ main {
   fill: #3a3a3a;
 }
 
+.environment.sel {
+  stroke: var(--focus);
+  stroke-width: 2;
+}
+
 .mesh-label {
   cursor: pointer;
 }

@@ -309,10 +309,11 @@ stack's API on port 8095; anywhere else, the deployed
 
 ### Selection
 - Clicking the "Relays" label of the environment selects the whole mesh:
-  nothing is dimmed, and the drawer shows each relay's clients, state
-  (serving, or draining with the time and the clients left), ingress, egress
-  and RSS with charts of egress, ingress, loss, sessions, RSS, cache
-  and congestion per relay plus an all-relays total line.
+  nothing is dimmed, the environment circle and every relay are drawn in the
+  selection blue, and the drawer shows each relay's clients, state (serving,
+  or draining with the time and the clients left), ingress, egress and
+  memory with per-relay charts plus an all-relays total line where a sum
+  means something.
 - Clicking a client highlights the hops of its subscriptions; clicking a
   relay, those through the relay; clicking a link draws it thick and
   highlights the full route of every subscription it carries, from the
