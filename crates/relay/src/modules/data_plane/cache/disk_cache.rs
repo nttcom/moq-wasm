@@ -56,11 +56,16 @@ pub(crate) struct DiskCache {
     command_sender: mpsc::Sender<DiskCommand>,
     stored_bytes: Arc<AtomicU64>,
     dropped_writes: Arc<AtomicU64>,
+    max_bytes: u64,
 }
 
 impl DiskCache {
     pub(crate) fn stored_bytes(&self) -> u64 {
         self.stored_bytes.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn max_bytes(&self) -> u64 {
+        self.max_bytes
     }
 }
 
