@@ -179,6 +179,11 @@ main {
   fill: #3a3a3a;
 }
 
+.environment.sel {
+  stroke: var(--focus);
+  stroke-width: 2;
+}
+
 .mesh-label {
   cursor: pointer;
 }
@@ -507,6 +512,34 @@ main {
   color: var(--muted);
   margin-bottom: 6px;
   overflow-wrap: anywhere;
+}
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.tabs button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  padding: 5px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tabs button:hover {
+  color: var(--text);
+}
+
+.tabs button.on {
+  border-color: #3a3a3a;
+  background: #2a2a2a;
+  color: var(--text);
 }
 
 .section {

@@ -75,7 +75,7 @@ neither is reported.
 {
   "relay_id": "relay-a",
   "timestamp_ms": 1791262800000,
-  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432, "disk_cache_bytes": 1234567890, "client_sessions": 3, "draining_since_ms": null },
+  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432, "disk_cache_bytes": 1234567890, "disk_cache_max_bytes": 5368709120, "client_sessions": 3, "draining_since_ms": null },
   "sessions": [
     {
       "session_id": 7, "peer": "client", "app_id": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
@@ -133,8 +133,11 @@ neither is reported.
 - `disk_cache_bytes` is the payload held in the relay's disk cache segments
   (`RELAY_DISK_CACHE_DIR`), 0 when the relay has none. It is
   `#[serde(default)]` because stored `snapshots.payload` rows from before the
-  field are decoded again for `?at=`. The relay and mesh views chart it as
-  `disk_cache_mb`.
+  field are decoded again for `?at=`. `disk_cache_max_bytes` is the cap it is
+  held under (`RELAY_DISK_CACHE_BYTES`), 0 without a disk cache, and likewise
+  defaulted. The relay and mesh views chart the two as `disk_cache_mb` and
+  `disk_cache_max_mb` under Storage, the space the relay may use rather than
+  the host's disk.
 - `client_sessions` is the count a drain waits for: client sessions only, no
   relay peer and no stats session. `draining_since_ms` is when the relay began
   draining (sent GOAWAY) and `null` while it serves; a relay older than these
@@ -281,7 +284,8 @@ stack's API on port 8095; anywhere else, the deployed
 
 ### Topology
 - One circle for the hosting environment (e.g. GCP) holding the relays,
-  drawn as server icons with RSS and cache size. A draining relay has a
+  drawn as server icons with memory (RSS), cache size and the bytes in the
+  disk cache (storage). A draining relay has a
   dashed amber frame and an amber LED, under a `DRAINING <s>s · <n> clients`
   label giving the time since the drain began and the client sessions still
   connected, as of the snapshot shown. Every client — publisher or
@@ -306,10 +310,11 @@ stack's API on port 8095; anywhere else, the deployed
 
 ### Selection
 - Clicking the "Relays" label of the environment selects the whole mesh:
-  nothing is dimmed, and the drawer shows each relay's clients, state
-  (serving, or draining with the time and the clients left), ingress, egress
-  and RSS with charts of egress, ingress, loss, sessions, RSS, cache
-  and congestion per relay plus an all-relays total line.
+  nothing is dimmed, the environment circle and every relay are drawn in the
+  selection blue, and the drawer shows each relay's clients, state (serving,
+  or draining with the time and the clients left), ingress, egress and
+  memory with per-relay charts plus an all-relays total line where a sum
+  means something.
 - Clicking a client highlights the hops of its subscriptions; clicking a
   relay, those through the relay; clicking a link draws it thick and
   highlights the full route of every subscription it carries, from the
@@ -332,19 +337,22 @@ the viewport by default, resizable by dragging its top edge) and holds:
 - a details column with what charts cannot show: identity (`app_id`, relay,
   path MTU), published tracks and subscriber count, received namespaces with
   their delivery lag, routes and their namespaces for a link, tracks carried
-  by an inter-relay link, and for a relay its state (serving, or draining
-  with the time and the clients left), its ingress / egress split into
-  clients and each peer relay plus the attached clients. Section headings
-  name their link in the selection blue (`carol → relay-b`). A relay's
-  sections say ingress / egress rather than uplink / downlink, which are
-  named from the client's side;
+  by an inter-relay link, and for a relay its session count and state
+  (serving, or draining with the time and the clients left). Section
+  headings name their link in the selection blue (`carol → relay-b`). Below
+  the summary, one tab per chart group switches the charts shown: Resources
+  (memory, storage, cache objects), Network and Sessions for a relay or the
+  mesh; Media (bitrate, arrival gap, delivery lag), Transport (RTT, loss,
+  cwnd, congestion) and Streams (flow control, resets) for a client or a
+  link. The picked tab stays across selections that have it, and only its
+  charts are fetched;
 - one chart per metric in the style of the GCP monitoring charts, with
   axes, gridlines and one line per series (uplink and downlink bitrate in
   one card, delivery lag per subscription in another), fed by
-  `GET /series`. Every metric of the direction table above appears; a
-  relay's charts are its process figures (including the client sessions a
-  drain waits for) and its ingress / egress totals (bitrate-weighted egress
-  loss, summed counts). The charts cover the header's
+  `GET /series`. Every metric of the direction table above appears in one of
+  the tabs; a relay's charts are its process figures (including the client
+  sessions a drain waits for, drawn with all sessions in one card) and its
+  ingress / egress totals (bitrate-weighted egress loss, summed counts). The charts cover the header's
   range up to now and mark the selected past time with a vertical line;
   hovering any card moves a shared crosshair that shows every card's value
   at that instant, and clicking a card moves the whole page to that time. The grid keeps its scrollbar gutter, so resizing the drawer never

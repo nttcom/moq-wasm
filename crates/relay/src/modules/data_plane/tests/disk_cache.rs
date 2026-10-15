@@ -233,3 +233,15 @@ async fn store_occupancy_reports_the_bytes_on_disk() {
     .await
     .expect("the stored bytes should be reported");
 }
+
+#[tokio::test]
+async fn store_occupancy_reports_the_disk_cap() {
+    // Arrange
+    let track = disk_backed_track("cap", 5 * 1024, PERSIST);
+
+    // Act
+    let occupancy = track.store.occupancy();
+
+    // Assert
+    assert_eq!(occupancy.disk_max_bytes, 5 * 1024);
+}

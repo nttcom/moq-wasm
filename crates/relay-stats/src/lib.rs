@@ -28,6 +28,9 @@ pub struct ProcessStats {
     /// Defaulted so snapshots stored before the field existed still decode.
     #[serde(default)]
     pub disk_cache_bytes: u64,
+    /// `RELAY_DISK_CACHE_BYTES`; 0 without a disk cache.
+    #[serde(default)]
+    pub disk_cache_max_bytes: u64,
     /// Sessions a drain waits for; excludes relay peers and the stats sessions.
     #[serde(default)]
     pub client_sessions: u64,
@@ -114,6 +117,7 @@ mod tests {
                 cache_objects: 2,
                 cache_payload_bytes: 3,
                 disk_cache_bytes: 4,
+                disk_cache_max_bytes: 6,
                 client_sessions: 5,
                 draining_since_ms: Some(1_791_262_799_000),
             },
