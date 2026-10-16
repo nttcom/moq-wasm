@@ -24,7 +24,7 @@ use crate::{
         domains::{
             connection::{Connection, logical_id},
             fetch_handle::FetchHandle,
-            session_context::{CarriedRequests, CarriedSubscription, SessionContext},
+            session_context::{CarriedSubscription, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
         version::{Notification, OutgoingRequest},
@@ -51,7 +51,7 @@ impl Subscriber {
         fields(namespace = %namespace)
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
-        let mut carried = self.lock_carried().await;
+        let mut carried = self.session.lock_carried().await;
         send_subscribe_namespace(&self.session.connection(), namespace.clone()).await?;
         if let Some(carried) = carried.as_mut() {
             carried.namespaces.push(namespace);
@@ -71,7 +71,7 @@ impl Subscriber {
         track_name: String,
         option: SubscribeOption,
     ) -> Result<Subscription, RequestFailure> {
-        let mut carried = self.lock_carried().await;
+        let mut carried = self.session.lock_carried().await;
         let connection = self.session.connection();
         let message = send_subscribe(&connection, &track_namespace, &track_name, &option).await?;
         let logical_alias = match self
@@ -310,7 +310,7 @@ impl Subscriber {
         subscription: &Subscription,
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
-        let mut carried = self.lock_carried().await;
+        let mut carried = self.session.lock_carried().await;
         if let Some(carried) = carried
             .as_mut()
             .and_then(|carried| carried.subscriptions.get_mut(&subscription.request_id()))
@@ -398,7 +398,7 @@ impl Subscriber {
         fields(request_id = %subscription.request_id())
     )]
     pub async fn unsubscribe(&self, subscription: &Subscription) -> anyhow::Result<()> {
-        if let Some(carried) = self.lock_carried().await.as_mut() {
+        if let Some(carried) = self.session.lock_carried().await.as_mut() {
             carried.subscriptions.remove(&subscription.request_id());
         }
         for (connection, request_id) in self.on_live_connections(subscription.request_id()) {
@@ -420,7 +420,7 @@ impl Subscriber {
         fields(namespace = %namespace)
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
-        if let Some(carried) = self.lock_carried().await.as_mut() {
+        if let Some(carried) = self.session.lock_carried().await.as_mut() {
             carried.namespaces.retain(|carried| *carried != namespace);
         }
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
@@ -446,13 +446,6 @@ impl Subscriber {
             },
             subscription.clone(),
         )
-    }
-
-    async fn lock_carried(&self) -> Option<tokio::sync::MutexGuard<'_, CarriedRequests>> {
-        match &self.session.carried {
-            Some(carried) => Some(carried.lock().await),
-            None => None,
-        }
     }
 
     /// Each live connection that carries the request `logical_id`, with its

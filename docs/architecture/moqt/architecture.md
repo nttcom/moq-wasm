@@ -227,11 +227,18 @@ the server's GOAWAY by itself (draft-14 §3.5; see
 events to a `MigrationTask` (`domains/session/migration_task.rs`) instead of
 the application: it forwards them with logical ids, and on GOAWAY it opens
 the next connection through the endpoint's `SessionCreator` (`Reconnect`),
-sends every SUBSCRIBE_NAMESPACE and SUBSCRIBE made on the session again
-(`NextGroupStart`, the last Forward state; a rejected one is repeated every
-500 ms for up to 10 s), makes it the current connection, and closes the
-previous one with NO_ERROR 5 s after every carried subscription cut over (at
-most 10 s after the move) or when the server closes it. While both
+sends every SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE
+made on the session again (`NextGroupStart`, the last Forward state; a
+rejected namespace or SUBSCRIBE is repeated every 500 ms for up to 10 s),
+makes it the current connection, and closes the previous one with NO_ERROR
+once the server takes no track this side sends there any more and 5 s after
+every carried subscription cut over (at most 10 s after the move), or when
+the server closes it. A track PUBLISHed on the session goes to every
+connection it is on: each subgroup stream the `StreamDataSenderFactory`
+opens, and each datagram, is sent on all of them, the new connection from
+the next subgroup on (draft-22 §7.6.1). An UNSUBSCRIBE that drops a
+publication from one connection while it is still on another is not
+returned; requests the peer sends, on any connection, carry logical ids. While both
 connections deliver a subscription, the sinks of both share a `GroupCutover`
 (see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
 carried subscription is dropped; GOAWAY is never returned; `Disconnected`
@@ -424,7 +431,11 @@ state name the connection:
   Registering a FETCH returns a `PendingFetch` drop-guard that removes both
   FETCH entries unless FETCH_OK arrived.
 - `carried` — for a session that follows GOAWAY, the namespace and track
-  subscriptions a migration sends again. It is locked while one of them is
+  subscriptions and the published namespaces a migration sends again.
+- `publications` — for a session that follows GOAWAY, the tracks PUBLISHed
+  on it with every connection each is on (`SendTargets::Publication`); a
+  track served for a SUBSCRIBE goes to the connection the SUBSCRIBE arrived
+  on (`SendTargets::Connection`). It is locked while one of them is
   sent and while a migration sends them all, so none is missed.
 
 ## Control plane (`modules/moqt/control_plane`)

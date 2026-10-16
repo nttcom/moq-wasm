@@ -1,40 +1,36 @@
-use std::sync::Arc;
-
 use crate::modules::{
     executor,
     moqt::{
-        data_plane::object::canonical_object::Object, domains::session_context::SessionContext,
+        data_plane::object::canonical_object::Object,
+        domains::send_targets::{SendTargets, any_sent},
     },
 };
 
 pub struct DatagramSender {
-    pub track_alias: u64,
-    session_context: Arc<SessionContext>,
+    targets: SendTargets,
 }
 
 impl DatagramSender {
-    pub(crate) fn new(track_alias: u64, session_context: Arc<SessionContext>) -> Self {
-        Self {
-            track_alias,
-            session_context,
-        }
+    pub(crate) fn new(targets: SendTargets) -> Self {
+        Self { targets }
     }
 
-    /// Sends `object` as one datagram of this track; its forwarding preference
-    /// is not read.
+    /// Sends `object` as one datagram on every connection the track goes to,
+    /// ignoring its forwarding preference. Fails when no connection took it.
     pub async fn send_object(&mut self, object: &Object) -> anyhow::Result<()> {
-        let bytes = self
-            .session_context
-            .connection()
-            .control
-            .version()
-            .encode_datagram(self.track_alias, object)?;
-        let result = self
-            .session_context
-            .connection()
-            .transport
-            .send_datagram(bytes);
+        let results = self
+            .targets
+            .resolve()
+            .into_iter()
+            .map(|(connection, track_alias)| {
+                connection
+                    .control
+                    .version()
+                    .encode_datagram(track_alias, object)
+                    .and_then(|bytes| connection.transport.send_datagram(bytes))
+            })
+            .collect();
         executor::yield_now().await;
-        result
+        any_sent(results)
     }
 }

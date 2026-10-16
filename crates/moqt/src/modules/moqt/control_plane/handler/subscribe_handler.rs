@@ -12,7 +12,10 @@ use crate::{
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
-        domains::{connection::Connection, session_context::SessionContext},
+        domains::{
+            connection::{Connection, logical_id},
+            session_context::SessionContext,
+        },
     },
     modules::transport::transport_send_stream::TransportSendError,
     object::GroupOrder,
@@ -99,6 +102,9 @@ impl SubscribeHandler {
             .control
             .respond(OutgoingResponse::SubscribeOk(subscribe_ok))
             .await?;
+        if self.session_context.follows_go_away() {
+            self.guard.connection().serve(self.request_id);
+        }
         Ok(())
     }
 
@@ -122,7 +128,7 @@ impl SubscribeHandler {
     /// makes it subscriber-initiated.
     pub fn into_subscription(&self, track_alias: u64) -> Subscription {
         Subscription::SubscriberInitiated(SubscriberInitiatedSubscription::from_subscribe_handler(
-            track_alias,
+            logical_id(self.guard.connection().generation, track_alias),
             self,
         ))
     }

@@ -1,13 +1,22 @@
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, Weak},
+};
+
+use tokio::sync::watch;
 
 use crate::{
     SessionEvent,
     modules::moqt::{
         control_plane::{constants::TerminationErrorCode, enums::RequestId},
         data_plane::stream::fetch_data_receiver::FetchDataReceiver,
-        domains::connection::{Connection, ObjectSink, SinkReceiver, logical_id},
+        domains::connection::{
+            Connection, ObjectSink, SinkReceiver, generation_of, logical_id, wire_part,
+        },
         runtime::dispatch::incoming_object::IncomingObject,
     },
+    publish::PublishOption,
     subscribe::SubscribeOption,
 };
 
@@ -26,6 +35,38 @@ pub(crate) struct SessionContext {
     /// carried request is sent and while a migration sends them all again,
     /// so a request sent during a migration is not skipped.
     pub(crate) carried: Option<tokio::sync::Mutex<CarriedRequests>>,
+    /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
+    /// keyed by logical request id, with every connection each is on. Read
+    /// for every subgroup sent, so not behind `carried`.
+    publications: std::sync::Mutex<HashMap<u64, Publication>>,
+    /// Wakes `unserved` whenever a connection stops serving a track.
+    served_changed: watch::Sender<()>,
+}
+
+pub(crate) struct Publication {
+    pub(crate) track_namespace: String,
+    pub(crate) track_name: String,
+    pub(crate) option: PublishOption,
+    pub(crate) targets: Vec<PublicationTarget>,
+}
+
+impl Publication {
+    /// `true` when the publication is still on another connection.
+    fn leave(&mut self, connection: &Connection) -> bool {
+        self.targets.retain(|target| {
+            target
+                .connection
+                .upgrade()
+                .is_some_and(|target| !std::ptr::eq(&*target, connection))
+        });
+        !self.targets.is_empty()
+    }
+}
+
+pub(crate) struct PublicationTarget {
+    pub(crate) connection: Weak<Connection>,
+    pub(crate) track_alias: u64,
+    pub(crate) request_id: u64,
 }
 
 struct Connections {
@@ -37,6 +78,7 @@ struct Connections {
 #[derive(Default)]
 pub(crate) struct CarriedRequests {
     pub(crate) namespaces: Vec<String>,
+    pub(crate) published_namespaces: Vec<String>,
     /// Keyed by logical request id.
     pub(crate) subscriptions: HashMap<u64, CarriedSubscription>,
 }
@@ -87,7 +129,138 @@ impl SessionContext {
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
             carried: follows_go_away.then(|| tokio::sync::Mutex::new(CarriedRequests::default())),
+            publications: std::sync::Mutex::default(),
+            served_changed: watch::channel(()).0,
         }
+    }
+
+    pub(crate) fn follows_go_away(&self) -> bool {
+        self.carried.is_some()
+    }
+
+    pub(crate) async fn lock_carried(
+        &self,
+    ) -> Option<tokio::sync::MutexGuard<'_, CarriedRequests>> {
+        match &self.carried {
+            Some(carried) => Some(carried.lock().await),
+            None => None,
+        }
+    }
+
+    /// The live connection a logical id belongs to, with its wire part.
+    pub(crate) fn connection_of(&self, logical_id: u64) -> Option<(Arc<Connection>, u64)> {
+        self.live_connections()
+            .into_iter()
+            .find(|connection| connection.generation == generation_of(logical_id))
+            .map(|connection| (connection, wire_part(logical_id)))
+    }
+
+    /// Drops the closed `connection` from every publication.
+    pub(crate) fn forget_connection(&self, connection: &Connection) {
+        for publication in self.publications().values_mut() {
+            publication.leave(connection);
+        }
+        self.served_changed.send_replace(());
+    }
+
+    fn publications(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Publication>> {
+        self.publications
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn add_publication(&self, request_id: u64, publication: Publication) {
+        self.publications().insert(request_id, publication);
+    }
+
+    pub(crate) fn remove_publication(&self, request_id: u64) -> Option<Publication> {
+        let publication = self.publications().remove(&request_id);
+        self.served_changed.send_replace(());
+        publication
+    }
+
+    /// The live connections the publication `request_id` is on, with its
+    /// wire track alias on each.
+    pub(crate) fn publication_targets(&self, request_id: u64) -> Vec<(Arc<Connection>, u64)> {
+        self.publications()
+            .get(&request_id)
+            .map(|publication| {
+                publication
+                    .targets
+                    .iter()
+                    .filter_map(|target| Some((target.connection.upgrade()?, target.track_alias)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn has_publication(&self, request_id: u64) -> bool {
+        self.publications().contains_key(&request_id)
+    }
+
+    /// What a migration sends again: each publication with its logical id.
+    pub(crate) fn publication_requests(&self) -> Vec<(u64, String, String, PublishOption)> {
+        self.publications()
+            .iter()
+            .map(|(request_id, publication)| {
+                (
+                    *request_id,
+                    publication.track_namespace.clone(),
+                    publication.track_name.clone(),
+                    publication.option.clone(),
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn add_publication_target(&self, request_id: u64, target: PublicationTarget) {
+        if let Some(publication) = self.publications().get_mut(&request_id) {
+            publication.targets.push(target);
+        }
+    }
+
+    /// Drops `connection` from the publication `request_id`, and the
+    /// publication once it is on no connection. `true` when it is still on
+    /// another one.
+    pub(crate) fn leave_publication(&self, request_id: u64, connection: &Connection) -> bool {
+        let mut publications = self.publications();
+        let still_published = publications
+            .get_mut(&request_id)
+            .is_some_and(|publication| publication.leave(connection));
+        if !still_published {
+            publications.remove(&request_id);
+        }
+        drop(publications);
+        self.served_changed.send_replace(());
+        still_published
+    }
+
+    /// Whether the peer of `connection` still takes a track this side sends:
+    /// a publication on it or a SUBSCRIBE it sent that it has not ended.
+    pub(crate) fn serves_on(&self, connection: &Arc<Connection>) -> bool {
+        connection.serves_subscriptions()
+            || self.publications().values().any(|publication| {
+                publication.targets.iter().any(|target| {
+                    target
+                        .connection
+                        .upgrade()
+                        .is_some_and(|target| Arc::ptr_eq(&target, connection))
+                })
+            })
+    }
+
+    /// Resolves once the peer of `connection` takes no track this side sends.
+    pub(crate) async fn unserved(&self, connection: &Arc<Connection>) {
+        let mut changed = self.served_changed.subscribe();
+        while self.serves_on(connection) {
+            if changed.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    pub(crate) fn note_served_changed(&self) {
+        self.served_changed.send_replace(());
     }
 
     /// The connection requests are sent on.
