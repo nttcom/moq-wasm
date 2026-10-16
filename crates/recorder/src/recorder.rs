@@ -10,17 +10,21 @@ use moqt::{
     fetch::{Fetch, FetchDataReceiver},
     subscribe::FilterType,
 };
-use tokio::signal::unix::{Signal, SignalKind, signal};
+use object_store::path::Path;
+use tokio::{
+    signal::unix::{SignalKind, signal},
+    sync::watch,
+};
 
 use crate::{
     Args,
     catalog_reader::CatalogReader,
-    recording::{Recording, Uploader},
+    recording::{Layout, Recording, Uploader},
     relay::{self, RelayConnection},
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
     track_selection::{Selection, VideoChoice, select_tracks},
-    upload_task::UploadTask,
+    upload_task::{UploadQueue, UploadTask},
 };
 
 /// Uploads begin when a file closes, so a recording without segments would
@@ -53,10 +57,84 @@ pub(crate) async fn run(args: Args) -> Result<()> {
     let result = if args.list_tracks {
         list_tracks(&connection.session, &args.namespace).await
     } else {
-        record_broadcast(&connection.session, &args).await
+        record_until_interrupted(&connection.session, &args).await
     };
     drop(token_refresh);
     connection.close().await;
+    result
+}
+
+/// What every broadcast of a recording shares.
+pub(crate) struct BroadcastOptions {
+    pub(crate) video_track: Option<String>,
+    pub(crate) max_video_height: u32,
+    pub(crate) audio_track: Option<String>,
+    pub(crate) layout: Layout,
+    pub(crate) from_cache: bool,
+    pub(crate) segment_length: Option<Duration>,
+    pub(crate) upload: Option<UploadTarget>,
+}
+
+/// Objects go under `prefix`, then the broadcast's namespace.
+#[derive(Clone)]
+pub(crate) struct UploadTarget {
+    pub(crate) queue: UploadQueue,
+    pub(crate) prefix: Path,
+}
+
+/// Records `args.namespace` until Ctrl-C or the end of a track, then waits
+/// for the uploads.
+async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> {
+    let upload_task = args
+        .upload
+        .as_ref()
+        .map(|url| {
+            let (store, prefix) = object_store::parse_url_opts(url, std::env::vars())
+                .with_context(|| format!("cannot use {url} as the upload location"))?;
+            anyhow::Ok((UploadTask::run(store.into()), prefix))
+        })
+        .transpose()?;
+    let options = BroadcastOptions {
+        video_track: args.video_track.clone(),
+        max_video_height: args.max_video_height,
+        audio_track: args.audio_track.clone(),
+        layout: args.layout,
+        from_cache: args.from_cache,
+        segment_length: args
+            .segment_seconds
+            .or(args.upload.is_some().then_some(UPLOAD_SEGMENT_SECONDS))
+            .map(Duration::from_secs),
+        upload: upload_task.as_ref().map(|(task, prefix)| UploadTarget {
+            queue: task.queue(),
+            prefix: prefix.clone(),
+        }),
+    };
+    let path = args
+        .output
+        .clone()
+        .unwrap_or_else(|| default_output_path(&args.namespace, SystemTime::now()));
+    // One listener for the whole recording: tokio drops a SIGINT that arrives
+    // while no listener is registered, such as between two `select!` polls.
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let (stop_sender, stop) = watch::channel(false);
+    let result = {
+        let recording = record_broadcast(session, &args.namespace, path, &options, stop);
+        tokio::pin!(recording);
+        tokio::select! {
+            result = &mut recording => result,
+            _ = interrupt.recv() => {
+                tracing::info!("stopping on Ctrl-C");
+                let _ = stop_sender.send(true);
+                recording.await
+            }
+        }
+    };
+    // The queues the options hold have to go before the upload task can end.
+    drop(options);
+    if let Some((task, _)) = upload_task {
+        tracing::info!("waiting for the uploads to finish");
+        task.finish().await;
+    }
     result
 }
 
@@ -75,9 +153,20 @@ async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
     Ok(())
 }
 
-async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
-    let mut catalog = CatalogReader::open(session, &args.namespace).await?;
-    let selection = wait_for_selection(&mut catalog, args).await?;
+/// Records `namespace` into `path` until `stop` turns true or a track ends.
+/// A stop while the catalog lists no video track yet records nothing.
+pub(crate) async fn record_broadcast(
+    session: &Session,
+    namespace: &str,
+    path: PathBuf,
+    options: &BroadcastOptions,
+    mut stop: watch::Receiver<bool>,
+) -> Result<()> {
+    let mut catalog = CatalogReader::open(session, namespace).await?;
+    let selection = tokio::select! {
+        selection = wait_for_selection(&mut catalog, options) => selection?,
+        _ = stop_requested(&mut stop) => return Ok(()),
+    };
     tracing::info!(
         video = %selection.video.name,
         video_codec = ?selection.video.codec,
@@ -85,17 +174,15 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
         "catalog resolved"
     );
 
-    let filter_type = if args.from_cache {
+    let filter_type = if options.from_cache {
         FilterType::LargestObject
     } else {
         FilterType::NextGroupStart
     };
     let video_subscription =
-        relay::subscribe(session, &args.namespace, &selection.video.name, filter_type).await?;
+        relay::subscribe(session, namespace, &selection.video.name, filter_type).await?;
     let audio_subscription = match &selection.audio {
-        Some(audio) => {
-            Some(relay::subscribe(session, &args.namespace, &audio.name, filter_type).await?)
-        }
+        Some(audio) => Some(relay::subscribe(session, namespace, &audio.name, filter_type).await?),
         None => None,
     };
     let video_reader = relay::track_reader(session, &video_subscription).await?;
@@ -104,37 +191,26 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
         None => None,
     };
 
-    let path = args
-        .output
-        .clone()
-        .unwrap_or_else(|| default_output_path(&args.namespace, SystemTime::now()));
-    // One listener for the whole recording: tokio drops a SIGINT that arrives
-    // while no listener is registered, such as between two `select!` polls.
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let segment_seconds = args
-        .segment_seconds
-        .or(args.upload.is_some().then_some(UPLOAD_SEGMENT_SECONDS));
-    let uploader = args
+    let uploader = options
         .upload
         .as_ref()
-        .map(|url| uploader(url, &args.namespace, SystemTime::now()))
-        .transpose()?;
+        .map(|target| uploader(target, namespace, SystemTime::now()));
     let mut recording = Recording::create(
         &selection,
-        args.layout,
+        options.layout,
         path,
-        segment_seconds.map(Duration::from_secs),
+        options.segment_length,
         uploader,
     )
     .await?;
     tracing::info!(paths = ?recording.paths().collect::<Vec<_>>(), "recording started");
-    let cached = if args.from_cache {
+    let cached = if options.from_cache {
         record_cached(
             session,
             &video_subscription,
             audio_subscription.as_ref(),
             &mut recording,
-            &mut interrupt,
+            &mut stop,
         )
         .await?
     } else {
@@ -146,7 +222,7 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
             video_reader,
             audio_reader,
             &mut recording,
-            &mut interrupt,
+            &mut stop,
         )
         .await?;
     }
@@ -156,22 +232,25 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
     Ok(())
 }
 
-async fn wait_for_selection(catalog: &mut CatalogReader<'_>, args: &Args) -> Result<Selection> {
-    let video_choice = match &args.video_track {
+async fn wait_for_selection(
+    catalog: &mut CatalogReader<'_>,
+    options: &BroadcastOptions,
+) -> Result<Selection> {
+    let video_choice = match &options.video_track {
         Some(name) => VideoChoice::Named(name),
-        None => VideoChoice::MaxHeight(args.max_video_height),
+        None => VideoChoice::MaxHeight(options.max_video_height),
     };
     loop {
         let selection = select_tracks(
             &catalog.next().await?,
             video_choice,
-            args.audio_track.as_deref(),
+            options.audio_track.as_deref(),
         )?;
         if let Some(selection) = selection {
             return Ok(selection);
         }
         tracing::info!(
-            track = args.video_track.as_deref(),
+            track = options.video_track.as_deref(),
             "waiting for the catalog to list the video track"
         );
     }
@@ -185,7 +264,7 @@ async fn record_cached(
     video: &Subscription,
     audio: Option<&Subscription>,
     recording: &mut Recording,
-    interrupt: &mut Signal,
+    stop: &mut watch::Receiver<bool>,
 ) -> Result<ControlFlow<()>> {
     let mut video_fetch = open_cached(session, video).await;
     let mut audio_fetch = match audio {
@@ -195,8 +274,8 @@ async fn record_cached(
     while video_fetch.is_some() || audio_fetch.is_some() {
         tokio::select! {
             biased;
-            _ = interrupt.recv() => {
-                tracing::info!("stopping on Ctrl-C");
+            _ = stop_requested(stop) => {
+                tracing::info!("stopping");
                 return Ok(ControlFlow::Break(()));
             }
             fetched = next_fetched(video_fetch.as_mut()) => {
@@ -220,13 +299,13 @@ async fn record_live(
     mut video_reader: TrackReader,
     mut audio_reader: Option<TrackReader>,
     recording: &mut Recording,
-    interrupt: &mut Signal,
+    stop: &mut watch::Receiver<bool>,
 ) -> Result<()> {
     loop {
         tokio::select! {
             biased;
-            _ = interrupt.recv() => {
-                tracing::info!("stopping on Ctrl-C");
+            _ = stop_requested(stop) => {
+                tracing::info!("stopping");
                 return Ok(());
             }
             close = session.closed() => {
@@ -301,19 +380,22 @@ async fn next_audio_object(reader: Option<&mut TrackReader>) -> Result<Option<Tr
     }
 }
 
-/// Objects go under `<url path>/<namespace>/`.
-fn uploader(url: &url::Url, namespace: &str, now: SystemTime) -> Result<Uploader> {
-    let (store, mut prefix) = object_store::parse_url_opts(url, std::env::vars())
-        .with_context(|| format!("cannot use {url} as the upload location"))?;
+/// Resolves once `stop` turns true, or at once when its sender is gone.
+async fn stop_requested(stop: &mut watch::Receiver<bool>) {
+    let _ = stop.wait_for(|stop| *stop).await;
+}
+
+fn uploader(target: &UploadTarget, namespace: &str, now: SystemTime) -> Uploader {
+    let mut prefix = target.prefix.clone();
     prefix.extend(namespace.split('/'));
-    Ok(Uploader {
-        task: UploadTask::run(store.into()),
+    Uploader {
+        queue: target.queue.clone(),
         prefix,
         started_at_ms: now
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64,
-    })
+    }
 }
 
 fn default_output_path(namespace: &str, now: SystemTime) -> PathBuf {

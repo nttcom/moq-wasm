@@ -16,9 +16,9 @@ pub(crate) struct Upload {
     pub(crate) capture_origin: Option<Timestamp>,
 }
 
-/// Uploads closed files one at a time, in the order they closed, and deletes
-/// each local file once its object is complete. A file whose upload fails
-/// after the store's retries stays on disk.
+/// Uploads closed files one at a time, in the order they were queued, and
+/// deletes each local file once its object is complete. A file whose upload
+/// fails after the store's retries stays on disk.
 pub(crate) struct UploadTask {
     handle: JoinHandle<()>,
     /// An `Option` so that `finish` can drop it to close the queue, which
@@ -48,20 +48,30 @@ impl UploadTask {
         }
     }
 
-    pub(crate) fn upload(&self, upload: Upload) {
+    pub(crate) fn queue(&self) -> UploadQueue {
         let Some(sender) = &self.upload_sender else {
             unreachable!("only `finish` clears the sender, and it consumes the task");
         };
-        if let Err(error) = sender.send(upload) {
-            tracing::error!(path = %error.0.path.display(), "upload task gone; the file stays on disk");
-        }
+        UploadQueue(sender.clone())
     }
 
-    /// Waits until every queued file is uploaded or has failed.
+    /// Waits until every queued file is uploaded or has failed; it returns
+    /// only once every `UploadQueue` is dropped.
     pub(crate) async fn finish(mut self) {
         self.upload_sender = None;
         if let Err(error) = (&mut self.handle).await {
             tracing::error!(%error, "upload task failed");
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct UploadQueue(mpsc::UnboundedSender<Upload>);
+
+impl UploadQueue {
+    pub(crate) fn upload(&self, upload: Upload) {
+        if let Err(error) = self.0.send(upload) {
+            tracing::error!(path = %error.0.path.display(), "upload task gone; the file stays on disk");
         }
     }
 }
@@ -120,7 +130,7 @@ mod tests {
         let key = Path::from("recordings/anon/live/1700000000000-1.mp4");
 
         // Act
-        task.upload(Upload {
+        task.queue().upload(Upload {
             path: path.clone(),
             key: key.clone(),
             capture_origin: Some(Timestamp::from_micros(1_700_000_000_123_456)),
