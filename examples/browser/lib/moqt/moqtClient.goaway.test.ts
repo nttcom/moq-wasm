@@ -86,6 +86,10 @@ class FakeRawClient {
     this.emit('subscribeNamespaceResponse', { requestId })
   }
 
+  async sendPublishNamespaceOk(requestId: bigint): Promise<void> {
+    this.sent.push(`PUBLISH_NAMESPACE_OK ${requestId}`)
+  }
+
   async sendSubscribe(
     requestId: bigint,
     trackNamespace: string[],
@@ -175,6 +179,10 @@ class FakeRawClient {
 
   receiveFetchEnd(requestId: bigint): void {
     this.emit('fetchStreamEnd', { requestId, isReset: false })
+  }
+
+  receivePublishNamespace(requestId: bigint, trackNamespace: string[]): void {
+    this.emit('publishNamespace', { requestId, trackNamespace })
   }
 
   receiveSubscribe(requestId: bigint, trackNamespace: string[], trackName: string): void {
@@ -705,4 +713,26 @@ test('the old relay is left once its open subgroup ends', async () => {
   // Assert
   expect(openAfterSwitch).toBe(true)
   expect(relayA.closed).toBe(true)
+})
+
+test('a PUBLISH_NAMESPACE the new relay sends before the switch completes is answered there', async () => {
+  // Arrange: relay B accepts the carried SUBSCRIBE only on its retry, so the switch is still under way
+  const { clients, wrapper } = fakeRelays({ relayBRejectsSubscribes: 1 })
+  await wrapper.connect('https://relay-a.example:4433')
+  await wrapper.subscribeNamespace(['room'], '')
+  await wrapper.subscribe(['room', 'them'], 'video', '')
+  const [relayA] = clients
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  const relayB = clients[1]
+  const switchedBefore = wrapper.getRawClient() === (relayB as unknown as MOQTClient)
+
+  // Act
+  relayB.receivePublishNamespace(3n, ['room', 'them'])
+  await settled()
+
+  // Assert
+  expect(switchedBefore).toBe(false)
+  expect(relayB.sent).toContain('PUBLISH_NAMESPACE_OK 3')
+  expect(relayA.sent).not.toContain('PUBLISH_NAMESPACE_OK 3')
 })
