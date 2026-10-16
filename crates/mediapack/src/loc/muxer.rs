@@ -44,7 +44,7 @@ mod tests {
     use super::*;
     use crate::{
         sample::{AudioSample, StreamSet, VideoSample},
-        test_support::{fixture_record, keyframe_annexb},
+        test_support::{fixture_video_config, keyframe_annexb},
     };
 
     fn muxer() -> Muxer {
@@ -100,7 +100,7 @@ mod tests {
         // Act / Assert
         assert!(
             muxer
-                .push(&MediaEvent::VideoConfig(fixture_record()))
+                .push(&MediaEvent::VideoConfig(fixture_video_config()))
                 .is_none()
         );
         assert!(

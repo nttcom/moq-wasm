@@ -12,5 +12,7 @@ pub mod rtp;
 pub mod sample;
 pub mod transmux;
 
-pub use sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample};
+pub use sample::{
+    AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample,
+};
 pub use transmux::{InputFormat, OutputFormat, Transmuxer, transmux};

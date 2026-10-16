@@ -100,7 +100,7 @@ impl Fmp4TrackMuxer {
                     bail!("video configuration pushed into an audio track");
                 };
                 ensure!(
-                    config == update,
+                    config == update.avc()?,
                     "video configuration changed after the init segment"
                 );
                 Ok(None)

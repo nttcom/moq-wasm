@@ -4,7 +4,9 @@ use bytes::Bytes;
 use crate::{
     h264::{AvcDecoderConfigurationRecord, ParameterSetTracker, avcc::avcc_to_annexb},
     loc::object::LocObject,
-    sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+    sample::{
+        AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample,
+    },
 };
 
 const DEFAULT_NAL_LENGTH_SIZE: usize = 4;
@@ -71,7 +73,7 @@ impl Demuxer {
                     return Ok(events);
                 };
                 if let Some(config) = unit.config_changed {
-                    events.push(MediaEvent::VideoConfig(config));
+                    events.push(MediaEvent::VideoConfig(VideoConfig::Avc(config)));
                 }
                 events.push(MediaEvent::Video(VideoSample {
                     data: unit.data,
@@ -126,7 +128,8 @@ mod tests {
         h264::annexb::annexb_to_avcc,
         loc::object::{CAPTURE_TIMESTAMP_ID, LocExtension, VIDEO_CONFIG_ID},
         test_support::{
-            delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k, video_samples,
+            delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb, mono_48k,
+            video_samples,
         },
     };
 
@@ -172,7 +175,7 @@ mod tests {
                 has_audio: false
             })
         );
-        assert_eq!(events[1], MediaEvent::VideoConfig(fixture_record()));
+        assert_eq!(events[1], MediaEvent::VideoConfig(fixture_video_config()));
         assert_eq!(
             events[2],
             MediaEvent::Video(VideoSample {

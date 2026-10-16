@@ -85,6 +85,7 @@ impl TrackPublisher {
         match event {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
+                let config = config.avc()?;
                 self.video_cmaf = Some(Fmp4TrackMuxer::video(config.clone()));
                 let info = VideoTrackInfo::from_record(config, self.tracks.video_label.clone())?;
                 self.broadcast

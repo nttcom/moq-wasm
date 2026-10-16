@@ -3,8 +3,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bytes::{Bytes, BytesMut};
 use mediapack::{
-    AudioConfig, MediaEvent, StreamSet, Timestamp,
-    h264::AvcDecoderConfigurationRecord,
+    AudioConfig, MediaEvent, StreamSet, Timestamp, VideoConfig,
     loc::{self, LocObject},
     mp4::Fmp4Muxer,
 };
@@ -33,7 +32,7 @@ pub(crate) struct Pipeline {
     streams: StreamSet,
     muxer: Fmp4Muxer,
     capture_origin: Option<Timestamp>,
-    video_config: Option<AvcDecoderConfigurationRecord>,
+    video_config: Option<VideoConfig>,
     audio_config: Option<AudioConfig>,
     file_started: bool,
     /// Video before the first keyframe cannot be decoded and is dropped; a
@@ -189,7 +188,7 @@ fn demuxer(
 
 fn new_muxer(
     streams: StreamSet,
-    video_config: Option<&AvcDecoderConfigurationRecord>,
+    video_config: Option<&VideoConfig>,
     audio_config: Option<&AudioConfig>,
 ) -> Result<Fmp4Muxer> {
     let mut muxer = Fmp4Muxer::new();
@@ -212,7 +211,7 @@ fn to_loc_object(object: &TrackObject) -> LocObject {
 
 #[cfg(test)]
 mod tests {
-    use mediapack::{AudioSample, VideoSample, mp4, mpegts};
+    use mediapack::{AudioSample, VideoSample, h264::AvcDecoderConfigurationRecord, mp4, mpegts};
 
     use super::*;
     use crate::track_selection::AudioTrack;
@@ -482,7 +481,7 @@ mod tests {
             .events
             .iter()
             .find_map(|event| match event {
-                MediaEvent::VideoConfig(config) => Some(config.clone()),
+                MediaEvent::VideoConfig(VideoConfig::Avc(record)) => Some(record.clone()),
                 _ => None,
             })
             .unwrap();
@@ -531,7 +530,7 @@ mod tests {
         next_file.extend_from_slice(&pipeline.finish().unwrap());
         assert_eq!(&next_file[4..8], b"ftyp");
         let recorded = demux(&next_file);
-        assert!(recorded.contains(&MediaEvent::VideoConfig(changed)));
+        assert!(recorded.contains(&MediaEvent::VideoConfig(VideoConfig::Avc(changed))));
         assert_eq!(video_samples(&recorded).len(), 2);
     }
 
