@@ -155,7 +155,7 @@ fn select_audio(catalog: &Catalog, name: Option<&str>) -> Result<Option<AudioTra
     }))
 }
 
-fn loc_tracks(catalog: &Catalog) -> impl Iterator<Item = &Track> {
+pub(crate) fn loc_tracks(catalog: &Catalog) -> impl Iterator<Item = &Track> {
     catalog
         .tracks
         .iter()

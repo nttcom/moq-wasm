@@ -52,7 +52,9 @@ both tracks into one init segment and one fragment stream.
    the audio codec from its `codec`, `sampleRate` and `channelConfig`, and an AAC track's
    AudioSpecificConfig from the `initDataList` entry its `initRef` names, the
    way `broadcast::build_catalog` writes it. While the catalog lists no video
-   track yet, the recorder waits for the next catalog object.
+   track yet, the recorder waits for the next catalog object. With
+   `--list-tracks` it prints the first catalog object's LOC tracks
+   (`track_list::track_table`) to stdout and exits instead.
 3. Both media tracks are subscribed with `NextGroupStart`, so the recording
    begins on a keyframe, and read with one `TrackReader` each. With
    `--from-cache` they are subscribed with `LargestObject` instead, and a

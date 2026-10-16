@@ -7,6 +7,7 @@ mod relay;
 #[cfg(test)]
 mod test_support;
 mod token_refresh_task;
+mod track_list;
 mod track_selection;
 mod upload_task;
 
@@ -52,6 +53,10 @@ pub(crate) struct Args {
     /// decodable audio track with the highest bitrate
     #[arg(long)]
     pub(crate) audio_track: Option<String>,
+
+    /// Print the catalog's LOC tracks and exit instead of recording
+    #[arg(long)]
+    pub(crate) list_tracks: bool,
 
     /// Output file; defaults to <namespace>-<Unix seconds>.mp4 in the current
     /// directory. With `--layout per-track` each track goes to <stem>-<track>.mp4
@@ -101,5 +106,5 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    recorder::record(Args::parse()).await
+    recorder::run(Args::parse()).await
 }

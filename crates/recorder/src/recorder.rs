@@ -18,6 +18,7 @@ use crate::{
     recording::{Recording, Uploader},
     relay::{self, RelayConnection},
     token_refresh_task::{TokenRefreshTask, read_token_file},
+    track_list::track_table,
     track_selection::{Selection, VideoChoice, select_tracks},
     upload_task::UploadTask,
 };
@@ -26,7 +27,7 @@ use crate::{
 /// upload only after it ended.
 const UPLOAD_SEGMENT_SECONDS: u64 = 60;
 
-pub(crate) async fn record(args: Args) -> Result<()> {
+pub(crate) async fn run(args: Args) -> Result<()> {
     let auth_token = match &args.auth_token_file {
         Some(path) => Some(read_token_file(path).await?),
         None => args.auth_token.clone(),
@@ -49,7 +50,11 @@ pub(crate) async fn record(args: Args) -> Result<()> {
                 token,
             )
         });
-    let result = record_broadcast(&connection.session, &args).await;
+    let result = if args.list_tracks {
+        list_tracks(&connection.session, &args.namespace).await
+    } else {
+        record_broadcast(&connection.session, &args).await
+    };
     drop(token_refresh);
     connection.close().await;
     result
@@ -59,6 +64,15 @@ pub(crate) async fn record(args: Args) -> Result<()> {
 /// refresh convention names as the TRACK_STATUS namespace.
 fn app_id(namespace: &str) -> &str {
     namespace.split('/').next().unwrap_or(namespace)
+}
+
+async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
+    let catalog = CatalogReader::open(session, namespace)
+        .await?
+        .next()
+        .await?;
+    println!("{}", track_table(&catalog));
+    Ok(())
 }
 
 async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {

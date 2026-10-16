@@ -12,6 +12,14 @@ cargo run -p recorder -- \
   --namespace anon/live/test
 ```
 
+To see which tracks a broadcast offers, print its catalog:
+
+```bash
+cargo run -p recorder -- \
+  --relay https://127.0.0.1:4433 --insecure-skip-tls-verify \
+  --namespace anon/research/alice --list-tracks
+```
+
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--relay` (`MOQT_URL`) | — | `moqt://` for QUIC, `https://` for WebTransport |
@@ -19,6 +27,7 @@ cargo run -p recorder -- \
 | `--video-track` | by `--max-video-height` | LOC video track to record (`video_720p`, `camera_main_720p`, ...); H.264, VP8, VP9 or AV1, as the catalog's `codec` names it |
 | `--max-video-height` | `480` | Without `--video-track`, the tallest video track at most this high, or the shortest one when all are taller |
 | `--audio-track` | highest bitrate | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
+| `--list-tracks` | off | Print the catalog's LOC tracks (name, role, codec, size, bitrate, sample rate) and exit |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
 | `--layout` | `combined` | `combined` writes the video and the audio into one file; `per-track` writes each track to `<stem>-<track>.mp4` (a `/` in the name becomes `_`) |
 | `--from-cache` | off | Start with what the relay or the publisher still caches (60 s by default), then continue live |
