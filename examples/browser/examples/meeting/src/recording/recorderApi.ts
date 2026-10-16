@@ -13,19 +13,20 @@ export interface RoomRecording {
 
 /// `recorder serve` listens here by default.
 const LOCAL_RECORDER_URL = 'http://localhost:8096'
+const CLOUD_RECORDER_URL = 'https://recorder.moqt.research.skyway.io'
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
-/// The `recorderUrl` query parameter, or the local recorder when the relay is
-/// local too; `null` hides recording.
-export function resolveRecorderUrl(search: string, relayUrl: string): string | null {
+/// The `recorderUrl` query parameter, or the recorder that reaches the relay:
+/// the local one for a local relay, the deployed one otherwise.
+export function resolveRecorderUrl(search: string, relayUrl: string): string {
   const configured = new URLSearchParams(search).get('recorderUrl')?.trim()
   if (configured) {
     return configured.replace(/\/+$/, '')
   }
   try {
-    return LOCAL_HOSTS.has(new URL(relayUrl).hostname) ? LOCAL_RECORDER_URL : null
+    return LOCAL_HOSTS.has(new URL(relayUrl).hostname) ? LOCAL_RECORDER_URL : CLOUD_RECORDER_URL
   } catch {
-    return null
+    return CLOUD_RECORDER_URL
   }
 }
 
