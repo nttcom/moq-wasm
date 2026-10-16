@@ -32,17 +32,17 @@ impl CatalogReader {
         Ok(Self { track, current })
     }
 
-    pub(crate) async fn next(&mut self) -> Result<Catalog> {
+    /// `Ok(None)` once the catalog track has ended.
+    pub(crate) async fn next(&mut self) -> Result<Option<Catalog>> {
         let payload = match self.current.take() {
             Some(payload) => payload,
-            None => {
-                self.track
-                    .next_object()
-                    .await?
-                    .context("catalog track ended")?
-                    .payload
-            }
+            None => match self.track.next_object().await? {
+                Some(object) => object.payload,
+                None => return Ok(None),
+            },
         };
-        serde_json::from_slice(&payload).context("catalog is not MSF JSON")
+        serde_json::from_slice(&payload)
+            .map(Some)
+            .context("catalog is not MSF JSON")
     }
 }

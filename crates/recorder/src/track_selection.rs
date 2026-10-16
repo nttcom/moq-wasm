@@ -39,9 +39,9 @@ pub(crate) enum VideoChoice<'a> {
 /// audio name, the audio track is the decodable LOC track with role `audio`
 /// and the highest `bitrate`. Remaining ties go to the track listed first.
 ///
-/// A named audio track listed without its decoder configuration is dropped
-/// with a warning: `broadcast` lists AAC audio before the first audio frame
-/// delivers its configuration.
+/// The audio is `None` while no such track can be decoded from the catalog:
+/// `broadcast` lists AAC audio before the first audio frame delivers its
+/// configuration.
 pub(crate) fn select_tracks(
     catalog: &Catalog,
     video: VideoChoice,
@@ -110,7 +110,8 @@ fn video_track(track: &Track) -> Result<VideoTrack> {
     })
 }
 
-fn select_audio(catalog: &Catalog, name: Option<&str>) -> Result<Option<AudioTrack>> {
+/// The audio track `select_tracks` picks.
+pub(crate) fn select_audio(catalog: &Catalog, name: Option<&str>) -> Result<Option<AudioTrack>> {
     let Some(name) = name else {
         let mut decodable = Vec::new();
         for track in loc_tracks(catalog).filter(|track| has_role(track, KnownTrackRole::Audio)) {
@@ -122,34 +123,16 @@ fn select_audio(catalog: &Catalog, name: Option<&str>) -> Result<Option<AudioTra
                 decodable.push((track.bitrate, audio));
             }
         }
-        let audio = decodable
+        return Ok(decodable
             .into_iter()
             .rev()
             .max_by_key(|(bitrate, _)| *bitrate)
-            .map(|(_, audio)| audio);
-        if audio.is_none() {
-            tracing::warn!(
-                "catalog lists no LOC audio track that can be decoded; recording video only"
-            );
-        }
-        return Ok(audio);
+            .map(|(_, audio)| audio));
     };
     let Some(track) = loc_tracks(catalog).find(|track| track.name == name) else {
-        tracing::warn!(
-            track = name,
-            "catalog lists no LOC audio track; recording video only"
-        );
         return Ok(None);
     };
-    let Some(config) = audio_config(catalog, track)? else {
-        tracing::warn!(
-            track = name,
-            codec = track.codec.as_deref().unwrap_or("-"),
-            "audio track cannot be decoded from the catalog; recording video only"
-        );
-        return Ok(None);
-    };
-    Ok(Some(AudioTrack {
+    Ok(audio_config(catalog, track)?.map(|config| AudioTrack {
         name: track.name.clone(),
         config,
     }))

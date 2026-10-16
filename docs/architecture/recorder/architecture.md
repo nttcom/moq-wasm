@@ -55,7 +55,9 @@ both tracks into one init segment and one fragment stream.
    the audio codec from its `codec`, `sampleRate` and `channelConfig`, and an AAC track's
    AudioSpecificConfig from the `initDataList` entry its `initRef` names, the
    way `broadcast::build_catalog` writes it. While the catalog lists no video
-   track yet, the recorder waits for the next catalog object. With
+   track yet, the recorder waits for the next catalog object. While it lists
+   no audio track that can be decoded, the recording starts with the video
+   alone and keeps reading the catalog (see "An audio track listed later"). With
    `--list-tracks` it prints the first catalog object's LOC tracks
    (`track_list::track_table`) to stdout and exits instead.
 3. Both media tracks are subscribed with `NextGroupStart`, so the recording
@@ -83,6 +85,30 @@ both tracks into one init segment and one fragment stream.
    publisher leaves, the relay sends PUBLISH_DONE on both subscriptions and
    `moqt` ends them 10 s later, after any late streams, so the recorder needs
    no session-event handling of its own.
+
+## An audio track listed later
+A publisher's first catalog often lacks the audio a later one lists:
+`broadcast` sends a catalog at the first video and the first audio
+configuration, and until the second it lists the AAC `audio` track without
+its `initRef`; a meeting participant lists its audio tracks only while the
+microphone is on. A room recording subscribes the moment the namespace is
+published, so it reads exactly that first catalog. Waiting for the audio
+before recording was not chosen, because a video-only `broadcast` lists the
+`audio` placeholder for good and a muted participant may never unmute.
+
+So the video starts alone, and while the recording has no audio,
+`record_live` runs every catalog object through `track_selection::select_audio`.
+The first track it returns is subscribed with `NextGroupStart` and added
+with `Recording::add_audio`. In the combined layout the pipeline adds the
+track to the muxer at once when nothing has been written yet; otherwise the
+file goes on with video only, the audio meanwhile is dropped, and the next
+keyframe starts the next numbered file with both tracks (the init segment
+cannot change). The per-track layout opens the track's file. The catalog
+branch is polled before the media branches, so a catalog that arrives
+together with the first video object is applied before that object.
+
+The recording keeps the audio track once added; an audio track that ends
+ends the recording, as before.
 
 ## Key invariants
 - **One timeline for both tracks.** Each `loc::Demuxer` would otherwise count
@@ -201,12 +227,13 @@ the recorder started with.
   publisher's caches, 60 s for a `broadcast` publisher. A relay that started
   caching mid-group returns that group without its keyframe, and the pipeline
   drops video until the first keyframe.
-- Audio outside AAC, Opus, G.711 A-law and MP3, or an AAC track whose
-  configuration is not in the catalog yet, is skipped with a warning.
-- A room recording picks a participant's tracks once, from the first catalog
-  that lists a video track. An AAC track whose configuration is not in that
-  catalog yet (a `broadcast` publisher before its first audio frame) leaves
-  that participant's recording without audio.
+- Audio outside AAC, Opus, G.711 A-law and MP3 is never recorded.
+- An audio track listed after the first video was written starts at the
+  next keyframe in the next file; the audio before it is lost. Only a missing
+  audio track is added later: the video track, and an audio track once
+  picked, stay as chosen at start.
+- A meeting participant who mutes ends the audio track with PUBLISH_DONE,
+  which ends that participant's recording.
 - Video outside H.264, VP8, VP9 and AV1 ends the recorder with an error
   before anything is recorded: without the video track there is no file.
 - The automatic choice reads no track name, so it cannot tell a meeting's
