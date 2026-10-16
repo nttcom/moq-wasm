@@ -23,7 +23,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct TrackStatusHandler {
-    session_context: Arc<SessionContext>,
     request_id: u64,
     track_namespace: String,
     track_namespace_tuple: Vec<String>,
@@ -39,12 +38,11 @@ pub struct TrackStatusHandler {
 impl TrackStatusHandler {
     pub(crate) fn new(session_context: Arc<SessionContext>, track_status: Subscribe) -> Self {
         let guard = ResponseGuard::new(
-            session_context.clone(),
+            session_context.connection().clone(),
             track_status.request_id,
             RequestKind::TrackStatus,
         );
         Self {
-            session_context,
             request_id: track_status.request_id,
             track_namespace: track_status.track_namespace.join("/"),
             track_namespace_tuple: track_status.track_namespace,
@@ -74,7 +72,8 @@ impl TrackStatusHandler {
             delivery_timeout: None,
             max_duration: None,
         };
-        self.session_context
+        self.guard
+            .connection()
             .control
             .respond(OutgoingResponse::TrackStatusOk(track_status_ok))
             .await

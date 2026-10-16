@@ -47,9 +47,10 @@ impl Subscriber {
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.control.next_request_id();
+        let request_id = self.session.connection().control.next_request_id();
         let pending = self
             .session
+            .connection()
             .control
             .send_request(OutgoingRequest::SubscribeNamespace(
                 SubscribeNamespace::new(request_id, vec_namespace, vec![]),
@@ -96,7 +97,7 @@ impl Subscriber {
     ) -> Result<Subscription, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let filter_type = option.filter_type;
-        let request_id = self.session.control.next_request_id();
+        let request_id = self.session.connection().control.next_request_id();
         let subscribe = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -110,6 +111,7 @@ impl Subscriber {
         };
         let response = self
             .session
+            .connection()
             .control
             .send_request(OutgoingRequest::Subscribe(subscribe))
             .await?
@@ -182,7 +184,7 @@ impl Subscriber {
         authorization_tokens: Vec<AuthorizationToken>,
     ) -> Result<TrackStatusOk, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.control.next_request_id();
+        let request_id = self.session.connection().control.next_request_id();
         let track_status = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -196,6 +198,7 @@ impl Subscriber {
         };
         let response = self
             .session
+            .connection()
             .control
             .send_request(OutgoingRequest::TrackStatus(track_status))
             .await?
@@ -258,6 +261,7 @@ impl Subscriber {
         let request_id = fetch.request_id;
         self.session.remove_pending_fetch(request_id);
         self.session
+            .connection()
             .control
             .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
             .await?;
@@ -291,7 +295,7 @@ impl Subscriber {
         fetch_params: FetchParams,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
-        let request_id = self.session.control.next_request_id();
+        let request_id = self.session.connection().control.next_request_id();
 
         let pending_fetch = self.session.register_pending_fetch(request_id);
 
@@ -304,6 +308,7 @@ impl Subscriber {
         };
         let response = self
             .session
+            .connection()
             .control
             .send_request(OutgoingRequest::Fetch(fetch))
             .await?
@@ -343,7 +348,7 @@ impl Subscriber {
     ) -> anyhow::Result<()> {
         let subscription_request_id = subscription.request_id();
         let subscribe_update = SubscribeUpdate {
-            request_id: self.session.control.next_request_id(),
+            request_id: self.session.connection().control.next_request_id(),
             subscription_request_id,
             start_location: option.start_location,
             end_group: option.end_group,
@@ -353,6 +358,7 @@ impl Subscriber {
             delivery_timeout: None,
         };
         self.session
+            .connection()
             .control
             .notify(Notification::SubscribeUpdate(subscribe_update))
             .await?;
@@ -422,6 +428,7 @@ impl Subscriber {
         let request_id = subscription.request_id();
         self.session.cancel_subscription(request_id).await;
         self.session
+            .connection()
             .control
             .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
             .await?;
@@ -437,6 +444,7 @@ impl Subscriber {
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         self.session
+            .connection()
             .control
             .notify(Notification::UnsubscribeNamespace(
                 UnsubscribeNamespace::new(vec_namespace),

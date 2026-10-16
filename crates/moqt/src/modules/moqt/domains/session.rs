@@ -125,22 +125,22 @@ impl Session {
     /// Consumes no session events, so it can be awaited beside
     /// `receive_event()`.
     pub async fn closed(&self) -> TransportClose {
-        self.inner.transport_connection.closed().await
+        self.inner.connection().transport.closed().await
     }
 
     pub fn transport_stats(&self) -> TransportStats {
-        self.inner.transport_connection.stats()
+        self.inner.connection().transport.stats()
     }
 
     pub fn transport_addresses(&self) -> TransportAddresses {
-        self.inner.transport_connection.addresses()
+        self.inner.connection().transport.addresses()
     }
 
     /// The URL scheme `Endpoint::connect` takes for this session's transport:
     /// `moqt` for raw QUIC, `https` for WebTransport. A server names a GOAWAY's
     /// New Session URI in it (draft-14 §9.4).
     pub fn url_scheme(&self) -> &'static str {
-        match self.inner.transport_connection.negotiated_protocol() {
+        match self.inner.connection().transport.negotiated_protocol() {
             NegotiatedProtocol::Quic { .. } => "moqt",
             NegotiatedProtocol::WebTransport { .. } => "https",
         }
@@ -150,6 +150,7 @@ impl Session {
     /// session. Fire-and-forget: the draft defines no response.
     pub async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()> {
         self.inner
+            .connection()
             .control
             .notify(Notification::GoAway(GoAway::new(new_session_uri)))
             .await?;
@@ -160,6 +161,7 @@ impl Session {
     /// §9.2). Fire-and-forget.
     pub async fn raise_max_request_id(&self, max_request_id: u64) -> anyhow::Result<()> {
         self.inner
+            .connection()
             .control
             .notify(Notification::MaxRequestId(MaxRequestId::new(
                 max_request_id,
@@ -172,6 +174,7 @@ impl Session {
     /// `maximum_request_id` (draft-14 §9.3). Fire-and-forget.
     pub async fn requests_blocked(&self, maximum_request_id: u64) -> anyhow::Result<()> {
         self.inner
+            .connection()
             .control
             .notify(Notification::RequestsBlocked(RequestsBlocked::new(
                 maximum_request_id,

@@ -17,7 +17,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct PublishNamespaceHandler {
-    session_context: Arc<SessionContext>,
     request_id: u64,
     pub track_namespace: String,
     pub track_namespace_tuple: Vec<String>,
@@ -30,12 +29,11 @@ impl PublishNamespaceHandler {
         publish_namespace: PublishNamespace,
     ) -> Self {
         let guard = ResponseGuard::new(
-            session_context.clone(),
+            session_context.connection().clone(),
             publish_namespace.request_id,
             RequestKind::PublishNamespace,
         );
         Self {
-            session_context,
             guard,
             request_id: publish_namespace.request_id,
             track_namespace: publish_namespace.track_namespace.join("/"),
@@ -52,7 +50,8 @@ impl PublishNamespaceHandler {
         let publish_namespace_ok = NamespaceOk {
             request_id: self.request_id,
         };
-        self.session_context
+        self.guard
+            .connection()
             .control
             .respond(OutgoingResponse::PublishNamespaceOk(publish_namespace_ok))
             .await

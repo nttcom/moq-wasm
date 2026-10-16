@@ -25,7 +25,7 @@ impl UniStreamReceiveTask {
             async move {
                 tracing::debug!("Uni Stream Receiver started");
                 loop {
-                    match context.transport_connection.accept_uni().await {
+                    match context.connection().transport.accept_uni().await {
                         Ok(stream) => {
                             tracing::debug!("accepted incoming uni stream");
                             Self::on_stream_received(&context, stream).await;
@@ -43,7 +43,13 @@ impl UniStreamReceiveTask {
 
     #[tracing::instrument(level = "debug", name = "on_stream_received", skip_all)]
     async fn on_stream_received(context: &Arc<SessionContext>, stream: BoxedReceiveStream) -> bool {
-        let incoming = match context.control.version().accept_uni_stream(stream).await {
+        let incoming = match context
+            .connection()
+            .control
+            .version()
+            .accept_uni_stream(stream)
+            .await
+        {
             Ok(Some(incoming)) => incoming,
             Ok(None) => {
                 tracing::debug!("Stream finished before its header");

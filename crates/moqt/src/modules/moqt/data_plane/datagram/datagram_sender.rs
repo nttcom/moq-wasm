@@ -25,12 +25,14 @@ impl DatagramSender {
     pub async fn send_object(&mut self, object: &Object) -> anyhow::Result<()> {
         let bytes = self
             .session_context
+            .connection()
             .control
             .version()
             .encode_datagram(self.track_alias, object)?;
         let result = self
             .session_context
-            .transport_connection
+            .connection()
+            .transport
             .send_datagram(bytes);
         executor::yield_now().await;
         result

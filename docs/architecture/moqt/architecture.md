@@ -235,8 +235,8 @@ reason as `TransportClose`; it reads no session events, so a task can await it
 beside `receive_event()`. `Session::url_scheme()` is `moqt` for raw QUIC and
 `https` for WebTransport, so a server sending GOAWAY can name the new session
 URI in the scheme the client connected with (§9.4).
-`SessionContext` knows whether it is the server side and whether a GOAWAY
-was already received: a second GOAWAY, or one carrying a New Session
+The session's `Connection` knows whether it is the server side and whether a
+GOAWAY was already received: a second GOAWAY, or one carrying a New Session
 URI at a server, closes the session with PROTOCOL_VIOLATION before any event
 is emitted (§9.4 MUSTs).
 `Publisher::begin_publish_namespace` returns once PUBLISH_NAMESPACE is written,
@@ -369,14 +369,23 @@ forward from their own cache through the raw stream senders.
   `resolve_fetch_range` (`domains/fetch_range.rs`), shared with the wasm
   bindings.
 
-### `SessionContext` — shared session state
+### `SessionContext` and `Connection` — shared session state
 
-One struct owns all cross-task state:
+`Connection` (`domains/connection.rs`) holds what draft-14 scopes to one
+transport connection:
 
+- `transport` — the QUIC or WebTransport connection.
 - `control: ControlChannel` — the version adapter above; for draft-14 it
   holds the request id counter and `inflight_requests`.
-- `track_alias: AtomicU64` — per-session track alias allocation, shared by
+- `track_alias: AtomicU64` — the track aliases this side assigns, shared by
   `SubscribeHandler::allocate_track_alias` and `Publisher::publish`.
+- whether it is the server side and whether a GOAWAY arrived.
+
+`SessionContext` holds the rest of the cross-task state and the session's
+one `Connection`; `connection()` is the connection requests are sent on (see
+[session-migration.md](session-migration.md) for why the two are apart):
+
+- `event_sender` and `receiver_map`.
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
@@ -392,8 +401,9 @@ One struct owns all cross-task state:
   `encode`/`decode`. Framing (varint type + **16-bit fixed length**, a draft-14
   change) lives in `wire.rs`.
 - `handler/*` — received-message facades handed to the application inside
-  `SessionEvent` (e.g. `SubscribeHandler::ok(...)`, `::error(...)`). They keep
-  an `Arc<SessionContext>` so responding does not require the `Session`.
+  `SessionEvent` (e.g. `SubscribeHandler::ok(...)`, `::error(...)`). Their
+  `ResponseGuard` keeps the `Connection` the request arrived on, so the answer
+  goes there and responding does not require the `Session`.
   Namespace-carrying handlers expose the track namespace both as the wire
   tuple (`track_namespace_tuple`) and as the `/`-joined string
   (`track_namespace`); the tuple is authoritative because a tuple element may

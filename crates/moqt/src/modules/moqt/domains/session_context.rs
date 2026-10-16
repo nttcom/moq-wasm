@@ -1,11 +1,7 @@
-use crate::modules::transport::transport_connection::BoxedConnection;
 use std::{
     collections::{HashMap, VecDeque, hash_map::Entry},
     fmt,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
+    sync::Arc,
 };
 
 use crate::{
@@ -13,19 +9,18 @@ use crate::{
     modules::moqt::{
         control_plane::{constants::TerminationErrorCode, enums::RequestId},
         data_plane::stream::fetch_data_receiver::FetchDataReceiver,
+        domains::connection::Connection,
         runtime::dispatch::incoming_object::IncomingObject,
-        version::ControlChannel,
     },
 };
 
 const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 
+/// The state of a session that outlives its transport connection: the
+/// events, and the receivers the application takes per track alias and per
+/// FETCH.
 pub(crate) struct SessionContext {
-    pub(crate) transport_connection: BoxedConnection,
-    pub(crate) control: ControlChannel,
-    is_server: bool,
-    go_away_received: AtomicBool,
-    track_alias: AtomicU64,
+    connection: Arc<Connection>,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
@@ -90,17 +85,11 @@ impl Drop for PendingFetch {
 
 impl SessionContext {
     pub(crate) fn new(
-        transport_connection: BoxedConnection,
-        control: ControlChannel,
-        is_server: bool,
+        connection: Connection,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         Self {
-            transport_connection,
-            control,
-            is_server,
-            go_away_received: AtomicBool::new(false),
-            track_alias: AtomicU64::new(0),
+            connection: Arc::new(connection),
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
@@ -109,20 +98,9 @@ impl SessionContext {
         }
     }
 
-    /// draft-14 §9.4: a second GOAWAY, or a New Session URI sent to a
-    /// server, is a protocol violation.
-    pub(crate) fn note_go_away_received(&self, new_session_uri: &str) -> Result<(), &'static str> {
-        if self.go_away_received.swap(true, Ordering::SeqCst) {
-            return Err("received a second GOAWAY");
-        }
-        if self.is_server && !new_session_uri.is_empty() {
-            return Err("GOAWAY sent to a server carries a New Session URI");
-        }
-        Ok(())
-    }
-
-    pub(crate) fn get_track_alias(&self) -> u64 {
-        self.track_alias.fetch_add(1, Ordering::SeqCst)
+    /// The connection requests are sent on.
+    pub(crate) fn connection(&self) -> &Arc<Connection> {
+        &self.connection
     }
 
     pub(crate) async fn notify_incoming_object(
@@ -259,8 +237,7 @@ impl SessionContext {
         {
             tracing::error!(?error, "failed to send protocol violation event");
         }
-        self.transport_connection
-            .close(self.control.version().termination_code(code), reason);
+        self.connection.close(code, reason);
     }
 }
 
@@ -306,7 +283,7 @@ mod tests {
                 .map(|_| {
                     scope.spawn(|| {
                         (0..1_000)
-                            .map(|_| context.control.next_request_id())
+                            .map(|_| context.connection().control.next_request_id())
                             .collect::<Vec<_>>()
                     })
                 })
