@@ -16,6 +16,7 @@ const MAX_FILES_PER_TRACK = 2
 const MAX_FRAME_GAP_SECONDS = 0.3
 /// Unmuting starts a new encoder, so the audio comes back later than the unmute click.
 const MUTE_GAP_MARGIN_SECONDS = 2
+const COMPOSITE_RECORDING_SECONDS = 6
 
 test.setTimeout(180_000)
 
@@ -69,6 +70,38 @@ test('recorder serve keeps recording a meeting participant who mutes and unmutes
         expect(run.at(-1)! - run[0], `${layout} audio after an unmute`).toBeGreaterThan(UNMUTED_SECONDS - 1)
       }
     }
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()))
+    await recorder.close()
+  }
+})
+
+test('recorder serve composites a room of two participants into one video', async ({ browser }) => {
+  // Arrange
+  const recorder = await startRecorderServe()
+  const contexts: BrowserContext[] = []
+
+  try {
+    const room = `recorder-composite-${Date.now()}`
+    const recording = await recorder.start(`anon/${room}`, 'combined', true)
+    for (const name of ['alice', 'bob']) {
+      const client = await arrangeMeetingClient(browser, { params: { relayAUrl: liveViewerE2EConfig.moqtUrl } })
+      contexts.push(client.context)
+      await joinRoom(client.page, room, name, 'a')
+      await enableMedia(client.page)
+    }
+    await sleep(COMPOSITE_RECORDING_SECONDS * 1_000)
+
+    // Act
+    await recorder.stop(recording)
+    const composite = await recorder.composite(recording)
+
+    // Assert: one H.264 grid and the mixed AAC, lasting about as long as the recording
+    const probe = probeRecording(composite)
+    expect(probe.codecs.sort()).toEqual(['aac', 'h264'])
+    expect(probe.decodeErrors).toBe('')
+    expect(probe.durationSeconds).toBeGreaterThan(COMPOSITE_RECORDING_SECONDS - 2)
+    expect(probe.largestGapSeconds.video).toBeLessThan(MAX_FRAME_GAP_SECONDS)
   } finally {
     await Promise.all(contexts.map((context) => context.close()))
     await recorder.close()

@@ -18,6 +18,8 @@ const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 const RECORDER_START_TIMEOUT_MS = 180_000
 const RECORDER_SERVE_PORT = Number(process.env.RECORDER_E2E_PORT ?? 8096)
 const RECORDING_FINISH_TIMEOUT_MS = 15_000
+/// Compositing re-encodes the whole room after it stopped, slower than real time in a debug build.
+const COMPOSITE_TIMEOUT_MS = 120_000
 const POLL_INTERVAL_MS = 200
 
 /// Records with `--from-cache` and stops the recorder with SIGINT, as Ctrl-C would, `liveSeconds`
@@ -85,7 +87,8 @@ export async function startRecorderServe() {
       liveViewerE2EConfig.moqtUrl,
       '--insecure-skip-tls-verify',
       '--output-dir',
-      outputDir
+      outputDir,
+      '--composite'
     ],
     { cwd: REPO_ROOT, env: { ...process.env, RUST_LOG: 'info' }, stdio: 'inherit' }
   )
@@ -124,6 +127,23 @@ export async function startRecorderServe() {
       return readdirSync(dir, { recursive: true, encoding: 'utf8' })
         .filter((name) => name.endsWith('.mp4'))
         .map((name) => join(dir, name))
+    },
+    /// Waits for a stopped recording's composite and returns its path.
+    async composite(recording: RoomRecording): Promise<string> {
+      const deadline = Date.now() + COMPOSITE_TIMEOUT_MS
+      for (;;) {
+        const current = (await listRecordings(url, recording.namespace_prefix)).find(
+          (candidate) => candidate.id === recording.id
+        )
+        const state = current?.composite?.state
+        if (state === 'done') {
+          return join(outputDir, recording.id, 'composite.mp4')
+        }
+        if (state === 'failed' || state === 'skipped' || Date.now() > deadline) {
+          throw new Error(`recording ${recording.id} was not composited: ${JSON.stringify(current)}`)
+        }
+        await sleep(POLL_INTERVAL_MS)
+      }
     },
     async close(): Promise<void> {
       recorder.kill('SIGINT')
