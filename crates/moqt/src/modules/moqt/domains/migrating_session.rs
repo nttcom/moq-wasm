@@ -16,20 +16,23 @@ use crate::{
             migration_task::MigrationTask,
         },
     },
+    publish::Origin,
     subscribe::SubscribeOption,
 };
 
 /// A client session that follows the server's GOAWAY (draft-14 §3.5).
 /// It connects to the New Session URI (the current URL when the GOAWAY
-/// names none), sends every SUBSCRIBE_NAMESPACE and SUBSCRIBE made through
-/// this type again there, and closes the previous session with NO_ERROR
-/// once every track has moved. `MigratingTrack`s survive the migration;
-/// `receive_event` returns the events of both sessions. A failed migration
-/// keeps the current session until the server closes it.
+/// names none), sends every SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH
+/// and SUBSCRIBE made through this type again there, and closes the previous
+/// session with NO_ERROR once every subscribed track has moved and the
+/// server no longer takes any published track there. Until then `origin()`
+/// writes to both sessions (draft-22 §7.6.1). `MigratingTrack`s survive the
+/// migration; `receive_event` returns the events of both sessions. A failed
+/// migration keeps the current session until the server closes it.
 ///
 /// A SUBSCRIBE sent again continues live from the next group start. Only
-/// requests made through this type move: a FETCH, PUBLISH or
-/// PUBLISH_NAMESPACE sent on `session()` stays on that session.
+/// requests made through this type move: a FETCH or another request sent on
+/// `session()` stays on that session.
 pub struct MigratingSession {
     shared: Arc<Shared>,
     event_receiver: tokio::sync::Mutex<mpsc::UnboundedReceiver<SessionEvent>>,
@@ -38,7 +41,10 @@ pub struct MigratingSession {
 
 struct Shared {
     connector: Box<dyn SessionConnector>,
+    origin: Origin,
     current: std::sync::Mutex<Current>,
+    /// The session a migration moved away from, until it is closed.
+    previous: std::sync::Mutex<Option<Arc<Session>>>,
     /// Locked while a request is sent and while a migration sends all of
     /// them again, so a request sent during a migration is not skipped.
     requests: tokio::sync::Mutex<Requests>,
@@ -55,6 +61,7 @@ struct Current {
 #[derive(Default)]
 struct Requests {
     namespaces: Vec<String>,
+    published_namespaces: Vec<String>,
     tracks: Vec<TrackRequest>,
 }
 
@@ -92,6 +99,8 @@ impl MigratingSession {
         let session = Arc::new(connector.connect(url.to_string()).await?);
         let shared = Arc::new(Shared {
             connector,
+            origin: Origin::default(),
+            previous: std::sync::Mutex::new(None),
             current: std::sync::Mutex::new(Current {
                 session,
                 url: url.to_string(),
@@ -112,6 +121,32 @@ impl MigratingSession {
     /// type; take them from `receive_event`.
     pub fn session(&self) -> Arc<Session> {
         self.shared.current().session
+    }
+
+    /// The tracks this endpoint publishes, on every session that takes them.
+    /// Answer the SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and
+    /// TRACK_STATUS events with it, and send PUBLISH through `publish`.
+    pub fn origin(&self) -> &Origin {
+        &self.shared.origin
+    }
+
+    pub async fn publish_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
+        let mut requests = self.shared.requests.lock().await;
+        self.session()
+            .publisher()
+            .publish_namespace(namespace.clone())
+            .await?;
+        requests.published_namespaces.push(namespace);
+        Ok(())
+    }
+
+    /// `Origin::publish` on the current session.
+    pub async fn publish(&self, namespace: &str, track_name: &str) -> anyhow::Result<()> {
+        let _requests = self.shared.requests.lock().await;
+        self.shared
+            .origin
+            .publish(&self.session(), namespace, track_name)
+            .await
     }
 
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
@@ -184,10 +219,11 @@ impl MigratingSession {
     /// Every `MigratingTrack` must already be dropped, or the wait never
     /// ends.
     pub async fn close(&self) {
-        // The task holds the previous session; ending it drops that one.
         self.migration_task.abort();
-        self.session()
-            .close_with_error(TerminationErrorCode::NoError, "");
+        let previous = self.shared.previous().take();
+        for session in previous.into_iter().chain([self.session()]) {
+            session.close_with_error(TerminationErrorCode::NoError, "");
+        }
         self.shared.connector.wait_idle().await;
     }
 }
@@ -198,6 +234,12 @@ impl Shared {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    fn previous(&self) -> std::sync::MutexGuard<'_, Option<Arc<Session>>> {
+        self.previous
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn replace_current(&self, current: Current) {
@@ -216,11 +258,13 @@ mod tests {
 
     use super::*;
     use crate::{
+        Subscription,
         modules::test_support::{
-            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, dual_client, open_subgroup, send_payload,
-            spawn_dual_server,
+            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, dual_client, open_subgroup,
+            send_payload, spawn_dual_server, subscribed_track_reader,
         },
         object::{ContentExists, StreamDataSenderFactory},
+        publish::Retention,
         subscribe::FilterType,
         wire::SubgroupId,
     };
@@ -313,6 +357,99 @@ mod tests {
             previous_close.expect("previous session closed").code,
             Some(0)
         );
+    }
+
+    async fn accept_namespace(server: &Session) {
+        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+    }
+
+    async fn publish_track(client: &MigratingSession, server: &Session) -> Subscription {
+        client
+            .origin()
+            .ensure_track("ns", "track", 1, Retention::NewestOnly)
+            .await;
+        let (announced, ()) = tokio::join!(
+            client.publish_namespace("ns".into()),
+            accept_namespace(server)
+        );
+        announced.unwrap();
+        let (published, subscription) =
+            tokio::join!(client.publish("ns", "track"), accept_publish(server));
+        published.unwrap();
+        subscription
+    }
+
+    async fn next_group_payload(server: &Session, subscription: &Subscription) -> Bytes {
+        let mut reader = subscribed_track_reader(server, subscription).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+            .await
+            .expect("object within timeout")
+            .unwrap()
+            .expect("track still open")
+            .payload
+    }
+
+    #[tokio::test]
+    async fn go_away_publishes_on_the_new_server_and_writes_to_both_until_the_old_one_unsubscribes()
+    {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("migrating-publish-a");
+        let (port_b, accept_b) = spawn_dual_server("migrating-publish-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let published_a = publish_track(&client, &server_a).await;
+        let session_a = client.session();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        accept_namespace(&server_b).await;
+        let published_b = accept_publish(&server_b).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while Arc::ptr_eq(&client.session(), &session_a) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the session must move to B");
+        client
+            .origin()
+            .write_group("ns", "track", Bytes::from_static(b"both"))
+            .await
+            .unwrap();
+        let on_a = next_group_payload(&server_a, &published_a).await;
+        let on_b = next_group_payload(&server_b, &published_b).await;
+        let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, server_a.closed()).await;
+        server_a
+            .subscriber()
+            .unsubscribe(&published_a)
+            .await
+            .unwrap();
+        let SessionEvent::Unsubscribe(unsubscribe) =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, client.receive_event())
+                .await
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("expected UNSUBSCRIBE");
+        };
+        client.origin().release(&unsubscribe).await;
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+
+        // Assert
+        assert_eq!(on_a, Bytes::from_static(b"both"));
+        assert_eq!(on_b, Bytes::from_static(b"both"));
+        assert!(
+            still_open.is_err(),
+            "A must stay open while it takes the track"
+        );
+        assert_eq!(close.expect("A closed once it unsubscribed").code, Some(0));
     }
 
     #[tokio::test]
