@@ -4,7 +4,7 @@ use bytes::Bytes;
 use crate::{
     h264::AvcDecoderConfigurationRecord,
     mp4::isobmff::{self, TrackInit, VIDEO_TIMESCALE},
-    sample::{AudioConfig, MediaEvent, Timestamp, VideoSample},
+    sample::{AudioConfig, MediaEvent, Timestamp, VideoConfig, VideoSample},
 };
 
 const TRACK_ID: u32 = 1;
@@ -28,13 +28,13 @@ pub struct Fmp4TrackMuxer {
 }
 
 enum Track {
-    Video(AvcDecoderConfigurationRecord),
+    Video(VideoConfig),
     Audio(AudioConfig),
 }
 
 impl Fmp4TrackMuxer {
     pub fn video(config: AvcDecoderConfigurationRecord) -> Self {
-        Self::new(Track::Video(config))
+        Self::new(Track::Video(VideoConfig::Avc(config)))
     }
 
     pub fn audio(config: AudioConfig) -> Self {
@@ -66,10 +66,9 @@ impl Fmp4TrackMuxer {
     pub fn push(&mut self, event: &MediaEvent) -> Result<Option<Fragment>> {
         match event {
             MediaEvent::Video(sample) => {
-                let Track::Video(config) = &self.track else {
+                if !matches!(self.track, Track::Video(_)) {
                     bail!("video sample pushed into an audio track");
-                };
-                let nal_length_size = config.nal_length_size as usize;
+                }
                 let Some(previous) = self.pending_video.replace(sample.clone()) else {
                     return Ok(None);
                 };
@@ -78,11 +77,7 @@ impl Fmp4TrackMuxer {
                     .saturating_sub(previous.dts)
                     .ticks(VIDEO_TIMESCALE) as u32;
                 self.last_video_duration = duration;
-                Ok(Some(self.video_fragment(
-                    &previous,
-                    duration,
-                    nal_length_size,
-                )))
+                self.video_fragment(&previous, duration).map(Some)
             }
             MediaEvent::Audio(sample) => {
                 let Track::Audio(config) = &self.track else {
@@ -100,7 +95,7 @@ impl Fmp4TrackMuxer {
                     bail!("video configuration pushed into an audio track");
                 };
                 ensure!(
-                    config == update.avc()?,
+                    config == update,
                     "video configuration changed after the init segment"
                 );
                 Ok(None)
@@ -119,34 +114,30 @@ impl Fmp4TrackMuxer {
         }
     }
 
-    pub fn finish(&mut self) -> Option<Fragment> {
-        let sample = self.pending_video.take()?;
-        let Track::Video(config) = &self.track else {
-            return None;
+    pub fn finish(&mut self) -> Result<Option<Fragment>> {
+        let Some(sample) = self.pending_video.take() else {
+            return Ok(None);
         };
-        let nal_length_size = config.nal_length_size as usize;
         let duration = self.last_video_duration;
-        Some(self.video_fragment(&sample, duration, nal_length_size))
+        self.video_fragment(&sample, duration).map(Some)
     }
 
-    fn video_fragment(
-        &mut self,
-        sample: &VideoSample,
-        duration: u32,
-        nal_length_size: usize,
-    ) -> Fragment {
+    fn video_fragment(&mut self, sample: &VideoSample, duration: u32) -> Result<Fragment> {
+        let Track::Video(config) = &self.track else {
+            bail!("video sample pushed into an audio track");
+        };
         self.sequence_number += 1;
-        Fragment {
+        Ok(Fragment {
             data: isobmff::video_fragment(
                 self.sequence_number,
                 TRACK_ID,
                 sample,
                 duration,
-                nal_length_size,
-            ),
+                config,
+            )?,
             is_keyframe: sample.is_keyframe,
             presentation_time: sample.pts,
-        }
+        })
     }
 }
 
@@ -215,7 +206,7 @@ mod tests {
         // Act
         let first = muxer.push(&video(0, true)).unwrap();
         let second = muxer.push(&video(40, false)).unwrap().unwrap();
-        let flushed = muxer.finish().unwrap();
+        let flushed = muxer.finish().unwrap().unwrap();
 
         // Assert
         assert!(first.is_none());
@@ -240,7 +231,7 @@ mod tests {
         assert_eq!(kinds(&fragment.data), ["moof", "mdat"]);
         assert_eq!(traf_track_id(&fragment.data), TRACK_ID);
         assert_eq!(boxes(&fragment.data)[1].1, [0xDE, 0xAD]);
-        assert!(muxer.finish().is_none());
+        assert!(muxer.finish().unwrap().is_none());
     }
 
     #[test]

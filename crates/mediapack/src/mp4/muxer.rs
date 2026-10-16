@@ -1,10 +1,9 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
-    h264::AvcDecoderConfigurationRecord,
     mp4::isobmff::{self, TrackInit, VIDEO_TIMESCALE},
-    sample::{AudioConfig, MediaEvent, StreamSet, VideoSample},
+    sample::{AudioConfig, MediaEvent, StreamSet, VideoConfig, VideoSample},
 };
 
 const VIDEO_TRACK_ID: u32 = 1;
@@ -13,7 +12,7 @@ const AUDIO_TRACK_ID: u32 = 2;
 #[derive(Default)]
 pub struct Fmp4Muxer {
     expected: StreamSet,
-    video_config: Option<AvcDecoderConfigurationRecord>,
+    video_config: Option<VideoConfig>,
     audio_config: Option<AudioConfig>,
     init_written: bool,
     sequence_number: u32,
@@ -34,7 +33,6 @@ impl Fmp4Muxer {
                 Ok(Bytes::new())
             }
             MediaEvent::VideoConfig(config) => {
-                let config = config.avc()?;
                 if self.init_written {
                     ensure!(
                         self.video_config.as_ref() == Some(config),
@@ -76,12 +74,8 @@ impl Fmp4Muxer {
         let Some(sample) = self.pending_video.take() else {
             return Ok(Bytes::new());
         };
-        let nal_length_size = self
-            .video_config
-            .as_ref()
-            .map_or(4, |config| config.nal_length_size as usize);
         let duration = self.last_video_duration;
-        Ok(self.video_fragment(&sample, duration, nal_length_size))
+        self.video_fragment(&sample, duration)
     }
 
     fn configs_ready(&self) -> bool {
@@ -92,11 +86,6 @@ impl Fmp4Muxer {
     fn fragment(&mut self, event: &MediaEvent) -> Result<Bytes> {
         match event {
             MediaEvent::Video(sample) => {
-                let nal_length_size = self
-                    .video_config
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("video sample without configuration"))?
-                    .nal_length_size as usize;
                 let Some(previous) = self.pending_video.replace(sample.clone()) else {
                     return Ok(Bytes::new());
                 };
@@ -105,7 +94,7 @@ impl Fmp4Muxer {
                     .saturating_sub(previous.dts)
                     .ticks(VIDEO_TIMESCALE) as u32;
                 self.last_video_duration = duration;
-                Ok(self.video_fragment(&previous, duration, nal_length_size))
+                self.video_fragment(&previous, duration)
             }
             MediaEvent::Audio(sample) => {
                 let config = self
@@ -119,19 +108,18 @@ impl Fmp4Muxer {
         }
     }
 
-    fn video_fragment(
-        &mut self,
-        sample: &VideoSample,
-        duration: u32,
-        nal_length_size: usize,
-    ) -> Bytes {
+    fn video_fragment(&mut self, sample: &VideoSample, duration: u32) -> Result<Bytes> {
+        let config = self
+            .video_config
+            .as_ref()
+            .context("video sample without configuration")?;
         self.sequence_number += 1;
         isobmff::video_fragment(
             self.sequence_number,
             VIDEO_TRACK_ID,
             sample,
             duration,
-            nal_length_size,
+            config,
         )
     }
 
@@ -162,9 +150,13 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         aac::AudioSpecificConfig,
+        loc,
         mp4::isobmff::{NON_SYNC_SAMPLE_FLAGS, SYNC_SAMPLE_FLAGS},
         sample::{AudioConfig, AudioSample, Timestamp},
-        test_support::{delta_frame_annexb, fixture_video_config, keyframe_annexb, mono_48k},
+        test_support::{
+            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, delta_frame_annexb,
+            fixture_video_config, ivf_frames, keyframe_annexb, mono_48k,
+        },
     };
 
     pub(crate) fn boxes(data: &[u8]) -> Vec<(String, &[u8])> {
@@ -344,5 +336,67 @@ pub(crate) mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    /// A video-only file of the fixture's two frames, demuxed from LOC objects.
+    fn mux_ivf(codec: loc::VideoCodec, fixture: &[u8]) -> Vec<u8> {
+        let mut demuxer = loc::Demuxer::video(codec);
+        let mut muxer = Fmp4Muxer::new();
+        let mut file = Vec::new();
+        for (index, payload) in ivf_frames(fixture).into_iter().enumerate() {
+            let object = loc::LocObject {
+                extensions: vec![loc::LocExtension::varint(
+                    loc::CAPTURE_TIMESTAMP_ID,
+                    index as u64 * 33_333,
+                )],
+                payload,
+            };
+            for event in demuxer.push(&object).unwrap() {
+                file.extend_from_slice(&muxer.push(&event).unwrap());
+            }
+        }
+        file.extend_from_slice(&muxer.finish().unwrap());
+        file
+    }
+
+    /// The payload of the first box of `kind` at any depth.
+    fn nested_box<'a>(data: &'a [u8], kind: &[u8; 4]) -> &'a [u8] {
+        let start = data
+            .windows(4)
+            .position(|window| window == kind)
+            .unwrap_or_else(|| panic!("missing box {}", String::from_utf8_lossy(kind)));
+        let size = u32::from_be_bytes(data[start - 4..start].try_into().unwrap()) as usize;
+        &data[start + 4..start - 4 + size]
+    }
+
+    #[test]
+    fn writes_vp8_and_vp9_with_a_vp_codec_configuration() {
+        // Act
+        let vp8 = mux_ivf(loc::VideoCodec::Vp8, FIXTURE_VP8_IVF);
+        let vp9 = mux_ivf(loc::VideoCodec::Vp9, FIXTURE_VP9_IVF);
+
+        // Assert: version 1, profile 0, level 1, 8-bit 4:2:0 limited range, colour unspecified
+        let expected_vpcc = [1, 0, 0, 0, 0, 10, 0x82, 2, 2, 2, 0, 0];
+        assert_eq!(nested_box(&vp8, b"vpcC"), expected_vpcc);
+        assert_eq!(nested_box(&vp9, b"vpcC"), expected_vpcc);
+        assert_eq!(
+            nested_box(&vp9, b"mdat"),
+            ivf_frames(FIXTURE_VP9_IVF)[0].as_ref()
+        );
+    }
+
+    #[test]
+    fn writes_av1_samples_without_their_temporal_delimiter() {
+        // Arrange
+        let frames = ivf_frames(FIXTURE_AV1_IVF);
+
+        // Act
+        let file = mux_ivf(loc::VideoCodec::Av1, FIXTURE_AV1_IVF);
+
+        // Assert: marker and version, profile 0 level 0, 8-bit 4:2:0, then the sequence header OBU
+        let av1c = nested_box(&file, b"av1C");
+        assert_eq!(av1c[..4], [0x81, 0x00, 0x0C, 0x00]);
+        assert_eq!(av1c[4..], frames[0][2..14]);
+        assert_eq!(nested_box(&file, b"mdat"), &frames[0][2..]);
     }
 }
