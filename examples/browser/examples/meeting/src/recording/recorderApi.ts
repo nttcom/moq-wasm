@@ -12,7 +12,7 @@ export interface RoomRecording {
 }
 
 /// `recorder serve` listens here by default.
-const LOCAL_RECORDER_URL = 'http://localhost:8095'
+const LOCAL_RECORDER_URL = 'http://localhost:8096'
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /// The `recorderUrl` query parameter, or the local recorder when the relay is

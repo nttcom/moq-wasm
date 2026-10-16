@@ -62,7 +62,7 @@ from the moment it is published, with the tracks picked from its catalog
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--listen` | `127.0.0.1:8095` | Address of the API |
+| `--listen` | `127.0.0.1:8096` | Address of the API |
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
 | `--namespace-root` | `anon` | First element every recorded prefix must have; the API has no authentication |
 | `--max-recordings` | `4` | Recordings at once |
