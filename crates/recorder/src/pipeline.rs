@@ -3,8 +3,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bytes::{Bytes, BytesMut};
 use mediapack::{
-    AudioConfig, MediaEvent, StreamSet, Timestamp,
-    h264::AvcDecoderConfigurationRecord,
+    AudioConfig, MediaEvent, StreamSet, Timestamp, VideoConfig,
     loc::{self, LocObject},
     mp4::Fmp4Muxer,
 };
@@ -29,11 +28,12 @@ pub(crate) struct Output {
 pub(crate) struct Pipeline {
     video: Option<loc::Demuxer>,
     audio: Option<loc::Demuxer>,
+    video_codec: loc::VideoCodec,
     audio_track: Option<AudioConfig>,
     streams: StreamSet,
     muxer: Fmp4Muxer,
     capture_origin: Option<Timestamp>,
-    video_config: Option<AvcDecoderConfigurationRecord>,
+    video_config: Option<VideoConfig>,
     audio_config: Option<AudioConfig>,
     file_started: bool,
     /// Video before the first keyframe cannot be decoded and is dropped; a
@@ -57,6 +57,7 @@ impl Pipeline {
         Ok(Self {
             video: None,
             audio: None,
+            video_codec: selection.video.codec,
             audio_track: audio_config.clone(),
             streams,
             muxer: new_muxer(streams, None, audio_config.as_ref())?,
@@ -78,7 +79,9 @@ impl Pipeline {
             .is_some_and(|previous| previous != object.group_id);
         let loc_object = to_loc_object(object);
         let origin = self.capture_origin(&loc_object);
-        let events = demuxer(&mut self.video, origin, loc::Demuxer::video).push(&loc_object)?;
+        let codec = self.video_codec;
+        let events =
+            demuxer(&mut self.video, origin, || loc::Demuxer::video(codec)).push(&loc_object)?;
         let mut output = self.mux(events)?;
         output.group_complete = group_complete;
         Ok(output)
@@ -189,7 +192,7 @@ fn demuxer(
 
 fn new_muxer(
     streams: StreamSet,
-    video_config: Option<&AvcDecoderConfigurationRecord>,
+    video_config: Option<&VideoConfig>,
     audio_config: Option<&AudioConfig>,
 ) -> Result<Fmp4Muxer> {
     let mut muxer = Fmp4Muxer::new();
@@ -212,10 +215,10 @@ fn to_loc_object(object: &TrackObject) -> LocObject {
 
 #[cfg(test)]
 mod tests {
-    use mediapack::{AudioSample, VideoSample, mp4, mpegts};
+    use mediapack::{AudioSample, VideoSample, h264::AvcDecoderConfigurationRecord, mp4, mpegts};
 
     use super::*;
-    use crate::track_selection::AudioTrack;
+    use crate::track_selection::{AudioTrack, VideoTrack};
 
     const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
     const CAPTURE_ORIGIN: Timestamp = Timestamp::from_micros(1_700_000_000_000_000);
@@ -283,7 +286,10 @@ mod tests {
 
     fn selection(audio_config: Option<AudioConfig>) -> Selection {
         Selection {
-            video: "video".to_string(),
+            video: VideoTrack {
+                name: "video".to_string(),
+                codec: loc::VideoCodec::H264,
+            },
             audio: audio_config.map(|config| AudioTrack {
                 name: "audio".to_string(),
                 config,
@@ -482,7 +488,7 @@ mod tests {
             .events
             .iter()
             .find_map(|event| match event {
-                MediaEvent::VideoConfig(config) => Some(config.clone()),
+                MediaEvent::VideoConfig(VideoConfig::Avc(record)) => Some(record.clone()),
                 _ => None,
             })
             .unwrap();
@@ -531,7 +537,7 @@ mod tests {
         next_file.extend_from_slice(&pipeline.finish().unwrap());
         assert_eq!(&next_file[4..8], b"ftyp");
         let recorded = demux(&next_file);
-        assert!(recorded.contains(&MediaEvent::VideoConfig(changed)));
+        assert!(recorded.contains(&MediaEvent::VideoConfig(VideoConfig::Avc(changed))));
         assert_eq!(video_samples(&recorded).len(), 2);
     }
 

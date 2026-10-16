@@ -92,7 +92,7 @@ impl TrackReceiveTask {
                         .capture_origin
                         .get_or_init(|| object.capture_timestamp().unwrap_or(Timestamp::ZERO));
                     match &kind {
-                        TrackKind::Video => loc::Demuxer::video(),
+                        TrackKind::Video => loc::Demuxer::video(loc::VideoCodec::H264),
                         TrackKind::Audio(config) => loc::Demuxer::audio(config.clone()),
                     }
                     .with_capture_origin(origin)

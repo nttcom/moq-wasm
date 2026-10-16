@@ -11,8 +11,10 @@ It has no dependency on GStreamer or FFmpeg; everything is parsed and written in
 | LoC | `loc::Demuxer` | `loc::Muxer` |
 | RTP | `rtp::Demuxer` | `rtp::Muxer` |
 
-All five formats share H.264/AAC `MediaEvent`s. MPEG-TS, FLV, and fMP4 can
-be converted in either direction through `Transmuxer`.
+All five formats share H.264/AAC `MediaEvent`s; the LoC demuxer also reports
+VP8, VP9 and AV1, which `mp4::Fmp4Muxer` writes and the other formats do not
+carry. MPEG-TS, FLV, and fMP4
+can be converted in either direction through `Transmuxer`.
 
 ## Model
 
@@ -22,9 +24,9 @@ the corresponding container bytes or objects.
 | Event | Meaning |
 | --- | --- |
 | `Streams` | Which tracks the container announces (MPEG-TS PMT, FLV header flags) |
-| `VideoConfig` | `AvcDecoderConfigurationRecord` (SPS/PPS, codec string) |
+| `VideoConfig` | `VideoConfig::Avc` holding the `AvcDecoderConfigurationRecord` (SPS/PPS, codec string), or the VP8, VP9 or AV1 configuration read from a keyframe; muxers other than `mp4::Fmp4Muxer` take H.264 only |
 | `AudioConfig` | AAC `AudioSpecificConfig`, or the sample rate and channels of G.711 A-law, Opus or MP3; the FLV and MPEG-TS muxers take AAC only, the fMP4 muxers all four |
-| `Video` | One H.264 access unit in Annex-B form; keyframes carry SPS/PPS in-band |
+| `Video` | One H.264 access unit in Annex-B form whose keyframes carry SPS/PPS in-band, a VP8 or VP9 frame, or an AV1 temporal unit in the low-overhead bitstream format |
 | `Audio` | One encoded audio frame (a raw AAC access unit without ADTS header, A-law bytes, an Opus packet or an MP3 frame) |
 
 Timestamps are `Timestamp` values in microseconds with conversions to and from
@@ -37,11 +39,12 @@ Timestamps are `Timestamp` values in microseconds with conversions to and from
 | `mpegts::parser` | TS packet alignment and parsing, PAT/PMT sections, PES headers |
 | `mpegts::Demuxer` / `mpegts::Muxer` | TS bytes and events; muxing writes PAT/PMT, PES, PCR, and ADTS |
 | `flv::Demuxer` / `flv::Muxer` | FLV file streams and RTMP tag payloads (`push_tag`) |
-| `mp4::Demuxer` / `mp4::Fmp4Muxer` | Fragmented MP4; muxing writes an init segment plus one fragment per sample |
+| `mp4::Demuxer` / `mp4::Fmp4Muxer` | Fragmented MP4; muxing writes an init segment plus one fragment per sample, with `avc1`, `vp08`, `vp09` or `av01` video |
 | `mp4::Fmp4TrackMuxer` | One track per muxer with the init segment returned apart from the fragments, the shape draft-ietf-moq-cmsf-01 §3.1/§3.3 gives a MoQT track |
 | `loc` | `Muxer`, `Demuxer`, and transport-independent `LocObject` with typed extensions |
 | `rtp` | `Demuxer` / `Muxer` over RTP datagrams, `packet::Header` (RFC 3550), the H.264 (RFC 6184), AAC `MPEG4-GENERIC` (RFC 3640), G.711 A-law (RFC 3551) and Opus (RFC 7587) payload formats, and the `sdp::SessionDescription` subset that describes a plain RTP session |
 | `h264` | Annex-B/AVCC conversion, NAL unit types, SPS parsing (codec string, dimensions) |
+| `vp8` / `vp9` / `av1` | Keyframe detection and the configuration a keyframe carries: the VP8 frame size, the VP9 uncompressed header, the AV1 sequence header |
 | `aac` | AudioSpecificConfig and ADTS parsing |
 | `transmux` | `Transmuxer` (push API) and `transmux()` (Read/Write API) |
 
@@ -72,13 +75,14 @@ cargo run -p mediapack --example transmux -- mpegts fmp4 in.ts out.mp4
 LoC carries individual objects with extension headers and a payload, rather
 than a byte stream. Use `loc::Muxer` and `loc::Demuxer` directly, outside the
 `Read`/`Write` transmux API. Route video and audio to separate MoQ tracks;
-provide the audio configuration from the catalog to `loc::Demuxer::audio`.
+provide the video codec and the audio configuration from the catalog to
+`loc::Demuxer::video` and `loc::Demuxer::audio`.
 
 ```rust
 use mediapack::{MediaEvent, Timestamp, loc};
 
 let muxer = loc::Muxer::new(Timestamp::from_micros(1_700_000_000_000_000));
-let mut video_demuxer = loc::Demuxer::video();
+let mut video_demuxer = loc::Demuxer::video(loc::VideoCodec::H264);
 for event in &events {
     if matches!(event, MediaEvent::Video(_)) {
         if let Some(object) = muxer.push(event) {

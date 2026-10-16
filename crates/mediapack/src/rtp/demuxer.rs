@@ -15,7 +15,9 @@ use crate::{
         reorder::{Ordered, ReorderBuffer},
         sdp::{Codec, OPUS_CLOCK_RATE, SessionDescription},
     },
-    sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+    sample::{
+        AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample,
+    },
 };
 
 /// Turns the RTP datagrams of a session into media events. The session
@@ -95,7 +97,8 @@ impl Demuxer {
                 Codec::H264 { parameter_sets } => {
                     set.has_video = true;
                     if let Some(record) = parameter_sets {
-                        announcement.push(MediaEvent::VideoConfig(record.clone()));
+                        announcement
+                            .push(MediaEvent::VideoConfig(VideoConfig::Avc(record.clone())));
                     }
                     StreamCodec::H264(VideoStream::new(parameter_sets.as_ref()))
                 }
@@ -303,7 +306,7 @@ impl VideoStream {
             return Ok(());
         };
         if let Some(config) = unit.config_changed {
-            events.push(MediaEvent::VideoConfig(config));
+            events.push(MediaEvent::VideoConfig(VideoConfig::Avc(config)));
         }
         if self.awaiting_keyframe && !unit.is_keyframe {
             return Ok(());
@@ -364,7 +367,7 @@ mod tests {
             sdp::MediaKind,
         },
         test_support::{
-            FIXTURE_PPS, FIXTURE_SPS, audio_samples, delta_frame_annexb, fixture_record,
+            FIXTURE_PPS, FIXTURE_SPS, audio_samples, delta_frame_annexb, fixture_video_config,
             keyframe_annexb, mono_48k, video_samples,
         },
     };
@@ -382,7 +385,7 @@ mod tests {
                 has_video: true,
                 has_audio: true,
             }),
-            MediaEvent::VideoConfig(fixture_record()),
+            MediaEvent::VideoConfig(fixture_video_config()),
             MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
             MediaEvent::Video(VideoSample {
                 data: keyframe_annexb(),
@@ -450,7 +453,7 @@ mod tests {
                     has_video: true,
                     has_audio: true
                 }),
-                MediaEvent::VideoConfig(fixture_record()),
+                MediaEvent::VideoConfig(fixture_video_config()),
                 MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
             ]
         );
@@ -521,7 +524,7 @@ mod tests {
             .collect();
 
         // Assert: the keyframe carries the parameter sets in band and the config is announced once
-        assert_eq!(events[1], MediaEvent::VideoConfig(fixture_record()));
+        assert_eq!(events[1], MediaEvent::VideoConfig(fixture_video_config()));
         assert_eq!(
             events
                 .iter()

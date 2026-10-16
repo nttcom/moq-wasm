@@ -5,7 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     flv::tag::{Tag, TagType, parse_file_header, parse_tag},
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
-    sample::{AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample},
+    sample::{AudioConfig, AudioSample, MediaEvent, Timestamp, VideoConfig, VideoSample},
 };
 
 const VIDEO_CODEC_AVC: u8 = 7;
@@ -70,7 +70,7 @@ impl Demuxer {
                 let config = AvcDecoderConfigurationRecord::parse(body)
                     .context("parse FLV AVC sequence header")?;
                 self.video_config = Some(config.clone());
-                Ok(vec![MediaEvent::VideoConfig(config)])
+                Ok(vec![MediaEvent::VideoConfig(VideoConfig::Avc(config))])
             }
             PACKET_TYPE_PAYLOAD => {
                 let config = self
@@ -128,7 +128,7 @@ mod tests {
         sample::StreamSet,
         test_support::{
             FIXTURE_FLV, IDR_SLICE, audio_samples, count_events, delta_frame_annexb,
-            fixture_record, keyframe_annexb, mono_48k, video_samples,
+            fixture_record, fixture_video_config, keyframe_annexb, mono_48k, video_samples,
         },
     };
 
@@ -167,7 +167,10 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert_eq!(config_events, [MediaEvent::VideoConfig(fixture_record())]);
+        assert_eq!(
+            config_events,
+            [MediaEvent::VideoConfig(fixture_video_config())]
+        );
         assert_eq!(
             key_events,
             [MediaEvent::Video(VideoSample {

@@ -4,7 +4,7 @@ use crate::{
     aac::{AudioSpecificConfig, adts::HEADER_LENGTH},
     h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
     mpegts::parser::{PACKET_SIZE, SYNC_BYTE},
-    sample::{AudioSample, MediaEvent, VideoSample},
+    sample::{AudioSample, MediaEvent, VideoConfig, VideoSample},
 };
 
 pub(crate) const FIXTURE_TS: &[u8] = include_bytes!("../fixtures/testsrc.ts");
@@ -13,6 +13,11 @@ pub(crate) const FIXTURE_MP4: &[u8] = include_bytes!("../fixtures/testsrc.mp4");
 pub(crate) const FIXTURE_PROGRESSIVE_MP4: &[u8] =
     include_bytes!("../fixtures/testsrc_progressive.mp4");
 pub(crate) const FIXTURE_MP3_MP4: &[u8] = include_bytes!("../fixtures/testsrc_mp3.mp4");
+/// Two 64x48 4:2:0 frames each, a keyframe and an inter frame, as ffmpeg
+/// writes them with libvpx, libvpx-vp9 and libaom-av1.
+pub(crate) const FIXTURE_VP8_IVF: &[u8] = include_bytes!("../fixtures/testsrc_vp8.ivf");
+pub(crate) const FIXTURE_VP9_IVF: &[u8] = include_bytes!("../fixtures/testsrc_vp9.ivf");
+pub(crate) const FIXTURE_AV1_IVF: &[u8] = include_bytes!("../fixtures/testsrc_av1.ivf");
 
 pub(crate) const FIXTURE_SPS: [u8; 24] = [
     0x67, 0x42, 0xd0, 0x0b, 0xda, 0x0a, 0x37, 0xe4, 0xc0, 0x44, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00,
@@ -28,6 +33,10 @@ pub(crate) fn fixture_record() -> AvcDecoderConfigurationRecord {
         vec![Bytes::from_static(&FIXTURE_PPS)],
     )
     .unwrap()
+}
+
+pub(crate) fn fixture_video_config() -> VideoConfig {
+    VideoConfig::Avc(fixture_record())
 }
 
 pub(crate) fn keyframe_annexb() -> Bytes {
@@ -200,4 +209,18 @@ pub(crate) fn pes_packet(stream_id: u8, pts: u64, dts: Option<u64>, payload: &[u
     pes.extend(header_data);
     pes.extend_from_slice(payload);
     pes
+}
+
+/// The frame payloads of an IVF file: a header whose length is at byte 6,
+/// then frames each prefixed by a 4-byte size and an 8-byte timestamp.
+pub(crate) fn ivf_frames(file: &[u8]) -> Vec<Bytes> {
+    let mut position = u16::from_le_bytes([file[6], file[7]]) as usize;
+    let mut frames = Vec::new();
+    while position < file.len() {
+        let size = u32::from_le_bytes(file[position..position + 4].try_into().unwrap()) as usize;
+        position += 12;
+        frames.push(Bytes::copy_from_slice(&file[position..position + size]));
+        position += size;
+    }
+    frames
 }

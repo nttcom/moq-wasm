@@ -17,7 +17,11 @@ async fn main() -> Result<()> {
     let source = events
         .iter()
         .find_map(|event| match event {
-            MediaEvent::VideoConfig(config) => Some(config.sequence_parameter_set()),
+            MediaEvent::VideoConfig(config) => Some(
+                config
+                    .avc()
+                    .and_then(|record| record.sequence_parameter_set()),
+            ),
             _ => None,
         })
         .context("input has no H.264 video")??;

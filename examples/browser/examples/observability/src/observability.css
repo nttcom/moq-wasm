@@ -501,24 +501,17 @@ main {
 }
 
 .details {
-  width: 300px;
+  width: 140px;
   flex: none;
   overflow-y: auto;
   padding: 10px 16px;
   border-right: 1px solid var(--line);
 }
 
-.details .sub {
-  color: var(--muted);
-  margin-bottom: 6px;
-  overflow-wrap: anywhere;
-}
-
 .tabs {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 10px;
 }
 
 .tabs button {
@@ -542,37 +535,10 @@ main {
   color: var(--text);
 }
 
-.section {
-  margin-top: 14px;
-  padding: 8px 0 4px;
-  border-top: 1px solid var(--line);
-  font-weight: 500;
-  display: flex;
-  justify-content: space-between;
-}
-
-.section small {
-  color: var(--focus);
-  font-weight: 400;
-}
-
 .note {
   color: var(--muted);
   font-size: 11px;
   margin-bottom: 4px;
-}
-
-.rows div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 0;
-  color: var(--muted);
-}
-
-.rows span:first-child {
-  color: var(--text);
-  overflow-wrap: anywhere;
 }
 
 .charts {

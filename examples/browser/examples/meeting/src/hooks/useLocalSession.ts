@@ -14,6 +14,10 @@ export function useLocalSession() {
   })
 
   const connect = useCallback(async (roomName: string, userName: string, relayUrl: string) => {
+    // The join form stays enabled while connecting, so a second submit must not open a second session.
+    if (sessionRef.current) {
+      return sessionRef.current
+    }
     setState({ session: sessionRef.current, isInitializing: true })
 
     try {

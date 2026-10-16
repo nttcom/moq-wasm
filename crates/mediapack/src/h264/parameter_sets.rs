@@ -7,7 +7,7 @@ use crate::{
         annexb::{nal_units, with_start_codes},
         nal::nal_unit_type,
     },
-    sample::{MediaEvent, Timestamp, VideoSample},
+    sample::{MediaEvent, Timestamp, VideoConfig, VideoSample},
 };
 
 #[derive(Default)]
@@ -27,7 +27,9 @@ impl TrackedAccessUnit {
     /// The `VideoConfig` first when the parameter sets changed, then the
     /// sample.
     pub fn into_events(self, pts: Timestamp, dts: Timestamp) -> Vec<MediaEvent> {
-        let config = self.config_changed.map(MediaEvent::VideoConfig);
+        let config = self
+            .config_changed
+            .map(|config| MediaEvent::VideoConfig(VideoConfig::Avc(config)));
         let sample = MediaEvent::Video(VideoSample {
             data: self.data,
             is_keyframe: self.is_keyframe,
@@ -108,7 +110,9 @@ impl ParameterSetTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{IDR_SLICE, delta_frame_annexb, fixture_record, keyframe_annexb};
+    use crate::test_support::{
+        IDR_SLICE, delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb,
+    };
 
     #[test]
     fn reports_config_once_and_keeps_inline_parameter_sets() {
@@ -187,7 +191,7 @@ mod tests {
             .into_events(pts, pts);
 
         // Assert
-        assert_eq!(events[0], MediaEvent::VideoConfig(fixture_record()));
+        assert_eq!(events[0], MediaEvent::VideoConfig(fixture_video_config()));
         assert_eq!(
             events[1],
             MediaEvent::Video(VideoSample {
