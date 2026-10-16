@@ -4,7 +4,7 @@ use crate::{
     aac::{AudioSpecificConfig, adts::HEADER_LENGTH},
     h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
     mpegts::parser::{PACKET_SIZE, SYNC_BYTE},
-    sample::{AudioSample, MediaEvent, VideoSample},
+    sample::{AudioSample, MediaEvent, VideoConfig, VideoSample},
 };
 
 pub(crate) const FIXTURE_TS: &[u8] = include_bytes!("../fixtures/testsrc.ts");
@@ -28,6 +28,10 @@ pub(crate) fn fixture_record() -> AvcDecoderConfigurationRecord {
         vec![Bytes::from_static(&FIXTURE_PPS)],
     )
     .unwrap()
+}
+
+pub(crate) fn fixture_video_config() -> VideoConfig {
+    VideoConfig::Avc(fixture_record())
 }
 
 pub(crate) fn keyframe_annexb() -> Bytes {

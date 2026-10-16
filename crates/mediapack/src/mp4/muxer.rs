@@ -34,6 +34,7 @@ impl Fmp4Muxer {
                 Ok(Bytes::new())
             }
             MediaEvent::VideoConfig(config) => {
+                let config = config.avc()?;
                 if self.init_written {
                     ensure!(
                         self.video_config.as_ref() == Some(config),
@@ -163,7 +164,7 @@ pub(crate) mod tests {
         aac::AudioSpecificConfig,
         mp4::isobmff::{NON_SYNC_SAMPLE_FLAGS, SYNC_SAMPLE_FLAGS},
         sample::{AudioConfig, AudioSample, Timestamp},
-        test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
+        test_support::{delta_frame_annexb, fixture_video_config, keyframe_annexb, mono_48k},
     };
 
     pub(crate) fn boxes(data: &[u8]) -> Vec<(String, &[u8])> {
@@ -216,7 +217,7 @@ pub(crate) mod tests {
             }))
             .unwrap();
         muxer
-            .push(&MediaEvent::VideoConfig(fixture_record()))
+            .push(&MediaEvent::VideoConfig(fixture_video_config()))
             .unwrap();
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
@@ -315,7 +316,7 @@ pub(crate) mod tests {
             }))
             .unwrap();
         muxer
-            .push(&MediaEvent::VideoConfig(fixture_record()))
+            .push(&MediaEvent::VideoConfig(fixture_video_config()))
             .unwrap();
 
         // Act

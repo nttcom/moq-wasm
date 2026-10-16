@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, ensure};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mediapack::{MediaEvent, Timestamp, VideoSample, h264::ParameterSetTracker};
+use mediapack::{MediaEvent, Timestamp, VideoConfig, VideoSample, h264::ParameterSetTracker};
 use tokio::sync::mpsc;
 
 use crate::ladder::Rendition;
@@ -242,7 +242,7 @@ fn install_sink_callbacks(
                         if let Some(config) = unit.config_changed {
                             let _ = message_sender.send(Message::Event(TranscodedEvent {
                                 rendition,
-                                event: MediaEvent::VideoConfig(config),
+                                event: MediaEvent::VideoConfig(VideoConfig::Avc(config)),
                             }));
                         }
                         let _ = message_sender.send(Message::Event(TranscodedEvent {
@@ -370,7 +370,7 @@ mod tests {
         let MediaEvent::VideoConfig(config) = &outputs[0].event else {
             panic!("first event must be the rendition's VideoConfig");
         };
-        let sps = config.sequence_parameter_set().unwrap();
+        let sps = config.avc().unwrap().sequence_parameter_set().unwrap();
         assert_eq!((sps.width, sps.height), (96, 54));
         let video: Vec<&VideoSample> = outputs
             .iter()

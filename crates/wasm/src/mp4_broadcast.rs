@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
 use bytes::Bytes;
-use mediapack::{AudioSample, MediaEvent, Timestamp, VideoSample};
+use mediapack::{AudioSample, MediaEvent, Timestamp, VideoConfig, VideoSample};
 use moqt::executor;
 use wasm_bindgen::prelude::*;
 
@@ -61,7 +61,10 @@ impl Mp4Broadcast {
         if let Some(audio) = sample_index.audio.clone() {
             push(&mut writer, MediaEvent::AudioConfig(audio))?;
         }
-        push(&mut writer, MediaEvent::VideoConfig(video))?;
+        push(
+            &mut writer,
+            MediaEvent::VideoConfig(VideoConfig::Avc(video)),
+        )?;
         Ok(Self { writer })
     }
 

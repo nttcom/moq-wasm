@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use anyhow::Result;
 use bytes::Bytes;
 use mediapack::{
-    MediaEvent, Timestamp,
+    MediaEvent, Timestamp, VideoConfig,
     flv::{self, Tag, TagType},
 };
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
@@ -93,8 +93,8 @@ impl RtmpState {
             }
         };
         for event in events {
-            if let MediaEvent::VideoConfig(config) = &event {
-                tracing::info!(peer = %label, namespace = %namespace_path, codec = %config.codec_string(), "detected video codec");
+            if let MediaEvent::VideoConfig(VideoConfig::Avc(record)) = &event {
+                tracing::info!(peer = %label, namespace = %namespace_path, codec = %record.codec_string(), "detected video codec");
             }
             if let Err(err) = stream.publisher.push(event) {
                 tracing::warn!(peer = %label, namespace = %namespace_path, ?err, "failed to publish RTMP media");

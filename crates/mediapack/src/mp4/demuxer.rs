@@ -10,7 +10,7 @@ use crate::{
         },
         track::{Media, Track, annexb_access_unit, read_track},
     },
-    sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+    sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample},
 };
 
 const TFHD_BASE_DATA_OFFSET: u32 = 0x01;
@@ -108,7 +108,7 @@ impl Demuxer {
         })];
         for track in self.tracks.values() {
             events.push(match &track.media {
-                Media::Video(config) => MediaEvent::VideoConfig(config.clone()),
+                Media::Video(config) => MediaEvent::VideoConfig(VideoConfig::Avc(config.clone())),
                 Media::Audio(config) => MediaEvent::AudioConfig(config.clone()),
             });
         }

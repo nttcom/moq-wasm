@@ -11,7 +11,9 @@ use crate::{
         STREAM_TYPE_H264, TsPacket, parse_packet, parse_pat_pmt_pid, parse_pes_header, parse_pmt,
         parse_section_body,
     },
-    sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+    sample::{
+        AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample,
+    },
 };
 
 #[derive(Default)]
@@ -233,7 +235,7 @@ fn emit_video(
         return Ok(());
     };
     if let Some(config) = unit.config_changed {
-        events.push(MediaEvent::VideoConfig(config));
+        events.push(MediaEvent::VideoConfig(VideoConfig::Avc(config)));
     }
     if video.awaiting_keyframe && !unit.is_keyframe {
         return Ok(());
@@ -349,7 +351,7 @@ mod tests {
                 has_audio: true
             })
         );
-        let MediaEvent::VideoConfig(config) = &events[1] else {
+        let MediaEvent::VideoConfig(VideoConfig::Avc(config)) = &events[1] else {
             panic!("expected video config, got {:?}", events[1]);
         };
         assert_eq!(config.codec_string(), "avc1.42D00B");

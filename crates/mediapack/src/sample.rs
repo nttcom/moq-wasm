@@ -72,6 +72,20 @@ pub struct AudioSample {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoConfig {
+    Avc(AvcDecoderConfigurationRecord),
+}
+
+impl VideoConfig {
+    /// Fails unless the config is H.264.
+    pub fn avc(&self) -> Result<&AvcDecoderConfigurationRecord> {
+        match self {
+            Self::Avc(record) => Ok(record),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioConfig {
     Aac(AudioSpecificConfig),
     /// G.711 A-law (RFC 3551 §4.5.14).
@@ -137,7 +151,7 @@ pub struct StreamSet {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaEvent {
     Streams(StreamSet),
-    VideoConfig(AvcDecoderConfigurationRecord),
+    VideoConfig(VideoConfig),
     AudioConfig(AudioConfig),
     Video(VideoSample),
     Audio(AudioSample),

@@ -48,6 +48,7 @@ impl Muxer {
                 return Ok(Bytes::new());
             }
             MediaEvent::VideoConfig(config) => {
+                let config = config.avc()?;
                 self.video_config = Some(config.clone());
                 let mut data = BytesMut::from(&AVC_SEQUENCE_HEADER[..]);
                 data.put_slice(&config.to_bytes());
@@ -118,8 +119,10 @@ mod tests {
     use super::*;
     use crate::{
         flv::demuxer::Demuxer,
-        sample::{AudioConfig, AudioSample, VideoSample},
-        test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
+        sample::{AudioConfig, AudioSample, VideoConfig, VideoSample},
+        test_support::{
+            delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb, mono_48k,
+        },
     };
 
     fn fixture_events() -> Vec<MediaEvent> {
@@ -128,7 +131,7 @@ mod tests {
                 has_video: true,
                 has_audio: true,
             }),
-            MediaEvent::VideoConfig(fixture_record()),
+            MediaEvent::VideoConfig(fixture_video_config()),
             MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
             MediaEvent::Video(VideoSample {
                 data: keyframe_annexb(),
@@ -184,7 +187,7 @@ mod tests {
         // Act
         let mut flv = BytesMut::from(
             muxer
-                .push(&MediaEvent::VideoConfig(config))
+                .push(&MediaEvent::VideoConfig(VideoConfig::Avc(config)))
                 .unwrap()
                 .as_ref(),
         );

@@ -170,6 +170,7 @@ impl Muxer {
                 Ok(Vec::new())
             }
             MediaEvent::VideoConfig(config) => {
+                let config = config.avc()?;
                 self.video_config = Some(config.clone());
                 Ok(Vec::new())
             }
@@ -405,7 +406,7 @@ mod tests {
     use super::*;
     use crate::{
         sample::{AudioConfig, AudioSample, Timestamp, VideoSample},
-        test_support::{fixture_record, keyframe_annexb, mono_48k},
+        test_support::{fixture_video_config, keyframe_annexb, mono_48k},
     };
 
     const DESTINATION: Destination = Destination {
@@ -503,7 +504,7 @@ mod tests {
             }))
             .unwrap();
         muxer
-            .push(&MediaEvent::VideoConfig(fixture_record()))
+            .push(&MediaEvent::VideoConfig(fixture_video_config()))
             .unwrap();
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
@@ -764,7 +765,7 @@ mod tests {
             }))
             .unwrap();
         muxer
-            .push(&MediaEvent::VideoConfig(fixture_record()))
+            .push(&MediaEvent::VideoConfig(fixture_video_config()))
             .unwrap();
 
         // Act
@@ -794,7 +795,7 @@ mod tests {
             }))
             .unwrap();
         muxer
-            .push(&MediaEvent::VideoConfig(fixture_record()))
+            .push(&MediaEvent::VideoConfig(fixture_video_config()))
             .unwrap();
 
         // Act
