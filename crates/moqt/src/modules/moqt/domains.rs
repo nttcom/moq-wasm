@@ -1,5 +1,6 @@
 pub(crate) mod accepting;
 pub(crate) mod connecting;
+pub(crate) mod connection;
 pub(crate) mod endpoint;
 pub(crate) mod fetch_handle;
 pub(crate) mod fetch_range;

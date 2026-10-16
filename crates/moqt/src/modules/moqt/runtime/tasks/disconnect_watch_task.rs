@@ -18,7 +18,7 @@ impl DisconnectWatchTask {
         executor::spawn(
             "Connection Close Watcher",
             async move {
-                session_context.transport_connection.closed().await;
+                session_context.connection().transport.closed().await;
 
                 if let Err(error) = session_context
                     .event_sender

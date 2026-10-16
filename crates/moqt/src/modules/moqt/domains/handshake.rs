@@ -5,7 +5,10 @@ use crate::modules::moqt::control_plane::control_messages::messages::client_setu
 
 use crate::{
     AuthorizationToken, Session, TerminationErrorCode,
-    modules::moqt::{domains::session_context::SessionContext, version::ServerHandshake},
+    modules::moqt::{
+        domains::{connection::Connection, session_context::SessionContext},
+        version::ServerHandshake,
+    },
 };
 
 pub struct Handshake {
@@ -29,7 +32,10 @@ impl Handshake {
     pub async fn accept(self) -> anyhow::Result<Session> {
         let (control, control_receiver) = self.setup.accept().await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let context = SessionContext::new(self.transport_connection, control, true, event_sender);
+        let context = SessionContext::new(
+            Connection::new(self.transport_connection, control, true),
+            event_sender,
+        );
         tracing::info!("Session established");
         Ok(Session::new(
             control_receiver,

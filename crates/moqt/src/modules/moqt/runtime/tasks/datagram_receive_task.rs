@@ -22,7 +22,7 @@ impl DatagramReceiveTask {
             async move {
                 tracing::debug!("Datagram Receiver started");
                 loop {
-                    match context.transport_connection.receive_datagram().await {
+                    match context.connection().transport.receive_datagram().await {
                         Ok(mut data) => {
                             Self::on_datagram_received(&context, &mut data).await;
                         }
@@ -40,7 +40,12 @@ impl DatagramReceiveTask {
     #[tracing::instrument(level = "trace", name = "on_datagram_received", skip_all)]
     async fn on_datagram_received(context: &Arc<SessionContext>, data: &mut BytesMut) -> bool {
         tracing::trace!(?data, "Received datagram");
-        let (track_alias, object) = match context.control.version().decode_datagram(data) {
+        let (track_alias, object) = match context
+            .connection()
+            .control
+            .version()
+            .decode_datagram(data)
+        {
             Ok(decoded) => decoded,
             Err(error) => {
                 tracing::error!(error = %format!("{error:#}"), "Failed to decode a datagram object");
