@@ -96,4 +96,5 @@ Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::
   - Scope: use the component name (`moqt`, `relay`, `wasm`, `broadcast`, `live-ingest`, `live-egress`, `onvif`, `msf`, `mediapack`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
 - PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
+- This repository is public. Do not reference private repositories or internal trackers in code, documentation, commits, or pull requests: no URLs, repository names, or issue/PR numbers. Link from the private side to this repository, never the reverse.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
