@@ -76,7 +76,7 @@ export class LocLive {
       if (event.data.type === 'frame') {
         const frame = event.data.frame as VideoFrame
         this.decodedFrameIds.set(frame.timestamp, { groupId: event.data.groupId, objectId: event.data.objectId })
-        this.playout.presentVideo(frame)
+        this.playout.presentVideo(frame, event.data.receivedAtUnixMs - performance.timeOrigin)
       }
     }
     this.audioWorker.onmessage = (event) => {

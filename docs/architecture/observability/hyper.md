@@ -12,7 +12,7 @@ Accepted
 
 Add `hyper` (`http1`, `server`), `hyper-util` (`tokio`) and `http-body-util`
 as direct dependencies of the `observability` crate. `src/api_server.rs` serves
-`GET /api/snapshots` (newest snapshot per relay, or the one at `?at=`) and
+`GET /api/snapshots` (newest snapshot per relay, or the ones at `?at=` and `&previous=`) and
 `GET /api/series` (one metric family over a time range) to the topology page.
 
 ## Context

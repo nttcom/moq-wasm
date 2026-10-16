@@ -43,6 +43,7 @@ impl DiskCacheTask {
             command_sender,
             stored_bytes: Arc::new(AtomicU64::new(0)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
+            max_bytes: config.max_bytes,
         };
         let mut state = DiskState::new(config, handle.stored_bytes.clone());
         let dropped_writes = handle.dropped_writes.clone();

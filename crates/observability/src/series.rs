@@ -283,6 +283,13 @@ const PROCESS_METRICS: &[(&str, Metric)] = &[
         },
     ),
     (
+        "disk_cache_max_mb",
+        Metric::Max {
+            column: "disk_cache_max_bytes",
+            scale: 1.0 / MEBIBYTE,
+        },
+    ),
+    (
         "client_sessions",
         Metric::Max {
             column: "client_sessions",

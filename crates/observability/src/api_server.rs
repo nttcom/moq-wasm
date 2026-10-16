@@ -17,7 +17,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 use crate::{
     browser_json::snapshots_for_browser,
     clickhouse::ClickHouse,
-    latest_snapshots::LatestSnapshots,
+    latest_snapshots::{LatestSnapshots, RELAY_SILENCE},
     namespaces::{NamespaceQuery, published_namespaces},
     schema::RETENTION_DAYS,
     series::{self, SeriesQuery, SeriesTarget},
@@ -116,14 +116,33 @@ async fn snapshots(
     state: &ApiState,
     params: &HashMap<String, String>,
 ) -> anyhow::Result<JsonResponse> {
-    let snapshots = match params.get("at") {
-        None => state.latest.current(),
-        Some(_) => snapshots_at(&state.clickhouse, number(params, "at")?).await?,
+    let body = match past_snapshot_times(params)? {
+        None => snapshots_for_browser(&state.latest.current()),
+        Some((at_ms, previous_ms)) => {
+            let past = snapshots_at(&state.clickhouse, at_ms, previous_ms).await?;
+            json!({
+                "snapshots": snapshots_for_browser(&past.snapshots),
+                "previous": snapshots_for_browser(&past.previous),
+            })
+        }
     };
-    Ok(json_response(
-        StatusCode::OK,
-        &snapshots_for_browser(&snapshots),
-    ))
+    Ok(json_response(StatusCode::OK, &body))
+}
+
+/// `at` and `previous` of a past lookup; `None` asks for the live snapshots.
+fn past_snapshot_times(params: &HashMap<String, String>) -> anyhow::Result<Option<(u64, u64)>> {
+    if !params.contains_key("at") {
+        return Ok(None);
+    }
+    let at_ms = number(params, "at")?;
+    let previous_ms = number(params, "previous")?;
+    anyhow::ensure!(previous_ms <= at_ms, "previous is after at");
+    anyhow::ensure!(
+        at_ms - previous_ms <= RELAY_SILENCE.as_millis() as u64,
+        "previous is at most {} s before at",
+        RELAY_SILENCE.as_secs()
+    );
+    Ok(Some((at_ms, previous_ms)))
 }
 
 fn time_range(params: &HashMap<String, String>) -> anyhow::Result<(u64, u64)> {
@@ -219,7 +238,7 @@ fn json_response(status: StatusCode, body: &impl Serialize) -> JsonResponse {
 mod tests {
     use std::collections::HashMap;
 
-    use super::series_query;
+    use super::{past_snapshot_times, series_query};
     use crate::series::SeriesTarget;
 
     fn params(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -300,5 +319,18 @@ mod tests {
 
         // Act / Assert
         assert!(series_query(&params).is_err());
+    }
+
+    #[test]
+    fn a_past_lookup_needs_a_previous_time_within_the_relay_silence() {
+        // Act / Assert
+        assert_eq!(past_snapshot_times(&params(&[])).unwrap(), None);
+        assert_eq!(
+            past_snapshot_times(&params(&[("at", "60000"), ("previous", "58000")])).unwrap(),
+            Some((60000, 58000))
+        );
+        assert!(past_snapshot_times(&params(&[("at", "60000")])).is_err());
+        assert!(past_snapshot_times(&params(&[("at", "60000"), ("previous", "60001")])).is_err());
+        assert!(past_snapshot_times(&params(&[("at", "60000"), ("previous", "49999")])).is_err());
     }
 }

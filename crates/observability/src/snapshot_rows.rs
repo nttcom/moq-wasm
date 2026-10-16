@@ -106,6 +106,7 @@ mod tests {
                 cache_objects: 3,
                 cache_payload_bytes: 4,
                 disk_cache_bytes: 5,
+                disk_cache_max_bytes: 8,
                 client_sessions: 6,
                 draining_since_ms: Some(7),
             },
@@ -128,6 +129,7 @@ mod tests {
                 "cache_objects": 3,
                 "cache_payload_bytes": 4,
                 "disk_cache_bytes": 5,
+                "disk_cache_max_bytes": 8,
                 "client_sessions": 6,
                 "draining_since_ms": 7,
             }])

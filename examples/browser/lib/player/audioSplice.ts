@@ -33,6 +33,38 @@ export function joinAfterSkip(skippedHead: Channels, next: Channels, sampleRate:
 /// waveform overlapped onto the next, or nothing when the waveform does not
 /// repeat.
 export function trimRepetition(channels: Channels, sampleRate: number, maxSamples: number): Channels | undefined {
+  const period = repeatingPeriod(channels, sampleRate, maxSamples)
+  return period && crossfade(channels, channels, period.offset, period.length)
+}
+
+/// Adds up to `maxSamples` to the start of a chunk by playing one repetition
+/// of its waveform twice, overlapped onto itself, or nothing when the
+/// waveform does not repeat.
+export function insertRepetition(channels: Channels, sampleRate: number, maxSamples: number): Channels | undefined {
+  const period = repeatingPeriod(channels, sampleRate, maxSamples)
+  if (!period) {
+    return undefined
+  }
+  const { offset, length } = period
+  const repeated = crossfade(
+    channels.map((channel) => channel.subarray(offset)),
+    channels,
+    0,
+    length
+  )
+  return channels.map((channel, index) => {
+    const out = new Float32Array(offset + repeated[index].length)
+    out.set(channel.subarray(0, offset))
+    out.set(repeated[index], offset)
+    return out
+  })
+}
+
+function repeatingPeriod(
+  channels: Channels,
+  sampleRate: number,
+  maxSamples: number
+): { offset: number; length: number } | undefined {
   const length = crossfadeSamples(sampleRate)
   const earliest = samplesFor(MIN_PERIOD_MS, sampleRate)
   const latest = Math.min(samplesFor(MAX_PERIOD_MS, sampleRate), maxSamples, channels[0].length - length)
@@ -44,7 +76,7 @@ export function trimRepetition(channels: Channels, sampleRate: number, maxSample
   if (similarity < MIN_SIMILARITY) {
     return undefined
   }
-  return crossfade(channels, channels, offset, length)
+  return { offset, length }
 }
 
 /// Fades from the start of `from` into `to` at `toOffset`, then carries on

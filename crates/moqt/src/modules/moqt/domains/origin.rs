@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use tokio::sync::Mutex;
 
@@ -261,18 +261,10 @@ impl Origin {
             let Some(writer) = track.writer.take() else {
                 return Ok(WriteOutcome::NotSent);
             };
-            if writer.next_group_id() != placement.location.group_id {
-                let next_group_id = writer.next_group_id();
-                track.writer = Some(writer);
-                bail!(
-                    "writer is at group {next_group_id} but the cache placed the object at group {}",
-                    placement.location.group_id
-                );
-            }
             (placement, writer)
         };
         let result = writer
-            .write_group(payload)
+            .write_group_at(placement.location.group_id, payload)
             .await
             .context("send group")
             .map(|()| true);
@@ -940,6 +932,55 @@ mod tests {
         );
         assert_eq!(ids(&cached), [(FIRST_GROUP_ID + 1, 0)]);
         assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+    }
+
+    #[tokio::test]
+    async fn a_group_written_while_another_is_in_flight_does_not_stall_the_track() {
+        // Arrange
+        let peers = origin_with_track("origin-write-group-in-flight", RETENTION).await;
+        let origin = &peers.origin;
+        let accepted = publish(&peers).await;
+        let key = track_key(NAMESPACE, TRACK);
+        origin
+            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c0"))
+            .await
+            .unwrap();
+        let in_flight = origin
+            .state
+            .lock()
+            .await
+            .track_mut(&key)
+            .unwrap()
+            .writer
+            .take()
+            .unwrap();
+
+        // Act
+        let overlapped = origin
+            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c1"))
+            .await
+            .unwrap();
+        origin.state.lock().await.track_mut(&key).unwrap().writer = Some(in_flight);
+        let after = origin
+            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c2"))
+            .await
+            .unwrap();
+        let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
+        let received_first = within(reader.next_object()).await.unwrap().unwrap();
+        let received_after = within(reader.next_object()).await.unwrap().unwrap();
+
+        // Assert
+        assert_eq!(overlapped, WriteOutcome::NotSent);
+        assert_eq!(after, sent(FIRST_GROUP_ID + 2, 0, true));
+        assert_eq!(received_first.group_id, FIRST_GROUP_ID);
+        assert_eq!(
+            (received_after.group_id, received_after.payload),
+            (FIRST_GROUP_ID + 2, Bytes::from_static(b"c2"))
+        );
+        assert_eq!(
+            received_after.extension_headers.prior_group_id_gap(),
+            vec![1]
+        );
     }
 
     #[tokio::test]

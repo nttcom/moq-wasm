@@ -90,6 +90,7 @@ impl StatsCollector {
                 cache_objects: occupancy.objects,
                 cache_payload_bytes: occupancy.payload_bytes,
                 disk_cache_bytes: occupancy.disk_payload_bytes,
+                disk_cache_max_bytes: occupancy.disk_max_bytes,
                 client_sessions,
                 draining_since_ms: self.sources.directory.draining_since_ms(),
             },

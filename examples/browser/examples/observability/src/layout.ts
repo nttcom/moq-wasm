@@ -11,7 +11,7 @@ export interface HalfSize {
 }
 
 export const CLIENT_HALF: HalfSize = { w: 50, h: 22 }
-export const RELAY_HALF: HalfSize = { w: 62, h: 50 }
+export const RELAY_HALF: HalfSize = { w: 62, h: 57 }
 export const CENTER: Point = { x: 0, y: 0 }
 export const ENVIRONMENT_RADIUS = 230
 

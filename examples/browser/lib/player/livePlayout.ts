@@ -31,14 +31,17 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 /// burst is not observed; the buffer opens on the longest wait between two
 /// audio arrivals during the warm-up instead, because sources
 /// such as MPEG-TS over SRT deliver audio in bursts of a few hundred
-/// milliseconds. A buffer below its target grows by the misses it takes. Once
-/// the buffer has settled, one above its target is shed as the catch-up
-/// asks: `speed-up` compresses the audio while it is more than
-/// `CATCH_UP_EXCESS_MS` over, `skip` drops the audio chunks that fit in the
-/// excess, `speed-up` skips too once it is more than `MAX_CATCH_UP_MS` over,
-/// and `off` keeps it. Whatever is older than the buffer is dropped rather
-/// than played late. Pausing drops what arrives, and resuming warms up again
-/// at the live edge.
+/// milliseconds. From then on the arrivals of both audio and video size the
+/// buffer, so a picture that arrives later than the sound is waited for. A
+/// buffer below its target grows by the misses it takes and, unless the
+/// catch-up is `off`, by stretching the audio while it is more than
+/// `CATCH_UP_EXCESS_MS` under. Once the buffer has settled, one above its
+/// target is shed as the catch-up asks: `speed-up` compresses the audio while
+/// it is more than `CATCH_UP_EXCESS_MS` over, `skip` drops the audio chunks
+/// that fit in the excess, `speed-up` skips too once it is more than
+/// `MAX_CATCH_UP_MS` over, and `off` keeps it. Whatever is older than the
+/// buffer is dropped rather than played late. Pausing drops what arrives, and
+/// resuming warms up again at the live edge.
 export class LivePlayout {
   private readonly clock = new PlayoutClock()
   private readonly jitterBuffer = new JitterBuffer(DEFAULT_BUFFER_POLICY)
@@ -57,7 +60,9 @@ export class LivePlayout {
     }
   }
 
-  presentVideo(frame: VideoFrame): void {
+  /// `arrivedAtMs` is when the frame's object arrived, before any wait for
+  /// decoding.
+  presentVideo(frame: VideoFrame, arrivedAtMs = performance.now()): void {
     if (this.paused) {
       frame.close()
       return
@@ -68,13 +73,13 @@ export class LivePlayout {
       return
     }
     if (!this.clock.anchored) {
-      this.hold({ kind: 'video', frame, captureMicros, arrivedAtMs: performance.now() })
+      this.hold({ kind: 'video', frame, captureMicros, arrivedAtMs })
       return
     }
+    this.jitterBuffer.observe(captureMicros, arrivedAtMs)
     const nowMs = performance.now()
     const master = !this.audioActive()
     if (master) {
-      this.jitterBuffer.observe(captureMicros, nowMs)
       const excessMs = this.excessMs()
       if (excessMs !== undefined && excessMs > MAX_CATCH_UP_MS) {
         this.shiftClock(-excessMs, captureMicros)
@@ -220,12 +225,20 @@ export class LivePlayout {
       audioData.close()
       return true
     }
-    this.audio.setCompressionRate(
-      this.catchUp === 'speed-up' && excessMs > CATCH_UP_EXCESS_MS ? CATCH_UP_COMPRESSION_RATE : 1
-    )
+    this.audio.setCompressionRate(this.compressionRateFor(excessMs))
     this.audio.play(audioData, captureMicros, (nowMs) => this.playoutTime(captureMicros, nowMs, true))
     audioData.close()
     return true
+  }
+
+  private compressionRateFor(excessMs: number): number {
+    if (this.catchUp === 'speed-up' && excessMs > CATCH_UP_EXCESS_MS) {
+      return CATCH_UP_COMPRESSION_RATE
+    }
+    if (this.catchUp !== 'off' && excessMs < -CATCH_UP_EXCESS_MS) {
+      return 1 / CATCH_UP_COMPRESSION_RATE
+    }
+    return 1
   }
 
   private excessMs(): number | undefined {

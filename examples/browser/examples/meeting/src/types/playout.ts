@@ -8,5 +8,5 @@ export type PlayoutSettings = {
 
 export const DEFAULT_PLAYOUT_SETTINGS: PlayoutSettings = {
   policy: DEFAULT_BUFFER_POLICY,
-  catchUp: 'skip'
+  catchUp: 'speed-up'
 }

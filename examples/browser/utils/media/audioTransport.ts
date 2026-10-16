@@ -37,7 +37,8 @@ export async function sendAudioChunkViaMoqt({
   const resolvedCaptureTimestampMicros =
     typeof captureTimestampMicros === 'number' && Number.isFinite(captureTimestampMicros)
       ? Math.round(captureTimestampMicros)
-      : monotonicUnixMicros()
+      : (audio.nextCaptureTimestampMicros ?? monotonicUnixMicros())
+  audio.nextCaptureTimestampMicros = resolvedCaptureTimestampMicros + (chunk.duration ?? 0)
   const locHeader = buildLocHeader({
     captureTimestampMicros: resolvedCaptureTimestampMicros,
     audioLevel
