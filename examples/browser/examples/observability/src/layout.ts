@@ -19,6 +19,8 @@ const FIRST_RING_RADIUS = 345
 const RING_SPACING = 70
 const CARD_SLOT = 2 * CLIENT_HALF.w + 12
 const RELAY_ORBIT = ENVIRONMENT_RADIUS * 0.5
+// Two relay cards whose centres are this far apart cannot overlap in any direction.
+const RELAY_CLEARANCE = Math.hypot(2 * RELAY_HALF.w, 2 * RELAY_HALF.h)
 const START_ANGLE = -Math.PI / 2
 
 export interface Layout {
@@ -36,6 +38,25 @@ function ringsFor(clientCount: number): number {
     rings += 1
   }
   return rings
+}
+
+// Pushes neighbouring angles apart until every circular gap is at least `gap`.
+function spreadAngles(angles: number[], gap: number): number[] {
+  const spread = [...angles]
+  for (let pass = 0; pass < 200; pass += 1) {
+    let moved = false
+    spread.forEach((angle, i) => {
+      const j = (i + 1) % spread.length
+      const shortfall = gap - (spread[j] + (j === 0 ? 2 * Math.PI : 0) - angle)
+      if (shortfall > 1e-6) {
+        spread[i] -= shortfall / 2
+        spread[j] += shortfall / 2
+        moved = true
+      }
+    })
+    if (!moved) break
+  }
+  return spread
 }
 
 const at = (angle: number, radius: number): Point => ({
@@ -59,12 +80,13 @@ export function layoutTopology(topology: Topology): Layout {
 
   const relays = new Map<string, Point>()
   const clients = new Map<string, Point>()
+  const relayAngles: number[] = []
   let arcStart = START_ANGLE
   let slot = 0
   relayIds.forEach((relayId, relayIndex) => {
     const arc = (weights[relayIndex] / totalWeight) * 2 * Math.PI
     const relayClients = clientsByRelay.get(relayId)!
-    relays.set(relayId, relayIds.length === 1 ? CENTER : at(arcStart + arc / 2, RELAY_ORBIT))
+    relayAngles.push(arcStart + arc / 2)
     relayClients.forEach((client, clientIndex) => {
       const angle = arcStart + ((clientIndex + 0.5) / relayClients.length) * arc
       clients.set(client.key, at(angle, FIRST_RING_RADIUS + (slot % rings) * RING_SPACING))
@@ -72,5 +94,13 @@ export function layoutTopology(topology: Topology): Layout {
     })
     arcStart += arc
   })
+
+  if (relayIds.length === 1) {
+    relays.set(relayIds[0], CENTER)
+  } else if (relayIds.length > 1) {
+    const orbit = Math.max(RELAY_ORBIT, RELAY_CLEARANCE / (2 * Math.sin(Math.PI / relayIds.length)))
+    const gap = 2 * Math.asin(RELAY_CLEARANCE / (2 * orbit))
+    spreadAngles(relayAngles, gap).forEach((angle, i) => relays.set(relayIds[i], at(angle, orbit)))
+  }
   return { relays, clients }
 }
