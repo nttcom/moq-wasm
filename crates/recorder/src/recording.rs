@@ -13,7 +13,7 @@ use crate::{
     file_writer::{ClosedFile, RecordingFile},
     pipeline::{FileTracks, Output, Pipeline, capture_timestamp},
     track_selection::Selection,
-    upload_task::{Upload, UploadTask},
+    upload_task::{Upload, UploadQueue},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -33,7 +33,7 @@ const MAX_PENDING_AUDIO: usize = 500;
 /// `<prefix>/<track>/<started_at_ms>-<index>.mp4`, without `<track>` for the
 /// combined file.
 pub(crate) struct Uploader {
-    pub(crate) task: UploadTask,
+    pub(crate) queue: UploadQueue,
     pub(crate) prefix: object_store::path::Path,
     pub(crate) started_at_ms: u64,
 }
@@ -151,8 +151,6 @@ impl Recording {
         Ok(())
     }
 
-    /// With an uploader, returns once every file is uploaded or its upload
-    /// failed.
     pub(crate) async fn finish(self) -> Result<()> {
         let Self {
             files,
@@ -167,10 +165,6 @@ impl Recording {
                 uploader.upload(file.track.as_deref(), closed, capture_origin);
             }
         }
-        if let Some(uploader) = uploader {
-            tracing::info!("waiting for the uploads to finish");
-            uploader.task.finish().await;
-        }
         Ok(())
     }
 }
@@ -180,7 +174,7 @@ impl Uploader {
         let mut key = self.prefix.clone();
         key.extend(track.iter().flat_map(|track| track.split('/')));
         key.extend([format!("{}-{}.mp4", self.started_at_ms, closed.index)]);
-        self.task.upload(Upload {
+        self.queue.upload(Upload {
             path: closed.path,
             key,
             capture_origin,
@@ -240,6 +234,8 @@ mod tests {
 
     use mediapack::{MediaEvent, loc::VideoCodec};
     use object_store::{ObjectStoreExt, memory::InMemory};
+
+    use crate::upload_task::UploadTask;
 
     use super::*;
     use crate::{
@@ -411,14 +407,16 @@ mod tests {
         // Arrange
         let dir = scratch_dir();
         let store = Arc::new(InMemory::new());
+        let task = UploadTask::run(store.clone());
         let uploader = Uploader {
-            task: UploadTask::run(store.clone()),
+            queue: task.queue(),
             prefix: object_store::path::Path::from("recordings/anon/live"),
             started_at_ms: 1_700_000_000_000,
         };
 
         // Act
         let paths = record(Layout::PerTrack, &dir, Some(uploader)).await;
+        task.finish().await;
 
         // Assert: a `/` in the track name nests the key
         let video = store
