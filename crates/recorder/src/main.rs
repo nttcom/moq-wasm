@@ -120,7 +120,7 @@ pub(crate) struct Args {
 #[derive(clap::Args, Debug)]
 pub(crate) struct ServeArgs {
     /// Address the HTTP API listens on
-    #[arg(long, default_value = "127.0.0.1:8095")]
+    #[arg(long, default_value = "127.0.0.1:8096")]
     pub(crate) listen: SocketAddr,
 
     /// MoQT relay URL every recording connects to
