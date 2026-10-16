@@ -1,10 +1,5 @@
-import init, {
-  Mp4Broadcast,
-  Mp4Index,
-  type Mp4SampleTable,
-  type Mp4VideoTrack,
-  type Mp4AudioTrack
-} from '../../pkg/moqt'
+import { Mp4Broadcast, Mp4Index, type Mp4SampleTable, type Mp4VideoTrack, type Mp4AudioTrack } from '../../pkg/moqt'
+import { loadMoqt } from '../../lib/moqt/loadMoqt'
 import { monotonicUnixMicros } from '../../utils/media/clock'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor, type StreamRecord } from './streamMonitor'
@@ -219,7 +214,7 @@ async function sleepUntilUnixMicros(dueMicros: number): Promise<void> {
 }
 
 async function openMp4(file: File): Promise<Mp4Media> {
-  await init()
+  await loadMoqt()
   const index = new Mp4Index(await readMoovAtom(file))
   try {
     const video = index.video()
