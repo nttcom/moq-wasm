@@ -14,7 +14,9 @@ use crate::{
     modules::{
         moqt::{
             control_plane::{constants::TerminationErrorCode, enums::RequestId},
-            data_plane::stream::fetch_data_receiver::FetchDataReceiver,
+            data_plane::stream::{
+                fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+            },
             domains::group_cutover::GroupCutover,
             runtime::dispatch::incoming_object::IncomingObject,
             version::ControlChannel,
@@ -93,6 +95,17 @@ pub(crate) struct SinkReceiver {
     pub(crate) newest_group: Option<u64>,
     /// Set while the subscription is read on two connections.
     pub(crate) cutover: Option<SinkCutover>,
+    pub(crate) open_subgroups: OpenSubgroups,
+}
+
+/// What the sink on the new connection takes from the previous one when a
+/// subscription is read on two connections.
+pub(crate) struct CutoverStart {
+    /// The track alias the application knows.
+    pub(crate) logical_alias: u64,
+    pub(crate) sender: mpsc::UnboundedSender<IncomingObject>,
+    pub(crate) shared: Arc<std::sync::Mutex<SharedCutover>>,
+    pub(crate) previous_open_subgroups: OpenSubgroups,
 }
 
 /// One side of a subscription read on two connections during a migration.
@@ -150,6 +163,7 @@ impl SinkReceiver {
         );
         if let IncomingObject::Subgroup(receiver) = &mut object {
             receiver.track_alias = self.logical_alias;
+            receiver.count_in(&self.open_subgroups);
         }
         if self.sender.send(object).is_err() {
             IncomingObjectNotification::ReceiverClosed
@@ -309,18 +323,13 @@ impl Connection {
     }
 
     /// Starts a cutover for the sink of the subscription `wire_request_id`,
-    /// which becomes its previous side. Returns what the sink on the new
-    /// connection needs: the application's track alias, the sender and the
-    /// shared cutover. `None` when no such sink is installed.
+    /// which becomes its previous side. `None` when no such sink is
+    /// installed.
     pub(crate) async fn start_cutover(
         &self,
         wire_request_id: RequestId,
         cut_over: oneshot::Sender<()>,
-    ) -> Option<(
-        u64,
-        mpsc::UnboundedSender<IncomingObject>,
-        Arc<std::sync::Mutex<SharedCutover>>,
-    )> {
+    ) -> Option<CutoverStart> {
         let mut sinks = self.object_sinks.lock().await;
         let receiver = sinks.values_mut().find_map(|sink| match sink {
             ObjectSink::Receiver(receiver) if receiver.request_id == wire_request_id => {
@@ -336,7 +345,12 @@ impl Connection {
             shared: shared.clone(),
             previous: true,
         });
-        Some((receiver.logical_alias, receiver.sender.clone(), shared))
+        Some(CutoverStart {
+            logical_alias: receiver.logical_alias,
+            sender: receiver.sender.clone(),
+            shared,
+            previous_open_subgroups: receiver.open_subgroups.clone(),
+        })
     }
 
     /// draft-14 §9.4: a second GOAWAY, or a New Session URI sent to a

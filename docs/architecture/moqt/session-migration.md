@@ -137,9 +137,14 @@ the recorder does now).
 
 ### Closing the previous connection
 
-With NO_ERROR once every subscription cut over (5 s grace, 10 s limit for a
-track that delivers nothing on the new connection) and the peer takes no
-track this side sends there, or when the server closes it. A SUBSCRIBE the
+With NO_ERROR once the peer takes no track this side sends there and no
+carried subscription has a subgroup stream open there, or when the server
+closes it. A subscription with none open when it moves needs nothing more
+from the previous connection, since the publisher sends every later group to
+the new one too; its cutover is fixed at the group after the newest the
+previous connection handed out. A group that never ends is bounded by the
+5 s grace after every subscription cut over (10 s limit for a track that
+delivers nothing on the new connection). A SUBSCRIBE the
 previous server sent and never unsubscribed ends then with an `Unsubscribe`
 event, as `moqtClient.ts` reports it today.
 
@@ -154,7 +159,7 @@ event, as `moqtClient.ts` reports it today.
 | Forward=0 carried | Forward state re-sent with the SUBSCRIBE |
 | dual send for PUBLISH and SUBSCRIBE-served tracks | fan-out in the sender factory |
 | retry every 500 ms for 10 s | same |
-| leave the old relay at once when no subgroup is arriving there (`onSubgroupEnd`) | not covered: the previous connection is kept until every carried subscription cut over (at most 10 s) and 5 s more, so a quiet track such as chat keeps a draining relay up to 15 s |
+| leave the old relay at once when no subgroup is arriving there (`onSubgroupEnd`) | each sink counts the subgroup streams it handed out until they end (`OpenSubgroups`); the previous connection closes once none of a carried subscription is open there |
 
 ## Alternatives
 

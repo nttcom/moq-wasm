@@ -1,7 +1,10 @@
 use crate::modules::moqt::{
     data_plane::{
         object::canonical_object::{Object, SubgroupStart},
-        stream::stream_receiver::StreamReceiveError,
+        stream::{
+            open_subgroups::{OpenSubgroup, OpenSubgroups},
+            stream_receiver::StreamReceiveError,
+        },
     },
     version::SubgroupReader,
 };
@@ -18,6 +21,7 @@ pub struct StreamDataReceiver {
     reader: SubgroupReader,
     header_returned: bool,
     first_object: Option<Object>,
+    open: Option<OpenSubgroup>,
 }
 
 impl StreamDataReceiver {
@@ -27,11 +31,17 @@ impl StreamDataReceiver {
             reader,
             header_returned: false,
             first_object: None,
+            open: None,
         }
     }
 
     pub(crate) fn group_id(&self) -> u64 {
         self.reader.group_id()
+    }
+
+    /// Counts this stream in `open_subgroups` until it ends or is dropped.
+    pub(crate) fn count_in(&mut self, open_subgroups: &OpenSubgroups) {
+        self.open = Some(open_subgroups.open());
     }
 
     /// Returns the header first, then each object with absolute ids.
@@ -40,6 +50,14 @@ impl StreamDataReceiver {
     /// object arrives, so a stream that ends before it returns `Ok(None)`
     /// without a header.
     pub async fn receive(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
+        let received = self.receive_next().await;
+        if !matches!(received, Ok(Some(_))) {
+            self.open = None;
+        }
+        received
+    }
+
+    async fn receive_next(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
         if !self.header_returned {
             if self.reader.start().is_none() {
                 let Some(first) = self.reader.next_object().await? else {
