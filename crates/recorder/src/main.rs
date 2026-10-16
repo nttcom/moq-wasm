@@ -1,7 +1,10 @@
 mod file_writer;
 mod pipeline;
 mod recorder;
+mod recording;
 mod relay;
+#[cfg(test)]
+mod test_support;
 mod token_refresh_task;
 mod track_selection;
 
@@ -10,6 +13,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+
+use crate::recording::Layout;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -34,15 +39,21 @@ pub(crate) struct Args {
     #[arg(long, default_value = "audio")]
     pub(crate) audio_track: String,
 
-    /// Output file; defaults to <namespace>-<Unix seconds>.mp4 in the current directory
+    /// Output file; defaults to <namespace>-<Unix seconds>.mp4 in the current
+    /// directory. With `--layout per-track` each track goes to <stem>-<track>.mp4
     #[arg(long)]
     pub(crate) output: Option<PathBuf>,
+
+    /// Whether the video and the audio share one file or each track gets its own
+    #[arg(long, value_enum, default_value_t = Layout::Combined)]
+    pub(crate) layout: Layout,
 
     /// Start with what the relay or the publisher still caches, then continue live
     #[arg(long)]
     pub(crate) from_cache: bool,
 
-    /// Start a new numbered file at the first keyframe after this many seconds
+    /// Start a new numbered file at the first keyframe (audio frame in an
+    /// audio-only file) after this many seconds
     #[arg(long, value_name = "SECONDS")]
     pub(crate) segment_seconds: Option<u64>,
 
