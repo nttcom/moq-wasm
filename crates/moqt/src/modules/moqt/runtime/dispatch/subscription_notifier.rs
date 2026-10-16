@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use crate::modules::moqt::{
-    domains::session_context::{IncomingObjectNotification, SessionContext},
+    domains::connection::{Connection, IncomingObjectNotification},
     runtime::dispatch::incoming_object::IncomingObject,
 };
 
@@ -15,11 +13,11 @@ impl SubscriptionNotifier {
         fields(track_alias = track_alias)
     )]
     pub(crate) async fn notify(
-        context: &Arc<SessionContext>,
+        connection: &Connection,
         track_alias: u64,
         incoming_object: IncomingObject,
     ) {
-        match context
+        match connection
             .notify_incoming_object(track_alias, incoming_object)
             .await
         {

@@ -209,15 +209,17 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 ### `Session` and its background tasks
 
-`Session::new` spawns five tasks (all named, all aborted in `Drop`):
+`Session::new` starts the `ConnectionTasks` of its connection
+(`runtime/tasks/connection_tasks.rs`): five tasks bound to that `Connection`,
+all named and all aborted when `ConnectionTasks` is dropped:
 
 | Task | Role |
 | --- | --- |
-| control receiver (`ControlReceiver::spawn`; draft-14: `ControlMessageReceiveTask`) | reads the control stream, decodes messages, routes them (see below). Holds only a `Weak<SessionContext>` so it cannot keep the session alive. |
+| control receiver (`ControlReceiver::spawn`; draft-14: `ControlMessageReceiveTask`) | reads the control stream, decodes messages, routes them (see below); the handlers it creates answer on its connection. Holds only `Weak` references to the `SessionContext` and the `Connection`, so it cannot keep the session alive. |
 | `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `SubscriptionNotifier`, a FETCH response to `FetchNotifier`. |
 | `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. This is also how a close this side requested with any code other than PROTOCOL_VIOLATION is reported; `close_with_error(ProtocolViolation, ..)` emits `SessionEvent::ProtocolViolation` at once instead. |
-| `PublishDoneExpiryTask` | receives the Request ID of every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription 10 s later (see *Key invariants*). Holds only a `Weak<SessionContext>`. |
+| `PublishDoneExpiryTask` | receives the Request ID of every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription of its connection 10 s later (see *Key invariants*). Holds only `Weak` references. |
 
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
 `Subscriber` facades sharing the same `Arc<SessionContext>`. Operations on an
@@ -380,19 +382,21 @@ transport connection:
 - `track_alias: AtomicU64` — the track aliases this side assigns, shared by
   `SubscribeHandler::allocate_track_alias` and `Publisher::publish`.
 - whether it is the server side and whether a GOAWAY arrived.
+- `object_sinks: HashMap<track_alias, ObjectSink>` — the objects arriving on
+  this connection; see buffering invariant below.
+- `fetch_notification_map` — keyed by request id; `FetchNotifier` removes the
+  sender when the FETCH stream arrives, since a FETCH is answered on a single
+  stream (draft-14 §9.16.3).
 
 `SessionContext` holds the rest of the cross-task state and the session's
-one `Connection`; `connection()` is the connection requests are sent on (see
+one `Connection`; `connection()` is the connection requests are sent on, and
+the methods that touch per-connection state name the connection (see
 [session-migration.md](session-migration.md) for why the two are apart):
 
-- `event_sender` and `receiver_map`.
-- `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
-  below.
-- `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
-  for FETCH data streams. A FETCH is answered on a single stream (draft-14
-  §9.16.3), so `FetchNotifier` removes the sender when that stream arrives;
-  the receiver keeps it until `accept_fetch_receiver`. Registration returns
-  a `PendingFetch` drop-guard that removes both entries unless FETCH_OK
+- `event_sender`.
+- `receiver_map` and `fetch_receiver_map` — the receivers the application
+  takes per track alias and per FETCH request id. Registering a FETCH returns
+  a `PendingFetch` drop-guard that removes both FETCH entries unless FETCH_OK
   arrived.
 
 ## Control plane (`modules/moqt/control_plane`)
@@ -542,7 +546,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 ## Runtime dispatch (`modules/moqt/runtime/dispatch`)
 
 - `SubscriptionNotifier` routes incoming objects by track alias into
-  `SessionContext::object_sinks`.
+  `Connection::object_sinks`.
 - `FetchNotifier` routes FETCH streams by request id as a
   `FetchDataReceiver`.
 - `IncomingObject` is the per-track-alias envelope (`Subgroup` holding a

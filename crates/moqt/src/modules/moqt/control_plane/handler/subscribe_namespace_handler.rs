@@ -10,7 +10,7 @@ use crate::{
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
-        domains::session_context::SessionContext,
+        domains::connection::Connection,
     },
     modules::transport::transport_send_stream::TransportSendError,
 };
@@ -25,11 +25,11 @@ pub struct SubscribeNamespaceHandler {
 
 impl SubscribeNamespaceHandler {
     pub(crate) fn new(
-        session_context: Arc<SessionContext>,
+        connection: Arc<Connection>,
         subscribe_namespace: SubscribeNamespace,
     ) -> Self {
         let guard = ResponseGuard::new(
-            session_context.connection().clone(),
+            connection,
             subscribe_namespace.request_id,
             RequestKind::SubscribeNamespace,
         );

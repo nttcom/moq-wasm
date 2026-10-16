@@ -48,7 +48,7 @@ use crate::{
                     stream_receiver::{BiStreamReceiver, StreamReceiveError},
                 },
             },
-            domains::session_context::SessionContext,
+            domains::{connection::Connection, session_context::SessionContext},
             version::draft14::control_message_receive_task::ControlMessageReceiveTask,
         },
         transport::{
@@ -320,13 +320,18 @@ impl ControlReceiver {
     pub(crate) fn spawn(
         self,
         session: Weak<SessionContext>,
+        connection: Weak<Connection>,
         publish_done_sender: UnboundedSender<RequestId>,
         span: Span,
     ) -> JoinHandle {
         match self {
-            Self::Draft14(receive_stream) => {
-                ControlMessageReceiveTask::run(receive_stream, session, publish_done_sender, span)
-            }
+            Self::Draft14(receive_stream) => ControlMessageReceiveTask::run(
+                receive_stream,
+                session,
+                connection,
+                publish_done_sender,
+                span,
+            ),
         }
     }
 }

@@ -5,7 +5,6 @@ use tracing::Span;
 
 use crate::Publisher;
 use crate::Subscriber;
-use crate::modules::executor::JoinHandle;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
 use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
@@ -13,10 +12,7 @@ use crate::modules::moqt::control_plane::control_messages::messages::requests_bl
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
-use crate::modules::moqt::runtime::tasks::{
-    datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
-    publish_done_expiry_task::PublishDoneExpiryTask, uni_stream_receive_task::UniStreamReceiveTask,
-};
+use crate::modules::moqt::runtime::tasks::connection_tasks::ConnectionTasks;
 use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
     application_protocol::NegotiatedProtocol, transport_addresses::TransportAddresses,
@@ -27,11 +23,7 @@ pub struct Session {
     inner: Arc<SessionContext>,
     session_span: Span,
     event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent>>,
-    control_message_receive_task: JoinHandle,
-    datagram_receive_task: JoinHandle,
-    uni_stream_receive_task: JoinHandle,
-    disconnect_watch_task: JoinHandle,
-    publish_done_expiry_task: JoinHandle,
+    _tasks: ConnectionTasks,
     server_setup: Option<ServerSetup>,
 }
 
@@ -48,45 +40,13 @@ impl Session {
         let inner = Arc::new(inner);
         let parent_span = Span::current();
         let session_span = tracing::info_span!(parent: &parent_span, "moqt.session");
-        let control_plane_receiver_span = tracing::info_span!(
-            parent: &session_span,
-            "moqt.control_plane.receiver"
-        );
-        let datagram_receiver_span =
-            tracing::info_span!(parent: &session_span, "data_plane.datagram_receiver");
-        let uni_stream_receiver_span =
-            tracing::info_span!(parent: &session_span, "data_plane.uni_stream_receiver");
-        let transport_close_watcher_span =
-            tracing::info_span!(parent: &session_span, "moqt.transport.close_watcher");
-        let publish_done_expiry_span =
-            tracing::info_span!(parent: &session_span, "moqt.publish_done_expiry");
-
-        let (publish_done_sender, publish_done_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let control_message_receive_task = control_receiver.spawn(
-            Arc::downgrade(&inner),
-            publish_done_sender,
-            control_plane_receiver_span,
-        );
-        let datagram_receive_task = DatagramReceiveTask::run(inner.clone(), datagram_receiver_span);
-        let uni_stream_receive_task =
-            UniStreamReceiveTask::run(inner.clone(), uni_stream_receiver_span);
-        let disconnect_watch_task =
-            DisconnectWatchTask::run(inner.clone(), transport_close_watcher_span);
-        let publish_done_expiry_task = PublishDoneExpiryTask::run(
-            publish_done_receiver,
-            Arc::downgrade(&inner),
-            publish_done_expiry_span,
-        );
-
+        let tasks =
+            ConnectionTasks::run(&inner, inner.connection(), control_receiver, &session_span);
         Self {
             inner,
             session_span,
             event_receiver: tokio::sync::Mutex::new(event_receiver),
-            control_message_receive_task,
-            datagram_receive_task,
-            uni_stream_receive_task,
-            disconnect_watch_task,
-            publish_done_expiry_task,
+            _tasks: tasks,
             server_setup,
         }
     }
@@ -194,11 +154,6 @@ impl Drop for Session {
         self.session_span.in_scope(|| {
             tracing::info!("Session dropped.");
         });
-        self.control_message_receive_task.abort();
-        self.datagram_receive_task.abort();
-        self.uni_stream_receive_task.abort();
-        self.disconnect_watch_task.abort();
-        self.publish_done_expiry_task.abort();
     }
 }
 
