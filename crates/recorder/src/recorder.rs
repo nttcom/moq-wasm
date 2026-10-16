@@ -25,7 +25,7 @@ use crate::{
     relay,
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
-    track_selection::{Selection, VideoChoice, select_audio, select_tracks},
+    track_selection::{Selection, VideoChoice, loc_tracks, select_audio, select_tracks},
     upload_task::{UploadQueue, UploadTask},
 };
 
@@ -86,7 +86,7 @@ pub(crate) struct UploadTarget {
     pub(crate) prefix: Path,
 }
 
-/// Records `args.namespace` until Ctrl-C or the end of a track, then waits
+/// Records `args.namespace` until Ctrl-C or the end of the video track, then waits
 /// for the uploads.
 async fn record_until_interrupted(session: &MigratingSession, args: &Args) -> Result<()> {
     let upload_task = args
@@ -158,10 +158,11 @@ async fn list_tracks(session: &MigratingSession, namespace: &str) -> Result<()> 
     Ok(())
 }
 
-/// Records `namespace` into `path` until `stop` turns true or a track ends.
-/// A stop while the catalog lists no video track yet records nothing. While
-/// the recording has no audio, each later catalog object is checked for an
-/// audio track to add.
+/// Records `namespace` into `path` until `stop` turns true or the video track
+/// ends. A stop while the catalog lists no video track yet records nothing.
+/// The audio follows the catalog: an audio track it no longer lists, or one
+/// that ended, is dropped. While no audio is read, each later catalog object
+/// is checked for one to add.
 pub(crate) async fn record_broadcast(
     session: &MigratingSession,
     namespace: &str,
@@ -335,13 +336,21 @@ async fn record_live(
                 return Ok(());
             }
             catalog = tracks.catalog.next(), if catalog_open => match catalog {
-                Ok(Some(catalog)) if tracks.audio.is_none() => {
-                    match add_listed_audio(session, namespace, &catalog, audio_name, recording).await {
-                        Ok(audio) => tracks.audio = audio,
-                        Err(error) => tracing::warn!(%error, "cannot add the audio track"),
+                Ok(Some(catalog)) => {
+                    // A muted meeting participant unlists its audio before sending
+                    // PUBLISH_DONE, and `moqt` reports the track end 10 s after it; an
+                    // unmute within those 10 s would otherwise go unnoticed.
+                    if tracks.audio.as_ref().is_some_and(|audio| !lists(&catalog, audio)) {
+                        tracing::info!("catalog no longer lists the audio track; recording video until it lists one");
+                        tracks.audio = None;
+                    }
+                    if tracks.audio.is_none() {
+                        match add_listed_audio(session, namespace, &catalog, audio_name, recording).await {
+                            Ok(audio) => tracks.audio = audio,
+                            Err(error) => tracing::warn!(%error, "cannot add the audio track"),
+                        }
                     }
                 }
-                Ok(Some(_)) => {}
                 Ok(None) => catalog_open = false,
                 Err(error) => tracing::warn!(%error, "catalog read error"),
             },
@@ -358,8 +367,8 @@ async fn record_live(
             object = next_audio_object(tracks.audio.as_mut()) => match object {
                 Ok(Some(object)) => recording.push_audio(&object).await?,
                 Ok(None) => {
-                    tracing::info!("audio track ended");
-                    return Ok(());
+                    tracing::info!("audio track ended; recording video until the catalog lists one");
+                    tracks.audio = None;
                 }
                 Err(error) => {
                     tracing::warn!(%error, "audio read error; continuing with the next group");
@@ -367,6 +376,11 @@ async fn record_live(
             },
         }
     }
+}
+
+fn lists(catalog: &Catalog, track: &MigratingTrack) -> bool {
+    let name = track.subscription().track_name();
+    loc_tracks(catalog).any(|listed| listed.name == name)
 }
 
 async fn add_listed_audio(

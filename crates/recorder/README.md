@@ -82,11 +82,11 @@ from the moment it is published, with the tracks picked from its catalog
   because a meeting participant encodes a rendition only while someone
   subscribes to it, the recorder included. The choice is made once, from
   the catalog at start, and logged as `catalog resolved`; only an audio
-  track missing at start is added later (see below).
+  track missing at start, or one that ended, is added later (see below).
 - Recording starts at the next group, i.e. the next keyframe, or with
   `--from-cache` at the oldest keyframe still cached, and ends on
   Ctrl-C, when the relay closes the session, or 10 s after the publisher ends
-  a recorded track (PUBLISH_DONE), the time `moqt` waits for late streams.
+  the video track (PUBLISH_DONE), the time `moqt` waits for late streams.
 - The file is fragmented MP4, so it plays even if the recorder is killed; the
   file is flushed to disk whenever a video group completes.
 - Audio and video keep the offset of their capture timestamps, so the two
@@ -106,6 +106,11 @@ from the moment it is published, with the tracks picked from its catalog
   combined file at once if no video has been written yet, otherwise from the
   next keyframe on in `<stem>-2.mp4`; per track in its own file. A codec
   without an fMP4 mapping is never recorded.
+- When the catalog no longer lists the audio track, or the track ends (a
+  meeting participant mutes), the video goes on alone and the audio is
+  picked again from a later catalog (the participant unmutes). It continues
+  in the file the audio went to, after a gap, while its configuration is the
+  same; otherwise it starts the next file as above.
 - With `--upload`, each closed file becomes the object
   `<prefix>/<namespace>/<track>/<start Unix ms>-<index>.mp4` (no `<track>` for
   the combined file), with the capture origin in its `capture-origin-us`

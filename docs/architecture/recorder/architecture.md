@@ -57,7 +57,7 @@ both tracks into one init segment and one fragment stream.
    way `broadcast::build_catalog` writes it. While the catalog lists no video
    track yet, the recorder waits for the next catalog object. While it lists
    no audio track that can be decoded, the recording starts with the video
-   alone and keeps reading the catalog (see "An audio track listed later"). With
+   alone and keeps reading the catalog (see "Audio that comes and goes"). With
    `--list-tracks` it prints the first catalog object's LOC tracks
    (`track_list::track_table`) to stdout and exits instead.
 3. Both media tracks are subscribed with `NextGroupStart`, so the recording
@@ -81,12 +81,13 @@ both tracks into one init segment and one fragment stream.
 5. The `RecordingFile` appends the bytes and flushes whenever the file's
    leading track moved to a new group: the video, or the audio in a file
    without video. A video group is a complete GoP on disk.
-6. The recording ends when either `MigratingTrack` returns `Ok(None)`. When the
-   publisher leaves, the relay sends PUBLISH_DONE on both subscriptions and
-   `moqt` ends them 10 s later, after any late streams, so the recorder needs
-   no session-event handling of its own.
+6. The recording ends when the video `MigratingTrack` returns `Ok(None)`. When
+   the publisher leaves, the relay sends PUBLISH_DONE on both subscriptions
+   and `moqt` ends them 10 s later, after any late streams, so the recorder
+   needs no session-event handling of its own. An audio track that ends only
+   stops the audio (see "Audio that comes and goes").
 
-## An audio track listed later
+## Audio that comes and goes
 A publisher's first catalog often lacks the audio a later one lists:
 `broadcast` sends a catalog at the first video and the first audio
 configuration, and until the second it lists the AAC `audio` track without
@@ -107,8 +108,26 @@ cannot change). The per-track layout opens the track's file. The catalog
 branch is polled before the media branches, so a catalog that arrives
 together with the first video object is applied before that object.
 
-The recording keeps the audio track once added; an audio track that ends
-ends the recording, as before.
+A meeting participant who mutes publishes a catalog without its audio
+tracks and then ends them with PUBLISH_DONE; one who unmutes publishes a
+catalog that lists them again and serves new SUBSCRIBEs. Ending the
+recording with the audio was not kept: the video after a mute would be
+lost. So `record_live` drops the audio subscription once a catalog no
+longer lists its track, or once the track ends, and the video goes on. The
+recording then reads no audio, and the next catalog that lists an audio
+track adds it the same way. Dropping on the catalog matters because `moqt`
+reports the end of a track 10 s after its PUBLISH_DONE: an unmute within
+those 10 s would list the audio while the ended subscription is still
+held, and no later catalog would follow.
+
+An audio track added after an ended one goes to the file the ended one
+went to. A file keeps its init segment, so audio with the configuration it
+holds continues in it after a gap: every audio sample is its own fragment
+whose decode time comes from its capture timestamp, so the gap needs
+nothing written and the audio stays in sync. Audio with another
+configuration starts the next file, at the next keyframe in a file with
+video, at once in the per-track audio file. The per-track audio file keeps
+the name of the first audio track.
 
 ## Key invariants
 - **One timeline for both tracks.** Each `loc::Demuxer` would otherwise count
@@ -230,10 +249,11 @@ the recorder started with.
 - Audio outside AAC, Opus, G.711 A-law and MP3 is never recorded.
 - An audio track listed after the first video was written starts at the
   next keyframe in the next file; the audio before it is lost. Only a missing
-  audio track is added later: the video track, and an audio track once
-  picked, stay as chosen at start.
-- A meeting participant who mutes ends the audio track with PUBLISH_DONE,
-  which ends that participant's recording.
+  audio track is added later: the video track stays as chosen at start, and
+  an audio track once picked stays while the catalog lists it.
+- A meeting participant who turns the camera off ends the video track, which
+  ends that participant's recording. Turning it on again is not recorded:
+  the namespace is not published again.
 - Video outside H.264, VP8, VP9 and AV1 ends the recorder with an error
   before anything is recorded: without the video track there is no file.
 - The automatic choice reads no track name, so it cannot tell a meeting's
