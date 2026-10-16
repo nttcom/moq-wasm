@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use moqt::{AuthorizationToken, MigratingSession};
+use moqt::{AuthorizationToken, Session};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
@@ -19,7 +19,7 @@ pub(crate) struct TokenRefreshTask {
 
 impl TokenRefreshTask {
     pub(crate) fn run(
-        session: Arc<MigratingSession>,
+        session: Arc<Session>,
         token_file: PathBuf,
         app_id: String,
         mut current_token: String,
@@ -39,7 +39,6 @@ impl TokenRefreshTask {
                     continue;
                 }
                 match session
-                    .session()
                     .subscriber()
                     .track_status(
                         app_id.clone(),

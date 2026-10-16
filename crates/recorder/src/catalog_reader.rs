@@ -1,20 +1,20 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use moqt::{MigratingSession, MigratingTrack, subscribe::FilterType};
+use moqt::{Session, subscribe::FilterType};
 use msf::Catalog;
 
-use crate::relay;
+use crate::relay::{self, Track};
 
 /// Yields the catalog's current object from the joining FETCH
 /// (draft-ietf-moq-msf-01 §5), then later objects from the subscription,
 /// whose first stream arrives with the next catalog object, up to 30 s later.
 pub(crate) struct CatalogReader {
-    track: MigratingTrack,
+    track: Track,
     current: Option<Bytes>,
 }
 
 impl CatalogReader {
-    pub(crate) async fn open(session: &MigratingSession, namespace: &str) -> Result<Self> {
+    pub(crate) async fn open(session: &Session, namespace: &str) -> Result<Self> {
         let track = relay::subscribe(
             session,
             namespace,
@@ -22,7 +22,7 @@ impl CatalogReader {
             FilterType::NextGroupStart,
         )
         .await?;
-        let current = match relay::fetch_joining_group(&track).await {
+        let current = match relay::fetch_joining_group(session, &track).await {
             Ok(current) => current,
             Err(error) => {
                 tracing::warn!(%error, "joining FETCH of the catalog failed");
