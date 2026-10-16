@@ -9,7 +9,7 @@ use crate::{
         },
         track::{Media, annexb_access_unit, find_path, read_timescale, read_track},
     },
-    sample::{AudioConfig, Timestamp},
+    sample::{AudioConfig, Timestamp, VideoConfig},
 };
 
 const MICROS_PER_SECOND: i128 = 1_000_000;
@@ -61,7 +61,7 @@ impl Mp4Index {
                 continue;
             };
             let kind = match track.media {
-                Media::Video(config) if video.is_none() => {
+                Media::Video(VideoConfig::Avc(config)) if video.is_none() => {
                     video = Some(config);
                     SampleKind::Video
                 }

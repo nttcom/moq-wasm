@@ -3,12 +3,24 @@ use bytes::Bytes;
 
 use crate::{
     aac::AudioSpecificConfig,
+    av1,
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
     mp4::atom::{Atom, FullAtom, find, full_atom, read_u32},
-    sample::AudioConfig,
+    sample::{AudioConfig, VideoConfig},
+    vp8::Vp8Config,
+    vp9::Vp9Config,
 };
 
-const VIDEO_SAMPLE_ENTRIES: [&[u8]; 2] = [b"avc1", b"avc3"];
+const AVC_SAMPLE_ENTRIES: [&[u8]; 2] = [b"avc1", b"avc3"];
+const VP8_SAMPLE_ENTRY: &[u8] = b"vp08";
+const VP9_SAMPLE_ENTRY: &[u8] = b"vp09";
+const AV1_SAMPLE_ENTRY: &[u8] = b"av01";
+// VP codec ISOBMFF binding §2.2 chromaSubsampling values.
+const VP_SUBSAMPLING_422: u8 = 2;
+const VP_SUBSAMPLING_444: u8 = 3;
+/// AV1-ISOBMFF binding §2.3: the marker/version byte and the three bytes of
+/// fields before the configOBUs.
+const AV1C_HEADER_LENGTH: usize = 4;
 const VISUAL_SAMPLE_ENTRY_LENGTH: usize = 78;
 const AUDIO_SAMPLE_ENTRY_LENGTH: usize = 28;
 const MPEG4_AUDIO_SAMPLE_ENTRY: &[u8] = b"mp4a";
@@ -22,7 +34,7 @@ pub(super) const MPEG2_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x69;
 pub(super) const MPEG1_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x6B;
 
 pub(super) enum Media {
-    Video(AvcDecoderConfigurationRecord),
+    Video(VideoConfig),
     Audio(AudioConfig),
 }
 
@@ -93,15 +105,8 @@ pub(super) fn annexb_access_unit(
 fn read_sample_entry(body: &[u8]) -> Result<Option<Media>> {
     let entries = body.get(4..).context("stsd has no entries")?;
     for entry in crate::mp4::atom::atoms(entries) {
-        if VIDEO_SAMPLE_ENTRIES.contains(&entry.kind) {
-            let children = entry
-                .payload
-                .get(VISUAL_SAMPLE_ENTRY_LENGTH..)
-                .context("visual sample entry is truncated")?;
-            let avcc = find(children, b"avcC").context("video sample entry has no avcC")?;
-            return Ok(Some(Media::Video(AvcDecoderConfigurationRecord::parse(
-                avcc.payload,
-            )?)));
+        if let Some(config) = read_video_entry(entry.kind, entry.payload)? {
+            return Ok(Some(Media::Video(config)));
         }
         if entry.kind == MPEG4_AUDIO_SAMPLE_ENTRY {
             return Ok(Some(Media::Audio(read_mpeg4_audio(entry.payload)?)));
@@ -121,6 +126,64 @@ fn read_sample_entry(body: &[u8]) -> Result<Option<Media>> {
         }
     }
     Ok(None)
+}
+
+fn read_video_entry(kind: &[u8], payload: &[u8]) -> Result<Option<VideoConfig>> {
+    let is_video = AVC_SAMPLE_ENTRIES.contains(&kind)
+        || [VP8_SAMPLE_ENTRY, VP9_SAMPLE_ENTRY, AV1_SAMPLE_ENTRY].contains(&kind);
+    if !is_video {
+        return Ok(None);
+    }
+    let children = payload
+        .get(VISUAL_SAMPLE_ENTRY_LENGTH..)
+        .context("visual sample entry is truncated")?;
+    // ISO/IEC 14496-12 §12.1.3: the 16-bit width and height follow 24 bytes
+    // of SampleEntry and pre-defined fields.
+    let size = read_u32(payload, 24)?;
+    let (width, height) = (size >> 16, size & 0xFFFF);
+    Ok(Some(match kind {
+        VP8_SAMPLE_ENTRY => VideoConfig::Vp8(Vp8Config { width, height }),
+        VP9_SAMPLE_ENTRY => VideoConfig::Vp9(read_vp9(children, width, height)?),
+        AV1_SAMPLE_ENTRY => VideoConfig::Av1(read_av1(children)?),
+        _ => {
+            let avcc = find(children, b"avcC").context("video sample entry has no avcC")?;
+            VideoConfig::Avc(AvcDecoderConfigurationRecord::parse(avcc.payload)?)
+        }
+    }))
+}
+
+/// VPCodecConfigurationBox (VP codec ISOBMFF binding §2.2).
+fn read_vp9(children: &[u8], width: u32, height: u32) -> Result<Vp9Config> {
+    let vpcc = find(children, b"vpcC").context("VP9 sample entry has no vpcC")?;
+    let body = full_atom(vpcc.payload, "vpcC")?.body;
+    let profile = *body.first().context("vpcC has no profile")?;
+    let packed = *body.get(2).context("vpcC has no bit depth")?;
+    let (subsampling_x, subsampling_y) = match packed >> 1 & 0x07 {
+        VP_SUBSAMPLING_422 => (true, false),
+        VP_SUBSAMPLING_444 => (false, false),
+        _ => (true, true),
+    };
+    Ok(Vp9Config {
+        profile,
+        bit_depth: packed >> 4,
+        subsampling_x,
+        subsampling_y,
+        full_range: packed & 1 == 1,
+        width,
+        height,
+    })
+}
+
+/// The configOBUs of an AV1CodecConfigurationBox (AV1-ISOBMFF binding §2.3)
+/// hold the sequence header OBU, which states every field of the config.
+fn read_av1(children: &[u8]) -> Result<av1::Av1Config> {
+    let av1c = find(children, b"av1C").context("AV1 sample entry has no av1C")?;
+    let config_obus = av1c
+        .payload
+        .get(AV1C_HEADER_LENGTH..)
+        .context("av1C is truncated")?;
+    av1::read_sequence_header(&Bytes::copy_from_slice(config_obus))?
+        .context("av1C has no sequence header OBU")
 }
 
 /// The OpusSpecificBox states the encoder's input rate and channel count; the

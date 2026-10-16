@@ -3,6 +3,7 @@ use bytes::Bytes;
 use crate::{
     aac::{AudioSpecificConfig, adts::HEADER_LENGTH},
     h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
+    loc,
     mpegts::parser::{PACKET_SIZE, SYNC_BYTE},
     sample::{AudioSample, MediaEvent, VideoConfig, VideoSample},
 };
@@ -223,4 +224,20 @@ pub(crate) fn ivf_frames(file: &[u8]) -> Vec<Bytes> {
         position += size;
     }
     frames
+}
+
+pub(crate) fn ivf_events(codec: loc::VideoCodec, fixture: &[u8]) -> Vec<MediaEvent> {
+    let mut demuxer = loc::Demuxer::video(codec);
+    let mut events = Vec::new();
+    for (index, payload) in ivf_frames(fixture).into_iter().enumerate() {
+        let object = loc::LocObject {
+            extensions: vec![loc::LocExtension::varint(
+                loc::CAPTURE_TIMESTAMP_ID,
+                index as u64 * 33_333,
+            )],
+            payload,
+        };
+        events.extend(demuxer.push(&object).unwrap());
+    }
+    events
 }
