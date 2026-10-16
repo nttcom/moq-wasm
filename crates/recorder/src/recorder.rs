@@ -66,7 +66,8 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
     .await?;
     let selection = wait_for_selection(session, &catalog_subscription, args).await?;
     tracing::info!(
-        video = %selection.video,
+        video = %selection.video.name,
+        video_codec = ?selection.video.codec,
         audio = selection.audio.as_ref().map(|audio| audio.name.as_str()),
         "catalog resolved"
     );
@@ -77,7 +78,7 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
         FilterType::NextGroupStart
     };
     let video_subscription =
-        relay::subscribe(session, &args.namespace, &selection.video, filter_type).await?;
+        relay::subscribe(session, &args.namespace, &selection.video.name, filter_type).await?;
     let audio_subscription = match &selection.audio {
         Some(audio) => {
             Some(relay::subscribe(session, &args.namespace, &audio.name, filter_type).await?)

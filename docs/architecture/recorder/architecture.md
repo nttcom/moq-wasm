@@ -34,8 +34,9 @@ both tracks into one init segment and one fragment stream.
    joining FETCH (offset 0) draft-ietf-moq-msf-01 §5 asks for, falling back to
    the subscription when the publisher has sent none yet.
    `track_selection::select_tracks` picks the LOC track named by
-   `--video-track` and `--audio-track`; the audio codec comes from the
-   catalog's `codec`, `sampleRate` and `channelConfig`, and an AAC track's
+   `--video-track` and `--audio-track`; the video codec comes from the
+   catalog's `codec`, a WebCodecs codec string naming H.264, VP8, VP9 or AV1,
+   the audio codec from its `codec`, `sampleRate` and `channelConfig`, and an AAC track's
    AudioSpecificConfig from the `initDataList` entry its `initRef` names, the
    way `broadcast::build_catalog` writes it. While the catalog lists no video
    track yet, the recorder waits for the next catalog object.
@@ -104,3 +105,5 @@ the convention is the relay's.
   drops video until the first keyframe.
 - Audio outside AAC, Opus, G.711 A-law and MP3, or an AAC track whose
   configuration is not in the catalog yet, is skipped with a warning.
+- Video outside H.264, VP8, VP9 and AV1 ends the recorder with an error
+  before anything is recorded: without the video track there is no file.

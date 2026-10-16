@@ -1,12 +1,18 @@
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose};
-use mediapack::{AudioConfig, aac::AudioSpecificConfig};
+use mediapack::{AudioConfig, aac::AudioSpecificConfig, loc::VideoCodec};
 use msf::{Catalog, KnownPackaging, Packaging, Track};
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Selection {
-    pub(crate) video: String,
+    pub(crate) video: VideoTrack,
     pub(crate) audio: Option<AudioTrack>,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct VideoTrack {
+    pub(crate) name: String,
+    pub(crate) codec: VideoCodec,
 }
 
 #[derive(Debug, PartialEq)]
@@ -16,9 +22,10 @@ pub(crate) struct AudioTrack {
 }
 
 /// `Ok(None)` until the catalog lists the video track, which a broadcast does
-/// from its first keyframe. An audio track listed without its decoder
-/// configuration is dropped with a warning: `broadcast` lists AAC audio before
-/// the first audio frame delivers its configuration.
+/// from its first keyframe; `Err` when its codec is not H.264, VP8, VP9 or
+/// AV1. An audio track listed without its decoder configuration is dropped
+/// with a warning: `broadcast` lists AAC audio before the first audio frame
+/// delivers its configuration.
 pub(crate) fn select_tracks(
     catalog: &Catalog,
     video_name: &str,
@@ -26,6 +33,13 @@ pub(crate) fn select_tracks(
 ) -> Result<Option<Selection>> {
     let Some(video) = loc_track(catalog, video_name) else {
         return Ok(None);
+    };
+    let video_codec = video.codec.as_deref().unwrap_or("-");
+    let video = VideoTrack {
+        name: video.name.clone(),
+        codec: VideoCodec::from_codec_string(video_codec).with_context(|| {
+            format!("video track {video_name} has codec {video_codec}, which cannot be recorded")
+        })?,
     };
     let audio = match loc_track(catalog, audio_name) {
         Some(track) => match audio_config(catalog, track)? {
@@ -50,10 +64,7 @@ pub(crate) fn select_tracks(
             None
         }
     };
-    Ok(Some(Selection {
-        video: video.name.clone(),
-        audio,
-    }))
+    Ok(Some(Selection { video, audio }))
 }
 
 fn loc_track<'a>(catalog: &'a Catalog, name: &str) -> Option<&'a Track> {
@@ -130,7 +141,9 @@ mod tests {
     }
 
     fn video_track() -> Track {
-        Track::new("video", KnownPackaging::Loc, true)
+        let mut track = Track::new("video", KnownPackaging::Loc, true);
+        track.codec = Some("avc1.42C01E".to_string());
+        track
     }
 
     fn audio_track(codec: &str) -> Track {
@@ -161,7 +174,10 @@ mod tests {
         assert_eq!(
             selection,
             Some(Selection {
-                video: "video".to_string(),
+                video: VideoTrack {
+                    name: "video".to_string(),
+                    codec: VideoCodec::H264,
+                },
                 audio: Some(AudioTrack {
                     name: "audio".to_string(),
                     config: AudioConfig::Aac(aac_config()),
@@ -232,6 +248,28 @@ mod tests {
                 sample_rate: 48_000,
                 channels: 2
             }
+        );
+    }
+
+    #[test]
+    fn takes_the_video_codec_from_the_catalog() {
+        // Arrange
+        let mut av1 = video_track();
+        av1.codec = Some("av01.0.08M.08".to_string());
+        let mut hevc = video_track();
+        hevc.name = "hevc".to_string();
+        hevc.codec = Some("hvc1.1.6.L93.B0".to_string());
+        let catalog = catalog(vec![av1, hevc]);
+
+        // Act
+        let selection = select_tracks(&catalog, "video", "audio").unwrap().unwrap();
+        let error = select_tracks(&catalog, "hevc", "audio").unwrap_err();
+
+        // Assert
+        assert_eq!(selection.video.codec, VideoCodec::Av1);
+        assert_eq!(
+            error.to_string(),
+            "video track hevc has codec hvc1.1.6.L93.B0, which cannot be recorded"
         );
     }
 

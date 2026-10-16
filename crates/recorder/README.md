@@ -3,7 +3,8 @@
 Records an MSF broadcast from a MoQT relay into a fragmented MP4 file. It
 subscribes to the catalog, reads the LOC `video` and `audio` tracks that
 `crates/broadcast` publishers (`live-ingest`, `moqtsink`, `onvif-ingest`)
-produce, and muxes both into one file with `mediapack`.
+and the WebCodecs publishers in `examples/browser` produce, and muxes both
+into one file with `mediapack`.
 
 ```bash
 cargo run -p recorder -- \
@@ -15,7 +16,7 @@ cargo run -p recorder -- \
 | --- | --- | --- |
 | `--relay` (`MOQT_URL`) | — | `moqt://` for QUIC, `https://` for WebTransport |
 | `--namespace` | — | Namespace of the broadcast |
-| `--video-track` | `video` | LOC video track to record (`video_720p`, `video/profile_1`, ...) |
+| `--video-track` | `video` | LOC video track to record (`video_720p`, `video/profile_1`, ...); H.264, VP8, VP9 or AV1, as the catalog's `codec` names it |
 | `--audio-track` | `audio` | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
 | `--from-cache` | off | Start with what the relay or the publisher still caches (60 s by default), then continue live |
