@@ -15,6 +15,12 @@ Each input is one module (`rtmp`, `srt`, `rtp`) that owns its transport and
 ends in the same `IngestPublisher`; the formats meet only at
 `mediapack::MediaEvent`.
 
+Nothing on the input's task may block before the first sample is pushed:
+`broadcast` takes the capture origin at that push, so a stall delays the origin
+and stamps the backlog read after it into the future. The transcoder is
+therefore built on a blocking thread, and the video samples that arrive
+meanwhile wait in its input queue, which drops them once it is full.
+
 ## Transport stream loss
 The SRT listener reads with a 4 MiB UDP receive buffer: a keyframe arrives as
 a burst of several hundred kilobytes within a few milliseconds, and the 64 KiB
