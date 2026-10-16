@@ -1,9 +1,12 @@
+use std::ops::Range;
+
 use anyhow::{Context, Result, bail, ensure};
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::bits::BitReader;
 
 const OBU_SEQUENCE_HEADER: u8 = 1;
+const OBU_TEMPORAL_DELIMITER: u8 = 2;
 const OBU_FRAME_HEADER: u8 = 3;
 const OBU_FRAME: u8 = 6;
 const KEY_FRAME: u64 = 0;
@@ -37,36 +40,17 @@ pub struct Av1TemporalUnit {
     pub config: Option<Av1Config>,
 }
 
-/// Walks the OBUs of a temporal unit in the low-overhead bitstream format
-/// (AV1 specification §5.2). A frame header is read with the sequence header
-/// of this temporal unit or, failing that, `current`; with neither, the unit
-/// is reported as an inter frame.
+/// Reads a temporal unit in the low-overhead bitstream format (AV1
+/// specification §5.2). A frame header is read with the sequence header of
+/// this temporal unit or, failing that, `current`; with neither, the unit is
+/// reported as an inter frame.
 pub fn parse_temporal_unit(data: &Bytes, current: Option<&Av1Config>) -> Result<Av1TemporalUnit> {
     let mut config = None;
-    let mut position = 0;
-    while position < data.len() {
-        let start = position;
-        let header = data[position];
-        ensure!(header & 0x80 == 0, "AV1 OBU with its forbidden bit set");
-        let obu_type = (header >> 3) & 0x0f;
-        let has_extension = header & 0x04 != 0;
-        let has_size_field = header & 0x02 != 0;
-        position += 1 + usize::from(has_extension);
-        let size = if has_size_field {
-            let (size, length) = read_leb128(data.get(position..).unwrap_or_default())?;
-            position += length;
-            size
-        } else {
-            data.len().saturating_sub(position)
-        };
-        let end = position
-            .checked_add(size)
-            .filter(|end| *end <= data.len())
-            .context("AV1 OBU longer than its temporal unit")?;
-        let payload = &data[position..end];
-        match obu_type {
+    for obu in obus(data)? {
+        let payload = &data[obu.payload];
+        match obu.obu_type {
             OBU_SEQUENCE_HEADER => {
-                config = Some(parse_sequence_header(payload, data.slice(start..end))?);
+                config = Some(parse_sequence_header(payload, data.slice(obu.whole))?);
             }
             OBU_FRAME_HEADER | OBU_FRAME => {
                 let Some(sequence) = config.as_ref().or(current) else {
@@ -87,9 +71,59 @@ pub fn parse_temporal_unit(data: &Bytes, current: Option<&Av1Config>) -> Result<
             }
             _ => {}
         }
-        position = end;
     }
     bail!("AV1 temporal unit without a frame")
+}
+
+/// A temporal unit as an ISOBMFF sample, which the AV1-ISOBMFF binding §2.4
+/// forbids to carry temporal delimiters.
+pub(crate) fn without_temporal_delimiters(data: &Bytes) -> Result<Bytes> {
+    let mut sample = BytesMut::with_capacity(data.len());
+    for obu in obus(data)? {
+        if obu.obu_type != OBU_TEMPORAL_DELIMITER {
+            sample.put_slice(&data[obu.whole]);
+        }
+    }
+    Ok(sample.freeze())
+}
+
+/// One OBU of a temporal unit, with the byte ranges of the whole OBU and of
+/// its payload.
+struct Obu {
+    obu_type: u8,
+    whole: Range<usize>,
+    payload: Range<usize>,
+}
+
+fn obus(data: &[u8]) -> Result<Vec<Obu>> {
+    let mut obus = Vec::new();
+    let mut position = 0;
+    while position < data.len() {
+        let start = position;
+        let header = data[position];
+        ensure!(header & 0x80 == 0, "AV1 OBU with its forbidden bit set");
+        let has_extension = header & 0x04 != 0;
+        let has_size_field = header & 0x02 != 0;
+        position += 1 + usize::from(has_extension);
+        let size = if has_size_field {
+            let (size, length) = read_leb128(data.get(position..).unwrap_or_default())?;
+            position += length;
+            size
+        } else {
+            data.len().saturating_sub(position)
+        };
+        let end = position
+            .checked_add(size)
+            .filter(|end| *end <= data.len())
+            .context("AV1 OBU longer than its temporal unit")?;
+        obus.push(Obu {
+            obu_type: (header >> 3) & 0x0f,
+            whole: start..end,
+            payload: position..end,
+        });
+        position = end;
+    }
+    Ok(obus)
 }
 
 /// AV1 specification §5.5.1 through `color_config()`.
@@ -317,6 +351,18 @@ mod tests {
 
         // Assert
         assert_eq!(error.to_string(), "AV1 OBU longer than its temporal unit");
+    }
+
+    #[test]
+    fn drops_the_temporal_delimiter_from_a_sample() {
+        // Arrange: the keyframe starts with a two-byte temporal delimiter
+        let frames = ivf_frames(FIXTURE_AV1_IVF);
+
+        // Act
+        let sample = without_temporal_delimiters(&frames[0]).unwrap();
+
+        // Assert
+        assert_eq!(sample, frames[0].slice(2..));
     }
 
     #[test]

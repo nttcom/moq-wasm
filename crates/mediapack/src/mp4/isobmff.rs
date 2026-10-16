@@ -3,9 +3,11 @@ use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
     aac::asc::SAMPLES_PER_FRAME,
-    h264::{AvcDecoderConfigurationRecord, annexb::annexb_to_avcc_without_parameter_sets},
+    av1::{self, Av1Config},
+    h264::annexb::annexb_to_avcc_without_parameter_sets,
     mp4::track::{MPEG1_AUDIO_OBJECT_TYPE_INDICATION, MPEG2_AUDIO_OBJECT_TYPE_INDICATION},
-    sample::{AudioConfig, AudioSample, VideoSample},
+    sample::{AudioConfig, AudioSample, VideoConfig, VideoSample},
+    vp9::Vp9Config,
 };
 
 pub(super) const VIDEO_TIMESCALE: u32 = 90_000;
@@ -20,6 +22,26 @@ pub(super) const NON_SYNC_SAMPLE_FLAGS: u32 = 0x0101_0000;
 const TFHD_DEFAULT_BASE_IS_MOOF: u32 = 0x0002_0000;
 const TRUN_FLAGS: u32 = 0x0001 | 0x0100 | 0x0200 | 0x0400 | 0x0800;
 const UNITY_MATRIX: [u32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
+/// ISO/IEC 23091-2: colour primaries, transfer characteristics and matrix
+/// coefficients left unspecified.
+const COLOUR_UNSPECIFIED: u8 = 2;
+/// The VP codec ISOBMFF binding's chromaSubsampling values.
+const VP_SUBSAMPLING_420_COLLOCATED: u8 = 1;
+const VP_SUBSAMPLING_422: u8 = 2;
+const VP_SUBSAMPLING_444: u8 = 3;
+/// VP9 levels by the largest luma picture size each allows (VP9 bitstream
+/// specification Annex A).
+const VP9_LEVELS: [(u32, u8); 9] = [
+    (36_864, 10),
+    (73_728, 11),
+    (122_880, 20),
+    (245_760, 21),
+    (552_960, 30),
+    (983_040, 31),
+    (2_228_224, 40),
+    (8_912_896, 50),
+    (35_651_584, 60),
+];
 
 pub(super) struct TrackInit {
     pub(super) track_id: u32,
@@ -40,14 +62,21 @@ pub(super) fn init_segment(tracks: &[TrackInit]) -> Bytes {
     out.freeze()
 }
 
+/// Fails for an AV1 temporal unit whose OBUs do not parse.
 pub(super) fn video_fragment(
     sequence_number: u32,
     track_id: u32,
     sample: &VideoSample,
     duration: u32,
-    nal_length_size: usize,
-) -> Bytes {
-    let data = annexb_to_avcc_without_parameter_sets(&sample.data, nal_length_size);
+    config: &VideoConfig,
+) -> Result<Bytes> {
+    let data = match config {
+        VideoConfig::Avc(record) => {
+            annexb_to_avcc_without_parameter_sets(&sample.data, record.nal_length_size as usize)
+        }
+        VideoConfig::Vp8(_) | VideoConfig::Vp9(_) => sample.data.clone(),
+        VideoConfig::Av1(_) => av1::without_temporal_delimiters(&sample.data)?,
+    };
     let composition_offset =
         sample.pts.ticks(VIDEO_TIMESCALE) as i64 - sample.dts.ticks(VIDEO_TIMESCALE) as i64;
     let flags = if sample.is_keyframe {
@@ -55,7 +84,7 @@ pub(super) fn video_fragment(
     } else {
         NON_SYNC_SAMPLE_FLAGS
     };
-    moof_mdat(
+    Ok(moof_mdat(
         sequence_number,
         track_id,
         sample.dts.ticks(VIDEO_TIMESCALE),
@@ -63,7 +92,7 @@ pub(super) fn video_fragment(
         flags,
         composition_offset as i32,
         &data,
-    )
+    ))
 }
 
 /// Fails for an MP3 frame without a valid header, an empty or truncated Opus
@@ -180,14 +209,64 @@ fn moof_mdat(
     out.freeze()
 }
 
-pub(super) fn video_trak(track_id: u32, config: &AvcDecoderConfigurationRecord) -> Result<Bytes> {
-    let sps = config.sequence_parameter_set()?;
+pub(super) fn video_trak(track_id: u32, config: &VideoConfig) -> Result<Bytes> {
+    let (width, height, kind, codec_box) = match config {
+        VideoConfig::Avc(record) => {
+            let sps = record.sequence_parameter_set()?;
+            (
+                sps.width,
+                sps.height,
+                b"avc1",
+                plain_box(b"avcC", &record.to_bytes()),
+            )
+        }
+        VideoConfig::Vp8(config) => (
+            config.width,
+            config.height,
+            b"vp08",
+            vpcc(
+                0,
+                vp9_level(config.width, config.height),
+                8,
+                VP_SUBSAMPLING_420_COLLOCATED,
+                false,
+            ),
+        ),
+        VideoConfig::Vp9(config) => (
+            config.width,
+            config.height,
+            b"vp09",
+            vpcc(
+                config.profile,
+                vp9_level(config.width, config.height),
+                config.bit_depth,
+                vp9_chroma_subsampling(config),
+                config.full_range,
+            ),
+        ),
+        VideoConfig::Av1(config) => (config.max_width, config.max_height, b"av01", av1c(config)),
+    };
+    let vmhd = full_box(b"vmhd", 0, 1, &[0; 8]);
+    Ok(trak(
+        tkhd(track_id, 0, width, height),
+        mdhd(VIDEO_TIMESCALE),
+        hdlr(b"vide", "VideoHandler"),
+        vmhd,
+        stbl(&plain_box(
+            kind,
+            &visual_sample_entry(width, height, &codec_box),
+        )),
+    ))
+}
+
+/// ISO/IEC 14496-12 §12.1.3 VisualSampleEntry followed by the codec's box.
+fn visual_sample_entry(width: u32, height: u32, codec_box: &[u8]) -> Bytes {
     let mut entry = BytesMut::new();
     entry.put_bytes(0, 6);
     entry.put_u16(1);
     entry.put_bytes(0, 16);
-    entry.put_u16(sps.width as u16);
-    entry.put_u16(sps.height as u16);
+    entry.put_u16(width as u16);
+    entry.put_u16(height as u16);
     entry.put_u32(0x0048_0000);
     entry.put_u32(0x0048_0000);
     entry.put_u32(0);
@@ -195,15 +274,62 @@ pub(super) fn video_trak(track_id: u32, config: &AvcDecoderConfigurationRecord) 
     entry.put_bytes(0, 32);
     entry.put_u16(0x0018);
     entry.put_i16(-1);
-    entry.put_slice(&plain_box(b"avcC", &config.to_bytes()));
-    let vmhd = full_box(b"vmhd", 0, 1, &[0; 8]);
-    Ok(trak(
-        tkhd(track_id, 0, sps.width, sps.height),
-        mdhd(VIDEO_TIMESCALE),
-        hdlr(b"vide", "VideoHandler"),
-        vmhd,
-        stbl(&plain_box(b"avc1", &entry)),
-    ))
+    entry.put_slice(codec_box);
+    entry.freeze()
+}
+
+/// VPCodecConfigurationBox (VP codec ISOBMFF binding §2.2). The bitstream
+/// carries no colour description that maps to it, so it is left unspecified.
+fn vpcc(profile: u8, level: u8, bit_depth: u8, chroma_subsampling: u8, full_range: bool) -> Bytes {
+    let mut payload = BytesMut::new();
+    payload.put_u8(profile);
+    payload.put_u8(level);
+    payload.put_u8(bit_depth << 4 | chroma_subsampling << 1 | u8::from(full_range));
+    payload.put_u8(COLOUR_UNSPECIFIED);
+    payload.put_u8(COLOUR_UNSPECIFIED);
+    payload.put_u8(COLOUR_UNSPECIFIED);
+    payload.put_u16(0);
+    full_box(b"vpcC", 1, 0, &payload)
+}
+
+/// The frame rate is unknown here, so the level is the lowest whose picture
+/// size fits, which is how ffmpeg derives it without a rate.
+fn vp9_level(width: u32, height: u32) -> u8 {
+    let picture_size = width.saturating_mul(height);
+    VP9_LEVELS
+        .iter()
+        .find(|(max_picture_size, _)| picture_size <= *max_picture_size)
+        .map_or(62, |(_, level)| *level)
+}
+
+fn vp9_chroma_subsampling(config: &Vp9Config) -> u8 {
+    match (config.subsampling_x, config.subsampling_y) {
+        (true, true) => VP_SUBSAMPLING_420_COLLOCATED,
+        (true, false) => VP_SUBSAMPLING_422,
+        _ => VP_SUBSAMPLING_444,
+    }
+}
+
+/// AV1CodecConfigurationBox (AV1-ISOBMFF binding §2.3) with the sequence
+/// header as its configOBUs.
+fn av1c(config: &Av1Config) -> Bytes {
+    let mut payload = BytesMut::new();
+    // marker and version 1
+    payload.put_u8(0x81);
+    payload.put_u8(config.seq_profile << 5 | config.seq_level_idx_0);
+    payload.put_u8(
+        u8::from(config.seq_tier_0) << 7
+            | u8::from(config.bit_depth > 8) << 6
+            | u8::from(config.bit_depth == 12) << 5
+            | u8::from(config.monochrome) << 4
+            | u8::from(config.chroma_subsampling_x) << 3
+            | u8::from(config.chroma_subsampling_y) << 2
+            | config.chroma_sample_position,
+    );
+    // no initial_presentation_delay
+    payload.put_u8(0);
+    payload.put_slice(&config.sequence_header_obu);
+    plain_box(b"av1C", &payload)
 }
 
 pub(super) fn audio_trak(track_id: u32, config: &AudioConfig) -> Bytes {
