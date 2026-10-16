@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::join_all;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::Mutex;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
@@ -69,27 +69,16 @@ pub enum WriteOutcome {
 }
 
 /// Objects are numbered and cached once per track, from the first one handed
-/// over, whether or not any session takes the track yet, so the cache and the
-/// live streams agree on ids. Each session that takes the track (a SUBSCRIBE
-/// it sent or a PUBLISH it accepted) gets an outlet with its own writer, and a
-/// write goes to every outlet: a client moving to another server publishes on
-/// both until the old one stops subscribing (draft-22 §7.6.1). A writer
-/// created while a group is open sends from the next group on. Content Exists
-/// reports what was actually sent.
-#[derive(Clone)]
+/// over, whether or not anything takes the track yet, so the cache and the
+/// live streams agree on ids. Each subscription to the track (a SUBSCRIBE a
+/// peer sent or a PUBLISH this endpoint sent) gets an outlet with its own
+/// writer, and a write goes to every outlet; during a migration the old and
+/// the new server each subscribe on their own. A writer created while a group
+/// is open sends from the next group on. Content Exists reports what was
+/// actually sent.
+#[derive(Clone, Default)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
-    /// Bumped whenever a session stops taking a track.
-    released: Arc<watch::Sender<u64>>,
-}
-
-impl Default for Origin {
-    fn default() -> Self {
-        Self {
-            state: Arc::default(),
-            released: Arc::new(watch::channel(0).0),
-        }
-    }
 }
 
 #[derive(Default)]
@@ -112,15 +101,12 @@ impl OriginState {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Publication {
-    Unpublished,
     /// A SUBSCRIBE the peer sent is being served.
     Subscribed,
     /// A PUBLISH this endpoint sent is being served.
     Published,
     /// `published` tells whether the released subscription came from PUBLISH.
-    Released {
-        published: bool,
-    },
+    Released { published: bool },
 }
 
 struct OriginTrack {
@@ -130,9 +116,9 @@ struct OriginTrack {
     outlets: Vec<Outlet>,
 }
 
-/// The track on one session.
+/// One subscription to the track: a SUBSCRIBE served or a PUBLISH sent.
 struct Outlet {
-    session: Arc<SessionContext>,
+    request: RequestKey,
     publication: Publication,
     writer: Option<TrackWriter>,
 }
@@ -147,32 +133,20 @@ impl OriginTrack {
         }
     }
 
-    fn outlet_mut(&mut self, session: &Arc<SessionContext>) -> &mut Outlet {
-        let index = match self
-            .outlets
+    fn outlet_mut(&mut self, request: RequestKey) -> Option<&mut Outlet> {
+        self.outlets
+            .iter_mut()
+            .find(|outlet| outlet.request == request)
+    }
+
+    fn of_session(&self, session: SessionKey) -> impl Iterator<Item = &Outlet> {
+        self.outlets
             .iter()
-            .position(|outlet| Arc::ptr_eq(&outlet.session, session))
-        {
-            Some(index) => index,
-            None => {
-                self.outlets.push(Outlet {
-                    session: session.clone(),
-                    publication: Publication::Unpublished,
-                    writer: None,
-                });
-                self.outlets.len() - 1
-            }
-        };
-        &mut self.outlets[index]
+            .filter(move |outlet| outlet.request.0 == session)
     }
 }
 
 impl Outlet {
-    fn serve(&mut self, publication: Publication, writer: TrackWriter) {
-        self.publication = publication;
-        self.writer = Some(writer);
-    }
-
     fn release(&mut self) {
         self.publication = Publication::Released {
             published: self.publication == Publication::Published,
@@ -206,7 +180,8 @@ impl Origin {
 
     /// Sends PUBLISH on `session`. A no-op while the peer of `session` takes
     /// the track, and once that peer unsubscribed from a PUBLISH of it. A
-    /// track released after a SUBSCRIBE is published again.
+    /// track released after a SUBSCRIBE is published again. A session that
+    /// follows GOAWAY sends the track to every connection it is published on.
     pub async fn publish(
         &self,
         session: &Session,
@@ -218,10 +193,14 @@ impl Origin {
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
-        if !matches!(
-            track.outlet_mut(context).publication,
-            Publication::Unpublished | Publication::Released { published: false }
-        ) {
+        if track.of_session(session_key(context)).any(|outlet| {
+            matches!(
+                outlet.publication,
+                Publication::Subscribed
+                    | Publication::Published
+                    | Publication::Released { published: true }
+            )
+        }) {
             return Ok(());
         }
         let publisher = session.publisher();
@@ -233,13 +212,16 @@ impl Origin {
             )
             .await
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
-        state.track_mut(&key)?.outlet_mut(context).serve(
-            Publication::Published,
-            TrackWriter::new(publisher.create_stream(&subscription), next_group_id),
-        );
-        state
-            .subscriptions
-            .insert((session_key(context), subscription.request_id()), key);
+        let request = (session_key(context), subscription.request_id());
+        state.track_mut(&key)?.outlets.push(Outlet {
+            request,
+            publication: Publication::Published,
+            writer: Some(TrackWriter::new(
+                publisher.create_stream(&subscription),
+                next_group_id,
+            )),
+        });
+        state.subscriptions.insert(request, key);
         tracing::info!(
             namespace,
             track_name,
@@ -343,13 +325,16 @@ impl Origin {
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
-        track.outlet_mut(context).serve(
-            Publication::Subscribed,
-            TrackWriter::new(publisher.create_stream(&subscription), next_group_id),
-        );
-        state
-            .subscriptions
-            .insert((session_key(context), handler.request_id()), key);
+        let request = (session_key(context), handler.request_id());
+        track.outlets.push(Outlet {
+            request,
+            publication: Publication::Subscribed,
+            writer: Some(TrackWriter::new(
+                publisher.create_stream(&subscription),
+                next_group_id,
+            )),
+        });
+        state.subscriptions.insert(request, key);
         tracing::info!(
             namespace = %handler.track_namespace,
             track_name = %handler.track_name,
@@ -375,16 +360,22 @@ impl Origin {
     /// Returns the released track's `(namespace, name)`; its numbering and
     /// cache are kept.
     pub async fn release(&self, handler: &UnsubscribeHandler) -> Option<(String, String)> {
-        let context = &handler.session_context;
+        let request = (
+            session_key(&handler.session_context),
+            handler.subscribe_id(),
+        );
         let mut state = self.state.lock().await;
-        let key = state
-            .subscriptions
-            .remove(&(session_key(context), handler.subscribe_id()))?;
+        let key = state.subscriptions.remove(&request)?;
         if let Some(track) = state.tracks.get_mut(&key) {
-            track.outlet_mut(context).release();
+            // A released PUBLISH stays as a marker, so `publish` keeps off it.
+            track.outlets.retain_mut(|outlet| {
+                if outlet.request != request {
+                    return true;
+                }
+                outlet.release();
+                outlet.publication == Publication::Released { published: true }
+            });
         }
-        drop(state);
-        self.released.send_modify(|count| *count += 1);
         Some(key)
     }
 
@@ -487,68 +478,20 @@ impl Origin {
         Ok(())
     }
 
-    /// The tracks this endpoint has sent PUBLISH for on `session`, released
-    /// or not.
-    pub(crate) async fn published_on(&self, session: &Session) -> Vec<TrackKey> {
-        let context = session.context();
-        self.state
-            .lock()
-            .await
-            .tracks
-            .iter()
-            .filter(|(_, track)| {
-                track.outlets.iter().any(|outlet| {
-                    Arc::ptr_eq(&outlet.session, context)
-                        && matches!(
-                            outlet.publication,
-                            Publication::Published | Publication::Released { published: true }
-                        )
-                })
-            })
-            .map(|(key, _)| key.clone())
-            .collect()
-    }
-
-    /// Resolves once the peer of `session` takes no track.
-    pub(crate) async fn unserved(&self, session: &Session) {
-        let mut released = self.released.subscribe();
-        while self.is_serving(session).await {
-            if released.changed().await.is_err() {
-                return;
-            }
-        }
-    }
-
-    /// Drops everything `session` takes. Call it once the session is closed.
-    pub(crate) async fn forget(&self, session: &Session) {
-        let context = session.context();
-        let key = session_key(context);
-        let mut state = self.state.lock().await;
-        for track in state.tracks.values_mut() {
-            track
-                .outlets
-                .retain(|outlet| !Arc::ptr_eq(&outlet.session, context));
-        }
-        state
-            .subscriptions
-            .retain(|(session, _), _| *session != key);
-        state.fetches.retain(|(session, _), _| *session != key);
-        drop(state);
-        self.released.send_modify(|count| *count += 1);
-    }
-
     async fn settle(
         &self,
         key: &TrackKey,
         placement: Placement,
-        results: Vec<(Arc<SessionContext>, TrackWriter, Result<bool>)>,
+        results: Vec<(RequestKey, TrackWriter, Result<bool>)>,
     ) -> Result<WriteOutcome> {
         let mut state = self.state.lock().await;
         let track = state.track_mut(key)?;
         let (mut sent, mut stopped, mut failure) = (false, false, None);
-        for (session, writer, result) in results {
-            let outlet = track.outlet_mut(&session);
-            if outlet.writer.is_none() && outlet.serving() {
+        for (request, writer, result) in results {
+            if let Some(outlet) = track.outlet_mut(request)
+                && outlet.writer.is_none()
+                && outlet.serving()
+            {
                 outlet.writer = Some(writer);
             }
             match result {
@@ -582,16 +525,11 @@ impl Origin {
     }
 }
 
-fn take_writers(track: &mut OriginTrack) -> Vec<(Arc<SessionContext>, TrackWriter)> {
+fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, TrackWriter)> {
     track
         .outlets
         .iter_mut()
-        .filter_map(|outlet| {
-            outlet
-                .writer
-                .take()
-                .map(|writer| (outlet.session.clone(), writer))
-        })
+        .filter_map(|outlet| outlet.writer.take().map(|writer| (outlet.request, writer)))
         .collect()
 }
 
@@ -1211,10 +1149,6 @@ mod tests {
         assert!(!origin.is_serving(&first.client).await);
         assert!(origin.is_serving(&second.client).await);
         assert_eq!(one, sent(FIRST_GROUP_ID + 1, 0, true));
-        assert_eq!(
-            origin.published_on(&first.client).await,
-            vec![track_key(NAMESPACE, TRACK)]
-        );
     }
 
     #[test]
