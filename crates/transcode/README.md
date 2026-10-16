@@ -35,6 +35,41 @@ interval is pushed out of reach (`key-int-max=i32::MAX`) and a keyframe is force
 frame carrying each source keyframe's presentation time, so rendition keyframes land
 exactly where the source's do (draft-ietf-moq-cmsf-01 §3.2).
 
+## Compositing
+
+`Compositor` composites several participants' recordings offline into one progressive MP4
+(`faststart`): their videos as a grid of equal tiles on a black background, re-encoded as
+H.264, and their audio mixed into one stereo AAC track.
+
+```
+EventSource ─> appsrc ─> decodebin3 ─> videoconvert ───────────────> compositor ─> x264enc ─┐
+EventSource ─> appsrc ─> decodebin3 ─> audioconvert ─> audioresample ─> audiomixer ─> avenc_aac ─┴─> mp4mux ─> file
+```
+
+```rust
+use transcode::{CompositeInput, CompositeSettings, Compositor};
+
+let inputs = vec![CompositeInput { video: Some(video_events), audio: Some(audio_events) }];
+let mut compositor = Compositor::start(inputs, CompositeSettings::default(), &output_path)?;
+compositor.finished().await?;                  // dropping the compositor cancels
+```
+
+Each `EventSource` yields a config event, then samples already on the shared timeline. The
+grid follows the participants whose video covers each output frame (ceil(sqrt(n)) columns):
+someone alone fills the picture, and a participant whose video stops for more than a second
+leaves the grid until it resumes. An input without video only joins the audio mix.
+
+Inputs may be H.264, VP8, VP9 or AV1 video and AAC, Opus, A-law or MP3 audio, which needs
+these plugins on top of the transcoder's:
+
+| Package | Plugins |
+| --- | --- |
+| `gst-plugins-base` | `compositor`, `audiomixer`, `opusdec` |
+| `gst-plugins-good` | `isomp4` (`mp4mux`), `vpx` (`vp8dec`/`vp9dec`), `alaw`, `mpg123`, `audioparsers` (`aacparse`, `mpegaudioparse`) |
+| `gst-plugins-bad` | `dav1d` or `aom` (AV1), `videoparsersbad` (`h264parse`, `av1parse`), `opusparse` |
+| `gst-plugins-ugly` | `x264` (`x264enc`) |
+| `gst-libav` | `avdec_h264`, `avenc_aac` |
+
 ## Requirements
 
 GStreamer 1.20+ with `gst-plugins-base` (appsrc/appsink, decodebin, videoscale),
