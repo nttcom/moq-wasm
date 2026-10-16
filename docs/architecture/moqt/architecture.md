@@ -231,9 +231,11 @@ sends every SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE
 made on the session again (`NextGroupStart`, the last Forward state; a
 rejected namespace or SUBSCRIBE is repeated every 500 ms for up to 10 s),
 makes it the current connection, and closes the previous one with NO_ERROR
-once the server takes no track this side sends there any more and 5 s after
-every carried subscription cut over (at most 10 s after the move), or when
-the server closes it; a SUBSCRIBE still served there then ends with an
+once the server takes no track this side sends there any more and no
+carried subscription has a subgroup stream open there (each sink counts the
+streams it handed out until they end, `OpenSubgroups`), at the latest 5 s
+after every carried subscription cut over (at most 10 s after the move), or
+when the server closes it; a SUBSCRIBE still served there then ends with an
 `Unsubscribe` event. A track PUBLISHed on the session goes to every
 connection it is on: each subgroup stream the `StreamDataSenderFactory`
 opens, and each datagram, is sent on all of them, the new connection from
@@ -561,7 +563,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   groups before it. A subgroup stream carries one group and counts as
   starting it, since the subscription sent again starts at the next group
   start. The publisher sends to both servers at once, so the cutover does not
-  wait for the new connection to deliver a group first.
+  wait for the new connection to deliver a group first. Once the previous
+  connection has no subgroup stream of the subscription open, a cutover still
+  waiting is fixed at the group after the newest it handed out, so no group
+  is delivered twice when the previous connection closes.
 
 - **Buffer-before-subscribe**: objects can arrive before the application
   registers a receiver (data races SUBSCRIBE_OK). `object_sinks` buffers up to

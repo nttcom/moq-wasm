@@ -10,7 +10,9 @@ use crate::{
     SessionEvent,
     modules::moqt::{
         control_plane::{constants::TerminationErrorCode, enums::RequestId},
-        data_plane::stream::fetch_data_receiver::FetchDataReceiver,
+        data_plane::stream::{
+            fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+        },
         domains::connection::{
             Connection, ObjectSink, SinkReceiver, generation_of, logical_id, wire_part,
         },
@@ -317,6 +319,7 @@ impl SessionContext {
                     logical_alias,
                     newest_group: None,
                     cutover: None,
+                    open_subgroups: OpenSubgroups::new(),
                 },
             )
             .await?;

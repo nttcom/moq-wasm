@@ -37,6 +37,16 @@ impl GroupCutover {
         }
     }
 
+    /// The previous subscription is let go while no group of it is
+    /// arriving, so it hands out nothing more. A waiting cutover is fixed at
+    /// the group after the newest it handed out, since the same publisher
+    /// numbers the groups alike on both connections.
+    pub(crate) fn release_previous(&mut self) {
+        if self.state == Cutover::Waiting {
+            self.state = Cutover::At(self.newest.map_or(0, |newest| newest + 1));
+        }
+    }
+
     pub(crate) fn is_cut_over(&self) -> bool {
         matches!(self.state, Cutover::At(_))
     }
@@ -154,6 +164,41 @@ mod tests {
         assert!(!current_same_group);
         assert!(!previous_next_group);
         assert!(current_next_group);
+    }
+
+    #[test]
+    fn a_released_previous_session_takes_no_later_group_and_the_current_one_resumes_after_it() {
+        // Arrange
+        let mut cutover = migrating_after(&[1]);
+        assert!(cutover.take_previous(2));
+
+        // Act
+        cutover.release_previous();
+        let previous_next_group = cutover.take_previous(3);
+        let current_delivered_group = cutover.take_current(2, 0);
+        let current_next_group = cutover.take_current(3, 0);
+
+        // Assert
+        assert!(cutover.is_cut_over());
+        assert!(!previous_next_group);
+        assert!(!current_delivered_group);
+        assert!(current_next_group);
+    }
+
+    #[test]
+    fn releasing_after_the_cutover_keeps_it() {
+        // Arrange
+        let mut cutover = migrating_after(&[1]);
+        assert!(cutover.take_current(3, 0));
+
+        // Act
+        cutover.release_previous();
+        let previous_tail = cutover.take_previous(2);
+        let current_group = cutover.take_current(3, 1);
+
+        // Assert
+        assert!(previous_tail);
+        assert!(current_group);
     }
 
     #[test]
