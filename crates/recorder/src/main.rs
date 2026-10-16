@@ -18,7 +18,7 @@ mod upload_task;
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::recording::Layout;
@@ -28,24 +28,8 @@ use crate::recording::Layout;
     author,
     version,
     about = "Record an MSF broadcast from a MoQT relay into fragmented MP4",
-    args_conflicts_with_subcommands = true,
-    subcommand_negates_reqs = true
+    after_help = "`recorder serve` serves an HTTP API that starts and stops room recordings; see `recorder serve --help`."
 )]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-
-    #[command(flatten)]
-    record: Option<Args>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Serve an HTTP API that starts and stops room recordings
-    Serve(ServeArgs),
-}
-
-#[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// MoQT relay URL (`moqt://` for QUIC, `https://` for WebTransport)
     #[arg(long, env = "MOQT_URL")]
@@ -117,7 +101,9 @@ pub(crate) struct Args {
     pub(crate) insecure_skip_tls_verify: bool,
 }
 
-#[derive(clap::Args, Debug)]
+/// Serve an HTTP API that starts and stops room recordings
+#[derive(Parser, Debug)]
+#[command(name = "recorder serve", bin_name = "recorder serve", version)]
 pub(crate) struct ServeArgs {
     /// Address the HTTP API listens on
     #[arg(long, default_value = "127.0.0.1:8095")]
@@ -178,10 +164,12 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let cli = Cli::parse();
-    match (cli.command, cli.record) {
-        (Some(Command::Serve(args)), _) => serve::serve(args).await,
-        (None, Some(args)) => recorder::run(args).await,
-        (None, None) => unreachable!("clap requires the recording flags without a subcommand"),
+    // Two parsers instead of a clap subcommand: with one, a recording flag
+    // filled from an environment variable (`MOQT_URL`) counts as given, so
+    // clap parses the recording mode, ignores `serve` and asks for `--namespace`.
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == "serve") {
+        serve::serve(ServeArgs::parse_from(std::env::args_os().skip(1))).await
+    } else {
+        recorder::run(Args::parse()).await
     }
 }
