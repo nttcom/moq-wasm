@@ -5,6 +5,8 @@ use mediapack::{
 };
 use moqt::TrackObject;
 
+use crate::pipeline::capture_timestamp;
+
 const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
 const CAPTURE_ORIGIN: Timestamp = Timestamp::from_micros(1_700_000_000_000_000);
 
@@ -93,13 +95,7 @@ pub(crate) fn audio_samples(events: &[MediaEvent]) -> Vec<&AudioSample> {
 }
 
 pub(crate) fn first_video_capture(object: &TrackObject) -> u64 {
-    loc::LocObject {
-        extensions: loc::from_extension_headers(&object.extension_headers),
-        payload: object.payload.clone(),
-    }
-    .capture_timestamp()
-    .unwrap()
-    .micros()
+    capture_timestamp(object).unwrap().micros()
 }
 
 pub(crate) fn opus_object(group_id: u64, object_id: u64, capture_micros: u64) -> TrackObject {
