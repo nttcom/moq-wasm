@@ -275,6 +275,46 @@ use these facades instead of the data-plane factories directly:
   while the other streams keep being read, and `Ok(None)` means the factory
   has no more streams.
 
+### `MigratingSession` — following GOAWAY on the subscribing side
+
+`MigratingSession` (`domains/migrating_session.rs`) is a client session that
+follows the server's GOAWAY (draft-14 §3.5) for what it subscribes, so the
+application keeps reading across a server drain. It owns the `Endpoint` and
+the current `Session`; `MigrationTask` reads the events of the current and
+the previous session and forwards them to `MigratingSession::receive_event`,
+except GOAWAY, which it acts on:
+
+1. connect to the New Session URI, or to the current URL when it is empty;
+2. send every SUBSCRIBE_NAMESPACE made through the session again, then every
+   SUBSCRIBE with `NextGroupStart`, repeating a rejected request every 500 ms
+   for up to 10 s because the publishers move on the same GOAWAY. A rejected
+   namespace fails the migration and keeps the current session; a rejected
+   track stays on the previous session alone;
+3. make the new session the current one and hand each `MigratingTrack` its
+   new subscription;
+4. close the previous session with NO_ERROR 5 s after every track has cut
+   over, or after 10 s for a track that delivered nothing on the new
+   session yet.
+
+A `MigratingTrack` reads both subscriptions while the two sessions are open.
+`GroupCutover` decides, per object, which one it is taken from: the first
+object of the new subscription fixes the cutover at the first group it
+delivers from the start that the previous one has not started, groups
+before it come from the previous subscription and the rest from the new one.
+A publisher migrating at the same time sends to both servers (draft-22
+§7.6.1), so the old path may deliver every group first; the cutover is
+therefore fixed at once rather than waiting for the new path to deliver a
+group first. The first data stream of each subscription is accepted in a task of its
+own because `Subscriber::accept_data_receiver` loses the receiver when its
+future is dropped, and `next_object` polls both subscriptions in `select!`.
+
+Only what goes through `MigratingSession` is carried: a FETCH, PUBLISH or
+PUBLISH_NAMESPACE sent on `session()` stays on its session, and
+`MigratingTrack::session()` names the session the first subscription lives
+on, so a joining FETCH addresses it there. The publishing side of a
+migration lives in `broadcast::RelayConnection` and the browser's
+`moqtClient.ts`.
+
 ### `Origin` — the tracks this endpoint originates
 
 `Origin` (`domains/origin.rs`) is the opt-in bookkeeping of an original
@@ -389,7 +429,8 @@ one of three paths:
    a response to a request kind this crate never sends) close the session and
    stop the task.
 
-Messages the crate can decode but not yet act on (GOAWAY, MAX_REQUEST_ID,
+Messages `Session` decodes but does not act on (GOAWAY, which
+`MigratingSession` acts on, MAX_REQUEST_ID,
 REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
 PUBLISH_NAMESPACE_CANCEL) still take path 1, so the application sees them
 instead of the session dying.
