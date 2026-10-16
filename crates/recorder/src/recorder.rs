@@ -359,7 +359,7 @@ mod tests {
         // Arrange
         let mut interrupt = signal(SignalKind::interrupt()).unwrap();
 
-        // Act: the runtime handles the SIGINT during the sleep, as it does while `write_output` awaits
+        // Act: the runtime handles the SIGINT during the sleep, as it does while `Recording::push_video` awaits
         let status = std::process::Command::new("kill")
             .args(["-INT", &std::process::id().to_string()])
             .status()
