@@ -14,11 +14,16 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::{
     Args,
-    recording::Recording,
+    recording::{Recording, Uploader},
     relay::{self, RelayConnection},
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_selection::{Selection, select_tracks},
+    upload_task::UploadTask,
 };
+
+/// Uploads begin when a file closes, so a recording without segments would
+/// upload only after it ended.
+const UPLOAD_SEGMENT_SECONDS: u64 = 60;
 
 pub(crate) async fn record(args: Args) -> Result<()> {
     let auth_token = match &args.auth_token_file {
@@ -97,11 +102,20 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
     // One listener for the whole recording: tokio drops a SIGINT that arrives
     // while no listener is registered, such as between two `select!` polls.
     let mut interrupt = signal(SignalKind::interrupt())?;
+    let segment_seconds = args
+        .segment_seconds
+        .or(args.upload.is_some().then_some(UPLOAD_SEGMENT_SECONDS));
+    let uploader = args
+        .upload
+        .as_ref()
+        .map(|url| uploader(url, &args.namespace, SystemTime::now()))
+        .transpose()?;
     let mut recording = Recording::create(
         &selection,
         args.layout,
         path,
-        args.segment_seconds.map(Duration::from_secs),
+        segment_seconds.map(Duration::from_secs),
+        uploader,
     )
     .await?;
     tracing::info!(paths = ?recording.paths().collect::<Vec<_>>(), "recording started");
@@ -300,6 +314,21 @@ async fn next_audio_object(reader: Option<&mut TrackReader>) -> Result<Option<Tr
         Some(reader) => reader.next_object().await,
         None => std::future::pending().await,
     }
+}
+
+/// Objects go under `<url path>/<namespace>/`.
+fn uploader(url: &url::Url, namespace: &str, now: SystemTime) -> Result<Uploader> {
+    let (store, mut prefix) = object_store::parse_url_opts(url, std::env::vars())
+        .with_context(|| format!("cannot use {url} as the upload location"))?;
+    prefix.extend(namespace.split('/'));
+    Ok(Uploader {
+        task: UploadTask::run(store.into()),
+        prefix,
+        started_at_ms: now
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    })
 }
 
 fn default_output_path(namespace: &str, now: SystemTime) -> PathBuf {

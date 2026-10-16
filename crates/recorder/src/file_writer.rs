@@ -6,6 +6,13 @@ use tokio::{
     io::{AsyncWriteExt, BufWriter},
 };
 
+/// `index` counts from 1.
+#[derive(Debug, PartialEq)]
+pub(crate) struct ClosedFile {
+    pub(crate) path: PathBuf,
+    pub(crate) index: u32,
+}
+
 /// `rotate` continues in the next numbered file (`<stem>-2.mp4`,
 /// `<stem>-3.mp4`, ...). An existing file is never overwritten.
 pub(crate) struct RecordingFile {
@@ -45,18 +52,26 @@ impl RecordingFile {
             .with_context(|| format!("cannot flush {}", self.path.display()))
     }
 
-    pub(crate) async fn rotate(&mut self, tail: &[u8]) -> Result<()> {
+    pub(crate) async fn rotate(&mut self, tail: &[u8]) -> Result<ClosedFile> {
         self.write(tail).await?;
         self.flush().await?;
+        let closed = ClosedFile {
+            path: self.path.clone(),
+            index: self.index,
+        };
         self.index += 1;
         self.path = numbered_path(&self.first_path, self.index);
         self.writer = open(&self.path).await?;
-        Ok(())
+        Ok(closed)
     }
 
-    pub(crate) async fn finish(mut self, tail: &[u8]) -> Result<()> {
+    pub(crate) async fn finish(mut self, tail: &[u8]) -> Result<ClosedFile> {
         self.write(tail).await?;
-        self.flush().await
+        self.flush().await?;
+        Ok(ClosedFile {
+            path: self.path,
+            index: self.index,
+        })
     }
 }
 
@@ -109,11 +124,25 @@ mod tests {
 
         // Act
         file.write(b"first").await.unwrap();
-        file.rotate(b"-tail").await.unwrap();
+        let rotated = file.rotate(b"-tail").await.unwrap();
         file.write(b"second").await.unwrap();
-        file.finish(b"!").await.unwrap();
+        let finished = file.finish(b"!").await.unwrap();
 
         // Assert
+        assert_eq!(
+            rotated,
+            ClosedFile {
+                path: first.clone(),
+                index: 1
+            }
+        );
+        assert_eq!(
+            finished,
+            ClosedFile {
+                path: dir.join("rec-2.mp4"),
+                index: 2
+            }
+        );
         assert_eq!(tokio::fs::read(&first).await.unwrap(), b"first-tail");
         assert_eq!(
             tokio::fs::read(dir.join("rec-2.mp4")).await.unwrap(),

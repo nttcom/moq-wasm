@@ -8,7 +8,7 @@ choice, the muxing flow or the file rules described here change.
 `crates/recorder` is a subscriber: it joins an MSF broadcast through a relay
 and writes what it receives to local disk as fragmented MP4: one file holding
 the video and the audio track, or with `--layout per-track` one file per
-track. It knows the catalog (`msf`), LOC objects and
+track. With `--upload` it moves every closed file to an object store. It knows the catalog (`msf`), LOC objects and
 the fMP4 muxer (`mediapack`) and the client side of `moqt`; it owns no track
 layout of its own and follows the one `crates/broadcast` publishes (see
 [its README](../../../crates/broadcast/README.md)).
@@ -99,6 +99,34 @@ both tracks into one init segment and one fragment stream.
 - **Shutdown reaches the relay.** The session handle is dropped and
   `Endpoint::wait_idle` awaited before exit, so the CONNECTION_CLOSE is sent
   instead of the relay waiting for the idle timeout.
+
+## Upload
+With `--upload <URL>` the recorder builds an `ObjectStore` from the URL with
+`object_store::parse_url_opts` and the process environment, so the credentials
+never pass through flags (see [object_store.md](object_store.md)). Local disk
+stays the write path, and the store only ever sees closed files:
+
+- Each segment is a self-contained file, so it is uploaded the moment it
+  closes, at rotation or at the end. `--upload` makes `--segment-seconds`
+  default to 60 s; without segments the only file would close when the
+  recording ends.
+- `upload_task::UploadTask` uploads the closed files one at a time in closing
+  order with `object_store::buffered::BufWriter`, which streams a large file
+  as a multipart upload. It deletes the local file once the object is
+  complete. A file whose upload still fails after the store's retries stays
+  on disk with an error log, and the recording goes on.
+- An object is named `<url path>/<namespace>/<track>/<recording start Unix
+  ms>-<segment index>.mp4`, without `<track>` for the combined file. A `/` in
+  the namespace or the track name nests the key.
+- Every object carries the recording's capture origin as the metadata
+  `capture-origin-us`: the Unix time in microseconds that presentation time
+  0 of the file stands for. Files of different recordings can be placed on
+  one wall clock from it.
+- At the end the recorder waits for the queued uploads before it exits.
+
+Writing straight into an in-progress multipart upload was not chosen: the
+object is not readable until the upload completes, a crash loses the whole
+segment, and a network stall would hold up the recording.
 
 ## Token refresh
 With `--auth-token-file` a `TokenRefreshTask` re-reads the file every 10 s and
