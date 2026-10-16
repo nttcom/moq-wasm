@@ -132,9 +132,10 @@ export function ControlBar(props: ControlBarProps) {
   )
 }
 
-const RECORDING_LAYOUTS: { layout: RecordingLayout; label: string }[] = [
-  { layout: 'combined', label: 'Video and audio in one file' },
-  { layout: 'per-track', label: 'One file per track' }
+const RECORDING_CHOICES: { id: string; layout: RecordingLayout; composite: boolean; label: string }[] = [
+  { id: 'combined', layout: 'combined', composite: false, label: 'Video and audio in one file' },
+  { id: 'per-track', layout: 'per-track', composite: false, label: 'One file per track' },
+  { id: 'composite', layout: 'combined', composite: true, label: 'Everyone in one video' }
 ]
 
 function RecordButton({ recording }: { recording: RoomRecordingControls }) {
@@ -167,14 +168,14 @@ function RecordButton({ recording }: { recording: RoomRecordingControls }) {
       </BarButton>
       {menuOpen && (
         <div className="absolute bottom-14 left-0 z-20 w-56 rounded-lg border border-white/10 bg-slate-900 p-1 shadow-lg">
-          {RECORDING_LAYOUTS.map(({ layout, label }) => (
+          {RECORDING_CHOICES.map(({ id, layout, composite, label }) => (
             <button
-              key={layout}
+              key={id}
               type="button"
-              data-testid={`record-${layout}`}
+              data-testid={`record-${id}`}
               onClick={() => {
                 setMenuOpen(false)
-                void recording.start(layout)
+                void recording.start(layout, composite)
               }}
               className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-700"
             >
