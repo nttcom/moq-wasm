@@ -14,10 +14,12 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::{
     Args,
+    catalog_reader::CatalogReader,
     recording::{Recording, Uploader},
     relay::{self, RelayConnection},
     token_refresh_task::{TokenRefreshTask, read_token_file},
-    track_selection::{Selection, select_tracks},
+    track_list::track_table,
+    track_selection::{Selection, VideoChoice, select_tracks},
     upload_task::UploadTask,
 };
 
@@ -25,7 +27,7 @@ use crate::{
 /// upload only after it ended.
 const UPLOAD_SEGMENT_SECONDS: u64 = 60;
 
-pub(crate) async fn record(args: Args) -> Result<()> {
+pub(crate) async fn run(args: Args) -> Result<()> {
     let auth_token = match &args.auth_token_file {
         Some(path) => Some(read_token_file(path).await?),
         None => args.auth_token.clone(),
@@ -48,7 +50,11 @@ pub(crate) async fn record(args: Args) -> Result<()> {
                 token,
             )
         });
-    let result = record_broadcast(&connection.session, &args).await;
+    let result = if args.list_tracks {
+        list_tracks(&connection.session, &args.namespace).await
+    } else {
+        record_broadcast(&connection.session, &args).await
+    };
     drop(token_refresh);
     connection.close().await;
     result
@@ -60,15 +66,18 @@ fn app_id(namespace: &str) -> &str {
     namespace.split('/').next().unwrap_or(namespace)
 }
 
+async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
+    let catalog = CatalogReader::open(session, namespace)
+        .await?
+        .next()
+        .await?;
+    println!("{}", track_table(&catalog));
+    Ok(())
+}
+
 async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
-    let catalog_subscription = relay::subscribe(
-        session,
-        &args.namespace,
-        msf::CATALOG_TRACK_NAME,
-        FilterType::NextGroupStart,
-    )
-    .await?;
-    let selection = wait_for_selection(session, &catalog_subscription, args).await?;
+    let mut catalog = CatalogReader::open(session, &args.namespace).await?;
+    let selection = wait_for_selection(&mut catalog, args).await?;
     tracing::info!(
         video = %selection.video.name,
         video_codec = ?selection.video.codec,
@@ -147,46 +156,22 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// Reads the catalog's current object from the joining FETCH
-/// (draft-ietf-moq-msf-01 §5), then later objects from the subscription, until
-/// the catalog lists the tracks to record. The subscription reader opens only
-/// after the FETCH: its first stream arrives with the next catalog object, up
-/// to 30 s later.
-async fn wait_for_selection(
-    session: &Session,
-    subscription: &Subscription,
-    args: &Args,
-) -> Result<Selection> {
-    let mut current = match relay::fetch_joining_group(session, subscription).await {
-        Ok(current) => current,
-        Err(error) => {
-            tracing::warn!(%error, "joining FETCH of the catalog failed");
-            None
-        }
+async fn wait_for_selection(catalog: &mut CatalogReader<'_>, args: &Args) -> Result<Selection> {
+    let video_choice = match &args.video_track {
+        Some(name) => VideoChoice::Named(name),
+        None => VideoChoice::MaxHeight(args.max_video_height),
     };
-    let mut reader = None;
     loop {
-        let payload = match current.take() {
-            Some(payload) => payload,
-            None => {
-                let reader = match &mut reader {
-                    Some(reader) => reader,
-                    None => reader.insert(relay::track_reader(session, subscription).await?),
-                };
-                reader
-                    .next_object()
-                    .await?
-                    .context("catalog track ended")?
-                    .payload
-            }
-        };
-        let catalog: msf::Catalog =
-            serde_json::from_slice(&payload).context("catalog is not MSF JSON")?;
-        if let Some(selection) = select_tracks(&catalog, &args.video_track, &args.audio_track)? {
+        let selection = select_tracks(
+            &catalog.next().await?,
+            video_choice,
+            args.audio_track.as_deref(),
+        )?;
+        if let Some(selection) = selection {
             return Ok(selection);
         }
         tracing::info!(
-            track = %args.video_track,
+            track = args.video_track.as_deref(),
             "waiting for the catalog to list the video track"
         );
     }
