@@ -1,12 +1,13 @@
 use std::{
     ops::ControlFlow,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use moqt::{
-    Session, Subscription, TrackObject, TrackReader,
+    MigratingSession, MigratingTrack, TrackObject,
     fetch::{Fetch, FetchDataReceiver},
     subscribe::FilterType,
 };
@@ -20,7 +21,7 @@ use crate::{
     Args,
     catalog_reader::CatalogReader,
     recording::{Layout, Recording, Uploader},
-    relay::{self, RelayConnection},
+    relay,
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
     track_selection::{Selection, VideoChoice, select_tracks},
@@ -36,31 +37,33 @@ pub(crate) async fn run(args: Args) -> Result<()> {
         Some(path) => Some(read_token_file(path).await?),
         None => args.auth_token.clone(),
     };
-    let connection = RelayConnection::connect(
-        &args.relay,
-        !args.insecure_skip_tls_verify,
-        auth_token.clone(),
-    )
-    .await?;
+    let session = Arc::new(
+        relay::connect(
+            &args.relay,
+            !args.insecure_skip_tls_verify,
+            auth_token.clone(),
+        )
+        .await?,
+    );
     let token_refresh = args
         .auth_token_file
         .clone()
         .zip(auth_token)
         .map(|(path, token)| {
             TokenRefreshTask::run(
-                connection.session.clone(),
+                session.clone(),
                 path,
                 app_id(&args.namespace).to_string(),
                 token,
             )
         });
     let result = if args.list_tracks {
-        list_tracks(&connection.session, &args.namespace).await
+        list_tracks(&session, &args.namespace).await
     } else {
-        record_until_interrupted(&connection.session, &args).await
+        record_until_interrupted(&session, &args).await
     };
     drop(token_refresh);
-    connection.close().await;
+    session.close().await;
     result
 }
 
@@ -84,7 +87,7 @@ pub(crate) struct UploadTarget {
 
 /// Records `args.namespace` until Ctrl-C or the end of a track, then waits
 /// for the uploads.
-async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> {
+async fn record_until_interrupted(session: &MigratingSession, args: &Args) -> Result<()> {
     let upload_task = args
         .upload
         .as_ref()
@@ -144,7 +147,7 @@ fn app_id(namespace: &str) -> &str {
     namespace.split('/').next().unwrap_or(namespace)
 }
 
-async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
+async fn list_tracks(session: &MigratingSession, namespace: &str) -> Result<()> {
     let catalog = CatalogReader::open(session, namespace)
         .await?
         .next()
@@ -156,7 +159,7 @@ async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
 /// Records `namespace` into `path` until `stop` turns true or a track ends.
 /// A stop while the catalog lists no video track yet records nothing.
 pub(crate) async fn record_broadcast(
-    session: &Session,
+    session: &MigratingSession,
     namespace: &str,
     path: PathBuf,
     options: &BroadcastOptions,
@@ -179,15 +182,10 @@ pub(crate) async fn record_broadcast(
     } else {
         FilterType::NextGroupStart
     };
-    let video_subscription =
+    let mut video_track =
         relay::subscribe(session, namespace, &selection.video.name, filter_type).await?;
-    let audio_subscription = match &selection.audio {
+    let mut audio_track = match &selection.audio {
         Some(audio) => Some(relay::subscribe(session, namespace, &audio.name, filter_type).await?),
-        None => None,
-    };
-    let video_reader = relay::track_reader(session, &video_subscription).await?;
-    let audio_reader = match &audio_subscription {
-        Some(subscription) => Some(relay::track_reader(session, subscription).await?),
         None => None,
     };
 
@@ -206,9 +204,8 @@ pub(crate) async fn record_broadcast(
     tracing::info!(paths = ?recording.paths().collect::<Vec<_>>(), "recording started");
     let cached = if options.from_cache {
         record_cached(
-            session,
-            &video_subscription,
-            audio_subscription.as_ref(),
+            &video_track,
+            audio_track.as_ref(),
             &mut recording,
             &mut stop,
         )
@@ -219,8 +216,8 @@ pub(crate) async fn record_broadcast(
     if cached.is_continue() {
         record_live(
             session,
-            video_reader,
-            audio_reader,
+            &mut video_track,
+            audio_track.as_mut(),
             &mut recording,
             &mut stop,
         )
@@ -233,7 +230,7 @@ pub(crate) async fn record_broadcast(
 }
 
 async fn wait_for_selection(
-    catalog: &mut CatalogReader<'_>,
+    catalog: &mut CatalogReader,
     options: &BroadcastOptions,
 ) -> Result<Selection> {
     let video_choice = match &options.video_track {
@@ -260,15 +257,14 @@ async fn wait_for_selection(
 /// subscriptions are read; they continue where it ends. A failed FETCH leaves
 /// a gap before the live part instead of ending the recording.
 async fn record_cached(
-    session: &Session,
-    video: &Subscription,
-    audio: Option<&Subscription>,
+    video: &MigratingTrack,
+    audio: Option<&MigratingTrack>,
     recording: &mut Recording,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<ControlFlow<()>> {
-    let mut video_fetch = open_cached(session, video).await;
+    let mut video_fetch = open_cached(video).await;
     let mut audio_fetch = match audio {
-        Some(audio) => open_cached(session, audio).await,
+        Some(audio) => open_cached(audio).await,
         None => None,
     };
     while video_fetch.is_some() || audio_fetch.is_some() {
@@ -295,9 +291,9 @@ async fn record_cached(
 }
 
 async fn record_live(
-    session: &Session,
-    mut video_reader: TrackReader,
-    mut audio_reader: Option<TrackReader>,
+    session: &MigratingSession,
+    video_track: &mut MigratingTrack,
+    mut audio_track: Option<&mut MigratingTrack>,
     recording: &mut Recording,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<()> {
@@ -312,7 +308,7 @@ async fn record_live(
                 tracing::warn!(%close, "session closed");
                 return Ok(());
             }
-            object = video_reader.next_object() => match object {
+            object = video_track.next_object() => match object {
                 Ok(Some(object)) => recording.push_video(&object).await?,
                 Ok(None) => {
                     tracing::info!("video track ended");
@@ -322,7 +318,7 @@ async fn record_live(
                     tracing::warn!(%error, "video read error; continuing with the next group");
                 }
             },
-            object = next_audio_object(audio_reader.as_mut()) => match object {
+            object = next_audio_object(audio_track.as_deref_mut()) => match object {
                 Ok(Some(object)) => recording.push_audio(&object).await?,
                 Ok(None) => {
                     tracing::info!("audio track ended");
@@ -356,11 +352,11 @@ fn fetched_object(
     }
 }
 
-async fn open_cached(session: &Session, subscription: &Subscription) -> Option<FetchDataReceiver> {
-    relay::fetch_cached(session, subscription)
+async fn open_cached(track: &MigratingTrack) -> Option<FetchDataReceiver> {
+    relay::fetch_cached(track)
         .await
         .inspect_err(|error| {
-            tracing::warn!(track = subscription.track_name(), %error, "cannot FETCH the cached part")
+            tracing::warn!(track = track.subscription().track_name(), %error, "cannot FETCH the cached part")
         })
         .ok()
         .flatten()
@@ -373,9 +369,9 @@ async fn next_fetched(receiver: Option<&mut FetchDataReceiver>) -> Result<Fetch>
     }
 }
 
-async fn next_audio_object(reader: Option<&mut TrackReader>) -> Result<Option<TrackObject>> {
-    match reader {
-        Some(reader) => reader.next_object().await,
+async fn next_audio_object(track: Option<&mut MigratingTrack>) -> Result<Option<TrackObject>> {
+    match track {
+        Some(track) => track.next_object().await,
         None => std::future::pending().await,
     }
 }

@@ -29,8 +29,11 @@ events the publishers started from, and `mediapack::mp4::Fmp4Muxer` writes
 both tracks into one init segment and one fragment stream.
 
 ## Flow
-1. `relay::RelayConnection` opens one session; the URL scheme selects QUIC or
-   WebTransport (`Endpoint<DUAL>`), as `broadcast` does on the publishing side.
+1. `relay::connect` opens one `moqt::MigratingSession`; the URL scheme selects
+   QUIC or WebTransport (`Endpoint<DUAL>`), as `broadcast` does on the
+   publishing side. When the relay drains, its GOAWAY moves every
+   subscription to the relay it names and the files continue without a gap
+   (see the `moqt` architecture, `MigratingSession`).
 2. `catalog_reader::CatalogReader` subscribes to the catalog first and reads
    its current object with the joining FETCH (offset 0)
    draft-ietf-moq-msf-01 §5 asks for, falling back to the subscription when
@@ -56,7 +59,7 @@ both tracks into one init segment and one fragment stream.
    `--list-tracks` it prints the first catalog object's LOC tracks
    (`track_list::track_table`) to stdout and exits instead.
 3. Both media tracks are subscribed with `NextGroupStart`, so the recording
-   begins on a keyframe, and read with one `TrackReader` each. With
+   begins on a keyframe, and read with one `MigratingTrack` each. With
    `--from-cache` they are subscribed with `LargestObject` instead, and a
    standalone FETCH per track from `{0, 0}` through the Largest Location in
    SUBSCRIBE_OK is written first, in arrival order across the two tracks. The
@@ -76,7 +79,7 @@ both tracks into one init segment and one fragment stream.
 5. The `RecordingFile` appends the bytes and flushes whenever the file's
    leading track moved to a new group: the video, or the audio in a file
    without video. A video group is a complete GoP on disk.
-6. The recording ends when either `TrackReader` returns `Ok(None)`. When the
+6. The recording ends when either `MigratingTrack` returns `Ok(None)`. When the
    publisher leaves, the relay sends PUBLISH_DONE on both subscriptions and
    `moqt` ends them 10 s later, after any late streams, so the recorder needs
    no session-event handling of its own.
@@ -110,8 +113,8 @@ both tracks into one init segment and one fragment stream.
   video sample, whose duration is unknown until the next one, is lost.
 - **Never overwrite.** The output file is created with `create_new`; a name
   clash is an error, not a truncated recording.
-- **Shutdown reaches the relay.** The session handle is dropped and
-  `Endpoint::wait_idle` awaited before exit, so the CONNECTION_CLOSE is sent
+- **Shutdown reaches the relay.** `MigratingSession::close` closes the
+  session and awaits `Endpoint::wait_idle` before exit, so the CONNECTION_CLOSE is sent
   instead of the relay waiting for the idle timeout.
 
 ## Upload
@@ -158,6 +161,9 @@ segment, and a network stall would hold up the recording.
   it would deliver every track of the namespace, every rendition included.
 - A participant who leaves ends their tracks with PUBLISH_DONE, which ends
   their recording. One who joins again is recorded into new files.
+- When the relay drains, the session sends SUBSCRIBE_NAMESPACE again on the
+  relay its GOAWAY names; the PUBLISH_NAMESPACE that relay answers with for a
+  participant already recorded is acknowledged and changes nothing.
 - `POST /recordings/{id}/stop` sends the stop signal every
   `record_broadcast` watches. The state goes from `stopping` to `finished`
   once each file is closed and, with `--upload`, uploaded. The objects go
@@ -186,7 +192,9 @@ TRACK_STATUS for namespace `[app id]` and track `update_auth_token` carrying
 the token as its AUTHORIZATION TOKEN (see the relay architecture document,
 "Token refresh"). The app id is the namespace's first element. moq-cli does
 the same; neither shares the code because draft-14 has no refresh message and
-the convention is the relay's.
+the convention is the relay's. The token goes to the current session, so it
+follows a migration; the session to the new relay is opened with the token
+the recorder started with.
 
 ## Limits
 - `--from-cache` reaches only as far back as the relay's and the
