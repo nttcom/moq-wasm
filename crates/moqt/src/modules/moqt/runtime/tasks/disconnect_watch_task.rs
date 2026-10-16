@@ -21,8 +21,11 @@ impl DisconnectWatchTask {
             async move {
                 connection.transport.closed().await;
 
-                if let Err(error) = event_sender.send(SessionEvent::Disconnected()) {
-                    tracing::warn!("failed to send disconnect event: {:?}", error);
+                // Nobody reads the events of a connection a migration retired.
+                if event_sender.send(SessionEvent::Disconnected()).is_err() {
+                    tracing::debug!(
+                        "disconnect event not delivered: nobody reads the connection's events"
+                    );
                 }
             }
             .instrument(close_watcher_span),
