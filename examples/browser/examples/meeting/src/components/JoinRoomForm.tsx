@@ -11,18 +11,34 @@ import { Label } from '../../../../lib/ui/label'
 
 interface JoinRoomFormProps {
   onJoin: (roomName: string, userName: string, relayUrl: string) => void
+  joinError: Error | null
+  connecting: boolean
 }
 
-interface RelayOptionGroup {
-  label: string
-  options: RelayPreset[]
-}
+type RelayTab = 'cloud' | 'local'
 
-export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
-  const relayOptionGroups = useMemo(() => buildRelayOptionGroups(), [])
+const RELAY_TAB_LABELS: Record<RelayTab, string> = { cloud: 'Cloud', local: 'Local' }
+
+const INPUT_CLASS_NAME =
+  'h-12 border-white/10 bg-slate-800 text-base text-white placeholder:text-slate-500 ring-offset-slate-900 focus-visible:ring-blue-500'
+
+export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProps) {
+  const relayOptions = useMemo<Record<RelayTab, RelayPreset[]>>(
+    () => ({
+      cloud: [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS],
+      local: buildLocalRelayPresets()
+    }),
+    []
+  )
   const [roomName, setRoomName] = useState('')
   const [userName, setUserName] = useState('')
-  const [relayUrl, setRelayUrl] = useState<string>(relayOptionGroups[0].options[0].value)
+  const [relayTab, setRelayTab] = useState<RelayTab>('cloud')
+  const [relayUrl, setRelayUrl] = useState<string>(relayOptions.cloud[0].value)
+
+  const selectRelayTab = (tab: RelayTab) => {
+    setRelayTab(tab)
+    setRelayUrl(relayOptions[tab][0].value)
+  }
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -32,15 +48,15 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50 p-8">
-      <div className="w-full max-w-4xl space-y-12">
-        <div className="text-center space-y-4">
-          <h1 className="text-6xl font-bold">Join Meeting Room</h1>
-          <p className="text-2xl text-muted-foreground">Enter your details to join the meeting</p>
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
+      <div className="w-full max-w-xl space-y-8 rounded-2xl bg-slate-900 p-8 ring-1 ring-white/10">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold">Join Meeting Room</h1>
+          <p className="text-slate-400">Enter your details to join the meeting</p>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-10">
-          <div className="space-y-4">
-            <Label htmlFor="roomName" className="text-2xl">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="roomName" className="text-slate-300">
               Room Name
             </Label>
             <Input
@@ -51,11 +67,11 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
               onChange={(e: ChangeEvent<HTMLInputElement>) => setRoomName(e.target.value)}
               placeholder="Enter room name"
               required
-              className="h-16 text-xl placeholder:text-xl"
+              className={INPUT_CLASS_NAME}
             />
           </div>
-          <div className="space-y-4">
-            <Label htmlFor="userName" className="text-2xl">
+          <div className="space-y-2">
+            <Label htmlFor="userName" className="text-slate-300">
               User Name
             </Label>
             <Input
@@ -66,71 +82,73 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
               onChange={(e: ChangeEvent<HTMLInputElement>) => setUserName(e.target.value)}
               placeholder="Enter your name"
               required
-              className="h-16 text-xl placeholder:text-xl"
+              className={INPUT_CLASS_NAME}
             />
           </div>
-          <div className="space-y-4">
-            <Label className="text-2xl">Relay</Label>
-            <div className="space-y-5">
-              {relayOptionGroups.map((group) => (
-                <fieldset key={group.label} className="space-y-3">
-                  <legend className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                    {group.label}
-                  </legend>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {group.options.map((option) => (
-                      <label
-                        key={option.value}
-                        className="flex min-h-24 items-center gap-4 rounded-xl border border-input bg-background px-5 py-4 text-lg"
-                      >
-                        <input
-                          type="radio"
-                          name="relayUrl"
-                          value={option.value}
-                          checked={relayUrl === option.value}
-                          onChange={() => setRelayUrl(option.value)}
-                          className="h-5 w-5 shrink-0 accent-blue-600"
-                          data-testid={option.testId}
-                        />
-                        <div className="min-w-0">
-                          <div className="font-semibold">{option.label}</div>
-                          <div className="break-all text-sm text-muted-foreground">{option.helper}</div>
-                        </div>
-                      </label>
-                    ))}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-300">Relay</span>
+              <div role="tablist" className="flex rounded-full bg-slate-800 p-1">
+                {(Object.keys(RELAY_TAB_LABELS) as RelayTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={relayTab === tab}
+                    data-testid={`join-relay-tab-${tab}`}
+                    onClick={() => selectRelayTab(tab)}
+                    className={`rounded-full px-4 py-1 text-sm font-medium transition ${
+                      relayTab === tab ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {RELAY_TAB_LABELS[tab]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div role="tabpanel" className="space-y-2">
+              {relayOptions[relayTab].map((option) => (
+                <label
+                  key={option.value}
+                  className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition ${
+                    relayUrl === option.value
+                      ? 'border-blue-500 bg-blue-500/10'
+                      : 'border-white/10 bg-slate-800/60 hover:bg-slate-800'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="relayUrl"
+                    value={option.value}
+                    checked={relayUrl === option.value}
+                    onChange={() => setRelayUrl(option.value)}
+                    className="h-4 w-4 shrink-0 accent-blue-500"
+                    data-testid={option.testId}
+                  />
+                  <div className="min-w-0">
+                    <div className="font-medium">{option.label}</div>
+                    <div className="break-all text-sm text-slate-400">{option.helper}</div>
                   </div>
-                </fieldset>
+                </label>
               ))}
             </div>
           </div>
+          {joinError && (
+            <p className="text-sm text-red-400" data-testid="join-error">
+              {joinError.message}
+            </p>
+          )}
           <Button
             type="submit"
             size="lg"
             data-testid="join-submit-button"
-            className="w-full h-16 text-2xl font-semibold bg-blue-600 hover:bg-blue-700 text-white"
-            disabled={!roomName.trim() || !userName.trim()}
+            className="h-12 w-full rounded-full bg-blue-600 text-base font-semibold text-white hover:bg-blue-700"
+            disabled={!roomName.trim() || !userName.trim() || connecting}
           >
-            Join Room
+            {connecting ? 'Connecting...' : 'Join Room'}
           </Button>
         </form>
       </div>
     </div>
   )
-}
-
-function buildRelayOptionGroups(): RelayOptionGroup[] {
-  return [
-    {
-      label: 'Local Relay',
-      options: buildLocalRelayPresets()
-    },
-    {
-      label: 'Cloud (LB)',
-      options: [LOAD_BALANCED_RELAY_PRESET]
-    },
-    {
-      label: 'Cloud (specific relay)',
-      options: CLOUD_RELAY_PRESETS
-    }
-  ]
 }
