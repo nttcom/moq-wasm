@@ -273,6 +273,42 @@ hides the answer from that page and a `text/plain` POST needs no preflight. The 
 track choice are server settings, so a request cannot point the recorder at
 another relay or bucket.
 
+## Composite
+On a recorder started with `--composite`, a `POST /recordings` with
+`"composite": true` also makes one MP4 of the whole room once the recording
+has ended; without the flag the request is refused with `400`, since
+compositing re-encodes every participant and keeps files on disk. The MP4
+holds every participant's video in a grid and their audio mixed
+(`transcode::Compositor`, see the transcode README).
+Compositing live was not chosen: the files are on disk anyway, and offline
+the compositor waits for every participant's data instead of dropping late
+frames.
+
+- When every participant's recording has ended and, with `--upload`, every
+  file is uploaded, `RoomRecording` hands the files it collected to a
+  `CompositeJob`. `record_broadcast` returns each file with its capture
+  origin; a participant who joined again is one input.
+- `composite::FileEvents` reads a participant's files in order with
+  `mediapack::mp4::Demuxer`, once for the video and once for the audio, on
+  the compositor's feeder threads. Each sample is moved by the file's
+  capture origin minus the room's earliest, so the participants share one
+  timeline; presentation time 0 of `composite.mp4` is that earliest origin.
+- Rooms are composited one at a time (`CompositeQueue`). Without
+  `--upload`, `composite.mp4` is written next to the participants' files in
+  `--output-dir/<recording id>/` and nothing is deleted.
+- With `--upload`, the upload task keeps each file on disk after uploading
+  it. The room's files are reserved against `--composite-max-gb` (20 GB) when
+  the recording ends; a room beyond the budget is `skipped`. Afterwards,
+  composited or not, `composite.mp4` goes to `<upload prefix>/<recording
+  id>/composite.mp4` with the earliest origin as `capture-origin-us`, and the
+  uploaded files are deleted. A file whose upload failed stays on disk as
+  before.
+- SIGINT or SIGTERM gives up a composite that waits or runs: dropping the
+  `Compositor` stops its pipeline.
+
+The recording's JSON carries `composite` (`null` when not requested) with
+`state` `waiting`, `composing`, `done`, `skipped` or `failed`, and `error`.
+
 ## Token refresh
 With `--auth-token-file` a `TokenRefreshTask` re-reads the file every 10 s and
 sends a changed token with the relay's in-session refresh convention: a
@@ -306,3 +342,9 @@ the recorder started with.
   because its bitrate is lower; a participant who shares the screen with
   the camera off is recorded from `screenshare_480p`, and stays so after
   the camera is turned on while the screen share is listed.
+- A room recording that fails while `composite` was requested is not
+  composited, and with `--upload` its uploaded files stay on disk.
+- The budget counts the participants' files only, not `composite.mp4`
+  (about 1.4 GB for two hours at the default 2 Mbit/s).
+- Clocks of the participants' devices are trusted as they are; a skewed
+  clock shifts that participant in the composite.

@@ -1,5 +1,6 @@
 mod api_server;
 mod catalog_reader;
+mod composite;
 mod file_writer;
 mod pipeline;
 mod recorder;
@@ -156,6 +157,17 @@ pub(crate) struct ServeArgs {
     /// the shortest one when all are taller
     #[arg(long, value_name = "PIXELS", default_value_t = 480)]
     pub(crate) max_video_height: u32,
+
+    /// Accept `"composite": true`, which composites a room into one MP4 once
+    /// its recording has ended
+    #[arg(long)]
+    pub(crate) composite: bool,
+
+    /// With --composite and --upload, the most gigabytes of participants'
+    /// files kept on disk for compositing at once; a room beyond it is not
+    /// composited
+    #[arg(long, value_name = "GB", default_value_t = 20)]
+    pub(crate) composite_max_gb: u64,
 
     /// Skip TLS certificate verification (INSECURE, local development only)
     #[arg(long)]

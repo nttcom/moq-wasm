@@ -25,8 +25,11 @@ use crate::{
 const MAX_BODY_BYTES: usize = 16 * 1024;
 
 /// Serves the recording API:
-/// - `POST /recordings` with `{"namespace_prefix", "layout"}` starts recording
-///   every broadcast under the prefix; `layout` is `combined` by default
+/// - `POST /recordings` with `{"namespace_prefix", "layout", "composite"}`
+///   starts recording every broadcast under the prefix; `layout` is
+///   `combined` by default. `composite: true` also composites the room into
+///   one MP4 once the recording has ended; only a server started with
+///   `--composite` accepts it
 /// - `POST /recordings/{id}/stop` stops it
 /// - `GET /recordings/{id}` and `GET /recordings?namespace_prefix=` report it
 ///
@@ -141,7 +144,12 @@ fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
             }
         },
     };
-    match recordings.start(namespace_prefix, layout) {
+    let composite = match body.get("composite") {
+        None => false,
+        Some(Value::Bool(composite)) => *composite,
+        Some(_) => return error_response(StatusCode::BAD_REQUEST, "composite must be a boolean"),
+    };
+    match recordings.start(namespace_prefix, layout, composite) {
         Ok(recording) => json_response(StatusCode::CREATED, &recording),
         Err(StartRejection::OutsideRoot) => error_response(
             StatusCode::FORBIDDEN,
@@ -153,6 +161,10 @@ fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
         Err(StartRejection::TooManyRecordings) => error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "too many recordings at once",
+        ),
+        Err(StartRejection::CompositeDisabled) => error_response(
+            StatusCode::BAD_REQUEST,
+            "this recorder does not composite; start it with --composite",
         ),
     }
 }
@@ -248,6 +260,7 @@ mod tests {
                 max_duration: Duration::from_secs(7200),
                 empty_room_timeout: Duration::from_secs(300),
             },
+            composite_budget_bytes: None,
         })
     }
 
@@ -258,7 +271,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_a_request_without_a_room_under_the_root_or_with_an_unknown_layout() {
+    async fn rejects_a_request_without_a_room_under_the_root_or_with_an_unknown_option() {
         // Arrange
         let recordings = recordings();
 
@@ -274,11 +287,23 @@ mod tests {
             &json!({ "namespace_prefix": "anon/room", "layout": "grid" }),
         ))
         .await;
+        let composite = error_of(start(
+            &recordings,
+            &json!({ "namespace_prefix": "anon/room", "composite": "yes" }),
+        ))
+        .await;
+        let composite_disabled = error_of(start(
+            &recordings,
+            &json!({ "namespace_prefix": "anon/room", "composite": true }),
+        ))
+        .await;
 
         // Assert: nothing was started
         assert_eq!(missing.0, StatusCode::BAD_REQUEST);
         assert_eq!(outside.0, StatusCode::FORBIDDEN);
         assert_eq!(layout.0, StatusCode::BAD_REQUEST);
+        assert_eq!(composite.0, StatusCode::BAD_REQUEST);
+        assert_eq!(composite_disabled.0, StatusCode::BAD_REQUEST);
         assert_eq!(recordings.list(None), json!({ "recordings": [] }));
     }
 
