@@ -1,4 +1,5 @@
 pub mod app_config;
+pub mod arrival_clamp;
 pub mod cli;
 pub mod command_subscriber;
 pub mod onvif_client;

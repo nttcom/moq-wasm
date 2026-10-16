@@ -31,6 +31,7 @@ pub fn run(url: &str, event_sender: TokioSender<MediaEvent>) -> Result<()> {
         .build()
         .context("create rtspsrc (GStreamer good plugins)")?;
     source.set_property_from_str("protocols", "tcp");
+    source.set_property_from_str("buffer-mode", "none");
     pipeline.add(&source)?;
     let pipeline_weak = pipeline.downgrade();
     source.connect_pad_added(move |_, pad| {
