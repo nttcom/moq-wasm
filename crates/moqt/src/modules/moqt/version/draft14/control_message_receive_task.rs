@@ -140,7 +140,7 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionEvent(SessionEvent::Subscribe(subscribe_handler))
             }
             ReceivedMessage::Unsubscribe(unsubscribe) => {
-                let unsubscribe_handler = UnsubscribeHandler::new(unsubscribe);
+                let unsubscribe_handler = UnsubscribeHandler::new(session.clone(), unsubscribe);
                 DepacketizeResult::SessionEvent(SessionEvent::Unsubscribe(unsubscribe_handler))
             }
             ReceivedMessage::SubscribeOk(subscribe_ok) => {
@@ -278,7 +278,7 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionEvent(SessionEvent::PublishDone(publish_done_handler))
             }
             ReceivedMessage::FetchCancel(fetch_cancel) => {
-                let fetch_cancel_handler = FetchCancelHandler::new(fetch_cancel);
+                let fetch_cancel_handler = FetchCancelHandler::new(session.clone(), fetch_cancel);
                 DepacketizeResult::SessionEvent(SessionEvent::FetchCancel(fetch_cancel_handler))
             }
             ReceivedMessage::PublishNamespaceCancel(publish_namespace_cancel) => {

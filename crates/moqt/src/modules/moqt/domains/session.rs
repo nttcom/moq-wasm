@@ -91,6 +91,10 @@ impl Session {
         }
     }
 
+    pub(crate) fn context(&self) -> &Arc<SessionContext> {
+        &self.inner
+    }
+
     pub fn publisher(&self) -> Publisher {
         Publisher {
             session: self.inner.clone(),

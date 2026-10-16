@@ -1,13 +1,23 @@
-use crate::modules::moqt::control_plane::control_messages::messages::unsubscribe::Unsubscribe;
+use std::sync::Arc;
+
+use crate::modules::moqt::{
+    control_plane::control_messages::messages::unsubscribe::Unsubscribe,
+    domains::session_context::SessionContext,
+};
 
 #[derive(Debug, Clone)]
 pub struct UnsubscribeHandler {
+    pub(crate) session_context: Arc<SessionContext>,
     request_id: u64,
 }
 
 impl UnsubscribeHandler {
-    pub(crate) fn new(unsubscribe_message: Unsubscribe) -> Self {
+    pub(crate) fn new(
+        session_context: Arc<SessionContext>,
+        unsubscribe_message: Unsubscribe,
+    ) -> Self {
         Self {
+            session_context,
             request_id: unsubscribe_message.request_id,
         }
     }

@@ -226,7 +226,7 @@ impl RelayConnection {
 
     async fn serving_previous(&self) -> Option<Arc<ConnectedRelay>> {
         let previous = self.inner.lock().await.previous.clone()?;
-        if previous.origin.is_serving().await {
+        if previous.origin.is_serving(&previous.session).await {
             return Some(previous);
         }
         self.retire_previous().await;
@@ -293,7 +293,7 @@ impl ConnectedRelay {
             .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);
 
-        let origin = Origin::new(session.clone());
+        let origin = Origin::default();
         let state = Arc::new(Mutex::new(RelayState::default()));
         let event_task = Self::spawn_event_loop(
             session.clone(),
@@ -433,7 +433,7 @@ impl ConnectedRelay {
                     }
                     SessionEvent::Unsubscribe(handler) => {
                         let request_id = handler.subscribe_id();
-                        match origin.release(request_id).await {
+                        match origin.release(&handler).await {
                             Some((namespace, track_name)) => {
                                 ledger.finish(&track_name);
                                 tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
@@ -460,7 +460,7 @@ impl ConnectedRelay {
                         }
                     }
                     SessionEvent::FetchCancel(handler) => {
-                        origin.cancel_fetch(handler.request_id()).await;
+                        origin.cancel_fetch(&handler).await;
                     }
                     SessionEvent::TrackStatus(handler) => {
                         let request_id = handler.request_id();
@@ -729,7 +729,7 @@ impl ConnectedRelay {
 
     async fn publish_track(&self, key: TrackKey) -> Result<()> {
         ensure_origin_track(&self.origin, &key).await;
-        self.origin.publish(&key.0, &key.1).await
+        self.origin.publish(&self.session, &key.0, &key.1).await
     }
 }
 
