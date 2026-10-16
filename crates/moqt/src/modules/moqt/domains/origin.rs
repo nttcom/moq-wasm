@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::join_all;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
@@ -76,9 +76,20 @@ pub enum WriteOutcome {
 /// both until the old one stops subscribing (draft-22 §7.6.1). A writer
 /// created while a group is open sends from the next group on. Content Exists
 /// reports what was actually sent.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
+    /// Bumped whenever a session stops taking a track.
+    released: Arc<watch::Sender<u64>>,
+}
+
+impl Default for Origin {
+    fn default() -> Self {
+        Self {
+            state: Arc::default(),
+            released: Arc::new(watch::channel(0).0),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -372,6 +383,8 @@ impl Origin {
         if let Some(track) = state.tracks.get_mut(&key) {
             track.outlet_mut(context).release();
         }
+        drop(state);
+        self.released.send_modify(|count| *count += 1);
         Some(key)
     }
 
@@ -472,6 +485,56 @@ impl Origin {
             }
         }
         Ok(())
+    }
+
+    /// The tracks this endpoint has sent PUBLISH for on `session`, released
+    /// or not.
+    pub(crate) async fn published_on(&self, session: &Session) -> Vec<TrackKey> {
+        let context = session.context();
+        self.state
+            .lock()
+            .await
+            .tracks
+            .iter()
+            .filter(|(_, track)| {
+                track.outlets.iter().any(|outlet| {
+                    Arc::ptr_eq(&outlet.session, context)
+                        && matches!(
+                            outlet.publication,
+                            Publication::Published | Publication::Released { published: true }
+                        )
+                })
+            })
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    /// Resolves once the peer of `session` takes no track.
+    pub(crate) async fn unserved(&self, session: &Session) {
+        let mut released = self.released.subscribe();
+        while self.is_serving(session).await {
+            if released.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Drops everything `session` takes. Call it once the session is closed.
+    pub(crate) async fn forget(&self, session: &Session) {
+        let context = session.context();
+        let key = session_key(context);
+        let mut state = self.state.lock().await;
+        for track in state.tracks.values_mut() {
+            track
+                .outlets
+                .retain(|outlet| !Arc::ptr_eq(&outlet.session, context));
+        }
+        state
+            .subscriptions
+            .retain(|(session, _), _| *session != key);
+        state.fetches.retain(|(session, _), _| *session != key);
+        drop(state);
+        self.released.send_modify(|count| *count += 1);
     }
 
     async fn settle(
@@ -1147,6 +1210,10 @@ mod tests {
         assert!(!origin.is_serving(&first.client).await);
         assert!(origin.is_serving(&second.client).await);
         assert_eq!(one, sent(FIRST_GROUP_ID + 1, 0, true));
+        assert_eq!(
+            origin.published_on(&first.client).await,
+            vec![track_key(NAMESPACE, TRACK)]
+        );
     }
 
     #[test]

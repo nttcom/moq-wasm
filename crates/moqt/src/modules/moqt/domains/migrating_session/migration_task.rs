@@ -63,8 +63,10 @@ impl Drop for MigrationTask {
 
 struct Previous {
     session: Arc<Session>,
-    /// Resolves `PREVIOUS_SESSION_GRACE` after every track cut over, or after
-    /// `CUTOVER_LIMIT`.
+    /// Resolves when the server closes the session, or once both hold:
+    /// - the tracks subscribed again cut over (or `CUTOVER_LIMIT` ran out),
+    ///   and `PREVIOUS_SESSION_GRACE` has passed since;
+    /// - the server takes no published track there.
     released: BoxFuture<()>,
 }
 
@@ -98,7 +100,11 @@ async fn follow(shared: Arc<Shared>, event_sender: mpsc::UnboundedSender<Session
                 Err(_) => current_events = false,
             },
             event = previous_event(previous.as_ref().map(|previous| previous.session.clone())), if previous_events => match event {
-                Ok(SessionEvent::GoAway(_) | SessionEvent::Disconnected()) => {}
+                Ok(
+                    SessionEvent::GoAway(_)
+                    | SessionEvent::Disconnected()
+                    | SessionEvent::ProtocolViolation(),
+                ) => {}
                 Ok(event) => {
                     let _ = event_sender.send(event);
                 }
@@ -109,10 +115,12 @@ async fn follow(shared: Arc<Shared>, event_sender: mpsc::UnboundedSender<Session
                 match migrated {
                     Ok(migrated) => {
                         if let Some(older) = previous.take() {
-                            older.session.close_with_error(TerminationErrorCode::NoError, "");
+                            retire(&shared, &older.session).await;
                         }
+                        let moved_from = std::mem::replace(&mut current, migrated.session);
+                        *shared.previous() = Some(moved_from.clone());
                         previous = Some(Previous {
-                            session: std::mem::replace(&mut current, migrated.session),
+                            session: moved_from,
                             released: migrated.released,
                         });
                         current_events = true;
@@ -128,7 +136,7 @@ async fn follow(shared: Arc<Shared>, event_sender: mpsc::UnboundedSender<Session
             () = optional(previous.as_mut().map(|previous| &mut previous.released)) => {
                 if let Some(previous) = previous.take() {
                     tracing::info!("closing the previous session");
-                    previous.session.close_with_error(TerminationErrorCode::NoError, "");
+                    retire(&shared, &previous.session).await;
                 }
                 previous_events = false;
             }
@@ -138,6 +146,19 @@ async fn follow(shared: Arc<Shared>, event_sender: mpsc::UnboundedSender<Session
                 return;
             }
         }
+    }
+}
+
+/// Closes `session` and drops what the origin sends there.
+async fn retire(shared: &Shared, session: &Arc<Session>) {
+    session.close_with_error(TerminationErrorCode::NoError, "");
+    shared.origin.forget(session).await;
+    let mut previous = shared.previous();
+    if previous
+        .as_ref()
+        .is_some_and(|previous| Arc::ptr_eq(previous, session))
+    {
+        *previous = None;
     }
 }
 
@@ -156,8 +177,10 @@ async fn optional<F: Future + Unpin>(future: Option<&mut F>) -> F::Output {
 }
 
 /// A track the new session does not accept stays on the previous session; a
-/// namespace it does not accept fails the migration.
+/// namespace it does not accept fails the migration. PUBLISH_NAMESPACE goes
+/// before PUBLISH, since the server routes a PUBLISH by its namespace.
 async fn migrate(shared: Arc<Shared>, url: String) -> anyhow::Result<Migrated> {
+    let moved_from = shared.current().session;
     let session = executor::timeout(MIGRATION_TIMEOUT, shared.connector.connect(url.clone()))
         .await
         .map_err(|()| anyhow::anyhow!("connecting to {url} timed out"))?
@@ -173,6 +196,24 @@ async fn migrate(shared: Arc<Shared>, url: String) -> anyhow::Result<Migrated> {
         })
         .await
         .with_context(|| format!("SUBSCRIBE_NAMESPACE {namespace} on the new session failed"))?;
+    }
+    for namespace in &requests.published_namespaces {
+        retry_until(deadline, || {
+            let publisher = session.publisher();
+            let namespace = namespace.clone();
+            async move { publisher.publish_namespace(namespace).await }
+        })
+        .await
+        .with_context(|| format!("PUBLISH_NAMESPACE {namespace} on the new session failed"))?;
+    }
+    for (namespace, track_name) in shared.origin.published_on(&moved_from).await {
+        if let Err(error) = shared
+            .origin
+            .publish(&session, &namespace, &track_name)
+            .await
+        {
+            tracing::warn!(%namespace, track = %track_name, error = format!("{error:#}"), "the new session did not accept the PUBLISH; the track stays on the previous one");
+        }
     }
     requests
         .tracks
@@ -203,11 +244,21 @@ async fn migrate(shared: Arc<Shared>, url: String) -> anyhow::Result<Migrated> {
         session: session.clone(),
         url,
     });
+    let origin = shared.origin.clone();
     Ok(Migrated {
         session,
         released: Box::pin(async move {
-            let _ = executor::timeout(CUTOVER_LIMIT, join_all(cut_overs)).await;
-            executor::sleep(PREVIOUS_SESSION_GRACE).await;
+            let moved = async {
+                if !cut_overs.is_empty() {
+                    let _ = executor::timeout(CUTOVER_LIMIT, join_all(cut_overs)).await;
+                    executor::sleep(PREVIOUS_SESSION_GRACE).await;
+                }
+                origin.unserved(&moved_from).await;
+            };
+            tokio::select! {
+                () = moved => {}
+                _ = moved_from.closed() => {}
+            }
         }),
     })
 }
