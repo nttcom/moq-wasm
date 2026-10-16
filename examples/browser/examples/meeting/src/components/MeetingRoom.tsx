@@ -5,6 +5,8 @@ import { ChatMessage } from '../types/chat'
 import { RemoteMember } from '../types/member'
 import { ChatSidebar } from './ChatSidebar'
 import { MemberGrid, memberStates } from './MemberGrid'
+import { useRoomRecording } from '../hooks/useRoomRecording'
+import { resolveRecorderUrl } from '../recording/recorderApi'
 import { RoomHeader } from './RoomHeader'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useMeetingMedia } from '../hooks/useMeetingMedia'
@@ -47,6 +49,10 @@ const AUTO_SUBSCRIBED_ROLES = ['audio', 'video', 'screenshare'] as const
 export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const roomName = session.roomName
   const userName = session.localMember.name
+  const recording = useRoomRecording(
+    resolveRecorderUrl(window.location.search, session.relayUrl),
+    session.trackNamespacePrefix.join('/')
+  )
   const [chatMessage, setChatMessage] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -683,6 +689,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     <div className="flex h-screen flex-col bg-slate-950 text-white">
       <RoomHeader
         roomName={roomName}
+        recording={recording?.active !== undefined}
         members={Array.from(room.remoteMembers.values()).map((member) => ({
           id: member.id,
           name: member.name,
@@ -760,6 +767,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             unreadChatMessageCount={unreadChatMessageCount}
             onToggleChat={() => setIsSidebarOpen((open) => !open)}
             onLeave={onLeave}
+            recording={recording}
             onTileHeight={handleTileHeight}
           />
         </main>

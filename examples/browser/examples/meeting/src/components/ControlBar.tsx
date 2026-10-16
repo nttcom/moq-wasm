@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import {
   BarChart3,
+  CircleDot,
+  CircleStop,
   LayoutGrid,
   MessageSquare,
   Mic,
@@ -15,6 +17,8 @@ import {
   Video,
   VideoOff
 } from 'lucide-react'
+import type { RoomRecordingControls } from '../hooks/useRoomRecording'
+import type { RecordingLayout } from '../recording/recorderApi'
 import type { StageView } from '../utils/stageLayout'
 
 interface ControlBarProps {
@@ -38,6 +42,7 @@ interface ControlBarProps {
   unreadChatMessageCount: number
   onToggleChat: () => void
   onLeave: () => void
+  recording: RoomRecordingControls | null
 }
 
 export function ControlBar(props: ControlBarProps) {
@@ -53,6 +58,7 @@ export function ControlBar(props: ControlBarProps) {
         <BarButton label="Show stats" onClick={props.onOpenStats}>
           <BarChart3 className="h-5 w-5" />
         </BarButton>
+        {props.recording && <RecordButton recording={props.recording} />}
       </div>
       <div className="flex items-center gap-3">
         <BarButton
@@ -122,6 +128,61 @@ export function ControlBar(props: ControlBarProps) {
           )}
         </BarButton>
       </div>
+    </div>
+  )
+}
+
+const RECORDING_LAYOUTS: { layout: RecordingLayout; label: string }[] = [
+  { layout: 'combined', label: 'Video and audio in one file' },
+  { layout: 'per-track', label: 'One file per track' }
+]
+
+function RecordButton({ recording }: { recording: RoomRecordingControls }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const active = recording.active
+  if (active) {
+    const stopping = active.state === 'stopping'
+    return (
+      <BarButton
+        label={stopping ? 'Stopping the recording' : 'Stop recording'}
+        testId="record-button"
+        off
+        disabled={stopping || recording.busy}
+        onClick={() => void recording.stop()}
+      >
+        <CircleStop className="h-5 w-5" />
+      </BarButton>
+    )
+  }
+  return (
+    <div className="relative">
+      <BarButton
+        label={recording.error ? `Record (${recording.error})` : 'Record'}
+        testId="record-button"
+        active={menuOpen}
+        disabled={recording.busy}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        <CircleDot className="h-5 w-5" />
+      </BarButton>
+      {menuOpen && (
+        <div className="absolute bottom-14 left-0 z-20 w-56 rounded-lg border border-white/10 bg-slate-900 p-1 shadow-lg">
+          {RECORDING_LAYOUTS.map(({ layout, label }) => (
+            <button
+              key={layout}
+              type="button"
+              data-testid={`record-${layout}`}
+              onClick={() => {
+                setMenuOpen(false)
+                void recording.start(layout)
+              }}
+              className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-700"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

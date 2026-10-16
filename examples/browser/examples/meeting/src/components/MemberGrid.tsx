@@ -1,4 +1,5 @@
 import { LocalMember, RemoteMember } from '../types/member'
+import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import { ReactNode, useEffect, useState } from 'react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
@@ -109,6 +110,7 @@ interface MemberGridProps {
   onToggleFilmstrip: () => void
   chatOpen: boolean
   unreadChatMessageCount: number
+  recording: RoomRecordingControls | null
   onToggleChat: () => void
   onLeave: () => void
   onTileHeight: (tileKey: string, heightPx: number) => void
@@ -167,6 +169,7 @@ export function MemberGrid({
   onToggleFilmstrip,
   chatOpen,
   unreadChatMessageCount,
+  recording,
   onToggleChat,
   onLeave,
   onTileHeight
@@ -284,6 +287,7 @@ export function MemberGrid({
         unreadChatMessageCount={unreadChatMessageCount}
         onToggleChat={onToggleChat}
         onLeave={onLeave}
+        recording={recording}
       />
       {isDeviceModalOpen && (
         <DeviceModal title="Select Devices" onClose={() => setIsDeviceModalOpen(false)}>

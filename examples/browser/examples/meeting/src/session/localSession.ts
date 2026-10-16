@@ -32,7 +32,7 @@ export enum LocalSessionState {
 
 export class LocalSession {
   readonly roomName: string
-  private readonly relayUrl: string
+  readonly relayUrl: string
   readonly localMember: LocalMember
   private readonly client = new MoqtClientWrapper()
   private readonly mediaController: MeetingMediaController
