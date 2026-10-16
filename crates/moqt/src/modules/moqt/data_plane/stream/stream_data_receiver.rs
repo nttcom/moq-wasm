@@ -30,6 +30,10 @@ impl StreamDataReceiver {
         }
     }
 
+    pub(crate) fn group_id(&self) -> u64 {
+        self.reader.group_id()
+    }
+
     /// Returns the header first, then each object with absolute ids.
     /// `Ok(None)` means the peer finished the stream (FIN). A header whose
     /// subgroup id comes from the first object is returned only after that

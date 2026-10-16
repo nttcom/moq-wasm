@@ -108,6 +108,7 @@ pub(crate) fn insecure_client_config() -> ClientConfig {
         port: 0,
         verify_certificate: false,
         authorization_token: None,
+        follow_go_away: false,
     }
 }
 
@@ -291,7 +292,7 @@ pub(crate) async fn register_and_take_data_receiver(
     track_alias: u64,
 ) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject> {
     context
-        .register_data_receiver(context.connection(), request_id, track_alias)
+        .register_data_receiver(&context.connection(), request_id, track_alias)
         .await
         .unwrap();
     context

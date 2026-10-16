@@ -158,6 +158,12 @@ impl SubgroupReader {
         }
     }
 
+    pub(crate) fn group_id(&self) -> u64 {
+        match self {
+            Self::Draft14(reader) => reader.group_id(),
+        }
+    }
+
     /// `Ok(None)` means the peer finished the stream (FIN).
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self {

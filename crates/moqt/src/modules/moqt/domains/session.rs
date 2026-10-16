@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::bail;
+use tokio::sync::watch;
 use tracing::Span;
 
 use crate::Publisher;
@@ -19,12 +20,28 @@ use crate::modules::transport::{
     transport_connection::TransportClose, transport_stats::TransportStats,
 };
 
+mod migration_task;
+
+pub(crate) use migration_task::Follow;
+use migration_task::MigrationTask;
+
 pub struct Session {
     inner: Arc<SessionContext>,
     session_span: Span,
     event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent>>,
-    _tasks: ConnectionTasks,
+    _driver: Driver,
+    /// Set by the migration task once no connection replaced a closed one;
+    /// `None` for a session that does not follow GOAWAY.
+    closed: Option<watch::Receiver<Option<TransportClose>>>,
     server_setup: Option<ServerSetup>,
+}
+
+/// What reads the session's connections.
+enum Driver {
+    /// The tasks of the only connection of a session that does not follow
+    /// GOAWAY.
+    Fixed(#[allow(dead_code)] ConnectionTasks),
+    Following(#[allow(dead_code)] MigrationTask),
 }
 
 impl Session {
@@ -36,17 +53,33 @@ impl Session {
         inner: SessionContext,
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         server_setup: Option<ServerSetup>,
+        follow: Option<Follow>,
     ) -> Self {
         let inner = Arc::new(inner);
         let parent_span = Span::current();
         let session_span = tracing::info_span!(parent: &parent_span, "moqt.session");
         let tasks =
-            ConnectionTasks::run(&inner, inner.connection(), control_receiver, &session_span);
+            ConnectionTasks::run(&inner, &inner.connection(), control_receiver, &session_span);
+        let (driver, closed) = match follow {
+            Some(follow) => {
+                let (closed_sender, closed) = watch::channel(None);
+                let task = MigrationTask::run(
+                    inner.clone(),
+                    tasks,
+                    follow,
+                    closed_sender,
+                    session_span.clone(),
+                );
+                (Driver::Following(task), Some(closed))
+            }
+            None => (Driver::Fixed(tasks), None),
+        };
         Self {
             inner,
             session_span,
             event_receiver: tokio::sync::Mutex::new(event_receiver),
-            _tasks: tasks,
+            _driver: driver,
+            closed,
             server_setup,
         }
     }
@@ -81,11 +114,23 @@ impl Session {
         }
     }
 
-    /// Resolves once the transport has closed, whichever side closed it.
+    /// Resolves once the session's last connection has closed, whichever
+    /// side closed it; a connection a GOAWAY replaced does not count.
     /// Consumes no session events, so it can be awaited beside
     /// `receive_event()`.
     pub async fn closed(&self) -> TransportClose {
-        self.inner.connection().transport.closed().await
+        let Some(closed) = &self.closed else {
+            return self.inner.connection().transport.closed().await;
+        };
+        let mut closed = closed.clone();
+        let close = closed.wait_for(Option::is_some).await;
+        close
+            .ok()
+            .and_then(|close| close.clone())
+            .unwrap_or_else(|| TransportClose {
+                code: None,
+                reason: "the session ended".to_string(),
+            })
     }
 
     pub fn transport_stats(&self) -> TransportStats {
@@ -143,7 +188,8 @@ impl Session {
         Ok(())
     }
 
-    /// The SERVER_SETUP this client received; `None` on a server session.
+    /// The SERVER_SETUP this client received on its first connection; `None`
+    /// on a server session.
     pub fn server_setup(&self) -> Option<&ServerSetup> {
         self.server_setup.as_ref()
     }

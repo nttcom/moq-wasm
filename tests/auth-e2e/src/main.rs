@@ -182,6 +182,7 @@ async fn connect(url: &str, token: Option<&str>) -> anyhow::Result<Session> {
         port: 0,
         verify_certificate: false,
         authorization_token: token.map(str::to_string),
+        follow_go_away: true,
     })?;
     let connecting = endpoint.connect(url).await?;
     tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)

@@ -1,9 +1,13 @@
-use crate::modules::executor;
+use std::sync::Arc;
+
+use crate::SessionEvent;
+use crate::modules::executor::{self, BoxFuture, MaybeSend, MaybeSync};
+use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::domains::connection::Connection;
-use crate::modules::moqt::domains::session::Session;
+use crate::modules::moqt::domains::session::{Follow, Session};
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
-use crate::modules::moqt::version;
+use crate::modules::moqt::version::{self, ControlReceiver};
 use crate::modules::transport::accept_error::AcceptError;
 use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::BoxedConnection;
@@ -18,37 +22,109 @@ const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) transport_creator: T::ConnectionCreator,
     pub(crate) authorization_token: Option<String>,
+    pub(crate) follow_go_away: bool,
+}
+
+/// Opens another connection of a session that follows GOAWAY, on the same
+/// endpoint and transport as the first.
+pub(crate) trait Reconnect: MaybeSend + MaybeSync {
+    fn connect(
+        &self,
+        url: String,
+        generation: u64,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>>;
+}
+
+impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
+    fn connect(
+        &self,
+        url: String,
+        generation: u64,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>> {
+        let creator = self.clone();
+        Box::pin(async move {
+            let transport_conn = creator.open_transport(&url).await?;
+            let (connection, control_receiver, _) = creator
+                .set_up(transport_conn, generation, event_sender)
+                .await?;
+            Ok((connection, control_receiver))
+        })
+    }
 }
 
 impl<T: TransportProtocol> SessionCreator<T> {
-    pub(crate) async fn create_new_connection(&self, url: &str) -> anyhow::Result<Connecting> {
-        let target = ConnectTarget::parse(url)?;
-        let transport_conn = self.transport_creator.create_new_transport(&target).await?;
-        let authorization_token = self.authorization_token.clone();
+    pub(crate) async fn create_new_connection(
+        self: &Arc<Self>,
+        url: &str,
+    ) -> anyhow::Result<Connecting> {
+        let transport_conn = self.open_transport(url).await?;
+        let creator = self.clone();
+        let url = url.to_string();
         let handshake = async move {
-            let (control, control_receiver, server_setup) =
-                match version::connect(&transport_conn, authorization_token.as_deref()).await {
-                    Ok(established) => established,
-                    Err(error) => {
-                        return Err(Self::explain_rejected_setup(&transport_conn, error).await);
-                    }
-                };
             let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let context = SessionContext::new(
-                Connection::new(transport_conn, control, false),
-                event_sender,
-            );
+            let session = if creator.follow_go_away {
+                let (connection_event_sender, connection_events) =
+                    tokio::sync::mpsc::unbounded_channel();
+                let (connection, control_receiver, server_setup) = creator
+                    .set_up(transport_conn, 0, connection_event_sender)
+                    .await?;
+                Session::new(
+                    control_receiver,
+                    SessionContext::new(connection, event_sender, true),
+                    event_receiver,
+                    Some(server_setup),
+                    Some(Follow {
+                        reconnect: Box::new(creator.clone()),
+                        url,
+                        connection_events,
+                    }),
+                )
+            } else {
+                let (connection, control_receiver, server_setup) = creator
+                    .set_up(transport_conn, 0, event_sender.clone())
+                    .await?;
+                Session::new(
+                    control_receiver,
+                    SessionContext::new(connection, event_sender, false),
+                    event_receiver,
+                    Some(server_setup),
+                    None,
+                )
+            };
             tracing::info!("Session established");
-            Ok(Session::new(
-                control_receiver,
-                context,
-                event_receiver,
-                Some(server_setup),
-            ))
+            Ok(session)
         };
         Ok(Connecting {
             inner: Box::pin(handshake),
         })
+    }
+
+    async fn open_transport(&self, url: &str) -> anyhow::Result<BoxedConnection> {
+        let target = ConnectTarget::parse(url)?;
+        self.transport_creator.create_new_transport(&target).await
+    }
+
+    /// The CLIENT_SETUP / SERVER_SETUP exchange on a new transport.
+    async fn set_up(
+        &self,
+        transport_conn: BoxedConnection,
+        generation: u64,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
+        let (control, control_receiver, server_setup) =
+            match version::connect(&transport_conn, self.authorization_token.as_deref()).await {
+                Ok(established) => established,
+                Err(error) => {
+                    return Err(Self::explain_rejected_setup(&transport_conn, error).await);
+                }
+            };
+        Ok((
+            Connection::new(transport_conn, control, false, generation, event_sender),
+            control_receiver,
+            server_setup,
+        ))
     }
 
     /// A peer that rejects CLIENT_SETUP closes the transport with a termination
@@ -107,6 +183,7 @@ mod tests {
                 port: 0,
                 verify_certificate: false,
                 authorization_token: Some("jwt".to_string()),
+                follow_go_away: false,
             })
             .connect(&url)
             .await?

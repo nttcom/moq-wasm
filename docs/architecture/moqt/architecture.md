@@ -221,6 +221,25 @@ all named and all aborted when `ConnectionTasks` is dropped:
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. This is also how a close this side requested with any code other than PROTOCOL_VIOLATION is reported; `close_with_error(ProtocolViolation, ..)` emits `SessionEvent::ProtocolViolation` at once instead. |
 | `PublishDoneExpiryTask` | receives the Request ID of every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription of its connection 10 s later (see *Key invariants*). Holds only `Weak` references. |
 
+A client session with `ClientConfig::follow_go_away` (the default) follows
+the server's GOAWAY by itself (draft-14 §3.5; see
+[session-migration.md](session-migration.md)). Its connections send their
+events to a `MigrationTask` (`domains/session/migration_task.rs`) instead of
+the application: it forwards them with logical ids, and on GOAWAY it opens
+the next connection through the endpoint's `SessionCreator` (`Reconnect`),
+sends every SUBSCRIBE_NAMESPACE and SUBSCRIBE made on the session again
+(`NextGroupStart`, the last Forward state; a rejected one is repeated every
+500 ms for up to 10 s), makes it the current connection, and closes the
+previous one with NO_ERROR 5 s after every carried subscription cut over (at
+most 10 s after the move) or when the server closes it. While both
+connections deliver a subscription, the sinks of both share a `GroupCutover`
+(see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
+carried subscription is dropped; GOAWAY is never returned; `Disconnected`
+comes once, when the current connection closed and no migration replaced
+it, and `Session::closed()` resolves then. A session without
+`follow_go_away`, and every server session, reads its one connection as
+before and returns GOAWAY as an event.
+
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
 `Subscriber` facades sharing the same `Arc<SessionContext>`. Operations on an
 established request take its handle, not its request id:
@@ -382,22 +401,31 @@ transport connection:
 - `track_alias: AtomicU64` — the track aliases this side assigns, shared by
   `SubscribeHandler::allocate_track_alias` and `Publisher::publish`.
 - whether it is the server side and whether a GOAWAY arrived.
+- `generation` (0 for the first connection) and the ids of requests carried
+  over from an earlier connection. A logical id, the id the application
+  sees, is `generation << 56 | wire id`, so the first connection's ids are
+  their own logical ids and no two connections' ids meet in the session's
+  maps.
 - `object_sinks: HashMap<track_alias, ObjectSink>` — the objects arriving on
-  this connection; see buffering invariant below.
+  this connection, keyed by wire alias; a sink sets the logical alias on
+  every stream it hands out; see buffering invariant below.
 - `fetch_notification_map` — keyed by request id; `FetchNotifier` removes the
   sender when the FETCH stream arrives, since a FETCH is answered on a single
   stream (draft-14 §9.16.3).
 
-`SessionContext` holds the rest of the cross-task state and the session's
-one `Connection`; `connection()` is the connection requests are sent on, and
-the methods that touch per-connection state name the connection (see
-[session-migration.md](session-migration.md) for why the two are apart):
+`SessionContext` holds the rest of the cross-task state, the current
+`Connection` and, during a migration, the previous one; `connection()` is the
+connection requests are sent on, and the methods that touch per-connection
+state name the connection:
 
 - `event_sender`.
 - `receiver_map` and `fetch_receiver_map` — the receivers the application
-  takes per track alias and per FETCH request id. Registering a FETCH returns
-  a `PendingFetch` drop-guard that removes both FETCH entries unless FETCH_OK
-  arrived.
+  takes per logical track alias and per logical FETCH request id.
+  Registering a FETCH returns a `PendingFetch` drop-guard that removes both
+  FETCH entries unless FETCH_OK arrived.
+- `carried` — for a session that follows GOAWAY, the namespace and track
+  subscriptions a migration sends again. It is locked while one of them is
+  sent and while a migration sends them all, so none is missed.
 
 ## Control plane (`modules/moqt/control_plane`)
 
@@ -554,6 +582,16 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   enter the per-track channel.
 
 ## Key invariants
+
+- **A carried subscription cuts over at a group boundary.** The first object
+  the new connection delivers fixes the cutover group: the group after the
+  newest one the previous connection handed out, or that object's group when
+  it is newer and starts the group. The previous connection's sink keeps
+  handing out the groups before it and drops the rest; the new one drops the
+  groups before it. A subgroup stream carries one group and counts as
+  starting it, since the subscription sent again starts at the next group
+  start. The publisher sends to both servers at once, so the cutover does not
+  wait for the new connection to deliver a group first.
 
 - **Buffer-before-subscribe**: objects can arrive before the application
   registers a receiver (data races SUBSCRIBE_OK). `object_sinks` buffers up to

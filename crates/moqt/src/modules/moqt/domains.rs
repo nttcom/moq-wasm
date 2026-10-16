@@ -4,6 +4,7 @@ pub(crate) mod connection;
 pub(crate) mod endpoint;
 pub(crate) mod fetch_handle;
 pub(crate) mod fetch_range;
+pub(crate) mod group_cutover;
 pub(crate) mod handshake;
 pub(crate) mod migrating_session;
 pub(crate) mod origin;
