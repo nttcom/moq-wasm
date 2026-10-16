@@ -92,7 +92,7 @@ async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> 
         .map(|url| {
             let (store, prefix) = object_store::parse_url_opts(url, std::env::vars())
                 .with_context(|| format!("cannot use {url} as the upload location"))?;
-            anyhow::Ok((UploadTask::run(store.into()), prefix))
+            anyhow::Ok((UploadTask::run(store.into(), false), prefix))
         })
         .transpose()?;
     let options = BroadcastOptions {

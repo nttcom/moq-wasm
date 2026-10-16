@@ -17,30 +17,36 @@ pub(crate) struct Upload {
 }
 
 /// Uploads closed files one at a time, in the order they were queued, and
-/// deletes each local file once its object is complete. A file whose upload
-/// fails after the store's retries stays on disk.
+/// deletes each local file once its object is complete unless `run` was
+/// given `keep_local_files`. A file whose upload fails after the store's
+/// retries stays on disk.
 pub(crate) struct UploadTask {
-    handle: JoinHandle<()>,
+    handle: JoinHandle<Vec<PathBuf>>,
     /// An `Option` so that `finish` can drop it to close the queue, which
     /// the `Drop` impl keeps it from moving out.
     upload_sender: Option<mpsc::UnboundedSender<Upload>>,
 }
 
 impl UploadTask {
-    pub(crate) fn run(store: Arc<dyn ObjectStore>) -> Self {
+    pub(crate) fn run(store: Arc<dyn ObjectStore>, keep_local_files: bool) -> Self {
         let (upload_sender, mut upload_receiver) = mpsc::unbounded_channel::<Upload>();
         let handle = tokio::spawn(async move {
+            let mut failed = Vec::new();
             while let Some(upload) = upload_receiver.recv().await {
-                match upload_file(&store, &upload).await {
+                match upload_file(&store, &upload, keep_local_files).await {
                     Ok(()) => tracing::info!(key = %upload.key, "uploaded"),
-                    Err(error) => tracing::error!(
-                        path = %upload.path.display(),
-                        key = %upload.key,
-                        error = format!("{error:#}"),
-                        "upload failed; the file stays on disk"
-                    ),
+                    Err(error) => {
+                        tracing::error!(
+                            path = %upload.path.display(),
+                            key = %upload.key,
+                            error = format!("{error:#}"),
+                            "upload failed; the file stays on disk"
+                        );
+                        failed.push(upload.path);
+                    }
                 }
             }
+            failed
         });
         Self {
             handle,
@@ -55,13 +61,15 @@ impl UploadTask {
         UploadQueue(sender.clone())
     }
 
-    /// Waits until every queued file is uploaded or has failed; it returns
-    /// only once every `UploadQueue` is dropped.
-    pub(crate) async fn finish(mut self) {
+    /// Waits until every queued file is uploaded or has failed, and returns
+    /// the files that failed; it returns only once every `UploadQueue` is
+    /// dropped.
+    pub(crate) async fn finish(mut self) -> Vec<PathBuf> {
         self.upload_sender = None;
-        if let Err(error) = (&mut self.handle).await {
+        (&mut self.handle).await.unwrap_or_else(|error| {
             tracing::error!(%error, "upload task failed");
-        }
+            Vec::new()
+        })
     }
 }
 
@@ -76,7 +84,11 @@ impl UploadQueue {
     }
 }
 
-async fn upload_file(store: &Arc<dyn ObjectStore>, upload: &Upload) -> Result<()> {
+async fn upload_file(
+    store: &Arc<dyn ObjectStore>,
+    upload: &Upload,
+    keep_local_file: bool,
+) -> Result<()> {
     let mut file = tokio::fs::File::open(&upload.path)
         .await
         .with_context(|| format!("cannot open {}", upload.path.display()))?;
@@ -100,6 +112,9 @@ async fn upload_file(store: &Arc<dyn ObjectStore>, upload: &Upload) -> Result<()
             tracing::warn!(key = %upload.key, %abort, "cannot abort the partial upload");
         }
         return Err(error).with_context(|| format!("cannot upload {}", upload.key));
+    }
+    if keep_local_file {
+        return Ok(());
     }
     tokio::fs::remove_file(&upload.path)
         .await
@@ -126,7 +141,7 @@ mod tests {
         let path = dir.join("rec-1.mp4");
         tokio::fs::write(&path, b"fragmented mp4").await.unwrap();
         let store = Arc::new(InMemory::new());
-        let task = UploadTask::run(store.clone());
+        let task = UploadTask::run(store.clone(), false);
         let key = Path::from("recordings/anon/live/1700000000000-1.mp4");
 
         // Act
@@ -135,9 +150,10 @@ mod tests {
             key: key.clone(),
             capture_origin: Some(Timestamp::from_micros(1_700_000_000_123_456)),
         });
-        task.finish().await;
+        let failed = task.finish().await;
 
         // Assert
+        assert!(failed.is_empty());
         let object = store.get(&key).await.unwrap();
         let metadata = object
             .attributes

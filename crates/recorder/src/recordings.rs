@@ -8,9 +8,12 @@ use object_store::{ObjectStore, path::Path};
 use serde_json::{Value, json};
 
 use crate::{
+    composite::CompositeQueue,
     recorder::BroadcastOptions,
     recording::Layout,
-    room_recording::{MemberStatus, RecordingLimits, RoomConfig, RoomRecording, RoomState},
+    room_recording::{
+        CompositeState, MemberStatus, RecordingLimits, RoomConfig, RoomRecording, RoomState,
+    },
 };
 
 /// What every recording the server starts shares.
@@ -25,6 +28,9 @@ pub(crate) struct ServeConfig {
     pub(crate) max_video_height: u32,
     pub(crate) segment_length: Option<Duration>,
     pub(crate) limits: RecordingLimits,
+    /// `None` refuses compositing. With an upload store, the most bytes of
+    /// participants' files kept on disk for compositing at once.
+    pub(crate) composite_budget_bytes: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -33,12 +39,14 @@ pub(crate) enum StartRejection {
     OutsideRoot,
     AlreadyRecording,
     TooManyRecordings,
+    CompositeDisabled,
 }
 
 /// The recordings the server started, finished ones included, so that
 /// `GET /recordings/{id}` keeps answering after a recording ended.
 pub(crate) struct Recordings {
     config: ServeConfig,
+    composite: Option<CompositeQueue>,
     entries: Mutex<Vec<Entry>>,
 }
 
@@ -52,6 +60,7 @@ struct Entry {
 impl Recordings {
     pub(crate) fn new(config: ServeConfig) -> Self {
         Self {
+            composite: config.composite_budget_bytes.map(CompositeQueue::new),
             config,
             entries: Mutex::new(Vec::new()),
         }
@@ -61,9 +70,13 @@ impl Recordings {
         &self,
         namespace_prefix: &str,
         layout: Layout,
+        composite: bool,
     ) -> Result<Value, StartRejection> {
         if !within_root(namespace_prefix, &self.config.namespace_root) {
             return Err(StartRejection::OutsideRoot);
+        }
+        if composite && self.composite.is_none() {
+            return Err(StartRejection::CompositeDisabled);
         }
         let mut entries = self.lock();
         let active: Vec<&Entry> = entries.iter().filter(|entry| entry.is_active()).collect();
@@ -101,8 +114,9 @@ impl Recordings {
                 upload: None,
             },
             limits: self.config.limits,
+            composite: self.composite.clone().filter(|_| composite),
         });
-        tracing::info!(%id, namespace_prefix, ?layout, "recording requested");
+        tracing::info!(%id, namespace_prefix, ?layout, composite, "recording requested");
         entries.push(Entry {
             id,
             namespace_prefix: namespace_prefix.to_string(),
@@ -137,12 +151,13 @@ impl Recordings {
     }
 
     /// Stops every recording and waits until each has closed and uploaded
-    /// its files.
+    /// its files. Composites not made yet are given up.
     pub(crate) async fn stop_all(&self) {
         let mut recordings: Vec<RoomRecording> =
             self.lock().drain(..).map(|entry| entry.recording).collect();
         for recording in &recordings {
             recording.stop();
+            recording.cancel_composite();
         }
         for recording in &mut recordings {
             recording.finished().await;
@@ -179,8 +194,20 @@ impl Entry {
             "state": state,
             "error": error,
             "members": status.members.iter().map(member_json).collect::<Vec<_>>(),
+            "composite": status.composite.as_ref().map(composite_json),
         })
     }
+}
+
+fn composite_json(composite: &CompositeState) -> Value {
+    let (state, error) = match composite {
+        CompositeState::Waiting => ("waiting", None),
+        CompositeState::Composing => ("composing", None),
+        CompositeState::Done => ("done", None),
+        CompositeState::Skipped(reason) => ("skipped", Some(reason.as_str())),
+        CompositeState::Failed(error) => ("failed", Some(error.as_str())),
+    };
+    json!({ "state": state, "error": error })
 }
 
 fn member_json(member: &MemberStatus) -> Value {

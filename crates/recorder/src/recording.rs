@@ -881,7 +881,7 @@ mod tests {
         // Arrange
         let dir = scratch_dir();
         let store = Arc::new(InMemory::new());
-        let task = UploadTask::run(store.clone());
+        let task = UploadTask::run(store.clone(), false);
         let uploader = Uploader {
             queue: task.queue(),
             prefix: object_store::path::Path::from("recordings/anon/live"),

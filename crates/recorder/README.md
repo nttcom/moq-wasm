@@ -49,16 +49,19 @@ cargo run -p recorder -- serve \
 
 | Request | Answer |
 | --- | --- |
-| `POST /recordings` `{"namespace_prefix": "anon/research", "layout": "per-track"}` | `201` with the recording; `layout` is `combined` by default. `403` outside `--namespace-root` or from a page outside `--allowed-origin`, `409` when the prefix is already recorded, `503` past `--max-recordings` |
+| `POST /recordings` `{"namespace_prefix": "anon/research", "layout": "per-track", "composite": true}` | `201` with the recording; `layout` is `combined` by default. `composite: true` also makes `composite.mp4`, every participant in one grid with mixed audio, once the recording has ended; it needs `--composite` (`400` otherwise). `403` outside `--namespace-root` or from a page outside `--allowed-origin`, `409` when the prefix is already recorded, `503` past `--max-recordings` |
 | `POST /recordings/{id}/stop` | `202`; the state turns `stopping`, then `finished` once every file is closed and uploaded |
-| `GET /recordings/{id}` | `state` (`recording`, `stopping`, `finished`, `failed`) and each participant's namespace, start time, `finished` and `error` |
+| `GET /recordings/{id}` | `state` (`recording`, `stopping`, `finished`, `failed`), each participant's namespace, start time, `finished` and `error`, and `composite` (`null`, or `state` `waiting`, `composing`, `done`, `skipped`, `failed` with `error`) |
 | `GET /recordings?namespace_prefix=anon/research` | The recordings of that prefix |
 
 Every namespace under the prefix (one per meeting participant) is recorded
 from the moment it is published, with the tracks picked from its catalog
 (`--max-video-height`, 480 by default). Files go to
 `--output-dir/<recording id>/`, objects to
-`<upload prefix>/<recording id>/<namespace>/<track>/`.
+`<upload prefix>/<recording id>/<namespace>/<track>/`. The composite is
+`composite.mp4` in the recording's directory or under `<upload
+prefix>/<recording id>/`; compositing needs the GStreamer plugins listed in
+the [transcode README](../transcode/README.md#compositing).
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -69,6 +72,8 @@ from the moment it is published, with the tracks picked from its catalog
 | `--max-recording-seconds` | `7200` | A recording stops by itself after this long |
 | `--empty-room-seconds` | `300` | A recording stops by itself once nobody has been recorded for this long, from the start too |
 | `--output-dir` | `recordings` | Where the files are written |
+| `--composite` | off | Accept `composite: true` |
+| `--composite-max-gb` | `20` | With `--composite` and `--upload`, the most gigabytes of participants' files kept on disk for compositing at once; a room beyond it is `skipped` |
 | `--upload`, `--segment-seconds`, `--max-video-height`, `--insecure-skip-tls-verify` | | As for a single recording |
 
 ## Behaviour

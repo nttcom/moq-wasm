@@ -140,3 +140,17 @@ pub(crate) fn scratch_dir() -> std::path::PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
+
+/// `testsrc.ts` (H.264 + AAC from 1.4 s) as a recorded fragmented MP4 at
+/// `path`.
+pub(crate) fn write_fixture_fmp4(path: &std::path::Path) {
+    let mut output = Vec::new();
+    mediapack::transmux(
+        mediapack::InputFormat::MpegTs,
+        mediapack::OutputFormat::Fmp4,
+        &mut &FIXTURE_TS[..],
+        &mut output,
+    )
+    .unwrap();
+    std::fs::write(path, output).unwrap();
+}

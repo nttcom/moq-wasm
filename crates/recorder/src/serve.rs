@@ -41,6 +41,9 @@ pub(crate) async fn serve(args: ServeArgs) -> Result<()> {
             max_duration: Duration::from_secs(args.max_recording_seconds),
             empty_room_timeout: Duration::from_secs(args.empty_room_seconds),
         },
+        composite_budget_bytes: args
+            .composite
+            .then(|| args.composite_max_gb.saturating_mul(1 << 30)),
     }));
     let listener = TcpListener::bind(args.listen)
         .await
