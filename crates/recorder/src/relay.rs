@@ -1,62 +1,38 @@
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, DUAL, Endpoint, Session, Subscription, TrackObject, TrackReader,
+    ClientConfig, DUAL, Endpoint, MigratingSession, MigratingTrack, TrackObject,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
-    object::{
-        ContentExists, DataReceiver, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectStatus,
-    },
+    object::{ContentExists, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
     subscribe::{FilterType, SubscribeOption},
 };
 
 const SUBSCRIBER_PRIORITY: u8 = 128;
 
-pub(crate) struct RelayConnection {
-    pub(crate) session: Arc<Session>,
-    endpoint: Endpoint<DUAL>,
-}
-
-impl RelayConnection {
-    pub(crate) async fn connect(
-        url: &str,
-        verify_certificate: bool,
-        authorization_token: Option<String>,
-    ) -> Result<Self> {
-        let config = ClientConfig {
-            port: 0,
-            verify_certificate,
-            authorization_token,
-        };
-        let endpoint = Endpoint::<DUAL>::create_client(&config)?;
-        tracing::info!(relay = url, "connecting to relay");
-        let connecting = endpoint
-            .connect(url)
-            .await
-            .with_context(|| format!("cannot connect to {url}"))?;
-        let session = Arc::new(connecting.await?);
-        Ok(Self { session, endpoint })
-    }
-
-    /// Every other handle to the session must already be dropped, or the wait
-    /// never ends. Waiting lets the CONNECTION_CLOSE reach the relay before the
-    /// process exits.
-    pub(crate) async fn close(self) {
-        drop(self.session);
-        self.endpoint.wait_idle().await;
-    }
+pub(crate) async fn connect(
+    url: &str,
+    verify_certificate: bool,
+    authorization_token: Option<String>,
+) -> Result<MigratingSession> {
+    let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
+        port: 0,
+        verify_certificate,
+        authorization_token,
+    })?;
+    tracing::info!(relay = url, "connecting to relay");
+    MigratingSession::connect(endpoint, url)
+        .await
+        .with_context(|| format!("cannot connect to {url}"))
 }
 
 /// `NextGroupStart` begins a live recording on a keyframe; `LargestObject`
 /// continues right after what `fetch_cached` returns.
 pub(crate) async fn subscribe(
-    session: &Session,
+    session: &MigratingSession,
     namespace: &str,
     name: &str,
     filter_type: FilterType,
-) -> Result<Subscription> {
+) -> Result<MigratingTrack> {
     let option = SubscribeOption {
         subscriber_priority: SUBSCRIBER_PRIORITY,
         group_order: GroupOrder::Ascending,
@@ -64,38 +40,18 @@ pub(crate) async fn subscribe(
         filter_type,
     };
     session
-        .subscriber()
         .subscribe(namespace.to_string(), name.to_string(), option)
         .await
         .with_context(|| format!("failed to subscribe {namespace}/{name}"))
 }
 
-/// Waits for the first data stream of `subscription`.
-pub(crate) async fn track_reader(
-    session: &Session,
-    subscription: &Subscription,
-) -> Result<TrackReader> {
-    let receiver = session
-        .subscriber()
-        .accept_data_receiver(subscription)
-        .await
-        .context("failed to accept data receiver")?;
-    let DataReceiver::Stream(factory) = receiver else {
-        anyhow::bail!("expected stream data receiver");
-    };
-    Ok(TrackReader::new(factory))
-}
-
-/// The last object of the group `subscription` joined at: the joining FETCH
+/// The last object of the group `track` joined at: the joining FETCH
 /// with offset 0 that draft-ietf-moq-msf-01 §5 asks for beside a catalog
 /// SUBSCRIBE. `None` when the publisher has sent nothing yet.
-pub(crate) async fn fetch_joining_group(
-    session: &Session,
-    subscription: &Subscription,
-) -> Result<Option<Bytes>> {
-    let mut subscriber = session.subscriber();
+pub(crate) async fn fetch_joining_group(track: &MigratingTrack) -> Result<Option<Bytes>> {
+    let mut subscriber = track.session().subscriber();
     let handle = subscriber
-        .fetch_relative_joining(subscription, 0, FetchOption::default())
+        .fetch_relative_joining(track.subscription(), 0, FetchOption::default())
         .await?;
     let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut latest = None;
@@ -109,18 +65,16 @@ pub(crate) async fn fetch_joining_group(
 }
 
 /// A standalone FETCH from the track's first location through the largest
-/// object `subscription` reported (draft-14 §9.16.1: End Location is the last
+/// object the track's subscription reported (draft-14 §9.16.1: End Location is the last
 /// object plus one), so a `LargestObject` subscription continues where it
 /// ends. The relay serves what it caches and asks the publisher for the
 /// rest. `None` when the subscription reported no content.
-pub(crate) async fn fetch_cached(
-    session: &Session,
-    subscription: &Subscription,
-) -> Result<Option<FetchDataReceiver>> {
+pub(crate) async fn fetch_cached(track: &MigratingTrack) -> Result<Option<FetchDataReceiver>> {
+    let subscription = track.subscription();
     let ContentExists::True { location: largest } = subscription.content_exists() else {
         return Ok(None);
     };
-    let mut subscriber = session.subscriber();
+    let mut subscriber = track.session().subscriber();
     let handle = subscriber
         .fetch(
             subscription.track_namespace().to_string(),

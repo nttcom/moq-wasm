@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use moqt::{RequestErrorCode, Session, SessionEvent};
+use moqt::{MigratingSession, RequestErrorCode, SessionEvent};
 use object_store::{ObjectStore, path::Path};
 use tokio::{
     sync::watch,
@@ -16,7 +16,7 @@ use tokio::{
 
 use crate::{
     recorder::{BroadcastOptions, UploadTarget, default_output_path, record_broadcast},
-    relay::RelayConnection,
+    relay,
     upload_task::UploadTask,
 };
 
@@ -133,10 +133,9 @@ async fn record(
         }),
         ..config.options
     });
-    let connection =
-        RelayConnection::connect(&config.relay, config.verify_certificate, None).await?;
+    let session = Arc::new(relay::connect(&config.relay, config.verify_certificate, None).await?);
     let result = follow_members(
-        &connection.session,
+        &session,
         &config.namespace_prefix,
         &config.output_dir,
         config.limits,
@@ -145,7 +144,7 @@ async fn record(
         status,
     )
     .await;
-    connection.close().await;
+    session.close().await;
     // The queues the options hold have to go before the upload task can end.
     drop(options);
     if let Some((task, _)) = upload_task {
@@ -159,7 +158,7 @@ async fn record(
 /// `AutoStop`) or the session closes, and every participant's recording has
 /// ended.
 async fn follow_members(
-    session: &Arc<Session>,
+    session: &Arc<MigratingSession>,
     namespace_prefix: &str,
     output_dir: &std::path::Path,
     limits: RecordingLimits,
@@ -168,7 +167,6 @@ async fn follow_members(
     status: &Arc<Mutex<RoomStatus>>,
 ) -> Result<()> {
     session
-        .subscriber()
         .subscribe_namespace(namespace_prefix.to_string())
         .await?;
     tracing::info!(prefix = namespace_prefix, "room recording started");
@@ -288,7 +286,7 @@ fn stopping(status: &Mutex<RoomStatus>) {
 }
 
 fn record_member(
-    session: Arc<Session>,
+    session: Arc<MigratingSession>,
     namespace: String,
     output_dir: &std::path::Path,
     options: Arc<BroadcastOptions>,

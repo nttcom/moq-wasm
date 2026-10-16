@@ -1,56 +1,42 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use moqt::{Session, Subscription, TrackReader, subscribe::FilterType};
+use moqt::{MigratingSession, MigratingTrack, subscribe::FilterType};
 use msf::Catalog;
 
 use crate::relay;
 
 /// Yields the catalog's current object from the joining FETCH
-/// (draft-ietf-moq-msf-01 §5), then later objects from the subscription. The
-/// subscription reader opens only after the FETCH: its first stream arrives
-/// with the next catalog object, up to 30 s later.
-pub(crate) struct CatalogReader<'a> {
-    session: &'a Session,
-    subscription: Subscription,
+/// (draft-ietf-moq-msf-01 §5), then later objects from the subscription,
+/// whose first stream arrives with the next catalog object, up to 30 s later.
+pub(crate) struct CatalogReader {
+    track: MigratingTrack,
     current: Option<Bytes>,
-    reader: Option<TrackReader>,
 }
 
-impl<'a> CatalogReader<'a> {
-    pub(crate) async fn open(session: &'a Session, namespace: &str) -> Result<Self> {
-        let subscription = relay::subscribe(
+impl CatalogReader {
+    pub(crate) async fn open(session: &MigratingSession, namespace: &str) -> Result<Self> {
+        let track = relay::subscribe(
             session,
             namespace,
             msf::CATALOG_TRACK_NAME,
             FilterType::NextGroupStart,
         )
         .await?;
-        let current = match relay::fetch_joining_group(session, &subscription).await {
+        let current = match relay::fetch_joining_group(&track).await {
             Ok(current) => current,
             Err(error) => {
                 tracing::warn!(%error, "joining FETCH of the catalog failed");
                 None
             }
         };
-        Ok(Self {
-            session,
-            subscription,
-            current,
-            reader: None,
-        })
+        Ok(Self { track, current })
     }
 
     pub(crate) async fn next(&mut self) -> Result<Catalog> {
         let payload = match self.current.take() {
             Some(payload) => payload,
             None => {
-                let reader = match &mut self.reader {
-                    Some(reader) => reader,
-                    None => self
-                        .reader
-                        .insert(relay::track_reader(self.session, &self.subscription).await?),
-                };
-                reader
+                self.track
                     .next_object()
                     .await?
                     .context("catalog track ended")?
