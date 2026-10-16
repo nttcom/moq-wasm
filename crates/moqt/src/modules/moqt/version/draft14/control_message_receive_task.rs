@@ -28,7 +28,7 @@ use crate::{
         data_plane::stream::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
-        domains::session_context::SessionContext,
+        domains::{connection::Connection, session_context::SessionContext},
         version::draft14::{ControlChannel, InflightRequest, error_codes, handle_late_response},
     },
 };
@@ -45,6 +45,7 @@ impl ControlMessageReceiveTask {
     pub(crate) fn run(
         mut receive_stream: BiStreamReceiver,
         session_context: Weak<SessionContext>,
+        connection: Weak<Connection>,
         publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
         receiver_span: Span,
     ) -> JoinHandle {
@@ -52,7 +53,9 @@ impl ControlMessageReceiveTask {
             "Control Message Receiver",
                 async move {
                     loop {
-                        if let Some(session) = session_context.upgrade() {
+                        if let (Some(session), Some(connection)) =
+                            (session_context.upgrade(), connection.upgrade())
+                        {
                             let received_message = match receive_stream.receive().await {
                                 Ok(Some(received_message)) => received_message,
                                 Ok(None) => {
@@ -65,7 +68,7 @@ impl ControlMessageReceiveTask {
                                 }
                             };
 
-                            match Self::resolve_message(session.clone(), received_message) {
+                            match Self::resolve_message(&session, &connection, received_message) {
                                 DepacketizeResult::SessionEvent(event) => {
                                     if let SessionEvent::PublishDone(handler) = &event {
                                         let _ = publish_done_sender.send(handler.request_id());
@@ -76,7 +79,7 @@ impl ControlMessageReceiveTask {
                                 }
                                 DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    let inflight_request = ControlChannel::of(session.connection())
+                                    let inflight_request = ControlChannel::of(&connection)
                                         .take_inflight_request(request_id);
                                     match inflight_request {
                                         Some(InflightRequest::Waiting {
@@ -89,6 +92,7 @@ impl ControlMessageReceiveTask {
                                             if let Err(message) = sender.send(message) {
                                                 handle_late_response(
                                                     &session,
+                                                    &connection,
                                                     request_id,
                                                     on_late_response,
                                                     message,
@@ -98,7 +102,8 @@ impl ControlMessageReceiveTask {
                                         }
                                         Some(InflightRequest::Abandoned(action)) => {
                                             handle_late_response(
-                                                &session, request_id, action, message,
+                                                &session, &connection, request_id, action,
+                                                message,
                                             )
                                             .await;
                                         }
@@ -107,7 +112,8 @@ impl ControlMessageReceiveTask {
                                                 request_id,
                                                 "Protocol violation: response for unknown or already-completed Request ID; closing session"
                                             );
-                                            session.close_with_error(
+                                            session.close_connection(
+                                                &connection,
                                                 TerminationErrorCode::ProtocolViolation,
                                                 "received response for unknown or already-completed Request ID",
                                             );
@@ -121,8 +127,8 @@ impl ControlMessageReceiveTask {
                             break;
                         }
                     }
-                    if let Some(session) = session_context.upgrade() {
-                        ControlChannel::of(session.connection()).fail_inflight_requests();
+                    if let Some(connection) = connection.upgrade() {
+                        ControlChannel::of(&connection).fail_inflight_requests();
                     }
                 }
             .instrument(receiver_span),
@@ -130,13 +136,15 @@ impl ControlMessageReceiveTask {
     }
 
     fn resolve_message(
-        session: Arc<SessionContext>,
+        session: &Arc<SessionContext>,
+        connection: &Arc<Connection>,
         received_message: ReceivedMessage,
     ) -> DepacketizeResult {
         tracing::debug!(message = ?received_message, "Event: message_type");
         match received_message {
             ReceivedMessage::Subscribe(subscribe) => {
-                let subscribe_handler = SubscribeHandler::new(session.clone(), subscribe);
+                let subscribe_handler =
+                    SubscribeHandler::new(session.clone(), connection.clone(), subscribe);
                 DepacketizeResult::SessionEvent(SessionEvent::Subscribe(subscribe_handler))
             }
             ReceivedMessage::Unsubscribe(unsubscribe) => {
@@ -160,7 +168,8 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::ResponseMessage(subscribe_error.request_id, response)
             }
             ReceivedMessage::Publish(publish) => {
-                let publish_handler = PublishHandler::new(session.clone(), publish);
+                let publish_handler =
+                    PublishHandler::new(session.clone(), connection.clone(), publish);
                 DepacketizeResult::SessionEvent(SessionEvent::Publish(publish_handler))
             }
             ReceivedMessage::PublishOk(publish_ok) => {
@@ -183,7 +192,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::PublishNamespace(publish_namespace) => {
                 let publish_namespace_handler =
-                    PublishNamespaceHandler::new(session.clone(), publish_namespace);
+                    PublishNamespaceHandler::new(connection.clone(), publish_namespace);
                 DepacketizeResult::SessionEvent(SessionEvent::PublishNamespace(
                     publish_namespace_handler,
                 ))
@@ -213,7 +222,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::SubscribeNamespace(subscribe_namespace) => {
                 let subscribe_namespace_handler =
-                    SubscribeNamespaceHandler::new(session.clone(), subscribe_namespace);
+                    SubscribeNamespaceHandler::new(connection.clone(), subscribe_namespace);
                 DepacketizeResult::SessionEvent(SessionEvent::SubscribeNameSpace(
                     subscribe_namespace_handler,
                 ))
@@ -242,7 +251,7 @@ impl ControlMessageReceiveTask {
                 ))
             }
             ReceivedMessage::Fetch(fetch) => {
-                let fetch_handler = FetchHandler::new(session.clone(), fetch);
+                let fetch_handler = FetchHandler::new(session.clone(), connection.clone(), fetch);
                 DepacketizeResult::SessionEvent(SessionEvent::Fetch(fetch_handler))
             }
             ReceivedMessage::FetchOk(fetch_ok) => {
@@ -296,12 +305,13 @@ impl ControlMessageReceiveTask {
                 ))
             }
             ReceivedMessage::GoAway(go_away) => {
-                if let Err(reason) = session
-                    .connection()
-                    .note_go_away_received(&go_away.new_session_uri)
-                {
+                if let Err(reason) = connection.note_go_away_received(&go_away.new_session_uri) {
                     tracing::error!("Protocol violation: {reason}");
-                    session.close_with_error(TerminationErrorCode::ProtocolViolation, reason);
+                    session.close_connection(
+                        connection,
+                        TerminationErrorCode::ProtocolViolation,
+                        reason,
+                    );
                     return DepacketizeResult::SessionClosed;
                 }
                 let go_away_handler = GoAwayHandler::new(go_away);
@@ -318,7 +328,8 @@ impl ControlMessageReceiveTask {
                 ))
             }
             ReceivedMessage::TrackStatus(track_status) => {
-                let track_status_handler = TrackStatusHandler::new(session.clone(), track_status);
+                let track_status_handler =
+                    TrackStatusHandler::new(connection.clone(), track_status);
                 DepacketizeResult::SessionEvent(SessionEvent::TrackStatus(track_status_handler))
             }
             ReceivedMessage::TrackStatusOk(track_status_ok) => {
@@ -341,7 +352,8 @@ impl ControlMessageReceiveTask {
                 tracing::error!(
                     "Protocol violation: SETUP received after the session was established"
                 );
-                session.close_with_error(
+                session.close_connection(
+                    connection,
                     TerminationErrorCode::ProtocolViolation,
                     "SETUP received after the session was established",
                 );
@@ -349,7 +361,8 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::FatalError(reason) => {
                 tracing::error!(%reason, "Protocol violation: malformed control message payload");
-                session.close_with_error(
+                session.close_connection(
+                    connection,
                     TerminationErrorCode::ProtocolViolation,
                     "malformed control message payload",
                 );

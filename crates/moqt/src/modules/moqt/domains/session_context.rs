@@ -1,20 +1,14 @@
-use std::{
-    collections::{HashMap, VecDeque, hash_map::Entry},
-    fmt,
-    sync::Arc,
-};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 use crate::{
     SessionEvent,
     modules::moqt::{
         control_plane::{constants::TerminationErrorCode, enums::RequestId},
         data_plane::stream::fetch_data_receiver::FetchDataReceiver,
-        domains::connection::Connection,
+        domains::connection::{Connection, ObjectSink},
         runtime::dispatch::incoming_object::IncomingObject,
     },
 };
-
-const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 
 /// The state of a session that outlives its transport connection: the
 /// events, and the receivers the application takes per track alias and per
@@ -24,46 +18,14 @@ pub(crate) struct SessionContext {
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
-    object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
-    pub(crate) fetch_notification_map:
-        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
     pub(crate) fetch_receiver_map:
         std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
-}
-
-enum ObjectSink {
-    /// Buffers objects that arrive before the receiver is registered.
-    Buffer(VecDeque<IncomingObject>),
-    Receiver {
-        request_id: RequestId,
-        sender: tokio::sync::mpsc::UnboundedSender<IncomingObject>,
-    },
-    /// Draft-14 §10.1: objects of a cancelled subscription can still arrive
-    /// and are discarded instead of being buffered as an unknown track alias.
-    /// Kept until a new subscription reuses the track alias.
-    Cancelled,
-}
-
-impl ObjectSink {
-    fn is_receiver_registered(&self) -> bool {
-        matches!(self, ObjectSink::Receiver { .. })
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum IncomingObjectNotification {
-    Notified,
-    Buffered {
-        pending_objects: usize,
-        dropped_oldest: bool,
-    },
-    ReceiverClosed,
-    Discarded,
 }
 
 #[must_use = "dropping this removes the pending fetch; bind it for the lifetime of the request"]
 pub(crate) struct PendingFetch {
     session: Arc<SessionContext>,
+    connection: Arc<Connection>,
     request_id: RequestId,
     kept: bool,
 }
@@ -78,7 +40,8 @@ impl PendingFetch {
 impl Drop for PendingFetch {
     fn drop(&mut self) {
         if !self.kept {
-            self.session.remove_pending_fetch(self.request_id);
+            self.session
+                .remove_pending_fetch(&self.connection, self.request_id);
         }
     }
 }
@@ -92,8 +55,6 @@ impl SessionContext {
             connection: Arc::new(connection),
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
-            object_sinks: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -103,55 +64,16 @@ impl SessionContext {
         &self.connection
     }
 
-    pub(crate) async fn notify_incoming_object(
-        &self,
-        track_alias: u64,
-        incoming_object: IncomingObject,
-    ) -> IncomingObjectNotification {
-        let mut sinks = self.object_sinks.lock().await;
-        match sinks.entry(track_alias) {
-            Entry::Vacant(entry) => {
-                let mut objects = VecDeque::new();
-                objects.push_back(incoming_object);
-                entry.insert(ObjectSink::Buffer(objects));
-                IncomingObjectNotification::Buffered {
-                    pending_objects: 1,
-                    dropped_oldest: false,
-                }
-            }
-            Entry::Occupied(mut entry) => match entry.get_mut() {
-                ObjectSink::Receiver { sender, .. } => {
-                    if sender.send(incoming_object).is_err() {
-                        IncomingObjectNotification::ReceiverClosed
-                    } else {
-                        IncomingObjectNotification::Notified
-                    }
-                }
-                ObjectSink::Buffer(objects) => {
-                    let dropped_oldest = objects.len() >= MAX_PENDING_OBJECTS_PER_TRACK_ALIAS;
-                    if dropped_oldest {
-                        objects.pop_front();
-                    }
-                    objects.push_back(incoming_object);
-                    IncomingObjectNotification::Buffered {
-                        pending_objects: objects.len(),
-                        dropped_oldest,
-                    }
-                }
-                ObjectSink::Cancelled => IncomingObjectNotification::Discarded,
-            },
-        }
-    }
-
     /// `receiver_map` is updated while the object-sinks lock is held, so the
     /// drain, the sink switch and the receiver registration are atomic.
     pub(crate) async fn register_data_receiver(
         &self,
+        connection: &Connection,
         request_id: RequestId,
         track_alias: u64,
     ) -> Result<(), TerminationErrorCode> {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
-        let mut sinks = self.object_sinks.lock().await;
+        let mut sinks = connection.object_sinks.lock().await;
 
         if sinks
             .get(&track_alias)
@@ -172,8 +94,8 @@ impl SessionContext {
         Ok(())
     }
 
-    pub(crate) async fn cancel_subscription(&self, request_id: RequestId) {
-        let mut sinks = self.object_sinks.lock().await;
+    pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
+        let mut sinks = connection.object_sinks.lock().await;
         let track_alias = sinks.iter().find_map(|(track_alias, sink)| {
             matches!(sink, ObjectSink::Receiver { request_id: id, .. } if *id == request_id)
                 .then_some(*track_alias)
@@ -183,8 +105,12 @@ impl SessionContext {
         }
     }
 
-    pub(crate) async fn cancel_unclaimed_track_alias(&self, track_alias: u64) {
-        let mut sinks = self.object_sinks.lock().await;
+    pub(crate) async fn cancel_unclaimed_track_alias(
+        &self,
+        connection: &Connection,
+        track_alias: u64,
+    ) {
+        let mut sinks = connection.object_sinks.lock().await;
         if !sinks
             .get(&track_alias)
             .is_some_and(ObjectSink::is_receiver_registered)
@@ -198,10 +124,16 @@ impl SessionContext {
         self.receiver_map.lock().await.remove(&track_alias);
     }
 
-    /// Call before sending the FETCH: its data stream can arrive before FETCH_OK.
-    pub(crate) fn register_pending_fetch(self: &Arc<Self>, request_id: RequestId) -> PendingFetch {
+    /// Call before sending the FETCH on `connection`: its data stream can
+    /// arrive before FETCH_OK.
+    pub(crate) fn register_pending_fetch(
+        self: &Arc<Self>,
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) -> PendingFetch {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
-        self.fetch_notification_map
+        connection
+            .fetch_notification_map
             .lock()
             .expect("fetch_notification_map poisoned")
             .insert(request_id, sender);
@@ -211,13 +143,15 @@ impl SessionContext {
             .insert(request_id, receiver);
         PendingFetch {
             session: self.clone(),
+            connection: connection.clone(),
             request_id,
             kept: false,
         }
     }
 
-    pub(crate) fn remove_pending_fetch(&self, request_id: RequestId) {
-        self.fetch_notification_map
+    pub(crate) fn remove_pending_fetch(&self, connection: &Connection, request_id: RequestId) {
+        connection
+            .fetch_notification_map
             .lock()
             .expect("fetch_notification_map poisoned")
             .remove(&request_id);
@@ -232,12 +166,22 @@ impl SessionContext {
     /// `SessionEvent::Disconnected` once the transport has closed, like a
     /// close by the peer.
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
+        self.close_connection(&self.connection, code, reason);
+    }
+
+    /// Like `close_with_error`, for the connection a message arrived on.
+    pub(crate) fn close_connection(
+        &self,
+        connection: &Connection,
+        code: TerminationErrorCode,
+        reason: &str,
+    ) {
         if code == TerminationErrorCode::ProtocolViolation
             && let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation())
         {
             tracing::error!(?error, "failed to send protocol violation event");
         }
-        self.connection.close(code, reason);
+        connection.close(code, reason);
     }
 }
 
@@ -258,7 +202,7 @@ impl Drop for SessionContext {
 mod tests {
     use std::collections::HashSet;
 
-    use super::IncomingObjectNotification;
+    use crate::modules::moqt::domains::connection::IncomingObjectNotification;
     use crate::modules::{
         moqt::runtime::dispatch::incoming_object::IncomingObject,
         test_support::{
@@ -323,7 +267,7 @@ mod tests {
         let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-unaccepted").await;
         let context = server.subscriber().session;
         context
-            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(context.connection(), REQUEST_ID, TRACK_ALIAS)
             .await
             .unwrap();
 
@@ -367,14 +311,16 @@ mod tests {
         let (_client, server) = spawn_connected_dual_sessions("sinks-reuse-alias").await;
         let context = server.subscriber().session;
         context
-            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(context.connection(), REQUEST_ID, TRACK_ALIAS)
             .await
             .unwrap();
-        context.cancel_subscription(REQUEST_ID).await;
+        context
+            .cancel_subscription(context.connection(), REQUEST_ID)
+            .await;
 
         // Act
         let registration = context
-            .register_data_receiver(OTHER_REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
             .await;
 
         // Assert

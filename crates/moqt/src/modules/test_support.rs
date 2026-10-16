@@ -20,7 +20,7 @@ use crate::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
             object_datagram::ObjectDatagram,
         },
-        domains::session_context::{IncomingObjectNotification, SessionContext},
+        domains::{connection::IncomingObjectNotification, session_context::SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
     object::{DataReceiver, StreamDataSenderFactory, SubgroupObjectSender},
@@ -280,6 +280,7 @@ pub(crate) async fn notify_datagram(
     track_alias: u64,
 ) -> IncomingObjectNotification {
     context
+        .connection()
         .notify_incoming_object(track_alias, IncomingObject::Datagram(datagram_object()))
         .await
 }
@@ -290,7 +291,7 @@ pub(crate) async fn register_and_take_data_receiver(
     track_alias: u64,
 ) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject> {
     context
-        .register_data_receiver(request_id, track_alias)
+        .register_data_receiver(context.connection(), request_id, track_alias)
         .await
         .unwrap();
     context

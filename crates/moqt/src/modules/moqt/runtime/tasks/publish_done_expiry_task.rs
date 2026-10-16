@@ -6,7 +6,10 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     executor::{self, JoinHandle},
-    moqt::{control_plane::enums::RequestId, domains::session_context::SessionContext},
+    moqt::{
+        control_plane::enums::RequestId,
+        domains::{connection::Connection, session_context::SessionContext},
+    },
 };
 
 /// draft-14 §9.12: PUBLISH_DONE travels on the control stream and can arrive
@@ -23,6 +26,7 @@ impl PublishDoneExpiryTask {
     pub(crate) fn run(
         mut publish_done_receiver: mpsc::UnboundedReceiver<RequestId>,
         session_context: Weak<SessionContext>,
+        connection: Weak<Connection>,
         expiry_span: Span,
     ) -> JoinHandle {
         executor::spawn(
@@ -38,11 +42,13 @@ impl PublishDoneExpiryTask {
                             });
                         }
                         Some(request_id) = expiries.next() => {
-                            let Some(session) = session_context.upgrade() else {
+                            let (Some(session), Some(connection)) =
+                                (session_context.upgrade(), connection.upgrade())
+                            else {
                                 break;
                             };
                             tracing::debug!(request_id, "ending the subscription PUBLISH_DONE terminated");
-                            session.cancel_subscription(request_id).await;
+                            session.cancel_subscription(&connection, request_id).await;
                         }
                         else => break,
                     }
