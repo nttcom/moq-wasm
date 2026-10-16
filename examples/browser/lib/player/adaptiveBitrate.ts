@@ -77,7 +77,9 @@ function estimateBitrate(track: MediaCatalogTrack, reference: MediaCatalogTrack 
 /// - Delivery is pushed at the encoded rate, so throughput measured while the
 ///   path keeps up does not show how much more it could carry.
 /// - A rising capture-to-arrival lag or a stall shows the rendition does not
-///   fit; the throughput measured then is what the path carries.
+///   fit; the throughput measured then is what the path carries. With a
+///   `targetLagMs`, the least lag of the last second standing above it also
+///   counts as not fitting.
 /// - A step down goes to the highest rendition that fits that throughput.
 /// - A step up tries the next rendition after a calm spell; a failed trial
 ///   doubles the spell before the next one.
@@ -90,6 +92,8 @@ export class AdaptiveBitrate {
   private upHoldChangedAtMs = 0
   private lastUpAtMs: number | undefined
   private lastCongestedAtMs: number | undefined
+
+  constructor(private readonly targetLagMs?: number) {}
 
   /// A rendition started playing.
   restart(nowMs: number): void {
@@ -164,7 +168,11 @@ export class AdaptiveBitrate {
         recentLeastLagMs = Math.min(recentLeastLagMs ?? sample.lagMs, sample.lagMs)
       }
     }
-    return recentLeastLagMs !== undefined && recentLeastLagMs - this.baselineLagMs > CONGESTED_EXCESS_LAG_MS
+    return (
+      recentLeastLagMs !== undefined &&
+      (recentLeastLagMs - this.baselineLagMs > CONGESTED_EXCESS_LAG_MS ||
+        (this.targetLagMs !== undefined && recentLeastLagMs > this.targetLagMs))
+    )
   }
 
   private stepDown(nowMs: number, ladder: Rung[], index: number): string | undefined {

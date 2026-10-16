@@ -85,6 +85,29 @@ test('a stall steps down even while the lag holds', () => {
   expect(choice).toBe('video_360p')
 })
 
+test('a lag above the target steps down even while it holds', () => {
+  // Arrange: 1.7 Mbps arrives 300 ms behind its capture throughout
+  const abr = new AdaptiveBitrate(250)
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 6_000, 7_000, () => 300)
+
+  // Act
+  const choice = abr.decide(6_000, LADDER, 'video', false)
+
+  // Assert: 0.8 × 1.7 Mbps fits 480p but not 720p
+  expect(choice).toBe('video_480p')
+})
+
+test('a lag within the target does not step down', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate(250)
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 6_000, 7_000, () => 200)
+
+  // Act / Assert
+  expect(abr.decide(6_000, LADDER, 'video', false)).toBeUndefined()
+})
+
 test('a single late keyframe is not taken for congestion', () => {
   // Arrange
   const abr = new AdaptiveBitrate()

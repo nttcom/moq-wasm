@@ -18,6 +18,7 @@ export type RemotePictures = Partial<Record<RemoteVideoSource, HTMLElement>>
 const ADAPT_INTERVAL_MS = 500
 /// After asking for another track, the next choice waits for the switch.
 const SWITCH_WAIT_MS = 3_000
+const TARGET_LAG_MS = 250
 
 export type VideoAdaptation = { ladder: Rung[]; onPreferred: (trackName: string) => void }
 
@@ -74,7 +75,8 @@ export class MediaSubscriber {
   /// without a gap; call `canReplaceVideo` first and unsubscribe the playing
   /// track when it returns false. With `adaptation`, the picture asks for the
   /// ladder track that fits its shown height and the delivery: no taller than
-  /// the picture, lower when the capture-to-arrival lag rises (see `AdaptiveBitrate`).
+  /// the picture, lower when the capture-to-arrival lag rises or exceeds
+  /// `TARGET_LAG_MS` (see `AdaptiveBitrate`).
   registerVideoTrack(
     userId: string,
     trackName: string,
@@ -296,7 +298,7 @@ export class MediaSubscriber {
 
   /// The shown height is in device pixels, the unit a rendition's height compares to.
   private observePicture(key: string, element: HTMLElement): void {
-    const bitrate = new AdaptiveBitrate()
+    const bitrate = new AdaptiveBitrate(TARGET_LAG_MS)
     bitrate.restart(nowMs())
     const picture: PictureAdaptation = {
       bitrate,
