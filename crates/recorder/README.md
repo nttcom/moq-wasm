@@ -37,6 +37,38 @@ cargo run -p recorder -- \
 | `--auth-token-file` (`MOQT_AUTH_TOKEN_FILE`) | — | File holding the JWT; re-read every 10 s and a changed token is sent to the relay |
 | `--insecure-skip-tls-verify` | off | Accept the local relay's development certificate |
 
+## Recording API
+
+`recorder serve` records whole rooms on request, for the meeting example:
+
+```bash
+cargo run -p recorder -- serve \
+  --relay https://127.0.0.1:4433 --insecure-skip-tls-verify \
+  --upload gs://moq-recorder/meetings
+```
+
+| Request | Answer |
+| --- | --- |
+| `POST /recordings` `{"namespace_prefix": "anon/research", "layout": "per-track"}` | `201` with the recording; `layout` is `combined` by default. `403` outside `--namespace-root` or from a page outside `--allowed-origin`, `409` when the prefix is already recorded, `503` past `--max-recordings` |
+| `POST /recordings/{id}/stop` | `202`; the state turns `stopping`, then `finished` once every file is closed and uploaded |
+| `GET /recordings/{id}` | `state` (`recording`, `stopping`, `finished`, `failed`) and each participant's namespace, start time, `finished` and `error` |
+| `GET /recordings?namespace_prefix=anon/research` | The recordings of that prefix |
+
+Every namespace under the prefix (one per meeting participant) is recorded
+from the moment it is published, with the tracks picked from its catalog
+(`--max-video-height`, 480 by default). Files go to
+`--output-dir/<recording id>/`, objects to
+`<upload prefix>/<recording id>/<namespace>/<track>/`.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--listen` | `127.0.0.1:8095` | Address of the API |
+| `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
+| `--namespace-root` | `anon` | First element every recorded prefix must have; the API has no authentication |
+| `--max-recordings` | `4` | Recordings at once |
+| `--output-dir` | `recordings` | Where the files are written |
+| `--upload`, `--segment-seconds`, `--max-video-height`, `--insecure-skip-tls-verify` | | As for a single recording |
+
 ## Behaviour
 
 - Without `--video-track`, the recorder takes the catalog's LOC track with

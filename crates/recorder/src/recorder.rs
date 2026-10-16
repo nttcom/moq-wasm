@@ -29,7 +29,7 @@ use crate::{
 
 /// Uploads begin when a file closes, so a recording without segments would
 /// upload only after it ended.
-const UPLOAD_SEGMENT_SECONDS: u64 = 60;
+pub(crate) const UPLOAD_SEGMENT_SECONDS: u64 = 60;
 
 pub(crate) async fn run(args: Args) -> Result<()> {
     let auth_token = match &args.auth_token_file {
@@ -398,7 +398,7 @@ fn uploader(target: &UploadTarget, namespace: &str, now: SystemTime) -> Uploader
     }
 }
 
-fn default_output_path(namespace: &str, now: SystemTime) -> PathBuf {
+pub(crate) fn default_output_path(namespace: &str, now: SystemTime) -> PathBuf {
     let seconds = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     PathBuf::from(format!("{}-{seconds}.mp4", namespace.replace('/', "_")))
 }

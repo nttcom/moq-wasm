@@ -24,6 +24,16 @@ pub(crate) enum Layout {
     PerTrack,
 }
 
+impl Layout {
+    /// The value `--layout` and the recording API take.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Combined => "combined",
+            Self::PerTrack => "per-track",
+        }
+    }
+}
+
 /// About 10 s of 20 ms frames, well past the one group the audio can lead
 /// the video by. Beyond it the oldest held object is dropped: it is the most
 /// likely to precede the video.

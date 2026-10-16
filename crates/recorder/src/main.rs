@@ -1,9 +1,13 @@
+mod api_server;
 mod catalog_reader;
 mod file_writer;
 mod pipeline;
 mod recorder;
 mod recording;
+mod recordings;
 mod relay;
+mod room_recording;
+mod serve;
 #[cfg(test)]
 mod test_support;
 mod token_refresh_task;
@@ -11,10 +15,10 @@ mod track_list;
 mod track_selection;
 mod upload_task;
 
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::recording::Layout;
@@ -23,8 +27,25 @@ use crate::recording::Layout;
 #[command(
     author,
     version,
-    about = "Record an MSF broadcast from a MoQT relay into fragmented MP4"
+    about = "Record an MSF broadcast from a MoQT relay into fragmented MP4",
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true
 )]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[command(flatten)]
+    record: Option<Args>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Serve an HTTP API that starts and stops room recordings
+    Serve(ServeArgs),
+}
+
+#[derive(clap::Args, Debug)]
 pub(crate) struct Args {
     /// MoQT relay URL (`moqt://` for QUIC, `https://` for WebTransport)
     #[arg(long, env = "MOQT_URL")]
@@ -96,6 +117,57 @@ pub(crate) struct Args {
     pub(crate) insecure_skip_tls_verify: bool,
 }
 
+#[derive(clap::Args, Debug)]
+pub(crate) struct ServeArgs {
+    /// Address the HTTP API listens on
+    #[arg(long, default_value = "127.0.0.1:8095")]
+    pub(crate) listen: SocketAddr,
+
+    /// MoQT relay URL every recording connects to
+    #[arg(long, env = "MOQT_URL")]
+    pub(crate) relay: String,
+
+    /// Origin of a page allowed to call the API (CORS); repeat for several
+    #[arg(
+        long = "allowed-origin",
+        value_name = "ORIGIN",
+        default_values_t = ["http://localhost:5173".to_string(), "http://127.0.0.1:5173".to_string()]
+    )]
+    pub(crate) allowed_origins: Vec<String>,
+
+    /// First element of every namespace prefix a request may record; the API
+    /// has no authentication, so it records anonymous rooms only by default
+    #[arg(long, default_value = "anon")]
+    pub(crate) namespace_root: String,
+
+    /// Recordings that may run at once
+    #[arg(long, default_value_t = 4)]
+    pub(crate) max_recordings: usize,
+
+    /// Directory the files are written to, one subdirectory per recording
+    #[arg(long, default_value = "recordings")]
+    pub(crate) output_dir: PathBuf,
+
+    /// Upload every closed file under this object store location, then
+    /// `<recording id>/<namespace>/`, and delete the local file
+    #[arg(long, env = "RECORDER_UPLOAD_URL", value_name = "URL")]
+    pub(crate) upload: Option<url::Url>,
+
+    /// Start a new numbered file after this many seconds; 60 by default with
+    /// `--upload`
+    #[arg(long, value_name = "SECONDS")]
+    pub(crate) segment_seconds: Option<u64>,
+
+    /// Record each participant's tallest video track at most this high, or
+    /// the shortest one when all are taller
+    #[arg(long, value_name = "PIXELS", default_value_t = 480)]
+    pub(crate) max_video_height: u32,
+
+    /// Skip TLS certificate verification (INSECURE, local development only)
+    #[arg(long)]
+    pub(crate) insecure_skip_tls_verify: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -106,5 +178,10 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    recorder::run(Args::parse()).await
+    let cli = Cli::parse();
+    match (cli.command, cli.record) {
+        (Some(Command::Serve(args)), _) => serve::serve(args).await,
+        (None, Some(args)) => recorder::run(args).await,
+        (None, None) => unreachable!("clap requires the recording flags without a subcommand"),
+    }
 }

@@ -142,6 +142,37 @@ Writing straight into an in-progress multipart upload was not chosen: the
 object is not readable until the upload completes, a crash loses the whole
 segment, and a network stall would hold up the recording.
 
+## Recording API
+`recorder serve` keeps one HTTP API (`api_server::ApiServer`, see
+[hyper.md](hyper.md)) and a `recordings::Recordings` list. Each
+`POST /recordings` with `{"namespace_prefix", "layout"}` starts a
+`room_recording::RoomRecording`:
+
+- It opens its own relay session and sends SUBSCRIBE_NAMESPACE for the
+  prefix. Each PUBLISH_NAMESPACE under it, the participants already there and
+  those who join later, starts `record_broadcast` for that namespace with the
+  requested layout. The tracks are picked from the catalog as without
+  `--video-track` (`--max-video-height`, 480 by default), so a participant's
+  browser encodes at most one extra light rendition for the recorder.
+- A forwarded PUBLISH is refused with PUBLISH_ERROR UNINTERESTED. Accepting
+  it would deliver every track of the namespace, every rendition included.
+- A participant who leaves ends their tracks with PUBLISH_DONE, which ends
+  their recording. One who joins again is recorded into new files.
+- `POST /recordings/{id}/stop` sends the stop signal every
+  `record_broadcast` watches. The state goes from `stopping` to `finished`
+  once each file is closed and, with `--upload`, uploaded. The objects go
+  under `<url path>/<recording id>/<namespace>/`.
+- SIGINT or SIGTERM stops every recording the same way before the process
+  exits.
+
+The API has no authentication, so it accepts only a prefix of at least two
+elements under `--namespace-root` (`anon` by default), at most
+`--max-recordings` recordings at once and one recording per prefix. A POST
+whose `Origin` is not an `--allowed-origin` is refused, since CORS alone only
+hides the answer from that page and a `text/plain` POST needs no preflight. The relay URL, the bucket and the
+track choice are server settings, so a request cannot point the recorder at
+another relay or bucket.
+
 ## Token refresh
 With `--auth-token-file` a `TokenRefreshTask` re-reads the file every 10 s and
 sends a changed token with the relay's in-session refresh convention: a
@@ -158,6 +189,10 @@ the convention is the relay's.
   drops video until the first keyframe.
 - Audio outside AAC, Opus, G.711 A-law and MP3, or an AAC track whose
   configuration is not in the catalog yet, is skipped with a warning.
+- A room recording picks a participant's tracks once, from the first catalog
+  that lists a video track. An AAC track whose configuration is not in that
+  catalog yet (a `broadcast` publisher before its first audio frame) leaves
+  that participant's recording without audio.
 - Video outside H.264, VP8, VP9 and AV1 ends the recorder with an error
   before anything is recorded: without the video track there is no file.
 - The automatic choice reads no track name, so it cannot tell a meeting's
