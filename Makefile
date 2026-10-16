@@ -99,11 +99,17 @@ gst-srt-publish: gst-plugin
 		moqtsink name=moqt relay-url=$(GST_MOQT_URL) $(GST_TLS_PROPERTIES) namespace=$(GST_NAMESPACE)
 
 ## Media helpers
+# -re with no catch-up: by default ffmpeg reads faster after a slow start until
+# it is back on schedule, and the ingest, which takes the capture origin from
+# the first sample's arrival, stamps the samples read in that burst into the
+# future.
+FFMPEG_REALTIME := -re -readrate_catchup 1
+
 relay-certs:
 	node scripts/ensure-relay-certs.mjs
 
 ffmpeg-rtmp:
-	ffmpeg -re \
+	ffmpeg $(FFMPEG_REALTIME) \
 		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
 		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
@@ -112,7 +118,7 @@ ffmpeg-rtmp:
 		-f flv "rtmp://localhost:1935/anon/live/test/stream"
 
 ffmpeg-srt:
-	ffmpeg -re \
+	ffmpeg $(FFMPEG_REALTIME) \
 		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
 		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
@@ -123,7 +129,7 @@ ffmpeg-srt:
 # One RTP stream per output. The SDP FFmpeg writes names the ports, payload types and the AAC config, so the receiver needs it.
 ffmpeg-rtp:
 	mkdir -p $(dir $(LIVE_INGEST_RTP_SDP))
-	ffmpeg -re \
+	ffmpeg $(FFMPEG_REALTIME) \
 		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
 		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
 		-sdp_file $(LIVE_INGEST_RTP_SDP) \
@@ -144,7 +150,7 @@ $(BBB_FILE):
 	rm -f $@.zip
 
 ffmpeg-srt-bbb-local: $(BBB_FILE)
-	ffmpeg -re -stream_loop -1 -i $(BBB_FILE) \
+	ffmpeg $(FFMPEG_REALTIME) -stream_loop -1 -i $(BBB_FILE) \
 		-map 0:v:0 -map 0:a:0 \
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
@@ -152,7 +158,7 @@ ffmpeg-srt-bbb-local: $(BBB_FILE)
 		-f mpegts "srt://localhost:9000?mode=caller&streamid=anon/live/test"
 
 ffmpeg-srt-bbb-remote: $(BBB_FILE)
-	ffmpeg -re -stream_loop -1 -i $(BBB_FILE) \
+	ffmpeg $(FFMPEG_REALTIME) -stream_loop -1 -i $(BBB_FILE) \
 		-map 0:v:0 -map 0:a:0 \
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
