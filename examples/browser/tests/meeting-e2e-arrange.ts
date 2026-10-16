@@ -139,6 +139,11 @@ export async function openMemberDetails(page: Page, memberName: string): Promise
   await page.getByTestId(`member-menu-${memberName}`).click()
 }
 
+export async function removeCatalogTrack(page: Page, trackName: string): Promise<void> {
+  await page.getByRole('button', { name: 'Catalog', exact: true }).click()
+  await page.getByTestId(`catalog-track-${trackName}`).getByRole('button', { name: 'Remove' }).click()
+}
+
 export async function openChat(model: MeetingClientPageModel): Promise<void> {
   if (!(await model.chatInput.isVisible())) {
     await model.page.getByTestId('chat-toggle-button').click()

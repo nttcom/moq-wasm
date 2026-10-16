@@ -161,6 +161,10 @@ export const RequestErrorCode = {
   UnknownStatusInRange: 0x8n
 } as const
 
+const PUBLISH_DONE_TRACK_ENDED = 0x2n
+/// The Stream Count a publisher that does not count its streams must send (draft-14 §9.12).
+const UNKNOWN_STREAM_COUNT = 2n ** 62n - 1n
+
 export class RequestError extends Error {
   readonly errorCode: bigint
 
@@ -1166,6 +1170,15 @@ export class MoqtClientWrapper {
     return [...this.incomingSubscriptions]
       .filter(([, incoming]) => incoming.trackName === trackName && incoming.trackNamespace.join('/') === namespace)
       .map(([trackAlias]) => trackAlias)
+  }
+
+  /// Sends PUBLISH_DONE TRACK_ENDED to every subscriber of the track (draft-14 §9.12).
+  async endTrack(trackNamespace: string[], trackName: string): Promise<void> {
+    for (const trackAlias of this.trackSubscribers(trackNamespace, trackName)) {
+      const { client, requestId } = this.incomingSubscriptions.get(trackAlias)!
+      this.incomingSubscriptions.delete(trackAlias)
+      await client.sendPublishDone(requestId, PUBLISH_DONE_TRACK_ENDED, UNKNOWN_STREAM_COUNT, 'track removed')
+    }
   }
 
   async sendSubgroupTextForTrack(trackNamespace: string[], trackName: string, text: string): Promise<void> {

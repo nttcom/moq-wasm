@@ -13,6 +13,7 @@ import {
   joinRoom,
   openChat,
   openMemberDetails,
+  removeCatalogTrack,
   sendChatMessage
 } from './meeting-e2e-arrange'
 
@@ -47,6 +48,10 @@ async function expectInterFramesDecoded(video: import('@playwright/test').Locato
 // being scheduled on a running AudioContext alongside shown frames.
 async function expectAudioPlaying(stats: import('@playwright/test').Locator): Promise<void> {
   await expect(stats).toHaveText(/A\/V [+-]\d+ ms/, { timeout: 30_000 })
+}
+
+function videoWidth(video: import('@playwright/test').Locator): Promise<number> {
+  return video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
 }
 
 // Wait until a remote member's catalog is fully subscribed on the viewer's screen.
@@ -268,8 +273,6 @@ test('a viewer switches a member camera between renditions on the same picture',
   const params = { e2eVideoCodec: 'avc1.42001F', e2eVideoLowHeight: '60' }
   const alice = await arrangeMeetingClient(browser, { params })
   const bob = await arrangeMeetingClient(browser, { params })
-  const videoWidth = (video: import('@playwright/test').Locator) =>
-    video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
 
   try {
     const roomName = `e2e-switch-${Date.now()}`
@@ -307,6 +310,36 @@ test('a viewer switches a member camera between renditions on the same picture',
   }
 })
 
+test('a viewer moves to a remaining rendition when the member removes the one it plays', async ({ browser }) => {
+  // Arrange: alice publishes a 160x90 and a 106x60 rendition; bob plays the first
+  const params = { e2eVideoCodec: 'avc1.42001F', e2eVideoLowHeight: '60' }
+  const alice = await arrangeMeetingClient(browser, { params })
+  const bob = await arrangeMeetingClient(browser, { params })
+
+  try {
+    const roomName = `e2e-remove-track-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await expectCatalogSubscribed(bob.page.page, 'alice')
+    await subscribeMedia(bob.page.page, 'alice')
+    const video = getMemberVideo(bob.page.page, 'alice')
+    await expectVideoPlaying(video)
+    await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(160)
+
+    // Act
+    await removeCatalogTrack(alice.page.page, 'camera_e2e_e2e')
+
+    // Assert
+    await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(106)
+    await expectTrackStatus(bob.page.page, 'video', 'alice', 'Subscribed')
+    await expectInterFramesDecoded(video)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
 test('Auto follows the size of a member tile when the view changes', async ({ browser }) => {
   // Arrange: bob publishes 640x360 and 320x180, a filmstrip tile is 126 px tall, and carol speaks so she takes the focus
   const params = {
@@ -319,8 +352,6 @@ test('Auto follows the size of a member tile when the view changes', async ({ br
   const alice = await arrangeMeetingClient(browser, { params })
   const bob = await arrangeMeetingClient(browser, { params })
   const carol = await arrangeMeetingClient(browser, { params })
-  const videoWidth = (video: import('@playwright/test').Locator) =>
-    video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
 
   try {
     const roomName = `e2e-tile-size-${Date.now()}`
