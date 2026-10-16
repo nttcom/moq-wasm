@@ -1,129 +1,30 @@
-use std::{collections::VecDeque, pin::Pin, time::Duration};
-
-use anyhow::{Context, Result};
-use moqt::{SessionEvent, TrackObject, TrackReader, object::ContentExists, subscribe::FilterType};
-use tokio::{io::AsyncWriteExt, task::JoinHandle, time::Sleep};
+use anyhow::Result;
+use moqt::{TrackReader, subscribe::FilterType};
+use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 use crate::catalog;
-use crate::cli::{RelayArgs, SubscribeArgs};
-use crate::track::FullTrackName;
-use crate::transport::{
-    MOVE_TIMEOUT, RelayConnection, connect_relay, fetch_current_group, follow_go_away,
-    read_catalog, subscribe, track_reader,
-};
-
-const MOVE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
-
-/// How long the previous relay session stays open after a move for groups it
-/// started and has not finished.
-const PREVIOUS_SESSION_GRACE: Duration = Duration::from_secs(5);
+use crate::cli::SubscribeArgs;
+use crate::transport::{RelayConnection, connect_relay, read_catalog, subscribe, track_reader};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
-    let mut relay = args.relay.clone();
-    let mut watching = watch(&relay, &args.track, FilterType::NextGroupStart).await?;
-    // The move runs beside the current session, which keeps delivering
-    // until the new relay has accepted the subscriptions (draft-14 §8.3.1).
-    let mut pending_move: Option<JoinHandle<Result<Watching>>> = None;
-    // After a move the previous session finishes the groups before the
-    // cutover (the first group the new session delivers, or the one after
-    // the newest group written), and the new session supplies the rest.
-    let mut previous: Option<Watching> = None;
-    let mut cutover: Option<u64> = None;
-    let mut grace: Option<Pin<Box<Sleep>>> = None;
-    let mut newest_written: Option<u64> = None;
+    let mut watching = watch(&args).await?;
+    let session = watching.connection.session.clone();
     let mut out = tokio::io::stdout();
     loop {
-        let session = watching.connection.session.clone();
         tokio::select! {
-            object = watching.next_object() => match object {
+            object = watching.media_reader.next_object() => match object {
                 Ok(Some(object)) => {
-                    if previous.is_some() {
-                        let first = *cutover.get_or_insert(match newest_written {
-                            Some(newest) if object.group_id <= newest => newest + 1,
-                            _ => object.group_id,
-                        });
-                        if object.group_id < first {
-                            continue;
-                        }
-                    }
-                    newest_written = newest_written.max(Some(object.group_id));
                     out.write_all(&object.payload).await?;
                     out.flush().await?;
                 }
                 Ok(None) => break,
                 Err(error) => tracing::warn!(%error, "group read error, advancing to next group"),
             },
-            object = async { previous.as_mut().expect("polled only while the previous session is open").next_object().await },
-                if previous.is_some() =>
-            {
-                match object {
-                    Ok(Some(object)) if cutover.is_none_or(|first| object.group_id < first) => {
-                        newest_written = newest_written.max(Some(object.group_id));
-                        out.write_all(&object.payload).await?;
-                        out.flush().await?;
-                    }
-                    // Reached the cutover, or the previous relay ended the track.
-                    _ => {
-                        grace = None;
-                        if let Some(previous) = previous.take() {
-                            previous.close().await;
-                            info!("closed the previous relay session");
-                        }
-                    }
-                }
-            },
-            () = async { grace.as_mut().expect("polled only while the grace runs").await },
-                if grace.is_some() =>
-            {
-                grace = None;
-                if let Some(previous) = previous.take() {
-                    previous.close().await;
-                    info!("closed the previous relay session after the grace period");
-                }
-            },
-            event = session.receive_event() => {
-                if let SessionEvent::GoAway(go_away) = event?
-                    && pending_move.is_none()
-                {
-                    follow_go_away(&mut relay, go_away.new_session_uri())?;
-                    info!(relay = %relay.url, "GOAWAY received; subscribing on the relay it names");
-                    let (relay, track) = (relay.clone(), args.track.clone());
-                    pending_move = Some(tokio::spawn(async move {
-                        tokio::time::timeout(MOVE_TIMEOUT, watch_until_available(&relay, &track))
-                            .await
-                            .context("timed out subscribing on the relay named by GOAWAY")?
-                    }));
-                }
-            },
-            moved = async { pending_move.as_mut().expect("polled only while a move is pending").await },
-                if pending_move.is_some() =>
-            {
-                pending_move = None;
-                match moved? {
-                    Ok(next) => {
-                        if let Some(older) = previous.take() {
-                            older.close().await;
-                        }
-                        previous = Some(std::mem::replace(&mut watching, next));
-                        cutover = None;
-                        grace = Some(Box::pin(tokio::time::sleep(PREVIOUS_SESSION_GRACE)));
-                        info!(relay = %relay.url, "moved to the relay named by GOAWAY");
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "failed to move to the relay named by GOAWAY; staying on the current session");
-                    }
-                }
-            },
             close = session.closed() => anyhow::bail!("session closed by the relay: {close}"),
         }
     }
-    if let Some(pending_move) = pending_move {
-        pending_move.abort();
-    }
-    if let Some(previous) = previous {
-        previous.close().await;
-    }
+    drop(session);
     watching.close().await;
     Ok(())
 }
@@ -131,19 +32,9 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
 struct Watching {
     connection: RelayConnection,
     media_reader: TrackReader,
-    /// Objects of the current group fetched after a move, delivered before
-    /// the subscription's own.
-    fetched: VecDeque<TrackObject>,
 }
 
 impl Watching {
-    async fn next_object(&mut self) -> Result<Option<TrackObject>> {
-        match self.fetched.pop_front() {
-            Some(object) => Ok(Some(object)),
-            None => self.media_reader.next_object().await,
-        }
-    }
-
     /// Every other handle to the session must be dropped first.
     async fn close(self) {
         drop(self.media_reader);
@@ -151,29 +42,9 @@ impl Watching {
     }
 }
 
-/// The publisher moves at the same time as this subscriber, so the track may
-/// not exist on the new relay yet; the SUBSCRIBE is repeated until it does.
-/// The publisher may also have started a group there before the SUBSCRIBE
-/// arrives, so the subscription continues from the Largest Location and the
-/// group up to it is fetched.
-async fn watch_until_available(relay: &RelayArgs, track: &FullTrackName) -> Result<Watching> {
-    loop {
-        match watch(relay, track, FilterType::LargestObject).await {
-            Ok(watching) => return Ok(watching),
-            Err(error) => {
-                tracing::info!(%error, "not subscribed on the new relay yet; retrying");
-                tokio::time::sleep(MOVE_RETRY_INTERVAL).await;
-            }
-        }
-    }
-}
-
-async fn watch(
-    relay: &RelayArgs,
-    track: &FullTrackName,
-    media_filter: FilterType,
-) -> Result<Watching> {
-    let connection = connect_relay(relay, track.app_id()).await?;
+async fn watch(args: &SubscribeArgs) -> Result<Watching> {
+    let track = &args.track;
+    let connection = connect_relay(&args.relay, track.app_id()).await?;
     let session = &connection.session;
 
     // Subscribe to both tracks before reading either so NextGroupStart
@@ -190,40 +61,21 @@ async fn watch(
         track = track.name,
         "subscribing"
     );
-    let media_subscription =
-        subscribe(session, &track.namespace, &track.name, media_filter).await?;
+    let media_subscription = subscribe(
+        session,
+        &track.namespace,
+        &track.name,
+        FilterType::NextGroupStart,
+    )
+    .await?;
     info!("subscribed");
 
     let catalog = read_catalog(session, &catalog_subscription).await?;
     describe_catalog(&catalog::parse(&catalog)?);
-    let fetched = if media_filter == FilterType::LargestObject
-        && matches!(
-            media_subscription.content_exists(),
-            ContentExists::True { .. }
-        ) {
-        fetch_current_group(session, &media_subscription)
-            .await
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "the current group was not fetched from the new relay");
-                Vec::new()
-            })
-            .into_iter()
-            .map(|object| TrackObject {
-                group_id: object.location.group_id,
-                subgroup_id: 0,
-                object_id: object.location.object_id,
-                extension_headers: object.extension_headers,
-                payload: object.payload,
-            })
-            .collect()
-    } else {
-        VecDeque::new()
-    };
     let media_reader = track_reader(session, &media_subscription).await?;
     Ok(Watching {
         connection,
         media_reader,
-        fetched,
     })
 }
 
