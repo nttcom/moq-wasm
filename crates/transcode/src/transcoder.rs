@@ -9,7 +9,7 @@ use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
 use mediapack::{MediaEvent, Timestamp, VideoConfig, VideoSample, h264::ParameterSetTracker};
 use tokio::sync::mpsc;
 
-use crate::ladder::Rendition;
+use crate::{buffer::video_buffer, ladder::Rendition};
 
 /// Renditions key only where the source does: the encoder's own keyframe
 /// interval is pushed out of reach and a key unit is requested for the frame
@@ -63,17 +63,7 @@ impl TranscodeInput {
                     .insert(sample.pts.micros());
             }
         }
-        let mut buffer = gst::Buffer::from_slice(sample.data.clone());
-        {
-            let buffer = buffer
-                .get_mut()
-                .ok_or_else(|| anyhow!("fresh buffer is shared"))?;
-            buffer.set_pts(gst::ClockTime::from_useconds(sample.pts.micros()));
-            buffer.set_dts(gst::ClockTime::from_useconds(sample.dts.micros()));
-            if !sample.is_keyframe {
-                buffer.set_flags(gst::BufferFlags::DELTA_UNIT);
-            }
-        }
+        let buffer = video_buffer(sample, None)?;
         self.source
             .push_buffer(buffer)
             .map(|_| ())
@@ -305,35 +295,17 @@ fn running_timestamp(
 mod tests {
     use std::time::Duration;
 
-    use mediapack::mpegts;
-
     use super::*;
-
-    const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
+    use crate::test_support::{decode_in_software, fixture_events};
 
     fn fixture_video_samples() -> Vec<VideoSample> {
-        let mut demuxer = mpegts::Demuxer::new();
-        let mut events = demuxer.push(FIXTURE_TS).unwrap();
-        events.extend(demuxer.finish().unwrap());
-        events
+        fixture_events()
             .into_iter()
             .filter_map(|event| match event {
                 MediaEvent::Video(sample) => Some(sample),
                 _ => None,
             })
             .collect()
-    }
-
-    /// VideoToolbox, which decodebin prefers on macOS, now and then drops the
-    /// last frame when it is drained at end of stream.
-    fn decode_in_software() {
-        gst::init().unwrap();
-        let registry = gst::Registry::get();
-        for name in ["vtdec_hw", "vtdec"] {
-            if let Some(decoder) = registry.lookup_feature(name) {
-                decoder.set_rank(gst::Rank::NONE);
-            }
-        }
     }
 
     async fn drain(transcoder: &mut Transcoder) -> Vec<TranscodedEvent> {
