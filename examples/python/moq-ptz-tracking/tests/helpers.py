@@ -11,7 +11,7 @@ from moq_ptz_tracking.djev_status import DjevStatus
 from moq_ptz_tracking.event_timeline import EventTimeline
 from moq_ptz_tracking.ptz import PtzCommands
 from moq_ptz_tracking.target import LatestTarget, Target
-from moq_ptz_tracking.vision import Answer, Position
+from moq_ptz_tracking.vision import COLUMNS, ROWS, Answer, Position, cell_key
 
 READ_TIMEOUT_SECONDS = 2
 TRACK_NAME = "eventtimeline"
@@ -83,15 +83,20 @@ class StubVision:
         return self.answer
 
 
+def grid_probabilities(given: dict[str, float]) -> dict[str, float]:
+    keys = [cell_key(row, column) for row in range(len(ROWS)) for column in range(len(COLUMNS))]
+    return {key: given.get(key, 0.0) for key in keys}
+
+
 @dataclass
 class FakeVisionServer:
-    content: str
+    answers: dict[str, Any]
     url: str = ""
     requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
 
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"choices": [{"message": {"content": self.content}}]})
+        return web.json_response({"model": "d3-flash", "answers": self.answers})
 
 
 @dataclass

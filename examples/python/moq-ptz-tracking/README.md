@@ -1,7 +1,7 @@
 # moq-ptz-tracking
 
 `onvif-ingest` が配信する ONVIF カメラの映像を pipecat の bot が受け取り、ブラウザの MoQ PTZ Tracking ページ
-（`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを Cloud Run 上の djev-vision に尋ねます。
+（`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを、Cloud Run 上の決定モデル d3-flash（`d3-flash-trial`）に尋ねます。
 対象が中央から外れていれば、`onvif-ingest` に ContinuousMove と Stop を送ってカメラを対象の方へ向けます。
 
 ```mermaid
@@ -9,14 +9,16 @@ sequenceDiagram
     participant B as Browser
     participant R as Relay
     participant P as pipecat bot
-    participant D as djev-vision (Cloud Run)
+    participant D as d3-flash (Cloud Run)
     participant O as onvif-ingest
     B->>R: prompt (anon/moq-ptz-tracking/viewer)、{"target": "人", "video": "video/profile_1"}
     O->>R: video/profile_1 (anon/onvif/client)、1 キーフレーム 1 group
     R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
     P->>P: PyAV で H.264 をデコードし、幅 640 の JPEG に
-    P->>D: /v1/chat/completions 画像 + 対象の中心の座標（0〜1000）を尋ねる質問
-    D-->>P: 750 250
+    P->>D: /v1/systemone 画像 + 対象が写っているか（yes/no）
+    D-->>P: 写っている確率
+    P->>D: 写っていれば、画像 + 5×5 のマス目のどこか
+    D-->>P: マスごとの確率
     P->>R: eventtimeline (anon/moq-ptz-tracking/tracker)
     R->>B: {"l": [groupId, objectId], "data": {"prompt": [promptGroupId, 0], "position": [0.75, 0.25], "pan_seconds": 0.93, "tilt_seconds": 0.66}}
     P->>R: command (anon/onvif/viewer)、{"type": "continuous", "pan": 0.5, "tilt": 0.0, ...}
@@ -28,8 +30,19 @@ sequenceDiagram
 
 ## 追従のしかた
 
-- djev-vision には、対象の中心の座標を横・縦それぞれ 0〜1000 で答えさせます。0〜100 を指定すると 0〜1000 で答えることが
-  多く目盛りが曖昧になるため、モデルが使い慣れた 0〜1000 にしています。返答の最終行を読み、`none` なら「映っていない」です。
+- d3-flash には、まず「写っているか」を yes/no で 1 問だけ尋ね、0.5 未満なら「映っていない」にします。写っていれば、
+  画面を 5×5 に分けたマス目から 1 つを選ぶ質問をもう 1 問送り、各マスの中心を確率で重み付けした平均を対象の位置にします。
+  マス目の質問に「写っていない」の選択肢を混ぜると、無い対象の確率が 25 マスに散らばって合計で「写っていない」を上回り、
+  無いものを「ある」と判定したため、2 問に分けています。映っていないときは約 0.35 秒、映っているときは約 1 秒かかります。
+- 対象を見失ったら、直前の 2 回の検出（bot が回した分を差し引く）から対象の動いた向きを求め、パンとチルトを
+  合わせてその向きへ 3 秒回しながら判定します。動きが小さければ、最後に見えた側へ回します。
+- それでも見つからなければ、AbsoluteMove で (0, 0)（パン中央、チルト 0）に戻してから、止まらずに横へパンし
+  続けながら 1 枚ずつ判定し、映った時点で止めます。Tapo は GetStatus で正しい位置を返さないため、(0, 0) から
+  回した時間で位置を見積もり、半周分（約 6.5 秒）離れたら向きを反対にします。判定が 2 秒途切れると、
+  パンは自動で止まります。
+- カメラは 360 度より先へは回りません。対象へ向けてパンしても、映像の中の対象が予想の 3 割も動かないことが 2 回続いたら、
+  パンの端に当たったとみなし、反対向きに回り込みます。対象がいったん映らなくなってから再び映れば止めて追従に戻り、
+  約 1 周分（14 秒）回っても見つからなければ、(0, 0) に戻して探索に移ります。
 - 中心からのずれに比例した時間だけ、速度 0.5 の ContinuousMove でパン、続いてチルトを動かし、Stop で止めます。
   ずれ ÷ `--pan-per-second`（`--tilt-per-second`）秒動かします。ずれが `--dead-zone` 未満の軸は動かしません。
   ONVIF では正のパンが右、正のチルトが上です。
@@ -97,12 +110,12 @@ Cloud relay-1 にはクラウドの bot がつながっているため、手元�
    ```shell
    cd examples/python/moq-ptz-tracking
    uv run python -m moq_ptz_tracking.bot --insecure \
-     --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/chat/completions" \
+     --djev-url "$(gcloud run services describe d3-flash-trial --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 
-   `--insecure` は手元の relay の自己署名証明書を検証しない指定です。djev-vision の認証とコールドスタート（約 3 分）は
-   [moq-camera-detection](../moq-camera-detection/README.md#djev-vision) と同じです。
+   `--insecure` は手元の relay の自己署名証明書を検証しない指定です。認証は
+   [moq-camera-detection](../moq-camera-detection/README.md#djev-vision) と同じです。d3-flash-trial のコールドスタートは約 2 分 40 秒です。
 
 4. ページを開く
 

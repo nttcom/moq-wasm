@@ -2,16 +2,18 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from tests.helpers import FakeMetadataServer, FakeVisionServer
+from tests.helpers import FakeMetadataServer, FakeVisionServer, grid_probabilities
 
 
 @pytest.fixture
 async def fake_vision_server():
-    server = FakeVisionServer(content="thought\n750 250")
+    server = FakeVisionServer(
+        answers={"visible": {"noul": 0.9}, "where": {"probabilities": grid_probabilities({"r1c3": 1.0})}}
+    )
     app = web.Application()
-    app.router.add_post("/v1/chat/completions", server.handle)
+    app.router.add_post("/v1/systemone", server.handle)
     async with TestServer(app) as test_server:
-        server.url = str(test_server.make_url("/v1/chat/completions"))
+        server.url = str(test_server.make_url("/v1/systemone"))
         yield server
 
 

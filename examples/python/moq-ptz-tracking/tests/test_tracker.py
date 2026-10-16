@@ -61,26 +61,40 @@ async def test_off_center_target_moves_the_camera_and_records_where_it_was():
     assert await next_records(group) == [
         {
             "l": [42, 3],
-            "data": {"prompt": [7, 0], "position": [0.75, 0.5], "pan_seconds": 0.03, "tilt_seconds": 0.0},
+            "data": {
+                "prompt": [7, 0],
+                "position": [0.75, 0.5],
+                "pan_seconds": 0.03,
+                "tilt_seconds": 0.0,
+                "sweep": None,
+            },
         }
     ]
 
 
-@pytest.mark.parametrize(
-    ("answer", "recorded"),
-    [(Position(0.52, 0.47), [0.52, 0.47]), (Answer.NOT_VISIBLE, "not visible"), (Answer.UNREADABLE, None)],
-)
-async def test_target_near_the_center_or_not_located_leaves_the_camera_still(answer, recorded):
+async def test_target_near_the_center_leaves_the_camera_still():
     # Arrange
-    tracker, group, command_track = await tracker_with(StubVision(answer))
+    tracker, group, command_track = await tracker_with(StubVision(Position(0.52, 0.47)))
 
     # Act
     await run_test(tracker, frames_to_send=[picture((42, 3)), SleepFrame()], expected_down_frames=[])
 
     # Assert
-    assert (await next_records(group))[0]["data"]["position"] == recorded
+    assert (await next_records(group))[0]["data"]["position"] == [0.52, 0.47]
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(command_track.next_group(), NOTHING_MORE_WAIT_SECONDS)
+
+
+async def test_target_never_seen_returns_the_camera_to_home_before_searching():
+    # Arrange
+    tracker, group, command_track = await tracker_with(StubVision(Answer.NOT_VISIBLE))
+
+    # Act
+    await run_test(tracker, frames_to_send=[picture((42, 3)), SleepFrame()], expected_down_frames=[])
+
+    # Assert
+    assert await next_move(command_track) == [{"type": "center", "speed": 1.0}]
+    assert (await next_records(group))[0]["data"]["position"] == "not visible"
 
 
 async def test_after_a_move_pictures_are_located_only_once_the_camera_has_settled():
