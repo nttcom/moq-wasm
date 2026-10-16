@@ -59,6 +59,7 @@ async fn receive_snapshots(
         port: 0,
         verify_certificate: options.verify_certificate,
         authorization_token: options.auth_token.clone(),
+        follow_go_away: true,
     })?;
     let session = endpoint
         .connect(&relay.url)

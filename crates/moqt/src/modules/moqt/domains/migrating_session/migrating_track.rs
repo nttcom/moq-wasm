@@ -6,7 +6,7 @@ use crate::{
     Session, Subscription, TrackObject, TrackReader,
     modules::{
         executor::{self, JoinHandle},
-        moqt::domains::migrating_session::group_cutover::GroupCutover,
+        moqt::domains::group_cutover::GroupCutover,
     },
     object::DataReceiver,
 };

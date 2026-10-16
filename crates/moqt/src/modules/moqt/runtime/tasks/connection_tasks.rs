@@ -48,7 +48,7 @@ impl ConnectionTasks {
             ),
             disconnect_watch_task: DisconnectWatchTask::run(
                 connection.clone(),
-                session.event_sender.clone(),
+                connection.event_sender.clone(),
                 tracing::info_span!(parent: session_span, "moqt.transport.close_watcher"),
             ),
             publish_done_expiry_task: PublishDoneExpiryTask::run(

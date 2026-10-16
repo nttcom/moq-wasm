@@ -325,6 +325,7 @@ impl MOQTClient {
             port: 0,
             verify_certificate: true,
             authorization_token: auth_token,
+            follow_go_away: false,
         })
         .map_err(anyhow_error)?;
         let session = endpoint

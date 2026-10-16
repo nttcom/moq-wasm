@@ -35,6 +35,7 @@ async fn new_session() -> anyhow::Result<Session> {
         port: 0,
         verify_certificate: false,
         authorization_token: None,
+        follow_go_away: true,
     })?;
     let connecting = endpoint.connect(&relay_url).await?;
     connecting.await

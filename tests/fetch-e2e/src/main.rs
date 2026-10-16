@@ -71,6 +71,7 @@ async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session> {
         port: 0,
         verify_certificate: false,
         authorization_token: None,
+        follow_go_away: true,
     })?;
     let connecting = endpoint.connect(relay_url).await?;
     connecting.await

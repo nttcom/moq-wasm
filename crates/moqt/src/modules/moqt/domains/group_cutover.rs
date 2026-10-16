@@ -8,7 +8,7 @@
 /// first: the publisher sends to both servers at once, so the previous one
 /// may win every race.
 #[derive(Default)]
-pub(super) struct GroupCutover {
+pub(crate) struct GroupCutover {
     newest: Option<u64>,
     /// `None` while the track has one subscription.
     state: Option<Cutover>,
@@ -21,30 +21,39 @@ enum Cutover {
 }
 
 impl GroupCutover {
+    /// Waiting for the current subscription, after the previous one handed
+    /// out groups up to `newest`.
+    pub(crate) fn waiting_after(newest: Option<u64>) -> Self {
+        Self {
+            newest,
+            state: Some(Cutover::Waiting),
+        }
+    }
+
     /// A subscription on the new session became the current one.
-    pub(super) fn begin(&mut self) {
+    pub(crate) fn begin(&mut self) {
         self.state = Some(Cutover::Waiting);
     }
 
     /// The previous subscription ended. If the current one has delivered
     /// nothing yet, it starts at its first group start, even when its group
     /// IDs are lower.
-    pub(super) fn previous_ended(&mut self) {
+    pub(crate) fn previous_ended(&mut self) {
         if self.state == Some(Cutover::Waiting) {
             self.newest = None;
         }
     }
 
     /// The previous subscription took over again after the current one ended.
-    pub(super) fn settle(&mut self) {
+    pub(crate) fn settle(&mut self) {
         self.state = None;
     }
 
-    pub(super) fn is_cut_over(&self) -> bool {
+    pub(crate) fn is_cut_over(&self) -> bool {
         matches!(self.state, Some(Cutover::At(_)))
     }
 
-    pub(super) fn take_previous(&mut self, group_id: u64) -> bool {
+    pub(crate) fn take_previous(&mut self, group_id: u64) -> bool {
         let take = match self.state {
             Some(Cutover::At(cutover)) => group_id < cutover,
             _ => true,
@@ -55,7 +64,7 @@ impl GroupCutover {
         take
     }
 
-    pub(super) fn take_current(&mut self, group_id: u64, object_id: u64) -> bool {
+    pub(crate) fn take_current(&mut self, group_id: u64, object_id: u64) -> bool {
         let take = match self.state {
             None => true,
             Some(Cutover::At(cutover)) => group_id >= cutover,

@@ -5,21 +5,47 @@ use crate::{
     modules::moqt::{
         control_plane::{constants::TerminationErrorCode, enums::RequestId},
         data_plane::stream::fetch_data_receiver::FetchDataReceiver,
-        domains::connection::{Connection, ObjectSink},
+        domains::connection::{Connection, ObjectSink, SinkReceiver, logical_id},
         runtime::dispatch::incoming_object::IncomingObject,
     },
+    subscribe::SubscribeOption,
 };
 
-/// The state of a session that outlives its transport connection: the
-/// events, and the receivers the application takes per track alias and per
-/// FETCH.
+/// The state of a session that outlives its transport connections: the
+/// events, the receivers the application takes per track alias and per
+/// FETCH (keyed by logical alias and logical request id), and, for a client
+/// that follows GOAWAY, the requests a migration sends again.
 pub(crate) struct SessionContext {
-    connection: Arc<Connection>,
+    connections: std::sync::Mutex<Connections>,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
     pub(crate) fetch_receiver_map:
         std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
+    /// `None` for a session that does not follow GOAWAY. Held while a
+    /// carried request is sent and while a migration sends them all again,
+    /// so a request sent during a migration is not skipped.
+    pub(crate) carried: Option<tokio::sync::Mutex<CarriedRequests>>,
+}
+
+struct Connections {
+    current: Arc<Connection>,
+    /// The connection a migration moved away from, until it is closed.
+    previous: Option<Arc<Connection>>,
+}
+
+#[derive(Default)]
+pub(crate) struct CarriedRequests {
+    pub(crate) namespaces: Vec<String>,
+    /// Keyed by logical request id.
+    pub(crate) subscriptions: HashMap<u64, CarriedSubscription>,
+}
+
+pub(crate) struct CarriedSubscription {
+    pub(crate) track_namespace: String,
+    pub(crate) track_name: String,
+    /// With the Forward state of the last SUBSCRIBE_UPDATE.
+    pub(crate) option: SubscribeOption,
 }
 
 #[must_use = "dropping this removes the pending fetch; bind it for the lifetime of the request"]
@@ -50,20 +76,60 @@ impl SessionContext {
     pub(crate) fn new(
         connection: Connection,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        follows_go_away: bool,
     ) -> Self {
         Self {
-            connection: Arc::new(connection),
+            connections: std::sync::Mutex::new(Connections {
+                current: Arc::new(connection),
+                previous: None,
+            }),
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
+            carried: follows_go_away.then(|| tokio::sync::Mutex::new(CarriedRequests::default())),
         }
     }
 
     /// The connection requests are sent on.
-    pub(crate) fn connection(&self) -> &Arc<Connection> {
-        &self.connection
+    pub(crate) fn connection(&self) -> Arc<Connection> {
+        self.connections().current.clone()
     }
 
+    /// The current connection first, then the one being migrated away from.
+    pub(crate) fn live_connections(&self) -> Vec<Arc<Connection>> {
+        let connections = self.connections();
+        std::iter::once(connections.current.clone())
+            .chain(connections.previous.clone())
+            .collect()
+    }
+
+    /// Makes `next` the current connection and the current one the previous.
+    pub(crate) fn move_to(&self, next: Arc<Connection>) -> Arc<Connection> {
+        let mut connections = self.connections();
+        let moved_from = std::mem::replace(&mut connections.current, next);
+        connections.previous = Some(moved_from.clone());
+        moved_from
+    }
+
+    pub(crate) fn forget_previous(&self, connection: &Arc<Connection>) {
+        let mut connections = self.connections();
+        if connections
+            .previous
+            .as_ref()
+            .is_some_and(|previous| Arc::ptr_eq(previous, connection))
+        {
+            connections.previous = None;
+        }
+    }
+
+    fn connections(&self) -> std::sync::MutexGuard<'_, Connections> {
+        self.connections
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Registers the receiver of a subscription accepted on `connection`
+    /// and returns its logical track alias, the key of `receiver_map`.
     /// `receiver_map` is updated while the object-sinks lock is held, so the
     /// drain, the sink switch and the receiver registration are atomic.
     pub(crate) async fn register_data_receiver(
@@ -71,37 +137,39 @@ impl SessionContext {
         connection: &Connection,
         request_id: RequestId,
         track_alias: u64,
-    ) -> Result<(), TerminationErrorCode> {
+    ) -> Result<u64, TerminationErrorCode> {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
-        let mut sinks = connection.object_sinks.lock().await;
-
-        if sinks
-            .get(&track_alias)
-            .is_some_and(ObjectSink::is_receiver_registered)
-        {
-            return Err(TerminationErrorCode::DuplicateTrackAlias);
-        }
-
-        if let Some(ObjectSink::Buffer(mut pending_objects)) = sinks.remove(&track_alias) {
-            while let Some(incoming_object) = pending_objects.pop_front() {
-                let _ = sender.send(incoming_object);
-            }
-        }
-        sinks.insert(track_alias, ObjectSink::Receiver { request_id, sender });
-
-        self.receiver_map.lock().await.insert(track_alias, receiver);
-
-        Ok(())
+        let logical_alias = logical_id(connection.generation, track_alias);
+        let _sinks = connection
+            .install_receiver(
+                track_alias,
+                SinkReceiver {
+                    request_id,
+                    sender,
+                    logical_alias,
+                    newest_group: None,
+                    cutover: None,
+                },
+            )
+            .await?;
+        self.receiver_map
+            .lock()
+            .await
+            .insert(logical_alias, receiver);
+        Ok(logical_alias)
     }
 
     pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
         let mut sinks = connection.object_sinks.lock().await;
-        let track_alias = sinks.iter().find_map(|(track_alias, sink)| {
-            matches!(sink, ObjectSink::Receiver { request_id: id, .. } if *id == request_id)
-                .then_some(*track_alias)
+        let found = sinks.iter().find_map(|(track_alias, sink)| match sink {
+            ObjectSink::Receiver(receiver) if receiver.request_id == request_id => {
+                Some((*track_alias, receiver.logical_alias))
+            }
+            _ => None,
         });
-        if let Some(track_alias) = track_alias {
-            self.cancel_track_alias(&mut sinks, track_alias).await;
+        if let Some((track_alias, logical_alias)) = found {
+            sinks.insert(track_alias, ObjectSink::Cancelled);
+            self.receiver_map.lock().await.remove(&logical_alias);
         }
     }
 
@@ -115,13 +183,8 @@ impl SessionContext {
             .get(&track_alias)
             .is_some_and(ObjectSink::is_receiver_registered)
         {
-            self.cancel_track_alias(&mut sinks, track_alias).await;
+            sinks.insert(track_alias, ObjectSink::Cancelled);
         }
-    }
-
-    async fn cancel_track_alias(&self, sinks: &mut HashMap<u64, ObjectSink>, track_alias: u64) {
-        sinks.insert(track_alias, ObjectSink::Cancelled);
-        self.receiver_map.lock().await.remove(&track_alias);
     }
 
     /// Call before sending the FETCH on `connection`: its data stream can
@@ -140,7 +203,7 @@ impl SessionContext {
         self.fetch_receiver_map
             .lock()
             .expect("fetch_receiver_map poisoned")
-            .insert(request_id, receiver);
+            .insert(logical_id(connection.generation, request_id), receiver);
         PendingFetch {
             session: self.clone(),
             connection: connection.clone(),
@@ -158,7 +221,7 @@ impl SessionContext {
         self.fetch_receiver_map
             .lock()
             .expect("fetch_receiver_map poisoned")
-            .remove(&request_id);
+            .remove(&logical_id(connection.generation, request_id));
     }
 
     /// A close for a protocol violation is reported at once as
@@ -166,7 +229,7 @@ impl SessionContext {
     /// `SessionEvent::Disconnected` once the transport has closed, like a
     /// close by the peer.
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
-        self.close_connection(&self.connection, code, reason);
+        self.close_connection(&self.connection(), code, reason);
     }
 
     /// Like `close_with_error`, for the connection a message arrived on.
@@ -177,7 +240,9 @@ impl SessionContext {
         reason: &str,
     ) {
         if code == TerminationErrorCode::ProtocolViolation
-            && let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation())
+            && let Err(error) = connection
+                .event_sender
+                .send(SessionEvent::ProtocolViolation())
         {
             tracing::error!(?error, "failed to send protocol violation event");
         }
@@ -185,16 +250,15 @@ impl SessionContext {
     }
 }
 
-impl fmt::Debug for SessionContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SessionContext").finish_non_exhaustive()
-    }
-}
-
 impl Drop for SessionContext {
     fn drop(&mut self) {
         tracing::debug!("SessionContext dropped.");
-        // send goaway
+    }
+}
+
+impl fmt::Debug for SessionContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionContext").finish_non_exhaustive()
     }
 }
 
@@ -267,7 +331,7 @@ mod tests {
         let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-unaccepted").await;
         let context = server.subscriber().session;
         context
-            .register_data_receiver(context.connection(), REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(&context.connection(), REQUEST_ID, TRACK_ALIAS)
             .await
             .unwrap();
 
@@ -311,16 +375,16 @@ mod tests {
         let (_client, server) = spawn_connected_dual_sessions("sinks-reuse-alias").await;
         let context = server.subscriber().session;
         context
-            .register_data_receiver(context.connection(), REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(&context.connection(), REQUEST_ID, TRACK_ALIAS)
             .await
             .unwrap();
         context
-            .cancel_subscription(context.connection(), REQUEST_ID)
+            .cancel_subscription(&context.connection(), REQUEST_ID)
             .await;
 
         // Act
         let registration = context
-            .register_data_receiver(context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(&context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
             .await;
 
         // Assert

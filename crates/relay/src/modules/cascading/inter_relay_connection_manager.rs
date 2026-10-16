@@ -60,6 +60,7 @@ impl InterRelayConnectionManager {
             port: 0,
             verify_certificate: false,
             authorization_token: Some(self.relay_token.clone()),
+            follow_go_away: false,
         })?;
         let session = tokio::time::timeout(CONNECT_TIMEOUT, async {
             endpoint
