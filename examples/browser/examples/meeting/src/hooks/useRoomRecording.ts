@@ -19,18 +19,18 @@ export interface RoomRecordingControls {
   stop: () => Promise<void>
 }
 
-/// `null` while no recorder is configured for this relay.
-export function useRoomRecording(recorderUrl: string | null, namespacePrefix: string): RoomRecordingControls | null {
+/// `null` until the recorder has answered once, so a recorder that is not
+/// running hides recording.
+export function useRoomRecording(recorderUrl: string, namespacePrefix: string): RoomRecordingControls | null {
+  const [reachable, setReachable] = useState(false)
   const [active, setActive] = useState<RoomRecording | undefined>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    if (!recorderUrl) {
-      return
-    }
     try {
       setActive(activeRecording(await listRecordings(recorderUrl, namespacePrefix)))
+      setReachable(true)
       setError(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -45,9 +45,6 @@ export function useRoomRecording(recorderUrl: string | null, namespacePrefix: st
 
   const run = useCallback(
     async (action: (url: string) => Promise<RoomRecording>) => {
-      if (!recorderUrl) {
-        return
-      }
       setBusy(true)
       try {
         const recording = await action(recorderUrl)
@@ -73,7 +70,7 @@ export function useRoomRecording(recorderUrl: string | null, namespacePrefix: st
     }
   }, [active?.id, run])
 
-  if (!recorderUrl) {
+  if (!reachable) {
     return null
   }
   return { active, busy, error, start, stop }

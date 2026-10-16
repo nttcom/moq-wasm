@@ -12,11 +12,12 @@ test('a configured recorder wins over the local default', () => {
   )
 })
 
-test('a local relay implies the local recorder and a remote one implies none', () => {
+test('a local relay implies the local recorder and any other one the deployed recorder', () => {
   // Act / Assert
   expect(resolveRecorderUrl('', 'https://127.0.0.1:4433')).toBe('http://localhost:8096')
-  expect(resolveRecorderUrl('', 'https://relay-1.moqt.research.skyway.io:443')).toBeNull()
-  expect(resolveRecorderUrl('', 'not a url')).toBeNull()
+  expect(resolveRecorderUrl('', 'https://relay-1.moqt.research.skyway.io:443')).toBe(
+    'https://recorder.moqt.research.skyway.io'
+  )
 })
 
 test('only a recording that still writes files is active', () => {
