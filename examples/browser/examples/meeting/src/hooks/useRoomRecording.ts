@@ -15,7 +15,8 @@ export interface RoomRecordingControls {
   active: RoomRecording | undefined
   busy: boolean
   error: string | null
-  start: (layout: RecordingLayout) => Promise<void>
+  /// `composite` also makes one video of the whole room after the recording.
+  start: (layout: RecordingLayout, composite: boolean) => Promise<void>
   stop: () => Promise<void>
 }
 
@@ -60,7 +61,8 @@ export function useRoomRecording(recorderUrl: string, namespacePrefix: string): 
   )
 
   const start = useCallback(
-    (layout: RecordingLayout) => run((url) => startRecording(url, namespacePrefix, layout)),
+    (layout: RecordingLayout, composite: boolean) =>
+      run((url) => startRecording(url, namespacePrefix, layout, composite)),
     [namespacePrefix, run]
   )
   const stop = useCallback(async () => {

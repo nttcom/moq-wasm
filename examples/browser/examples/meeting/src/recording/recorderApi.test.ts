@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { type RoomRecording, activeRecording, resolveRecorderUrl } from './recorderApi'
 
 function recording(id: string, state: RoomRecording['state']): RoomRecording {
-  return { id, namespace_prefix: 'anon/room', layout: 'combined', state, error: null, members: [] }
+  return { id, namespace_prefix: 'anon/room', layout: 'combined', state, error: null, members: [], composite: null }
 }
 
 test('a configured recorder wins over the local default', () => {

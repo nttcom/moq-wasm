@@ -2,6 +2,8 @@ export type RecordingLayout = 'combined' | 'per-track'
 
 export type RecordingState = 'recording' | 'stopping' | 'finished' | 'failed'
 
+export type CompositeState = 'waiting' | 'composing' | 'done' | 'skipped' | 'failed'
+
 export interface RoomRecording {
   id: string
   namespace_prefix: string
@@ -9,6 +11,8 @@ export interface RoomRecording {
   state: RecordingState
   error: string | null
   members: { namespace: string; started_at_ms: number; finished: boolean; error: string | null }[]
+  /// `null` unless the recording was started with `composite`.
+  composite: { state: CompositeState; error: string | null } | null
 }
 
 /// `recorder serve` listens here by default.
@@ -38,12 +42,13 @@ export function activeRecording(recordings: RoomRecording[]): RoomRecording | un
 export async function startRecording(
   recorderUrl: string,
   namespacePrefix: string,
-  layout: RecordingLayout
+  layout: RecordingLayout,
+  composite: boolean
 ): Promise<RoomRecording> {
   return request(`${recorderUrl}/recordings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ namespace_prefix: namespacePrefix, layout })
+    body: JSON.stringify({ namespace_prefix: namespacePrefix, layout, composite })
   })
 }
 

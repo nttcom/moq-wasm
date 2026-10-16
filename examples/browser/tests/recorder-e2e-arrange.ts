@@ -102,7 +102,8 @@ export async function startRecorderServe() {
     await sleep(POLL_INTERVAL_MS)
   }
   return {
-    start: (namespacePrefix: string, layout: RecordingLayout) => startRecording(url, namespacePrefix, layout),
+    start: (namespacePrefix: string, layout: RecordingLayout, composite = false) =>
+      startRecording(url, namespacePrefix, layout, composite),
     /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
     async stop(recording: RoomRecording): Promise<string[]> {
       await stopRecording(url, recording.id)
