@@ -121,3 +121,14 @@ pub(crate) fn opus_config() -> AudioConfig {
         channels: 2,
     }
 }
+
+/// A new empty directory under the system temp directory.
+pub(crate) fn scratch_dir() -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("recorder-test-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}

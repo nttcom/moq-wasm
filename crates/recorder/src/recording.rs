@@ -10,9 +10,10 @@ use mediapack::Timestamp;
 use moqt::TrackObject;
 
 use crate::{
-    file_writer::RecordingFile,
+    file_writer::{ClosedFile, RecordingFile},
     pipeline::{FileTracks, Output, Pipeline, capture_timestamp},
     track_selection::Selection,
+    upload_task::{Upload, UploadTask},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -28,6 +29,15 @@ pub(crate) enum Layout {
 /// likely to precede the video.
 const MAX_PENDING_AUDIO: usize = 500;
 
+/// Where the closed files of a recording go: object
+/// `<prefix>/<track>/<started_at_ms>-<index>.mp4`, without `<track>` for the
+/// combined file.
+pub(crate) struct Uploader {
+    pub(crate) task: UploadTask,
+    pub(crate) prefix: object_store::path::Path,
+    pub(crate) started_at_ms: u64,
+}
+
 /// The files of one recording. They share one capture origin, the capture
 /// timestamp of the first video object, so their timelines line up. Each
 /// track subscribes from its own next group, so the audio can start a group
@@ -39,11 +49,14 @@ pub(crate) struct Recording {
     audio: Option<usize>,
     capture_origin: Option<Timestamp>,
     pending_audio: VecDeque<TrackObject>,
+    uploader: Option<Uploader>,
 }
 
 struct TrackFile {
     pipeline: Pipeline,
     file: RecordingFile,
+    /// The track the file holds alone; `None` for the combined file.
+    track: Option<String>,
 }
 
 impl Recording {
@@ -52,6 +65,7 @@ impl Recording {
         layout: Layout,
         path: PathBuf,
         segment_length: Option<Duration>,
+        uploader: Option<Uploader>,
     ) -> Result<Self> {
         let video = Some(selection.video.codec);
         let audio = selection.audio.as_ref().map(|audio| audio.config.clone());
@@ -59,26 +73,20 @@ impl Recording {
         let audio_index = match layout {
             Layout::Combined => {
                 let has_audio = audio.is_some();
-                files.push(
-                    TrackFile::create(FileTracks { video, audio }, path, segment_length).await?,
-                );
+                let tracks = FileTracks { video, audio };
+                files.push(TrackFile::create(tracks, None, &path, segment_length).await?);
                 has_audio.then_some(0)
             }
             Layout::PerTrack => {
-                let video_path = track_path(&path, &selection.video.name);
-                let video_tracks = FileTracks { video, audio: None };
-                files.push(TrackFile::create(video_tracks, video_path, segment_length).await?);
-                match &selection.audio {
-                    Some(track) => {
-                        let audio_tracks = FileTracks { video: None, audio };
-                        let audio_path = track_path(&path, &track.name);
-                        files.push(
-                            TrackFile::create(audio_tracks, audio_path, segment_length).await?,
-                        );
-                        Some(1)
-                    }
-                    None => None,
+                let tracks = FileTracks { video, audio: None };
+                let name = Some(selection.video.name.as_str());
+                files.push(TrackFile::create(tracks, name, &path, segment_length).await?);
+                if let Some(track) = &selection.audio {
+                    let tracks = FileTracks { video: None, audio };
+                    let name = Some(track.name.as_str());
+                    files.push(TrackFile::create(tracks, name, &path, segment_length).await?);
                 }
+                selection.audio.as_ref().map(|_| 1)
             }
         };
         Ok(Self {
@@ -86,6 +94,7 @@ impl Recording {
             audio: audio_index,
             capture_origin: None,
             pending_audio: VecDeque::new(),
+            uploader,
         })
     }
 
@@ -97,9 +106,10 @@ impl Recording {
         if self.capture_origin.is_none() {
             self.capture_origin = capture_timestamp(object);
         }
-        let file = &mut self.files[0];
-        let output = file.pipeline.push_video(object, self.capture_origin)?;
-        file.write(output).await?;
+        let output = self.files[0]
+            .pipeline
+            .push_video(object, self.capture_origin)?;
+        self.write(0, output).await?;
         let Some(origin) = self.capture_origin else {
             return Ok(());
         };
@@ -127,42 +137,87 @@ impl Recording {
             return Ok(());
         }
         let index = self.audio.context("audio object without an audio track")?;
-        let file = &mut self.files[index];
-        let output = file.pipeline.push_audio(object, Some(origin))?;
-        file.write(output).await
+        let output = self.files[index]
+            .pipeline
+            .push_audio(object, Some(origin))?;
+        self.write(index, output).await
     }
 
-    pub(crate) async fn finish(self) -> Result<()> {
-        for mut file in self.files {
-            let tail = file.pipeline.finish()?;
-            file.file.finish(&tail).await?;
+    async fn write(&mut self, index: usize, output: Output) -> Result<()> {
+        let file = &mut self.files[index];
+        if let (Some(closed), Some(uploader)) = (file.write(output).await?, &self.uploader) {
+            uploader.upload(file.track.as_deref(), closed, self.capture_origin);
         }
         Ok(())
+    }
+
+    /// With an uploader, returns once every file is uploaded or its upload
+    /// failed.
+    pub(crate) async fn finish(self) -> Result<()> {
+        let Self {
+            files,
+            capture_origin,
+            uploader,
+            ..
+        } = self;
+        for mut file in files {
+            let tail = file.pipeline.finish()?;
+            let closed = file.file.finish(&tail).await?;
+            if let Some(uploader) = &uploader {
+                uploader.upload(file.track.as_deref(), closed, capture_origin);
+            }
+        }
+        if let Some(uploader) = uploader {
+            tracing::info!("waiting for the uploads to finish");
+            uploader.task.finish().await;
+        }
+        Ok(())
+    }
+}
+
+impl Uploader {
+    fn upload(&self, track: Option<&str>, closed: ClosedFile, capture_origin: Option<Timestamp>) {
+        let mut key = self.prefix.clone();
+        key.extend(track.iter().flat_map(|track| track.split('/')));
+        key.extend([format!("{}-{}.mp4", self.started_at_ms, closed.index)]);
+        self.task.upload(Upload {
+            path: closed.path,
+            key,
+            capture_origin,
+        });
     }
 }
 
 impl TrackFile {
     async fn create(
         tracks: FileTracks,
-        path: PathBuf,
+        track: Option<&str>,
+        path: &Path,
         segment_length: Option<Duration>,
     ) -> Result<Self> {
+        let path = match track {
+            Some(track) => track_path(path, track),
+            None => path.to_path_buf(),
+        };
         Ok(Self {
             pipeline: Pipeline::new(tracks, segment_length)?,
             file: RecordingFile::create(path).await?,
+            track: track.map(str::to_string),
         })
     }
 
-    async fn write(&mut self, output: Output) -> Result<()> {
+    /// The file `output` closed, if any.
+    async fn write(&mut self, output: Output) -> Result<Option<ClosedFile>> {
+        let mut closed = None;
         if let Some(tail) = output.previous_file_tail {
-            self.file.rotate(&tail).await?;
+            closed = Some(self.file.rotate(&tail).await?);
             tracing::info!(path = %self.file.path().display(), "recording into a new file");
         }
         self.file.write(&output.data).await?;
         if output.group_complete {
             self.file.flush().await?;
         }
-        Ok(())
+        Ok(closed)
     }
 }
 
@@ -181,15 +236,16 @@ fn track_path(path: &Path, track: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::Arc;
 
     use mediapack::{MediaEvent, loc::VideoCodec};
+    use object_store::{ObjectStoreExt, memory::InMemory};
 
     use super::*;
     use crate::{
         test_support::{
             audio_samples, demux, first_video_capture, fixture, opus_config, opus_object,
-            video_samples,
+            scratch_dir, video_samples,
         },
         track_selection::{AudioTrack, VideoTrack},
     };
@@ -207,25 +263,15 @@ mod tests {
         }
     }
 
-    fn scratch_dir() -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("recorder-test-{}-{nanos}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     /// Records the fixture's first two video objects and one audio frame 30 ms
     /// after the first video object.
-    async fn record(layout: Layout, dir: &Path) -> Vec<PathBuf> {
+    async fn record(layout: Layout, dir: &Path, uploader: Option<Uploader>) -> Vec<PathBuf> {
         let fixture = fixture();
         let video_capture = first_video_capture(&fixture.video[0]);
-        let mut recording = Recording::create(&selection(), layout, dir.join("rec.mp4"), None)
-            .await
-            .unwrap();
+        let mut recording =
+            Recording::create(&selection(), layout, dir.join("rec.mp4"), None, uploader)
+                .await
+                .unwrap();
         let paths = recording.paths().map(Path::to_path_buf).collect();
         recording.push_video(&fixture.video[0]).await.unwrap();
         recording
@@ -243,7 +289,7 @@ mod tests {
         let dir = scratch_dir();
 
         // Act
-        let paths = record(Layout::PerTrack, &dir).await;
+        let paths = record(Layout::PerTrack, &dir, None).await;
 
         // Assert: the audio keeps its 30 ms offset to the video in the other file
         assert_eq!(
@@ -269,10 +315,15 @@ mod tests {
     ) -> Vec<MediaEvent> {
         let fixture = fixture();
         let dir = scratch_dir();
-        let mut recording =
-            Recording::create(&selection(), Layout::Combined, dir.join("rec.mp4"), None)
-                .await
-                .unwrap();
+        let mut recording = Recording::create(
+            &selection(),
+            Layout::Combined,
+            dir.join("rec.mp4"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         for audio in audio_before {
             recording.push_audio(audio).await.unwrap();
         }
@@ -345,7 +396,7 @@ mod tests {
         let dir = scratch_dir();
 
         // Act
-        let paths = record(Layout::Combined, &dir).await;
+        let paths = record(Layout::Combined, &dir, None).await;
 
         // Assert
         assert_eq!(paths, [dir.join("rec.mp4")]);
@@ -353,5 +404,36 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(video_samples(&recorded).len(), 2);
         assert_eq!(audio_samples(&recorded).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn uploads_each_track_under_its_own_key_and_deletes_the_local_files() {
+        // Arrange
+        let dir = scratch_dir();
+        let store = Arc::new(InMemory::new());
+        let uploader = Uploader {
+            task: UploadTask::run(store.clone()),
+            prefix: object_store::path::Path::from("recordings/anon/live"),
+            started_at_ms: 1_700_000_000_000,
+        };
+
+        // Act
+        let paths = record(Layout::PerTrack, &dir, Some(uploader)).await;
+
+        // Assert: a `/` in the track name nests the key
+        let video = store
+            .get(&"recordings/anon/live/video/profile_1/1700000000000-1.mp4".into())
+            .await
+            .unwrap();
+        let audio = store
+            .get(&"recordings/anon/live/audio/1700000000000-1.mp4".into())
+            .await
+            .unwrap();
+        let video = demux(&video.bytes().await.unwrap());
+        let audio = demux(&audio.bytes().await.unwrap());
+        assert!(paths.iter().all(|path| !path.exists()));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(video_samples(&video).len(), 2);
+        assert_eq!(audio_samples(&audio).len(), 1);
     }
 }

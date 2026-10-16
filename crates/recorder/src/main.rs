@@ -7,6 +7,7 @@ mod relay;
 mod test_support;
 mod token_refresh_task;
 mod track_selection;
+mod upload_task;
 
 use std::path::PathBuf;
 
@@ -52,9 +53,16 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) from_cache: bool,
 
-    /// Start a new numbered file at the first keyframe after this many seconds
+    /// Start a new numbered file at the first keyframe (audio frame in an
+    /// audio-only file) after this many seconds; 60 by default with `--upload`
     #[arg(long, value_name = "SECONDS")]
     pub(crate) segment_seconds: Option<u64>,
+
+    /// Upload every closed file to this object store location, e.g.
+    /// gs://bucket/prefix, and delete the local file once it is uploaded.
+    /// Credentials come from the environment
+    #[arg(long, env = "RECORDER_UPLOAD_URL", value_name = "URL")]
+    pub(crate) upload: Option<url::Url>,
 
     /// Authorization token (JWT) presented to the relay in CLIENT_SETUP
     #[arg(long, env = "MOQT_AUTH_TOKEN", conflicts_with = "auth_token_file")]
