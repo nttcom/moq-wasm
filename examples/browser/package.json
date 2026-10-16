@@ -21,7 +21,8 @@
     "e2e:live-viewer-delivery": "playwright test tests/live-viewer-delivery-e2e.spec.ts",
     "e2e:chat-moderation": "playwright test tests/chat-moderation-e2e.spec.ts",
     "e2e:camera-detection": "playwright test tests/camera-detection-e2e.spec.ts",
-    "e2e:goaway": "playwright test tests/goaway-e2e.spec.ts"
+    "e2e:goaway": "playwright test tests/goaway-e2e.spec.ts",
+    "e2e:recorder-goaway": "playwright test tests/recorder-goaway-e2e.spec.ts"
   },
   "keywords": [],
   "author": "",

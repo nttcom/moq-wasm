@@ -5,7 +5,9 @@ import { readFileSync } from "node:fs";
 
 // Two relays sharing a Redis route registry, live-ingest publishing an RTMP
 // stream to relay A and the live viewer watching it there. The spec stops
-// relay A with SIGINT, which makes it send GOAWAY naming relay B.
+// relay A with SIGINT, which makes it send GOAWAY naming relay B. Relay A is
+// then restarted and drained again with recorder serve and a meeting
+// participant on it.
 
 import {
   registerSignalHandlers,
@@ -103,7 +105,7 @@ async function main() {
   try {
     // One build per package, as CI builds them: a combined build unifies
     // features differently and recompiles the dependencies.
-    for (const pkg of ["relay", "live-ingest"]) {
+    for (const pkg of ["relay", "live-ingest", "recorder"]) {
       await runCommand("cargo", ["build", "-p", pkg], {
         cwd: repoRoot,
         env: process.env,
@@ -175,16 +177,36 @@ async function main() {
       60_000,
     );
 
+    const specEnv = {
+      ...process.env,
+      MEDIA_E2E_BASE_URL: baseUrl,
+      MEDIA_E2E_MOQT_URL: `https://127.0.0.1:${relays[0].port}`,
+      LIVE_VIEWER_E2E_NAMESPACE: namespace,
+    };
     await runCommand(resolveCommandName("npm"), ["run", "e2e:goaway"], {
       cwd: jsDir,
-      env: {
-        ...process.env,
-        MEDIA_E2E_BASE_URL: baseUrl,
-        MEDIA_E2E_MOQT_URL: `https://127.0.0.1:${relays[0].port}`,
-        LIVE_VIEWER_E2E_NAMESPACE: namespace,
-        GOAWAY_E2E_RELAY_A_PID: String(relayA.pid),
-      },
+      env: { ...specEnv, GOAWAY_E2E_RELAY_A_PID: String(relayA.pid) },
     });
+
+    const restartedRelayA = spawnRelay(relays[0]);
+    childProcesses.push(restartedRelayA);
+    await waitForOutput(
+      restartedRelayA,
+      /Relay server started/,
+      "relay-a",
+      60_000,
+    );
+    await runCommand(
+      resolveCommandName("npm"),
+      ["run", "e2e:recorder-goaway"],
+      {
+        cwd: jsDir,
+        env: {
+          ...specEnv,
+          GOAWAY_E2E_RELAY_A_PID: String(restartedRelayA.pid),
+        },
+      },
+    );
   } finally {
     await cleanup();
   }
