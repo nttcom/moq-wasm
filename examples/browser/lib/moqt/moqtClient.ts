@@ -1208,9 +1208,9 @@ export class MoqtClientWrapper {
       const handler = this.onPublishNamespaceHandler ?? defaultIncomingPublishNamespaceHandler
       void handler({
         publishNamespace,
-        respondOk: () => this.requireConnectedClient().sendPublishNamespaceOk(publishNamespace.requestId),
+        respondOk: () => client.sendPublishNamespaceOk(publishNamespace.requestId),
         respondError: (errorCode, reasonPhrase) =>
-          this.requireConnectedClient().sendPublishNamespaceError(publishNamespace.requestId, errorCode, reasonPhrase)
+          client.sendPublishNamespaceError(publishNamespace.requestId, errorCode, reasonPhrase)
       })
     })
 
@@ -1349,9 +1349,9 @@ export class MoqtClientWrapper {
       const handler = this.incomingTrackStatusHandler ?? defaultIncomingTrackStatusHandler
       await handler({
         trackStatus,
-        respondOk: () => this.requireConnectedClient().sendTrackStatusOk(trackStatus.requestId),
+        respondOk: () => client.sendTrackStatusOk(trackStatus.requestId),
         respondError: (errorCode, reasonPhrase) =>
-          this.requireConnectedClient().sendTrackStatusError(trackStatus.requestId, errorCode, reasonPhrase)
+          client.sendTrackStatusError(trackStatus.requestId, errorCode, reasonPhrase)
       })
     })
     client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
@@ -1367,11 +1367,10 @@ export class MoqtClientWrapper {
         await handler({
           fetch,
           cancelSignal: cancellation.signal,
-          respondOk: () => this.requireConnectedClient().sendFetchOk(requestId),
-          respondError: (errorCode, reasonPhrase) =>
-            this.requireConnectedClient().sendFetchError(requestId, errorCode, reasonPhrase),
+          respondOk: () => client.sendFetchOk(requestId),
+          respondError: (errorCode, reasonPhrase) => client.sendFetchError(requestId, errorCode, reasonPhrase),
           sendObject: (object) =>
-            this.requireConnectedClient().sendFetchObject(
+            client.sendFetchObject(
               requestId,
               object.groupId,
               object.subgroupId,
@@ -1381,7 +1380,7 @@ export class MoqtClientWrapper {
               object.payload,
               object.locHeader
             ),
-          finish: () => this.requireConnectedClient().finishFetch(requestId)
+          finish: () => client.finishFetch(requestId)
         })
       } finally {
         this.incomingFetchCancellations.delete(requestId)
