@@ -11,8 +11,9 @@ use crate::{
         executor::{self, BoxFuture, JoinHandle},
         moqt::{
             control_plane::control_messages::messages::unsubscribe::Unsubscribe,
+            data_plane::stream::open_subgroups::OpenSubgroups,
             domains::{
-                connection::{Connection, SharedCutover, SinkCutover, SinkReceiver},
+                connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
                 publisher::{send_publish, send_publish_namespace},
                 session_context::{CarriedSubscription, PublicationTarget, SessionContext},
                 session_creator::Reconnect,
@@ -37,7 +38,7 @@ const RETRY_INTERVAL: Duration = Duration::from_millis(500);
 /// cut over, such as one that delivers nothing on the new connection.
 const CUTOVER_LIMIT: Duration = Duration::from_secs(10);
 /// How long after the last cutover the previous connection keeps delivering
-/// the groups that started on it.
+/// the groups that started on it, when one of them does not end.
 #[cfg(not(test))]
 const PREVIOUS_CONNECTION_GRACE: Duration = Duration::from_secs(5);
 #[cfg(test)]
@@ -100,8 +101,9 @@ struct Live {
 
 struct Previous {
     live: Live,
-    /// Resolves `PREVIOUS_CONNECTION_GRACE` after every carried subscription
-    /// cut over (waiting at most `CUTOVER_LIMIT`), or at once when none moved.
+    /// Resolves once no carried subscription has a subgroup stream open on
+    /// this connection, or `PREVIOUS_CONNECTION_GRACE` after every one cut
+    /// over (waiting at most `CUTOVER_LIMIT`).
     released: BoxFuture<()>,
     cutovers: Vec<Arc<std::sync::Mutex<SharedCutover>>>,
 }
@@ -372,10 +374,16 @@ async fn migrate(
     .await;
     let mut cut_overs = Vec::new();
     let mut cutovers = Vec::new();
+    let mut previous_open_subgroups = Vec::new();
     for (request_id, outcome) in carried_over {
         match outcome {
-            Carried::Moved { cut_over, cutover } => {
+            Carried::Moved {
+                cut_over,
+                cutover,
+                previous_open,
+            } => {
                 cut_overs.push(cut_over);
+                previous_open_subgroups.push((cutover.clone(), previous_open));
                 cutovers.push(cutover);
             }
             Carried::Stays => {}
@@ -394,9 +402,20 @@ async fn migrate(
         },
         url,
         released: Box::pin(async move {
-            if !cut_overs.is_empty() {
-                let _ = executor::timeout(CUTOVER_LIMIT, join_all(cut_overs)).await;
-                executor::sleep(PREVIOUS_CONNECTION_GRACE).await;
+            let grace = async {
+                if !cut_overs.is_empty() {
+                    let _ = executor::timeout(CUTOVER_LIMIT, join_all(cut_overs)).await;
+                    executor::sleep(PREVIOUS_CONNECTION_GRACE).await;
+                }
+            };
+            let idle = join_all(
+                previous_open_subgroups
+                    .iter()
+                    .map(|(cutover, open)| release_when_idle(&moved_from, cutover, open)),
+            );
+            tokio::select! {
+                () = grace => {}
+                _ = idle => {}
             }
             session.unserved(&moved_from).await;
         }),
@@ -404,11 +423,36 @@ async fn migrate(
     })
 }
 
+/// Resolves once `moved_from` has no subgroup stream open for the
+/// subscription `open` counts, and releases the previous side of `cutover`:
+/// the publisher sends every later group to the new connection too.
+async fn release_when_idle(
+    moved_from: &Connection,
+    cutover: &std::sync::Mutex<SharedCutover>,
+    open: &OpenSubgroups,
+) {
+    loop {
+        open.all_ended().await;
+        // Sinks count a new stream under this lock, so none opens between the
+        // check and the release.
+        let _sinks = moved_from.object_sinks.lock().await;
+        if open.is_empty() {
+            let mut shared = cutover
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            shared.cutover.release_previous();
+            shared.cut_over = None;
+            return;
+        }
+    }
+}
+
 enum Carried {
     /// Subscribed on the new connection; both sinks share `cutover`.
     Moved {
         cut_over: oneshot::Receiver<()>,
         cutover: Arc<std::sync::Mutex<SharedCutover>>,
+        previous_open: OpenSubgroups,
     },
     /// The new server did not accept it; it stays on the previous connection.
     Stays,
@@ -452,7 +496,12 @@ async fn carry_subscription(
         }
     };
     let (cut_over, cut_over_receiver) = oneshot::channel();
-    let Some((logical_alias, sender, cutover)) = moved_from
+    let Some(CutoverStart {
+        logical_alias,
+        sender,
+        shared: cutover,
+        previous_open_subgroups,
+    }) = moved_from
         .start_cutover(previous_request_id, cut_over)
         .await
     else {
@@ -477,6 +526,7 @@ async fn carry_subscription(
                     shared: cutover.clone(),
                     previous: false,
                 }),
+                open_subgroups: OpenSubgroups::new(),
             },
         )
         .await
@@ -492,6 +542,7 @@ async fn carry_subscription(
         Carried::Moved {
             cut_over: cut_over_receiver,
             cutover,
+            previous_open: previous_open_subgroups,
         },
     )
 }
@@ -644,13 +695,85 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_done_keeps_the_ids_the_application_knows_and_drops_the_drained_one() {
+    async fn a_subscription_with_no_group_arriving_lets_the_old_server_go_at_once() {
         // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-quiet-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-quiet-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        group_1_a.close().await.unwrap();
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let (sender_b, _, _) = serve_subscribe(&server_b).await;
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+        let mut group_1_b = open_subgroup(&sender_b, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_b, b"b1-0").await;
+        let mut group_2_b = open_subgroup(&sender_b, 2, SubgroupId::None).await;
+        send_payload(&mut group_2_b, b"b2-0").await;
+        let after_cutover = next_payload(&mut reader).await;
+
+        // Assert: A closes well before CUTOVER_LIMIT, and B's group 1, which A delivered, is dropped
+        assert_eq!(close.expect("A closed at once").code, Some(0));
+        assert_eq!(after_cutover, payload(2, b"b2-0"));
+    }
+
+    #[tokio::test]
+    async fn the_old_server_is_kept_until_the_group_arriving_there_ends() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-open-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-open-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let _ = serve_subscribe(&server_b).await;
+        let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, server_a.closed()).await;
+        send_payload(&mut group_1_a, b"a1-1").await;
+        group_1_a.close().await.unwrap();
+        let previous_tail = next_payload(&mut reader).await;
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+
+        // Assert: A stays open while its group is open, then closes once it ends, well before CUTOVER_LIMIT
+        assert!(
+            still_open.is_err(),
+            "A must stay open while group 1 arrives"
+        );
+        assert_eq!(previous_tail, payload(1, b"a1-1"));
+        assert_eq!(close.expect("A closed once group 1 ended").code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn publish_done_keeps_the_ids_the_application_knows_and_drops_the_drained_one() {
+        // Arrange: a group still arriving on A keeps A open after the migration
         let (port_a, accept_a) = spawn_dual_server("session-migration-done-a");
         let (port_b, accept_b) = spawn_dual_server("session-migration-done-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
-        let (subscription, _, served_a) = subscribe(&client, &server_a).await;
+        let (subscription, sender_a, served_a) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
         server_a
             .go_away(format!("moqt://127.0.0.1:{port_b}"))
             .await
