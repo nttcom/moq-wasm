@@ -30,10 +30,6 @@ use crate::{
     upload_task::{UploadQueue, UploadTask},
 };
 
-/// Uploads begin when a file closes, so a recording without segments would
-/// upload only after it ended.
-pub(crate) const UPLOAD_SEGMENT_SECONDS: u64 = 60;
-
 pub(crate) async fn run(args: Args) -> Result<()> {
     let auth_token = match &args.auth_token_file {
         Some(path) => Some(read_token_file(path).await?),
@@ -104,10 +100,7 @@ async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> 
         audio_track: args.audio_track.clone(),
         layout: args.layout,
         from_cache: args.from_cache,
-        segment_length: args
-            .segment_seconds
-            .or(args.upload.is_some().then_some(UPLOAD_SEGMENT_SECONDS))
-            .map(Duration::from_secs),
+        segment_length: args.segment_seconds.map(Duration::from_secs),
         upload: upload_task.as_ref().map(|(task, prefix)| UploadTarget {
             queue: task.queue(),
             prefix: prefix.clone(),

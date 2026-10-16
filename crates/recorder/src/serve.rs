@@ -9,7 +9,6 @@ use tokio::{
 use crate::{
     ServeArgs,
     api_server::ApiServer,
-    recorder::UPLOAD_SEGMENT_SECONDS,
     recordings::{Recordings, ServeConfig},
     room_recording::RecordingLimits,
 };
@@ -37,10 +36,7 @@ pub(crate) async fn serve(args: ServeArgs) -> Result<()> {
         output_dir: args.output_dir,
         upload,
         max_video_height: args.max_video_height,
-        segment_length: args
-            .segment_seconds
-            .or(args.upload.is_some().then_some(UPLOAD_SEGMENT_SECONDS))
-            .map(Duration::from_secs),
+        segment_length: args.segment_seconds.map(Duration::from_secs),
         limits: RecordingLimits {
             max_duration: Duration::from_secs(args.max_recording_seconds),
             empty_room_timeout: Duration::from_secs(args.empty_room_seconds),

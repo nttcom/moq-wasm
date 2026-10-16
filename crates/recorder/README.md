@@ -31,7 +31,7 @@ cargo run -p recorder -- \
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
 | `--layout` | `combined` | `combined` writes the video and the audio into one file; `per-track` writes each track to `<stem>-<track>.mp4` (a `/` in the name becomes `_`) |
 | `--from-cache` | off | Start with what the relay or the publisher still caches (60 s by default), then continue live |
-| `--segment-seconds` | — (60 with `--upload`) | Start the next numbered file at the first keyframe after this many seconds |
+| `--segment-seconds` | — | Start the next numbered file at the first keyframe after this many seconds |
 | `--upload` (`RECORDER_UPLOAD_URL`) | — | Upload every closed file to `gs://<bucket>/<prefix>` and delete the local file once it is uploaded |
 | `--auth-token` (`MOQT_AUTH_TOKEN`) | — | JWT for namespaces outside `anon/**` |
 | `--auth-token-file` (`MOQT_AUTH_TOKEN_FILE`) | — | File holding the JWT; re-read every 10 s and a changed token is sent to the relay |
@@ -126,7 +126,9 @@ from the moment it is published, with the tracks picked from its catalog
   metadata. The credentials come from the environment, as for `gcloud`:
   `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_SERVICE_ACCOUNT`, the ADC file
   that `gcloud auth application-default login` writes, or the metadata server
-  of a GCE VM or Cloud Run. A file whose upload fails stays on disk.
+  of a GCE VM or Cloud Run. A file whose upload fails stays on disk. A file
+  is uploaded when it closes, so without `--segment-seconds` a recording
+  reaches the store only when it ends.
 - A token given with `--auth-token` is never refreshed, so the relay ends a
   recording that outlives it. With `--auth-token-file`, rewrite the file
   before the token expires and the recorder sends the new token in-session.
