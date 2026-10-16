@@ -12,7 +12,7 @@ use moqt::TrackObject;
 use crate::{
     file_writer::{ClosedFile, RecordingFile},
     pipeline::{FileTracks, Output, Pipeline, capture_timestamp},
-    track_selection::{AudioTrack, Selection},
+    track_selection::{AudioTrack, Selection, VideoTrack},
     upload_task::{Upload, UploadQueue},
 };
 
@@ -49,14 +49,19 @@ pub(crate) struct Uploader {
 }
 
 /// The files of one recording. They share one capture origin, the capture
-/// timestamp of the first video object, so their timelines line up. Each
+/// timestamp of the first object of the leading track, so their timelines
+/// line up. Each
 /// track subscribes from its own next group, so the audio can start a group
 /// before the video, and an audio object can overtake the video's first: the
-/// audio waits for the origin, and audio captured before it is dropped.
+/// audio waits for the origin while a video track is read, and audio
+/// captured before it is dropped. While no video track is read, the first
+/// audio object sets the origin.
 pub(crate) struct Recording {
-    /// The video's file is at index 0.
     files: Vec<TrackFile>,
+    /// The index of the file each track goes to, kept after the track ends.
+    video: Option<usize>,
     audio: Option<usize>,
+    reads_video: bool,
     layout: Layout,
     path: PathBuf,
     segment_length: Option<Duration>,
@@ -80,15 +85,11 @@ impl Recording {
         segment_length: Option<Duration>,
         uploader: Option<Uploader>,
     ) -> Result<Self> {
-        let tracks = FileTracks {
-            video: Some(selection.video.codec),
-            audio: None,
-        };
-        let name = (layout == Layout::PerTrack).then_some(selection.video.name.as_str());
-        let video = TrackFile::create(tracks, name, &path, segment_length).await?;
         let mut recording = Self {
-            files: vec![video],
+            files: Vec::new(),
+            video: None,
             audio: None,
+            reads_video: false,
             layout,
             path,
             segment_length,
@@ -96,10 +97,61 @@ impl Recording {
             pending_audio: VecDeque::new(),
             uploader,
         };
+        if layout == Layout::Combined {
+            let tracks = FileTracks {
+                video: selection.video.as_ref().map(|video| video.codec),
+                audio: None,
+            };
+            let file = TrackFile::create(tracks, None, &recording.path, segment_length).await?;
+            recording.files.push(file);
+        }
+        if let Some(video) = &selection.video {
+            recording.add_video(video).await?;
+        }
         if let Some(audio) = &selection.audio {
             recording.add_audio(audio).await?;
         }
         Ok(recording)
+    }
+
+    /// Adds a video track to a recording that reads none: the first, or one
+    /// after a video track ended. A later track goes to the file the ended one
+    /// went to; the per-track layout opens a file only for the first. When the
+    /// track starts in that file follows `Pipeline::add_video`.
+    pub(crate) async fn add_video(&mut self, track: &VideoTrack) -> Result<()> {
+        let index = match (self.video, self.layout) {
+            (Some(index), _) => index,
+            (None, Layout::Combined) => 0,
+            (None, Layout::PerTrack) => {
+                let tracks = FileTracks {
+                    video: Some(track.codec),
+                    audio: None,
+                };
+                let file =
+                    TrackFile::create(tracks, Some(&track.name), &self.path, self.segment_length)
+                        .await?;
+                self.files.push(file);
+                self.files.len() - 1
+            }
+        };
+        self.files[index].pipeline.add_video(track.codec);
+        self.video = Some(index);
+        self.reads_video = true;
+        Ok(())
+    }
+
+    /// The video track ended: writes the audio held for it, which sets the
+    /// origin when none is set yet; later audio no longer waits.
+    pub(crate) async fn end_video(&mut self) -> Result<()> {
+        self.reads_video = false;
+        if let Some(index) = self.video {
+            self.files[index].pipeline.end_video()?;
+        }
+        let pending = std::mem::take(&mut self.pending_audio);
+        if self.capture_origin.is_none() {
+            self.capture_origin = pending.front().and_then(capture_timestamp);
+        }
+        self.write_pending_audio(pending).await
     }
 
     /// Adds an audio track to a recording that reads none: the first, or one
@@ -139,20 +191,19 @@ impl Recording {
         if self.capture_origin.is_none() {
             self.capture_origin = capture_timestamp(object);
         }
-        let output = self.files[0]
+        let index = self.video.context("video object without a video track")?;
+        let output = self.files[index]
             .pipeline
             .push_video(object, self.capture_origin)?;
-        self.write(0, output).await?;
-        let Some(origin) = self.capture_origin else {
-            return Ok(());
-        };
-        for audio in std::mem::take(&mut self.pending_audio) {
-            self.write_audio(&audio, origin).await?;
-        }
-        Ok(())
+        self.write(index, output).await?;
+        let pending = std::mem::take(&mut self.pending_audio);
+        self.write_pending_audio(pending).await
     }
 
     pub(crate) async fn push_audio(&mut self, object: &TrackObject) -> Result<()> {
+        if self.capture_origin.is_none() && !self.reads_video {
+            self.capture_origin = capture_timestamp(object);
+        }
         match self.capture_origin {
             Some(origin) => self.write_audio(object, origin).await,
             None => {
@@ -163,6 +214,18 @@ impl Recording {
                 Ok(())
             }
         }
+    }
+
+    /// Keeps holding `pending` while there is no origin yet.
+    async fn write_pending_audio(&mut self, pending: VecDeque<TrackObject>) -> Result<()> {
+        let Some(origin) = self.capture_origin else {
+            self.pending_audio = pending;
+            return Ok(());
+        };
+        for audio in pending {
+            self.write_audio(&audio, origin).await?;
+        }
+        Ok(())
     }
 
     async fn write_audio(&mut self, object: &TrackObject, origin: Timestamp) -> Result<()> {
@@ -276,15 +339,19 @@ mod tests {
             audio_samples, demux, first_video_capture, fixture, opus_config, opus_object,
             scratch_dir, video_samples,
         },
-        track_selection::{AudioTrack, VideoTrack},
+        track_selection::AudioTrack,
     };
+
+    fn video_track() -> VideoTrack {
+        VideoTrack {
+            name: "video/profile_1".to_string(),
+            codec: VideoCodec::H264,
+        }
+    }
 
     fn selection() -> Selection {
         Selection {
-            video: VideoTrack {
-                name: "video/profile_1".to_string(),
-                codec: VideoCodec::H264,
-            },
+            video: Some(video_track()),
             audio: Some(AudioTrack {
                 name: "audio".to_string(),
                 config: opus_config(),
@@ -547,6 +614,187 @@ mod tests {
             audio,
             [Timestamp::from_millis(20), Timestamp::from_millis(1_000)]
         );
+    }
+
+    /// Records the fixture's first group, turns the camera off, records two
+    /// audio frames, turns the camera on again with the same track and
+    /// records the second group.
+    async fn record_camera_off_and_on(layout: Layout, dir: &Path) -> Vec<PathBuf> {
+        let fixture = fixture();
+        let start = first_video_capture(&fixture.video[0]);
+        let (first_group, second_group): (Vec<_>, Vec<_>) = fixture
+            .video
+            .iter()
+            .partition(|object| object.group_id == 1);
+        let mut recording =
+            Recording::create(&selection(), layout, dir.join("rec.mp4"), None, None)
+                .await
+                .unwrap();
+        for object in first_group {
+            recording.push_video(object).await.unwrap();
+        }
+        recording.end_video().await.unwrap();
+        for index in 0..2 {
+            recording
+                .push_audio(&opus_object(5, index, start + 20_000 * (index + 1)))
+                .await
+                .unwrap();
+        }
+        recording.add_video(&video_track()).await.unwrap();
+        for object in second_group {
+            recording.push_video(object).await.unwrap();
+        }
+        let paths = recording.paths().map(Path::to_path_buf).collect();
+        recording.finish().await.unwrap();
+        paths
+    }
+
+    #[tokio::test]
+    async fn video_listed_again_after_it_ended_resumes_in_the_combined_file() {
+        // Arrange
+        let dir = scratch_dir();
+
+        // Act
+        let paths = record_camera_off_and_on(Layout::Combined, &dir).await;
+
+        // Assert: one file with every video sample and the audio recorded while the camera was off
+        let recorded = demux(&std::fs::read(dir.join("rec.mp4")).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(paths, [dir.join("rec.mp4")]);
+        assert_eq!(
+            video_samples(&recorded).len(),
+            video_samples(&fixture().events).len()
+        );
+        let audio: Vec<_> = audio_samples(&recorded)
+            .iter()
+            .map(|sample| sample.pts)
+            .collect();
+        assert_eq!(
+            audio,
+            [Timestamp::from_millis(20), Timestamp::from_millis(40)]
+        );
+    }
+
+    #[tokio::test]
+    async fn video_listed_again_after_it_ended_goes_on_in_its_own_file() {
+        // Arrange
+        let dir = scratch_dir();
+
+        // Act
+        let paths = record_camera_off_and_on(Layout::PerTrack, &dir).await;
+
+        // Assert: no second video file
+        let video = demux(&std::fs::read(dir.join("rec-video_profile_1.mp4")).unwrap());
+        let audio = demux(&std::fs::read(dir.join("rec-audio.mp4")).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            paths,
+            [
+                dir.join("rec-video_profile_1.mp4"),
+                dir.join("rec-audio.mp4")
+            ]
+        );
+        assert_eq!(
+            video_samples(&video).len(),
+            video_samples(&fixture().events).len()
+        );
+        assert_eq!(audio_samples(&audio).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_recording_without_video_starts_with_the_audio_and_adds_the_video_at_its_keyframe() {
+        // Arrange: a participant who joined with the camera off
+        let fixture = fixture();
+        let start = first_video_capture(&fixture.video[0]);
+        let dir = scratch_dir();
+        let audio_only = Selection {
+            video: None,
+            ..selection()
+        };
+        let mut recording = Recording::create(
+            &audio_only,
+            Layout::Combined,
+            dir.join("rec.mp4"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Act: audio 1 s before the camera's first keyframe; the camera turns on between two audio frames
+        recording
+            .push_audio(&opus_object(1, 0, start - 1_000_000))
+            .await
+            .unwrap();
+        recording.add_video(&video_track()).await.unwrap();
+        recording
+            .push_audio(&opus_object(1, 1, start - 980_000))
+            .await
+            .unwrap();
+        for object in &fixture.video {
+            recording.push_video(object).await.unwrap();
+        }
+        recording
+            .push_audio(&opus_object(2, 0, start + 20_000))
+            .await
+            .unwrap();
+        let paths: Vec<_> = recording.paths().map(Path::to_path_buf).collect();
+        recording.finish().await.unwrap();
+
+        // Assert: the audio-only file ends at the first keyframe, the next one holds both tracks on the audio's timeline
+        let first = demux(&std::fs::read(dir.join("rec.mp4")).unwrap());
+        let next = demux(&std::fs::read(dir.join("rec-2.mp4")).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(paths, [dir.join("rec-2.mp4")]);
+        assert!(video_samples(&first).is_empty());
+        let first_audio: Vec<_> = audio_samples(&first)
+            .iter()
+            .map(|sample| sample.pts)
+            .collect();
+        assert_eq!(first_audio, [Timestamp::ZERO, Timestamp::from_millis(20)]);
+        let video = video_samples(&next);
+        assert_eq!(video.len(), video_samples(&fixture.events).len());
+        assert!(video[0].is_keyframe);
+        assert_eq!(video[0].pts, Timestamp::from_millis(1_000));
+        assert_eq!(audio_samples(&next)[0].pts, Timestamp::from_millis(1_020));
+    }
+
+    #[tokio::test]
+    async fn audio_held_for_a_video_that_ended_before_its_first_object_is_written() {
+        // Arrange: one audio frame held while no video object has arrived
+        let start = first_video_capture(&fixture().video[0]);
+        let dir = scratch_dir();
+        let mut recording = Recording::create(
+            &selection(),
+            Layout::Combined,
+            dir.join("rec.mp4"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        recording
+            .push_audio(&opus_object(1, 0, start))
+            .await
+            .unwrap();
+
+        // Act: the camera turns off before its first keyframe, then another audio frame arrives
+        recording.end_video().await.unwrap();
+        recording
+            .push_audio(&opus_object(1, 1, start + 20_000))
+            .await
+            .unwrap();
+        recording.finish().await.unwrap();
+
+        // Assert: the held frame sets the origin
+        let recorded = demux(&std::fs::read(dir.join("rec.mp4")).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let audio: Vec<_> = audio_samples(&recorded)
+            .iter()
+            .map(|sample| sample.pts)
+            .collect();
+        assert_eq!(audio, [Timestamp::ZERO, Timestamp::from_millis(20)]);
+        assert!(video_samples(&recorded).is_empty());
     }
 
     #[tokio::test]

@@ -108,7 +108,13 @@ async function main() {
 
     await runCommand(
       resolveCommandName("npm"),
-      ["run", "e2e:live-viewer", "--", "tests/live-viewer-mp4-e2e.spec.ts"],
+      [
+        "run",
+        "e2e:live-viewer",
+        "--",
+        "tests/live-viewer-mp4-e2e.spec.ts",
+        "tests/recorder-serve-e2e.spec.ts",
+      ],
       {
         cwd: jsDir,
         env: {

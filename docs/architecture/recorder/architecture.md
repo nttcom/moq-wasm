@@ -55,10 +55,11 @@ both tracks into one init segment and one fragment stream.
    comes from the catalog's `codec`, a WebCodecs codec string naming H.264, VP8, VP9 or AV1,
    the audio codec from its `codec`, `sampleRate` and `channelConfig`, and an AAC track's
    AudioSpecificConfig from the `initDataList` entry its `initRef` names, the
-   way `broadcast::build_catalog` writes it. While the catalog lists no video
-   track yet, the recorder waits for the next catalog object. While it lists
-   no audio track that can be decoded, the recording starts with the video
-   alone and keeps reading the catalog (see "Audio that comes and goes"). With
+   way `broadcast::build_catalog` writes it. While the catalog lists neither
+   a video track nor an audio track that can be decoded, the recorder waits
+   for the next catalog object. While it lists only one of them, the
+   recording starts with that track alone and keeps reading the catalog (see
+   "Tracks that come and go"). With
    `--list-tracks` it prints the first catalog object's LOC tracks
    (`track_list::track_table`) to stdout and exits instead.
 3. Both media tracks are subscribed with `NextGroupStart`, so the recording
@@ -82,15 +83,16 @@ both tracks into one init segment and one fragment stream.
    demuxers announce, so the muxer waits for every configuration of the file
    before writing the init segment.
 5. The `RecordingFile` appends the bytes and flushes whenever the file's
-   leading track moved to a new group: the video, or the audio in a file
-   without video. A video group is a complete GoP on disk.
-6. The recording ends when the video `relay::Track` returns `Ok(None)`. When
-   the publisher leaves, the relay sends PUBLISH_DONE on both subscriptions
-   and `moqt` ends them 10 s later, after any late streams, so the recorder
-   needs no session-event handling of its own. An audio track that ends only
-   stops the audio (see "Audio that comes and goes").
+   leading track moved to a new group: the video while a video track is
+   read, the audio otherwise. A video group is a complete GoP on disk.
+6. The recording ends once the catalog track and every media track it reads
+   have ended. When the publisher leaves, the relay sends PUBLISH_DONE on
+   every subscription and `moqt` ends them 10 s later, after any late
+   streams, so the recorder needs no session-event handling of its own. A
+   media track that ends alone only stops that track (see "Tracks that come
+   and go").
 
-## Audio that comes and goes
+## Tracks that come and go
 A publisher's first catalog often lacks the audio a later one lists:
 `broadcast` sends a catalog at the first video and the first audio
 configuration, and until the second it lists the AAC `audio` track without
@@ -132,6 +134,37 @@ configuration starts the next file, at the next keyframe in a file with
 video, at once in the per-track audio file. The per-track audio file keeps
 the name of the first audio track.
 
+A participant who turns the camera off publishes a catalog without its
+camera tracks and ends them with PUBLISH_DONE; turning it on lists them
+again, and the namespace is not published again. Ending the recording with
+the video was not kept: a room recording starts a participant only on
+PUBLISH_NAMESPACE, so the participant would never be recorded again. The
+video therefore follows the catalog like the audio: `record_live` drops the
+subscription once a catalog no longer lists the track, or once it ends, and
+while the recording reads no video, each catalog object goes through
+`track_selection::select_video`, the same choice as at start. The track it
+returns is subscribed with `NextGroupStart` and added with
+`Recording::add_video`.
+
+While no video is read, the audio is recorded alone and leads the file: it
+flushes at each audio group and ends a segment at the first frame past its
+length. Holding the audio back until the video returns was not chosen, since
+what a participant says with the camera off would be lost. For the same
+reason a participant who joins with the camera off is recorded from the
+audio: `select_tracks` returns a selection while the catalog lists either
+track, and the capture origin is then the first audio object's capture
+timestamp.
+
+A video track added after an ended one goes to the file the ended one went
+to, through a new demuxer. Its first keyframe continues the file when the
+init segment holds the same configuration; the muxer gives the last sample
+before the gap the gap's duration, so a player shows that frame until the
+camera is back. Another configuration starts the next file at that
+keyframe, and so does the first keyframe in a combined file that holds no
+video because the recording started with the audio; the audio until then
+stays in the audio-only file. The per-track video file keeps the name of
+the first video track.
+
 ## Key invariants
 - **One timeline for both tracks.** Each `loc::Demuxer` would otherwise count
   presentation time from its own first capture timestamp, and the two
@@ -144,6 +177,8 @@ the name of the first audio track.
   origin is dropped, since the demuxer would clamp it to presentation time 0.
   Audio that overtakes the first video object waits for it, up to
   `MAX_PENDING_AUDIO` objects (about 10 s); beyond that the oldest is dropped.
+  While no video track is read, the first audio object sets the origin,
+  including one held for a video track that ended before its first object.
 - **An init segment never changes.** `Fmp4Muxer` rejects a configuration
   change after the init segment is out. The pipeline compares each
   `VideoConfig` / `AudioConfig` event with the one the current muxer was built
@@ -153,8 +188,8 @@ the name of the first audio track.
 - **Segments start on a keyframe.** With `--segment-seconds` the same rotation
   runs at the first keyframe whose presentation time is at least the segment
   length past the file's first video sample, so every file decodes on its
-  own. A file without video rotates at the first audio frame past that
-  length, since every audio frame is a sync sample. Presentation times are
+  own. While no video track is read, a file rotates at the first audio frame
+  past that length, since every audio frame is a sync sample. Presentation times are
   not rebased per file: the files keep one timeline and can be concatenated.
 - **The file is valid at every flush.** Fragmented MP4 needs no trailing
   index, so a recorder killed mid-way leaves a playable file; only the last
@@ -208,7 +243,9 @@ segment, and a network stall would hold up the recording.
 - A forwarded PUBLISH is refused with PUBLISH_ERROR UNINTERESTED. Accepting
   it would deliver every track of the namespace, every rendition included.
 - A participant who leaves ends their tracks with PUBLISH_DONE, which ends
-  their recording. One who joins again is recorded into new files.
+  their recording. One who joins again is recorded into new files. Muting
+  and turning the camera off and on keep the recording going (see "Tracks
+  that come and go").
 - When the relay drains, the session sends SUBSCRIBE_NAMESPACE again on the
   relay its GOAWAY names; the PUBLISH_NAMESPACE that relay answers with for a
   participant already recorded is acknowledged and changes nothing.
@@ -252,14 +289,17 @@ the recorder started with.
 - Audio outside AAC, Opus, G.711 A-law and MP3 is never recorded.
 - An audio track listed after the first video was written starts at the
   next keyframe in the next file; the audio before it is lost. Only a missing
-  audio track is added later: the video track stays as chosen at start, and
-  an audio track once picked stays while the catalog lists it.
-- A meeting participant who turns the camera off ends the video track, which
-  ends that participant's recording. Turning it on again is not recorded:
-  the namespace is not published again.
-- Video outside H.264, VP8, VP9 and AV1 ends the recorder with an error
-  before anything is recorded: without the video track there is no file.
+  track is added later: a track once picked stays while the catalog lists it.
+- A recording that starts with the audio alone writes it to a file of its
+  own in the combined layout; the first keyframe starts the next. A
+  `broadcast` publisher whose first audio configuration comes before its
+  first keyframe lists the audio first, so a recording that starts with that
+  publisher can begin with a short audio-only file.
+- Video outside H.264, VP8, VP9 and AV1 in the catalog a recording starts
+  from ends the recorder with an error before anything is recorded. Listed
+  later, it is logged and the recording goes on without it.
 - The automatic choice reads no track name, so it cannot tell a meeting's
   camera from its screen share. At equal height the camera wins only
   because its bitrate is lower; a participant who shares the screen with
-  the camera off is recorded from `screenshare_480p`.
+  the camera off is recorded from `screenshare_480p`, and stays so after
+  the camera is turned on while the screen share is listed.

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use mediapack::{
     AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample,
     loc::{self, LocObject},
@@ -122,13 +124,19 @@ pub(crate) fn opus_config() -> AudioConfig {
     }
 }
 
-/// A new empty directory under the system temp directory.
+/// A new empty directory under the system temp directory. The counter keeps
+/// tests running in parallel apart: the clock does not tick every nanosecond.
 pub(crate) fn scratch_dir() -> std::path::PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("recorder-test-{}-{nanos}", std::process::id()));
+    let count = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "recorder-test-{}-{nanos}-{count}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

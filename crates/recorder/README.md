@@ -81,14 +81,16 @@ from the moment it is published, with the tracks picked from its catalog
   remaining tie goes to the track listed first. A light default matters
   because a meeting participant encodes a rendition only while someone
   subscribes to it, the recorder included. The choice is made once, from
-  the catalog at start, and logged as `catalog resolved`; only an audio
-  track missing at start, or one that ended, is added later (see below).
+  the catalog at start, and logged as `catalog resolved`; only a track
+  missing at start, or one that ended, is added later (see below).
 - Recording starts at the next group, i.e. the next keyframe, or with
   `--from-cache` at the oldest keyframe still cached, and ends on
   Ctrl-C, when the relay closes the session, or 10 s after the publisher ends
-  the video track (PUBLISH_DONE), the time `moqt` waits for late streams.
+  the catalog and the media tracks (PUBLISH_DONE), the time `moqt` waits for
+  late streams.
 - The file is fragmented MP4, so it plays even if the recorder is killed; the
-  file is flushed to disk whenever a video group completes.
+  file is flushed to disk whenever a video group completes, or an audio group
+  while no video is recorded.
 - Audio and video keep the offset of their capture timestamps, so the two
   tracks stay in sync however the subscriptions started, also across the two
   files of `--layout per-track`.
@@ -111,6 +113,13 @@ from the moment it is published, with the tracks picked from its catalog
   picked again from a later catalog (the participant unmutes). It continues
   in the file the audio went to, after a gap, while its configuration is the
   same; otherwise it starts the next file as above.
+- The video does the same (a meeting participant turns the camera off and
+  on): the audio goes on alone meanwhile, and a recording whose first
+  catalog lists no video starts with the audio. A video track listed later
+  is recorded from its next group, in the file the video went to while its
+  configuration is the same (the last frame before the gap stays on
+  screen); otherwise, and in a combined file without video, from its
+  keyframe on in the next file.
 - With `--upload`, each closed file becomes the object
   `<prefix>/<namespace>/<track>/<start Unix ms>-<index>.mp4` (no `<track>` for
   the combined file), with the capture origin in its `capture-origin-us`

@@ -32,12 +32,14 @@ pub(crate) struct FileTracks {
 pub(crate) struct Pipeline {
     video: Option<loc::Demuxer>,
     audio: Option<loc::Demuxer>,
+    /// `None` while no video track is read; the audio then leads the file.
     video_codec: Option<loc::VideoCodec>,
     /// `audio_track` is the configuration being read; `audio_config` the one
     /// the current file's init segment holds. They differ after `add_audio`
     /// with another configuration, until the next file.
     audio_track: Option<AudioConfig>,
     audio_config: Option<AudioConfig>,
+    /// The tracks the next muxer expects.
     streams: StreamSet,
     muxer: Fmp4Muxer,
     video_config: Option<VideoConfig>,
@@ -46,7 +48,7 @@ pub(crate) struct Pipeline {
     /// relay's oldest cached group can start mid-group.
     keyframe_seen: bool,
     /// Presentation time of the current file's first sample of the leading
-    /// track: the video, or the audio in a file without video.
+    /// track: the video, or the audio while no video track is read.
     file_start: Option<Timestamp>,
     segment_length: Option<Duration>,
     current_group: Option<u64>,
@@ -54,8 +56,8 @@ pub(crate) struct Pipeline {
 
 impl Pipeline {
     /// With a `segment_length`, a new file starts at the first keyframe at
-    /// least that long after the current file's start; in a file without
-    /// video, at the first audio frame.
+    /// least that long after the current file's start; while no video track
+    /// is read, at the first audio frame.
     pub(crate) fn new(tracks: FileTracks, segment_length: Option<Duration>) -> Result<Self> {
         let streams = StreamSet {
             has_video: tracks.video.is_some(),
@@ -85,7 +87,7 @@ impl Pipeline {
     ) -> Result<Output> {
         let codec = self
             .video_codec
-            .context("video object for a file without video")?;
+            .context("video object without a video track")?;
         let group_complete = self.group_complete(object);
         let loc_object = to_loc_object(object);
         let events = demuxer(&mut self.video, capture_origin, || {
@@ -95,6 +97,31 @@ impl Pipeline {
         let mut output = self.mux(events)?;
         output.group_complete = group_complete;
         Ok(output)
+    }
+
+    /// Adds a video track: the first, or one after an ended track. From this
+    /// call on, only a video keyframe starts a file or a segment; audio until
+    /// then goes to the current file. A keyframe with the configuration the
+    /// init segment holds continues the file after the gap; any other
+    /// configuration starts the next file.
+    pub(crate) fn add_video(&mut self, codec: loc::VideoCodec) {
+        self.video_codec = Some(codec);
+        self.streams.has_video = true;
+        // A new demuxer announces the configuration to the muxer again.
+        self.video = None;
+        self.keyframe_seen = false;
+    }
+
+    /// The video track ended; the audio leads the file until `add_video`.
+    pub(crate) fn end_video(&mut self) -> Result<()> {
+        self.video_codec = None;
+        // A muxer still waiting for the first video configuration would hold
+        // the audio back until the video returns.
+        if !self.file_started && self.video_config.is_none() {
+            self.streams.has_video = false;
+            self.muxer = new_muxer(self.streams, None, self.audio_config.as_ref())?;
+        }
+        Ok(())
     }
 
     /// Adds an audio track: the first, or one that follows an ended track.
@@ -160,7 +187,7 @@ impl Pipeline {
     fn mux(&mut self, events: Vec<MediaEvent>) -> Result<Output> {
         let mut tail: Option<BytesMut> = None;
         let mut data = BytesMut::new();
-        let has_video = self.streams.has_video;
+        let video_leads = self.video_codec.is_some();
         for event in events {
             if let MediaEvent::Video(sample) = &event {
                 self.keyframe_seen |= sample.is_keyframe;
@@ -170,7 +197,7 @@ impl Pipeline {
             }
             let leading_sample = match &event {
                 MediaEvent::Video(sample) if sample.is_keyframe => Some(sample.pts),
-                MediaEvent::Audio(sample) if !has_video => Some(sample.pts),
+                MediaEvent::Audio(sample) if !video_leads => Some(sample.pts),
                 _ => None,
             };
             let changed = match &event {
@@ -190,7 +217,7 @@ impl Pipeline {
                 MediaEvent::Video(sample) => {
                     self.file_start.get_or_insert(sample.pts);
                 }
-                MediaEvent::Audio(sample) if !has_video => {
+                MediaEvent::Audio(sample) if !video_leads => {
                     self.file_start.get_or_insert(sample.pts);
                 }
                 _ => {}
@@ -653,6 +680,52 @@ mod tests {
         let next = demux(&next_file);
         assert!(next.contains(&MediaEvent::AudioConfig(pcma_config())));
         assert_eq!(audio_samples(&next)[0].pts, Timestamp::from_millis(1_000));
+    }
+
+    #[test]
+    fn the_audio_leads_the_file_while_no_video_track_is_read() {
+        // Arrange: 100 ms segments, one video group written
+        let fixture = fixture();
+        let mut pipeline = Pipeline::new(
+            tracks(Some(opus_config())),
+            Some(Duration::from_millis(100)),
+        )
+        .unwrap();
+        let origin = capture_timestamp(&fixture.video[0]);
+        let start = first_video_capture(&fixture.video[0]);
+        let mut first_file = BytesMut::new();
+        for object in fixture.video.iter().filter(|object| object.group_id == 1) {
+            first_file.extend_from_slice(&pipeline.push_video(object, origin).unwrap().data);
+        }
+
+        // Act: the video track ends, then audio 2 s later in two groups
+        pipeline.end_video().unwrap();
+        let outputs: Vec<_> = (0..4)
+            .map(|index| {
+                let object = opus_object(5 + index / 2, index, start + 2_000_000 + index * 20_000);
+                pipeline.push_audio(&object, origin).unwrap()
+            })
+            .collect();
+
+        // Assert: the first audio frame ends the segment; each new audio group completes the previous one
+        assert!(
+            outputs
+                .iter()
+                .skip(1)
+                .all(|output| output.previous_file_tail.is_none())
+        );
+        first_file.extend_from_slice(outputs[0].previous_file_tail.as_ref().unwrap());
+        let group_complete: Vec<_> = outputs.iter().map(|output| output.group_complete).collect();
+        assert_eq!(group_complete, [true, false, true, false]);
+        let mut next_file = BytesMut::new();
+        for output in &outputs {
+            next_file.extend_from_slice(&output.data);
+        }
+        next_file.extend_from_slice(&pipeline.finish().unwrap());
+        assert!(audio_samples(&demux(&first_file)).is_empty());
+        let next = demux(&next_file);
+        assert!(video_samples(&next).is_empty());
+        assert_eq!(audio_samples(&next)[0].pts, Timestamp::from_millis(2_000));
     }
 
     #[test]
