@@ -47,6 +47,7 @@ pub struct SubscribeUpdateOption {
     pub forward: bool,
 }
 
+#[derive(Clone)]
 pub struct SubscribeOption {
     pub subscriber_priority: u8,
     pub group_order: GroupOrder,
