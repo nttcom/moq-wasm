@@ -4,7 +4,7 @@ use relay_stats::RelaySnapshot;
 use tokio::{
     sync::mpsc,
     task::{JoinHandle, JoinSet},
-    time::{self, MissedTickBehavior},
+    time,
 };
 
 use crate::{
@@ -13,8 +13,6 @@ use crate::{
 
 const MAX_STORES_IN_FLIGHT: usize = 16;
 
-/// Snapshots wait this long in memory so that each table gets one INSERT per interval.
-/// A part per INSERT kept the merges busy: every merge rewrote the small day part.
 const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct SnapshotIngestTask {
@@ -30,9 +28,7 @@ impl SnapshotIngestTask {
         let join_handle = tokio::spawn(async move {
             let mut stores = JoinSet::new();
             let mut buffered = SnapshotRows::default();
-            let mut flush_ticker =
-                time::interval_at(time::Instant::now() + FLUSH_INTERVAL, FLUSH_INTERVAL);
-            flush_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            let mut flush_ticker = time::interval(FLUSH_INTERVAL);
             loop {
                 tokio::select! {
                     received = snapshot_receiver.recv() => {
@@ -70,7 +66,6 @@ impl Drop for SnapshotIngestTask {
 
 #[cfg(test)]
 mod tests {
-    use relay_stats::{ProcessStats, RelaySnapshot};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -81,28 +76,9 @@ mod tests {
     use super::{FLUSH_INTERVAL, SnapshotIngestTask};
     use crate::{
         clickhouse::ClickHouse, config::ClickHouseConfig, latest_snapshots::LatestSnapshots,
+        test_support::snapshot,
     };
 
-    fn snapshot(timestamp_ms: u64) -> RelaySnapshot {
-        RelaySnapshot {
-            relay_id: "relay-a".to_string(),
-            timestamp_ms,
-            process: ProcessStats {
-                rss_bytes: None,
-                cache_tracks: 0,
-                cache_objects: 0,
-                cache_payload_bytes: 0,
-                disk_cache_bytes: 0,
-                client_sessions: 0,
-                draining_since_ms: None,
-            },
-            sessions: vec![],
-            tracks: vec![],
-            subscriptions: vec![],
-        }
-    }
-
-    /// Answers every INSERT with 200 and reports its query and body.
     async fn fake_clickhouse() -> (ClickHouse, mpsc::UnboundedReceiver<(String, String)>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());

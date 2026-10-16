@@ -10,3 +10,5 @@ pub mod series;
 pub mod snapshot_history;
 pub mod snapshot_ingest_task;
 mod snapshot_rows;
+#[cfg(test)]
+mod test_support;

@@ -25,8 +25,7 @@ impl ClickHouse {
         self.post(&[], sql.to_string()).await.map(drop)
     }
 
-    /// Inserts `body`, one JSON object per line, in a single synchronous INSERT, so a failed
-    /// insert is returned to the caller. An empty body sends nothing.
+    /// An empty body sends nothing.
     pub async fn insert_json_lines(&self, table: &str, body: String) -> anyhow::Result<()> {
         if body.is_empty() {
             return Ok(());

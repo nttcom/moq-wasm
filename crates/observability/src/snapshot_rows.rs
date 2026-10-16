@@ -32,7 +32,6 @@ fn rows<'a, T>(snapshot: &'a RelaySnapshot, stats: &'a [T]) -> Vec<Row<'a, T>> {
         .collect()
 }
 
-/// JSONEachRow bodies of the rows that snapshots add to each table, one string per table.
 #[derive(Default)]
 pub(crate) struct SnapshotRows {
     snapshots: String,
@@ -75,7 +74,6 @@ impl SnapshotRows {
         )
     }
 
-    /// Inserts every table's rows in one INSERT per table.
     pub(crate) async fn store(self, clickhouse: &ClickHouse) -> anyhow::Result<()> {
         tokio::try_join!(
             clickhouse.insert_json_lines(SNAPSHOTS, self.snapshots),
@@ -94,6 +92,7 @@ mod tests {
     use serde_json::json;
 
     use super::{SnapshotRows, rows};
+    use crate::test_support::snapshot;
 
     #[test]
     fn a_row_carries_the_snapshot_key_next_to_the_flattened_stats() {
@@ -135,25 +134,6 @@ mod tests {
         );
     }
 
-    fn snapshot(timestamp_ms: u64) -> RelaySnapshot {
-        RelaySnapshot {
-            relay_id: "relay-a".to_string(),
-            timestamp_ms,
-            process: ProcessStats {
-                rss_bytes: None,
-                cache_tracks: 0,
-                cache_objects: 0,
-                cache_payload_bytes: 0,
-                disk_cache_bytes: 0,
-                client_sessions: 0,
-                draining_since_ms: None,
-            },
-            sessions: vec![],
-            tracks: vec![],
-            subscriptions: vec![],
-        }
-    }
-
     #[test]
     fn pushed_snapshots_become_one_line_each_per_table() {
         // Arrange
@@ -163,7 +143,7 @@ mod tests {
         buffered.push(&snapshot(1)).unwrap();
         buffered.push(&snapshot(2)).unwrap();
 
-        // Assert: a snapshot without sessions adds no session row
+        // Assert: one line per snapshot in each table; no session row, since the snapshots have no sessions
         let timestamps = |body: &str| -> Vec<u64> {
             body.lines()
                 .map(|line| {
