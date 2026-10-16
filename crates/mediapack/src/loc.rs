@@ -4,7 +4,7 @@ mod extension_headers;
 pub mod muxer;
 pub mod object;
 
-pub use demuxer::Demuxer;
+pub use demuxer::{Demuxer, VideoCodec};
 #[cfg(feature = "moqt")]
 pub use extension_headers::{from_extension_headers, to_extension_headers};
 pub use muxer::Muxer;

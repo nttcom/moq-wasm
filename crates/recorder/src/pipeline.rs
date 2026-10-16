@@ -77,7 +77,10 @@ impl Pipeline {
             .is_some_and(|previous| previous != object.group_id);
         let loc_object = to_loc_object(object);
         let origin = self.capture_origin(&loc_object);
-        let events = demuxer(&mut self.video, origin, loc::Demuxer::video).push(&loc_object)?;
+        let events = demuxer(&mut self.video, origin, || {
+            loc::Demuxer::video(loc::VideoCodec::H264)
+        })
+        .push(&loc_object)?;
         let mut output = self.mux(events)?;
         output.group_complete = group_complete;
         Ok(output)

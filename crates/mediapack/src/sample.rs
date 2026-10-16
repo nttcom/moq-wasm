@@ -1,7 +1,10 @@
 use anyhow::{Result, bail};
 use bytes::Bytes;
 
-use crate::{aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord};
+use crate::{
+    aac::AudioSpecificConfig, av1::Av1Config, h264::AvcDecoderConfigurationRecord, vp8::Vp8Config,
+    vp9::Vp9Config,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
 pub struct Timestamp {
@@ -54,7 +57,9 @@ impl Timestamp {
     }
 }
 
-/// `data` is an Annex-B access unit; keyframes carry their SPS/PPS in-band.
+/// `data` is one access unit of the track's `VideoConfig` codec: an H.264
+/// Annex-B access unit whose keyframes carry their SPS/PPS in-band, a VP8 or
+/// VP9 frame, or an AV1 temporal unit in the low-overhead bitstream format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoSample {
     pub data: Bytes,
@@ -74,14 +79,21 @@ pub struct AudioSample {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VideoConfig {
     Avc(AvcDecoderConfigurationRecord),
+    Vp8(Vp8Config),
+    Vp9(Vp9Config),
+    Av1(Av1Config),
 }
 
 impl VideoConfig {
     /// Fails unless the config is H.264.
     pub fn avc(&self) -> Result<&AvcDecoderConfigurationRecord> {
-        match self {
-            Self::Avc(record) => Ok(record),
-        }
+        let codec = match self {
+            Self::Avc(record) => return Ok(record),
+            Self::Vp8(_) => "VP8",
+            Self::Vp9(_) => "VP9",
+            Self::Av1(_) => "AV1",
+        };
+        bail!("{codec} video is not supported here")
     }
 }
 
@@ -207,6 +219,21 @@ mod tests {
         assert_eq!(opus.codec_string(), "opus");
         assert_eq!((pcma.sample_rate(), pcma.channels()), (8_000, 1));
         assert_eq!((aac.sample_rate(), aac.channels()), (48_000, 2));
+    }
+
+    #[test]
+    fn only_h264_has_an_avc_record() {
+        // Arrange
+        let vp8 = VideoConfig::Vp8(Vp8Config {
+            width: 64,
+            height: 48,
+        });
+
+        // Act
+        let error = vp8.avc().unwrap_err();
+
+        // Assert
+        assert_eq!(error.to_string(), "VP8 video is not supported here");
     }
 
     #[test]
