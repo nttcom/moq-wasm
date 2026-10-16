@@ -62,7 +62,11 @@ export function probeRecording(path: string) {
       { encoding: 'utf8' }
     )
   ) as { streams: { codec_name: string }[]; format: { duration: string } }
-  const decoded = spawnSync('ffmpeg', ['-v', 'error', '-i', path, '-f', 'null', '-'], { encoding: 'utf8' })
+  // ffprobe decodes every frame without encoding it again; an ffmpeg null output would also report its encoder and
+  // muxer complaints about timestamps, such as across the gap a muted microphone leaves.
+  const decoded = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'frame=key_frame', '-of', 'csv=p=0', path], {
+    encoding: 'utf8'
+  })
   return {
     codecs: info.streams.map((stream) => stream.codec_name),
     durationSeconds: Number(info.format.duration),
