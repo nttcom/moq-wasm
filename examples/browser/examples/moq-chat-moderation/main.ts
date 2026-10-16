@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SingleObjectGroupPublisher, setUpDjevBotPage } from '../../utils/djevBot'
+import { SingleObjectGroupPublisher, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
 import { element, setStatus } from '../../utils/page'
 import {
   type Location,
@@ -25,7 +25,7 @@ const sendButton = element<HTMLButtonElement>('sendBtn')
 
 chatInput.maxLength = MAX_CHAT_TEXT_LENGTH
 
-setUpDjevBotPage({
+setUpD3FlashBotPage({
   session,
   logTag: 'moq-chat-moderation',
   ownNamespace: CHAT_NAMESPACE,

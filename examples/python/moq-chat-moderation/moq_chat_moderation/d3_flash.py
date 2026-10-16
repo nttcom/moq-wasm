@@ -1,6 +1,6 @@
 import aiohttp
 
-from moq_chat_moderation.djev_status import DjevStatus
+from moq_chat_moderation.d3_flash_status import D3FlashStatus
 from moq_chat_moderation.identity_token import IdentityToken
 
 ABUSIVE_QUESTION_ID = "abusive"
@@ -14,12 +14,12 @@ ABUSIVE_QUESTION = {
 }
 
 
-class JevClient:
+class D3FlashClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
         url: str,
-        status: DjevStatus,
+        status: D3FlashStatus,
         identity_token: IdentityToken | None = None,
     ):
         self._session = session

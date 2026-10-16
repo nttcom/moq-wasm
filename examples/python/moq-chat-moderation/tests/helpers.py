@@ -6,7 +6,7 @@ from typing import Any
 import moq
 from aiohttp import web
 
-from moq_chat_moderation.djev_status import DjevStatus
+from moq_chat_moderation.d3_flash_status import D3FlashStatus
 from moq_chat_moderation.event_timeline import EventTimeline
 
 READ_TIMEOUT_SECONDS = 2
@@ -43,7 +43,7 @@ async def published_timeline() -> tuple[EventTimeline, TimelineReader]:
 
 
 @dataclass
-class StubJev:
+class StubD3Flash:
     probability: float
     texts: list[str] = field(default_factory=list)
 
@@ -53,7 +53,7 @@ class StubJev:
 
 
 @dataclass
-class FakeJevServer:
+class FakeD3FlashServer:
     noul: float
     url: str = ""
     requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
@@ -73,7 +73,7 @@ class FakeMetadataServer:
         return web.Response(text="metadata-token")
 
 
-async def published_status(status: DjevStatus) -> moq.TrackConsumer:
+async def published_status(status: D3FlashStatus) -> moq.TrackConsumer:
     broadcast = moq.BroadcastProducer()
     status.publish_on(broadcast)
     return await broadcast.consume().subscribe_track(STATUS_TRACK_NAME)
@@ -82,4 +82,4 @@ async def published_status(status: DjevStatus) -> moq.TrackConsumer:
 async def next_status(track: moq.TrackConsumer) -> str:
     group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
     frame = await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS)
-    return json.loads(frame.payload)["djev"]
+    return json.loads(frame.payload)["d3_flash"]

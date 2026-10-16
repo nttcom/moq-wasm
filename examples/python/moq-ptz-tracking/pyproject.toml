@@ -1,7 +1,7 @@
 [project]
 name = "moq-ptz-tracking"
 version = "0.1.0"
-description = "pipecat bot that pans and tilts an ONVIF camera toward a target found by djev-run"
+description = "pipecat bot that pans and tilts an ONVIF camera toward a target found by d3-flash"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",

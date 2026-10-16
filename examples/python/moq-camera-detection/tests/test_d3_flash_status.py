@@ -1,7 +1,7 @@
 import pytest
 
-from moq_camera_detection import djev_status
-from moq_camera_detection.djev_status import IDLE_STOP_SECONDS, DjevStatus
+from moq_camera_detection import d3_flash_status
+from moq_camera_detection.d3_flash_status import IDLE_STOP_SECONDS, D3FlashStatus
 from tests.helpers import STATUS_TRACK_NAME, next_status, published_status
 
 
@@ -15,18 +15,18 @@ class FakeClock:
 
 @pytest.fixture
 def short_escalation(monkeypatch):
-    monkeypatch.setattr(djev_status, "SLOW_SECONDS", 0.05)
-    monkeypatch.setattr(djev_status, "COLD_START_SECONDS", 0.1)
+    monkeypatch.setattr(d3_flash_status, "SLOW_SECONDS", 0.05)
+    monkeypatch.setattr(d3_flash_status, "COLD_START_SECONDS", 0.1)
 
 
-async def answered_once(status: DjevStatus) -> None:
+async def answered_once(status: D3FlashStatus) -> None:
     async with status.request():
         pass
 
 
-async def test_first_request_reports_a_cold_start_until_djev_answers():
+async def test_first_request_reports_a_cold_start_until_d3_flash_answers():
     # Arrange
-    status = DjevStatus(STATUS_TRACK_NAME)
+    status = D3FlashStatus(STATUS_TRACK_NAME)
     track = await published_status(status)
     assert await next_status(track) == "ready"
 
@@ -41,7 +41,7 @@ async def test_first_request_reports_a_cold_start_until_djev_answers():
 
 async def test_late_answer_while_warm_reports_slow_then_a_cold_start(short_escalation):
     # Arrange
-    status = DjevStatus(STATUS_TRACK_NAME)
+    status = D3FlashStatus(STATUS_TRACK_NAME)
     await answered_once(status)
     track = await published_status(status)
     assert await next_status(track) == "ready"
@@ -58,7 +58,7 @@ async def test_late_answer_while_warm_reports_slow_then_a_cold_start(short_escal
 async def test_request_after_an_idle_stop_reports_a_cold_start():
     # Arrange
     clock = FakeClock()
-    status = DjevStatus(STATUS_TRACK_NAME, clock)
+    status = D3FlashStatus(STATUS_TRACK_NAME, clock)
     await answered_once(status)
     track = await published_status(status)
     assert await next_status(track) == "ready"
@@ -74,7 +74,7 @@ async def test_request_after_an_idle_stop_reports_a_cold_start():
 
 async def test_failed_request_reports_ready_again():
     # Arrange
-    status = DjevStatus(STATUS_TRACK_NAME)
+    status = D3FlashStatus(STATUS_TRACK_NAME)
     track = await published_status(status)
     assert await next_status(track) == "ready"
 
@@ -82,7 +82,7 @@ async def test_failed_request_reports_ready_again():
     with pytest.raises(RuntimeError):
         async with status.request():
             assert await next_status(track) == "starting"
-            raise RuntimeError("djev failed")
+            raise RuntimeError("d3-flash failed")
 
     # Assert
     assert await next_status(track) == "ready"

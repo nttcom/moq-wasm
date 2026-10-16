@@ -11,7 +11,7 @@ from moq_ptz_tracking.event_timeline import EventTimeline, Location, location_re
 from moq_ptz_tracking.pan_planner import Home, PanPlanner, Sweeping
 from moq_ptz_tracking.ptz import CENTER_SECONDS, Heading, PtzCalibration, PtzCommands, PtzMove, Sweep
 from moq_ptz_tracking.target import LatestTarget, Target
-from moq_ptz_tracking.vision import Answer, DjevVisionClient, Position
+from moq_ptz_tracking.vision import Answer, D3FlashVisionClient, Position
 
 # The camera stops within 0.3 s of a Stop command, and a picture reaches the bot about 0.4 s after
 # the camera captured it.
@@ -34,7 +34,7 @@ class PtzTracker(FrameProcessor):
 
     def __init__(
         self,
-        vision: DjevVisionClient,
+        vision: D3FlashVisionClient,
         timeline: EventTimeline,
         commands: PtzCommands,
         calibration: PtzCalibration,
@@ -72,7 +72,7 @@ class PtzTracker(FrameProcessor):
             try:
                 answer = await self._vision.locate(picture.jpeg, picture.target.description)
             except (aiohttp.ClientError, KeyError, IndexError) as error:
-                logger.warning(f"djev-vision could not locate the target in {picture.location}: {error}")
+                logger.warning(f"d3-flash could not locate the target in {picture.location}: {error}")
                 return
             logger.info(f"camera picture {picture.location} {answer} in {time.monotonic() - requested_at:.2f}s")
             if self._latest_target.target != picture.target:

@@ -7,7 +7,7 @@ import av
 import moq
 from aiohttp import web
 
-from moq_ptz_tracking.djev_status import DjevStatus
+from moq_ptz_tracking.d3_flash_status import D3FlashStatus
 from moq_ptz_tracking.event_timeline import EventTimeline
 from moq_ptz_tracking.ptz import PtzCommands
 from moq_ptz_tracking.target import LatestTarget, Target
@@ -109,7 +109,7 @@ class FakeMetadataServer:
         return web.Response(text="metadata-token")
 
 
-async def published_status(status: DjevStatus) -> moq.TrackConsumer:
+async def published_status(status: D3FlashStatus) -> moq.TrackConsumer:
     broadcast = moq.BroadcastProducer()
     status.publish_on(broadcast)
     return await broadcast.consume().subscribe_track(STATUS_TRACK_NAME)
@@ -118,4 +118,4 @@ async def published_status(status: DjevStatus) -> moq.TrackConsumer:
 async def next_status(track: moq.TrackConsumer) -> str:
     group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
     frame = await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS)
-    return json.loads(frame.payload)["djev"]
+    return json.loads(frame.payload)["d3_flash"]

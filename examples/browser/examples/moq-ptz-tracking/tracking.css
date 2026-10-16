@@ -51,7 +51,7 @@
   grid-template-areas:
     '. . browser . . . .'
     '. . browser-link . . . .'
-    'camera camera-link relay bot-link bot djev-link djev';
+    'camera camera-link relay bot-link bot d3-flash-link d3-flash';
   justify-content: start;
   justify-items: center;
 }
@@ -84,10 +84,10 @@
   grid-area: bot;
 }
 
-.hub-djev-link {
-  grid-area: djev-link;
+.hub-d3-flash-link {
+  grid-area: d3-flash-link;
 }
 
-.hub-djev {
-  grid-area: djev;
+.hub-d3-flash {
+  grid-area: d3-flash;
 }

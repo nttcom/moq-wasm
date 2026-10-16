@@ -1,7 +1,7 @@
 # moq-camera-detection
 
 ブラウザの MoQ Camera Detection ページ（`examples/browser/examples/moq-camera-detection`）が H.264 で配信したカメラ映像を
-pipecat の bot が受け取り、Cloud Run 上の djev-vision（[djev-run](https://github.com/taeold/djev-run) の画像対応版）で
+pipecat の bot が受け取り、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) で
 ページが送った質問に選択肢から答えます。答えは MSF の event timeline として publish され、ページに表示されます。
 
 ```mermaid
@@ -9,7 +9,7 @@ sequenceDiagram
     participant B as Browser
     participant R as Relay
     participant P as pipecat bot
-    participant D as djev-vision (Cloud Run)
+    participant D as d3-flash (Cloud Run)
     B->>R: prompt (anon/moq-camera-detection/camera)、{"question": "...", "choices": ["はい", "いいえ"]}
     B->>R: video (anon/moq-camera-detection/camera)、1 キーフレーム 1 group
     R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
@@ -20,12 +20,11 @@ sequenceDiagram
     R->>B: {"l": [groupId, objectId], "data": {"prompt": [promptGroupId, 0], "answer": "はい"}}
 ```
 
-## djev-vision
+## d3-flash
 
-djev-run を `--language-model-only` なしで起動し、画像を受け付けるようにした Cloud Run サービス `djev-vision`（asia-southeast1）です。
-vLLM の画像前処理キャッシュは API とエンジンのプロセス間でずれるため、`--mm-processor-cache-gb 0` で無効にしています。
-IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、GCE の VM では `--metadata-auth` で ID トークンを送ります。停止後の最初の判定はコールドスタートで約 3 分かかります。
-デプロイ手順は [djev-run を Cloud Run にデプロイする](../djev-run-on-cloud-run.md) にあります。
+System One の `/v1/systemone` に画像付きで答える Cloud Run サービス `d3-flash`（asia-southeast1、MoQ Chat Moderation・MoQ PTZ Tracking と共用）です。
+IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、GCE の VM では `--metadata-auth` で ID トークンを送ります。停止後の最初の判定はコールドスタートで約 2 分 40 秒かかります。
+デプロイ手順は [d3-flash を Cloud Run にデプロイする](../d3-flash-on-cloud-run.md) にあります。
 
 質問は `/v1/systemone` の choice 型で送り、選択肢を criteria にします。返った choice が選択肢になければ「判定できません」と表示します。
 
@@ -48,7 +47,7 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
    ```shell
    cd examples/python/moq-camera-detection
    uv run python -m moq_camera_detection.bot --insecure \
-     --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --d3-flash-url "$(gcloud run services describe d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 
@@ -85,7 +84,7 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
 uv run pytest
 ```
 
-E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の djev-vision・bot を起動し、Playwright の偽カメラでページを操作します。
+E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の d3-flash・bot を起動し、Playwright の偽カメラでページを操作します。
 
 ```shell
 node tests/browser-e2e/run-camera-detection-e2e.mjs

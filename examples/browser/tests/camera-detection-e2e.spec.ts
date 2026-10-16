@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
-import { DJEV_ORIGIN, answerDetectorWith, askCamera, joinCamera } from './camera-detection-e2e-arrange'
-import { delayDjevAnswers } from './fake-djev'
+import { D3_FLASH_ORIGIN, answerDetectorWith, askCamera, joinCamera } from './camera-detection-e2e-arrange'
+import { delayD3FlashAnswers } from './fake-d3-flash'
 import { leaveAllPages } from './leave-all-pages'
 
 const LATE_ANSWER_MS = 6_000
@@ -8,7 +8,7 @@ const LATE_ANSWER_MS = 6_000
 test.describe('MoQ Camera Detection', () => {
   test.afterEach(async ({ browser }) => {
     await leaveAllPages(browser, 'camera-detection-leave-button')
-    await delayDjevAnswers(DJEV_ORIGIN, 0)
+    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
   })
 
   test('follows the detector when its choice changes', async ({ page }) => {
@@ -60,19 +60,19 @@ test.describe('MoQ Camera Detection', () => {
     await expect(verdict).toHaveText('判定できません')
   })
 
-  test('shows the djev status while its answers are late', async ({ page }) => {
+  test('shows the d3-flash status while its answers are late', async ({ page }) => {
     // Arrange
     await answerDetectorWith('はい')
-    await delayDjevAnswers(DJEV_ORIGIN, LATE_ANSWER_MS)
+    await delayD3FlashAnswers(D3_FLASH_ORIGIN, LATE_ANSWER_MS)
 
     // Act
     const verdict = await joinCamera(page)
 
     // Assert
-    const djevStatus = page.getByTestId('camera-detection-djev-status')
-    await expect(djevStatus).toContainText('djev')
-    await delayDjevAnswers(DJEV_ORIGIN, 0)
+    const d3FlashStatus = page.getByTestId('camera-detection-d3-flash-status')
+    await expect(d3FlashStatus).toContainText('d3-flash')
+    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
     await expect(verdict).toHaveText('はい', { timeout: 30_000 })
-    await expect(djevStatus).toBeHidden()
+    await expect(d3FlashStatus).toBeHidden()
   })
 })

@@ -99,7 +99,7 @@
         grid-template-areas:
           '. . browser . . . .'
           '. . browser-link . . . .'
-          'camera camera-link relay bot-link bot djev-link djev';
+          'camera camera-link relay bot-link bot d3-flash-link d3-flash';
         justify-content: center;
         justify-items: center;
       }
@@ -132,12 +132,12 @@
         grid-area: bot;
       }
 
-      .hub-djev-link {
-        grid-area: djev-link;
+      .hub-d3-flash-link {
+        grid-area: d3-flash-link;
       }
 
-      .hub-djev {
-        grid-area: djev;
+      .hub-d3-flash {
+        grid-area: d3-flash;
       }
 
       .observability-map {
@@ -500,7 +500,7 @@
               >
               <span class="link">↔</span>
               <span class="node cloud"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>djev-run</span
+                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d3-flash</span
               >
             </p>
             <span class="arrow" aria-hidden="true"></span>
@@ -524,7 +524,7 @@
               >
               <span class="link">↔</span>
               <span class="node cloud"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>djev-run</span
+                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d3-flash</span
               >
             </p>
             <span class="arrow" aria-hidden="true"></span>
@@ -550,9 +550,9 @@
               <span class="node hub-bot"
                 ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
               >
-              <span class="link hub-djev-link">↔</span>
-              <span class="node cloud hub-djev"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>djev-run</span
+              <span class="link hub-d3-flash-link">↔</span>
+              <span class="node cloud hub-d3-flash"
+                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d3-flash</span
               >
             </p>
             <span class="arrow" aria-hidden="true"></span>

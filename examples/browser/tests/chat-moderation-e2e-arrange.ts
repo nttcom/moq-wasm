@@ -3,7 +3,7 @@ import { CHAT_MODERATION_PATH } from '../playwright.helpers'
 import { leavePage } from './leave-all-pages'
 
 const moqtUrl = process.env.CHAT_MODERATION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-export const JEV_ORIGIN = process.env.CHAT_MODERATION_E2E_JEV_ORIGIN!
+export const D3_FLASH_ORIGIN = process.env.CHAT_MODERATION_E2E_D3_FLASH_ORIGIN!
 
 export const LEAVE_BUTTON_TEST_ID = 'chat-moderation-leave-button'
 export const ABUSIVE_TEXT = 'e2e-abusive'

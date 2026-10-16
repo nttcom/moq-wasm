@@ -10,10 +10,10 @@ from pipecat.pipeline.worker import PipelineWorker
 from pipecat.transports.moq.transport import MOQParams, MOQTransport
 from pipecat.workers.runner import WorkerRunner
 
-from moq_chat_moderation.djev_status import DjevStatus
+from moq_chat_moderation.d3_flash import D3FlashClient
+from moq_chat_moderation.d3_flash_status import D3FlashStatus
 from moq_chat_moderation.event_timeline import EventTimeline
 from moq_chat_moderation.identity_token import gcloud_identity_token, metadata_identity_token
-from moq_chat_moderation.jev import JevClient
 from moq_chat_moderation.moderator import ChatModerator
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
@@ -24,19 +24,19 @@ EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
 CHAT_PAGE_WAIT_SECONDS = 365 * 24 * 60 * 60
 REBUILD_DELAY_SECONDS = 2.0
-# djev-run scales to zero; a cold start copies 19 GB of weights before it answers.
+# d3-flash scales to zero; a cold start copies 17 GB of weights before it answers.
 JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with djev-run")
+    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with d3-flash")
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",
         action="store_true",
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
-    parser.add_argument("--jev-url", required=True, help="a Jev-compatible /v1/systemone endpoint")
+    parser.add_argument("--d3-flash-url", required=True, help="a System One /v1/systemone endpoint, such as d3-flash")
     auth = parser.add_mutually_exclusive_group()
     auth.add_argument(
         "--gcloud-auth",
@@ -59,7 +59,7 @@ def moderator_broadcast(transport: MOQTransport) -> moq.BroadcastProducer:
 
 
 async def moderate_until_transport_fails(
-    args: argparse.Namespace, jev: JevClient, timeline: EventTimeline, status: DjevStatus
+    args: argparse.Namespace, d3_flash: D3FlashClient, timeline: EventTimeline, status: D3FlashStatus
 ) -> bool:
     transport = MOQTransport(
         params=MOQParams(
@@ -91,7 +91,7 @@ async def moderate_until_transport_fails(
 
     await runner.add_workers(
         PipelineWorker(
-            Pipeline([ChatModerator(jev, timeline), transport.input()]),
+            Pipeline([ChatModerator(d3_flash, timeline), transport.input()]),
             enable_rtvi=False,
             idle_timeout_secs=None,
         )
@@ -103,17 +103,17 @@ async def moderate_until_transport_fails(
 async def main():
     args = parse_args()
     timeline = EventTimeline(EVENT_TIMELINE_TRACK)
-    status = DjevStatus(STATUS_TRACK)
+    status = D3FlashStatus(STATUS_TRACK)
     async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as session:
         identity_token = (
             gcloud_identity_token()
             if args.gcloud_auth
-            else metadata_identity_token(session, args.jev_url)
+            else metadata_identity_token(session, args.d3_flash_url)
             if args.metadata_auth
             else None
         )
-        jev = JevClient(session, args.jev_url, status, identity_token)
-        while await moderate_until_transport_fails(args, jev, timeline, status):
+        d3_flash = D3FlashClient(session, args.d3_flash_url, status, identity_token)
+        while await moderate_until_transport_fails(args, d3_flash, timeline, status):
             # The finished runner leaves its SIGINT handler installed; restore the default one so
             # Ctrl-C still stops the bot until the next runner takes over.
             asyncio.get_running_loop().remove_signal_handler(signal.SIGINT)

@@ -2,7 +2,7 @@ import base64
 
 import aiohttp
 
-from moq_camera_detection.djev_status import DjevStatus
+from moq_camera_detection.d3_flash_status import D3FlashStatus
 from moq_camera_detection.identity_token import IdentityToken
 from moq_camera_detection.prompt import Prompt
 
@@ -17,12 +17,12 @@ def choice_question(prompt: Prompt) -> dict:
     }
 
 
-class DjevVisionClient:
+class D3FlashVisionClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
         url: str,
-        status: DjevStatus,
+        status: D3FlashStatus,
         identity_token: IdentityToken | None = None,
     ):
         self._session = session

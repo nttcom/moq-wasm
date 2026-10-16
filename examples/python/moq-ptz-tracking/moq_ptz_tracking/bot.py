@@ -9,14 +9,14 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from moq_ptz_tracking.djev_status import DjevStatus
+from moq_ptz_tracking.d3_flash_status import D3FlashStatus
 from moq_ptz_tracking.event_timeline import EventTimeline
 from moq_ptz_tracking.identity_token import gcloud_identity_token, metadata_identity_token
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
 from moq_ptz_tracking.video import GroupDecoder, picture_to_jpeg
-from moq_ptz_tracking.vision import DjevVisionClient
+from moq_ptz_tracking.vision import D3FlashVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 CAMERA_BROADCAST_PATH = "anon/onvif/client"
@@ -30,7 +30,7 @@ STATUS_TRACK = "status"
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
-# djev-vision scales to zero; a cold start copies 19 GB of weights before it answers.
+# d3-flash scales to zero; a cold start copies 17 GB of weights before it answers.
 VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
     parser.add_argument(
-        "--djev-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
+        "--d3-flash-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
     )
     parser.add_argument(
         "--pan-per-second",
@@ -186,7 +186,7 @@ async def main():
     publish_origin = moq.OriginProducer()
     tracker_broadcast = publish_origin.create_broadcast(TRACKER_BROADCAST_PATH)
     timeline = EventTimeline(tracker_broadcast, EVENT_TIMELINE_TRACK)
-    status = DjevStatus(STATUS_TRACK)
+    status = D3FlashStatus(STATUS_TRACK)
     status.publish_on(tracker_broadcast)
     commands = PtzCommands(publish_origin.create_broadcast(COMMAND_BROADCAST_PATH), COMMAND_TRACK)
     latest_target = LatestTarget()
@@ -195,11 +195,11 @@ async def main():
         identity_token = (
             gcloud_identity_token()
             if args.gcloud_auth
-            else metadata_identity_token(session, args.djev_url)
+            else metadata_identity_token(session, args.d3_flash_url)
             if args.metadata_auth
             else None
         )
-        vision = DjevVisionClient(session, args.djev_url, status, identity_token)
+        vision = D3FlashVisionClient(session, args.d3_flash_url, status, identity_token)
         calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.dead_zone)
         tracker = PtzTracker(vision, timeline, commands, calibration, latest_target)
         worker = PipelineWorker(Pipeline([tracker]), enable_rtvi=False, idle_timeout_secs=None)

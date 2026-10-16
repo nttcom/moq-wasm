@@ -1,7 +1,7 @@
 # moq-chat-moderation
 
 ブラウザの MoQ Chat Moderation ページ（`examples/browser/examples/moq-chat-moderation`）で打ったチャットを
-pipecat の bot が `MOQTransport` で受け取り、Cloud Run 上の [djev-run](https://github.com/taeold/djev-run) で暴言かどうかを判定します。
+pipecat の bot が `MOQTransport` で受け取り、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) で暴言かどうかを判定します。
 判定結果は MSF の event timeline として publish され、ページは暴言のメッセージを「モデレーターによって削除されました」に置き換えます。
 
 ```mermaid
@@ -9,7 +9,7 @@ sequenceDiagram
     participant B as Browser
     participant R as Relay
     participant P as pipecat bot
-    participant D as djev-run (Cloud Run)
+    participant D as d3-flash (Cloud Run)
     B->>R: chat (anon/moq-chat-moderation/chat)
     R->>P: chat
     P->>D: /v1/systemone noul "abusive"
@@ -18,12 +18,12 @@ sequenceDiagram
     R->>B: {"l": [groupId, objectId], "data": {"abusive": true}}
 ```
 
-## djev-run
+## d3-flash
 
-djev-run は Jev 互換の `/v1/systemone` を返す Cloud Run サービス `djev-vision`（asia-southeast1、MoQ Camera Detection と共用）として動いています。
+d3-flash は System One の `/v1/systemone` に答える Cloud Run サービス `d3-flash`（asia-southeast1、MoQ Camera Detection・MoQ PTZ Tracking と共用）として動いています。
 IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。bot は `--gcloud-auth` を付けると
-`gcloud auth print-identity-token` の ID トークンを Bearer で送ります。GCE の VM では `--metadata-auth` を付けると、VM のサービスアカウントの ID トークンをメタデータサーバーから取って送ります。`--min-instances=0` のため、しばらく使われずに停止した後の最初の判定は、コールドスタートで約 3 分かかります。
-デプロイ手順は [djev-run を Cloud Run にデプロイする](../djev-run-on-cloud-run.md) にあります。
+`gcloud auth print-identity-token` の ID トークンを Bearer で送ります。GCE の VM では `--metadata-auth` を付けると、VM のサービスアカウントの ID トークンをメタデータサーバーから取って送ります。`--min-instances=0` のため、しばらく使われずに停止した後の最初の判定は、コールドスタートで約 2 分 40 秒かかります。
+デプロイ手順は [d3-flash を Cloud Run にデプロイする](../d3-flash-on-cloud-run.md) にあります。
 
 ## 起動
 
@@ -44,7 +44,7 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
    ```shell
    cd examples/python/moq-chat-moderation
    uv run python -m moq_chat_moderation.bot --insecure \
-     --jev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --d3-flash-url "$(gcloud run services describe d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 
@@ -79,7 +79,7 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
 uv run pytest
 ```
 
-E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の djev-run・bot を起動し、Playwright でページを操作します。
+E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の d3-flash・bot を起動し、Playwright でページを操作します。
 
 ```shell
 node tests/browser-e2e/run-chat-moderation-e2e.mjs

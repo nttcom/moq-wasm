@@ -1,8 +1,8 @@
 import aiohttp
 
-from moq_camera_detection.djev_status import DjevStatus
+from moq_camera_detection.d3_flash_status import D3FlashStatus
 from moq_camera_detection.identity_token import gcloud_identity_token
-from moq_camera_detection.vision import DjevVisionClient
+from moq_camera_detection.vision import D3FlashVisionClient
 from tests.helpers import YES_NO_PROMPT
 
 
@@ -10,7 +10,7 @@ async def test_image_is_asked_as_a_choice_between_the_prompt_choices(fake_vision
     # Arrange
     async with aiohttp.ClientSession() as session:
         token = gcloud_identity_token(command=("echo", "identity-token"))
-        client = DjevVisionClient(session, fake_vision_server.url, DjevStatus("status"), token)
+        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus("status"), token)
 
         # Act
         choice = await client.choose(b"jpeg", YES_NO_PROMPT)
@@ -31,7 +31,7 @@ async def test_answer_outside_the_prompt_choices_is_no_choice(fake_vision_server
     # Arrange
     fake_vision_server.choice = "maybe"
     async with aiohttp.ClientSession() as session:
-        client = DjevVisionClient(session, fake_vision_server.url, DjevStatus("status"))
+        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus("status"))
 
         # Act
         choice = await client.choose(b"jpeg", YES_NO_PROMPT)
