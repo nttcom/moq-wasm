@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
     parser.add_argument(
-        "--djev-url", required=True, help="djev-vision's /v1/chat/completions endpoint"
+        "--djev-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
     )
     auth = parser.add_mutually_exclusive_group()
     auth.add_argument(

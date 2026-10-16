@@ -1,30 +1,12 @@
 import aiohttp
-import pytest
 
 from moq_camera_detection.djev_status import DjevStatus
 from moq_camera_detection.identity_token import gcloud_identity_token
-from moq_camera_detection.vision import DjevVisionClient, parse_choice
+from moq_camera_detection.vision import DjevVisionClient
 from tests.helpers import YES_NO_PROMPT
 
 
-@pytest.mark.parametrize(
-    ("content", "choice"),
-    [
-        ("thought\n1", "yes"),
-        ("thought\n2. no", "no"),
-        ("2", "no"),
-        ("thought\n0", None),
-        ("thought\n3", None),
-        ("maybe", None),
-        ("", None),
-    ],
-)
-def test_choice_is_read_from_the_number_on_the_last_line(content, choice):
-    # Act / Assert
-    assert parse_choice(content, YES_NO_PROMPT) == choice
-
-
-async def test_image_is_sent_with_the_numbered_choices(fake_vision_server):
+async def test_image_is_asked_as_a_choice_between_the_prompt_choices(fake_vision_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
         token = gcloud_identity_token(command=("echo", "identity-token"))
@@ -35,9 +17,24 @@ async def test_image_is_sent_with_the_numbered_choices(fake_vision_server):
 
     # Assert
     [(authorization, request)] = fake_vision_server.requests
-    [image, question] = request["messages"][0]["content"]
     assert choice == "no"
     assert authorization == "Bearer identity-token"
-    assert image["image_url"]["url"] == "data:image/jpeg;base64,anBlZw=="
-    assert question["text"].startswith("Is there a person?\n")
-    assert question["text"].endswith("\n1. yes\n2. no")
+    assert request["images"] == ["data:image/jpeg;base64,anBlZw=="]
+    assert request["questions"]["answer"] == {
+        "type": "choice",
+        "instructions": "Is there a person?",
+        "criteria": {"yes": None, "no": None},
+    }
+
+
+async def test_answer_outside_the_prompt_choices_is_no_choice(fake_vision_server):
+    # Arrange
+    fake_vision_server.choice = "maybe"
+    async with aiohttp.ClientSession() as session:
+        client = DjevVisionClient(session, fake_vision_server.url, DjevStatus("status"))
+
+        # Act
+        choice = await client.choose(b"jpeg", YES_NO_PROMPT)
+
+    # Assert
+    assert choice is None

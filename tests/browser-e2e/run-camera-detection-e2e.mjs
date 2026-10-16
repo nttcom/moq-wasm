@@ -35,7 +35,7 @@ const botDir = resolve(repoRoot, "examples/python/moq-camera-detection");
 const childProcesses = [];
 
 async function startFakeDjevVision() {
-  let answer = "1";
+  let answer = "はい";
   let delayMs = 0;
   const server = createServer(async (request, response) => {
     if (request.method === "PUT" && request.url === "/delay") {
@@ -53,9 +53,7 @@ async function startFakeDjevVision() {
     await setTimeout(delayMs);
     response.setHeader("content-type", "application/json");
     response.end(
-      JSON.stringify({
-        choices: [{ message: { content: `thought\n${answer}` } }],
-      }),
+      JSON.stringify({ answers: { answer: { choice: answer } } }),
     );
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
@@ -109,7 +107,7 @@ async function main() {
         moqtUrl,
         "--insecure",
         "--djev-url",
-        `${fakeDjevOrigin}/v1/chat/completions`,
+        `${fakeDjevOrigin}/v1/systemone`,
       ],
       { cwd: botDir },
     );

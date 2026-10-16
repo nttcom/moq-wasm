@@ -14,10 +14,6 @@ class Prompt:
     choices: tuple[str, ...]
     location: Location
 
-    def text(self) -> str:
-        numbered = "\n".join(f"{number}. {choice}" for number, choice in enumerate(self.choices, 1))
-        return f"{self.question}\nAnswer with only the number of one of these choices:\n{numbered}"
-
 
 def parse_prompt(payload: bytes, location: Location) -> Prompt | None:
     try:

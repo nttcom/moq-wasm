@@ -13,12 +13,12 @@ test.describe('MoQ Camera Detection', () => {
 
   test('follows the detector when its choice changes', async ({ page }) => {
     // Arrange
-    await answerDetectorWith('1')
+    await answerDetectorWith('はい')
     const verdict = await joinCamera(page)
     await expect(verdict).toHaveText('はい')
 
     // Act
-    await answerDetectorWith('2')
+    await answerDetectorWith('いいえ')
 
     // Assert
     await expect(verdict).toHaveText('いいえ')
@@ -26,7 +26,7 @@ test.describe('MoQ Camera Detection', () => {
 
   test('answers with a choice of the edited prompt', async ({ page }) => {
     // Arrange
-    await answerDetectorWith('3')
+    await answerDetectorWith('緑')
     const verdict = await joinCamera(page)
 
     // Act
@@ -38,7 +38,7 @@ test.describe('MoQ Camera Detection', () => {
 
   test('applies the prompt once its rejected choices are fixed', async ({ page }) => {
     // Arrange
-    await answerDetectorWith('2')
+    await answerDetectorWith('緑')
     const verdict = await joinCamera(page)
     await askCamera(page, '何色の服ですか？', '赤')
 
@@ -49,9 +49,9 @@ test.describe('MoQ Camera Detection', () => {
     await expect(verdict).toHaveText('緑')
   })
 
-  test('shows a number outside the choices as undecided', async ({ page }) => {
+  test('shows an answer outside the choices as undecided', async ({ page }) => {
     // Arrange
-    await answerDetectorWith('3')
+    await answerDetectorWith('たぶん')
 
     // Act
     const verdict = await joinCamera(page)
@@ -62,7 +62,7 @@ test.describe('MoQ Camera Detection', () => {
 
   test('shows the djev status while its answers are late', async ({ page }) => {
     // Arrange
-    await answerDetectorWith('1')
+    await answerDetectorWith('はい')
     await delayDjevAnswers(DJEV_ORIGIN, LATE_ANSWER_MS)
 
     // Act

@@ -14,8 +14,8 @@ sequenceDiagram
     B->>R: video (anon/moq-camera-detection/camera)、1 キーフレーム 1 group
     R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
     P->>P: PyAV で H.264 をデコードし、0.1 秒ごとに 1 枚 JPEG に
-    P->>D: /v1/chat/completions 画像 + 質問 + 番号付きの選択肢
-    D-->>P: 1
+    P->>D: /v1/systemone 画像 + 質問（choice、選択肢）
+    D-->>P: はい
     P->>R: eventtimeline (anon/moq-camera-detection/detector)
     R->>B: {"l": [groupId, objectId], "data": {"prompt": [promptGroupId, 0], "answer": "はい"}}
 ```
@@ -27,8 +27,7 @@ vLLM の画像前処理キャッシュは API とエンジンのプロセス間�
 IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、GCE の VM では `--metadata-auth` で ID トークンを送ります。停止後の最初の判定はコールドスタートで約 3 分かかります。
 デプロイ手順は [djev-run を Cloud Run にデプロイする](../djev-run-on-cloud-run.md) にあります。
 
-vLLM は拡散モデルの出力を選択肢に縛れない（structured outputs 非対応）ため、選択肢に番号を振って番号だけで答えるよう指示し、
-返答の最終行の先頭の数字を読みます。選択肢の番号でなければ「判定できません」と表示します。
+質問は `/v1/systemone` の choice 型で送り、選択肢を criteria にします。返った choice が選択肢になければ「判定できません」と表示します。
 
 ## 起動
 
@@ -49,7 +48,7 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
    ```shell
    cd examples/python/moq-camera-detection
    uv run python -m moq_camera_detection.bot --insecure \
-     --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/chat/completions" \
+     --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 

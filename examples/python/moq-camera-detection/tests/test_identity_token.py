@@ -2,7 +2,7 @@ import aiohttp
 
 from moq_camera_detection.identity_token import metadata_identity_token
 
-SERVICE_URL = "https://djev.example.run.app/v1/chat/completions"
+SERVICE_URL = "https://djev.example.run.app/v1/systemone"
 
 
 async def test_metadata_token_is_requested_for_the_service_origin_once(fake_metadata_server):

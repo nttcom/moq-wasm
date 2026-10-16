@@ -4,8 +4,8 @@ import { CAMERA_DETECTION_PATH } from '../playwright.helpers'
 const moqtUrl = process.env.CAMERA_DETECTION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 export const DJEV_ORIGIN = process.env.CAMERA_DETECTION_E2E_DJEV_ORIGIN!
 
-export async function answerDetectorWith(choiceNumber: string): Promise<void> {
-  const response = await fetch(`${DJEV_ORIGIN}/answer`, { method: 'PUT', body: choiceNumber })
+export async function answerDetectorWith(choice: string): Promise<void> {
+  const response = await fetch(`${DJEV_ORIGIN}/answer`, { method: 'PUT', body: choice })
   expect(response.ok).toBe(true)
 }
 

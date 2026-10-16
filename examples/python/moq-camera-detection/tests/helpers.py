@@ -58,13 +58,13 @@ class StubVision:
 
 @dataclass
 class FakeVisionServer:
-    content: str
+    choice: str
     url: str = ""
     requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
 
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"choices": [{"message": {"content": self.content}}]})
+        return web.json_response({"answers": {"answer": {"choice": self.choice}}})
 
 
 @dataclass
