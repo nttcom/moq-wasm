@@ -233,7 +233,8 @@ rejected namespace or SUBSCRIBE is repeated every 500 ms for up to 10 s),
 makes it the current connection, and closes the previous one with NO_ERROR
 once the server takes no track this side sends there any more and 5 s after
 every carried subscription cut over (at most 10 s after the move), or when
-the server closes it. A track PUBLISHed on the session goes to every
+the server closes it; a SUBSCRIBE still served there then ends with an
+`Unsubscribe` event. A track PUBLISHed on the session goes to every
 connection it is on: each subgroup stream the `StreamDataSenderFactory`
 opens, and each datagram, is sent on all of them, the new connection from
 the next subgroup on (draft-22 §7.6.1). An UNSUBSCRIBE that drops a
