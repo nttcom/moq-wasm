@@ -135,11 +135,16 @@ export class MediaPublisher {
   }
 
   async setCatalogTracks(tracks: MeetingCatalogTrack[]): Promise<void> {
+    const names = new Set(tracks.map((track) => track.name))
+    const removedNames = this.catalogTracks.map((track) => track.name).filter((name) => !names.has(name))
     this.catalogTracks = tracks
     this.syncVideoTrackContexts('camera')
     this.syncVideoTrackContexts('screenshare')
     this.syncAudioTrackContexts()
     await this.broadcastCatalog()
+    for (const name of removedNames) {
+      await this.client.endTrack(this.trackNamespace, name)
+    }
   }
 
   resolveTrackRole(trackName: string): MeetingCatalogTrack['role'] | null {

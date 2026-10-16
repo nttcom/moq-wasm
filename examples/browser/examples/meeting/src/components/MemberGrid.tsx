@@ -771,7 +771,11 @@ function CatalogTrackEditor({
             {currentTab.tracks.map((track) => {
               const metadataEntries = buildCatalogTrackMetadataEntries(track)
               return (
-                <div key={track.id} className="flex items-start justify-between gap-3 rounded-md bg-white/[0.04] p-2">
+                <div
+                  key={track.id}
+                  data-testid={`catalog-track-${track.name}`}
+                  className="flex items-start justify-between gap-3 rounded-md bg-white/[0.04] p-2"
+                >
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-white">{track.label || track.name}</div>
                     <div className="truncate text-xs text-blue-200">{formatCatalogTrackLabel(track)}</div>
