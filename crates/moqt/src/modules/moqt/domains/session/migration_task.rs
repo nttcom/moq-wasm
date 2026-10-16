@@ -13,7 +13,8 @@ use crate::{
             control_plane::control_messages::messages::unsubscribe::Unsubscribe,
             domains::{
                 connection::{Connection, SharedCutover, SinkCutover, SinkReceiver},
-                session_context::{CarriedSubscription, SessionContext},
+                publisher::{send_publish, send_publish_namespace},
+                session_context::{CarriedSubscription, PublicationTarget, SessionContext},
                 session_creator::Reconnect,
                 subscriber::{send_subscribe, send_subscribe_namespace},
             },
@@ -22,6 +23,7 @@ use crate::{
         },
         transport::transport_connection::TransportClose,
     },
+    subscribe::UnsubscribeHandler,
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -160,6 +162,9 @@ impl Router {
                         let request_id = current.connection.logical_request_id(handler.request_id());
                         self.forward(SessionEvent::PublishDone(handler.with_request_id(request_id)));
                     }
+                    Some(SessionEvent::Unsubscribe(handler)) => {
+                        self.unsubscribed(&current.connection, handler);
+                    }
                     Some(event) => self.forward(event),
                 },
                 signal = previous_signal(previous.as_mut()) => match signal {
@@ -185,6 +190,11 @@ impl Router {
                         // connection only reports the draining server; drop it.
                         if current.connection.wire_request_id(request_id).is_none() {
                             self.forward(SessionEvent::PublishDone(handler.with_request_id(request_id)));
+                        }
+                    }
+                    PreviousSignal::Event(Some(SessionEvent::Unsubscribe(handler))) => {
+                        if let Some(moved_from) = previous.as_ref() {
+                            self.unsubscribed(&moved_from.live.connection, handler);
                         }
                     }
                     PreviousSignal::Event(Some(event)) => self.forward(event),
@@ -222,6 +232,23 @@ impl Router {
         let _ = self.session.event_sender.send(event);
     }
 
+    /// An UNSUBSCRIBE for a track this side publishes on another connection
+    /// too only drops this connection; the application learns of it once the
+    /// track is on no connection.
+    fn unsubscribed(&self, connection: &Arc<Connection>, handler: UnsubscribeHandler) {
+        let request_id = handler.subscribe_id();
+        if connection.stop_serving(request_id) {
+            self.session.note_served_changed();
+        }
+        if self.session.has_publication(request_id) {
+            if self.session.leave_publication(request_id, connection) {
+                return;
+            }
+            self.session.remove_publication(request_id);
+        }
+        self.forward(SessionEvent::Unsubscribe(handler));
+    }
+
     /// Closes the previous connection with NO_ERROR; a subscription that has
     /// not cut over takes its next group start from the current one.
     fn retire(&self, previous: Previous) {
@@ -230,6 +257,7 @@ impl Router {
             .connection
             .close(TerminationErrorCode::NoError, "");
         self.session.forget_previous(&previous.live.connection);
+        self.session.forget_connection(&previous.live.connection);
         for cutover in previous.cutovers {
             cutover
                 .lock()
@@ -299,6 +327,37 @@ async fn migrate(
         .await
         .with_context(|| format!("SUBSCRIBE_NAMESPACE {namespace} on the new connection failed"))?;
     }
+    for namespace in &carried.published_namespaces {
+        retry_until(deadline, || async {
+            send_publish_namespace(&connection, namespace.clone())
+                .await?
+                .accepted()
+                .await
+        })
+        .await
+        .with_context(|| format!("PUBLISH_NAMESPACE {namespace} on the new connection failed"))?;
+    }
+    for (request_id, track_namespace, track_name, option) in session.publication_requests() {
+        match send_publish(&connection, &track_namespace, &track_name, &option).await {
+            Ok((publish_ok, track_alias)) => {
+                connection.carry(request_id, publish_ok.request_id);
+                session.add_publication_target(
+                    request_id,
+                    PublicationTarget {
+                        connection: Arc::downgrade(&connection),
+                        track_alias,
+                        request_id: publish_ok.request_id,
+                    },
+                );
+            }
+            Err(error) => tracing::warn!(
+                namespace = %track_namespace,
+                track = %track_name,
+                %error,
+                "the new connection did not accept the PUBLISH; the track stays on the previous one"
+            ),
+        }
+    }
     let subscriptions: Vec<(u64, &CarriedSubscription)> = carried
         .subscriptions
         .iter()
@@ -336,6 +395,7 @@ async fn migrate(
                 let _ = executor::timeout(CUTOVER_LIMIT, join_all(cut_overs)).await;
                 executor::sleep(PREVIOUS_CONNECTION_GRACE).await;
             }
+            session.unserved(&moved_from).await;
         }),
         cutovers,
     })
@@ -454,12 +514,13 @@ mod tests {
 
     use crate::{
         ClientConfig, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
+        TrackWriter,
         modules::test_support::{
-            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, dual_client_with_config, open_subgroup,
-            send_payload, spawn_dual_server, subscribed_track_reader,
+            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, dual_client_with_config,
+            open_subgroup, send_payload, spawn_dual_server, subscribed_track_reader,
         },
         object::{ContentExists, StreamDataSenderFactory},
-        publish::PublishDoneCode,
+        publish::{PublishDoneCode, PublishOption},
         subscribe::{FilterType, SubscribeOption},
         wire::SubgroupId,
     };
@@ -707,6 +768,83 @@ mod tests {
         assert_ne!(from_a.request_id(), from_b.request_id());
         assert_eq!(from_a.track_name, "a");
         assert_eq!(from_b.track_name, "b");
+    }
+
+    async fn accept_namespace(server: &Session) {
+        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+    }
+
+    async fn publish(client: &Session, server: &Session) -> (Subscription, Subscription) {
+        let publisher = client.publisher();
+        let (announced, ()) = tokio::join!(
+            publisher.publish_namespace("ns".into()),
+            accept_namespace(server)
+        );
+        announced.unwrap();
+        let (published, accepted) = tokio::join!(
+            publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+            accept_publish(server)
+        );
+        (published.unwrap(), accepted)
+    }
+
+    async fn next_group_payload(server: &Session, subscription: &Subscription) -> Bytes {
+        let mut reader = subscribed_track_reader(server, subscription).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+            .await
+            .expect("object within timeout")
+            .unwrap()
+            .expect("track still open")
+            .payload
+    }
+
+    #[tokio::test]
+    async fn go_away_publishes_on_the_new_server_and_sends_to_both_until_the_old_one_unsubscribes()
+    {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-publish-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-publish-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (published, accepted_a) = publish(&client, &server_a).await;
+        let mut writer = TrackWriter::new(client.publisher().create_stream(&published), 0);
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        accept_namespace(&server_b).await;
+        let accepted_b = accept_publish(&server_b).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        writer
+            .write_group(Bytes::from_static(b"both"))
+            .await
+            .unwrap();
+        let on_a = next_group_payload(&server_a, &accepted_a).await;
+        let on_b = next_group_payload(&server_b, &accepted_b).await;
+        let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, server_a.closed()).await;
+        server_a
+            .subscriber()
+            .unsubscribe(&accepted_a)
+            .await
+            .unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+        let unsubscribe_seen = tokio::time::timeout(NO_EVENT_TIMEOUT, client.receive_event()).await;
+
+        // Assert: A's UNSUBSCRIBE only drops A, so the application sees nothing
+        assert_eq!(on_a, Bytes::from_static(b"both"));
+        assert_eq!(on_b, Bytes::from_static(b"both"));
+        assert!(
+            still_open.is_err(),
+            "A must stay open while it takes the track"
+        );
+        assert_eq!(close.expect("A closed once it unsubscribed").code, Some(0));
+        assert!(unsubscribe_seen.is_err(), "{unsubscribe_seen:?}");
     }
 
     #[tokio::test]

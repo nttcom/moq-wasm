@@ -4,6 +4,7 @@ use crate::{
     subscribe::FilterType,
 };
 
+#[derive(Clone)]
 pub struct PublishOption {
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,

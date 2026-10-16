@@ -25,27 +25,94 @@ pub type SubgroupObjectSender = StreamDataSender<HeaderSent>;
 /// the sender and returns it in the `S = HeaderSent` state. Objects can only
 /// be sent in the `HeaderSent` state, so the invariant that the header is
 /// always sent first is enforced at compile time.
+///
+/// While a session migrates, one sender writes the same subgroup to a stream
+/// on each connection that takes the track (draft-22 §7.6.1). A stream that
+/// fails is dropped as long as another one is left; the failure is returned
+/// when it was the last.
 pub struct StreamDataSender<S = Uninitialized> {
+    streams: Vec<WireStream>,
+    _state: PhantomData<S>,
+}
+
+/// One stream of the subgroup, on one connection, with that connection's
+/// track alias.
+pub(crate) struct WireStream {
     stream_sender: StreamSender,
     encoder: SubgroupEncoder,
-    _state: PhantomData<S>,
+}
+
+impl WireStream {
+    pub(crate) fn new(version: Version, track_alias: u64, send_stream: BoxedSendStream) -> Self {
+        Self {
+            stream_sender: StreamSender::new(send_stream),
+            encoder: SubgroupEncoder::new(version, track_alias),
+        }
+    }
+}
+
+impl<S> StreamDataSender<S> {
+    /// Keeps the streams whose step succeeded, unless none did; see the
+    /// type's documentation for failures.
+    fn settle(&mut self, results: Vec<anyhow::Result<()>>) -> anyhow::Result<()> {
+        if results.iter().all(Result::is_err) {
+            return results.into_iter().next().unwrap_or(Ok(()));
+        }
+        let mut results = results.into_iter();
+        self.streams.retain(|_| match results.next() {
+            Some(Err(error)) => {
+                tracing::debug!(%error, "dropping one stream of a subgroup sent on several connections");
+                false
+            }
+            _ => true,
+        });
+        Ok(())
+    }
+
+    pub async fn close(&mut self) -> anyhow::Result<()> {
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &self.streams {
+            results.push(stream.stream_sender.close().await);
+        }
+        self.settle(results)
+    }
+
+    pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &self.streams {
+            let code = stream.encoder.version().data_stream_reset_code(code);
+            results.push(stream.stream_sender.reset(code).await);
+        }
+        self.settle(results)
+    }
 }
 
 // ─── Uninitialized State ───────────────────────────────────────────────────────
 
 impl StreamDataSender<Uninitialized> {
-    pub(crate) fn new(version: Version, track_alias: u64, send_stream: BoxedSendStream) -> Self {
+    /// `streams` is not empty.
+    pub(crate) fn on_streams(streams: Vec<WireStream>) -> Self {
         Self {
-            stream_sender: StreamSender::new(send_stream),
-            encoder: SubgroupEncoder::new(version, track_alias),
+            streams,
             _state: PhantomData,
         }
     }
 
+    /// Fails only when no stream took the priority; a stream that did not
+    /// fails at its next send.
     pub async fn set_priority(&self, priority: StreamPriority) -> anyhow::Result<()> {
-        self.stream_sender
-            .set_priority(priority.transport_priority())
-            .await
+        let priority = priority.transport_priority();
+        let (mut set, mut failure) = (false, None);
+        for stream in &self.streams {
+            match stream.stream_sender.set_priority(priority).await {
+                Ok(()) => set = true,
+                Err(error) => failure = Some(error),
+            }
+        }
+        match failure {
+            Some(error) if !set => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Sends the header of the subgroup `start` describes and returns the
@@ -55,8 +122,12 @@ impl StreamDataSender<Uninitialized> {
         start: SubgroupStart,
     ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
         tracing::debug!(?start, "Sending new subgroup header");
-        let header = self.encoder.header(start);
-        self.stream_sender.send(&header).await?;
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &mut self.streams {
+            let header = stream.encoder.header(start);
+            results.push(stream.stream_sender.send(&header).await);
+        }
+        self.settle(results)?;
         Ok(self.into_header_sent())
     }
 
@@ -68,60 +139,50 @@ impl StreamDataSender<Uninitialized> {
         subgroup_id: crate::wire::SubgroupId,
         publisher_priority: u8,
     ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
-        let SubgroupEncoder::Draft14(encoder) = &mut self.encoder;
-        let bytes = encoder.raw_header(group_id, subgroup_id, publisher_priority);
-        self.stream_sender.send(&bytes).await?;
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &mut self.streams {
+            let SubgroupEncoder::Draft14(encoder) = &mut stream.encoder;
+            let bytes = encoder.raw_header(group_id, subgroup_id.clone(), publisher_priority);
+            results.push(stream.stream_sender.send(&bytes).await);
+        }
+        self.settle(results)?;
         Ok(self.into_header_sent())
     }
 
     fn into_header_sent(self) -> StreamDataSender<HeaderSent> {
         StreamDataSender {
-            stream_sender: self.stream_sender,
-            encoder: self.encoder,
+            streams: self.streams,
             _state: PhantomData,
         }
     }
-
-    pub async fn close(&mut self) -> anyhow::Result<()> {
-        self.stream_sender.close().await
-    }
-
-    pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        let code = self.encoder.version().data_stream_reset_code(code);
-        self.stream_sender.reset(code).await
-    }
 }
 
-// ─── HeaderSent State ──────────────────────────────────────────────────────────
-
 impl StreamDataSender<HeaderSent> {
-    /// Sends `object` on this subgroup with the header's group, subgroup and
-    /// priority. Fails when its object id is not greater than the previous
-    /// object's. An object without payload is sent as its status.
     pub async fn send_object(&mut self, object: &Object) -> anyhow::Result<()> {
-        let bytes = self.encoder.object(object)?;
-        self.stream_sender.send(&bytes).await
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &mut self.streams {
+            let result = match stream.encoder.object(object) {
+                Ok(bytes) => stream.stream_sender.send(&bytes).await,
+                Err(error) => Err(error),
+            };
+            results.push(result);
+        }
+        self.settle(results)
     }
 
-    /// Sends a draft-14 object field without extensions.
     #[cfg(test)]
     pub(crate) async fn send_raw(
         &mut self,
         object_id_delta: u64,
         subgroup_object: crate::wire::SubgroupObject,
     ) -> anyhow::Result<()> {
-        let SubgroupEncoder::Draft14(encoder) = &self.encoder;
-        let bytes = encoder.raw_object_field(object_id_delta, subgroup_object);
-        self.stream_sender.send(&bytes).await
-    }
-
-    pub async fn close(&mut self) -> anyhow::Result<()> {
-        self.stream_sender.close().await
-    }
-
-    pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        let code = self.encoder.version().data_stream_reset_code(code);
-        self.stream_sender.reset(code).await
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &mut self.streams {
+            let SubgroupEncoder::Draft14(encoder) = &stream.encoder;
+            let bytes = encoder.raw_object_field(object_id_delta, subgroup_object.clone());
+            results.push(stream.stream_sender.send(&bytes).await);
+        }
+        self.settle(results)
     }
 }
 

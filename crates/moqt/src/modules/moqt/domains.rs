@@ -13,6 +13,7 @@ pub(crate) mod publisher;
 pub(crate) mod request_failure;
 #[cfg(all(not(target_arch = "wasm32"), any(test, feature = "self-signed-cert")))]
 pub(crate) mod self_signed_cert;
+pub(crate) mod send_targets;
 pub(crate) mod session;
 pub(crate) mod session_context;
 pub(crate) mod session_creator;

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque, hash_map::Entry},
+    collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
     fmt,
     sync::{
         Arc,
@@ -35,11 +35,11 @@ pub(crate) fn logical_id(generation: u64, wire_id: u64) -> u64 {
     (generation << GENERATION_SHIFT) | wire_id
 }
 
-fn generation_of(logical_id: u64) -> u64 {
+pub(crate) fn generation_of(logical_id: u64) -> u64 {
     logical_id >> GENERATION_SHIFT
 }
 
-fn wire_part(logical_id: u64) -> u64 {
+pub(crate) fn wire_part(logical_id: u64) -> u64 {
     logical_id & ((1 << GENERATION_SHIFT) - 1)
 }
 
@@ -58,6 +58,10 @@ pub(crate) struct Connection {
     track_alias: AtomicU64,
     /// Requests of earlier connections sent again here: logical id ↔ wire id.
     carried: std::sync::Mutex<CarriedIds>,
+    /// The logical ids of the SUBSCRIBEs the peer sent here that this side
+    /// accepted and neither side has ended; kept for a session that follows
+    /// GOAWAY, which closes a previous connection only once it is empty.
+    served: std::sync::Mutex<HashSet<u64>>,
     pub(crate) object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
     pub(crate) fetch_notification_map:
         std::sync::Mutex<HashMap<RequestId, mpsc::UnboundedSender<FetchDataReceiver>>>,
@@ -189,6 +193,7 @@ impl Connection {
             go_away_received: AtomicBool::new(false),
             track_alias: AtomicU64::new(0),
             carried: std::sync::Mutex::default(),
+            served: std::sync::Mutex::default(),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
             fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
         }
@@ -215,6 +220,25 @@ impl Connection {
         let mut carried = self.carried_ids();
         carried.wire_by_logical.insert(logical_id, wire_id);
         carried.logical_by_wire.insert(wire_id, logical_id);
+    }
+
+    pub(crate) fn serve(&self, request_id: u64) {
+        self.served_ids().insert(request_id);
+    }
+
+    /// `true` when the subscription was served here.
+    pub(crate) fn stop_serving(&self, request_id: u64) -> bool {
+        self.served_ids().remove(&request_id)
+    }
+
+    pub(crate) fn serves_subscriptions(&self) -> bool {
+        !self.served_ids().is_empty()
+    }
+
+    fn served_ids(&self) -> std::sync::MutexGuard<'_, HashSet<u64>> {
+        self.served
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn carried_ids(&self) -> std::sync::MutexGuard<'_, CarriedIds> {
