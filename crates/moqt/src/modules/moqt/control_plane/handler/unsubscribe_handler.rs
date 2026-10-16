@@ -17,7 +17,14 @@ impl UnsubscribeHandler {
         connection: &Connection,
         unsubscribe_message: Unsubscribe,
     ) -> Self {
-        let request_id = connection.logical_request_id(unsubscribe_message.request_id);
+        Self::ended(
+            session_context,
+            connection.logical_request_id(unsubscribe_message.request_id),
+        )
+    }
+
+    /// A subscription that ended with the connection it was served on.
+    pub(crate) fn ended(session_context: Arc<SessionContext>, request_id: u64) -> Self {
         Self {
             session_context,
             request_id,
