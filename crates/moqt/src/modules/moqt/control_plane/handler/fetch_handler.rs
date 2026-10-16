@@ -11,7 +11,7 @@ use crate::{
                 error_codes::{RequestErrorCode, RequestKind},
                 handler::response_guard::ResponseGuard,
             },
-            domains::session_context::SessionContext,
+            domains::{connection::Connection, session_context::SessionContext},
         },
         transport::transport_send_stream::TransportSendError,
     },
@@ -31,14 +31,14 @@ pub struct FetchHandler {
 }
 
 impl FetchHandler {
-    pub(crate) fn new(session_context: Arc<SessionContext>, fetch: Fetch) -> Self {
+    pub(crate) fn new(
+        session_context: Arc<SessionContext>,
+        connection: Arc<Connection>,
+        fetch: Fetch,
+    ) -> Self {
         let request_id = fetch.request_id;
         let group_order = fetch.group_order;
-        let guard = ResponseGuard::new(
-            session_context.connection().clone(),
-            request_id,
-            RequestKind::Fetch,
-        );
+        let guard = ResponseGuard::new(connection, request_id, RequestKind::Fetch);
         Self {
             session_context,
             request_id,

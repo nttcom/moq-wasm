@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use crate::modules::moqt::{
-    data_plane::stream::fetch_data_receiver::FetchDataReceiver,
-    domains::session_context::SessionContext,
+    data_plane::stream::fetch_data_receiver::FetchDataReceiver, domains::connection::Connection,
 };
 
 pub(crate) struct FetchNotifier;
@@ -15,12 +12,12 @@ impl FetchNotifier {
         fields(request_id = request_id)
     )]
     pub(crate) async fn notify(
-        context: &Arc<SessionContext>,
+        connection: &Connection,
         request_id: u64,
         fetch_data_receiver: FetchDataReceiver,
     ) {
         // Draft-14 §9.16.3: a FETCH response is delivered on a single stream.
-        let sender = context
+        let sender = connection
             .fetch_notification_map
             .lock()
             .expect("fetch_notification_map poisoned")

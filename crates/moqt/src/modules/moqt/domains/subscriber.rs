@@ -127,7 +127,11 @@ impl Subscriber {
                     tracing::info!("Subscribe ok");
                     if let Err(code) = self
                         .session
-                        .register_data_receiver(message.request_id, message.track_alias)
+                        .register_data_receiver(
+                            self.session.connection(),
+                            message.request_id,
+                            message.track_alias,
+                        )
                         .await
                     {
                         // The track alias is already bound to another active subscription.
@@ -259,7 +263,8 @@ impl Subscriber {
     )]
     pub async fn fetch_cancel(&self, fetch: &FetchHandle) -> anyhow::Result<()> {
         let request_id = fetch.request_id;
-        self.session.remove_pending_fetch(request_id);
+        self.session
+            .remove_pending_fetch(self.session.connection(), request_id);
         self.session
             .connection()
             .control
@@ -297,7 +302,9 @@ impl Subscriber {
     ) -> Result<FetchHandle, RequestFailure> {
         let request_id = self.session.connection().control.next_request_id();
 
-        let pending_fetch = self.session.register_pending_fetch(request_id);
+        let pending_fetch = self
+            .session
+            .register_pending_fetch(self.session.connection(), request_id);
 
         let fetch = Fetch {
             request_id,
@@ -426,7 +433,9 @@ impl Subscriber {
     )]
     pub async fn unsubscribe(&self, subscription: &Subscription) -> anyhow::Result<()> {
         let request_id = subscription.request_id();
-        self.session.cancel_subscription(request_id).await;
+        self.session
+            .cancel_subscription(self.session.connection(), request_id)
+            .await;
         self.session
             .connection()
             .control
@@ -602,6 +611,7 @@ mod tests {
     fn has_pending_fetch(client: &Session, request_id: u64) -> bool {
         let session = client.subscriber().session;
         session
+            .connection()
             .fetch_notification_map
             .lock()
             .unwrap()
@@ -640,6 +650,7 @@ mod tests {
             !client
                 .subscriber()
                 .session
+                .connection()
                 .fetch_notification_map
                 .lock()
                 .unwrap()

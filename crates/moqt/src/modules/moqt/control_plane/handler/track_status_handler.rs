@@ -14,7 +14,7 @@ use crate::{
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
-        domains::session_context::SessionContext,
+        domains::connection::Connection,
     },
     modules::transport::transport_send_stream::TransportSendError,
     object::GroupOrder,
@@ -36,9 +36,9 @@ pub struct TrackStatusHandler {
 }
 
 impl TrackStatusHandler {
-    pub(crate) fn new(session_context: Arc<SessionContext>, track_status: Subscribe) -> Self {
+    pub(crate) fn new(connection: Arc<Connection>, track_status: Subscribe) -> Self {
         let guard = ResponseGuard::new(
-            session_context.connection().clone(),
+            connection,
             track_status.request_id,
             RequestKind::TrackStatus,
         );

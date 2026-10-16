@@ -6,7 +6,7 @@ use crate::{
     modules::executor::{self, JoinHandle},
     modules::moqt::{
         data_plane::stream::stream_receiver::StreamReceiveError,
-        domains::session_context::SessionContext,
+        domains::connection::Connection,
         runtime::dispatch::{
             fetch_notifier::FetchNotifier, incoming_object::IncomingObject,
             subscription_notifier::SubscriptionNotifier,
@@ -19,16 +19,16 @@ use crate::{
 pub(crate) struct UniStreamReceiveTask;
 
 impl UniStreamReceiveTask {
-    pub(crate) fn run(context: Arc<SessionContext>, stream_span: Span) -> JoinHandle {
+    pub(crate) fn run(connection: Arc<Connection>, stream_span: Span) -> JoinHandle {
         executor::spawn(
             "Uni Stream Receiver",
             async move {
                 tracing::debug!("Uni Stream Receiver started");
                 loop {
-                    match context.connection().transport.accept_uni().await {
+                    match connection.transport.accept_uni().await {
                         Ok(stream) => {
                             tracing::debug!("accepted incoming uni stream");
-                            Self::on_stream_received(&context, stream).await;
+                            Self::on_stream_received(&connection, stream).await;
                         }
                         Err(error) => {
                             tracing::debug!(%error, "Uni Stream Receiver stopped: the session ended");
@@ -42,14 +42,8 @@ impl UniStreamReceiveTask {
     }
 
     #[tracing::instrument(level = "debug", name = "on_stream_received", skip_all)]
-    async fn on_stream_received(context: &Arc<SessionContext>, stream: BoxedReceiveStream) -> bool {
-        let incoming = match context
-            .connection()
-            .control
-            .version()
-            .accept_uni_stream(stream)
-            .await
-        {
+    async fn on_stream_received(connection: &Connection, stream: BoxedReceiveStream) -> bool {
+        let incoming = match connection.control.version().accept_uni_stream(stream).await {
             Ok(Some(incoming)) => incoming,
             Ok(None) => {
                 tracing::debug!("Stream finished before its header");
@@ -74,14 +68,14 @@ impl UniStreamReceiveTask {
                     "received subgroup header"
                 );
                 SubscriptionNotifier::notify(
-                    context,
+                    connection,
                     receiver.track_alias,
                     IncomingObject::Subgroup(receiver),
                 )
                 .await;
             }
             IncomingStream::Fetch(receiver) => {
-                FetchNotifier::notify(context, receiver.request_id, receiver).await;
+                FetchNotifier::notify(connection, receiver.request_id, receiver).await;
             }
         }
         true

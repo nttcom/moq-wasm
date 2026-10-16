@@ -349,11 +349,12 @@ impl PendingResponse {
 /// discarded.
 async fn handle_late_response(
     session: &SessionContext,
+    connection: &Connection,
     request_id: RequestId,
     action: LateResponseAction,
     response: ResponseMessage,
 ) {
-    let channel = ControlChannel::of(session.connection());
+    let channel = ControlChannel::of(connection);
     let send_result = match &response {
         ResponseMessage::SubscribeOk(subscribe_ok) => match &action {
             LateResponseAction::Unsubscribe => {
@@ -362,13 +363,13 @@ async fn handle_late_response(
                     "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
                 );
                 session
-                    .cancel_unclaimed_track_alias(subscribe_ok.track_alias)
+                    .cancel_unclaimed_track_alias(connection, subscribe_ok.track_alias)
                     .await;
                 channel
                     .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
                     .await
             }
-            _ => close_on_mismatched_late_response(session, request_id, &response),
+            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
         },
         ResponseMessage::SubscribeNameSpaceOk(_) => match &action {
             LateResponseAction::UnsubscribeNamespace { namespace } => {
@@ -382,7 +383,7 @@ async fn handle_late_response(
                     ))
                     .await
             }
-            _ => close_on_mismatched_late_response(session, request_id, &response),
+            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
         },
         ResponseMessage::PublishNamespaceOk(_) => match &action {
             LateResponseAction::PublishNamespaceDone { namespace } => {
@@ -396,7 +397,7 @@ async fn handle_late_response(
                     ))
                     .await
             }
-            _ => close_on_mismatched_late_response(session, request_id, &response),
+            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
         },
         ResponseMessage::PublishOk(_) => match &action {
             LateResponseAction::PublishDone => {
@@ -415,7 +416,7 @@ async fn handle_late_response(
                     })
                     .await
             }
-            _ => close_on_mismatched_late_response(session, request_id, &response),
+            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
         },
         ResponseMessage::FetchOk(_) => match &action {
             LateResponseAction::FetchCancel => {
@@ -427,11 +428,11 @@ async fn handle_late_response(
                     .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
                     .await
             }
-            _ => close_on_mismatched_late_response(session, request_id, &response),
+            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
         },
         ResponseMessage::TrackStatusOk(_) => match &action {
             LateResponseAction::Discard => discard_late_response(request_id, &response),
-            _ => close_on_mismatched_late_response(session, request_id, &response),
+            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
         },
         _ => discard_late_response(request_id, &response),
     };
@@ -463,6 +464,7 @@ fn discard_late_response(
 /// close the session instead of guessing a withdrawal.
 fn close_on_mismatched_late_response(
     session: &SessionContext,
+    connection: &Connection,
     request_id: RequestId,
     response: &ResponseMessage,
 ) -> Result<(), TransportSendError> {
@@ -471,7 +473,8 @@ fn close_on_mismatched_late_response(
         ?response,
         "Protocol violation: response type does not match the request; closing session"
     );
-    session.close_with_error(
+    session.close_connection(
+        connection,
         TerminationErrorCode::ProtocolViolation,
         "response type does not match the request",
     );
@@ -496,7 +499,7 @@ mod tests {
                     },
                     enums::ResponseMessage,
                 },
-                domains::session_context::IncomingObjectNotification,
+                domains::connection::IncomingObjectNotification,
             },
             test_support::{
                 HANDSHAKE_TIMEOUT, notify_datagram, register_and_take_data_receiver,
@@ -565,6 +568,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
+            context.connection(),
             REQUEST_ID,
             LateResponseAction::Unsubscribe,
             late_subscribe_ok(),
@@ -593,13 +597,14 @@ mod tests {
             spawn_connected_dual_sessions("sinks-late-subscribe-ok-other").await;
         let context = server.subscriber().session;
         context
-            .register_data_receiver(OTHER_REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
             .await
             .unwrap();
 
         // Act
         handle_late_response(
             &context,
+            context.connection(),
             REQUEST_ID,
             LateResponseAction::Unsubscribe,
             late_subscribe_ok(),
@@ -623,6 +628,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
+            context.connection(),
             REQUEST_ID,
             LateResponseAction::PublishDone,
             late_publish_ok(),
@@ -647,6 +653,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
+            context.connection(),
             REQUEST_ID,
             LateResponseAction::FetchCancel,
             late_fetch_ok(),
@@ -669,6 +676,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
+            context.connection(),
             REQUEST_ID,
             LateResponseAction::Unsubscribe,
             late_track_status_ok(),

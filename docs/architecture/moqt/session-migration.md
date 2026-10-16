@@ -38,9 +38,10 @@ own. Putting the id map into `Session` serves Rust and the browser alike.
 
 `Session` becomes the logical session. The per-connection state of
 `SessionContext` moves to a `Connection` (transport, `ControlChannel` with
-its request id allocator, the track aliases this side assigns, GOAWAY state;
-the object sinks and the FETCH stream notifications follow in step 2, where
-they get keyed by wire alias and wire request id). `Session` holds:
+its request id allocator, the track aliases this side assigns, GOAWAY state,
+the object sinks keyed by wire alias and the FETCH stream notifications keyed
+by wire request id), and the tasks that read a connection are bound to it
+(`ConnectionTasks`). `Session` holds:
 
 - the current `Connection` and, during a migration, the previous one;
 - the logical request table (below);
@@ -163,9 +164,10 @@ closes it.
 Each step is one PR, stacked:
 
 1. **Connections under `Session`, no migration.** `SessionContext` splits into
-   the logical session and `Connection`, and each handler answers on the
-   connection its request arrived on; logical ids equal wire ids. No
-   behaviour change; the existing tests are the check.
+   the logical session and `Connection`, the tasks and object sinks of a
+   connection are bound to it, and each handler answers on the connection
+   its request arrived on; logical ids equal wire ids. No behaviour change;
+   the existing tests are the check.
 2. **`follow_go_away` and subscribing-side migration in `Session`.** Logical id
    maps, per-stream cutover, events. The relay sets `false`. The recorder
    moves from `MigratingSession` to `Session`.

@@ -10,7 +10,7 @@ use crate::{
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
-        domains::session_context::SessionContext,
+        domains::connection::Connection,
     },
     modules::transport::transport_send_stream::TransportSendError,
 };
@@ -24,12 +24,9 @@ pub struct PublishNamespaceHandler {
 }
 
 impl PublishNamespaceHandler {
-    pub(crate) fn new(
-        session_context: Arc<SessionContext>,
-        publish_namespace: PublishNamespace,
-    ) -> Self {
+    pub(crate) fn new(connection: Arc<Connection>, publish_namespace: PublishNamespace) -> Self {
         let guard = ResponseGuard::new(
-            session_context.connection().clone(),
+            connection,
             publish_namespace.request_id,
             RequestKind::PublishNamespace,
         );

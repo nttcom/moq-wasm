@@ -12,7 +12,7 @@ use crate::{
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
-        domains::session_context::SessionContext,
+        domains::{connection::Connection, session_context::SessionContext},
     },
     modules::transport::transport_send_stream::TransportSendError,
     object::GroupOrder,
@@ -38,9 +38,13 @@ pub struct SubscribeHandler {
 }
 
 impl SubscribeHandler {
-    pub(crate) fn new(session_context: Arc<SessionContext>, subscribe_message: Subscribe) -> Self {
+    pub(crate) fn new(
+        session_context: Arc<SessionContext>,
+        connection: Arc<Connection>,
+        subscribe_message: Subscribe,
+    ) -> Self {
         let guard = ResponseGuard::new(
-            session_context.connection().clone(),
+            connection,
             subscribe_message.request_id,
             RequestKind::Subscribe,
         );

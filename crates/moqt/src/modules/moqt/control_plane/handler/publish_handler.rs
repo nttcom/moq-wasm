@@ -11,7 +11,7 @@ use crate::{
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
-        domains::session_context::SessionContext,
+        domains::{connection::Connection, session_context::SessionContext},
     },
     modules::transport::transport_send_stream::TransportSendError,
     object::GroupOrder,
@@ -37,12 +37,13 @@ pub struct PublishHandler {
 }
 
 impl PublishHandler {
-    pub(crate) fn new(session_context: Arc<SessionContext>, publish_message: Publish) -> Self {
-        let guard = ResponseGuard::new(
-            session_context.connection().clone(),
-            publish_message.request_id,
-            RequestKind::Publish,
-        );
+    pub(crate) fn new(
+        session_context: Arc<SessionContext>,
+        connection: Arc<Connection>,
+        publish_message: Publish,
+    ) -> Self {
+        let guard =
+            ResponseGuard::new(connection, publish_message.request_id, RequestKind::Publish);
         Self {
             session_context,
             guard,
@@ -101,7 +102,7 @@ impl PublishHandler {
     pub async fn accept_data_receiver(&self) {
         if let Err(code) = self
             .session_context
-            .register_data_receiver(self.request_id, self.track_alias)
+            .register_data_receiver(self.guard.connection(), self.request_id, self.track_alias)
             .await
         {
             // The track alias is already bound to another active subscription.
@@ -110,8 +111,11 @@ impl PublishHandler {
                 track_alias = self.track_alias,
                 "PUBLISH reused an in-use track alias; closing session"
             );
-            self.session_context
-                .close_with_error(code, "PUBLISH reused an in-use track alias");
+            self.session_context.close_connection(
+                self.guard.connection(),
+                code,
+                "PUBLISH reused an in-use track alias",
+            );
             return;
         }
         tracing::info!(
@@ -126,7 +130,7 @@ impl PublishHandler {
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
         self.session_context
-            .cancel_unclaimed_track_alias(self.track_alias)
+            .cancel_unclaimed_track_alias(self.guard.connection(), self.track_alias)
             .await;
         self.guard.reject(code, reason_phrase).await
     }
@@ -142,7 +146,7 @@ mod tests {
     use crate::{
         SessionEvent,
         modules::{
-            moqt::domains::session_context::IncomingObjectNotification,
+            moqt::domains::connection::IncomingObjectNotification,
             test_support::{
                 notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
             },

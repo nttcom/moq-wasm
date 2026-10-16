@@ -5,25 +5,23 @@ use tracing::{Instrument, Span};
 use crate::{
     SessionEvent,
     modules::executor::{self, JoinHandle},
-    modules::moqt::domains::session_context::SessionContext,
+    modules::moqt::domains::connection::Connection,
 };
 
 pub(crate) struct DisconnectWatchTask;
 
 impl DisconnectWatchTask {
     pub(crate) fn run(
-        session_context: Arc<SessionContext>,
+        connection: Arc<Connection>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         close_watcher_span: Span,
     ) -> JoinHandle {
         executor::spawn(
             "Connection Close Watcher",
             async move {
-                session_context.connection().transport.closed().await;
+                connection.transport.closed().await;
 
-                if let Err(error) = session_context
-                    .event_sender
-                    .send(SessionEvent::Disconnected())
-                {
+                if let Err(error) = event_sender.send(SessionEvent::Disconnected()) {
                     tracing::warn!("failed to send disconnect event: {:?}", error);
                 }
             }
