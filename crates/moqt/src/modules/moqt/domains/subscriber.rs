@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::Instrument;
 
 use crate::{
-    RequestFailure, SubscriberInitiatedSubscription, Subscription,
+    RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
     fetch::FetchOption,
     modules::moqt::{
         control_plane::{
@@ -433,6 +433,19 @@ impl Subscriber {
                 .await?;
         }
         Ok(())
+    }
+
+    /// The objects of `subscription`. The wait for the first data stream runs
+    /// in the reader's task, so unlike `accept_data_receiver`,
+    /// `TrackReader::next_object` may be polled in `select!` from the start.
+    /// A track delivered in datagrams yields a `MalformedTrackError`.
+    pub fn track_reader(&self, subscription: &Subscription) -> TrackReader {
+        TrackReader::of(
+            Subscriber {
+                session: self.session.clone(),
+            },
+            subscription.clone(),
+        )
     }
 
     async fn lock_carried(&self) -> Option<tokio::sync::MutexGuard<'_, CarriedRequests>> {

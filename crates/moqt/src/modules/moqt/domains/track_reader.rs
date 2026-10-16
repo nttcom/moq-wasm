@@ -3,9 +3,10 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use tokio::sync::mpsc;
 
 use crate::{
-    modules::executor::{self, JoinHandle},
+    Subscriber, Subscription,
+    modules::executor::{self, JoinHandle, MaybeSend},
     object::{
-        ExtensionHeaders, ForwardingPreference, MalformedTrackError, ObjectStatus,
+        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, ObjectStatus,
         StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
     },
 };
@@ -37,6 +38,24 @@ impl TrackReader {
         let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
         Self {
             object_receiver,
+            _stream_accept_task: SubgroupStreamAcceptTask::run(
+                async move { Ok(factory) },
+                object_sender,
+            ),
+        }
+    }
+
+    pub(crate) fn of(subscriber: Subscriber, subscription: Subscription) -> Self {
+        let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        let factory = async move {
+            let mut subscriber = subscriber;
+            match subscriber.accept_data_receiver(&subscription).await? {
+                DataReceiver::Stream(factory) => Ok(factory),
+                DataReceiver::Datagram(_) => Err(MalformedTrackError.into()),
+            }
+        };
+        Self {
+            object_receiver,
             _stream_accept_task: SubgroupStreamAcceptTask::run(factory, object_sender),
         }
     }
@@ -56,10 +75,21 @@ struct SubgroupStreamAcceptTask {
 
 impl SubgroupStreamAcceptTask {
     fn run(
-        mut factory: StreamDataReceiverFactory,
+        factory: impl Future<Output = anyhow::Result<StreamDataReceiverFactory>> + MaybeSend + 'static,
         object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
     ) -> Self {
         let join_handle = executor::spawn("Track Reader", async move {
+            let mut factory = match factory.await {
+                Ok(factory) => factory,
+                Err(error) => {
+                    if error.is::<MalformedTrackError>() {
+                        let _ = object_sender.send(Err(error)).await;
+                    } else {
+                        tracing::debug!(%error, "track delivered no data stream");
+                    }
+                    return;
+                }
+            };
             let mut subgroup_readers = FuturesUnordered::new();
             loop {
                 tokio::select! {
@@ -200,6 +230,24 @@ mod tests {
                 (1, 0, 0, Bytes::from_static(b"g1-o0")),
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn a_reader_made_before_the_first_stream_can_be_polled_and_dropped() {
+        // Arrange
+        let track = published_track("reader-before-first-stream").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut reader = track.server.subscriber().track_reader(&track.accepted);
+
+        // Act: a poll that times out drops the future while nothing arrived
+        let early = tokio::time::timeout(NO_OBJECT_TIMEOUT, reader.next_object()).await;
+        let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
+        send_payload(&mut group_0, b"g0-o0").await;
+        let objects = collect_objects(&mut reader, 1).await;
+
+        // Assert
+        assert!(early.is_err());
+        assert_eq!(objects[0].payload, Bytes::from_static(b"g0-o0"));
     }
 
     #[tokio::test]
