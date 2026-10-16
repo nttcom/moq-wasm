@@ -155,7 +155,7 @@ pub(crate) mod tests {
         sample::{AudioConfig, AudioSample, Timestamp},
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, delta_frame_annexb,
-            fixture_video_config, ivf_frames, keyframe_annexb, mono_48k,
+            fixture_video_config, ivf_events, ivf_frames, keyframe_annexb, mono_48k,
         },
     };
 
@@ -340,20 +340,10 @@ pub(crate) mod tests {
 
     /// A video-only file of the fixture's two frames, demuxed from LOC objects.
     fn mux_ivf(codec: loc::VideoCodec, fixture: &[u8]) -> Vec<u8> {
-        let mut demuxer = loc::Demuxer::video(codec);
         let mut muxer = Fmp4Muxer::new();
         let mut file = Vec::new();
-        for (index, payload) in ivf_frames(fixture).into_iter().enumerate() {
-            let object = loc::LocObject {
-                extensions: vec![loc::LocExtension::varint(
-                    loc::CAPTURE_TIMESTAMP_ID,
-                    index as u64 * 33_333,
-                )],
-                payload,
-            };
-            for event in demuxer.push(&object).unwrap() {
-                file.extend_from_slice(&muxer.push(&event).unwrap());
-            }
+        for event in ivf_events(codec, fixture) {
+            file.extend_from_slice(&muxer.push(&event).unwrap());
         }
         file.extend_from_slice(&muxer.finish().unwrap());
         file

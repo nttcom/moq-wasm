@@ -108,7 +108,7 @@ impl Demuxer {
         })];
         for track in self.tracks.values() {
             events.push(match &track.media {
-                Media::Video(config) => MediaEvent::VideoConfig(VideoConfig::Avc(config.clone())),
+                Media::Video(config) => MediaEvent::VideoConfig(config.clone()),
                 Media::Audio(config) => MediaEvent::AudioConfig(config.clone()),
             });
         }
@@ -163,7 +163,10 @@ impl SampleEntry {
         let pts = shift(dts, self.composition_offset, track.timescale);
         Ok(match &track.media {
             Media::Video(config) => MediaEvent::Video(VideoSample {
-                data: annexb_access_unit(config, &data, self.is_sync)?,
+                data: match config {
+                    VideoConfig::Avc(record) => annexb_access_unit(record, &data, self.is_sync)?,
+                    VideoConfig::Vp8(_) | VideoConfig::Vp9(_) | VideoConfig::Av1(_) => data,
+                },
                 is_keyframe: self.is_sync,
                 pts,
                 dts,
@@ -330,9 +333,13 @@ fn optional_u32(body: &[u8], offset: &mut usize, flags: u32, wanted: u32) -> Res
 mod tests {
     use super::*;
     use crate::{
+        av1, loc,
         mp4::Fmp4Muxer,
         sample::AudioConfig,
-        test_support::{FIXTURE_MP4, FIXTURE_TS, audio_samples, count_events, video_samples},
+        test_support::{
+            FIXTURE_AV1_IVF, FIXTURE_MP4, FIXTURE_TS, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF,
+            audio_samples, count_events, ivf_events, video_samples,
+        },
     };
 
     fn demux(data: &[u8], chunk: usize) -> Vec<MediaEvent> {
@@ -426,6 +433,50 @@ mod tests {
         }
         assert_eq!(audio_samples(&actual).len(), audio_samples(&expected).len());
     }
+
+    #[test]
+    fn round_trips_vp8_vp9_and_av1_video_the_muxer_wrote() {
+        let cases = [
+            (loc::VideoCodec::Vp8, FIXTURE_VP8_IVF),
+            (loc::VideoCodec::Vp9, FIXTURE_VP9_IVF),
+            (loc::VideoCodec::Av1, FIXTURE_AV1_IVF),
+        ];
+        for (codec, fixture) in cases {
+            // Arrange
+            let source = ivf_events(codec, fixture);
+            let mut muxer = Fmp4Muxer::new();
+            let mut stream = BytesMut::new();
+            for event in &source {
+                stream.extend_from_slice(&muxer.push(event).unwrap());
+            }
+            stream.extend_from_slice(&muxer.finish().unwrap());
+
+            // Act
+            let events = demux(&stream, stream.len());
+
+            // Assert: the muxer drops AV1 temporal delimiters and its 90 kHz timescale loses at most one tick (≤ 12 µs)
+            let config = |events: &[MediaEvent]| {
+                events.iter().find_map(|event| match event {
+                    MediaEvent::VideoConfig(config) => Some(config.clone()),
+                    _ => None,
+                })
+            };
+            let expected_config = config(&source).unwrap();
+            assert_eq!(config(&events), Some(expected_config.clone()));
+            let (expected, actual) = (video_samples(&source), video_samples(&events));
+            assert_eq!(actual.len(), expected.len(), "{codec:?}");
+            for (left, right) in actual.iter().zip(&expected) {
+                let expected_data = match expected_config {
+                    VideoConfig::Av1(_) => av1::without_temporal_delimiters(&right.data).unwrap(),
+                    _ => right.data.clone(),
+                };
+                assert_eq!(left.data, expected_data, "{codec:?}");
+                assert_eq!(left.is_keyframe, right.is_keyframe, "{codec:?}");
+                assert!(left.pts.micros().abs_diff(right.pts.micros()) <= 12);
+            }
+        }
+    }
+
     #[test]
     fn round_trips_opus_alaw_and_mp3_audio_the_muxer_wrote() {
         // Arrange: (config, frame, frame ms): Opus TOC 0xFC and 160 A-law bytes at

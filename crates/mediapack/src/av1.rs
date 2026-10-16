@@ -75,6 +75,14 @@ pub fn parse_temporal_unit(data: &Bytes, current: Option<&Av1Config>) -> Result<
     bail!("AV1 temporal unit without a frame")
 }
 
+pub(crate) fn read_sequence_header(data: &Bytes) -> Result<Option<Av1Config>> {
+    obus(data)?
+        .into_iter()
+        .find(|obu| obu.obu_type == OBU_SEQUENCE_HEADER)
+        .map(|obu| parse_sequence_header(&data[obu.payload], data.slice(obu.whole)))
+        .transpose()
+}
+
 /// A temporal unit as an ISOBMFF sample, which the AV1-ISOBMFF binding §2.4
 /// forbids to carry temporal delimiters.
 pub(crate) fn without_temporal_delimiters(data: &Bytes) -> Result<Bytes> {
