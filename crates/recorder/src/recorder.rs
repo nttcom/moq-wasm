@@ -11,6 +11,7 @@ use moqt::{
     fetch::{Fetch, FetchDataReceiver},
     subscribe::FilterType,
 };
+use msf::Catalog;
 use object_store::path::Path;
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -24,7 +25,7 @@ use crate::{
     relay,
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
-    track_selection::{Selection, VideoChoice, select_tracks},
+    track_selection::{Selection, VideoChoice, select_audio, select_tracks},
     upload_task::{UploadQueue, UploadTask},
 };
 
@@ -151,13 +152,16 @@ async fn list_tracks(session: &MigratingSession, namespace: &str) -> Result<()> 
     let catalog = CatalogReader::open(session, namespace)
         .await?
         .next()
-        .await?;
+        .await?
+        .context("catalog track ended")?;
     println!("{}", track_table(&catalog));
     Ok(())
 }
 
 /// Records `namespace` into `path` until `stop` turns true or a track ends.
-/// A stop while the catalog lists no video track yet records nothing.
+/// A stop while the catalog lists no video track yet records nothing. While
+/// the recording has no audio, each later catalog object is checked for an
+/// audio track to add.
 pub(crate) async fn record_broadcast(
     session: &MigratingSession,
     namespace: &str,
@@ -176,17 +180,27 @@ pub(crate) async fn record_broadcast(
         audio = selection.audio.as_ref().map(|audio| audio.name.as_str()),
         "catalog resolved"
     );
+    if selection.audio.is_none() {
+        tracing::info!(
+            track = options.audio_track.as_deref(),
+            "catalog lists no LOC audio track that can be decoded yet; recording video until one is listed"
+        );
+    }
 
     let filter_type = if options.from_cache {
         FilterType::LargestObject
     } else {
         FilterType::NextGroupStart
     };
-    let mut video_track =
-        relay::subscribe(session, namespace, &selection.video.name, filter_type).await?;
-    let mut audio_track = match &selection.audio {
+    let video = relay::subscribe(session, namespace, &selection.video.name, filter_type).await?;
+    let audio = match &selection.audio {
         Some(audio) => Some(relay::subscribe(session, namespace, &audio.name, filter_type).await?),
         None => None,
+    };
+    let mut tracks = Subscriptions {
+        catalog,
+        video,
+        audio,
     };
 
     let uploader = options
@@ -204,8 +218,8 @@ pub(crate) async fn record_broadcast(
     tracing::info!(paths = ?recording.paths().collect::<Vec<_>>(), "recording started");
     let cached = if options.from_cache {
         record_cached(
-            &video_track,
-            audio_track.as_ref(),
+            &tracks.video,
+            tracks.audio.as_ref(),
             &mut recording,
             &mut stop,
         )
@@ -216,8 +230,9 @@ pub(crate) async fn record_broadcast(
     if cached.is_continue() {
         record_live(
             session,
-            &mut video_track,
-            audio_track.as_mut(),
+            namespace,
+            &mut tracks,
+            options.audio_track.as_deref(),
             &mut recording,
             &mut stop,
         )
@@ -239,7 +254,7 @@ async fn wait_for_selection(
     };
     loop {
         let selection = select_tracks(
-            &catalog.next().await?,
+            &catalog.next().await?.context("catalog track ended")?,
             video_choice,
             options.audio_track.as_deref(),
         )?;
@@ -290,14 +305,25 @@ async fn record_cached(
     Ok(ControlFlow::Continue(()))
 }
 
+struct Subscriptions {
+    catalog: CatalogReader,
+    video: MigratingTrack,
+    audio: Option<MigratingTrack>,
+}
+
 async fn record_live(
     session: &MigratingSession,
-    video_track: &mut MigratingTrack,
-    mut audio_track: Option<&mut MigratingTrack>,
+    namespace: &str,
+    tracks: &mut Subscriptions,
+    audio_name: Option<&str>,
     recording: &mut Recording,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<()> {
+    let mut catalog_open = true;
     loop {
+        // `biased` polls the catalog before the media, so an audio track listed
+        // while the first video object waits joins the file before it is
+        // written to.
         tokio::select! {
             biased;
             _ = stop_requested(stop) => {
@@ -308,7 +334,18 @@ async fn record_live(
                 tracing::warn!(%close, "session closed");
                 return Ok(());
             }
-            object = video_track.next_object() => match object {
+            catalog = tracks.catalog.next(), if catalog_open => match catalog {
+                Ok(Some(catalog)) if tracks.audio.is_none() => {
+                    match add_listed_audio(session, namespace, &catalog, audio_name, recording).await {
+                        Ok(audio) => tracks.audio = audio,
+                        Err(error) => tracing::warn!(%error, "cannot add the audio track"),
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => catalog_open = false,
+                Err(error) => tracing::warn!(%error, "catalog read error"),
+            },
+            object = tracks.video.next_object() => match object {
                 Ok(Some(object)) => recording.push_video(&object).await?,
                 Ok(None) => {
                     tracing::info!("video track ended");
@@ -318,7 +355,7 @@ async fn record_live(
                     tracing::warn!(%error, "video read error; continuing with the next group");
                 }
             },
-            object = next_audio_object(audio_track.as_deref_mut()) => match object {
+            object = next_audio_object(tracks.audio.as_mut()) => match object {
                 Ok(Some(object)) => recording.push_audio(&object).await?,
                 Ok(None) => {
                     tracing::info!("audio track ended");
@@ -330,6 +367,23 @@ async fn record_live(
             },
         }
     }
+}
+
+async fn add_listed_audio(
+    session: &MigratingSession,
+    namespace: &str,
+    catalog: &Catalog,
+    audio_name: Option<&str>,
+    recording: &mut Recording,
+) -> Result<Option<MigratingTrack>> {
+    let Some(audio) = select_audio(catalog, audio_name)? else {
+        return Ok(None);
+    };
+    let track =
+        relay::subscribe(session, namespace, &audio.name, FilterType::NextGroupStart).await?;
+    recording.add_audio(&audio).await?;
+    tracing::info!(audio = %audio.name, "catalog lists the audio track now; recording it");
+    Ok(Some(track))
 }
 
 /// Clears `fetch` once the FETCH ended or failed; status objects yield nothing.

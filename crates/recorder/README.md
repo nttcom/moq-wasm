@@ -81,7 +81,8 @@ from the moment it is published, with the tracks picked from its catalog
   remaining tie goes to the track listed first. A light default matters
   because a meeting participant encodes a rendition only while someone
   subscribes to it, the recorder included. The choice is made once, from
-  the catalog at start, and logged as `catalog resolved`.
+  the catalog at start, and logged as `catalog resolved`; only an audio
+  track missing at start is added later (see below).
 - Recording starts at the next group, i.e. the next keyframe, or with
   `--from-cache` at the oldest keyframe still cached, and ends on
   Ctrl-C, when the relay closes the session, or 10 s after the publisher ends
@@ -97,9 +98,14 @@ from the moment it is published, with the tracks picked from its catalog
   ... (`<stem>-<track>-2.mp4` per track). Every file starts with its own init
   segment and a keyframe (any audio frame in an audio-only file), and keeps
   the recording's timeline, so the second file of 60 s segments starts at 60 s.
-- An audio track the catalog lists without its configuration (a `broadcast`
-  publisher that has not seen an audio frame yet, or a codec without an fMP4
-  mapping) is left out with a warning and the video is recorded alone.
+- While the catalog lists no audio track the recorder can decode (a
+  `broadcast` publisher lists AAC before its first audio frame delivers the
+  configuration; a meeting participant lists audio only while the microphone
+  is on), the video is recorded alone and each later catalog is checked. The
+  first audio track one lists is recorded from its next group: in the
+  combined file at once if no video has been written yet, otherwise from the
+  next keyframe on in `<stem>-2.mp4`; per track in its own file. A codec
+  without an fMP4 mapping is never recorded.
 - With `--upload`, each closed file becomes the object
   `<prefix>/<namespace>/<track>/<start Unix ms>-<index>.mp4` (no `<track>` for
   the combined file), with the capture origin in its `capture-origin-us`

@@ -12,7 +12,7 @@ use moqt::TrackObject;
 use crate::{
     file_writer::{ClosedFile, RecordingFile},
     pipeline::{FileTracks, Output, Pipeline, capture_timestamp},
-    track_selection::Selection,
+    track_selection::{AudioTrack, Selection},
     upload_task::{Upload, UploadQueue},
 };
 
@@ -57,6 +57,9 @@ pub(crate) struct Recording {
     /// The video's file is at index 0.
     files: Vec<TrackFile>,
     audio: Option<usize>,
+    layout: Layout,
+    path: PathBuf,
+    segment_length: Option<Duration>,
     capture_origin: Option<Timestamp>,
     pending_audio: VecDeque<TrackObject>,
     uploader: Option<Uploader>,
@@ -77,35 +80,51 @@ impl Recording {
         segment_length: Option<Duration>,
         uploader: Option<Uploader>,
     ) -> Result<Self> {
-        let video = Some(selection.video.codec);
-        let audio = selection.audio.as_ref().map(|audio| audio.config.clone());
-        let mut files = Vec::new();
-        let audio_index = match layout {
-            Layout::Combined => {
-                let has_audio = audio.is_some();
-                let tracks = FileTracks { video, audio };
-                files.push(TrackFile::create(tracks, None, &path, segment_length).await?);
-                has_audio.then_some(0)
-            }
-            Layout::PerTrack => {
-                let tracks = FileTracks { video, audio: None };
-                let name = Some(selection.video.name.as_str());
-                files.push(TrackFile::create(tracks, name, &path, segment_length).await?);
-                if let Some(track) = &selection.audio {
-                    let tracks = FileTracks { video: None, audio };
-                    let name = Some(track.name.as_str());
-                    files.push(TrackFile::create(tracks, name, &path, segment_length).await?);
-                }
-                selection.audio.as_ref().map(|_| 1)
-            }
+        let tracks = FileTracks {
+            video: Some(selection.video.codec),
+            audio: None,
         };
-        Ok(Self {
-            files,
-            audio: audio_index,
+        let name = (layout == Layout::PerTrack).then_some(selection.video.name.as_str());
+        let video = TrackFile::create(tracks, name, &path, segment_length).await?;
+        let mut recording = Self {
+            files: vec![video],
+            audio: None,
+            layout,
+            path,
+            segment_length,
             capture_origin: None,
             pending_audio: VecDeque::new(),
             uploader,
-        })
+        };
+        if let Some(audio) = &selection.audio {
+            recording.add_audio(audio).await?;
+        }
+        Ok(recording)
+    }
+
+    /// Adds the audio track to a recording without one. The per-track layout
+    /// opens a file for it; the combined file takes it at once while still
+    /// empty, else from its next keyframe (see `Pipeline::add_audio`).
+    pub(crate) async fn add_audio(&mut self, track: &AudioTrack) -> Result<()> {
+        let index = match self.layout {
+            Layout::Combined => {
+                self.files[0].pipeline.add_audio(track.config.clone())?;
+                0
+            }
+            Layout::PerTrack => {
+                let tracks = FileTracks {
+                    video: None,
+                    audio: Some(track.config.clone()),
+                };
+                let file =
+                    TrackFile::create(tracks, Some(&track.name), &self.path, self.segment_length)
+                        .await?;
+                self.files.push(file);
+                self.files.len() - 1
+            }
+        };
+        self.audio = Some(index);
+        Ok(())
     }
 
     pub(crate) fn paths(&self) -> impl Iterator<Item = &Path> {
@@ -394,6 +413,49 @@ mod tests {
         let audio = audio_samples(&recorded);
         assert_eq!(audio.len(), MAX_PENDING_AUDIO);
         assert_eq!(audio[0].pts, Timestamp::from_millis(20));
+    }
+
+    #[tokio::test]
+    async fn an_audio_track_listed_after_the_recording_started_joins_the_combined_file() {
+        // Arrange: the first catalog listed the audio track without its configuration
+        let fixture = fixture();
+        let start = first_video_capture(&fixture.video[0]);
+        let dir = scratch_dir();
+        let video_only = Selection {
+            audio: None,
+            ..selection()
+        };
+        let mut recording = Recording::create(
+            &video_only,
+            Layout::Combined,
+            dir.join("rec.mp4"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Act: the next catalog lists it before the first video object arrives
+        recording
+            .add_audio(&selection().audio.unwrap())
+            .await
+            .unwrap();
+        recording.push_video(&fixture.video[0]).await.unwrap();
+        recording
+            .push_audio(&opus_object(1, 0, start + 20_000))
+            .await
+            .unwrap();
+        recording.push_video(&fixture.video[1]).await.unwrap();
+        let paths: Vec<_> = recording.paths().map(Path::to_path_buf).collect();
+        recording.finish().await.unwrap();
+
+        // Assert
+        let recorded = demux(&std::fs::read(dir.join("rec.mp4")).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(paths, [dir.join("rec.mp4")]);
+        assert!(recorded.contains(&MediaEvent::AudioConfig(opus_config())));
+        assert_eq!(video_samples(&recorded).len(), 2);
+        assert_eq!(audio_samples(&recorded)[0].pts, Timestamp::from_millis(20));
     }
 
     #[tokio::test]

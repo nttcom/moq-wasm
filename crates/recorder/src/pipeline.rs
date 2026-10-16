@@ -12,6 +12,7 @@ use moqt::TrackObject;
 /// What one object produced. `previous_file_tail` ends the file written so
 /// far when a configuration change forces a new init segment or a segment
 /// reached its length; `data` then belongs to the next file.
+#[derive(Default)]
 pub(crate) struct Output {
     pub(crate) previous_file_tail: Option<Bytes>,
     pub(crate) data: Bytes,
@@ -34,6 +35,9 @@ pub(crate) struct Pipeline {
     video_codec: Option<loc::VideoCodec>,
     audio_track: Option<AudioConfig>,
     streams: StreamSet,
+    /// The tracks of the file the muxer writes. Lags `streams` after
+    /// `add_audio` on a started file, until the next keyframe starts a new file.
+    muxer_streams: StreamSet,
     muxer: Fmp4Muxer,
     video_config: Option<VideoConfig>,
     audio_config: Option<AudioConfig>,
@@ -63,6 +67,7 @@ impl Pipeline {
             video_codec: tracks.video,
             audio_track: tracks.audio.clone(),
             streams,
+            muxer_streams: streams,
             muxer: new_muxer(streams, None, tracks.audio.as_ref())?,
             video_config: None,
             audio_config: tracks.audio,
@@ -93,6 +98,25 @@ impl Pipeline {
         Ok(output)
     }
 
+    /// Adds an audio track to a video-only pipeline. Takes effect at once
+    /// while the file is still empty; otherwise the current file stays
+    /// video-only, the next keyframe starts a file with both tracks, and audio
+    /// before that keyframe is dropped.
+    pub(crate) fn add_audio(&mut self, config: AudioConfig) -> Result<()> {
+        self.streams.has_audio = true;
+        self.audio_track = Some(config.clone());
+        self.audio_config = Some(config);
+        if !self.file_started {
+            self.muxer = new_muxer(
+                self.streams,
+                self.video_config.as_ref(),
+                self.audio_config.as_ref(),
+            )?;
+            self.muxer_streams = self.streams;
+        }
+        Ok(())
+    }
+
     pub(crate) fn push_audio(
         &mut self,
         object: &TrackObject,
@@ -102,6 +126,9 @@ impl Pipeline {
             .audio_track
             .clone()
             .context("audio object for a file without audio")?;
+        if !self.muxer_streams.has_audio {
+            return Ok(Output::default());
+        }
         let group_complete = self.video_codec.is_none() && self.group_complete(object);
         let loc_object = to_loc_object(object);
         let events = demuxer(&mut self.audio, capture_origin, || {
@@ -149,9 +176,9 @@ impl Pipeline {
                 MediaEvent::Streams(_) => continue,
                 MediaEvent::VideoConfig(config) => self.video_config.as_ref() != Some(config),
                 MediaEvent::AudioConfig(config) => self.audio_config.as_ref() != Some(config),
-                MediaEvent::Video(_) | MediaEvent::Audio(_) => {
-                    leading_sample.is_some_and(|pts| self.segment_ended(pts))
-                }
+                MediaEvent::Video(_) | MediaEvent::Audio(_) => leading_sample.is_some_and(|pts| {
+                    self.muxer_streams != self.streams || self.segment_ended(pts)
+                }),
             };
             if changed && self.file_started {
                 tail.get_or_insert_default()
@@ -198,6 +225,7 @@ impl Pipeline {
             self.video_config.as_ref(),
             self.audio_config.as_ref(),
         )?;
+        self.muxer_streams = self.streams;
         self.file_started = false;
         self.file_start = None;
         Ok(tail.freeze())
@@ -475,6 +503,50 @@ mod tests {
         let recorded = demux(&next_file);
         assert!(recorded.contains(&MediaEvent::VideoConfig(VideoConfig::Avc(changed))));
         assert_eq!(video_samples(&recorded).len(), 2);
+    }
+
+    #[test]
+    fn an_audio_track_added_after_the_file_started_begins_with_the_next_keyframe() {
+        // Arrange: the first group is written as video only
+        let fixture = fixture();
+        let mut pipeline = Pipeline::new(tracks(None), None).unwrap();
+        let origin = capture_timestamp(&fixture.video[0]);
+        let start = first_video_capture(&fixture.video[0]);
+        let (first_group, later_groups): (Vec<_>, Vec<_>) = fixture
+            .video
+            .iter()
+            .partition(|object| object.group_id == 1);
+        let mut first_file = BytesMut::new();
+        for object in first_group {
+            first_file.extend_from_slice(&pipeline.push_video(object, origin).unwrap().data);
+        }
+
+        // Act
+        pipeline.add_audio(opus_config()).unwrap();
+        let before_keyframe = pipeline
+            .push_audio(&opus_object(1, 0, start + 20_000), origin)
+            .unwrap();
+        let rotated = pipeline.push_video(later_groups[0], origin).unwrap();
+        let after_keyframe = pipeline
+            .push_audio(
+                &opus_object(2, 0, first_video_capture(later_groups[0])),
+                origin,
+            )
+            .unwrap();
+
+        // Assert: the audio before the keyframe is dropped, the next file holds both tracks
+        assert!(before_keyframe.data.is_empty());
+        first_file.extend_from_slice(rotated.previous_file_tail.as_ref().unwrap());
+        let mut next_file = BytesMut::from(rotated.data.as_ref());
+        next_file.extend_from_slice(&after_keyframe.data);
+        next_file.extend_from_slice(&pipeline.finish().unwrap());
+        let first = demux(&first_file);
+        let next = demux(&next_file);
+        assert!(audio_samples(&first).is_empty());
+        assert!(!first.contains(&MediaEvent::AudioConfig(opus_config())));
+        assert!(next.contains(&MediaEvent::AudioConfig(opus_config())));
+        assert_eq!(audio_samples(&next).len(), 1);
+        assert!(video_samples(&next)[0].is_keyframe);
     }
 
     #[test]
