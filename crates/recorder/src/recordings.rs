@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::{
     recorder::BroadcastOptions,
     recording::Layout,
-    room_recording::{MemberStatus, RoomConfig, RoomRecording, RoomState},
+    room_recording::{MemberStatus, RecordingLimits, RoomConfig, RoomRecording, RoomState},
 };
 
 /// What every recording the server starts shares.
@@ -24,6 +24,7 @@ pub(crate) struct ServeConfig {
     pub(crate) upload: Option<(Arc<dyn ObjectStore>, Path)>,
     pub(crate) max_video_height: u32,
     pub(crate) segment_length: Option<Duration>,
+    pub(crate) limits: RecordingLimits,
 }
 
 #[derive(Debug)]
@@ -99,6 +100,7 @@ impl Recordings {
                 segment_length: self.config.segment_length,
                 upload: None,
             },
+            limits: self.config.limits,
         });
         tracing::info!(%id, namespace_prefix, ?layout, "recording requested");
         entries.push(Entry {
