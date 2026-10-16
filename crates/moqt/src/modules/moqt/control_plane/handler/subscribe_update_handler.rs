@@ -1,5 +1,8 @@
 use crate::{
-    modules::moqt::control_plane::control_messages::messages::subscribe_update::SubscribeUpdate,
+    modules::moqt::{
+        control_plane::control_messages::messages::subscribe_update::SubscribeUpdate,
+        domains::connection::Connection,
+    },
     object::Location,
 };
 
@@ -15,10 +18,11 @@ pub struct SubscribeUpdateHandler {
 }
 
 impl SubscribeUpdateHandler {
-    pub(crate) fn new(subscribe_update: SubscribeUpdate) -> Self {
+    pub(crate) fn new(connection: &Connection, subscribe_update: SubscribeUpdate) -> Self {
         Self {
-            request_id: subscribe_update.request_id,
-            subscription_request_id: subscribe_update.subscription_request_id,
+            request_id: connection.logical_request_id(subscribe_update.request_id),
+            subscription_request_id: connection
+                .logical_request_id(subscribe_update.subscription_request_id),
             start_location: subscribe_update.start_location,
             end_group: subscribe_update.end_group,
             subscriber_priority: subscribe_update.subscriber_priority,

@@ -17,7 +17,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct SubscribeNamespaceHandler {
-    request_id: u64,
     pub track_namespace_prefix: String,
     pub track_namespace_prefix_tuple: Vec<String>,
     guard: ResponseGuard,
@@ -35,7 +34,6 @@ impl SubscribeNamespaceHandler {
         );
         Self {
             guard,
-            request_id: subscribe_namespace.request_id,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
             track_namespace_prefix_tuple: subscribe_namespace.track_namespace_prefix,
         }
@@ -44,7 +42,7 @@ impl SubscribeNamespaceHandler {
     pub async fn ok(&self) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {
-            request_id: self.request_id,
+            request_id: self.guard.request_id(),
         };
         self.guard
             .connection()

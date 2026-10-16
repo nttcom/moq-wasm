@@ -40,6 +40,11 @@ impl ResponseGuard {
         &self.connection
     }
 
+    /// The request's id on its connection.
+    pub(crate) fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
     pub(crate) fn mark_responded(&self) {
         self.responded.store(true, Ordering::Relaxed);
     }

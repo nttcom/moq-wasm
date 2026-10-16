@@ -43,7 +43,9 @@ impl TrackStatusHandler {
             RequestKind::TrackStatus,
         );
         Self {
-            request_id: track_status.request_id,
+            request_id: guard
+                .connection()
+                .logical_request_id(track_status.request_id),
             track_namespace: track_status.track_namespace.join("/"),
             track_namespace_tuple: track_status.track_namespace,
             track_name: track_status.track_name,
@@ -64,7 +66,7 @@ impl TrackStatusHandler {
     ) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let track_status_ok = SubscribeOk {
-            request_id: self.request_id,
+            request_id: self.guard.request_id(),
             track_alias: 0,
             expires,
             group_order: self.group_order.delivered(),

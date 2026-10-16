@@ -31,8 +31,10 @@ impl PublishNamespaceHandler {
             RequestKind::PublishNamespace,
         );
         Self {
+            request_id: guard
+                .connection()
+                .logical_request_id(publish_namespace.request_id),
             guard,
-            request_id: publish_namespace.request_id,
             track_namespace: publish_namespace.track_namespace.join("/"),
             track_namespace_tuple: publish_namespace.track_namespace,
         }
@@ -45,7 +47,7 @@ impl PublishNamespaceHandler {
     pub async fn ok(&self) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {
-            request_id: self.request_id,
+            request_id: self.guard.request_id(),
         };
         self.guard
             .connection()

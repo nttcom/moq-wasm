@@ -56,7 +56,9 @@ async fn respond(
     end_location: Location,
 ) -> Result<()> {
     handler.ok(false, end_location).await?;
-    let sender = publisher.create_fetch_stream(handler.request_id).await?;
+    let sender = publisher
+        .create_fetch_stream(handler.wire_request_id())
+        .await?;
     for object in in_group_order(objects, handler.group_order) {
         sender
             .send_object(&Object {

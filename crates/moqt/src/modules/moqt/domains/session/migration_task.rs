@@ -662,6 +662,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requests_of_the_new_server_get_ids_apart_from_those_of_the_first() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-ids-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-ids-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let first = async {
+            let mut subscriber = server_a.subscriber();
+            let _ = subscriber
+                .subscribe("ns".into(), "a".into(), SubscribeOption::default())
+                .await;
+        };
+        let (_, from_a) = tokio::join!(
+            tokio::time::timeout(NO_EVENT_TIMEOUT, first),
+            client.receive_event()
+        );
+        let SessionEvent::Subscribe(from_a) = from_a.unwrap() else {
+            panic!("expected SUBSCRIBE from A");
+        };
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Act
+        let second = async {
+            let mut subscriber = server_b.subscriber();
+            let _ = subscriber
+                .subscribe("ns".into(), "b".into(), SubscribeOption::default())
+                .await;
+        };
+        let (_, from_b) = tokio::join!(
+            tokio::time::timeout(NO_EVENT_TIMEOUT, second),
+            client.receive_event()
+        );
+        let SessionEvent::Subscribe(from_b) = from_b.unwrap() else {
+            panic!("expected SUBSCRIBE from B");
+        };
+
+        // Assert: both servers number their first request alike
+        assert_ne!(from_a.request_id(), from_b.request_id());
+        assert_eq!(from_a.track_name, "a");
+        assert_eq!(from_b.track_name, "b");
+    }
+
+    #[tokio::test]
     async fn a_go_away_to_an_unreachable_server_keeps_the_current_connection() {
         // Arrange
         let (port_a, accept_a) = spawn_dual_server("session-migration-unreachable");
