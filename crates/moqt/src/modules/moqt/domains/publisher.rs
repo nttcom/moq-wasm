@@ -8,7 +8,7 @@ use crate::{
         control_plane::{
             control_messages::messages::{
                 publish::Publish, publish_namespace::PublishNamespace,
-                publish_namespace_done::PublishNamespaceDone,
+                publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
             },
             enums::ResponseMessage,
             options::PublishOption,
@@ -17,8 +17,10 @@ use crate::{
             fetch_data_sender::FetchDataSender, stream_data_sender_factory::StreamDataSenderFactory,
         },
         domains::{
+            connection::{Connection, logical_id},
             pending_publish_namespace::PendingPublishNamespace,
-            session_context::SessionContext,
+            send_targets::SendTargets,
+            session_context::{Publication, PublicationTarget, SessionContext},
             subscription::{PublisherInitiatedSubscription, Subscription},
         },
         version::{Notification, OutgoingRequest},
@@ -42,35 +44,31 @@ impl Publisher {
         &self,
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
-        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.connection().control.next_request_id();
-        let pending = self
-            .session
-            .connection()
-            .control
-            .send_request(OutgoingRequest::PublishNamespace(PublishNamespace::new(
-                request_id,
-                vec_namespace,
-                vec![],
-            )))
-            .await?;
-        Ok(PendingPublishNamespace {
-            request_id,
-            pending,
-        })
+        let mut carried = self.session.lock_carried().await;
+        let pending = send_publish_namespace(&self.session.connection(), namespace.clone()).await?;
+        if let Some(carried) = carried.as_mut() {
+            carried.published_namespaces.push(namespace);
+        }
+        Ok(pending)
     }
 
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
     /// defines no response message for PUBLISH_NAMESPACE_DONE.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
-        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
-        self.session
-            .connection()
-            .control
-            .notify(Notification::PublishNamespaceDone(
-                PublishNamespaceDone::new(vec_namespace),
-            ))
-            .await?;
+        if let Some(carried) = self.session.lock_carried().await.as_mut() {
+            carried
+                .published_namespaces
+                .retain(|carried| *carried != namespace);
+        }
+        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+        for connection in self.session.live_connections() {
+            connection
+                .control
+                .notify(Notification::PublishNamespaceDone(
+                    PublishNamespaceDone::new(vec_namespace.clone()),
+                ))
+                .await?;
+        }
         Ok(())
     }
 
@@ -94,7 +92,8 @@ impl Publisher {
         Ok(())
     }
 
-    /// Ends a subscription this endpoint publishes on (draft-14 §9.12).
+    /// Ends a subscription this endpoint publishes on (draft-14 §9.12), on
+    /// every connection it is on.
     pub async fn publish_done(
         &self,
         subscription: &Subscription,
@@ -102,16 +101,29 @@ impl Publisher {
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        self.session
-            .connection()
-            .control
-            .notify(Notification::PublishDone {
-                request_id: subscription.request_id(),
-                code: status_code,
-                stream_count,
-                reason: error_reason,
-            })
-            .await?;
+        let request_id = subscription.request_id();
+        let targets: Vec<(Arc<Connection>, u64)> = match self.session.remove_publication(request_id)
+        {
+            Some(publication) => publication
+                .targets
+                .into_iter()
+                .filter_map(|target| Some((target.connection.upgrade()?, target.request_id)))
+                .collect(),
+            None => self.session.connection_of(request_id).into_iter().collect(),
+        };
+        for (connection, wire_request_id) in targets {
+            connection.stop_serving(request_id);
+            self.session.note_served_changed();
+            connection
+                .control
+                .notify(Notification::PublishDone {
+                    request_id: wire_request_id,
+                    code: status_code,
+                    stream_count,
+                    reason: error_reason.clone(),
+                })
+                .await?;
+        }
         Ok(())
     }
 
@@ -121,82 +133,149 @@ impl Publisher {
         track_name: String,
         option: PublishOption,
     ) -> Result<Subscription, RequestFailure> {
-        let track_alias = self.session.connection().allocate_track_alias();
-        let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.connection().control.next_request_id();
-        let content_exists = option.content_exists;
-        let publish = Publish {
-            request_id,
-            track_namespace_tuple: vec_namespace,
-            track_name: track_name.clone(),
-            track_alias,
-            group_order: option.group_order,
-            content_exists,
-            forward: option.forward,
-            authorization_tokens: vec![],
-            delivery_timeout: None,
-            max_duration: option.max_cache_duration,
-        };
-        // A late PUBLISH_OK is discarded: the peer keeps subscription state
-        // but receives no objects.
-        let response = self
-            .session
-            .connection()
-            .control
-            .send_request(OutgoingRequest::Publish(publish))
-            .await?
-            .response()
-            .await?;
-        match response {
-            ResponseMessage::PublishOk(message) => {
-                if request_id != message.request_id {
-                    Err(RequestFailure::ProtocolViolation(
-                        "response for another request ID",
-                    ))
-                } else {
-                    tracing::info!("Publish ok");
-                    Ok(Subscription::PublisherInitiated(
-                        PublisherInitiatedSubscription::new(
-                            track_namespace,
-                            track_name,
-                            track_alias,
-                            message,
-                            option.max_cache_duration,
-                        )
-                        .with_content_exists(content_exists),
-                    ))
-                }
-            }
-            ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
-                tracing::info!("Publish error");
-                Err(RequestFailure::Rejected {
-                    request_id,
-                    code: error_code,
-                    reason: reason_phrase,
-                })
-            }
-            _ => Err(RequestFailure::ProtocolViolation(
-                "response type does not match the request",
-            )),
+        let _carried = self.session.lock_carried().await;
+        let connection = self.session.connection();
+        let (publish_ok, track_alias) =
+            send_publish(&connection, &track_namespace, &track_name, &option).await?;
+        let request_id = logical_id(connection.generation, publish_ok.request_id);
+        if self.session.follows_go_away() {
+            self.session.add_publication(
+                request_id,
+                Publication {
+                    track_namespace: track_namespace.clone(),
+                    track_name: track_name.clone(),
+                    option: option.clone(),
+                    targets: vec![PublicationTarget {
+                        connection: Arc::downgrade(&connection),
+                        track_alias,
+                        request_id: publish_ok.request_id,
+                    }],
+                },
+            );
         }
+        Ok(Subscription::PublisherInitiated(
+            PublisherInitiatedSubscription::new(
+                track_namespace,
+                track_name,
+                logical_id(connection.generation, track_alias),
+                PublishOk {
+                    request_id,
+                    ..publish_ok
+                },
+                option.max_cache_duration,
+            )
+            .with_content_exists(option.content_exists),
+        ))
     }
 
     pub fn create_stream(&self, subscription: &Subscription) -> StreamDataSenderFactory {
-        StreamDataSenderFactory::new(subscription.track_alias(), self.session.clone())
+        StreamDataSenderFactory::new(self.send_targets(subscription))
     }
 
     pub fn create_datagram(&self, subscription: &Subscription) -> DatagramSender {
-        DatagramSender::new(subscription.track_alias(), self.session.clone())
+        DatagramSender::new(self.send_targets(subscription))
     }
 
+    /// Opens the response stream of the FETCH `request_id` on the connection
+    /// it arrived on; fails once that connection is gone.
     pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender> {
-        let send_stream = self.session.connection().transport.open_uni().await?;
-        FetchDataSender::new(
-            self.session.connection().control.version(),
-            send_stream,
+        let (connection, wire_request_id) = self
+            .session
+            .connection_of(request_id)
+            .ok_or_else(|| anyhow::anyhow!("the connection of FETCH {request_id} is gone"))?;
+        let send_stream = connection.transport.open_uni().await?;
+        FetchDataSender::new(connection.control.version(), send_stream, wire_request_id).await
+    }
+
+    fn send_targets(&self, subscription: &Subscription) -> SendTargets {
+        let request_id = subscription.request_id();
+        if self.session.has_publication(request_id) {
+            return SendTargets::Publication {
+                session: self.session.clone(),
+                request_id,
+            };
+        }
+        let (connection, track_alias) = self
+            .session
+            .connection_of(subscription.track_alias())
+            .map(|(connection, track_alias)| (Arc::downgrade(&connection), track_alias))
+            .unwrap_or_default();
+        SendTargets::Connection {
+            connection,
+            track_alias,
+        }
+    }
+}
+
+pub(crate) async fn send_publish_namespace(
+    connection: &Connection,
+    namespace: String,
+) -> Result<PendingPublishNamespace, RequestFailure> {
+    let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+    let request_id = connection.control.next_request_id();
+    let pending = connection
+        .control
+        .send_request(OutgoingRequest::PublishNamespace(PublishNamespace::new(
             request_id,
-        )
-        .await
+            vec_namespace,
+            vec![],
+        )))
+        .await?;
+    Ok(PendingPublishNamespace {
+        request_id,
+        pending,
+    })
+}
+
+/// The PUBLISH_OK and the track alias this side chose, with `connection`'s
+/// wire ids.
+pub(crate) async fn send_publish(
+    connection: &Connection,
+    track_namespace: &str,
+    track_name: &str,
+    option: &PublishOption,
+) -> Result<(PublishOk, u64), RequestFailure> {
+    let track_alias = connection.allocate_track_alias();
+    let request_id = connection.control.next_request_id();
+    let publish = Publish {
+        request_id,
+        track_namespace_tuple: track_namespace.split('/').map(|s| s.to_string()).collect(),
+        track_name: track_name.to_string(),
+        track_alias,
+        group_order: option.group_order,
+        content_exists: option.content_exists,
+        forward: option.forward,
+        authorization_tokens: vec![],
+        delivery_timeout: None,
+        max_duration: option.max_cache_duration,
+    };
+    // A late PUBLISH_OK is discarded: the peer keeps subscription state
+    // but receives no objects.
+    let response = connection
+        .control
+        .send_request(OutgoingRequest::Publish(publish))
+        .await?
+        .response()
+        .await?;
+    match response {
+        ResponseMessage::PublishOk(message) if message.request_id == request_id => {
+            tracing::info!("Publish ok");
+            Ok((message, track_alias))
+        }
+        ResponseMessage::PublishOk(_) => Err(RequestFailure::ProtocolViolation(
+            "response for another request ID",
+        )),
+        ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
+            tracing::info!("Publish error");
+            Err(RequestFailure::Rejected {
+                request_id,
+                code: error_code,
+                reason: reason_phrase,
+            })
+        }
+        _ => Err(RequestFailure::ProtocolViolation(
+            "response type does not match the request",
+        )),
     }
 }
 

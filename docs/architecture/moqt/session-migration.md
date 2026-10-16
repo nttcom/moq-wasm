@@ -171,11 +171,11 @@ Each step is one PR, stacked:
 2. **`follow_go_away` and subscribing-side migration in `Session`.** Logical id
    maps, per-stream cutover, events. The relay, `broadcast` and wasm set
    `false` until their steps. The recorder moves from `MigratingSession` to
-   `Session`. Requests the peer sends on a later connection keep their wire
-   ids until step 3, which needs them for the publishing side.
-3. **Publishing-side migration in `Session`.** Fan-out in the sender factory;
-   `broadcast` moves to `Session`; `Origin` loses its outlets;
-   `MigratingSession` is removed.
+   `Session`.
+3. **Publishing-side migration in `Session`.** Logical ids for the requests
+   the peer sends; PUBLISH_NAMESPACE and PUBLISH carried and fan-out in the
+   sender factory; `broadcast` moves to `Session`; `Origin` keeps an outlet
+   per subscription instead of per session; `MigratingSession` is removed.
 4. **FETCH carry-over and Forward state.**
 5. **wasm and `moqtClient.ts`.** The wasm client turns `follow_go_away` on and
    the TypeScript switchover is deleted; `run-goaway-e2e.mjs` and the browser

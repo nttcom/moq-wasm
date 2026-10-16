@@ -49,11 +49,6 @@ impl FetchHandler {
         }
     }
 
-    /// The FETCH's id on its connection, which its response stream carries.
-    pub(crate) fn wire_request_id(&self) -> u64 {
-        self.guard.request_id()
-    }
-
     pub async fn ok(
         &self,
         end_of_track: bool,
