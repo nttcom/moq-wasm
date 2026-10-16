@@ -70,9 +70,10 @@ impl Broadcast {
     /// `false` when nothing was sent: there is no target, the peer stopped the
     /// stream, or the write ended in `WriteOutcome::NotSent`.
     pub async fn send_object(&self, track_name: &str, object: OutgoingObject) -> Result<bool> {
-        self.connection
-            .send_object(&self.namespace, track_name, object)
-            .await
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(false);
+        };
+        relay.send_object(&self.namespace, track_name, object).await
     }
 
     pub async fn update_video_catalog(&self, track_name: &str, info: VideoTrackInfo) -> Result<()> {
