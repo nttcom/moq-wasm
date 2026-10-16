@@ -1,13 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Weak},
+    sync::Arc,
     time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, MigratingSession, RequestErrorCode, Session, SessionEvent,
+    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TerminationErrorCode,
     TransportStats,
     executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
@@ -71,9 +71,9 @@ struct RelayState {
 struct CatalogSent {
     /// `executor::now()` at the send.
     at: Duration,
-    /// The session the catalog was sent on; after a migration the new relay
-    /// gets the catalog at the next send.
-    session: Weak<Session>,
+    /// `Session::connection_generation` at the send; after a migration the
+    /// new relay gets the catalog at the next send.
+    generation: u64,
 }
 
 impl RelayState {
@@ -107,21 +107,17 @@ impl RelayState {
             .is_some_and(|catalog| awaits_subscribe(&catalog, track_name))
     }
 
-    fn catalog_refresh_due(
-        &self,
-        namespace_path: &str,
-        now: Duration,
-        session: &Weak<Session>,
-    ) -> bool {
+    fn catalog_refresh_due(&self, namespace_path: &str, now: Duration, generation: u64) -> bool {
         self.catalog_sent.get(namespace_path).is_some_and(|sent| {
-            now.saturating_sub(sent.at) >= CATALOG_REFRESH_INTERVAL
-                || !Weak::ptr_eq(&sent.session, session)
+            now.saturating_sub(sent.at) >= CATALOG_REFRESH_INTERVAL || sent.generation != generation
         })
     }
 }
 
 pub(crate) struct ConnectedRelay {
-    session: Arc<MigratingSession>,
+    endpoint: Endpoint<RelayTransport>,
+    session: Arc<Session>,
+    origin: Origin,
     state: Arc<Mutex<RelayState>>,
     catalog_send: Mutex<()>,
     ledger: StreamLedger,
@@ -149,7 +145,10 @@ impl RelayConnection {
     pub async fn close(&self) {
         let connected = self.connected.lock().await.clone();
         if let Some(connected) = connected {
-            connected.session.close().await;
+            connected
+                .session
+                .close_with_error(TerminationErrorCode::NoError, "");
+            connected.endpoint.wait_idle().await;
         }
     }
 
@@ -157,11 +156,11 @@ impl RelayConnection {
     /// whole connect, so a caller during it sees `None` as well.
     pub fn transport_stats(&self) -> Option<TransportStats> {
         let connected = self.connected.try_lock().ok()?.clone()?;
-        Some(connected.session.session().transport_stats())
+        Some(connected.session.transport_stats())
     }
 
     /// The relay session to send on, connected on first use; it follows the
-    /// relay's GOAWAY (`moqt::MigratingSession`).
+    /// relay's GOAWAY (`ClientConfig::follow_go_away`).
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) async fn connected(&self) -> Result<Option<Arc<ConnectedRelay>>> {
         let Some(target) = &self.target else {
@@ -184,17 +183,25 @@ impl ConnectedRelay {
             port: 0,
             verify_certificate: target.verify_certificate,
             authorization_token: target.auth_token.clone(),
-            follow_go_away: false,
+            follow_go_away: true,
         })?;
-        let session = Arc::new(
-            MigratingSession::connect(endpoint, &target.url)
-                .await
-                .context("establish moqt session")?,
-        );
+        let connecting = endpoint
+            .connect(&target.url)
+            .await
+            .context("connect moqt transport")?;
+        let session = Arc::new(connecting.await.context("establish moqt session")?);
+        let origin = Origin::default();
         let state = Arc::new(Mutex::new(RelayState::default()));
-        let event_task = Self::spawn_event_loop(session.clone(), state.clone(), ledger.clone());
+        let event_task = Self::spawn_event_loop(
+            session.clone(),
+            origin.clone(),
+            state.clone(),
+            ledger.clone(),
+        );
         Ok(Self {
+            endpoint,
             session,
+            origin,
             state,
             catalog_send: Mutex::new(()),
             ledger,
@@ -203,12 +210,12 @@ impl ConnectedRelay {
     }
 
     fn spawn_event_loop(
-        session: Arc<MigratingSession>,
+        session: Arc<Session>,
+        origin: Origin,
         state: Arc<Mutex<RelayState>>,
         ledger: StreamLedger,
     ) -> JoinHandle {
         executor::spawn("broadcast-relay-events", async move {
-            let origin = session.origin();
             loop {
                 let event = match session.receive_event().await {
                     Ok(event) => event,
@@ -234,7 +241,7 @@ impl ConnectedRelay {
                         }
                     }
                     SessionEvent::Subscribe(handler) => {
-                        Self::serve_subscribe(origin, &state, handler).await;
+                        Self::serve_subscribe(&origin, &state, handler).await;
                     }
                     SessionEvent::Unsubscribe(handler) => {
                         let request_id = handler.subscribe_id();
@@ -299,6 +306,7 @@ impl ConnectedRelay {
 
         if announce_needed {
             self.session
+                .publisher()
                 .publish_namespace(namespace_path.clone())
                 .await
                 .with_context(|| format!("publish_namespace {}", namespace_path))?;
@@ -319,17 +327,16 @@ impl ConnectedRelay {
         if self.state.lock().await.catalog_refresh_due(
             &key.0,
             executor::now(),
-            &Arc::downgrade(&self.session.session()),
+            self.session.connection_generation(),
         ) {
             self.send_catalog(&key.0).await?;
         }
         if self.state.lock().await.disconnected {
             bail!("MoQ publisher disconnected");
         }
-        let origin = self.session.origin();
-        ensure_origin_track(origin, &key).await;
+        ensure_origin_track(&self.origin, &key).await;
         let bytes = object.payload.len();
-        match origin.write(&key.0, &key.1, object).await? {
+        match self.origin.write(&key.0, &key.1, object).await? {
             WriteOutcome::Sent(placement) => {
                 if placement.starts_group {
                     self.ledger.open(&key.1, placement.location.group_id);
@@ -499,13 +506,12 @@ impl ConnectedRelay {
             namespace_path.to_string(),
             CatalogSent {
                 at: executor::now(),
-                session: Arc::downgrade(&self.session.session()),
+                generation: self.session.connection_generation(),
             },
         );
         let bytes = payload.len();
         match self
-            .session
-            .origin()
+            .origin
             .write_group(namespace_path, CATALOG_TRACK_NAME, payload)
             .await
             .context("send catalog group")?
@@ -529,8 +535,8 @@ impl ConnectedRelay {
     }
 
     async fn publish_track(&self, key: TrackKey) -> Result<()> {
-        ensure_origin_track(self.session.origin(), &key).await;
-        self.session.publish(&key.0, &key.1).await
+        ensure_origin_track(&self.origin, &key).await;
+        self.origin.publish(&self.session, &key.0, &key.1).await
     }
 }
 
@@ -920,22 +926,22 @@ mod tests {
     fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
         // Arrange
         let sent_at = Duration::from_secs(100);
-        let session = Weak::new();
         let mut state = RelayState::default();
         state.catalog_sent.insert(
             "live/test".to_string(),
             CatalogSent {
                 at: sent_at,
-                session: session.clone(),
+                generation: 0,
             },
         );
 
         // Act / Assert
         let almost = sent_at + CATALOG_REFRESH_INTERVAL - Duration::from_secs(1);
-        assert!(!state.catalog_refresh_due("live/test", almost, &session));
+        assert!(!state.catalog_refresh_due("live/test", almost, 0));
+        assert!(state.catalog_refresh_due("live/test", almost, 1));
         let due = sent_at + CATALOG_REFRESH_INTERVAL;
-        assert!(state.catalog_refresh_due("live/test", due, &session));
-        assert!(!state.catalog_refresh_due("live/other", due, &session));
+        assert!(state.catalog_refresh_due("live/test", due, 0));
+        assert!(!state.catalog_refresh_due("live/other", due, 0));
     }
 
     #[test]

@@ -106,20 +106,21 @@ completes that FETCH from here when its own cache has dropped it.
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
 an empty URI meaning the same one (draft-ietf-moq-transport-14 §3.5, §9.4).
-`RelayConnection` publishes through a `moqt::MigratingSession`, which performs
-the publisher switchover of §8.4.2 (see the `moqt` architecture document): it
-announces every namespace and publishes every published track on the new
-relay while sends keep going to the current one, then writes every object to
-both, as draft-ietf-moq-transport-22 §7.6.1 describes. Viewers still on the
+`RelayConnection` publishes through a `moqt::Session` that follows GOAWAY
+(`ClientConfig::follow_go_away`), which performs the publisher switchover of
+§8.4.2 (see the `moqt` architecture document): it announces every namespace
+and publishes every published track on the new relay while sends keep going
+to the current one, then writes every object to both, as
+draft-ietf-moq-transport-22 §7.6.1 describes. Viewers still on the
 old relay keep receiving the track, and the new relay gets each track from
 its next group (an object within a group is dropped where no group is open).
 The previous session is closed with NO_ERROR once its relay no longer
 subscribes to any track, which a draining relay of this repository signals
 by unsubscribing when the subscribers it sent GOAWAY to have left, or when
-that relay closes it. The one `Origin` spans both sessions, so the numbering
-and the FETCH cache carry over. The catalog is sent again on the first send
-after the move, since the record of its last send names the session it went
-to. If the named relay cannot be reached within 10 s, the connection keeps
+that relay closes it. The `Origin` and the session stay the same, so the
+numbering and the FETCH cache carry over. The catalog is sent again on the
+first send after the move, since the record of its last send names the
+connection generation it went to. If the named relay cannot be reached within 10 s, the connection keeps
 publishing to the old session until that relay closes it.
 
 ## Group alignment

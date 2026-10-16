@@ -303,77 +303,31 @@ use these facades instead of the data-plane factories directly:
   while the other streams keep being read, and `Ok(None)` means the factory
   has no more streams.
 
-### `MigratingSession` — following GOAWAY
-
-`MigratingSession` (`domains/migrating_session.rs`) is a client session that
-follows the server's GOAWAY (draft-14 §3.5) for what it subscribes and
-publishes, so the application keeps reading and writing across a server
-drain. It owns the `Endpoint`, the current `Session` and an `Origin`;
-`MigrationTask` reads the events of the current and the previous session and
-forwards them to `MigratingSession::receive_event`, except GOAWAY, which it
-acts on, and the previous session's Disconnected and ProtocolViolation:
-
-1. connect to the New Session URI, or to the current URL when it is empty;
-2. send every SUBSCRIBE_NAMESPACE and PUBLISH_NAMESPACE made through the
-   session again, then PUBLISH for every track the origin published on the
-   previous session, then every SUBSCRIBE with `NextGroupStart`. A rejected
-   namespace request or SUBSCRIBE is repeated every 500 ms for up to 10 s
-   because the other clients move on the same GOAWAY. A rejected namespace
-   fails the migration and keeps the current session; a rejected track
-   stays on the previous session alone;
-3. make the new session the current one and hand each `MigratingTrack` its
-   new subscription;
-4. close the previous session with NO_ERROR once the server takes no
-   published track there any more (`Origin::is_serving`) and, when tracks
-   were subscribed again, 5 s after every one of them has cut over, or after
-   10 s for a track that delivered nothing on the new session yet. A server
-   that closes the previous session first ends the wait too.
-
-Until then `Origin` writes every object to both sessions (draft-22 §7.6.1),
-each from the next group its new outlet starts at.
-
-A `MigratingTrack` reads both subscriptions while the two sessions are open.
-`GroupCutover` decides, per object, which one it is taken from: the first
-object of the new subscription fixes the cutover at the first group it
-delivers from the start that the previous one has not started, groups
-before it come from the previous subscription and the rest from the new one.
-A publisher migrating at the same time sends to both servers (draft-22
-§7.6.1), so the old path may deliver every group first; the cutover is
-therefore fixed at once rather than waiting for the new path to deliver a
-group first. The first data stream of each subscription is accepted in a task of its
-own because `Subscriber::accept_data_receiver` loses the receiver when its
-future is dropped, and `next_object` polls both subscriptions in `select!`.
-
-Only what goes through `MigratingSession` is carried: a FETCH or another
-request sent on `session()` stays on its session, and
-`MigratingTrack::session()` names the session the first subscription lives
-on, so a joining FETCH addresses it there. The browser's `moqtClient.ts`
-still migrates on its own.
-
 ### `Origin` — the tracks this endpoint originates
 
 `Origin` (`domains/origin.rs`) is the opt-in bookkeeping of an original
 publisher: a `Clone` handle over a `tokio::sync::Mutex` of per-track state,
-shared between the application's session event loop and its media writers,
-and across the sessions that take its tracks. Relays do not use it; they
+shared between the application's session event loop and its media writers.
+Relays do not use it; they
 forward from their own cache through the raw stream senders.
 
 - Per track (`ensure_track(namespace, name, first_group_id, retention)`):
   `ObjectNumbering` (`GroupBoundary::{Within, Next, At}` → `Placement`),
   an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`,
-  the largest location actually sent, and one outlet per session that takes
-  the track: its publication state and its optional `TrackWriter`. A session
-  is identified by its `SessionContext`, which the SUBSCRIBE, UNSUBSCRIBE,
-  FETCH and FETCH_CANCEL handlers carry, so each request is answered on the
-  session it arrived on. The caller chooses the retention and the first
-  group id.
+  the largest location actually sent, and one outlet per subscription to
+  the track (a SUBSCRIBE served or a PUBLISH sent): its publication state and
+  its optional `TrackWriter`. An outlet is keyed by the session, identified
+  by its `SessionContext`, which the SUBSCRIBE, UNSUBSCRIBE, FETCH and
+  FETCH_CANCEL handlers carry, and the logical request id, so the SUBSCRIBEs
+  an old and a new server send during a migration get one outlet each. The
+  caller chooses the retention and the first group id.
 - `write(namespace, name, OutgoingObject) -> WriteOutcome` numbers and
   caches the object first, whether or not the track is published, so the
   cache and the live streams always agree on ids, then sends it to every
   outlet at once. Each writer is taken out of its slot for the duration of
   the awaited send and put back only if nothing replaced or released it
-  meanwhile. A send that fails on one session is returned only when no
-  session took the object. `Sent(placement)` and
+  meanwhile. A send that fails on one outlet is returned only when no outlet
+  took the object. `Sent(placement)` and
   `Stopped(placement)` (STOP_SENDING by the peer; the track resumes at the
   next group) carry the placement so the caller can account the stream;
   `NotSent` covers a `Within` object with no open group, a track without a
@@ -497,8 +451,8 @@ one of three paths:
    a response to a request kind this crate never sends) close the session and
    stop the task.
 
-Messages `Session` decodes but does not act on (GOAWAY, which
-`MigratingSession` acts on, MAX_REQUEST_ID,
+Messages `Session` decodes but does not act on (GOAWAY, unless the session
+follows it, MAX_REQUEST_ID,
 REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
 PUBLISH_NAMESPACE_CANCEL) still take path 1, so the application sees them
 instead of the session dying.
