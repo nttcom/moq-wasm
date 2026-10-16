@@ -1,0 +1,27 @@
+FROM lukemathwalker/cargo-chef:0.1.78-rust-1.99.0-slim-trixie@sha256:bcda2cef02bedabfaf433379d82fecd02c0a428fb66fe28ab2d65c25c3db3b5e AS chef
+WORKDIR /workspace
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+# Dependencies are cooked from the recipe alone so this layer is reused
+# until a manifest or Cargo.lock changes; only the workspace crates are
+# compiled after the source is copied in.
+COPY --from=planner /workspace/recipe.json recipe.json
+RUN cargo chef cook --release -p recorder --recipe-path recipe.json
+COPY . .
+RUN cargo build --release -p recorder && mkdir /recordings
+
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
+
+WORKDIR /app
+COPY --from=builder /workspace/target/release/recorder /usr/local/bin/
+# distroless has no shell to run mkdir, so the empty directory comes from the builder.
+COPY --from=builder --chown=nonroot:nonroot /recordings /recordings
+
+EXPOSE 8096
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/recorder"]
+CMD ["serve", "--listen", "0.0.0.0:8096", "--output-dir", "/recordings"]
