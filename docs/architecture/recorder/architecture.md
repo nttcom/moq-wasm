@@ -6,8 +6,9 @@ choice, the muxing flow or the file rules described here change.
 
 ## Scope
 `crates/recorder` is a subscriber: it joins an MSF broadcast through a relay
-and writes what it receives to local disk as one fragmented MP4 file holding
-the video and the audio track. It knows the catalog (`msf`), LOC objects and
+and writes what it receives to local disk as fragmented MP4: one file holding
+the video and the audio track, or with `--layout per-track` one file per
+track. It knows the catalog (`msf`), LOC objects and
 the fMP4 muxer (`mediapack`) and the client side of `moqt`; it owns no track
 layout of its own and follows the one `crates/broadcast` publishes (see
 [its README](../../../crates/broadcast/README.md)).
@@ -50,13 +51,17 @@ both tracks into one init segment and one fragment stream.
    from its cache and FETCHes what it lacks from the publisher. The live
    objects wait in the readers' bounded channels, so QUIC flow control holds
    them back meanwhile.
-4. `pipeline::Pipeline` converts each `TrackObject` to a `LocObject`, runs the
-   track's `loc::Demuxer` and feeds the events to the `Fmp4Muxer`. It pushes
-   one `Streams { has_video, has_audio }` itself and drops the single-track
-   `Streams` events the demuxers announce, so the muxer waits for both
-   configurations before writing the init segment.
-5. `file_writer::RecordingFile` appends the bytes and flushes whenever the
-   video moved to a new group, which is a complete GoP on disk.
+4. `recording::Recording` holds one `pipeline::Pipeline` and one
+   `file_writer::RecordingFile` per output file and routes each track's
+   objects to the file that holds it. A pipeline converts each `TrackObject`
+   to a `LocObject`, runs the track's `loc::Demuxer` and feeds the events to
+   the `Fmp4Muxer`. It pushes one `Streams { has_video, has_audio }` for the
+   tracks of its file and drops the single-track `Streams` events the
+   demuxers announce, so the muxer waits for every configuration of the file
+   before writing the init segment.
+5. The `RecordingFile` appends the bytes and flushes whenever the file's
+   leading track moved to a new group: the video, or the audio in a file
+   without video. A video group is a complete GoP on disk.
 6. The recording ends when either `TrackReader` returns `Ok(None)`. When the
    publisher leaves, the relay sends PUBLISH_DONE on both subscriptions and
    `moqt` ends them 10 s later, after any late streams, so the recorder needs
@@ -65,10 +70,11 @@ both tracks into one init segment and one fragment stream.
 ## Key invariants
 - **One timeline for both tracks.** Each `loc::Demuxer` would otherwise count
   presentation time from its own first capture timestamp, and the two
-  subscriptions start at different objects. The pipeline takes the first
-  capture timestamp either track delivers and creates each track's demuxer
-  at its first object with `with_capture_origin` set to it, so the file keeps
-  the publisher's audio/video offset.
+  subscriptions start at different objects. The `Recording` keeps the first
+  capture timestamp either track delivers, and each pipeline creates its
+  track's demuxer at its first object with `with_capture_origin` set to it.
+  The files therefore keep the publisher's audio/video offset, whether the
+  tracks share a file or not.
 - **An init segment never changes.** `Fmp4Muxer` rejects a configuration
   change after the init segment is out. The pipeline compares each
   `VideoConfig` / `AudioConfig` event with the one the current muxer was built
@@ -78,8 +84,9 @@ both tracks into one init segment and one fragment stream.
 - **Segments start on a keyframe.** With `--segment-seconds` the same rotation
   runs at the first keyframe whose presentation time is at least the segment
   length past the file's first video sample, so every file decodes on its
-  own. Presentation times are not rebased per file: the files keep one
-  timeline and can be concatenated.
+  own. A file without video rotates at the first audio frame past that
+  length, since every audio frame is a sync sample. Presentation times are
+  not rebased per file: the files keep one timeline and can be concatenated.
 - **The file is valid at every flush.** Fragmented MP4 needs no trailing
   index, so a recorder killed mid-way leaves a playable file; only the last
   video sample, whose duration is unknown until the next one, is lost.
