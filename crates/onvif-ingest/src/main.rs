@@ -10,12 +10,15 @@ use onvif_ingest::{
 };
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
 
 const RTSP_EVENT_CAPACITY: usize = 64;
+const RTSP_RETRY_MIN_DELAY: Duration = Duration::from_secs(1);
+const RTSP_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Bridge ONVIF PTZ and RTSP media over MoQ")]
@@ -135,7 +138,7 @@ async fn main() -> Result<()> {
 }
 
 /// Starts every profile on the first SUBSCRIBE to the catalog or a profile
-/// track; fails once every profile has ended.
+/// track; fails once the relay has ended every profile.
 async fn publish_profiles(
     broadcast: Broadcast,
     sources: Vec<ProfileSource>,
@@ -168,27 +171,58 @@ async fn publish_profiles(
     bail!("every profile has ended")
 }
 
+/// Publishes one profile for as long as the relay accepts it, reconnecting to
+/// the camera whenever its RTSP stream ends.
 async fn publish_profile(
     broadcast: Broadcast,
     source: ProfileSource,
     mut dump_keyframe: Option<PathBuf>,
 ) -> Result<()> {
-    log::info!(
-        "Starting RTSP for {}: {}",
-        source.tracks.video,
-        redact_rtsp_url(&source.rtsp_url)
-    );
+    let mut retry_delay = RTSP_RETRY_MIN_DELAY;
+    loop {
+        log::info!(
+            "Starting RTSP for {}: {}",
+            source.tracks.video,
+            redact_rtsp_url(&source.rtsp_url)
+        );
+        let started = Instant::now();
+        match play_rtsp(&broadcast, &source, &mut dump_keyframe).await? {
+            Ok(()) => log::warn!("RTSP for {} ended", source.tracks.video),
+            Err(err) => log::warn!("RTSP for {} failed: {err:#}", source.tracks.video),
+        }
+        if started.elapsed() >= RTSP_RETRY_MAX_DELAY {
+            retry_delay = RTSP_RETRY_MIN_DELAY;
+        }
+        log::info!(
+            "Reconnecting RTSP for {} in {:?}",
+            source.tracks.video,
+            retry_delay
+        );
+        tokio::time::sleep(retry_delay).await;
+        retry_delay = (retry_delay * 2).min(RTSP_RETRY_MAX_DELAY);
+    }
+}
+
+/// Plays one RTSP session into a fresh writer, so a reconnected stream gets a
+/// new capture origin for its restarted timestamps. The outer error is the
+/// relay's and ends the profile; the inner one is the camera's and triggers a
+/// reconnect.
+async fn play_rtsp(
+    broadcast: &Broadcast,
+    source: &ProfileSource,
+    dump_keyframe: &mut Option<PathBuf>,
+) -> Result<Result<()>> {
     let (event_sender, mut event_receiver) = mpsc::channel(RTSP_EVENT_CAPACITY);
     let (rtsp_result_sender, rtsp_result) = oneshot::channel();
-    let rtsp_url = source.rtsp_url;
+    let rtsp_url = source.rtsp_url.clone();
     // A thread rather than spawn_blocking, which the runtime would wait for on
     // exit while GStreamer still plays.
     std::thread::spawn(move || {
         let _ = rtsp_result_sender.send(rtsp_source::run(&rtsp_url, event_sender));
     });
-    let mut writer = BroadcastWriter::run(broadcast, source.tracks);
+    let mut writer = BroadcastWriter::run(broadcast.clone(), source.tracks.clone());
     while let Some(event) = event_receiver.recv().await {
-        if let (Some(path), MediaEvent::Video(sample)) = (&dump_keyframe, &event) {
+        if let (Some(path), MediaEvent::Video(sample)) = (&*dump_keyframe, &event) {
             if sample.is_keyframe {
                 std::fs::write(path, &sample.data)
                     .with_context(|| format!("write keyframe payload to {}", path.display()))?;
@@ -196,12 +230,14 @@ async fn publish_profile(
                     "RTSP keyframe payload dumped for ffprobe: {}",
                     path.display()
                 );
-                dump_keyframe = None;
+                *dump_keyframe = None;
             }
         }
         writer.push(event)?;
     }
-    rtsp_result.await.context("RTSP thread")?
+    Ok(rtsp_result
+        .await
+        .unwrap_or_else(|_| Err(anyhow!("RTSP thread exited"))))
 }
 
 fn profile_tracks(args: &MoqtArgs, profile_index: usize, label: &str) -> SourceTracks {
