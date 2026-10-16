@@ -68,9 +68,9 @@ async def test_off_center_target_moves_the_camera_and_records_where_it_was():
 
 @pytest.mark.parametrize(
     ("answer", "recorded"),
-    [(Position(0.52, 0.47), [0.52, 0.47]), (Answer.NOT_VISIBLE, "not visible"), (Answer.UNREADABLE, None)],
+    [(Position(0.52, 0.47), [0.52, 0.47]), (Answer.NOT_VISIBLE, "not visible")],
 )
-async def test_target_near_the_center_or_not_located_leaves_the_camera_still(answer, recorded):
+async def test_target_near_the_center_or_not_visible_leaves_the_camera_still(answer, recorded):
     # Arrange
     tracker, group, command_track = await tracker_with(StubVision(answer))
 

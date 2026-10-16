@@ -92,7 +92,7 @@ class PtzTracker(FrameProcessor):
             self._locating = None
 
 
-def position_record(answer: Position | Answer) -> list[float] | str | None:
+def position_record(answer: Position | Answer) -> list[float] | str:
     if isinstance(answer, Position):
         return [round(answer.x, 3), round(answer.y, 3)]
-    return answer.value if answer is Answer.NOT_VISIBLE else None
+    return answer.value
