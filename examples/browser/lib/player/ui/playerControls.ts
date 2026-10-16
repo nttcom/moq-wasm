@@ -294,8 +294,10 @@ export class PlayerControls {
   }
 
   /// Elapsed broadcast time when a media timeline exists, else the capture
-  /// wall-clock time (continuous cameras have no timeline).
+  /// wall-clock time (continuous cameras have no timeline); a stopped player
+  /// has no time to show.
   private timeLabel(captureSeconds: number): string {
+    if (captureSeconds <= 0) return '--:--'
     const elapsed = this.player.elapsedMsAt(captureSeconds * MICROS_PER_SECOND)
     return elapsed === undefined ? formatClock(captureSeconds) : formatElapsed(elapsed)
   }
