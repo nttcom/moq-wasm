@@ -22,9 +22,9 @@ import {
 import { catalogTracksForRole } from '../media/meetingCatalog'
 import { buildTrackActionKey } from '../utils/state/roomState'
 import { checkCodecSupport } from '../utils/codecSupport'
-import type { SidebarStatsSample } from '../types/stats'
-import { MemberStatsCharts } from './MemberStatsCharts'
-import type { RemotePictures, RemotePlaybackStats } from '../media/mediaSubscriber'
+import type { LocalStatsSample, RemoteStatsSample } from '../types/stats'
+import { MeetingStats, RemoteMemberStatsCharts, SendStatsCharts } from './StatsCharts'
+import type { RemotePictures } from '../media/mediaSubscriber'
 import { formatLiveStats } from '@player/locLive'
 import type {
   VideoCodecOption,
@@ -62,7 +62,6 @@ interface MemberGridProps {
   localVideoStream?: MediaStream | null
   localScreenShareStream?: MediaStream | null
   remotePictures: Map<string, RemotePictures>
-  remoteStats: Map<string, RemotePlaybackStats>
   playoutSettings: Map<string, PlayoutSettings>
   onChangePlayoutSettings: (userId: string, settings: PlayoutSettings) => void
   onToggleCamera: () => void
@@ -101,7 +100,8 @@ interface MemberGridProps {
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
   onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
-  statsHistory: Map<string, SidebarStatsSample[]>
+  localStatsHistory: LocalStatsSample[]
+  remoteStatsHistory: Map<string, RemoteStatsSample[]>
   stage: StageArrangement
   speakingMemberIds: Set<string>
   filmstripOpen: boolean
@@ -120,7 +120,6 @@ export function MemberGrid({
   localVideoStream,
   localScreenShareStream,
   remotePictures,
-  remoteStats,
   playoutSettings,
   onChangePlayoutSettings,
   onToggleCamera,
@@ -159,7 +158,8 @@ export function MemberGrid({
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
   onSelectCatalogTrack,
-  statsHistory,
+  localStatsHistory,
+  remoteStatsHistory,
   stage,
   speakingMemberIds,
   filmstripOpen,
@@ -173,6 +173,7 @@ export function MemberGrid({
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false)
+  const [isStatsModalOpen, setIsStatsModalOpen] = useState(false)
   const [detailsTarget, setDetailsTarget] = useState<string | null>(null)
   const detailsMember = remoteMembers.find((member) => member.id === detailsTarget)
   const [galleryRef, gallerySize] = useElementSize()
@@ -210,7 +211,7 @@ export function MemberGrid({
         />
       )
     }
-    const stats = remoteStats.get(member.id)?.camera
+    const stats = remoteStatsHistory.get(member.id)?.at(-1)?.camera
     return (
       <ParticipantTile
         name={member.name}
@@ -274,7 +275,7 @@ export function MemberGrid({
         onToggleScreenShare={onToggleScreenShare}
         onOpenDevices={() => setIsDeviceModalOpen(true)}
         onOpenCatalog={() => setIsCatalogModalOpen(true)}
-        onOpenStats={() => setDetailsTarget(LOCAL_MEMBER_ID)}
+        onOpenStats={() => setIsStatsModalOpen(true)}
         view={stage.view}
         onToggleView={onToggleView}
         filmstripOpen={stage.view === 'speaker' ? filmstripOpen : undefined}
@@ -340,11 +341,23 @@ export function MemberGrid({
           />
         </DeviceModal>
       )}
+      {isStatsModalOpen && (
+        <DeviceModal title="Stats" onClose={() => setIsStatsModalOpen(false)} size="wide">
+          <MeetingStats
+            localSamples={localStatsHistory}
+            remoteMembers={remoteMembers.map((member) => ({
+              id: member.id,
+              name: member.name,
+              samples: remoteStatsHistory.get(member.id) ?? []
+            }))}
+          />
+        </DeviceModal>
+      )}
       {detailsTarget === LOCAL_MEMBER_ID && (
         <DeviceModal title={`${localMember.name} (You)`} onClose={() => setDetailsTarget(null)} size="wide">
           <div className="space-y-4">
             <CatalogsPanel subscribedTracks={subscribedCatalogTracks} />
-            <MemberStatsCharts samples={statsHistory.get(localMember.id) ?? []} />
+            <SendStatsCharts samples={localStatsHistory} />
           </div>
         </DeviceModal>
       )}
@@ -370,7 +383,7 @@ export function MemberGrid({
                 />
               </div>
             </div>
-            <MemberStatsCharts samples={statsHistory.get(detailsMember.id) ?? []} />
+            <RemoteMemberStatsCharts samples={remoteStatsHistory.get(detailsMember.id) ?? []} />
           </div>
         </DeviceModal>
       )}

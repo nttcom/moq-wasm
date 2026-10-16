@@ -31,8 +31,8 @@ interface MediaPublisherHandlers {
   onLocalCameraStream?: LocalStreamHandler
   onLocalScreenShareStream?: LocalStreamHandler
   onLocalAudioStream?: LocalStreamHandler
-  onEncodedVideoBitrate?: (mbps: number) => void
-  onEncodedAudioBitrate?: (mbps: number) => void
+  onEncodedVideoBitrate?: (kbps: number, source: VideoSource) => void
+  onEncodedAudioBitrate?: (kbps: number) => void
   onVideoEncodeError?: (message: string) => void
   onAudioEncodeError?: (message: string) => void
   onAudioEncodingAdjusted?: (settings: AudioEncodingSettings) => void
@@ -1001,7 +1001,7 @@ export class MediaPublisher {
     const kbps = Array.from(this.videoTrackContexts.values())
       .filter((context) => context.source === source)
       .map((context) => this.videoBitrateByTrackName.get(context.trackName) ?? 0)
-    this.handlers.onEncodedVideoBitrate?.(Math.max(0, ...kbps))
+    this.handlers.onEncodedVideoBitrate?.(Math.max(0, ...kbps), source)
   }
 
   private reportAudioBitrate(): void {

@@ -20,8 +20,8 @@ import {
 } from '../types/catalog'
 import { catalogTracksForRole, pickHighestBitrateTrack } from '../media/meetingCatalog'
 import { checkCodecSupport } from '../utils/codecSupport'
-import type { RemotePlaybackStats, VideoAdaptation } from '../media/mediaSubscriber'
-import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
+import type { VideoAdaptation } from '../media/mediaSubscriber'
+import type { LocalStatsSample, RemoteStatsSample, VideoSendTiming } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 import { type StageView, arrangeStage, tileKey } from '../utils/stageLayout'
 import { capLadderToHeight } from '@player/adaptiveBitrate'
@@ -32,8 +32,8 @@ interface MeetingRoomProps {
 }
 
 type StatsSnapshot = {
-  localMemberId: string
-  localVideoBitrate: number | null
+  localCameraBitrate: number | null
+  localScreenShareBitrate: number | null
   localAudioBitrate: number | null
   localCameraVideoSendTiming: VideoSendTiming | null
   localScreenShareVideoSendTiming: VideoSendTiming | null
@@ -61,8 +61,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       setTileHeights((prev) => (prev.get(key) === heightPx ? prev : new Map(prev).set(key, heightPx))),
     []
   )
-  const [statsHistory, setStatsHistory] = useState<Map<string, SidebarStatsSample[]>>(new Map())
-  const [remoteStats, setRemoteStats] = useState<Map<string, RemotePlaybackStats>>(new Map())
+  const [localStatsHistory, setLocalStatsHistory] = useState<LocalStatsSample[]>([])
+  const [remoteStatsHistory, setRemoteStatsHistory] = useState<Map<string, RemoteStatsSample[]>>(new Map())
   const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, MeetingCatalogTrack[]>>(new Map())
   const [remoteCatalogSelections, setRemoteCatalogSelections] = useState<Map<string, CatalogSelections>>(new Map())
   const [catalogLoadingMemberIds, setCatalogLoadingMemberIds] = useState<Set<string>>(new Set())
@@ -88,7 +88,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     localVideoStream,
     localScreenShareStream,
     localAudioBitrate,
-    localVideoBitrate,
+    localCameraBitrate,
+    localScreenShareBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
     remotePictures,
@@ -125,8 +126,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   } = useMeetingMedia(session)
 
   const statsSnapshotRef = useRef<StatsSnapshot>({
-    localMemberId: session.localMember.id,
-    localVideoBitrate,
+    localCameraBitrate,
+    localScreenShareBitrate,
     localAudioBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
@@ -182,8 +183,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setCatalogSubscribedMemberIds(new Set())
     setCatalogUnsubscribingTrackKeys(new Set())
     setIsSidebarOpen(false)
-    setStatsHistory(new Map())
-    setRemoteStats(new Map())
+    setLocalStatsHistory([])
+    setRemoteStatsHistory(new Map())
   }, [session])
 
   useEffect(() => {
@@ -199,8 +200,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
 
   useEffect(() => {
     statsSnapshotRef.current = {
-      localMemberId: room.localMember.id,
-      localVideoBitrate,
+      localCameraBitrate,
+      localScreenShareBitrate,
       localAudioBitrate,
       localCameraVideoSendTiming,
       localScreenShareVideoSendTiming,
@@ -208,10 +209,10 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     }
   }, [
     localAudioBitrate,
-    localVideoBitrate,
+    localCameraBitrate,
+    localScreenShareBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
-    room.localMember.id,
     room.remoteMembers
   ])
 
@@ -220,38 +221,24 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       const snapshot = statsSnapshotRef.current
       const sampledAt = Date.now()
       const { subscriber } = session.getMediaController()
-      const latestRemoteStats = new Map<string, RemotePlaybackStats>()
-      setStatsHistory((prev) => {
-        const next = new Map<string, SidebarStatsSample[]>()
-        const localSample: SidebarStatsSample = {
-          timestamp: sampledAt,
-          videoBitrateKbps: snapshot.localVideoBitrate,
-          audioBitrateKbps: snapshot.localAudioBitrate,
-          localCameraSend: snapshot.localCameraVideoSendTiming,
-          localScreenShareSend: snapshot.localScreenShareVideoSendTiming
-        }
-        next.set(snapshot.localMemberId, appendStatsSample(prev.get(snapshot.localMemberId), localSample))
-        for (const remoteMember of snapshot.remoteMembers) {
-          const stats = subscriber.stats(remoteMember.id)
-          latestRemoteStats.set(remoteMember.id, stats)
-          const primary = stats.camera ?? stats.screenshare
-          const remoteSample: SidebarStatsSample = {
-            timestamp: sampledAt,
-            videoBitrateKbps: stats.camera?.receivedKbps,
-            screenShareBitrateKbps: stats.screenshare?.receivedKbps,
-            audioBitrateKbps: stats.camera?.receivedAudioKbps,
-            bufferMs: primary?.bufferMs,
-            targetBufferMs: primary?.targetBufferMs,
-            outputLatencyMs: primary?.outputLatencyMs,
-            arrivalSpreadMs: primary?.arrivalSpreadMs,
-            viewerDelayMs: primary?.viewerDelayMs,
-            syncOffsetMs: primary?.syncOffsetMs
-          }
-          next.set(remoteMember.id, appendStatsSample(prev.get(remoteMember.id), remoteSample))
-        }
-        return next
-      })
-      setRemoteStats(latestRemoteStats)
+      const localSample: LocalStatsSample = {
+        timestamp: sampledAt,
+        cameraBitrateKbps: snapshot.localCameraBitrate,
+        screenShareBitrateKbps: snapshot.localScreenShareBitrate,
+        audioBitrateKbps: snapshot.localAudioBitrate,
+        cameraSend: snapshot.localCameraVideoSendTiming,
+        screenShareSend: snapshot.localScreenShareVideoSendTiming
+      }
+      setLocalStatsHistory((prev) => appendStatsSample(prev, localSample))
+      setRemoteStatsHistory(
+        (prev) =>
+          new Map(
+            snapshot.remoteMembers.map((member) => [
+              member.id,
+              appendStatsSample(prev.get(member.id), { timestamp: sampledAt, ...subscriber.stats(member.id) })
+            ])
+          )
+      )
     }, SIDEBAR_STATS_SAMPLE_INTERVAL_MS)
 
     return () => window.clearInterval(timer)
@@ -716,7 +703,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             localVideoStream={localVideoStream}
             localScreenShareStream={localScreenShareStream}
             remotePictures={remotePictures}
-            remoteStats={remoteStats}
             playoutSettings={playoutSettings}
             onChangePlayoutSettings={setPlayoutSettings}
             onToggleCamera={toggleCamera}
@@ -763,7 +749,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             catalogSubscribedMemberIds={catalogSubscribedMemberIds}
             catalogUnsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
             onSelectCatalogTrack={handleSelectCatalogTrack}
-            statsHistory={statsHistory}
+            localStatsHistory={localStatsHistory}
+            remoteStatsHistory={remoteStatsHistory}
             stage={stage}
             speakingMemberIds={speakingMemberIds}
             filmstripOpen={filmstripOpen}
@@ -790,10 +777,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   )
 }
 
-function appendStatsSample(
-  current: SidebarStatsSample[] | undefined,
-  sample: SidebarStatsSample
-): SidebarStatsSample[] {
+function appendStatsSample<S>(current: S[] | undefined, sample: S): S[] {
   const base = current ?? []
   const next = [...base, sample]
   if (next.length <= SIDEBAR_STATS_HISTORY_LIMIT) {

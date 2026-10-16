@@ -1,3 +1,5 @@
+import type { RemotePlaybackStats } from '../media/mediaSubscriber'
+
 export interface VideoSendTiming {
   captureToEncodeDoneMs: number | null
   encodeQueueSize: number
@@ -8,17 +10,13 @@ export interface VideoSendTiming {
   objectBytes: number
 }
 
-export interface SidebarStatsSample {
+export interface LocalStatsSample {
   timestamp: number
-  videoBitrateKbps?: number | null
-  screenShareBitrateKbps?: number | null
-  audioBitrateKbps?: number | null
-  localCameraSend?: VideoSendTiming | null
-  localScreenShareSend?: VideoSendTiming | null
-  bufferMs?: number | null
-  targetBufferMs?: number | null
-  outputLatencyMs?: number | null
-  arrivalSpreadMs?: number | null
-  viewerDelayMs?: number | null
-  syncOffsetMs?: number | null
+  cameraBitrateKbps: number | null
+  screenShareBitrateKbps: number | null
+  audioBitrateKbps: number | null
+  cameraSend: VideoSendTiming | null
+  screenShareSend: VideoSendTiming | null
 }
+
+export type RemoteStatsSample = RemotePlaybackStats & { timestamp: number }

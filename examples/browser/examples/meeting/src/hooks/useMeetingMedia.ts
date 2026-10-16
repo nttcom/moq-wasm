@@ -57,7 +57,8 @@ interface UseMeetingMediaResult {
   localVideoStream: MediaStream | null
   localScreenShareStream: MediaStream | null
   localAudioStream: MediaStream | null
-  localVideoBitrate: number | null
+  localCameraBitrate: number | null
+  localScreenShareBitrate: number | null
   localAudioBitrate: number | null
   localCameraVideoSendTiming: VideoSendTiming | null
   localScreenShareVideoSendTiming: VideoSendTiming | null
@@ -125,7 +126,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null)
   const [localScreenShareStream, setLocalScreenShareStream] = useState<MediaStream | null>(null)
   const [localAudioStream, setLocalAudioStream] = useState<MediaStream | null>(null)
-  const [localVideoBitrate, setLocalVideoBitrate] = useState<number | null>(null)
+  const [localCameraBitrate, setLocalCameraBitrate] = useState<number | null>(null)
+  const [localScreenShareBitrate, setLocalScreenShareBitrate] = useState<number | null>(null)
   const [localAudioBitrate, setLocalAudioBitrate] = useState<number | null>(null)
   const [localCameraVideoSendTiming, setLocalCameraVideoSendTiming] = useState<VideoSendTiming | null>(null)
   const [localScreenShareVideoSendTiming, setLocalScreenShareVideoSendTiming] = useState<VideoSendTiming | null>(null)
@@ -233,7 +235,13 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         setLocalAudioStream(stream)
         setMicrophoneEnabled(!!stream)
       },
-      onEncodedVideoBitrate: (kbps) => setLocalVideoBitrate(kbps),
+      onEncodedVideoBitrate: (kbps, source) => {
+        if (source === 'screenshare') {
+          setLocalScreenShareBitrate(kbps)
+          return
+        }
+        setLocalCameraBitrate(kbps)
+      },
       onEncodedAudioBitrate: (kbps) => setLocalAudioBitrate(kbps),
       onLocalVideoSendTiming: (timing, source) => {
         if (source === 'screenshare') {
@@ -281,7 +289,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       publisher.setHandlers({})
       subscriber.setHandlers({})
       setRemotePictures(new Map())
-      setLocalVideoBitrate(null)
+      setLocalCameraBitrate(null)
+      setLocalScreenShareBitrate(null)
       setLocalAudioBitrate(null)
       setLocalCameraVideoSendTiming(null)
       setLocalScreenShareVideoSendTiming(null)
@@ -657,7 +666,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     localVideoStream,
     localScreenShareStream,
     localAudioStream,
-    localVideoBitrate,
+    localCameraBitrate,
+    localScreenShareBitrate,
     localAudioBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
