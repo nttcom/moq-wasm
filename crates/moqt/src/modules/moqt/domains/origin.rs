@@ -27,7 +27,10 @@ use fetch_serve_task::FetchServeTask;
 use object_cache::{CachedObject, FetchRange, ObjectCache};
 use object_numbering::ObjectNumbering;
 
-const SUBSCRIBE_EXPIRES_MS: u64 = 1_000_000;
+/// An Origin never ends a subscription on a timer (draft-ietf-moq-transport-14
+/// §9.8). Relays forward this value, and some subscribers (moq-ffi before
+/// 0.4.5) reject a non-zero one.
+const SUBSCRIBE_NEVER_EXPIRES: u64 = 0;
 const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
 
@@ -332,7 +335,7 @@ impl Origin {
             content_exists(state.track_mut(&key)?.largest_sent)
         };
         let track_alias = handler
-            .ok(SUBSCRIBE_EXPIRES_MS, content_exists)
+            .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists)
             .await
             .context("accept SUBSCRIBE")?;
         let subscription = handler.into_subscription(track_alias);
@@ -868,6 +871,18 @@ mod tests {
             ]
         );
         assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+    }
+
+    #[tokio::test]
+    async fn accepted_subscribe_never_expires() {
+        // Arrange
+        let peers = origin_with_track("origin-subscribe-expires", RETENTION).await;
+
+        // Act
+        let subscription = subscribe(&peers).await;
+
+        // Assert
+        assert_eq!(subscription.expires(), Some(0));
     }
 
     #[tokio::test]
