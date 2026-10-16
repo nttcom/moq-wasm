@@ -311,7 +311,6 @@ export default function App() {
             height={drawerHeight}
             onResize={setDrawerHeight}
             onClose={() => setDrawerClosed(true)}
-            namespacePrefix={filters.namespacePrefix}
           />
         )}
       </main>

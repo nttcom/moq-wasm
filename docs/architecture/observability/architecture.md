@@ -286,7 +286,7 @@ stack's API on port 8095; anywhere else, the deployed
   up to now in 1 s steps — a 7-day slider would move about an hour per
   pixel. −10 s / +10 s buttons and ← / → (1 s, Shift for 10 s) step from
   the current position; stepping past now returns to live. The whole page
-  (topology, colours, details) then shows the snapshot at that time, and the
+  (topology, colours, charts) then shows the snapshot at that time, and the
   time label returns to live when clicked.
 - A Namespaces button opens a panel listing every Track Namespace published
   in the header's range (`GET /api/namespaces`), newest first, searchable,
@@ -348,18 +348,12 @@ stack's API on port 8095; anywhere else, the deployed
 ### Chart drawer
 Opening on every selection, it overlays the bottom of the topology (45% of
 the viewport by default, resizable by dragging its top edge) and holds:
-- a details column with what charts cannot show: identity (`app_id`, relay,
-  path MTU), published tracks and subscriber count, received namespaces with
-  their delivery lag, routes and their namespaces for a link, tracks carried
-  by an inter-relay link, and for a relay its session count and state
-  (serving, or draining with the time and the clients left). Section
-  headings name their link in the selection blue (`carol → relay-b`). Below
-  the summary, one tab per chart group switches the charts shown: Resources
-  (memory, storage, cache objects), Network and Sessions for a relay or the
-  mesh; Media (bitrate, arrival gap, delivery lag), Transport (RTT, loss,
-  cwnd, congestion) and Streams (flow control, resets) for a client or a
-  link. The picked tab stays across selections that have it, and only its
-  charts are fetched;
+- a tab column, one tab per chart group, switching the charts shown:
+  Resources (memory, storage, cache objects), Network and Sessions for a
+  relay or the mesh; Media (bitrate, arrival gap, delivery lag), Transport
+  (RTT, loss, cwnd, congestion) and Streams (flow control, resets) for a
+  client or a link. The picked tab stays across selections that have it, and
+  only its charts are fetched;
 - one chart per metric in the style of the GCP monitoring charts, with
   axes, gridlines and one line per series (uplink and downlink bitrate in
   one card, delivery lag per subscription in another), fed by
@@ -376,7 +370,7 @@ With a Track Namespace filter, bitrates and track lists count only the
 filtered subscriptions (from the per-subscription counters; an inter-relay
 link shows only the filtered tracks it carries). Transport figures — RTT,
 loss, cwnd, congestion, flow-control and reset counts — exist per QUIC
-connection only, so they stay whole-session, and the details column says so.
+connection only, so they stay whole-session.
 
 A route is built backwards from each subscription of a client: the track's
 publisher session on that relay is either a client (the original publisher)
