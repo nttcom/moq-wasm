@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
+import { listenForRelayMove, processAlive, relayAPid } from './goaway-e2e-arrange'
 import { arrangeLiveViewerE2ESession, closeLiveViewerE2ESession, expectVideoDecoded } from './live-viewer-e2e-arrange'
+import { RELAY_B_URL } from './meeting-e2e-arrange'
 
-const relayAPid = Number(process.env.GOAWAY_E2E_RELAY_A_PID)
 const STEADY_MS = 5_000
 const AFTER_SWITCH_MS = 10_000
 /// The runner's encoder starts a group every 2 s.
@@ -54,28 +55,12 @@ function nextGroupStart(page: Page): Promise<void> {
   })
 }
 
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
 test('live playback continues when the relay shuts down with GOAWAY', async ({ browser }) => {
   // Arrange: the viewer plays the stream through relay A
   expect(Number.isInteger(relayAPid)).toBe(true)
   const session = await arrangeLiveViewerE2ESession(browser)
   const { viewer } = session
-  const movedTo = new Promise<string>((resolve) =>
-    viewer.page.on('console', async (message) => {
-      if (message.text().startsWith('[moqt] moved to the relay named by GOAWAY')) {
-        const { url } = (await message.args()[1].jsonValue()) as { url: string }
-        resolve(url)
-      }
-    })
-  )
+  const movedTo = listenForRelayMove(viewer.page)
 
   try {
     await viewer.watchButton.click()
@@ -90,10 +75,7 @@ test('live playback continues when the relay shuts down with GOAWAY', async ({ b
     // Act: relay A stops and sends GOAWAY naming relay B
     const stoppedAt = await viewer.page.evaluate(() => performance.now())
     process.kill(relayAPid, 'SIGINT')
-    const newRelayUrl = await Promise.race([
-      movedTo,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('the viewer did not move')), 15_000))
-    ])
+    const newRelayUrl = await movedTo()
     await viewer.page.waitForTimeout(AFTER_SWITCH_MS)
     const endedAt = await viewer.page.evaluate(() => performance.now())
 
@@ -101,7 +83,7 @@ test('live playback continues when the relay shuts down with GOAWAY', async ({ b
     const before = await presentedFrameWindow(viewer.page, steadyFrom, stoppedAt)
     const across = await presentedFrameWindow(viewer.page, stoppedAt, endedAt)
     console.log(JSON.stringify({ newRelayUrl, before, across }))
-    expect(newRelayUrl).toBe('https://127.0.0.1:4434')
+    expect(newRelayUrl).toBe(RELAY_B_URL)
     expect(across.maxGapMs).toBeLessThan(Math.max(250, before.maxGapMs * 2))
     expect(across.meanGapMs).toBeLessThanOrEqual(before.meanGapMs * 1.1)
     await expect(viewer.playbackStatus).toContainText('Playing')

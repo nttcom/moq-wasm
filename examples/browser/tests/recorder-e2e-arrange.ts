@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -151,6 +152,13 @@ export function probeRecording(path: string) {
     largestGapSeconds: { video: largestGap(packetSeconds.video), audio: largestGap(packetSeconds.audio) },
     decodeErrors: decoded.stderr
   }
+}
+
+/// The probe with the most packets of `track`.
+export function longestRecording(probes: ReturnType<typeof probeRecording>[], track: 'video' | 'audio') {
+  const [file] = [...probes].sort((left, right) => right.packetSeconds[track].length - left.packetSeconds[track].length)
+  expect(file, `a file with ${track}`).toBeDefined()
+  return file
 }
 
 /// `times` must be in ascending order.

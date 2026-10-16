@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { type RecordingLayout } from '../examples/meeting/src/recording/recorderApi'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 import { type MeetingClientPageModel, arrangeMeetingClient, enableMedia, joinRoom } from './meeting-e2e-arrange'
-import { probeRecording, splitAtGaps, startRecorderServe } from './recorder-e2e-arrange'
+import { longestRecording, probeRecording, splitAtGaps, startRecorderServe } from './recorder-e2e-arrange'
 
 /// The first mute ends within moqt's 10 s PUBLISH_DONE grace, the second one past it.
 const MUTE_SECONDS = [4, 14]
@@ -51,8 +51,8 @@ test('recorder serve keeps recording a meeting participant who mutes and unmutes
       const audioFiles = probes.filter((probe) => probe.packetSeconds.audio.length > 0)
       expect(videoFiles.length, `${layout} video files`).toBeLessThanOrEqual(MAX_FILES_PER_TRACK)
       expect(audioFiles.length, `${layout} audio files`).toBeLessThanOrEqual(MAX_FILES_PER_TRACK)
-      const video = longest(videoFiles, 'video')
-      const audio = longest(audioFiles, 'audio')
+      const video = longestRecording(videoFiles, 'video')
+      const audio = longestRecording(audioFiles, 'audio')
       expect(video.decodeErrors, `${layout} video decodes`).toBe('')
       expect(audio.decodeErrors, `${layout} audio decodes`).toBe('')
       // Assert: the video goes on through both mutes
@@ -84,10 +84,4 @@ async function muteAndUnmute(model: MeetingClientPageModel): Promise<void> {
     await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off')
     await sleep(UNMUTED_SECONDS * 1_000)
   }
-}
-
-function longest(probes: ReturnType<typeof probeRecording>[], track: 'video' | 'audio') {
-  const [file] = [...probes].sort((left, right) => right.packetSeconds[track].length - left.packetSeconds[track].length)
-  expect(file, `a file with ${track}`).toBeDefined()
-  return file
 }
