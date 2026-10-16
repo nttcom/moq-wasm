@@ -4,13 +4,15 @@ use clap::Parser;
 use mediapack::MediaEvent;
 use moqt::ClientConfig;
 use onvif_ingest::{
-    app_config, cli,
+    app_config,
+    arrival_clamp::ArrivalClamp,
+    cli,
     command_subscriber::{CommandSubscriber, CommandTrack},
     onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_source, soap_client,
 };
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
@@ -221,7 +223,9 @@ async fn play_rtsp(
         let _ = rtsp_result_sender.send(rtsp_source::run(&rtsp_url, event_sender));
     });
     let mut writer = BroadcastWriter::run(broadcast.clone(), source.tracks.clone());
-    while let Some(event) = event_receiver.recv().await {
+    let mut clamp = ArrivalClamp::default();
+    while let Some(mut event) = event_receiver.recv().await {
+        clamp.apply(&mut event, wall_clock_micros());
         if let (Some(path), MediaEvent::Video(sample)) = (&*dump_keyframe, &event) {
             if sample.is_keyframe {
                 std::fs::write(path, &sample.data)
@@ -238,6 +242,12 @@ async fn play_rtsp(
     Ok(rtsp_result
         .await
         .unwrap_or_else(|_| Err(anyhow!("RTSP thread exited"))))
+}
+
+fn wall_clock_micros() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_micros() as i64)
 }
 
 fn profile_tracks(args: &MoqtArgs, profile_index: usize, label: &str) -> SourceTracks {
