@@ -22,6 +22,21 @@ pub enum VideoCodec {
     Av1,
 }
 
+impl VideoCodec {
+    /// Reads a WebCodecs codec string, the form a catalog's `codec` takes;
+    /// `None` for any other codec.
+    pub fn from_codec_string(codec: &str) -> Option<Self> {
+        let family = codec.split('.').next().unwrap_or_default();
+        match family {
+            "avc1" | "avc3" => Some(Self::H264),
+            "vp8" => Some(Self::Vp8),
+            "vp09" => Some(Self::Vp9),
+            "av01" => Some(Self::Av1),
+            _ => None,
+        }
+    }
+}
+
 /// A LOC track carries one codec, and draft-ietf-moq-loc-01 leaves the track's
 /// kind, its codec and its audio configuration to the catalog, so the caller
 /// states them.
@@ -401,6 +416,25 @@ mod tests {
                 "{codec:?}"
             );
         }
+    }
+
+    #[test]
+    fn reads_the_codec_from_a_webcodecs_codec_string() {
+        // Act / Assert
+        assert_eq!(
+            VideoCodec::from_codec_string("avc1.640028"),
+            Some(VideoCodec::H264)
+        );
+        assert_eq!(VideoCodec::from_codec_string("vp8"), Some(VideoCodec::Vp8));
+        assert_eq!(
+            VideoCodec::from_codec_string("vp09.00.10.08"),
+            Some(VideoCodec::Vp9)
+        );
+        assert_eq!(
+            VideoCodec::from_codec_string("av01.0.08M.08"),
+            Some(VideoCodec::Av1)
+        );
+        assert_eq!(VideoCodec::from_codec_string("hvc1.1.6.L93.B0"), None);
     }
 
     #[test]
