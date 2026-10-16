@@ -1,13 +1,18 @@
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use moqt::{RequestErrorCode, Session, SessionEvent};
 use object_store::{ObjectStore, path::Path};
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::watch,
+    task::{JoinHandle, JoinSet},
+    time::Instant,
+};
 
 use crate::{
     recorder::{BroadcastOptions, UploadTarget, default_output_path, record_broadcast},
@@ -26,6 +31,7 @@ pub(crate) struct RoomConfig {
     /// The store and the key prefix the room's objects go under.
     pub(crate) upload: Option<(Arc<dyn ObjectStore>, Path)>,
     pub(crate) options: BroadcastOptions,
+    pub(crate) limits: RecordingLimits,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,10 +98,7 @@ impl RoomRecording {
     /// Asks every participant's recording to close its files; `finished`
     /// then waits for them and for the uploads.
     pub(crate) fn stop(&self) {
-        let mut status = lock(&self.status);
-        if status.state == RoomState::Recording {
-            status.state = RoomState::Stopping;
-        }
+        stopping(&self.status);
         let _ = self.stop_sender.send(true);
     }
 
@@ -136,6 +139,7 @@ async fn record(
         &connection.session,
         &config.namespace_prefix,
         &config.output_dir,
+        config.limits,
         &options,
         stop,
         status,
@@ -151,12 +155,14 @@ async fn record(
     result
 }
 
-/// Returns once `stop` turns true or the session closes, and every
-/// participant's recording has ended.
+/// Returns once `stop` turns true, the room stops by itself (see
+/// `AutoStop`) or the session closes, and every participant's recording has
+/// ended.
 async fn follow_members(
     session: &Arc<Session>,
     namespace_prefix: &str,
     output_dir: &std::path::Path,
+    limits: RecordingLimits,
     options: &Arc<BroadcastOptions>,
     mut stop: watch::Receiver<bool>,
     status: &Arc<Mutex<RoomStatus>>,
@@ -166,13 +172,29 @@ async fn follow_members(
         .subscribe_namespace(namespace_prefix.to_string())
         .await?;
     tracing::info!(prefix = namespace_prefix, "room recording started");
-    let mut members: Vec<(String, JoinHandle<()>)> = Vec::new();
+    let (member_stop_sender, member_stop) = watch::channel(false);
+    let mut members: JoinSet<String> = JoinSet::new();
+    let mut recorded: HashSet<String> = HashSet::new();
+    let mut auto_stop = AutoStop::new(Instant::now(), limits);
     loop {
+        let (deadline, reason) = auto_stop.next();
         let event = tokio::select! {
             _ = stop.wait_for(|stop| *stop) => break,
+            _ = tokio::time::sleep_until(deadline) => {
+                tracing::info!(prefix = namespace_prefix, reason, "stopping the room recording");
+                stopping(status);
+                break;
+            }
             close = session.closed() => {
                 tracing::warn!(%close, "room session closed");
                 break;
+            }
+            Some(finished) = members.join_next(), if !members.is_empty() => {
+                if let Ok(namespace) = finished {
+                    recorded.remove(&namespace);
+                }
+                auto_stop.members_changed(recorded.len(), Instant::now());
+                continue;
             }
             event = session.receive_event() => event?,
         };
@@ -180,20 +202,19 @@ async fn follow_members(
             SessionEvent::PublishNamespace(handler) => {
                 let namespace = handler.track_namespace.clone();
                 handler.ok().await?;
-                members.retain(|(_, handle)| !handle.is_finished());
-                if members.iter().any(|(member, _)| *member == namespace) {
+                if !recorded.insert(namespace.clone()) {
                     continue;
                 }
                 tracing::info!(%namespace, "recording a participant");
-                let handle = record_member(
+                members.spawn(record_member(
                     Arc::clone(session),
-                    namespace.clone(),
+                    namespace,
                     output_dir,
                     Arc::clone(options),
-                    stop.clone(),
+                    member_stop.clone(),
                     Arc::clone(status),
-                );
-                members.push((namespace, handle));
+                ));
+                auto_stop.members_changed(recorded.len(), Instant::now());
             }
             // Accepting forwarded PUBLISHes would deliver every track the
             // participant publishes, not only the selected ones.
@@ -212,10 +233,58 @@ async fn follow_members(
             event => tracing::debug!(?event, "room session event ignored"),
         }
     }
-    for (_, handle) in members {
-        let _ = handle.await;
-    }
+    let _ = member_stop_sender.send(true);
+    members.join_all().await;
     Ok(())
+}
+
+/// How long a room recording may run by itself.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RecordingLimits {
+    pub(crate) max_duration: Duration,
+    /// Stop once no participant has been recorded for this long, counted
+    /// from the start too.
+    pub(crate) empty_room_timeout: Duration,
+}
+
+/// The moment a room recording stops by itself.
+struct AutoStop {
+    max_end: Instant,
+    empty_room_timeout: Duration,
+    /// `None` while some participant is recorded.
+    empty_end: Option<Instant>,
+}
+
+impl AutoStop {
+    fn new(now: Instant, limits: RecordingLimits) -> Self {
+        Self {
+            max_end: now + limits.max_duration,
+            empty_room_timeout: limits.empty_room_timeout,
+            empty_end: Some(now + limits.empty_room_timeout),
+        }
+    }
+
+    fn members_changed(&mut self, recorded: usize, now: Instant) {
+        self.empty_end = match (recorded, self.empty_end) {
+            (0, Some(end)) => Some(end),
+            (0, None) => Some(now + self.empty_room_timeout),
+            _ => None,
+        };
+    }
+
+    fn next(&self) -> (Instant, &'static str) {
+        match self.empty_end {
+            Some(end) if end < self.max_end => (end, "the room has been empty"),
+            _ => (self.max_end, "the recording reached its maximum length"),
+        }
+    }
+}
+
+fn stopping(status: &Mutex<RoomStatus>) {
+    let mut status = lock(status);
+    if status.state == RoomState::Recording {
+        status.state = RoomState::Stopping;
+    }
 }
 
 fn record_member(
@@ -225,7 +294,7 @@ fn record_member(
     options: Arc<BroadcastOptions>,
     stop: watch::Receiver<bool>,
     status: Arc<Mutex<RoomStatus>>,
-) -> JoinHandle<()> {
+) -> impl Future<Output = String> + use<> {
     let now = SystemTime::now();
     let index = {
         let mut status = lock(&status);
@@ -241,7 +310,7 @@ fn record_member(
         status.members.len() - 1
     };
     let path = output_dir.join(default_output_path(&namespace, now));
-    tokio::spawn(async move {
+    async move {
         let result = record_broadcast(&session, &namespace, path, &options, stop).await;
         let mut status = lock(&status);
         let member = &mut status.members[index];
@@ -250,11 +319,74 @@ fn record_member(
             tracing::warn!(%namespace, error = format!("{error:#}"), "participant recording failed");
             member.error = Some(format!("{error:#}"));
         }
-    })
+        namespace
+    }
 }
 
 fn lock(status: &Mutex<RoomStatus>) -> std::sync::MutexGuard<'_, RoomStatus> {
     status
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LIMITS: RecordingLimits = RecordingLimits {
+        max_duration: Duration::from_secs(7200),
+        empty_room_timeout: Duration::from_secs(300),
+    };
+
+    #[test]
+    fn an_empty_room_stops_five_minutes_after_the_start() {
+        // Arrange
+        let start = Instant::now();
+
+        // Act
+        let auto_stop = AutoStop::new(start, LIMITS);
+
+        // Assert
+        assert_eq!(auto_stop.next().0, start + Duration::from_secs(300));
+    }
+
+    #[test]
+    fn the_empty_room_timer_runs_only_while_nobody_is_recorded() {
+        // Arrange
+        let start = Instant::now();
+        let mut auto_stop = AutoStop::new(start, LIMITS);
+        let joined = start + Duration::from_secs(60);
+        let left = start + Duration::from_secs(600);
+
+        // Act
+        auto_stop.members_changed(1, joined);
+        let while_recorded = auto_stop.next().0;
+        auto_stop.members_changed(0, left);
+        auto_stop.members_changed(0, left + Duration::from_secs(10));
+
+        // Assert: a second empty report keeps the first deadline
+        assert_eq!(while_recorded, start + Duration::from_secs(7200));
+        assert_eq!(auto_stop.next().0, left + Duration::from_secs(300));
+    }
+
+    #[test]
+    fn the_maximum_length_wins_over_a_later_empty_room_deadline() {
+        // Arrange
+        let start = Instant::now();
+        let mut auto_stop = AutoStop::new(start, LIMITS);
+
+        auto_stop.members_changed(1, start + Duration::from_secs(10));
+
+        // Act: the last participant leaves 100 s before the maximum length
+        auto_stop.members_changed(0, start + Duration::from_secs(7100));
+
+        // Assert
+        assert_eq!(
+            auto_stop.next(),
+            (
+                start + Duration::from_secs(7200),
+                "the recording reached its maximum length"
+            )
+        );
+    }
 }

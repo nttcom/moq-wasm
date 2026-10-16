@@ -232,7 +232,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::recordings::ServeConfig;
+    use crate::{recordings::ServeConfig, room_recording::RecordingLimits};
 
     fn recordings() -> Recordings {
         Recordings::new(ServeConfig {
@@ -244,6 +244,10 @@ mod tests {
             upload: None,
             max_video_height: 480,
             segment_length: Some(Duration::from_secs(60)),
+            limits: RecordingLimits {
+                max_duration: Duration::from_secs(7200),
+                empty_room_timeout: Duration::from_secs(300),
+            },
         })
     }
 

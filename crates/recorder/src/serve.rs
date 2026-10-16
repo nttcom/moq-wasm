@@ -11,6 +11,7 @@ use crate::{
     api_server::ApiServer,
     recorder::UPLOAD_SEGMENT_SECONDS,
     recordings::{Recordings, ServeConfig},
+    room_recording::RecordingLimits,
 };
 
 /// Serves the recording API until SIGINT or SIGTERM, then stops every
@@ -40,6 +41,10 @@ pub(crate) async fn serve(args: ServeArgs) -> Result<()> {
             .segment_seconds
             .or(args.upload.is_some().then_some(UPLOAD_SEGMENT_SECONDS))
             .map(Duration::from_secs),
+        limits: RecordingLimits {
+            max_duration: Duration::from_secs(args.max_recording_seconds),
+            empty_room_timeout: Duration::from_secs(args.empty_room_seconds),
+        },
     }));
     let listener = TcpListener::bind(args.listen)
         .await

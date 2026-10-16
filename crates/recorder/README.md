@@ -66,6 +66,8 @@ from the moment it is published, with the tracks picked from its catalog
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
 | `--namespace-root` | `anon` | First element every recorded prefix must have; the API has no authentication |
 | `--max-recordings` | `4` | Recordings at once |
+| `--max-recording-seconds` | `7200` | A recording stops by itself after this long |
+| `--empty-room-seconds` | `300` | A recording stops by itself once nobody has been recorded for this long, from the start too |
 | `--output-dir` | `recordings` | Where the files are written |
 | `--upload`, `--segment-seconds`, `--max-video-height`, `--insecure-skip-tls-verify` | | As for a single recording |
 

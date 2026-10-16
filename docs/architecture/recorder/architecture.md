@@ -162,6 +162,12 @@ segment, and a network stall would hold up the recording.
   `record_broadcast` watches. The state goes from `stopping` to `finished`
   once each file is closed and, with `--upload`, uploaded. The objects go
   under `<url path>/<recording id>/<namespace>/`.
+- A recording also stops by itself, the same way, `--max-recording-seconds`
+  (2 h) after it started, or once no participant has been recorded for
+  `--empty-room-seconds` (5 min), counted from the start too. A participant
+  counts until their recording ends, which is up to 10 s after the
+  PUBLISH_DONE that follows their leaving, so a forgotten stop or an empty
+  room cannot keep a recording running.
 - SIGINT or SIGTERM stops every recording the same way before the process
   exits.
 

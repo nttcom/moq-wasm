@@ -158,6 +158,15 @@ pub(crate) struct ServeArgs {
     #[arg(long, value_name = "SECONDS")]
     pub(crate) segment_seconds: Option<u64>,
 
+    /// Stop a recording after this many seconds
+    #[arg(long, value_name = "SECONDS", default_value_t = 7200)]
+    pub(crate) max_recording_seconds: u64,
+
+    /// Stop a recording once no participant has been in the room for this
+    /// many seconds, counted from the start too
+    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
+    pub(crate) empty_room_seconds: u64,
+
     /// Record each participant's tallest video track at most this high, or
     /// the shortest one when all are taller
     #[arg(long, value_name = "PIXELS", default_value_t = 480)]
