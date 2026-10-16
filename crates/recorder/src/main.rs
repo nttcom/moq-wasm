@@ -1,3 +1,4 @@
+mod catalog_reader;
 mod file_writer;
 mod pipeline;
 mod recorder;

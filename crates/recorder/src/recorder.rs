@@ -14,6 +14,7 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::{
     Args,
+    catalog_reader::CatalogReader,
     recording::{Recording, Uploader},
     relay::{self, RelayConnection},
     token_refresh_task::{TokenRefreshTask, read_token_file},
@@ -61,14 +62,8 @@ fn app_id(namespace: &str) -> &str {
 }
 
 async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
-    let catalog_subscription = relay::subscribe(
-        session,
-        &args.namespace,
-        msf::CATALOG_TRACK_NAME,
-        FilterType::NextGroupStart,
-    )
-    .await?;
-    let selection = wait_for_selection(session, &catalog_subscription, args).await?;
+    let mut catalog = CatalogReader::open(session, &args.namespace).await?;
+    let selection = wait_for_selection(&mut catalog, args).await?;
     tracing::info!(
         video = %selection.video.name,
         video_codec = ?selection.video.codec,
@@ -147,46 +142,17 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// Reads the catalog's current object from the joining FETCH
-/// (draft-ietf-moq-msf-01 §5), then later objects from the subscription, until
-/// the catalog lists the tracks to record. The subscription reader opens only
-/// after the FETCH: its first stream arrives with the next catalog object, up
-/// to 30 s later.
-async fn wait_for_selection(
-    session: &Session,
-    subscription: &Subscription,
-    args: &Args,
-) -> Result<Selection> {
+async fn wait_for_selection(catalog: &mut CatalogReader<'_>, args: &Args) -> Result<Selection> {
     let video_choice = match &args.video_track {
         Some(name) => VideoChoice::Named(name),
         None => VideoChoice::MaxHeight(args.max_video_height),
     };
-    let mut current = match relay::fetch_joining_group(session, subscription).await {
-        Ok(current) => current,
-        Err(error) => {
-            tracing::warn!(%error, "joining FETCH of the catalog failed");
-            None
-        }
-    };
-    let mut reader = None;
     loop {
-        let payload = match current.take() {
-            Some(payload) => payload,
-            None => {
-                let reader = match &mut reader {
-                    Some(reader) => reader,
-                    None => reader.insert(relay::track_reader(session, subscription).await?),
-                };
-                reader
-                    .next_object()
-                    .await?
-                    .context("catalog track ended")?
-                    .payload
-            }
-        };
-        let catalog: msf::Catalog =
-            serde_json::from_slice(&payload).context("catalog is not MSF JSON")?;
-        let selection = select_tracks(&catalog, video_choice, args.audio_track.as_deref())?;
+        let selection = select_tracks(
+            &catalog.next().await?,
+            video_choice,
+            args.audio_track.as_deref(),
+        )?;
         if let Some(selection) = selection {
             return Ok(selection);
         }

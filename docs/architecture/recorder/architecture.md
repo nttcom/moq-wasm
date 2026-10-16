@@ -31,9 +31,10 @@ both tracks into one init segment and one fragment stream.
 ## Flow
 1. `relay::RelayConnection` opens one session; the URL scheme selects QUIC or
    WebTransport (`Endpoint<DUAL>`), as `broadcast` does on the publishing side.
-2. The catalog is subscribed first and its current object read with the
-   joining FETCH (offset 0) draft-ietf-moq-msf-01 §5 asks for, falling back to
-   the subscription when the publisher has sent none yet.
+2. `catalog_reader::CatalogReader` subscribes to the catalog first and reads
+   its current object with the joining FETCH (offset 0)
+   draft-ietf-moq-msf-01 §5 asks for, falling back to the subscription when
+   the publisher has sent none yet.
    `track_selection::select_tracks` picks the LOC track named by
    `--video-track` and `--audio-track`. Without a name it ranks the LOC
    tracks by their catalog role and quality fields instead of guessing names
