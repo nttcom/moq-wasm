@@ -66,11 +66,6 @@ pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Ses
             SessionEvent::TrackStatus(handler) => on_track_status(&shared, handler),
             SessionEvent::Fetch(handler) => on_fetch(&shared, handler),
             SessionEvent::FetchCancel(handler) => on_fetch_cancel(&shared, handler.request_id()),
-            SessionEvent::GoAway(handler) => emit(
-                &shared.callbacks,
-                |c| &c.go_away,
-                &[JsValue::from_str(handler.new_session_uri())],
-            ),
             SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
             other => console_log(&format!("Unhandled session event: {other:?}")),
         }

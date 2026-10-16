@@ -232,13 +232,6 @@ impl MOQTClient {
         self.shared.callbacks.borrow_mut().subgroup_object = Some(callback);
     }
 
-    /// Called with `(trackAlias, groupId, subgroupId)` once a subgroup stream
-    /// ended, by FIN or reset.
-    #[wasm_bindgen(js_name = onSubgroupEnd)]
-    pub fn set_subgroup_end_callback(&mut self, callback: js_sys::Function) {
-        self.shared.callbacks.borrow_mut().subgroup_end = Some(callback);
-    }
-
     #[wasm_bindgen(js_name = onFetch)]
     pub fn set_fetch_callback(&mut self, callback: js_sys::Function) {
         self.shared.callbacks.borrow_mut().fetch = Some(callback);
@@ -272,13 +265,6 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = onTrackStatusResponse)]
     pub fn set_track_status_response_callback(&mut self, callback: js_sys::Function) {
         self.shared.callbacks.borrow_mut().track_status_response = Some(callback);
-    }
-
-    /// Called with the New Session URI of a GOAWAY (draft-14 §9.4): the URL
-    /// to reconnect to, or an empty string to reuse the current one.
-    #[wasm_bindgen(js_name = onGoAway)]
-    pub fn set_go_away_callback(&mut self, callback: js_sys::Function) {
-        self.shared.callbacks.borrow_mut().go_away = Some(callback);
     }
 
     #[wasm_bindgen(js_name = onConnectionClosed)]
@@ -325,7 +311,7 @@ impl MOQTClient {
             port: 0,
             verify_certificate: true,
             authorization_token: auth_token,
-            follow_go_away: false,
+            follow_go_away: true,
         })
         .map_err(anyhow_error)?;
         let session = endpoint

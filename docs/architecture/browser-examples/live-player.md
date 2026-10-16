@@ -62,52 +62,13 @@ Rules:
   top of the pictures.
 - L1 does not connect. It is given a connected `MoqtClientWrapper`, so a page
   can share one session with a publisher or with other players.
-- Relay switchover is the wrapper's, not the player's. On GOAWAY
-  (draft-14 §3.5, §8.3.1, §8.4.2) `MoqtClientWrapper` opens a second session
-  to the relay the GOAWAY names (or its current URL when it names none) and
-  re-sends PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE, every active SUBSCRIBE and
-  every `publish()` there under the same request ids, repeating a request the
-  new relay rejects every 500 ms; a failed switchover keeps the old session.
-  Each session has its own alias map, filled as soon as that session answers,
-  so an object from the new relay reaches its track before the switch
-  completes. While both sessions are open, each carried subscription has a
-  cutover group: the first group the new relay delivers, or the group after
-  the newest one the old relay delivered. Earlier groups are taken from the
-  old session only and later ones from the new session only, so a group is
-  neither duplicated nor cut short. A live subscription (Next Group Start or
-  Largest Object, forwarding) is re-sent with the Largest Object filter: the
-  publisher may have started a group on the new relay before the SUBSCRIBE
-  got there, and Next Group Start would skip it. When that Largest Location
-  is in a group the old session has not delivered, a joining FETCH of the
-  current group supplies it from its start, and the subscription's objects
-  are held until the FETCH ends (at most 2 s) so the group stays in order.
-  On the sending side a published track goes to both sessions
-  (draft-22 §7.6.1): a group starts on the new session and, while the old
-  relay still subscribes to the track, on the old one too, and its objects go
-  wherever it started. A subscription with no subgroup still arriving on
-  the old session (the wasm client reports each stream's end with
-  `onSubgroupEnd`) passes its cutover at once, since the publisher sends every
-  later group to the new relay too; this lets a quiet track such as chat leave
-  without the 5 s grace. The old session is closed once every subscription has
-  passed its cutover (or its relay sent PUBLISH_DONE, which the wrapper
-  otherwise ignores from a relay that sent GOAWAY; subscriptions give up
-  after 5 s) and its relay has unsubscribed from every published track, or
-  when that session ends. A FETCH still in flight is re-issued for
-  what it has not delivered yet and from then on taken from the new session
-  only: an absolute range resumes after the last object received, a joining
-  FETCH that delivered nothing yet is repeated against the re-issued
-  subscription, one that did is completed as an absolute range up to the
-  Largest Location its subscription started from, and in descending group
-  order the range is cut to end after the group being delivered, whose
-  repeated objects are skipped. Incoming SUBSCRIBEs stay with the session
-  they arrived on: `trackSubscribers` lists those of both sessions, so a
-  track served on SUBSCRIBE also goes to both relays, and the old relay's are
-  reported through the incoming-unsubscribe handler when it unsubscribes or
-  its session is closed. The wrapper hands out the aliases the application
-  sends on, so an alias a later session reuses for another track is replaced
-  rather than shared. The alias in
-  `SubgroupHeaderMessage` / datagram messages is the wire alias of the
-  session that delivered it.
+- Relay switchover is the session's, not the player's. The wasm client's
+  `moqt::Session` follows GOAWAY itself (`follow_go_away`, see
+  `docs/architecture/moqt/session-migration.md`): request ids and track
+  aliases stay what the wrapper first saw, so `MoqtClientWrapper` and the
+  player see no switchover at all. A SUBSCRIBE the old relay sent and never
+  unsubscribed is reported through the incoming-unsubscribe handler when its
+  connection closes.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
   `setOnConnectionClosedHandler`); they have one slot per client and belong to
   the page. It registers per-alias and per-request handlers only.
