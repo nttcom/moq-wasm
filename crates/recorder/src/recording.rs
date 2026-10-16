@@ -102,10 +102,14 @@ impl Recording {
         Ok(recording)
     }
 
-    /// Adds the audio track to a recording without one. The per-track layout
-    /// opens a file for it; the combined file takes it at once while still
-    /// empty, else from its next keyframe (see `Pipeline::add_audio`).
+    /// Adds an audio track to a recording that reads none: the first, or one
+    /// after an audio track ended. A later track goes to the file the ended one
+    /// went to; the per-track layout opens a file only for the first. When the
+    /// track starts in that file follows `Pipeline::add_audio`.
     pub(crate) async fn add_audio(&mut self, track: &AudioTrack) -> Result<()> {
+        if let Some(index) = self.audio {
+            return self.files[index].pipeline.add_audio(track.config.clone());
+        }
         let index = match self.layout {
             Layout::Combined => {
                 self.files[0].pipeline.add_audio(track.config.clone())?;
@@ -456,6 +460,93 @@ mod tests {
         assert!(recorded.contains(&MediaEvent::AudioConfig(opus_config())));
         assert_eq!(video_samples(&recorded).len(), 2);
         assert_eq!(audio_samples(&recorded)[0].pts, Timestamp::from_millis(20));
+    }
+
+    /// Records the fixture's video with an audio frame 20 ms after the video
+    /// start, then adds the same audio track again and records a frame 1 s
+    /// after the video start.
+    async fn record_mute_and_unmute(layout: Layout, dir: &Path) -> Vec<PathBuf> {
+        let fixture = fixture();
+        let start = first_video_capture(&fixture.video[0]);
+        let (last, earlier) = fixture.video.split_last().unwrap();
+        let mut recording =
+            Recording::create(&selection(), layout, dir.join("rec.mp4"), None, None)
+                .await
+                .unwrap();
+        recording.push_video(&earlier[0]).await.unwrap();
+        recording
+            .push_audio(&opus_object(1, 0, start + 20_000))
+            .await
+            .unwrap();
+        for object in &earlier[1..] {
+            recording.push_video(object).await.unwrap();
+        }
+        recording
+            .add_audio(&selection().audio.unwrap())
+            .await
+            .unwrap();
+        recording
+            .push_audio(&opus_object(last.group_id, 0, start + 1_000_000))
+            .await
+            .unwrap();
+        recording.push_video(last).await.unwrap();
+        let paths = recording.paths().map(Path::to_path_buf).collect();
+        recording.finish().await.unwrap();
+        paths
+    }
+
+    #[tokio::test]
+    async fn audio_listed_again_after_it_ended_resumes_in_the_combined_file() {
+        // Arrange
+        let dir = scratch_dir();
+
+        // Act
+        let paths = record_mute_and_unmute(Layout::Combined, &dir).await;
+
+        // Assert: one file with every video sample, and the audio on both sides of the gap
+        let recorded = demux(&std::fs::read(dir.join("rec.mp4")).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(paths, [dir.join("rec.mp4")]);
+        assert_eq!(
+            video_samples(&recorded).len(),
+            video_samples(&fixture().events).len()
+        );
+        let audio: Vec<_> = audio_samples(&recorded)
+            .iter()
+            .map(|sample| sample.pts)
+            .collect();
+        assert_eq!(
+            audio,
+            [Timestamp::from_millis(20), Timestamp::from_millis(1_000)]
+        );
+    }
+
+    #[tokio::test]
+    async fn audio_listed_again_after_it_ended_goes_on_in_its_own_file() {
+        // Arrange
+        let dir = scratch_dir();
+
+        // Act
+        let paths = record_mute_and_unmute(Layout::PerTrack, &dir).await;
+
+        // Assert: no second audio file
+        let audio = demux(&std::fs::read(dir.join("rec-audio.mp4")).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            paths,
+            [
+                dir.join("rec-video_profile_1.mp4"),
+                dir.join("rec-audio.mp4")
+            ]
+        );
+        let audio: Vec<_> = audio_samples(&audio)
+            .iter()
+            .map(|sample| sample.pts)
+            .collect();
+        assert_eq!(
+            audio,
+            [Timestamp::from_millis(20), Timestamp::from_millis(1_000)]
+        );
     }
 
     #[tokio::test]
