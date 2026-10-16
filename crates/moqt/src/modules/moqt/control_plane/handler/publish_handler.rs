@@ -11,7 +11,10 @@ use crate::{
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
-        domains::{connection::Connection, session_context::SessionContext},
+        domains::{
+            connection::{Connection, logical_id},
+            session_context::SessionContext,
+        },
     },
     modules::transport::transport_send_stream::TransportSendError,
     object::GroupOrder,
@@ -26,6 +29,7 @@ pub struct PublishHandler {
     pub track_namespace_tuple: Vec<String>,
     pub track_name: String,
     pub track_alias: u64,
+    wire_track_alias: u64,
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
@@ -44,14 +48,19 @@ impl PublishHandler {
     ) -> Self {
         let guard =
             ResponseGuard::new(connection, publish_message.request_id, RequestKind::Publish);
+        let request_id = guard
+            .connection()
+            .logical_request_id(publish_message.request_id);
+        let track_alias = logical_id(guard.connection().generation, publish_message.track_alias);
         Self {
             session_context,
             guard,
-            request_id: publish_message.request_id,
+            request_id,
+            wire_track_alias: publish_message.track_alias,
             track_namespace: publish_message.track_namespace_tuple.join("/"),
             track_namespace_tuple: publish_message.track_namespace_tuple,
             track_name: publish_message.track_name,
-            track_alias: publish_message.track_alias,
+            track_alias,
             group_order: publish_message.group_order,
             content_exists: publish_message.content_exists,
             forward: publish_message.forward,
@@ -68,7 +77,7 @@ impl PublishHandler {
     ) -> Result<Subscription, TransportSendError> {
         self.guard.mark_responded();
         let publish_ok = PublishOk {
-            request_id: self.request_id,
+            request_id: self.guard.request_id(),
             forward: self.forward,
             subscriber_priority,
             group_order: self.group_order,
@@ -102,7 +111,11 @@ impl PublishHandler {
     pub async fn accept_data_receiver(&self) {
         if let Err(code) = self
             .session_context
-            .register_data_receiver(self.guard.connection(), self.request_id, self.track_alias)
+            .register_data_receiver(
+                self.guard.connection(),
+                self.guard.request_id(),
+                self.wire_track_alias,
+            )
             .await
         {
             // The track alias is already bound to another active subscription.
@@ -130,7 +143,7 @@ impl PublishHandler {
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
         self.session_context
-            .cancel_unclaimed_track_alias(self.guard.connection(), self.track_alias)
+            .cancel_unclaimed_track_alias(self.guard.connection(), self.wire_track_alias)
             .await;
         self.guard.reject(code, reason_phrase).await
     }

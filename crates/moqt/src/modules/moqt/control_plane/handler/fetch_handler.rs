@@ -36,9 +36,9 @@ impl FetchHandler {
         connection: Arc<Connection>,
         fetch: Fetch,
     ) -> Self {
-        let request_id = fetch.request_id;
         let group_order = fetch.group_order;
-        let guard = ResponseGuard::new(connection, request_id, RequestKind::Fetch);
+        let guard = ResponseGuard::new(connection, fetch.request_id, RequestKind::Fetch);
+        let request_id = guard.connection().logical_request_id(fetch.request_id);
         Self {
             session_context,
             request_id,
@@ -49,6 +49,11 @@ impl FetchHandler {
         }
     }
 
+    /// The FETCH's id on its connection, which its response stream carries.
+    pub(crate) fn wire_request_id(&self) -> u64 {
+        self.guard.request_id()
+    }
+
     pub async fn ok(
         &self,
         end_of_track: bool,
@@ -56,7 +61,7 @@ impl FetchHandler {
     ) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let fetch_ok = FetchOk {
-            request_id: self.request_id,
+            request_id: self.guard.request_id(),
             group_order: self.group_order.delivered(),
             end_of_track,
             end_location,
