@@ -147,8 +147,16 @@ function pendingText(): string {
 }
 
 function renderViewerDelay(): void {
-  const { viewerDelayMs } = player.stats()
-  viewerDelayLabel.textContent = viewerDelayMs === undefined ? '' : `delay ${Math.round(viewerDelayMs)} ms`
+  const { viewerDelayMs, fastestArrivalDelayMs, bufferMs } = player.stats()
+  if (viewerDelayMs === undefined) {
+    viewerDelayLabel.textContent = ''
+    return
+  }
+  const parts =
+    fastestArrivalDelayMs === undefined || bufferMs === undefined
+      ? ''
+      : ` (arrival ${Math.round(fastestArrivalDelayMs)} ms + buffer ${Math.round(bufferMs)} ms)`
+  viewerDelayLabel.textContent = `pub to sub delay ${Math.round(viewerDelayMs)} ms${parts}`
 }
 
 function formatSeconds(seconds: number): string {

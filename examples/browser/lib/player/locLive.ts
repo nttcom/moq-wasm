@@ -25,6 +25,7 @@ export type LiveStats = {
   fixedBuffer: boolean
   outputLatencyMs: number
   arrivalSpreadMs: number | undefined
+  fastestArrivalDelayMs: number | undefined
   receivedKbps: number
   receivedAudioKbps: number
   syncOffsetMs: number | undefined
@@ -154,6 +155,7 @@ export class LocLive {
       fixedBuffer: this.playout.fixedBuffer(),
       outputLatencyMs: this.playout.outputLatencyMs(),
       arrivalSpreadMs: this.playout.arrivalSpreadMs(),
+      fastestArrivalDelayMs: this.playout.fastestArrivalDelayMs(),
       receivedKbps: this.receivedKbps,
       receivedAudioKbps: this.receivedAudioKbps,
       syncOffsetMs: this.playout.syncOffsetMs(),
@@ -194,7 +196,7 @@ export function formatSyncOffset(offsetMs: number | undefined): string {
 
 export function formatLiveStats(stats: LiveStats): string {
   const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : 'no video yet'
-  const delay = stats.viewerDelayMs === undefined ? '' : ` · delay ${Math.round(stats.viewerDelayMs)} ms`
+  const delay = stats.viewerDelayMs === undefined ? '' : ` · pub to sub delay ${Math.round(stats.viewerDelayMs)} ms`
   const buffer =
     stats.bufferMs === undefined
       ? ''

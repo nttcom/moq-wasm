@@ -1,3 +1,4 @@
+import { alawToAudioData, isPcmAlawCodec } from '../../utils/media/alaw'
 import { AudioPlayout } from './audioPlayout'
 import { PlayoutClock, syncOffsetMs } from './playoutClock'
 import { VideoPlayout } from './videoPlayout'
@@ -76,6 +77,23 @@ export class ReviewPlayout {
       return
     }
     this.audio.prepare(config.sampleRate)
+    if (isPcmAlawCodec(config.codec)) {
+      for (const chunk of chunks) {
+        const audioData = alawToAudioData(
+          chunk.data,
+          config.sampleRate,
+          config.numberOfChannels,
+          chunk.captureMicros ?? 0
+        )
+        if (audioData) {
+          this.playDecoded(audioData, chunk.captureMicros)
+        }
+      }
+      return
+    }
+    if (this.audioDecoder?.state === 'closed') {
+      this.audioDecoder = undefined
+    }
     this.audioDecoder ??= this.createAudioDecoder(config)
     for (const chunk of chunks) {
       if (chunk.captureMicros === undefined) {
@@ -129,17 +147,18 @@ export class ReviewPlayout {
     return this.clock.dueAt(captureMicros) ?? performance.now()
   }
 
+  private playDecoded(audioData: AudioData, captureMicros: number | undefined): void {
+    if (captureMicros === undefined || captureMicros + (audioData.duration ?? 0) <= this.shownFromMicros) {
+      audioData.close()
+      return
+    }
+    this.audio.play(audioData, captureMicros, () => this.dueAt(captureMicros))
+    audioData.close()
+  }
+
   private createAudioDecoder(config: AudioDecoderConfig): AudioDecoder {
     const decoder = new AudioDecoder({
-      output: (audioData) => {
-        const captureMicros = this.pendingCaptureMicros.shift()
-        if (captureMicros === undefined || captureMicros + (audioData.duration ?? 0) <= this.shownFromMicros) {
-          audioData.close()
-          return
-        }
-        this.audio.play(audioData, captureMicros, () => this.dueAt(captureMicros))
-        audioData.close()
-      },
+      output: (audioData) => this.playDecoded(audioData, this.pendingCaptureMicros.shift()),
       error: (error) => this.onError(`review audio decoder: ${error.message}`)
     })
     decoder.configure(config)

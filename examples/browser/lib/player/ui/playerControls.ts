@@ -256,8 +256,7 @@ export class PlayerControls {
     const window = this.part('seek-available-window')
     window.style.left = this.percentOfAxis(replayableStart - min, latest)
     window.style.width = this.percentOfAxis(latest - replayableStart, latest)
-    const elapsed = this.player.elapsedMsAt(min * MICROS_PER_SECOND)
-    this.part('seek-start').textContent = elapsed === undefined ? '--:--' : formatElapsed(elapsed)
+    this.part('seek-start').textContent = this.timeLabel(min)
   }
 
   private percentOfAxis(seconds: number, latest: number): string {
@@ -291,12 +290,16 @@ export class PlayerControls {
   }
 
   private renderSeekElapsed(position: number, latest: number): void {
-    const elapsed = this.player.elapsedMsAt(position * MICROS_PER_SECOND)
-    const broadcast = this.player.elapsedMsAt(latest * MICROS_PER_SECOND)
-    this.part('seek-elapsed').textContent =
-      elapsed === undefined || broadcast === undefined
-        ? '--:-- / --:--'
-        : `${formatElapsed(elapsed)} / ${formatElapsed(broadcast)}`
+    this.part('seek-elapsed').textContent = `${this.timeLabel(position)} / ${this.timeLabel(latest)}`
+  }
+
+  /// Elapsed broadcast time when a media timeline exists, else the capture
+  /// wall-clock time (continuous cameras have no timeline); a stopped player
+  /// has no time to show.
+  private timeLabel(captureSeconds: number): string {
+    if (captureSeconds <= 0) return '--:--'
+    const elapsed = this.player.elapsedMsAt(captureSeconds * MICROS_PER_SECOND)
+    return elapsed === undefined ? formatClock(captureSeconds) : formatElapsed(elapsed)
   }
 }
 
@@ -343,4 +346,8 @@ function describeAutoTrack(state: LivePlayerState): string {
 function describeVideoTrack(track: MediaCatalogTrack): string {
   const resolution = track.width && track.height ? ` (${track.width}x${track.height})` : ''
   return `${track.label}${resolution}`
+}
+
+function formatClock(captureSeconds: number): string {
+  return new Date(captureSeconds * 1000).toLocaleTimeString([], { hour12: false })
 }
