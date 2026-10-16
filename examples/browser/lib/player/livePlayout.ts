@@ -138,6 +138,14 @@ export class LivePlayout {
     return this.jitterBuffer.targetMs(this.outputLatencyMs())
   }
 
+  /// Capture-to-arrival delay of the window's fastest sample; plus `bufferMs`
+  /// it gives the shown delay. Arrivals use the page clock and captures the
+  /// Unix clock, so `performance.timeOrigin` converts between them.
+  fastestArrivalDelayMs(): number | undefined {
+    const fastestDelayMs = this.jitterBuffer.fastestDelayMs()
+    return fastestDelayMs === undefined ? undefined : fastestDelayMs + performance.timeOrigin
+  }
+
   arrivalSpreadMs(): number | undefined {
     return this.jitterBuffer.spreadMs()
   }

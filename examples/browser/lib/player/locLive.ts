@@ -25,6 +25,7 @@ export type LiveStats = {
   fixedBuffer: boolean
   outputLatencyMs: number
   arrivalSpreadMs: number | undefined
+  fastestArrivalDelayMs: number | undefined
   receivedKbps: number
   receivedAudioKbps: number
   syncOffsetMs: number | undefined
@@ -154,6 +155,7 @@ export class LocLive {
       fixedBuffer: this.playout.fixedBuffer(),
       outputLatencyMs: this.playout.outputLatencyMs(),
       arrivalSpreadMs: this.playout.arrivalSpreadMs(),
+      fastestArrivalDelayMs: this.playout.fastestArrivalDelayMs(),
       receivedKbps: this.receivedKbps,
       receivedAudioKbps: this.receivedAudioKbps,
       syncOffsetMs: this.playout.syncOffsetMs(),
