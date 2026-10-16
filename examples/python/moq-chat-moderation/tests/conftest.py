@@ -2,12 +2,12 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from tests.helpers import FakeMetadataServer, FakeJevServer
+from tests.helpers import FakeD3FlashServer, FakeMetadataServer
 
 
 @pytest.fixture
-async def fake_jev_server():
-    server = FakeJevServer(noul=0.9)
+async def fake_d3_flash_server():
+    server = FakeD3FlashServer(noul=0.9)
     app = web.Application()
     app.router.add_post("/v1/systemone", server.handle)
     async with TestServer(app) as test_server:

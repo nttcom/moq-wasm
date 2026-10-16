@@ -35,7 +35,7 @@ const botDir = resolve(repoRoot, "examples/python/moq-chat-moderation");
 const abusiveText = "e2e-abusive";
 const childProcesses = [];
 
-async function startFakeJev() {
+async function startFakeD3Flash() {
   let delayMs = 0;
   const server = createServer(async (request, response) => {
     if (request.method === "PUT" && request.url === "/delay") {
@@ -61,14 +61,14 @@ async function main() {
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
-  const fakeJev = await startFakeJev();
-  const fakeJevUrl = `http://127.0.0.1:${fakeJev.address().port}/v1/systemone`;
+  const fakeD3Flash = await startFakeD3Flash();
+  const fakeD3FlashUrl = `http://127.0.0.1:${fakeD3Flash.address().port}/v1/systemone`;
 
   const cleanup = async () => {
     await Promise.allSettled(
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
-    fakeJev.close();
+    fakeD3Flash.close();
   };
 
   registerSignalHandlers(cleanup);
@@ -100,8 +100,8 @@ async function main() {
         "--relay-url",
         moqtUrl,
         "--insecure",
-        "--jev-url",
-        fakeJevUrl,
+        "--d3-flash-url",
+        fakeD3FlashUrl,
       ],
       { cwd: botDir },
     );
@@ -117,7 +117,7 @@ async function main() {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
           CHAT_MODERATION_E2E_MOQT_URL: moqtUrl,
-          CHAT_MODERATION_E2E_JEV_ORIGIN: `http://127.0.0.1:${fakeJev.address().port}`,
+          CHAT_MODERATION_E2E_D3_FLASH_ORIGIN: `http://127.0.0.1:${fakeD3Flash.address().port}`,
         },
       },
     );

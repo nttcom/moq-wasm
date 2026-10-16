@@ -1,32 +1,28 @@
 import base64
-import re
 
 import aiohttp
 
-from moq_camera_detection.djev_status import DjevStatus
+from moq_camera_detection.d3_flash_status import D3FlashStatus
 from moq_camera_detection.identity_token import IdentityToken
 from moq_camera_detection.prompt import Prompt
 
-MODEL = "djev-dgemma"
-MAX_ANSWER_TOKENS = 8
-LEADING_NUMBER = re.compile(r"\s*(\d+)")
+QUESTION_ID = "answer"
 
 
-def parse_choice(content: str, prompt: Prompt) -> str | None:
-    # DiffusionGemma prefixes the answer with a "thought" line, and vLLM cannot constrain a
-    # diffusion model's output to the choices, so the number is read from the last line.
-    lines = content.strip().splitlines()
-    number = LEADING_NUMBER.match(lines[-1]) if lines else None
-    index = int(number[1]) - 1 if number else -1
-    return prompt.choices[index] if 0 <= index < len(prompt.choices) else None
+def choice_question(prompt: Prompt) -> dict:
+    return {
+        "type": "choice",
+        "instructions": prompt.question,
+        "criteria": {choice: None for choice in prompt.choices},
+    }
 
 
-class DjevVisionClient:
+class D3FlashVisionClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
         url: str,
-        status: DjevStatus,
+        status: D3FlashStatus,
         identity_token: IdentityToken | None = None,
     ):
         self._session = session
@@ -35,19 +31,10 @@ class DjevVisionClient:
         self._identity_token = identity_token
 
     async def choose(self, jpeg: bytes, prompt: Prompt) -> str | None:
-        image_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
         request = {
-            "model": MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                        {"type": "text", "text": prompt.text()},
-                    ],
-                }
-            ],
-            "max_tokens": MAX_ANSWER_TOKENS,
+            "state": "A camera picture.",
+            "images": ["data:image/jpeg;base64," + base64.b64encode(jpeg).decode()],
+            "questions": {QUESTION_ID: choice_question(prompt)},
         }
         headers = (
             {"Authorization": f"Bearer {await self._identity_token.value()}"}
@@ -60,4 +47,5 @@ class DjevVisionClient:
         ):
             response.raise_for_status()
             body = await response.json()
-        return parse_choice(body["choices"][0]["message"]["content"], prompt)
+        choice = body["answers"][QUESTION_ID]["choice"]
+        return choice if choice in prompt.choices else None

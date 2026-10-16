@@ -34,8 +34,8 @@ import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 const botDir = resolve(repoRoot, "examples/python/moq-camera-detection");
 const childProcesses = [];
 
-async function startFakeDjevVision() {
-  let answer = "1";
+async function startFakeD3Flash() {
+  let answer = "はい";
   let delayMs = 0;
   const server = createServer(async (request, response) => {
     if (request.method === "PUT" && request.url === "/delay") {
@@ -52,11 +52,7 @@ async function startFakeDjevVision() {
     }
     await setTimeout(delayMs);
     response.setHeader("content-type", "application/json");
-    response.end(
-      JSON.stringify({
-        choices: [{ message: { content: `thought\n${answer}` } }],
-      }),
-    );
+    response.end(JSON.stringify({ answers: { answer: { choice: answer } } }));
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   return server;
@@ -69,14 +65,14 @@ async function main() {
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
-  const fakeDjev = await startFakeDjevVision();
-  const fakeDjevOrigin = `http://127.0.0.1:${fakeDjev.address().port}`;
+  const fakeD3Flash = await startFakeD3Flash();
+  const fakeD3FlashOrigin = `http://127.0.0.1:${fakeD3Flash.address().port}`;
 
   const cleanup = async () => {
     await Promise.allSettled(
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
-    fakeDjev.close();
+    fakeD3Flash.close();
   };
 
   registerSignalHandlers(cleanup);
@@ -108,8 +104,8 @@ async function main() {
         "--relay-url",
         moqtUrl,
         "--insecure",
-        "--djev-url",
-        `${fakeDjevOrigin}/v1/chat/completions`,
+        "--d3-flash-url",
+        `${fakeD3FlashOrigin}/v1/systemone`,
       ],
       { cwd: botDir },
     );
@@ -125,7 +121,7 @@ async function main() {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
           CAMERA_DETECTION_E2E_MOQT_URL: moqtUrl,
-          CAMERA_DETECTION_E2E_DJEV_ORIGIN: fakeDjevOrigin,
+          CAMERA_DETECTION_E2E_D3_FLASH_ORIGIN: fakeD3FlashOrigin,
         },
       },
     );

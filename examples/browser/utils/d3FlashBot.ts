@@ -1,6 +1,6 @@
 import { FilterType, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { showBotOffHoursNotice } from './botHours'
-import { DjevStatusView } from './djevStatus'
+import { D3FlashStatusView } from './d3FlashStatus'
 import { timeSeededGroupId } from './media/clock'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
 import { setUpRelayUrlControls } from './relayPresets'
@@ -10,7 +10,7 @@ const EVENT_TIMELINE_TRACK = 'eventtimeline'
 
 type BotSubscriber = { trackName: string; requestId: bigint; trackAlias: bigint }
 
-export type DjevBotPageOptions = {
+export type D3FlashBotPageOptions = {
   session: MoqtClientWrapper
   logTag: string
   ownNamespace: string[]
@@ -24,17 +24,17 @@ export type DjevBotPageOptions = {
   afterConnect?(): Promise<void>
 }
 
-export function setUpDjevBotPage(options: DjevBotPageOptions): void {
+export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
   const { session, logTag, ownNamespace, ownTracks, botNamespace } = options
   const urlInput = element<HTMLInputElement>('url')
   const joinButton = element<HTMLButtonElement>('joinBtn')
   const leaveButton = element<HTMLButtonElement>('leaveBtn')
-  const djevStatus = new DjevStatusView(element('djev-status'))
+  const d3FlashStatus = new D3FlashStatusView(element('d3-flash-status'))
   showBotOffHoursNotice(element('bot-hours'))
   setUpRelayUrlControls(urlInput, element('urlPresets'))
 
   const reset = async (connectionText: string, connectionState: StatusState): Promise<void> => {
-    djevStatus.reset()
+    d3FlashStatus.reset()
     await options.onReset()
     setStatus('connection-status', connectionText, connectionState)
     joinButton.disabled = false
@@ -84,9 +84,9 @@ export function setUpDjevBotPage(options: DjevBotPageOptions): void {
         await respondOk()
         if (sameNamespace(publishNamespace.trackNamespace, botNamespace)) {
           await subscribeTimeline()
-          await djevStatus
+          await d3FlashStatus
             .follow(session, botNamespace)
-            .catch((error) => console.warn(`[${logTag}] djev status subscribe failed`, error))
+            .catch((error) => console.warn(`[${logTag}] d3-flash status subscribe failed`, error))
         }
       })
       await session.publishNamespace(ownNamespace, AUTH_INFO)

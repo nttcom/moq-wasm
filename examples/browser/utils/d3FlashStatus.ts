@@ -3,10 +3,10 @@ import type { MoqtClientWrapper } from '@moqt/moqtClient'
 const STATUS_TRACK = 'status'
 const AUTH_INFO = ''
 
-type DjevState = 'ready' | 'slow' | 'starting'
+type D3FlashState = 'ready' | 'slow' | 'starting'
 
-export class DjevStatusView {
-  private state: DjevState = 'ready'
+export class D3FlashStatusView {
+  private state: D3FlashState = 'ready'
   private sinceMs = 0
   private ticker: ReturnType<typeof setInterval> | undefined
 
@@ -20,8 +20,10 @@ export class DjevStatusView {
       STATUS_TRACK,
       AUTH_INFO,
       (payload) => {
-        const { djev, since }: { djev: DjevState; since: number } = JSON.parse(new TextDecoder().decode(payload))
-        this.show(djev, since)
+        const { d3_flash: state, since }: { d3_flash: D3FlashState; since: number } = JSON.parse(
+          new TextDecoder().decode(payload)
+        )
+        this.show(state, since)
       },
       { onPublishDone: () => this.reset() }
     )
@@ -31,7 +33,7 @@ export class DjevStatusView {
     this.show('ready', 0)
   }
 
-  private show(state: DjevState, sinceMs: number): void {
+  private show(state: D3FlashState, sinceMs: number): void {
     this.state = state
     this.sinceMs = sinceMs
     clearInterval(this.ticker)
@@ -44,9 +46,9 @@ export class DjevStatusView {
     this.element.style.display = this.state === 'ready' ? 'none' : ''
     this.element.textContent =
       this.state === 'starting'
-        ? `djev を起動しています（約 3 分、経過 ${elapsedSeconds} 秒）`
+        ? `d3-flash を起動しています（約 2 分 40 秒、経過 ${elapsedSeconds} 秒）`
         : this.state === 'slow'
-          ? `djev の応答に時間がかかっています（経過 ${elapsedSeconds} 秒）`
+          ? `d3-flash の応答に時間がかかっています（経過 ${elapsedSeconds} 秒）`
           : ''
   }
 }

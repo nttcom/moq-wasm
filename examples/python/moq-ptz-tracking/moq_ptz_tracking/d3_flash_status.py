@@ -6,8 +6,8 @@ from contextlib import asynccontextmanager
 
 import moq
 
-# Cloud Run stops an idle djev after about ten minutes, so a request after a longer pause waits for
-# a cold start. A warm djev answers within a second, so a request still pending after
+# Cloud Run stops an idle d3-flash after about ten minutes, so a request after a longer pause waits for
+# a cold start. A warm d3-flash answers within a second, so a request still pending after
 # COLD_START_SECONDS is a cold start too.
 IDLE_STOP_SECONDS = 10 * 60
 SLOW_SECONDS = 5.0
@@ -23,7 +23,7 @@ def epoch_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
-class DjevStatus:
+class D3FlashStatus:
     def __init__(self, track_name: str, clock: Callable[[], float] = time.monotonic):
         self._track_name = track_name
         self._clock = clock
@@ -83,6 +83,6 @@ class DjevStatus:
         group = self._track.create_group(self._next_group_id)
         self._next_group_id += 1
         group.write_frame(
-            json.dumps({"djev": self._state, "since": self._since_ms}, separators=(",", ":")).encode()
+            json.dumps({"d3_flash": self._state, "since": self._since_ms}, separators=(",", ":")).encode()
         )
         group.finish()

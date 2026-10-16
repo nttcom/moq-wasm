@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from moq_ptz_tracking.djev_status import DjevStatus
+from moq_ptz_tracking.d3_flash_status import D3FlashStatus
 from moq_ptz_tracking.identity_token import IdentityToken
 
 COLUMNS = ("far left", "left", "center", "right", "far right")
@@ -56,12 +56,12 @@ def read_position(probabilities: dict[str, float]) -> Position:
     return Position(sum(p * x for p, x, _ in cells) / total, sum(p * y for p, _, y in cells) / total)
 
 
-class DjevVisionClient:
+class D3FlashVisionClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
         url: str,
-        status: DjevStatus,
+        status: D3FlashStatus,
         identity_token: IdentityToken | None = None,
     ):
         self._session = session

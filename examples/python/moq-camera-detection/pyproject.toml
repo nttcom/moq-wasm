@@ -1,7 +1,7 @@
 [project]
 name = "moq-camera-detection"
 version = "0.1.0"
-description = "pipecat bot that judges whether a person is visible in MoQ camera video with djev-run"
+description = "pipecat bot that judges whether a person is visible in MoQ camera video with d3-flash"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",

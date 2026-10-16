@@ -1,6 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LivePlayer } from '@player/livePlayer'
-import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpDjevBotPage } from '../../utils/djevBot'
+import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
 import { element, setStatus } from '../../utils/page'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
@@ -32,7 +32,7 @@ const positionLabel = element<HTMLSpanElement>('position')
 const moveLabel = element<HTMLSpanElement>('move')
 const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 
-setUpDjevBotPage({
+setUpD3FlashBotPage({
   session,
   logTag: 'moq-ptz-tracking',
   ownNamespace: VIEWER_NAMESPACE,

@@ -1,7 +1,7 @@
 # moq-ptz-tracking
 
 `onvif-ingest` が配信する ONVIF カメラの映像を pipecat の bot が受け取り、ブラウザの MoQ PTZ Tracking ページ
-（`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを、Cloud Run 上の決定モデル d3-flash（`d3-flash-trial`）に尋ねます。
+（`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) に尋ねます。
 対象が中央から外れていれば、`onvif-ingest` に ContinuousMove と Stop を送ってカメラを対象の方へ向けます。
 
 ```mermaid
@@ -110,12 +110,12 @@ Cloud relay-1 にはクラウドの bot がつながっているため、手元�
    ```shell
    cd examples/python/moq-ptz-tracking
    uv run python -m moq_ptz_tracking.bot --insecure \
-     --djev-url "$(gcloud run services describe d3-flash-trial --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --d3-flash-url "$(gcloud run services describe d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。認証は
-   [moq-camera-detection](../moq-camera-detection/README.md#djev-vision) と同じです。d3-flash-trial のコールドスタートは約 2 分 40 秒です。
+   [moq-camera-detection](../moq-camera-detection/README.md#d3-flash) と同じです。
 
 4. ページを開く
 
@@ -135,7 +135,7 @@ Cloud relay-1 にはクラウドの bot がつながっているため、手元�
 | `anon/onvif/client` | `video/profile_N` | `onvif-ingest` | H.264 Annex B の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
 | `anon/onvif/viewer` | `command` | bot | `onvif-ingest` の PTZ コマンド。1 回の動きを 1 group にし、`{"type": "continuous", ...}` と `{"type": "stop"}` を順に送る。ONVIF ページも同じトラックに送る |
 | `anon/moq-ptz-tracking/tracker` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す。`data.position` は対象の中心（画面に対する割合）、映っていなければ `"not visible"`、読めなければ `null` |
-| `anon/moq-ptz-tracking/tracker` | `status` | bot | djev-vision の起動状態（[moq-camera-detection](../moq-camera-detection/README.md) と同じ） |
+| `anon/moq-ptz-tracking/tracker` | `status` | bot | d3-flash の起動状態（[moq-camera-detection](../moq-camera-detection/README.md) と同じ） |
 
 - ページは自分が再生している映像トラックを prompt で伝えます。`onvif-ingest` は最初に subscribe されたプロファイルしか
   配信しないため、bot は別のプロファイルを選びません。

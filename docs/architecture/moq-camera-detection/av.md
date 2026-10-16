@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 The camera detection bot (`examples/python/moq-camera-detection`) receives the browser's camera as H.264 Annex B
-objects over MoQ: one group per keyframe. djev-vision judges images, not video, so the bot has to decode the
+objects over MoQ: one group per keyframe. d3-flash judges images, not video, so the bot has to decode the
 frames of each group and send a picture every 0.1 s as a JPEG. pipecat's `MOQTransport` does not receive video, and the `moq` library
 hands over encoded frames only, so neither decodes H.264.
 

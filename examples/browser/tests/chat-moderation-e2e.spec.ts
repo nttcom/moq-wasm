@@ -3,11 +3,11 @@ import {
   ABUSIVE_TEXT,
   LEAVE_BUTTON_TEST_ID,
   REMOVED_MESSAGE_TEXT,
-  JEV_ORIGIN,
+  D3_FLASH_ORIGIN,
   clickJoin,
   joinChat
 } from './chat-moderation-e2e-arrange'
-import { delayDjevAnswers } from './fake-djev'
+import { delayD3FlashAnswers } from './fake-d3-flash'
 import { leaveAllPages } from './leave-all-pages'
 
 const ORDINARY_TEXT = 'こんにちは'
@@ -17,7 +17,7 @@ const LATE_JOIN_ANSWER_MS = 15_000
 test.describe('MoQ Chat Moderation', () => {
   test.afterEach(async ({ browser }) => {
     await leaveAllPages(browser, LEAVE_BUTTON_TEST_ID)
-    await delayDjevAnswers(JEV_ORIGIN, 0)
+    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
   })
 
   test('replaces only the message the moderator judges abusive', async ({ page }) => {
@@ -68,33 +68,35 @@ test.describe('MoQ Chat Moderation', () => {
     await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT)
   })
 
-  test('shows the djev status while its answers are late', async ({ page }) => {
+  test('shows the d3-flash status while its answers are late', async ({ page }) => {
     // Arrange
     const chat = await joinChat(page)
-    await delayDjevAnswers(JEV_ORIGIN, LATE_ANSWER_MS)
+    await delayD3FlashAnswers(D3_FLASH_ORIGIN, LATE_ANSWER_MS)
 
     // Act
     await chat.send(ABUSIVE_TEXT)
 
     // Assert
-    const djevStatus = page.getByTestId('chat-moderation-djev-status')
-    await expect(djevStatus).toContainText('djev')
+    const d3FlashStatus = page.getByTestId('chat-moderation-d3-flash-status')
+    await expect(d3FlashStatus).toContainText('d3-flash')
     await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT, { timeout: 30_000 })
-    await expect(djevStatus).toBeHidden()
+    await expect(d3FlashStatus).toBeHidden()
   })
 
-  test('shows the djev status to a page that joins while answers are late', async ({ browser, page }) => {
+  test('shows the d3-flash status to a page that joins while answers are late', async ({ browser, page }) => {
     // Arrange
     const earlierPage = await browser.newPage()
     const earlierChat = await joinChat(earlierPage)
-    await delayDjevAnswers(JEV_ORIGIN, LATE_JOIN_ANSWER_MS)
+    await delayD3FlashAnswers(D3_FLASH_ORIGIN, LATE_JOIN_ANSWER_MS)
     await earlierChat.send(ABUSIVE_TEXT)
-    await expect(earlierPage.getByTestId('chat-moderation-djev-status')).toContainText('djev', { timeout: 10_000 })
+    await expect(earlierPage.getByTestId('chat-moderation-d3-flash-status')).toContainText('d3-flash', {
+      timeout: 10_000
+    })
 
     // Act
     await clickJoin(page)
 
     // Assert
-    await expect(page.getByTestId('chat-moderation-djev-status')).toContainText('djev')
+    await expect(page.getByTestId('chat-moderation-d3-flash-status')).toContainText('d3-flash')
   })
 })

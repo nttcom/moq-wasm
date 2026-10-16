@@ -9,7 +9,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from moq_camera_detection.event_timeline import EventTimeline, Location, location_record
 from moq_camera_detection.prompt import Prompt
-from moq_camera_detection.vision import DjevVisionClient
+from moq_camera_detection.vision import D3FlashVisionClient
 
 STALE_PICTURE_SECONDS = 2.0
 MAX_JUDGING_PICTURES = 8
@@ -24,7 +24,7 @@ class CameraPicture(SystemFrame):
 
 
 class CameraDetector(FrameProcessor):
-    def __init__(self, vision: DjevVisionClient, timeline: EventTimeline):
+    def __init__(self, vision: D3FlashVisionClient, timeline: EventTimeline):
         super().__init__()
         self._vision = vision
         self._timeline = timeline
@@ -39,7 +39,7 @@ class CameraDetector(FrameProcessor):
         if time.monotonic() - frame.decoded_at > STALE_PICTURE_SECONDS:
             return
         if len(self._judging) >= MAX_JUDGING_PICTURES:
-            logger.debug(f"djev-vision is busy, skipping camera picture {frame.location}")
+            logger.debug(f"d3-flash is busy, skipping camera picture {frame.location}")
             return
         task = self.create_task(self._judge(frame))
         self._judging.add(task)
@@ -55,7 +55,7 @@ class CameraDetector(FrameProcessor):
         try:
             answer = await self._vision.choose(picture.jpeg, picture.prompt)
         except (aiohttp.ClientError, KeyError, IndexError) as error:
-            logger.warning(f"djev-vision could not judge camera picture {picture.location}: {error}")
+            logger.warning(f"d3-flash could not judge camera picture {picture.location}: {error}")
             return
         logger.info(
             f"camera picture {picture.location} answer={answer}"
