@@ -484,6 +484,7 @@ test('an invalid token is rejected by the relay with a surfaced reason', async (
     // Act: 不正トークンのまま relay-a に入室を試みる。
     await client.page.roomNameInput.fill(`e2e-auth-${Date.now()}`)
     await client.page.userNameInput.fill('mallory')
+    await client.page.localRelayTab.click()
     await client.page.relayARadio.click()
     await client.page.submitButton.click()
 

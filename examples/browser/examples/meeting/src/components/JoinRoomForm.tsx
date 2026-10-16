@@ -13,16 +13,27 @@ interface JoinRoomFormProps {
   onJoin: (roomName: string, userName: string, relayUrl: string) => void
 }
 
-interface RelayOptionGroup {
-  label: string
-  options: RelayPreset[]
-}
+type RelayTab = 'cloud' | 'local'
+
+const RELAY_TAB_LABELS: Record<RelayTab, string> = { cloud: 'Cloud', local: 'Local' }
 
 export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
-  const relayOptionGroups = useMemo(() => buildRelayOptionGroups(), [])
+  const relayOptions = useMemo<Record<RelayTab, RelayPreset[]>>(
+    () => ({
+      cloud: [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS],
+      local: buildLocalRelayPresets()
+    }),
+    []
+  )
   const [roomName, setRoomName] = useState('')
   const [userName, setUserName] = useState('')
-  const [relayUrl, setRelayUrl] = useState<string>(relayOptionGroups[0].options[0].value)
+  const [relayTab, setRelayTab] = useState<RelayTab>('cloud')
+  const [relayUrl, setRelayUrl] = useState<string>(relayOptions.cloud[0].value)
+
+  const selectRelayTab = (tab: RelayTab) => {
+    setRelayTab(tab)
+    setRelayUrl(relayOptions[tab][0].value)
+  }
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -70,36 +81,46 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
             />
           </div>
           <div className="space-y-4">
-            <Label className="text-2xl">Relay</Label>
-            <div className="space-y-5">
-              {relayOptionGroups.map((group) => (
-                <fieldset key={group.label} className="space-y-3">
-                  <legend className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                    {group.label}
-                  </legend>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {group.options.map((option) => (
-                      <label
-                        key={option.value}
-                        className="flex min-h-24 items-center gap-4 rounded-xl border border-input bg-background px-5 py-4 text-lg"
-                      >
-                        <input
-                          type="radio"
-                          name="relayUrl"
-                          value={option.value}
-                          checked={relayUrl === option.value}
-                          onChange={() => setRelayUrl(option.value)}
-                          className="h-5 w-5 shrink-0 accent-blue-600"
-                          data-testid={option.testId}
-                        />
-                        <div className="min-w-0">
-                          <div className="font-semibold">{option.label}</div>
-                          <div className="break-all text-sm text-muted-foreground">{option.helper}</div>
-                        </div>
-                      </label>
-                    ))}
+            <div className="flex items-center justify-between">
+              <span className="text-2xl font-medium">Relay</span>
+              <div role="tablist" className="flex rounded-full bg-muted p-1">
+                {(Object.keys(RELAY_TAB_LABELS) as RelayTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={relayTab === tab}
+                    data-testid={`join-relay-tab-${tab}`}
+                    onClick={() => selectRelayTab(tab)}
+                    className={`rounded-full px-4 py-1 text-sm font-medium transition ${
+                      relayTab === tab ? 'bg-background shadow-sm' : 'text-muted-foreground'
+                    }`}
+                  >
+                    {RELAY_TAB_LABELS[tab]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div role="tabpanel" className="grid gap-3 sm:grid-cols-2">
+              {relayOptions[relayTab].map((option) => (
+                <label
+                  key={option.value}
+                  className="flex min-h-24 items-center gap-4 rounded-xl border border-input bg-background px-5 py-4 text-lg"
+                >
+                  <input
+                    type="radio"
+                    name="relayUrl"
+                    value={option.value}
+                    checked={relayUrl === option.value}
+                    onChange={() => setRelayUrl(option.value)}
+                    className="h-5 w-5 shrink-0 accent-blue-600"
+                    data-testid={option.testId}
+                  />
+                  <div className="min-w-0">
+                    <div className="font-semibold">{option.label}</div>
+                    <div className="break-all text-sm text-muted-foreground">{option.helper}</div>
                   </div>
-                </fieldset>
+                </label>
               ))}
             </div>
           </div>
@@ -116,21 +137,4 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
       </div>
     </div>
   )
-}
-
-function buildRelayOptionGroups(): RelayOptionGroup[] {
-  return [
-    {
-      label: 'Local Relay',
-      options: buildLocalRelayPresets()
-    },
-    {
-      label: 'Cloud (LB)',
-      options: [LOAD_BALANCED_RELAY_PRESET]
-    },
-    {
-      label: 'Cloud (specific relay)',
-      options: CLOUD_RELAY_PRESETS
-    }
-  ]
 }
