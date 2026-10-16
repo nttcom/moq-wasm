@@ -150,10 +150,11 @@ event, as `moqtClient.ts` reports it today.
 | app alias ↔ wire alias, request ids kept | logical ids and aliases in `Session` |
 | group cutover, `previousNewestGroup` | `GroupCutover` per stream in the receiver factory |
 | joining FETCH to fill the new relay's current group | not needed: the previous connection supplies every group before the cutover; a previous connection lost before the cutover leaves the gap of today |
-| FETCH remainder carried over | FETCH carry-over |
+| FETCH remainder carried over | FETCH carry-over, ascending only: a descending FETCH cut off is not sent again |
 | Forward=0 carried | Forward state re-sent with the SUBSCRIBE |
 | dual send for PUBLISH and SUBSCRIBE-served tracks | fan-out in the sender factory |
 | retry every 500 ms for 10 s | same |
+| leave the old relay at once when no subgroup is arriving there (`onSubgroupEnd`) | not covered: the previous connection is kept until every carried subscription cut over (at most 10 s) and 5 s more, so a quiet track such as chat keeps a draining relay up to 15 s |
 
 ## Alternatives
 

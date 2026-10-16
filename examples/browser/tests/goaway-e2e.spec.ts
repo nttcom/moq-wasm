@@ -68,14 +68,6 @@ test('live playback continues when the relay shuts down with GOAWAY', async ({ b
   expect(Number.isInteger(relayAPid)).toBe(true)
   const session = await arrangeLiveViewerE2ESession(browser)
   const { viewer } = session
-  const movedTo = new Promise<string>((resolve) =>
-    viewer.page.on('console', async (message) => {
-      if (message.text().startsWith('[moqt] moved to the relay named by GOAWAY')) {
-        const { url } = (await message.args()[1].jsonValue()) as { url: string }
-        resolve(url)
-      }
-    })
-  )
 
   try {
     await viewer.watchButton.click()
@@ -90,24 +82,23 @@ test('live playback continues when the relay shuts down with GOAWAY', async ({ b
     // Act: relay A stops and sends GOAWAY naming relay B
     const stoppedAt = await viewer.page.evaluate(() => performance.now())
     process.kill(relayAPid, 'SIGINT')
-    const newRelayUrl = await Promise.race([
-      movedTo,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('the viewer did not move')), 15_000))
-    ])
     await viewer.page.waitForTimeout(AFTER_SWITCH_MS)
     const endedAt = await viewer.page.evaluate(() => performance.now())
 
     // Assert: frames keep coming at the steady pace across the switch
     const before = await presentedFrameWindow(viewer.page, steadyFrom, stoppedAt)
     const across = await presentedFrameWindow(viewer.page, stoppedAt, endedAt)
-    console.log(JSON.stringify({ newRelayUrl, before, across }))
-    expect(newRelayUrl).toBe('https://127.0.0.1:4434')
+    console.log(JSON.stringify({ before, across }))
     expect(across.maxGapMs).toBeLessThan(Math.max(250, before.maxGapMs * 2))
     expect(across.meanGapMs).toBeLessThanOrEqual(before.meanGapMs * 1.1)
     await expect(viewer.playbackStatus).toContainText('Playing')
 
-    // Assert: relay A exits once the viewer and the publisher have left it
+    // Assert: relay A exits once the viewer and the publisher have left it, and frames keep coming through relay B
     await expect.poll(() => processAlive(relayAPid), { timeout: 20_000 }).toBe(false)
+    const exitedAt = await viewer.page.evaluate(() => performance.now())
+    await viewer.page.waitForTimeout(GROUP_MS)
+    const afterExit = await presentedFrameWindow(viewer.page, exitedAt, exitedAt + GROUP_MS)
+    expect(afterExit.frames).toBeGreaterThan(0)
   } finally {
     await closeLiveViewerE2ESession(session)
   }
