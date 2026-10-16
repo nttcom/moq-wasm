@@ -1,13 +1,12 @@
 use std::{
     ops::ControlFlow,
     path::PathBuf,
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use moqt::{
-    MigratingSession, MigratingTrack, TrackObject,
+    Session, TrackObject,
     fetch::{Fetch, FetchDataReceiver},
     subscribe::FilterType,
 };
@@ -22,7 +21,7 @@ use crate::{
     Args,
     catalog_reader::CatalogReader,
     recording::{Layout, Recording, Uploader},
-    relay,
+    relay::{self, RelayConnection, Track},
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
     track_selection::{
@@ -40,14 +39,13 @@ pub(crate) async fn run(args: Args) -> Result<()> {
         Some(path) => Some(read_token_file(path).await?),
         None => args.auth_token.clone(),
     };
-    let session = Arc::new(
-        relay::connect(
-            &args.relay,
-            !args.insecure_skip_tls_verify,
-            auth_token.clone(),
-        )
-        .await?,
-    );
+    let connection = RelayConnection::connect(
+        &args.relay,
+        !args.insecure_skip_tls_verify,
+        auth_token.clone(),
+    )
+    .await?;
+    let session = &connection.session;
     let token_refresh = args
         .auth_token_file
         .clone()
@@ -61,12 +59,12 @@ pub(crate) async fn run(args: Args) -> Result<()> {
             )
         });
     let result = if args.list_tracks {
-        list_tracks(&session, &args.namespace).await
+        list_tracks(session, &args.namespace).await
     } else {
-        record_until_interrupted(&session, &args).await
+        record_until_interrupted(session, &args).await
     };
     drop(token_refresh);
-    session.close().await;
+    connection.close().await;
     result
 }
 
@@ -90,7 +88,7 @@ pub(crate) struct UploadTarget {
 
 /// Records `args.namespace` until Ctrl-C or the end of the broadcast, then
 /// waits for the uploads.
-async fn record_until_interrupted(session: &MigratingSession, args: &Args) -> Result<()> {
+async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> {
     let upload_task = args
         .upload
         .as_ref()
@@ -150,7 +148,7 @@ fn app_id(namespace: &str) -> &str {
     namespace.split('/').next().unwrap_or(namespace)
 }
 
-async fn list_tracks(session: &MigratingSession, namespace: &str) -> Result<()> {
+async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
     let catalog = CatalogReader::open(session, namespace)
         .await?
         .next()
@@ -165,7 +163,7 @@ async fn list_tracks(session: &MigratingSession, namespace: &str) -> Result<()> 
 /// lists a track records nothing. A track the catalog unlists, or one that
 /// ends, is dropped; a later catalog that lists one adds it again.
 pub(crate) async fn record_broadcast(
-    session: &MigratingSession,
+    session: &Session,
     namespace: &str,
     path: PathBuf,
     options: &BroadcastOptions,
@@ -223,6 +221,7 @@ pub(crate) async fn record_broadcast(
     tracing::info!(paths = ?recording.paths().collect::<Vec<_>>(), "recording started");
     let cached = if options.from_cache {
         record_cached(
+            session,
             tracks.video.as_ref(),
             tracks.audio.as_ref(),
             &mut recording,
@@ -281,13 +280,14 @@ fn video_choice(options: &BroadcastOptions) -> VideoChoice<'_> {
 /// subscriptions are read; they continue where it ends. A failed FETCH leaves
 /// a gap before the live part instead of ending the recording.
 async fn record_cached(
-    video: Option<&MigratingTrack>,
-    audio: Option<&MigratingTrack>,
+    session: &Session,
+    video: Option<&Track>,
+    audio: Option<&Track>,
     recording: &mut Recording,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<ControlFlow<()>> {
-    let mut video_fetch = open_cached(video).await;
-    let mut audio_fetch = open_cached(audio).await;
+    let mut video_fetch = open_cached(session, video).await;
+    let mut audio_fetch = open_cached(session, audio).await;
     while video_fetch.is_some() || audio_fetch.is_some() {
         tokio::select! {
             biased;
@@ -313,12 +313,12 @@ async fn record_cached(
 
 struct Subscriptions {
     catalog: CatalogReader,
-    video: Option<MigratingTrack>,
-    audio: Option<MigratingTrack>,
+    video: Option<Track>,
+    audio: Option<Track>,
 }
 
 async fn record_live(
-    session: &MigratingSession,
+    session: &Session,
     namespace: &str,
     tracks: &mut Subscriptions,
     options: &BroadcastOptions,
@@ -378,7 +378,7 @@ async fn record_live(
 /// PUBLISH_DONE, and `moqt` reports the track end 10 s later; without the
 /// drop, turning it back on within those 10 s would go unnoticed.
 async fn follow_catalog(
-    session: &MigratingSession,
+    session: &Session,
     namespace: &str,
     catalog: &Catalog,
     tracks: &mut Subscriptions,
@@ -421,18 +421,18 @@ async fn follow_catalog(
     Ok(())
 }
 
-fn lists(catalog: &Catalog, track: &MigratingTrack) -> bool {
+fn lists(catalog: &Catalog, track: &Track) -> bool {
     let name = track.subscription().track_name();
     loc_tracks(catalog).any(|listed| listed.name == name)
 }
 
 async fn add_listed_video(
-    session: &MigratingSession,
+    session: &Session,
     namespace: &str,
     catalog: &Catalog,
     options: &BroadcastOptions,
     recording: &mut Recording,
-) -> Result<Option<MigratingTrack>> {
+) -> Result<Option<Track>> {
     let Some(video) = select_video(catalog, video_choice(options))? else {
         return Ok(None);
     };
@@ -444,12 +444,12 @@ async fn add_listed_video(
 }
 
 async fn add_listed_audio(
-    session: &MigratingSession,
+    session: &Session,
     namespace: &str,
     catalog: &Catalog,
     options: &BroadcastOptions,
     recording: &mut Recording,
-) -> Result<Option<MigratingTrack>> {
+) -> Result<Option<Track>> {
     let Some(audio) = select_audio(catalog, options.audio_track.as_deref())? else {
         return Ok(None);
     };
@@ -480,9 +480,9 @@ fn fetched_object(
     }
 }
 
-async fn open_cached(track: Option<&MigratingTrack>) -> Option<FetchDataReceiver> {
+async fn open_cached(session: &Session, track: Option<&Track>) -> Option<FetchDataReceiver> {
     let track = track?;
-    relay::fetch_cached(track)
+    relay::fetch_cached(session, track)
         .await
         .inspect_err(|error| {
             tracing::warn!(track = track.subscription().track_name(), %error, "cannot FETCH the cached part")
@@ -498,7 +498,7 @@ async fn next_fetched(receiver: Option<&mut FetchDataReceiver>) -> Result<Fetch>
     }
 }
 
-async fn next_object(track: Option<&mut MigratingTrack>) -> Result<Option<TrackObject>> {
+async fn next_object(track: Option<&mut Track>) -> Result<Option<TrackObject>> {
     match track {
         Some(track) => track.next_object().await,
         None => std::future::pending().await,

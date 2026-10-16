@@ -29,11 +29,12 @@ events the publishers started from, and `mediapack::mp4::Fmp4Muxer` writes
 both tracks into one init segment and one fragment stream.
 
 ## Flow
-1. `relay::connect` opens one `moqt::MigratingSession`; the URL scheme selects
-   QUIC or WebTransport (`Endpoint<DUAL>`), as `broadcast` does on the
-   publishing side. When the relay drains, its GOAWAY moves every
-   subscription to the relay it names and the files continue without a gap
-   (see the `moqt` architecture, `MigratingSession`).
+1. `relay::RelayConnection` opens one session; the URL scheme selects QUIC
+   or WebTransport (`Endpoint<DUAL>`), as `broadcast` does on the publishing
+   side. The session follows the relay's GOAWAY (`follow_go_away`): when the
+   relay drains, every subscription moves to the relay it names, keeping its
+   ids, and the files continue without a gap (see the `moqt` architecture,
+   session-migration.md).
 2. `catalog_reader::CatalogReader` subscribes to the catalog first and reads
    its current object with the joining FETCH (offset 0)
    draft-ietf-moq-msf-01 §5 asks for, falling back to the subscription when
@@ -62,7 +63,9 @@ both tracks into one init segment and one fragment stream.
    `--list-tracks` it prints the first catalog object's LOC tracks
    (`track_list::track_table`) to stdout and exits instead.
 3. Both media tracks are subscribed with `NextGroupStart`, so the recording
-   begins on a keyframe, and read with one `MigratingTrack` each. With
+   begins on a keyframe, and read with one `relay::Track` each, a
+   subscription and the `TrackReader` `Subscriber::track_reader` makes for
+   it. With
    `--from-cache` they are subscribed with `LargestObject` instead, and a
    standalone FETCH per track from `{0, 0}` through the Largest Location in
    SUBSCRIBE_OK is written first, in arrival order across the two tracks. The
@@ -193,7 +196,7 @@ the first video track.
   video sample, whose duration is unknown until the next one, is lost.
 - **Never overwrite.** The output file is created with `create_new`; a name
   clash is an error, not a truncated recording.
-- **Shutdown reaches the relay.** `MigratingSession::close` closes the
+- **Shutdown reaches the relay.** `RelayConnection::close` closes the
   session and awaits `Endpoint::wait_idle` before exit, so the CONNECTION_CLOSE is sent
   instead of the relay waiting for the idle timeout.
 
@@ -274,7 +277,7 @@ TRACK_STATUS for namespace `[app id]` and track `update_auth_token` carrying
 the token as its AUTHORIZATION TOKEN (see the relay architecture document,
 "Token refresh"). The app id is the namespace's first element. moq-cli does
 the same; neither shares the code because draft-14 has no refresh message and
-the convention is the relay's. The token goes to the current session, so it
+the convention is the relay's. The TRACK_STATUS goes to the current connection, so it
 follows a migration; the session to the new relay is opened with the token
 the recorder started with.
 
