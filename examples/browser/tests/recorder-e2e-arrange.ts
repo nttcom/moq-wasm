@@ -1,11 +1,23 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+import {
+  type RecordingLayout,
+  type RoomRecording,
+  listRecordings,
+  startRecording,
+  stopRecording
+} from '../examples/meeting/src/recording/recorderApi'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 
 const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 /// The first run compiles the recorder unless CI built it beforehand.
 const RECORDER_START_TIMEOUT_MS = 180_000
+const RECORDER_SERVE_PORT = Number(process.env.RECORDER_E2E_PORT ?? 8096)
+const RECORDING_FINISH_TIMEOUT_MS = 15_000
+const POLL_INTERVAL_MS = 200
 
 /// Records with `--from-cache` and stops the recorder with SIGINT, as Ctrl-C would, `liveSeconds`
 /// after it starts recording.
@@ -54,6 +66,70 @@ export async function recordFromCache(namespace: string, liveSeconds: number): P
   return output
 }
 
+export async function startRecorderServe() {
+  const url = `http://127.0.0.1:${RECORDER_SERVE_PORT}`
+  const outputDir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
+  const recorder = spawn(
+    'cargo',
+    [
+      'run',
+      '-q',
+      '-p',
+      'recorder',
+      '--',
+      'serve',
+      '--listen',
+      `127.0.0.1:${RECORDER_SERVE_PORT}`,
+      '--relay',
+      liveViewerE2EConfig.moqtUrl,
+      '--insecure-skip-tls-verify',
+      '--output-dir',
+      outputDir
+    ],
+    { cwd: REPO_ROOT, env: { ...process.env, RUST_LOG: 'info' }, stdio: 'inherit' }
+  )
+  const exited = new Promise<number | null>((resolveExit) => recorder.on('exit', resolveExit))
+  const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
+  while (
+    !(await fetch(`${url}/healthz`)
+      .then((response) => response.ok)
+      .catch(() => false))
+  ) {
+    if (recorder.exitCode !== null || Date.now() > deadline) {
+      throw new Error(`recorder serve did not start (exit code ${recorder.exitCode})`)
+    }
+    await sleep(POLL_INTERVAL_MS)
+  }
+  return {
+    start: (namespacePrefix: string, layout: RecordingLayout) => startRecording(url, namespacePrefix, layout),
+    /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
+    async stop(recording: RoomRecording): Promise<string[]> {
+      await stopRecording(url, recording.id)
+      const deadline = Date.now() + RECORDING_FINISH_TIMEOUT_MS
+      for (;;) {
+        const current = (await listRecordings(url, recording.namespace_prefix)).find(
+          (candidate) => candidate.id === recording.id
+        )
+        if (current?.state === 'finished') {
+          break
+        }
+        if (current?.state === 'failed' || Date.now() > deadline) {
+          throw new Error(`recording ${recording.id} did not finish: ${JSON.stringify(current)}`)
+        }
+        await sleep(POLL_INTERVAL_MS)
+      }
+      const dir = join(outputDir, recording.id)
+      return readdirSync(dir, { recursive: true, encoding: 'utf8' })
+        .filter((name) => name.endsWith('.mp4'))
+        .map((name) => join(dir, name))
+    },
+    async close(): Promise<void> {
+      recorder.kill('SIGINT')
+      await exited
+    }
+  }
+}
+
 export function probeRecording(path: string) {
   const info = JSON.parse(
     execFileSync(
@@ -67,23 +143,41 @@ export function probeRecording(path: string) {
   const decoded = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'frame=key_frame', '-of', 'csv=p=0', path], {
     encoding: 'utf8'
   })
+  const packetSeconds = { video: packetTimes(path, 'v'), audio: packetTimes(path, 'a') }
   return {
     codecs: info.streams.map((stream) => stream.codec_name),
     durationSeconds: Number(info.format.duration),
-    largestGapSeconds: { video: largestPacketGap(path, 'v'), audio: largestPacketGap(path, 'a') },
+    packetSeconds,
+    largestGapSeconds: { video: largestGap(packetSeconds.video), audio: largestGap(packetSeconds.audio) },
     decodeErrors: decoded.stderr
   }
 }
 
-function largestPacketGap(path: string, stream: 'v' | 'a'): number {
-  const times = execFileSync(
+/// `times` must be in ascending order.
+export function splitAtGaps(times: number[], minGapSeconds: number): number[][] {
+  const runs: number[][] = []
+  for (const [index, time] of times.entries()) {
+    if (index === 0 || time - times[index - 1] > minGapSeconds) {
+      runs.push([])
+    }
+    runs[runs.length - 1].push(time)
+  }
+  return runs
+}
+
+function packetTimes(path: string, stream: 'v' | 'a'): number[] {
+  // A file without the stream prints nothing, and `Number('')` would turn that into a packet at 0 s.
+  return execFileSync(
     'ffprobe',
     ['-v', 'error', '-select_streams', stream, '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', path],
     { encoding: 'utf8' }
   )
-    .trim()
     .split('\n')
+    .filter((line) => line.trim() !== '')
     .map(Number)
     .sort((left, right) => left - right)
+}
+
+function largestGap(times: number[]): number {
   return times.slice(1).reduce((largest, time, index) => Math.max(largest, time - times[index]), 0)
 }
