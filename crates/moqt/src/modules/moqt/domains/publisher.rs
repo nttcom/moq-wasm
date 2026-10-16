@@ -43,9 +43,10 @@ impl Publisher {
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.control.next_request_id();
+        let request_id = self.session.connection().control.next_request_id();
         let pending = self
             .session
+            .connection()
             .control
             .send_request(OutgoingRequest::PublishNamespace(PublishNamespace::new(
                 request_id,
@@ -64,6 +65,7 @@ impl Publisher {
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         self.session
+            .connection()
             .control
             .notify(Notification::PublishNamespaceDone(
                 PublishNamespaceDone::new(vec_namespace),
@@ -81,6 +83,7 @@ impl Publisher {
         error_reason: String,
     ) -> anyhow::Result<()> {
         self.session
+            .connection()
             .control
             .notify(Notification::PublishNamespaceCancel {
                 namespace: namespace.split('/').map(|s| s.to_string()).collect(),
@@ -100,6 +103,7 @@ impl Publisher {
         error_reason: String,
     ) -> anyhow::Result<()> {
         self.session
+            .connection()
             .control
             .notify(Notification::PublishDone {
                 request_id: subscription.request_id(),
@@ -117,9 +121,9 @@ impl Publisher {
         track_name: String,
         option: PublishOption,
     ) -> Result<Subscription, RequestFailure> {
-        let track_alias = self.session.get_track_alias();
+        let track_alias = self.session.connection().allocate_track_alias();
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.control.next_request_id();
+        let request_id = self.session.connection().control.next_request_id();
         let content_exists = option.content_exists;
         let publish = Publish {
             request_id,
@@ -137,6 +141,7 @@ impl Publisher {
         // but receives no objects.
         let response = self
             .session
+            .connection()
             .control
             .send_request(OutgoingRequest::Publish(publish))
             .await?
@@ -185,8 +190,13 @@ impl Publisher {
     }
 
     pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender> {
-        let send_stream = self.session.transport_connection.open_uni().await?;
-        FetchDataSender::new(self.session.control.version(), send_stream, request_id).await
+        let send_stream = self.session.connection().transport.open_uni().await?;
+        FetchDataSender::new(
+            self.session.connection().control.version(),
+            send_stream,
+            request_id,
+        )
+        .await
     }
 }
 
@@ -222,7 +232,7 @@ mod tests {
         };
 
         // Act
-        let subscribe_ok_track_alias = session.get_track_alias();
+        let subscribe_ok_track_alias = session.connection().allocate_track_alias();
 
         // Assert
         assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);

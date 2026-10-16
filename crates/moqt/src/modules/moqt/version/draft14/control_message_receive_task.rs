@@ -76,7 +76,7 @@ impl ControlMessageReceiveTask {
                                 }
                                 DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    let inflight_request = ControlChannel::of(&session)
+                                    let inflight_request = ControlChannel::of(session.connection())
                                         .take_inflight_request(request_id);
                                     match inflight_request {
                                         Some(InflightRequest::Waiting {
@@ -122,7 +122,7 @@ impl ControlMessageReceiveTask {
                         }
                     }
                     if let Some(session) = session_context.upgrade() {
-                        ControlChannel::of(&session).fail_inflight_requests();
+                        ControlChannel::of(session.connection()).fail_inflight_requests();
                     }
                 }
             .instrument(receiver_span),
@@ -296,7 +296,10 @@ impl ControlMessageReceiveTask {
                 ))
             }
             ReceivedMessage::GoAway(go_away) => {
-                if let Err(reason) = session.note_go_away_received(&go_away.new_session_uri) {
+                if let Err(reason) = session
+                    .connection()
+                    .note_go_away_received(&go_away.new_session_uri)
+                {
                     tracing::error!("Protocol violation: {reason}");
                     session.close_with_error(TerminationErrorCode::ProtocolViolation, reason);
                     return DepacketizeResult::SessionClosed;

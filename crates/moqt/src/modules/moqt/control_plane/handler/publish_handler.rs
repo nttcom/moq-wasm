@@ -39,7 +39,7 @@ pub struct PublishHandler {
 impl PublishHandler {
     pub(crate) fn new(session_context: Arc<SessionContext>, publish_message: Publish) -> Self {
         let guard = ResponseGuard::new(
-            session_context.clone(),
+            session_context.connection().clone(),
             publish_message.request_id,
             RequestKind::Publish,
         );
@@ -74,7 +74,8 @@ impl PublishHandler {
             filter_type,
             delivery_timeout: self.delivery_timeout,
         };
-        self.session_context
+        self.guard
+            .connection()
             .control
             .respond(OutgoingResponse::PublishOk(publish_ok))
             .await?;

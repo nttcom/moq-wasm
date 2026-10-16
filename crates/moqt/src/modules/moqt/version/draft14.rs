@@ -35,7 +35,7 @@ use crate::{
                 error_codes::{PublishDoneCode, RequestKind},
             },
             data_plane::stream::bi_stream_sender::BiStreamSender,
-            domains::session_context::SessionContext,
+            domains::{connection::Connection, session_context::SessionContext},
             version::{self, Notification, OutgoingRequest, OutgoingResponse},
         },
         transport::transport_send_stream::TransportSendError,
@@ -99,8 +99,8 @@ impl ControlChannel {
         }
     }
 
-    fn of(session: &SessionContext) -> &Self {
-        let version::ControlChannel::Draft14(channel) = &session.control;
+    fn of(connection: &Connection) -> &Self {
+        let version::ControlChannel::Draft14(channel) = &connection.control;
         channel
     }
 
@@ -353,7 +353,7 @@ async fn handle_late_response(
     action: LateResponseAction,
     response: ResponseMessage,
 ) {
-    let channel = ControlChannel::of(session);
+    let channel = ControlChannel::of(session.connection());
     let send_result = match &response {
         ResponseMessage::SubscribeOk(subscribe_ok) => match &action {
             LateResponseAction::Unsubscribe => {

@@ -40,7 +40,7 @@ pub struct SubscribeHandler {
 impl SubscribeHandler {
     pub(crate) fn new(session_context: Arc<SessionContext>, subscribe_message: Subscribe) -> Self {
         let guard = ResponseGuard::new(
-            session_context.clone(),
+            session_context.connection().clone(),
             subscribe_message.request_id,
             RequestKind::Subscribe,
         );
@@ -87,7 +87,8 @@ impl SubscribeHandler {
             delivery_timeout: self.delivery_timeout,
             max_duration: self.max_cache_duration,
         };
-        self.session_context
+        self.guard
+            .connection()
             .control
             .respond(OutgoingResponse::SubscribeOk(subscribe_ok))
             .await?;
@@ -95,7 +96,7 @@ impl SubscribeHandler {
     }
 
     pub fn allocate_track_alias(&self) -> u64 {
-        self.session_context.get_track_alias()
+        self.guard.connection().allocate_track_alias()
     }
 
     pub async fn error(

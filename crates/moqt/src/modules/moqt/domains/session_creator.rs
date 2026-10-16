@@ -1,4 +1,5 @@
 use crate::modules::executor;
+use crate::modules::moqt::domains::connection::Connection;
 use crate::modules::moqt::domains::session::Session;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
@@ -33,7 +34,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     }
                 };
             let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let context = SessionContext::new(transport_conn, control, false, event_sender);
+            let context = SessionContext::new(
+                Connection::new(transport_conn, control, false),
+                event_sender,
+            );
             tracing::info!("Session established");
             Ok(Session::new(
                 control_receiver,
@@ -150,12 +154,12 @@ mod tests {
 
         // Act
         let client_ids = [
-            client_context.control.next_request_id(),
-            client_context.control.next_request_id(),
+            client_context.connection().control.next_request_id(),
+            client_context.connection().control.next_request_id(),
         ];
         let server_ids = [
-            server_context.control.next_request_id(),
-            server_context.control.next_request_id(),
+            server_context.connection().control.next_request_id(),
+            server_context.connection().control.next_request_id(),
         ];
 
         // Assert

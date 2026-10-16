@@ -34,7 +34,11 @@ impl FetchHandler {
     pub(crate) fn new(session_context: Arc<SessionContext>, fetch: Fetch) -> Self {
         let request_id = fetch.request_id;
         let group_order = fetch.group_order;
-        let guard = ResponseGuard::new(session_context.clone(), request_id, RequestKind::Fetch);
+        let guard = ResponseGuard::new(
+            session_context.connection().clone(),
+            request_id,
+            RequestKind::Fetch,
+        );
         Self {
             session_context,
             request_id,
@@ -58,7 +62,8 @@ impl FetchHandler {
             end_location,
             max_cache_duration: self.max_cache_duration,
         };
-        self.session_context
+        self.guard
+            .connection()
             .control
             .respond(OutgoingResponse::FetchOk(fetch_ok))
             .await

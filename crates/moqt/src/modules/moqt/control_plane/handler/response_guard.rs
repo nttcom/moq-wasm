@@ -7,7 +7,7 @@ use crate::modules::{
     executor,
     moqt::{
         control_plane::error_codes::{RequestErrorCode, RequestKind},
-        domains::session_context::SessionContext,
+        domains::connection::Connection,
         version::OutgoingResponse,
     },
     transport::transport_send_stream::TransportSendError,
@@ -19,24 +19,25 @@ use crate::modules::{
 /// for its control timeout.
 #[derive(Debug, Clone)]
 pub(crate) struct ResponseGuard {
-    session_context: Arc<SessionContext>,
+    /// The connection the request arrived on; every answer goes there.
+    connection: Arc<Connection>,
     request_id: u64,
     kind: RequestKind,
     responded: Arc<AtomicBool>,
 }
 
 impl ResponseGuard {
-    pub(crate) fn new(
-        session_context: Arc<SessionContext>,
-        request_id: u64,
-        kind: RequestKind,
-    ) -> Self {
+    pub(crate) fn new(connection: Arc<Connection>, request_id: u64, kind: RequestKind) -> Self {
         Self {
-            session_context,
+            connection,
             request_id,
             kind,
             responded: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub(crate) fn connection(&self) -> &Arc<Connection> {
+        &self.connection
     }
 
     pub(crate) fn mark_responded(&self) {
@@ -50,7 +51,7 @@ impl ResponseGuard {
     ) -> Result<(), TransportSendError> {
         self.mark_responded();
         send_request_error(
-            &self.session_context,
+            &self.connection,
             self.request_id,
             self.kind,
             code,
@@ -61,13 +62,13 @@ impl ResponseGuard {
 }
 
 async fn send_request_error(
-    session_context: &SessionContext,
+    connection: &Connection,
     request_id: u64,
     kind: RequestKind,
     code: RequestErrorCode,
     reason_phrase: String,
 ) -> Result<(), TransportSendError> {
-    session_context
+    connection
         .control
         .respond(OutgoingResponse::Error {
             kind,
@@ -85,12 +86,12 @@ impl Drop for ResponseGuard {
         if self.responded.load(Ordering::Relaxed) || Arc::strong_count(&self.responded) > 1 {
             return;
         }
-        let session_context = self.session_context.clone();
+        let connection = self.connection.clone();
         let request_id = self.request_id;
         let kind = self.kind;
         executor::try_spawn("Unhandled Request Rejecter", async move {
             if let Err(error) = send_request_error(
-                &session_context,
+                &connection,
                 request_id,
                 kind,
                 RequestErrorCode::NotSupported,

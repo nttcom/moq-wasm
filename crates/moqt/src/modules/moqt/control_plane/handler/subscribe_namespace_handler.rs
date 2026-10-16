@@ -17,7 +17,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct SubscribeNamespaceHandler {
-    session_context: Arc<SessionContext>,
     request_id: u64,
     pub track_namespace_prefix: String,
     pub track_namespace_prefix_tuple: Vec<String>,
@@ -30,12 +29,11 @@ impl SubscribeNamespaceHandler {
         subscribe_namespace: SubscribeNamespace,
     ) -> Self {
         let guard = ResponseGuard::new(
-            session_context.clone(),
+            session_context.connection().clone(),
             subscribe_namespace.request_id,
             RequestKind::SubscribeNamespace,
         );
         Self {
-            session_context,
             guard,
             request_id: subscribe_namespace.request_id,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
@@ -48,7 +46,8 @@ impl SubscribeNamespaceHandler {
         let publish_namespace_ok = NamespaceOk {
             request_id: self.request_id,
         };
-        self.session_context
+        self.guard
+            .connection()
             .control
             .respond(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
             .await?;
