@@ -24,6 +24,14 @@ impl UnsubscribeHandler {
         }
     }
 
+    /// A subscription that ended with the connection it was served on.
+    pub(crate) fn ended(session_context: Arc<SessionContext>, request_id: u64) -> Self {
+        Self {
+            session_context,
+            request_id,
+        }
+    }
+
     pub fn subscribe_id(&self) -> u64 {
         self.request_id
     }

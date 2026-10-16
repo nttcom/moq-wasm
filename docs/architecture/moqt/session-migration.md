@@ -139,7 +139,9 @@ the recorder does now).
 
 With NO_ERROR once every subscription cut over (5 s grace, 10 s limit for a
 track that delivers nothing on the new connection) and the peer takes no
-track this side sends there, or when the server closes it.
+track this side sends there, or when the server closes it. A SUBSCRIBE the
+previous server sent and never unsubscribed ends then with an `Unsubscribe`
+event, as `moqtClient.ts` reports it today.
 
 ## What `moqtClient.ts` does that this design covers
 

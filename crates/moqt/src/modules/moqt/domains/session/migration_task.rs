@@ -250,12 +250,19 @@ impl Router {
     }
 
     /// Closes the previous connection with NO_ERROR; a subscription that has
-    /// not cut over takes its next group start from the current one.
+    /// not cut over takes its next group start from the current one, and one
+    /// served there ends as if its subscriber unsubscribed.
     fn retire(&self, previous: Previous) {
         previous
             .live
             .connection
             .close(TerminationErrorCode::NoError, "");
+        for request_id in previous.live.connection.take_served() {
+            self.forward(SessionEvent::Unsubscribe(UnsubscribeHandler::ended(
+                self.session.clone(),
+                request_id,
+            )));
+        }
         self.session.forget_previous(&previous.live.connection);
         self.session.forget_connection(&previous.live.connection);
         for cutover in previous.cutovers {
@@ -849,6 +856,36 @@ mod tests {
         );
         assert_eq!(close.expect("A closed once it unsubscribed").code, Some(0));
         assert!(unsubscribe_seen.is_err(), "{unsubscribe_seen:?}");
+    }
+
+    #[tokio::test]
+    async fn a_subscription_served_on_the_old_server_ends_when_that_server_closes() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-served-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-served-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let mut subscriber_a = server_a.subscriber();
+        let (_, (_, _, served)) = tokio::join!(
+            subscriber_a.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            serve_subscribe(&client)
+        );
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let _server_b = accept_b.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Act
+        server_a.close_with_error(TerminationErrorCode::NoError, "");
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.receive_event()).await;
+
+        // Assert
+        let Ok(Ok(SessionEvent::Unsubscribe(handler))) = event else {
+            panic!("expected UNSUBSCRIBE, got {event:?}");
+        };
+        assert_eq!(handler.subscribe_id(), served.request_id());
     }
 
     fn fetched_object(object_id: u64) -> Object {

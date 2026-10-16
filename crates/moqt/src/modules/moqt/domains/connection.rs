@@ -231,6 +231,10 @@ impl Connection {
         self.served_ids().remove(&request_id)
     }
 
+    pub(crate) fn take_served(&self) -> Vec<u64> {
+        self.served_ids().drain().collect()
+    }
+
     pub(crate) fn serves_subscriptions(&self) -> bool {
         !self.served_ids().is_empty()
     }
