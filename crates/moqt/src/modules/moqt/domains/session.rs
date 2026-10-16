@@ -133,6 +133,12 @@ impl Session {
             })
     }
 
+    /// 0 on the first connection, then one more each time the session moved
+    /// to the connection a GOAWAY named.
+    pub fn connection_generation(&self) -> u64 {
+        self.inner.connection().generation
+    }
+
     pub fn transport_stats(&self) -> TransportStats {
         self.inner.connection().transport.stats()
     }

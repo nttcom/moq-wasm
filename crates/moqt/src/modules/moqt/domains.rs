@@ -6,7 +6,6 @@ pub(crate) mod fetch_handle;
 pub(crate) mod fetch_range;
 pub(crate) mod group_cutover;
 pub(crate) mod handshake;
-pub(crate) mod migrating_session;
 pub(crate) mod origin;
 pub(crate) mod pending_publish_namespace;
 pub(crate) mod publisher;

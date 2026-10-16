@@ -21,8 +21,6 @@ pub use crate::modules::moqt::control_plane::handler::requests_blocked_handler::
 pub use crate::modules::moqt::domains::connecting::Connecting;
 pub use crate::modules::moqt::domains::endpoint::ClientConfig;
 pub use crate::modules::moqt::domains::endpoint::Endpoint;
-pub use crate::modules::moqt::domains::migrating_session::MigratingSession;
-pub use crate::modules::moqt::domains::migrating_session::migrating_track::MigratingTrack;
 pub use crate::modules::moqt::domains::publisher::Publisher;
 pub use crate::modules::moqt::domains::request_failure::RequestFailure;
 pub use crate::modules::moqt::domains::session::Session;

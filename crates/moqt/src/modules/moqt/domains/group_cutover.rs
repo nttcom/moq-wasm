@@ -7,11 +7,9 @@
 /// cutover does not wait for the current subscription to deliver a group
 /// first: the publisher sends to both servers at once, so the previous one
 /// may win every race.
-#[derive(Default)]
 pub(crate) struct GroupCutover {
     newest: Option<u64>,
-    /// `None` while the track has one subscription.
-    state: Option<Cutover>,
+    state: Cutover,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -26,37 +24,27 @@ impl GroupCutover {
     pub(crate) fn waiting_after(newest: Option<u64>) -> Self {
         Self {
             newest,
-            state: Some(Cutover::Waiting),
+            state: Cutover::Waiting,
         }
-    }
-
-    /// A subscription on the new session became the current one.
-    pub(crate) fn begin(&mut self) {
-        self.state = Some(Cutover::Waiting);
     }
 
     /// The previous subscription ended. If the current one has delivered
     /// nothing yet, it starts at its first group start, even when its group
     /// IDs are lower.
     pub(crate) fn previous_ended(&mut self) {
-        if self.state == Some(Cutover::Waiting) {
+        if self.state == Cutover::Waiting {
             self.newest = None;
         }
     }
 
-    /// The previous subscription took over again after the current one ended.
-    pub(crate) fn settle(&mut self) {
-        self.state = None;
-    }
-
     pub(crate) fn is_cut_over(&self) -> bool {
-        matches!(self.state, Some(Cutover::At(_)))
+        matches!(self.state, Cutover::At(_))
     }
 
     pub(crate) fn take_previous(&mut self, group_id: u64) -> bool {
         let take = match self.state {
-            Some(Cutover::At(cutover)) => group_id < cutover,
-            _ => true,
+            Cutover::At(cutover) => group_id < cutover,
+            Cutover::Waiting => true,
         };
         if take {
             self.note(group_id);
@@ -66,15 +54,14 @@ impl GroupCutover {
 
     pub(crate) fn take_current(&mut self, group_id: u64, object_id: u64) -> bool {
         let take = match self.state {
-            None => true,
-            Some(Cutover::At(cutover)) => group_id >= cutover,
-            Some(Cutover::Waiting) => {
+            Cutover::At(cutover) => group_id >= cutover,
+            Cutover::Waiting => {
                 let cutover = match self.newest {
                     Some(newest) if group_id <= newest => newest + 1,
                     _ if object_id == 0 => group_id,
                     _ => group_id + 1,
                 };
-                self.state = Some(Cutover::At(cutover));
+                self.state = Cutover::At(cutover);
                 group_id >= cutover
             }
         };
@@ -94,12 +81,7 @@ mod tests {
     use super::*;
 
     fn migrating_after(groups: &[u64]) -> GroupCutover {
-        let mut cutover = GroupCutover::default();
-        for &group_id in groups {
-            assert!(cutover.take_current(group_id, 0));
-        }
-        cutover.begin();
-        cutover
+        GroupCutover::waiting_after(groups.iter().copied().max())
     }
 
     #[test]

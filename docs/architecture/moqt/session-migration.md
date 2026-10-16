@@ -50,8 +50,8 @@ by wire request id), and the tasks that read a connection are bound to it
   the new connection on the same socket and transport (`BROWSER` included);
 - the `MigrationTask`, which reacts to GOAWAY.
 
-Requests sent while a migration re-sends the others wait for it, as in
-`MigratingSession`, so none is missed.
+Requests sent while a migration re-sends the others wait for it, so none is
+missed.
 
 `Publisher`, `Subscriber` and the handlers hold the logical session and pick
 the connection when a request is sent, not when the handle is created. A
@@ -136,10 +136,9 @@ the recorder does now).
 
 ### Closing the previous connection
 
-As in `MigratingSession`: with NO_ERROR once every subscription cut over
-(5 s grace, 10 s limit for a track that delivers nothing on the new
-connection) and the peer takes no published track there, or when the server
-closes it.
+With NO_ERROR once every subscription cut over (5 s grace, 10 s limit for a
+track that delivers nothing on the new connection) and the peer takes no
+track this side sends there, or when the server closes it.
 
 ## What `moqtClient.ts` does that this design covers
 
