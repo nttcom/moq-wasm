@@ -73,7 +73,7 @@ impl ControlMessageReceiveTask {
                                     if let SessionEvent::PublishDone(handler) = &event {
                                         let _ = publish_done_sender.send(handler.request_id());
                                     }
-                                    if let Err(error) = session.event_sender.send(event) {
+                                    if let Err(error) = connection.event_sender.send(event) {
                                         tracing::error!("failed to send message: {:?}", error);
                                     }
                                 }

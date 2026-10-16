@@ -33,14 +33,22 @@ impl Handshake {
         let (control, control_receiver) = self.setup.accept().await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
         let context = SessionContext::new(
-            Connection::new(self.transport_connection, control, true),
+            Connection::new(
+                self.transport_connection,
+                control,
+                true,
+                0,
+                event_sender.clone(),
+            ),
             event_sender,
+            false,
         );
         tracing::info!("Session established");
         Ok(Session::new(
             control_receiver,
             context,
             event_receiver,
+            None,
             None,
         ))
     }

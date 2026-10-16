@@ -568,7 +568,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
-            context.connection(),
+            &context.connection(),
             REQUEST_ID,
             LateResponseAction::Unsubscribe,
             late_subscribe_ok(),
@@ -597,14 +597,14 @@ mod tests {
             spawn_connected_dual_sessions("sinks-late-subscribe-ok-other").await;
         let context = server.subscriber().session;
         context
-            .register_data_receiver(context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
+            .register_data_receiver(&context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
             .await
             .unwrap();
 
         // Act
         handle_late_response(
             &context,
-            context.connection(),
+            &context.connection(),
             REQUEST_ID,
             LateResponseAction::Unsubscribe,
             late_subscribe_ok(),
@@ -628,7 +628,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
-            context.connection(),
+            &context.connection(),
             REQUEST_ID,
             LateResponseAction::PublishDone,
             late_publish_ok(),
@@ -653,7 +653,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
-            context.connection(),
+            &context.connection(),
             REQUEST_ID,
             LateResponseAction::FetchCancel,
             late_fetch_ok(),
@@ -676,7 +676,7 @@ mod tests {
         // Act
         handle_late_response(
             &context,
-            context.connection(),
+            &context.connection(),
             REQUEST_ID,
             LateResponseAction::Unsubscribe,
             late_track_status_ok(),

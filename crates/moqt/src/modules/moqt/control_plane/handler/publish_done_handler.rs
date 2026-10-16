@@ -27,6 +27,10 @@ impl PublishDoneHandler {
         self.request_id
     }
 
+    pub(crate) fn with_request_id(self, request_id: u64) -> Self {
+        Self { request_id, ..self }
+    }
+
     pub fn status_code(&self) -> PublishDoneCode {
         self.status_code
     }

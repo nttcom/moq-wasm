@@ -184,6 +184,7 @@ impl ConnectedRelay {
             port: 0,
             verify_certificate: target.verify_certificate,
             authorization_token: target.auth_token.clone(),
+            follow_go_away: false,
         })?;
         let session = Arc::new(
             MigratingSession::connect(endpoint, &target.url)

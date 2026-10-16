@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     Connecting, TransportProtocol,
     modules::{
@@ -13,6 +15,12 @@ pub struct ClientConfig {
     pub port: u16,
     pub verify_certificate: bool,
     pub authorization_token: Option<String>,
+    /// A session follows the server's GOAWAY by itself (draft-14 §3.5):
+    /// it connects to the New Session URI, sends its subscriptions there
+    /// again and keeps the request ids and track aliases the application
+    /// knows. With `false`, GOAWAY arrives as a `SessionEvent` and the session
+    /// stays on its connection.
+    pub follow_go_away: bool,
 }
 
 impl Default for ClientConfig {
@@ -21,6 +29,7 @@ impl Default for ClientConfig {
             port: 0,
             verify_certificate: true,
             authorization_token: None,
+            follow_go_away: true,
         }
     }
 }
@@ -34,7 +43,7 @@ pub struct ServerConfig {
 }
 
 pub struct Endpoint<T: TransportProtocol> {
-    session_creator: SessionCreator<T>,
+    session_creator: Arc<SessionCreator<T>>,
 }
 
 impl<T: TransportProtocol> Endpoint<T> {
@@ -47,8 +56,11 @@ impl<T: TransportProtocol> Endpoint<T> {
         let session_creator = SessionCreator {
             transport_creator: client,
             authorization_token: config.authorization_token.clone(),
+            follow_go_away: config.follow_go_away,
         };
-        Ok(Self { session_creator })
+        Ok(Self {
+            session_creator: Arc::new(session_creator),
+        })
     }
 
     pub fn create_client_with_custom_cert(
@@ -63,8 +75,11 @@ impl<T: TransportProtocol> Endpoint<T> {
         let session_creator = SessionCreator {
             transport_creator: client,
             authorization_token: None,
+            follow_go_away: true,
         };
-        Ok(Self { session_creator })
+        Ok(Self {
+            session_creator: Arc::new(session_creator),
+        })
     }
 
     pub fn create_server(server_config: &ServerConfig) -> anyhow::Result<Self> {
@@ -78,8 +93,11 @@ impl<T: TransportProtocol> Endpoint<T> {
         let session_creator = SessionCreator {
             transport_creator: server,
             authorization_token: None,
+            follow_go_away: false,
         };
-        Ok(Self { session_creator })
+        Ok(Self {
+            session_creator: Arc::new(session_creator),
+        })
     }
 
     /// `url` selects the transport by scheme: `moqt://host[:port]` for raw

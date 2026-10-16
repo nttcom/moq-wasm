@@ -223,6 +223,10 @@ impl SubgroupReader {
         }
     }
 
+    pub(crate) fn group_id(&self) -> u64 {
+        self.header.group_id
+    }
+
     pub(crate) fn start(&self) -> Option<SubgroupStart> {
         Some(SubgroupStart {
             group_id: self.header.group_id,

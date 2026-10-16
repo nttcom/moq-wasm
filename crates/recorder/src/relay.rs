@@ -18,6 +18,7 @@ pub(crate) async fn connect(
         port: 0,
         verify_certificate,
         authorization_token,
+        follow_go_away: false,
     })?;
     tracing::info!(relay = url, "connecting to relay");
     MigratingSession::connect(endpoint, url)

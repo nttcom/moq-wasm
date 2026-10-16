@@ -8,11 +8,12 @@ use crate::{
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
-                fetch::Fetch, fetch::FetchParams, fetch_cancel::FetchCancel,
+                fetch::Fetch, fetch::FetchParams, fetch_cancel::FetchCancel, fetch_ok::FetchOk,
                 parameters::authorization_token::AuthorizationToken,
                 parameters::content_exists::ContentExists, subscribe::Subscribe,
-                subscribe_namespace::SubscribeNamespace, subscribe_update::SubscribeUpdate,
-                unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
+                subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
+                subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
+                unsubscribe_namespace::UnsubscribeNamespace,
             },
             enums::ResponseMessage,
         },
@@ -20,7 +21,11 @@ use crate::{
             fetch_data_receiver::FetchDataReceiver,
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
-        domains::{fetch_handle::FetchHandle, session_context::SessionContext},
+        domains::{
+            connection::{Connection, logical_id},
+            fetch_handle::FetchHandle,
+            session_context::{CarriedRequests, CarriedSubscription, SessionContext},
+        },
         runtime::dispatch::incoming_object::IncomingObject,
         version::{Notification, OutgoingRequest},
     },
@@ -46,41 +51,12 @@ impl Subscriber {
         fields(namespace = %namespace)
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
-        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.connection().control.next_request_id();
-        let pending = self
-            .session
-            .connection()
-            .control
-            .send_request(OutgoingRequest::SubscribeNamespace(
-                SubscribeNamespace::new(request_id, vec_namespace, vec![]),
-            ))
-            .await?;
-        tracing::info!("Subscribe namespace");
-        let response = pending.response().await?;
-        match response {
-            ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
-                if request_id != response_request_id {
-                    Err(RequestFailure::ProtocolViolation(
-                        "response for another request ID",
-                    ))
-                } else {
-                    tracing::info!("Subscribe namespace ok");
-                    Ok(())
-                }
-            }
-            ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
-                tracing::info!("Subscribe namespace error");
-                Err(RequestFailure::Rejected {
-                    request_id,
-                    code: error_code,
-                    reason: reason_phrase,
-                })
-            }
-            _ => Err(RequestFailure::ProtocolViolation(
-                "response type does not match the request",
-            )),
+        let mut carried = self.lock_carried().await;
+        send_subscribe_namespace(&self.session.connection(), namespace.clone()).await?;
+        if let Some(carried) = carried.as_mut() {
+            carried.namespaces.push(namespace);
         }
+        Ok(())
     }
 
     #[tracing::instrument(
@@ -95,84 +71,61 @@ impl Subscriber {
         track_name: String,
         option: SubscribeOption,
     ) -> Result<Subscription, RequestFailure> {
-        let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let filter_type = option.filter_type;
-        let request_id = self.session.connection().control.next_request_id();
-        let subscribe = Subscribe {
-            request_id,
-            track_namespace: vec_namespace,
-            track_name: track_name.clone(),
-            subscriber_priority: option.subscriber_priority,
-            group_order: option.group_order,
-            forward: option.forward,
-            filter_type: option.filter_type,
-            authorization_tokens: vec![],
-            delivery_timeout: None,
-        };
-        let response = self
+        let mut carried = self.lock_carried().await;
+        let connection = self.session.connection();
+        let message = send_subscribe(&connection, &track_namespace, &track_name, &option).await?;
+        let logical_alias = match self
             .session
-            .connection()
-            .control
-            .send_request(OutgoingRequest::Subscribe(subscribe))
-            .await?
-            .response()
-            .await?;
-        match response {
-            ResponseMessage::SubscribeOk(message) => {
-                if request_id != message.request_id {
-                    Err(RequestFailure::ProtocolViolation(
-                        "response for another request ID",
-                    ))
-                } else {
-                    tracing::info!("Subscribe ok");
-                    if let Err(code) = self
-                        .session
-                        .register_data_receiver(
-                            self.session.connection(),
-                            message.request_id,
-                            message.track_alias,
-                        )
-                        .await
-                    {
-                        // The track alias is already bound to another active subscription.
-                        // draft-14 §9.8: the subscriber MUST close with DUPLICATE_TRACK_ALIAS.
-                        tracing::error!(
-                            track_alias = message.track_alias,
-                            "SUBSCRIBE_OK reused an in-use track alias; closing session"
-                        );
-                        self.session
-                            .close_with_error(code, "SUBSCRIBE_OK reused an in-use track alias");
-                        return Err(RequestFailure::ProtocolViolation(
-                            "SUBSCRIBE_OK reused an in-use track alias",
-                        ));
-                    }
-                    tracing::info!(
-                        track_alias = message.track_alias,
-                        "subscriber registered incoming object receiver after SUBSCRIBE_OK"
-                    );
-                    Ok(Subscription::SubscriberInitiated(
-                        SubscriberInitiatedSubscription::new(
-                            track_namespace,
-                            track_name,
-                            message,
-                            option.subscriber_priority,
-                            filter_type,
-                        ),
-                    ))
-                }
+            .register_data_receiver(&connection, message.request_id, message.track_alias)
+            .await
+        {
+            Ok(logical_alias) => logical_alias,
+            Err(code) => {
+                // The track alias is already bound to another active subscription.
+                // draft-14 §9.8: the subscriber MUST close with DUPLICATE_TRACK_ALIAS.
+                tracing::error!(
+                    track_alias = message.track_alias,
+                    "SUBSCRIBE_OK reused an in-use track alias; closing session"
+                );
+                self.session.close_connection(
+                    &connection,
+                    code,
+                    "SUBSCRIBE_OK reused an in-use track alias",
+                );
+                return Err(RequestFailure::ProtocolViolation(
+                    "SUBSCRIBE_OK reused an in-use track alias",
+                ));
             }
-            ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
-                tracing::info!("Subscribe error");
-                Err(RequestFailure::Rejected {
-                    request_id,
-                    code: error_code,
-                    reason: reason_phrase,
-                })
-            }
-            _ => Err(RequestFailure::ProtocolViolation(
-                "response type does not match the request",
-            )),
+        };
+        tracing::info!(
+            track_alias = message.track_alias,
+            "subscriber registered incoming object receiver after SUBSCRIBE_OK"
+        );
+        let request_id = logical_id(connection.generation, message.request_id);
+        if let Some(carried) = carried.as_mut() {
+            carried.subscriptions.insert(
+                request_id,
+                CarriedSubscription {
+                    track_namespace: track_namespace.clone(),
+                    track_name: track_name.clone(),
+                    option: option.clone(),
+                },
+            );
         }
+        let message = SubscribeOk {
+            request_id,
+            track_alias: logical_alias,
+            ..message
+        };
+        Ok(Subscription::SubscriberInitiated(
+            SubscriberInitiatedSubscription::new(
+                track_namespace,
+                track_name,
+                message,
+                option.subscriber_priority,
+                option.filter_type,
+            ),
+        ))
     }
 
     #[tracing::instrument(
@@ -187,8 +140,9 @@ impl Subscriber {
         track_name: String,
         authorization_tokens: Vec<AuthorizationToken>,
     ) -> Result<TrackStatusOk, RequestFailure> {
+        let connection = self.session.connection();
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let request_id = self.session.connection().control.next_request_id();
+        let request_id = connection.control.next_request_id();
         let track_status = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -200,9 +154,7 @@ impl Subscriber {
             authorization_tokens,
             delivery_timeout: None,
         };
-        let response = self
-            .session
-            .connection()
+        let response = connection
             .control
             .send_request(OutgoingRequest::TrackStatus(track_status))
             .await?
@@ -252,7 +204,8 @@ impl Subscriber {
             start_location,
             end_location,
         };
-        self.send_fetch(fetch_params, option).await
+        self.send_fetch(self.session.connection(), fetch_params, option)
+            .await
     }
 
     #[tracing::instrument(
@@ -262,11 +215,11 @@ impl Subscriber {
         fields(request_id = %fetch.request_id)
     )]
     pub async fn fetch_cancel(&self, fetch: &FetchHandle) -> anyhow::Result<()> {
-        let request_id = fetch.request_id;
-        self.session
-            .remove_pending_fetch(self.session.connection(), request_id);
-        self.session
-            .connection()
+        let Some((connection, request_id)) = self.on_live_connection(fetch.request_id) else {
+            return Ok(());
+        };
+        self.session.remove_pending_fetch(&connection, request_id);
+        connection
             .control
             .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
             .await?;
@@ -288,23 +241,25 @@ impl Subscriber {
         joining_start: u64,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
+        let (connection, joining_request_id) = self
+            .on_live_connection(subscription.request_id())
+            .unwrap_or_else(|| (self.session.connection(), subscription.request_id()));
         let fetch_params = FetchParams::RelativeJoining {
-            joining_request_id: subscription.request_id(),
+            joining_request_id,
             joining_start,
         };
-        self.send_fetch(fetch_params, option).await
+        self.send_fetch(connection, fetch_params, option).await
     }
 
     async fn send_fetch(
         &self,
+        connection: Arc<Connection>,
         fetch_params: FetchParams,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
-        let request_id = self.session.connection().control.next_request_id();
+        let request_id = connection.control.next_request_id();
 
-        let pending_fetch = self
-            .session
-            .register_pending_fetch(self.session.connection(), request_id);
+        let pending_fetch = self.session.register_pending_fetch(&connection, request_id);
 
         let fetch = Fetch {
             request_id,
@@ -313,9 +268,7 @@ impl Subscriber {
             fetch_params,
             authorization_tokens: vec![],
         };
-        let response = self
-            .session
-            .connection()
+        let response = connection
             .control
             .send_request(OutgoingRequest::Fetch(fetch))
             .await?
@@ -324,7 +277,10 @@ impl Subscriber {
         match response {
             ResponseMessage::FetchOk(fetch_ok) => {
                 pending_fetch.keep();
-                Ok(FetchHandle::new(fetch_ok))
+                Ok(FetchHandle::new(FetchOk {
+                    request_id: logical_id(connection.generation, fetch_ok.request_id),
+                    ..fetch_ok
+                }))
             }
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
                 Err(RequestFailure::Rejected {
@@ -339,7 +295,8 @@ impl Subscriber {
         }
     }
 
-    /// Sends a SUBSCRIBE_UPDATE for `subscription_request_id` (draft-14 §9.10).
+    /// Sends a SUBSCRIBE_UPDATE for `subscription` on each connection that
+    /// carries it (draft-14 §9.10).
     /// The draft defines no response, so this returns once the message is
     /// written.
     #[tracing::instrument(
@@ -353,22 +310,31 @@ impl Subscriber {
         subscription: &Subscription,
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
-        let subscription_request_id = subscription.request_id();
-        let subscribe_update = SubscribeUpdate {
-            request_id: self.session.connection().control.next_request_id(),
-            subscription_request_id,
-            start_location: option.start_location,
-            end_group: option.end_group,
-            subscriber_priority: option.subscriber_priority,
-            forward: option.forward,
-            authorization_tokens: vec![],
-            delivery_timeout: None,
-        };
-        self.session
-            .connection()
-            .control
-            .notify(Notification::SubscribeUpdate(subscribe_update))
-            .await?;
+        let mut carried = self.lock_carried().await;
+        if let Some(carried) = carried
+            .as_mut()
+            .and_then(|carried| carried.subscriptions.get_mut(&subscription.request_id()))
+        {
+            carried.option.forward = option.forward;
+        }
+        for (connection, subscription_request_id) in
+            self.on_live_connections(subscription.request_id())
+        {
+            let subscribe_update = SubscribeUpdate {
+                request_id: connection.control.next_request_id(),
+                subscription_request_id,
+                start_location: option.start_location,
+                end_group: option.end_group,
+                subscriber_priority: option.subscriber_priority,
+                forward: option.forward,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
+            };
+            connection
+                .control
+                .notify(Notification::SubscribeUpdate(subscribe_update))
+                .await?;
+        }
         Ok(())
     }
 
@@ -432,15 +398,18 @@ impl Subscriber {
         fields(request_id = %subscription.request_id())
     )]
     pub async fn unsubscribe(&self, subscription: &Subscription) -> anyhow::Result<()> {
-        let request_id = subscription.request_id();
-        self.session
-            .cancel_subscription(self.session.connection(), request_id)
-            .await;
-        self.session
-            .connection()
-            .control
-            .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
-            .await?;
+        if let Some(carried) = self.lock_carried().await.as_mut() {
+            carried.subscriptions.remove(&subscription.request_id());
+        }
+        for (connection, request_id) in self.on_live_connections(subscription.request_id()) {
+            self.session
+                .cancel_subscription(&connection, request_id)
+                .await;
+            connection
+                .control
+                .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
+                .await?;
+        }
         Ok(())
     }
 
@@ -451,15 +420,43 @@ impl Subscriber {
         fields(namespace = %namespace)
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
-        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
-        self.session
-            .connection()
-            .control
-            .notify(Notification::UnsubscribeNamespace(
-                UnsubscribeNamespace::new(vec_namespace),
-            ))
-            .await?;
+        if let Some(carried) = self.lock_carried().await.as_mut() {
+            carried.namespaces.retain(|carried| *carried != namespace);
+        }
+        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+        for connection in self.session.live_connections() {
+            connection
+                .control
+                .notify(Notification::UnsubscribeNamespace(
+                    UnsubscribeNamespace::new(vec_namespace.clone()),
+                ))
+                .await?;
+        }
         Ok(())
+    }
+
+    async fn lock_carried(&self) -> Option<tokio::sync::MutexGuard<'_, CarriedRequests>> {
+        match &self.session.carried {
+            Some(carried) => Some(carried.lock().await),
+            None => None,
+        }
+    }
+
+    /// Each live connection that carries the request `logical_id`, with its
+    /// wire id there.
+    fn on_live_connections(&self, logical_id: u64) -> Vec<(Arc<Connection>, u64)> {
+        self.session
+            .live_connections()
+            .into_iter()
+            .filter_map(|connection| {
+                let wire_id = connection.wire_request_id(logical_id)?;
+                Some((connection, wire_id))
+            })
+            .collect()
+    }
+
+    fn on_live_connection(&self, logical_id: u64) -> Option<(Arc<Connection>, u64)> {
+        self.on_live_connections(logical_id).into_iter().next()
     }
 
     #[tracing::instrument(
@@ -543,6 +540,92 @@ impl Subscriber {
                 receiver,
             ))),
         }
+    }
+}
+
+pub(crate) async fn send_subscribe_namespace(
+    connection: &Connection,
+    namespace: String,
+) -> Result<(), RequestFailure> {
+    let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+    let request_id = connection.control.next_request_id();
+    let pending = connection
+        .control
+        .send_request(OutgoingRequest::SubscribeNamespace(
+            SubscribeNamespace::new(request_id, vec_namespace, vec![]),
+        ))
+        .await?;
+    tracing::info!("Subscribe namespace");
+    let response = pending.response().await?;
+    match response {
+        ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
+            if request_id != response_request_id {
+                Err(RequestFailure::ProtocolViolation(
+                    "response for another request ID",
+                ))
+            } else {
+                tracing::info!("Subscribe namespace ok");
+                Ok(())
+            }
+        }
+        ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
+            tracing::info!("Subscribe namespace error");
+            Err(RequestFailure::Rejected {
+                request_id,
+                code: error_code,
+                reason: reason_phrase,
+            })
+        }
+        _ => Err(RequestFailure::ProtocolViolation(
+            "response type does not match the request",
+        )),
+    }
+}
+
+/// The SUBSCRIBE_OK, with `connection`'s wire ids.
+pub(crate) async fn send_subscribe(
+    connection: &Connection,
+    track_namespace: &str,
+    track_name: &str,
+    option: &SubscribeOption,
+) -> Result<SubscribeOk, RequestFailure> {
+    let request_id = connection.control.next_request_id();
+    let subscribe = Subscribe {
+        request_id,
+        track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
+        track_name: track_name.to_string(),
+        subscriber_priority: option.subscriber_priority,
+        group_order: option.group_order,
+        forward: option.forward,
+        filter_type: option.filter_type,
+        authorization_tokens: vec![],
+        delivery_timeout: None,
+    };
+    let response = connection
+        .control
+        .send_request(OutgoingRequest::Subscribe(subscribe))
+        .await?
+        .response()
+        .await?;
+    match response {
+        ResponseMessage::SubscribeOk(message) if message.request_id == request_id => {
+            tracing::info!("Subscribe ok");
+            Ok(message)
+        }
+        ResponseMessage::SubscribeOk(_) => Err(RequestFailure::ProtocolViolation(
+            "response for another request ID",
+        )),
+        ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
+            tracing::info!("Subscribe error");
+            Err(RequestFailure::Rejected {
+                request_id,
+                code: error_code,
+                reason: reason_phrase,
+            })
+        }
+        _ => Err(RequestFailure::ProtocolViolation(
+            "response type does not match the request",
+        )),
     }
 }
 
