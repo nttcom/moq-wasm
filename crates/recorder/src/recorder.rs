@@ -14,8 +14,7 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::{
     Args,
-    file_writer::RecordingFile,
-    pipeline::{Output, Pipeline},
+    recording::Recording,
     relay::{self, RelayConnection},
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_selection::{Selection, select_tracks},
@@ -98,16 +97,20 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
     // One listener for the whole recording: tokio drops a SIGINT that arrives
     // while no listener is registered, such as between two `select!` polls.
     let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut file = RecordingFile::create(path).await?;
-    let mut pipeline = Pipeline::new(&selection, args.segment_seconds.map(Duration::from_secs))?;
-    tracing::info!(path = %file.path().display(), "recording started");
+    let mut recording = Recording::create(
+        &selection,
+        args.layout,
+        path,
+        args.segment_seconds.map(Duration::from_secs),
+    )
+    .await?;
+    tracing::info!(paths = ?recording.paths().collect::<Vec<_>>(), "recording started");
     let cached = if args.from_cache {
         record_cached(
             session,
             &video_subscription,
             audio_subscription.as_ref(),
-            &mut pipeline,
-            &mut file,
+            &mut recording,
             &mut interrupt,
         )
         .await?
@@ -119,15 +122,13 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
             session,
             video_reader,
             audio_reader,
-            &mut pipeline,
-            &mut file,
+            &mut recording,
             &mut interrupt,
         )
         .await?;
     }
 
-    let tail = pipeline.finish()?;
-    file.finish(&tail).await?;
+    recording.finish().await?;
     tracing::info!("recording finished");
     Ok(())
 }
@@ -184,8 +185,7 @@ async fn record_cached(
     session: &Session,
     video: &Subscription,
     audio: Option<&Subscription>,
-    pipeline: &mut Pipeline,
-    file: &mut RecordingFile,
+    recording: &mut Recording,
     interrupt: &mut Signal,
 ) -> Result<ControlFlow<()>> {
     let mut video_fetch = open_cached(session, video).await;
@@ -202,12 +202,12 @@ async fn record_cached(
             }
             fetched = next_fetched(video_fetch.as_mut()) => {
                 if let Some(object) = fetched_object(fetched, "video", &mut video_fetch) {
-                    write_output(file, pipeline.push_video(&object)?).await?;
+                    recording.push_video(&object).await?;
                 }
             }
             fetched = next_fetched(audio_fetch.as_mut()) => {
                 if let Some(object) = fetched_object(fetched, "audio", &mut audio_fetch) {
-                    write_output(file, pipeline.push_audio(&object)?).await?;
+                    recording.push_audio(&object).await?;
                 }
             }
         }
@@ -220,12 +220,11 @@ async fn record_live(
     session: &Session,
     mut video_reader: TrackReader,
     mut audio_reader: Option<TrackReader>,
-    pipeline: &mut Pipeline,
-    file: &mut RecordingFile,
+    recording: &mut Recording,
     interrupt: &mut Signal,
 ) -> Result<()> {
     loop {
-        let output = tokio::select! {
+        tokio::select! {
             biased;
             _ = interrupt.recv() => {
                 tracing::info!("stopping on Ctrl-C");
@@ -236,29 +235,26 @@ async fn record_live(
                 return Ok(());
             }
             object = video_reader.next_object() => match object {
-                Ok(Some(object)) => pipeline.push_video(&object)?,
+                Ok(Some(object)) => recording.push_video(&object).await?,
                 Ok(None) => {
                     tracing::info!("video track ended");
                     return Ok(());
                 }
                 Err(error) => {
                     tracing::warn!(%error, "video read error; continuing with the next group");
-                    continue;
                 }
             },
             object = next_audio_object(audio_reader.as_mut()) => match object {
-                Ok(Some(object)) => pipeline.push_audio(&object)?,
+                Ok(Some(object)) => recording.push_audio(&object).await?,
                 Ok(None) => {
                     tracing::info!("audio track ended");
                     return Ok(());
                 }
                 Err(error) => {
                     tracing::warn!(%error, "audio read error; continuing with the next group");
-                    continue;
                 }
             },
-        };
-        write_output(file, output).await?;
+        }
     }
 }
 
@@ -304,18 +300,6 @@ async fn next_audio_object(reader: Option<&mut TrackReader>) -> Result<Option<Tr
         Some(reader) => reader.next_object().await,
         None => std::future::pending().await,
     }
-}
-
-async fn write_output(file: &mut RecordingFile, output: Output) -> Result<()> {
-    if let Some(tail) = output.previous_file_tail {
-        file.rotate(&tail).await?;
-        tracing::info!(path = %file.path().display(), "recording into a new file");
-    }
-    file.write(&output.data).await?;
-    if output.group_complete {
-        file.flush().await?;
-    }
-    Ok(())
 }
 
 fn default_output_path(namespace: &str, now: SystemTime) -> PathBuf {
