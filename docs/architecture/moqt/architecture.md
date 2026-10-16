@@ -238,7 +238,11 @@ connection it is on: each subgroup stream the `StreamDataSenderFactory`
 opens, and each datagram, is sent on all of them, the new connection from
 the next subgroup on (draft-22 §7.6.1). An UNSUBSCRIBE that drops a
 publication from one connection while it is still on another is not
-returned; requests the peer sends, on any connection, carry logical ids. While both
+returned; requests the peer sends, on any connection, carry logical ids. A
+FETCH response stream a migration cuts off is FETCHed again on the current
+connection from the first object not delivered up to the FETCH_OK's End
+Location, and the `FetchDataReceiver` reads on from it; a descending FETCH
+is not sent again. While both
 connections deliver a subscription, the sinks of both share a `GroupCutover`
 (see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
 carried subscription is dropped; GOAWAY is never returned; `Disconnected`
