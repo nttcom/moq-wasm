@@ -10,6 +10,7 @@ pub(crate) fn snapshot(timestamp_ms: u64) -> RelaySnapshot {
             cache_objects: 0,
             cache_payload_bytes: 0,
             disk_cache_bytes: 0,
+            disk_cache_max_bytes: 0,
             client_sessions: 0,
             draining_since_ms: None,
         },
