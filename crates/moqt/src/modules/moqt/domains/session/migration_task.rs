@@ -510,11 +510,15 @@ mod tests {
     use crate::{
         ClientConfig, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
         TrackWriter,
+        fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::test_support::{
             DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, dual_client_with_config,
             open_subgroup, send_payload, spawn_dual_server, subscribed_track_reader,
         },
-        object::{ContentExists, StreamDataSenderFactory},
+        object::{
+            ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
+            StreamDataSenderFactory,
+        },
         publish::{PublishDoneCode, PublishOption},
         subscribe::{FilterType, SubscribeOption},
         wire::SubgroupId,
@@ -840,6 +844,118 @@ mod tests {
         );
         assert_eq!(close.expect("A closed once it unsubscribed").code, Some(0));
         assert!(unsubscribe_seen.is_err(), "{unsubscribe_seen:?}");
+    }
+
+    fn fetched_object(object_id: u64) -> Object {
+        Object {
+            location: Location {
+                group_id: 1,
+                object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: ExtensionHeaders::default(),
+            payload: Bytes::from(format!("o{object_id}")),
+            ends_group: false,
+        }
+    }
+
+    /// Answers the next FETCH and returns its start and its response stream.
+    async fn serve_fetch(server: &Session, end: Location) -> (Location, FetchDataSender) {
+        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected FETCH");
+        };
+        let FetchParams::Standalone { start_location, .. } = handler.fetch.fetch_params else {
+            panic!("expected a standalone FETCH");
+        };
+        handler.ok(false, end).await.unwrap();
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        (start_location, sender)
+    }
+
+    #[tokio::test]
+    async fn a_fetch_cut_off_by_the_old_server_continues_on_the_new_one() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-fetch-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-fetch-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let end = Location {
+            group_id: 1,
+            object_id: 3,
+        };
+        let mut subscriber = client.subscriber();
+        let (handle, (_, sender_a)) = tokio::join!(
+            subscriber.fetch(
+                "ns".into(),
+                "track".into(),
+                Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+                end,
+                FetchOption::default(),
+            ),
+            serve_fetch(&server_a, end)
+        );
+        let mut receiver = subscriber
+            .accept_fetch_receiver(&handle.unwrap())
+            .await
+            .unwrap();
+        for object_id in [0, 1] {
+            sender_a
+                .send_object(&fetched_object(object_id))
+                .await
+                .unwrap();
+        }
+        for _ in 0..2 {
+            let fetched = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive()).await;
+            assert!(matches!(fetched.unwrap().unwrap(), Fetch::Object(_)));
+        }
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Act: A closes after delivering objects 0 and 1
+        server_a.close_with_error(TerminationErrorCode::GoawayTimeout, "drained");
+        let rest = tokio::spawn(async move {
+            let mut rest = Vec::new();
+            loop {
+                match receiver.receive().await {
+                    Ok(Fetch::Object(object)) => rest.push(object.payload),
+                    Ok(Fetch::End) => return Ok(rest),
+                    Err(error) => return Err(error),
+                }
+            }
+        });
+        let (start_b, sender_b) =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, serve_fetch(&server_b, end))
+                .await
+                .expect("the rest of the FETCH reaches B");
+        sender_b.send_object(&fetched_object(2)).await.unwrap();
+        sender_b.close().await.unwrap();
+        let rest = tokio::time::timeout(HANDSHAKE_TIMEOUT, rest)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert: B is asked from the first object A did not deliver
+        assert_eq!(
+            start_b,
+            Location {
+                group_id: 1,
+                object_id: 2
+            }
+        );
+        assert_eq!(rest.unwrap(), vec![Bytes::from("o2")]);
     }
 
     #[tokio::test]

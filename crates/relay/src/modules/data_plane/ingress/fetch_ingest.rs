@@ -272,6 +272,7 @@ mod tests {
                 end_of_track: false,
                 end_location: location(0, 1),
                 max_cache_duration: None,
+                remainder: None,
             },
             egress_start: EgressFetchRequest {
                 subscriber_session_id: DOWNSTREAM_SESSION,

@@ -23,7 +23,7 @@ use crate::{
         },
         domains::{
             connection::{Connection, logical_id},
-            fetch_handle::FetchHandle,
+            fetch_handle::{FetchHandle, FetchRemainder},
             session_context::{CarriedSubscription, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
@@ -198,14 +198,25 @@ impl Subscriber {
         end_location: Location,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
+        let remainder = FetchRemainder {
+            track_namespace: track_namespace.clone(),
+            track_name: track_name.clone(),
+            start: start_location,
+            subscriber_priority: option.subscriber_priority,
+        };
         let fetch_params = FetchParams::Standalone {
             track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
             track_name,
             start_location,
             end_location,
         };
-        self.send_fetch(self.session.connection(), fetch_params, option)
-            .await
+        self.send_fetch(
+            self.session.connection(),
+            fetch_params,
+            option,
+            Some(remainder),
+        )
+        .await
     }
 
     #[tracing::instrument(
@@ -244,19 +255,39 @@ impl Subscriber {
         let (connection, joining_request_id) = self
             .on_live_connection(subscription.request_id())
             .unwrap_or_else(|| (self.session.connection(), subscription.request_id()));
+        let remainder = match subscription.content_exists() {
+            ContentExists::True { location } => Some(FetchRemainder {
+                track_namespace: subscription.track_namespace().to_string(),
+                track_name: subscription.track_name().to_string(),
+                start: Location {
+                    group_id: location.group_id.saturating_sub(joining_start),
+                    object_id: 0,
+                },
+                subscriber_priority: option.subscriber_priority,
+            }),
+            ContentExists::False => None,
+        };
         let fetch_params = FetchParams::RelativeJoining {
             joining_request_id,
             joining_start,
         };
-        self.send_fetch(connection, fetch_params, option).await
+        self.send_fetch(connection, fetch_params, option, remainder)
+            .await
     }
 
+    /// `remainder` is what a session that follows GOAWAY asks the next
+    /// connection for when the response stream is cut off; only an
+    /// ascending FETCH is sent again.
     async fn send_fetch(
         &self,
         connection: Arc<Connection>,
         fetch_params: FetchParams,
         option: FetchOption,
+        remainder: Option<FetchRemainder>,
     ) -> Result<FetchHandle, RequestFailure> {
+        let remainder = remainder.filter(|_| {
+            self.session.follows_go_away() && option.group_order != GroupOrder::Descending
+        });
         let request_id = connection.control.next_request_id();
 
         let pending_fetch = self.session.register_pending_fetch(&connection, request_id);
@@ -277,10 +308,12 @@ impl Subscriber {
         match response {
             ResponseMessage::FetchOk(fetch_ok) => {
                 pending_fetch.keep();
-                Ok(FetchHandle::new(FetchOk {
+                let mut handle = FetchHandle::new(FetchOk {
                     request_id: logical_id(connection.generation, fetch_ok.request_id),
                     ..fetch_ok
-                }))
+                });
+                handle.remainder = remainder;
+                Ok(handle)
             }
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
                 Err(RequestFailure::Rejected {
@@ -488,10 +521,19 @@ impl Subscriber {
                     request_id
                 )
             })?;
-        fetch_stream_rx
+        let mut receiver = fetch_stream_rx
             .recv()
             .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))
+            .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
+        if let Some(remainder) = fetch_handle.remainder.clone() {
+            receiver.carry_with(
+                self.session.clone(),
+                remainder,
+                fetch_handle.end_location,
+                fetch_handle.request_id,
+            );
+        }
+        Ok(receiver)
     }
 
     #[tracing::instrument(

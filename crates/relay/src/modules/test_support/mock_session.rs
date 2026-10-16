@@ -497,6 +497,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 end_of_track: false,
                 end_location,
                 max_cache_duration: None,
+                remainder: None,
             }),
         }
     }

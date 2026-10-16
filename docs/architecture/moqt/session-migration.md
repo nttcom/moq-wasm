@@ -108,10 +108,11 @@ the others before the application sees them. Datagrams take the same
 decision per object. `TrackReader`, `MigratingTrack`'s users and the wasm
 `track_io` all read the factory, so they need no change.
 
-A FETCH in flight on the previous connection is sent again on the new one for
-the part not delivered yet (the remainder of the range after the last
-location received), as `moqtClient.ts` does today. A FETCH the new relay
-rejects keeps reading from the previous connection.
+A FETCH in flight on the previous connection keeps reading there; when that
+stream is cut off after the move, the part not delivered yet (the range
+after the last location received, up to the FETCH_OK's End Location) is
+FETCHed on the current connection and the same receiver reads on. A
+descending FETCH is not sent again.
 
 ### Publishing side
 
