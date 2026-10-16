@@ -77,7 +77,7 @@ pub(crate) struct Args {
     pub(crate) from_cache: bool,
 
     /// Start a new numbered file at the first keyframe (audio frame in an
-    /// audio-only file) after this many seconds; 60 by default with `--upload`
+    /// audio-only file) after this many seconds
     #[arg(long, value_name = "SECONDS")]
     pub(crate) segment_seconds: Option<u64>,
 
@@ -139,8 +139,7 @@ pub(crate) struct ServeArgs {
     #[arg(long, env = "RECORDER_UPLOAD_URL", value_name = "URL")]
     pub(crate) upload: Option<url::Url>,
 
-    /// Start a new numbered file after this many seconds; 60 by default with
-    /// `--upload`
+    /// Start a new numbered file after this many seconds
     #[arg(long, value_name = "SECONDS")]
     pub(crate) segment_seconds: Option<u64>,
 

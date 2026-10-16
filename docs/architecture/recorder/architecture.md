@@ -206,10 +206,13 @@ With `--upload <URL>` the recorder builds an `ObjectStore` from the URL with
 never pass through flags (see [object_store.md](object_store.md)). Local disk
 stays the write path, and the store only ever sees closed files:
 
-- Each segment is a self-contained file, so it is uploaded the moment it
-  closes, at rotation or at the end. `--upload` makes `--segment-seconds`
-  default to 60 s; without segments the only file would close when the
-  recording ends.
+- Each file is uploaded the moment it closes: at the end, or when a new
+  configuration or `--segment-seconds` rotates it. Without
+  `--segment-seconds` a recording is therefore one object per init segment,
+  uploaded when it ends, rather than one object per minute that would have
+  to be joined before viewing. The cost is that nothing reaches the store
+  while the recording runs, and a VM lost with its disk loses the whole
+  recording; a recorder process that dies leaves a playable file on disk.
 - `upload_task::UploadTask` uploads the closed files one at a time in closing
   order with `object_store::buffered::BufWriter`, which streams a large file
   as a multipart upload. It deletes the local file once the object is
