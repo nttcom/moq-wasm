@@ -194,7 +194,7 @@ export function formatSyncOffset(offsetMs: number | undefined): string {
 
 export function formatLiveStats(stats: LiveStats): string {
   const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : 'no video yet'
-  const delay = stats.viewerDelayMs === undefined ? '' : ` · delay ${Math.round(stats.viewerDelayMs)} ms`
+  const delay = stats.viewerDelayMs === undefined ? '' : ` · pub to sub delay ${Math.round(stats.viewerDelayMs)} ms`
   const buffer =
     stats.bufferMs === undefined
       ? ''

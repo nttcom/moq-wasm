@@ -65,10 +65,10 @@ const CHARTS: ChartSpec[] = [
     wide: true
   },
   {
-    title: 'Delay',
+    title: 'Pub to sub delay',
     unit: 'ms',
     headline: 'delayMs',
-    series: [{ key: 'delayMs', label: 'delay', color: 'var(--series-1)' }]
+    series: [{ key: 'delayMs', label: 'pub to sub delay', color: 'var(--series-1)' }]
   },
   {
     title: 'Bitrate',

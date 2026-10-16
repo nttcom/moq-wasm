@@ -197,9 +197,15 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
   },
   {
     key: 'viewer-delay',
-    title: 'Delay (capture → display, ms)',
+    title: 'Pub to sub delay (ms)',
     scale: PLAYOUT_SCALE,
-    series: [{ label: 'Delay', accessor: (sample) => primaryStats(sample)?.viewerDelayMs, colorClass: 'text-cyan-300' }]
+    series: [
+      {
+        label: 'Pub to sub delay',
+        accessor: (sample) => primaryStats(sample)?.viewerDelayMs,
+        colorClass: 'text-cyan-300'
+      }
+    ]
   },
   {
     key: 'av-offset',
@@ -261,7 +267,7 @@ const RECEIVE_METRICS: ReceiveMetric[] = [
   },
   {
     key: 'viewer-delay',
-    title: 'Delay (capture → display, ms)',
+    title: 'Pub to sub delay (ms)',
     scale: PLAYOUT_SCALE,
     value: (stats) => stats.viewerDelayMs
   },

@@ -148,7 +148,7 @@ function pendingText(): string {
 
 function renderViewerDelay(): void {
   const { viewerDelayMs } = player.stats()
-  viewerDelayLabel.textContent = viewerDelayMs === undefined ? '' : `delay ${Math.round(viewerDelayMs)} ms`
+  viewerDelayLabel.textContent = viewerDelayMs === undefined ? '' : `pub to sub delay ${Math.round(viewerDelayMs)} ms`
 }
 
 function formatSeconds(seconds: number): string {

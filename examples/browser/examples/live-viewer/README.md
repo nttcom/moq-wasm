@@ -77,7 +77,7 @@ Publishes an MP4 from the browser as the same catalog and LOC tracks
 
 - Video must be H.264. Audio may be AAC or MP3; other audio codecs are skipped and only the video is published.
 - Loop restarts the file at its end; without it publishing stops there.
-- The preview on the left shows the picture a receiver without network delay would see, with the viewer's lag below it as `viewer delay`. Publish Streams on the right lists the streams sent per track.
+- The preview on the left shows the picture a receiver without network delay would see, with the viewer's lag below it as `pub to sub delay`. Publish Streams on the right lists the streams sent per track.
 - Publishing uses its own MoQT session, so Watch and Stop do not affect it.
 
 ## Relay URL

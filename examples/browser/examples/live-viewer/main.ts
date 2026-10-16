@@ -143,8 +143,8 @@ function renderPublishStreams(state: LivePlayerState): void {
   const viewerDelayMs = player.stats().viewerDelayMs
   element<HTMLSpanElement>('publish-latency').textContent =
     state.started && state.packaging === 'loc' && state.mode === 'live' && viewerDelayMs !== undefined
-      ? `viewer delay ${Math.round(viewerDelayMs)} ms`
-      : 'viewer delay -'
+      ? `pub to sub delay ${Math.round(viewerDelayMs)} ms`
+      : 'pub to sub delay -'
   if (!mp4Publisher.publishing) {
     return
   }
