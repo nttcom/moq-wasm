@@ -1175,6 +1175,7 @@ mod tests {
                     };
                     let cancel = FetchCancelHandler::new(
                         peers.client.context().clone(),
+                        &peers.client.context().connection(),
                         crate::modules::moqt::control_plane::control_messages::messages::fetch_cancel::FetchCancel {
                             request_id: handler.request_id,
                         },

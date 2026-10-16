@@ -48,10 +48,13 @@ impl SubscribeHandler {
             subscribe_message.request_id,
             RequestKind::Subscribe,
         );
+        let request_id = guard
+            .connection()
+            .logical_request_id(subscribe_message.request_id);
         Self {
             session_context,
             guard,
-            request_id: subscribe_message.request_id,
+            request_id,
             track_namespace: subscribe_message.track_namespace.join("/"),
             track_namespace_tuple: subscribe_message.track_namespace,
             track_name: subscribe_message.track_name,
@@ -83,7 +86,7 @@ impl SubscribeHandler {
     ) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let subscribe_ok = SubscribeOk {
-            request_id: self.request_id,
+            request_id: self.guard.request_id(),
             track_alias,
             expires,
             group_order: self.group_order.delivered(),
