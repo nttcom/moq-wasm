@@ -35,8 +35,19 @@ both tracks into one init segment and one fragment stream.
    joining FETCH (offset 0) draft-ietf-moq-msf-01 §5 asks for, falling back to
    the subscription when the publisher has sent none yet.
    `track_selection::select_tracks` picks the LOC track named by
-   `--video-track` and `--audio-track`; the video codec comes from the
-   catalog's `codec`, a WebCodecs codec string naming H.264, VP8, VP9 or AV1,
+   `--video-track` and `--audio-track`. Without a name it ranks the LOC
+   tracks by their catalog role and quality fields instead of guessing names
+   the publisher chose (a meeting participant lists `camera_main_720p` and
+   `audio_128kbps`): among the video tracks whose codec can be recorded, the
+   tallest at or below `--max-video-height` (480 by default; the shortest when
+   all are taller), then the lowest `bitrate`, and the audio track with the
+   highest `bitrate` among those that can be decoded; remaining ties go to
+   the track listed first. The video default is a light rendition because a
+   meeting participant encodes a rendition only while it has a subscriber
+   and the recorder's SUBSCRIBE counts, so a rendition no viewer watches is
+   encoded for the recording alone. Audio takes the highest bitrate, which
+   viewers start on as well, and Opus is cheap to encode. The video codec
+   comes from the catalog's `codec`, a WebCodecs codec string naming H.264, VP8, VP9 or AV1,
    the audio codec from its `codec`, `sampleRate` and `channelConfig`, and an AAC track's
    AudioSpecificConfig from the `initDataList` entry its `initRef` names, the
    way `broadcast::build_catalog` writes it. While the catalog lists no video
@@ -146,3 +157,7 @@ the convention is the relay's.
   configuration is not in the catalog yet, is skipped with a warning.
 - Video outside H.264, VP8, VP9 and AV1 ends the recorder with an error
   before anything is recorded: without the video track there is no file.
+- The automatic choice reads no track name, so it cannot tell a meeting's
+  camera from its screen share. At equal height the camera wins only
+  because its bitrate is lower; a participant who shares the screen with
+  the camera off is recorded from `screenshare_480p`.

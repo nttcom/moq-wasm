@@ -17,7 +17,7 @@ use crate::{
     recording::{Recording, Uploader},
     relay::{self, RelayConnection},
     token_refresh_task::{TokenRefreshTask, read_token_file},
-    track_selection::{Selection, select_tracks},
+    track_selection::{Selection, VideoChoice, select_tracks},
     upload_task::UploadTask,
 };
 
@@ -157,6 +157,10 @@ async fn wait_for_selection(
     subscription: &Subscription,
     args: &Args,
 ) -> Result<Selection> {
+    let video_choice = match &args.video_track {
+        Some(name) => VideoChoice::Named(name),
+        None => VideoChoice::MaxHeight(args.max_video_height),
+    };
     let mut current = match relay::fetch_joining_group(session, subscription).await {
         Ok(current) => current,
         Err(error) => {
@@ -182,11 +186,12 @@ async fn wait_for_selection(
         };
         let catalog: msf::Catalog =
             serde_json::from_slice(&payload).context("catalog is not MSF JSON")?;
-        if let Some(selection) = select_tracks(&catalog, &args.video_track, &args.audio_track)? {
+        let selection = select_tracks(&catalog, video_choice, args.audio_track.as_deref())?;
+        if let Some(selection) = selection {
             return Ok(selection);
         }
         tracing::info!(
-            track = %args.video_track,
+            track = args.video_track.as_deref(),
             "waiting for the catalog to list the video track"
         );
     }

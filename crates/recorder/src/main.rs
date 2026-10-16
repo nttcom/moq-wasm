@@ -32,13 +32,25 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) namespace: String,
 
-    /// Name of the LOC video track listed in the catalog
-    #[arg(long, default_value = "video")]
-    pub(crate) video_track: String,
+    /// Name of the LOC video track listed in the catalog; without it the
+    /// recorder picks one by `--max-video-height`
+    #[arg(long)]
+    pub(crate) video_track: Option<String>,
 
-    /// Name of the LOC audio track listed in the catalog
-    #[arg(long, default_value = "audio")]
-    pub(crate) audio_track: String,
+    /// Without `--video-track`, record the tallest video track at most this
+    /// high, or the shortest one when all are taller
+    #[arg(
+        long,
+        value_name = "PIXELS",
+        default_value_t = 480,
+        conflicts_with = "video_track"
+    )]
+    pub(crate) max_video_height: u32,
+
+    /// Name of the LOC audio track listed in the catalog; defaults to the
+    /// decodable audio track with the highest bitrate
+    #[arg(long)]
+    pub(crate) audio_track: Option<String>,
 
     /// Output file; defaults to <namespace>-<Unix seconds>.mp4 in the current
     /// directory. With `--layout per-track` each track goes to <stem>-<track>.mp4

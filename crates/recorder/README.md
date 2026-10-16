@@ -1,7 +1,7 @@
 # recorder
 
 Records an MSF broadcast from a MoQT relay into a fragmented MP4 file. It
-subscribes to the catalog, reads the LOC `video` and `audio` tracks that
+subscribes to the catalog, reads one LOC video and one LOC audio track that
 `crates/broadcast` publishers (`live-ingest`, `moqtsink`, `onvif-ingest`)
 and the WebCodecs publishers in `examples/browser` produce, and muxes both
 into one file with `mediapack`.
@@ -16,8 +16,9 @@ cargo run -p recorder -- \
 | --- | --- | --- |
 | `--relay` (`MOQT_URL`) | — | `moqt://` for QUIC, `https://` for WebTransport |
 | `--namespace` | — | Namespace of the broadcast |
-| `--video-track` | `video` | LOC video track to record (`video_720p`, `video/profile_1`, ...); H.264, VP8, VP9 or AV1, as the catalog's `codec` names it |
-| `--audio-track` | `audio` | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
+| `--video-track` | by `--max-video-height` | LOC video track to record (`video_720p`, `camera_main_720p`, ...); H.264, VP8, VP9 or AV1, as the catalog's `codec` names it |
+| `--max-video-height` | `480` | Without `--video-track`, the tallest video track at most this high, or the shortest one when all are taller |
+| `--audio-track` | highest bitrate | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
 | `--layout` | `combined` | `combined` writes the video and the audio into one file; `per-track` writes each track to `<stem>-<track>.mp4` (a `/` in the name becomes `_`) |
 | `--from-cache` | off | Start with what the relay or the publisher still caches (60 s by default), then continue live |
@@ -29,6 +30,15 @@ cargo run -p recorder -- \
 
 ## Behaviour
 
+- Without `--video-track`, the recorder takes the catalog's LOC track with
+  role `video` and a codec it can record whose `height` is the largest at or
+  below `--max-video-height` (the smallest when every track is taller), and
+  of those the lowest `bitrate`; without `--audio-track`, the LOC track with
+  role `audio` and the highest `bitrate` among those it can decode. A
+  remaining tie goes to the track listed first. A light default matters
+  because a meeting participant encodes a rendition only while someone
+  subscribes to it, the recorder included. The choice is made once, from
+  the catalog at start, and logged as `catalog resolved`.
 - Recording starts at the next group, i.e. the next keyframe, or with
   `--from-cache` at the oldest keyframe still cached, and ends on
   Ctrl-C, when the relay closes the session, or 10 s after the publisher ends
