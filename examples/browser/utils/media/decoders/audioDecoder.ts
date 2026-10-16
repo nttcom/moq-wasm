@@ -1,3 +1,4 @@
+import { alawToAudioData, isPcmAlawCodec } from '../alaw'
 import { GroupOrderGate } from '../groupOrderGate'
 import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
@@ -106,52 +107,10 @@ async function decode(payload: Uint8Array, captureTimestampMicros: number | unde
 }
 
 function decodePcmAlawChunk(payload: Uint8Array, timestamp: number, captureTimestampMicros: number | undefined): void {
-  const channels = Math.max(1, audioConfig.channels)
-  const sampleRate = Math.max(1, audioConfig.sampleRate)
-  const totalSamples = payload.byteLength
-  const numberOfFrames = Math.floor(totalSamples / channels)
-  if (numberOfFrames <= 0) {
-    return
+  const audioData = alawToAudioData(payload, audioConfig.sampleRate, audioConfig.channels, timestamp)
+  if (audioData) {
+    postAudioData(audioData, captureTimestampMicros)
   }
-
-  const pcm = new Int16Array(numberOfFrames * channels)
-  for (let i = 0; i < pcm.length; i += 1) {
-    pcm[i] = decodeAlawSample(payload[i] ?? 0)
-  }
-
-  const audioData = new AudioData({
-    format: 's16',
-    sampleRate,
-    numberOfFrames,
-    numberOfChannels: channels,
-    timestamp,
-    data: new Uint8Array(pcm.buffer)
-  })
-  postAudioData(audioData, captureTimestampMicros)
-}
-
-function isPcmAlawCodec(codec: string): boolean {
-  const normalized = codec.trim().toLowerCase()
-  return normalized === 'pcma' || normalized === 'pcm_alaw' || normalized === 'g711-alaw'
-}
-
-function decodeAlawSample(encoded: number): number {
-  let sample = encoded ^ 0x55
-  let value = (sample & 0x0f) << 4
-  const segment = (sample & 0x70) >> 4
-  switch (segment) {
-    case 0:
-      value += 8
-      break
-    case 1:
-      value += 0x108
-      break
-    default:
-      value += 0x108
-      value <<= segment - 1
-      break
-  }
-  return (sample & 0x80) !== 0 ? value : -value
 }
 
 function buildDecoderConfig(config: AudioConfig): AudioDecoderConfig {
