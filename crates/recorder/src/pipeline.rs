@@ -77,16 +77,17 @@ impl Pipeline {
     pub(crate) fn push_video(
         &mut self,
         object: &TrackObject,
-        capture_origin: &mut Option<Timestamp>,
+        capture_origin: Option<Timestamp>,
     ) -> Result<Output> {
         let codec = self
             .video_codec
             .context("video object for a file without video")?;
         let group_complete = self.group_complete(object);
         let loc_object = to_loc_object(object);
-        let origin = observe_capture_origin(capture_origin, &loc_object);
-        let events =
-            demuxer(&mut self.video, origin, || loc::Demuxer::video(codec)).push(&loc_object)?;
+        let events = demuxer(&mut self.video, capture_origin, || {
+            loc::Demuxer::video(codec)
+        })
+        .push(&loc_object)?;
         let mut output = self.mux(events)?;
         output.group_complete = group_complete;
         Ok(output)
@@ -95,7 +96,7 @@ impl Pipeline {
     pub(crate) fn push_audio(
         &mut self,
         object: &TrackObject,
-        capture_origin: &mut Option<Timestamp>,
+        capture_origin: Option<Timestamp>,
     ) -> Result<Output> {
         let config = self
             .audio_track
@@ -103,9 +104,10 @@ impl Pipeline {
             .context("audio object for a file without audio")?;
         let group_complete = self.video_codec.is_none() && self.group_complete(object);
         let loc_object = to_loc_object(object);
-        let origin = observe_capture_origin(capture_origin, &loc_object);
-        let events =
-            demuxer(&mut self.audio, origin, || loc::Demuxer::audio(config)).push(&loc_object)?;
+        let events = demuxer(&mut self.audio, capture_origin, || {
+            loc::Demuxer::audio(config)
+        })
+        .push(&loc_object)?;
         let mut output = self.mux(events)?;
         output.group_complete = group_complete;
         Ok(output)
@@ -202,15 +204,8 @@ impl Pipeline {
     }
 }
 
-/// The first capture timestamp any track of the recording delivers.
-fn observe_capture_origin(
-    capture_origin: &mut Option<Timestamp>,
-    object: &LocObject,
-) -> Option<Timestamp> {
-    if let Some(capture) = object.capture_timestamp() {
-        capture_origin.get_or_insert(capture);
-    }
-    *capture_origin
+pub(crate) fn capture_timestamp(object: &TrackObject) -> Option<Timestamp> {
+    to_loc_object(object).capture_timestamp()
 }
 
 fn demuxer(
@@ -272,23 +267,23 @@ mod tests {
         // Arrange: the audio of a group follows the first video object of the group
         let fixture = fixture();
         let mut pipeline = Pipeline::new(tracks(Some(fixture.audio_config.clone())), None).unwrap();
-        let mut origin = None;
+        let origin = capture_timestamp(&fixture.video[0]);
         let mut file = BytesMut::new();
         let mut groups_completed = 0;
         let mut audio = fixture.audio.iter().peekable();
 
         // Act
         for object in &fixture.video {
-            let output = pipeline.push_video(object, &mut origin).unwrap();
+            let output = pipeline.push_video(object, origin).unwrap();
             assert_eq!(output.previous_file_tail, None);
             groups_completed += output.group_complete as usize;
             file.extend_from_slice(&output.data);
             while let Some(next) = audio.next_if(|audio| audio.group_id <= object.group_id) {
-                file.extend_from_slice(&pipeline.push_audio(next, &mut origin).unwrap().data);
+                file.extend_from_slice(&pipeline.push_audio(next, origin).unwrap().data);
             }
         }
         for next in audio {
-            file.extend_from_slice(&pipeline.push_audio(next, &mut origin).unwrap().data);
+            file.extend_from_slice(&pipeline.push_audio(next, origin).unwrap().data);
         }
         file.extend_from_slice(&pipeline.finish().unwrap());
 
@@ -316,7 +311,7 @@ mod tests {
         // Arrange: the audio track starts 30 ms after the first video object
         let fixture = fixture();
         let mut pipeline = Pipeline::new(tracks(Some(fixture.audio_config.clone())), None).unwrap();
-        let mut origin = None;
+        let origin = capture_timestamp(&fixture.video[0]);
         let first_video = fixture.video[0].clone();
         let mut late_audio = fixture.audio[0].clone();
         let video_capture = first_video_capture(&first_video);
@@ -327,14 +322,9 @@ mod tests {
         let mut file = BytesMut::new();
 
         // Act
-        file.extend_from_slice(&pipeline.push_video(&first_video, &mut origin).unwrap().data);
-        file.extend_from_slice(&pipeline.push_audio(&late_audio, &mut origin).unwrap().data);
-        file.extend_from_slice(
-            &pipeline
-                .push_video(&fixture.video[1], &mut origin)
-                .unwrap()
-                .data,
-        );
+        file.extend_from_slice(&pipeline.push_video(&first_video, origin).unwrap().data);
+        file.extend_from_slice(&pipeline.push_audio(&late_audio, origin).unwrap().data);
+        file.extend_from_slice(&pipeline.push_video(&fixture.video[1], origin).unwrap().data);
         file.extend_from_slice(&pipeline.finish().unwrap());
 
         // Assert
@@ -371,12 +361,12 @@ mod tests {
         let start = first_video_capture(&fixture.video[0]);
         for (config, frame, frame_micros) in cases {
             let mut pipeline = Pipeline::new(tracks(Some(config.clone())), None).unwrap();
-            let mut origin = None;
+            let origin = capture_timestamp(&fixture.video[0]);
             let mut file = BytesMut::new();
 
             // Act
             for object in &fixture.video {
-                file.extend_from_slice(&pipeline.push_video(object, &mut origin).unwrap().data);
+                file.extend_from_slice(&pipeline.push_video(object, origin).unwrap().data);
             }
             for index in 0..10 {
                 let audio = track_object(
@@ -390,7 +380,7 @@ mod tests {
                         payload: frame.clone(),
                     },
                 );
-                file.extend_from_slice(&pipeline.push_audio(&audio, &mut origin).unwrap().data);
+                file.extend_from_slice(&pipeline.push_audio(&audio, origin).unwrap().data);
             }
             file.extend_from_slice(&pipeline.finish().unwrap());
 
@@ -422,10 +412,10 @@ mod tests {
         // Arrange: a keyframe whose SPS declares another level
         let fixture = fixture();
         let mut pipeline = Pipeline::new(tracks(None), None).unwrap();
-        let mut origin = None;
+        let origin = None;
         let mut file = BytesMut::new();
         for object in &fixture.video[..3] {
-            file.extend_from_slice(&pipeline.push_video(object, &mut origin).unwrap().data);
+            file.extend_from_slice(&pipeline.push_video(object, origin).unwrap().data);
         }
         let record = fixture
             .events
@@ -456,7 +446,7 @@ mod tests {
         );
 
         // Act
-        let rotated = pipeline.push_video(&keyframe, &mut origin).unwrap();
+        let rotated = pipeline.push_video(&keyframe, origin).unwrap();
         let next = pipeline
             .push_video(
                 &track_object(
@@ -470,7 +460,7 @@ mod tests {
                         payload: Bytes::from_static(&[0, 0, 0, 1, 0x41, 0x9a, 0x22]),
                     },
                 ),
-                &mut origin,
+                origin,
             )
             .unwrap();
 
@@ -492,7 +482,7 @@ mod tests {
         // Arrange: the recording joins the fixture's first group after its keyframe
         let fixture = fixture();
         let mut pipeline = Pipeline::new(tracks(None), None).unwrap();
-        let mut origin = None;
+        let origin = None;
         let second_keyframe = fixture
             .video
             .iter()
@@ -502,7 +492,7 @@ mod tests {
 
         // Act
         for object in &fixture.video[1..] {
-            file.extend_from_slice(&pipeline.push_video(object, &mut origin).unwrap().data);
+            file.extend_from_slice(&pipeline.push_video(object, origin).unwrap().data);
         }
         file.extend_from_slice(&pipeline.finish().unwrap());
 
@@ -521,13 +511,13 @@ mod tests {
             audio: Some(opus_config()),
         };
         let mut pipeline = Pipeline::new(tracks, Some(Duration::from_millis(100))).unwrap();
-        let mut origin = None;
+        let origin = None;
         let mut files = vec![BytesMut::new()];
 
         // Act
         for index in 0..10 {
             let object = opus_object(1, index, 1_000_000 + index * 20_000);
-            let output = pipeline.push_audio(&object, &mut origin).unwrap();
+            let output = pipeline.push_audio(&object, origin).unwrap();
             if let Some(tail) = output.previous_file_tail {
                 files.last_mut().unwrap().extend_from_slice(&tail);
                 files.push(BytesMut::new());
@@ -551,7 +541,7 @@ mod tests {
         // Arrange: a 1 ms segment ends at the fixture's second keyframe
         let fixture = fixture();
         let mut pipeline = Pipeline::new(tracks(None), Some(Duration::from_millis(1))).unwrap();
-        let mut origin = None;
+        let origin = None;
         let second_keyframe = fixture
             .video
             .iter()
@@ -561,7 +551,7 @@ mod tests {
 
         // Act
         for object in &fixture.video {
-            let output = pipeline.push_video(object, &mut origin).unwrap();
+            let output = pipeline.push_video(object, origin).unwrap();
             if let Some(tail) = output.previous_file_tail {
                 files.last_mut().unwrap().extend_from_slice(&tail);
                 files.push(BytesMut::new());
