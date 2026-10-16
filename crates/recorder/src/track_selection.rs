@@ -7,7 +7,7 @@ use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Selection {
-    pub(crate) video: VideoTrack,
+    pub(crate) video: Option<VideoTrack>,
     pub(crate) audio: Option<AudioTrack>,
 }
 
@@ -31,9 +31,10 @@ pub(crate) enum VideoChoice<'a> {
     MaxHeight(u32),
 }
 
-/// `Ok(None)` until the catalog lists the video track, which a broadcast does
-/// from its first keyframe. `Err` when the named video track, or every listed
-/// one, has a codec other than H.264, VP8, VP9 or AV1.
+/// `Ok(None)` while the catalog lists neither a video track nor an audio
+/// track that can be decoded; a meeting participant with the camera off lists
+/// only the audio. `Err` when the named video track, or every listed one, has
+/// a codec other than H.264, VP8, VP9 or AV1.
 ///
 /// Without a video name, only LOC tracks with role `video` qualify. Without an
 /// audio name, the audio track is the decodable LOC track with role `audio`
@@ -47,14 +48,13 @@ pub(crate) fn select_tracks(
     video: VideoChoice,
     audio_name: Option<&str>,
 ) -> Result<Option<Selection>> {
-    let Some(video) = select_video(catalog, video)? else {
-        return Ok(None);
-    };
+    let video = select_video(catalog, video)?;
     let audio = select_audio(catalog, audio_name)?;
-    Ok(Some(Selection { video, audio }))
+    Ok((video.is_some() || audio.is_some()).then_some(Selection { video, audio }))
 }
 
-fn select_video(catalog: &Catalog, choice: VideoChoice) -> Result<Option<VideoTrack>> {
+/// The video track `select_tracks` picks.
+pub(crate) fn select_video(catalog: &Catalog, choice: VideoChoice) -> Result<Option<VideoTrack>> {
     let max_height = match choice {
         VideoChoice::Named(name) => {
             return match loc_tracks(catalog).find(|track| track.name == name) {
@@ -281,7 +281,7 @@ mod tests {
             .unwrap();
 
         // Assert: hevc_480p cannot be recorded, screenshare_480p has a higher bitrate, the two cameras tie and the first listed wins
-        assert_eq!(selection.video.name, "camera_base_480p");
+        assert_eq!(selection.video.unwrap().name, "camera_base_480p");
         assert_eq!(selection.audio.unwrap().name, "audio_128kbps");
     }
 
@@ -299,8 +299,8 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert_eq!(under.video.name, "camera_base_720p");
-        assert_eq!(over.video.name, "camera_base_480p");
+        assert_eq!(under.video.unwrap().name, "camera_base_720p");
+        assert_eq!(over.video.unwrap().name, "camera_base_480p");
     }
 
     #[test]
@@ -318,7 +318,7 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(selection.video.name, "camera_main_1080p");
+        assert_eq!(selection.video.unwrap().name, "camera_main_1080p");
         assert_eq!(selection.audio.unwrap().name, "audio_32kbps");
     }
 
@@ -354,10 +354,10 @@ mod tests {
         assert_eq!(
             selection,
             Some(Selection {
-                video: VideoTrack {
+                video: Some(VideoTrack {
                     name: "video".to_string(),
                     codec: VideoCodec::H264,
-                },
+                }),
                 audio: Some(AudioTrack {
                     name: "audio".to_string(),
                     config: AudioConfig::Aac(aac_config()),
@@ -367,9 +367,9 @@ mod tests {
     }
 
     #[test]
-    fn waits_while_the_video_track_is_not_listed() {
-        // Arrange
-        let catalog = catalog(vec![audio_track("opus")]);
+    fn waits_while_neither_track_is_listed() {
+        // Arrange: the AAC track has no init data yet
+        let catalog = catalog(vec![audio_track("mp4a.40.2")]);
 
         // Act / Assert
         assert_eq!(
@@ -380,6 +380,21 @@ mod tests {
             select_tracks(&catalog, VideoChoice::MaxHeight(480), None).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn records_audio_only_while_no_video_track_is_listed() {
+        // Arrange: a meeting participant with the camera off
+        let catalog = catalog(vec![audio_track("opus")]);
+
+        // Act
+        let selection = select_tracks(&catalog, VideoChoice::MaxHeight(480), None)
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert_eq!(selection.video, None);
+        assert_eq!(selection.audio.unwrap().name, "audio");
     }
 
     #[test]
@@ -463,7 +478,7 @@ mod tests {
         let error = select_tracks(&catalog, VideoChoice::Named("hevc"), Some("audio")).unwrap_err();
 
         // Assert
-        assert_eq!(selection.video.codec, VideoCodec::Av1);
+        assert_eq!(selection.video.unwrap().codec, VideoCodec::Av1);
         assert_eq!(
             error.to_string(),
             "video track hevc has codec hvc1.1.6.L93.B0, which cannot be recorded"

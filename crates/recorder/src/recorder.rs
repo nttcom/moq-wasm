@@ -25,7 +25,9 @@ use crate::{
     relay,
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
-    track_selection::{Selection, VideoChoice, loc_tracks, select_audio, select_tracks},
+    track_selection::{
+        Selection, VideoChoice, loc_tracks, select_audio, select_tracks, select_video,
+    },
     upload_task::{UploadQueue, UploadTask},
 };
 
@@ -86,8 +88,8 @@ pub(crate) struct UploadTarget {
     pub(crate) prefix: Path,
 }
 
-/// Records `args.namespace` until Ctrl-C or the end of the video track, then waits
-/// for the uploads.
+/// Records `args.namespace` until Ctrl-C or the end of the broadcast, then
+/// waits for the uploads.
 async fn record_until_interrupted(session: &MigratingSession, args: &Args) -> Result<()> {
     let upload_task = args
         .upload
@@ -158,11 +160,10 @@ async fn list_tracks(session: &MigratingSession, namespace: &str) -> Result<()> 
     Ok(())
 }
 
-/// Records `namespace` into `path` until `stop` turns true or the video track
-/// ends. A stop while the catalog lists no video track yet records nothing.
-/// The audio follows the catalog: an audio track it no longer lists, or one
-/// that ended, is dropped. While no audio is read, each later catalog object
-/// is checked for one to add.
+/// Records `namespace` into `path` until `stop` turns true, or until the
+/// catalog and every media track read have ended. A stop before the catalog
+/// lists a track records nothing. A track the catalog unlists, or one that
+/// ends, is dropped; a later catalog that lists one adds it again.
 pub(crate) async fn record_broadcast(
     session: &MigratingSession,
     namespace: &str,
@@ -176,8 +177,8 @@ pub(crate) async fn record_broadcast(
         _ = stop_requested(&mut stop) => return Ok(()),
     };
     tracing::info!(
-        video = %selection.video.name,
-        video_codec = ?selection.video.codec,
+        video = selection.video.as_ref().map(|video| video.name.as_str()),
+        video_codec = ?selection.video.as_ref().map(|video| video.codec),
         audio = selection.audio.as_ref().map(|audio| audio.name.as_str()),
         "catalog resolved"
     );
@@ -193,7 +194,10 @@ pub(crate) async fn record_broadcast(
     } else {
         FilterType::NextGroupStart
     };
-    let video = relay::subscribe(session, namespace, &selection.video.name, filter_type).await?;
+    let video = match &selection.video {
+        Some(video) => Some(relay::subscribe(session, namespace, &video.name, filter_type).await?),
+        None => None,
+    };
     let audio = match &selection.audio {
         Some(audio) => Some(relay::subscribe(session, namespace, &audio.name, filter_type).await?),
         None => None,
@@ -219,7 +223,7 @@ pub(crate) async fn record_broadcast(
     tracing::info!(paths = ?recording.paths().collect::<Vec<_>>(), "recording started");
     let cached = if options.from_cache {
         record_cached(
-            &tracks.video,
+            tracks.video.as_ref(),
             tracks.audio.as_ref(),
             &mut recording,
             &mut stop,
@@ -233,7 +237,7 @@ pub(crate) async fn record_broadcast(
             session,
             namespace,
             &mut tracks,
-            options.audio_track.as_deref(),
+            options,
             &mut recording,
             &mut stop,
         )
@@ -249,23 +253,27 @@ async fn wait_for_selection(
     catalog: &mut CatalogReader,
     options: &BroadcastOptions,
 ) -> Result<Selection> {
-    let video_choice = match &options.video_track {
-        Some(name) => VideoChoice::Named(name),
-        None => VideoChoice::MaxHeight(options.max_video_height),
-    };
     loop {
         let selection = select_tracks(
             &catalog.next().await?.context("catalog track ended")?,
-            video_choice,
+            video_choice(options),
             options.audio_track.as_deref(),
         )?;
         if let Some(selection) = selection {
             return Ok(selection);
         }
         tracing::info!(
-            track = options.video_track.as_deref(),
-            "waiting for the catalog to list the video track"
+            video = options.video_track.as_deref(),
+            audio = options.audio_track.as_deref(),
+            "waiting for the catalog to list a video or an audio track"
         );
+    }
+}
+
+fn video_choice(options: &BroadcastOptions) -> VideoChoice<'_> {
+    match &options.video_track {
+        Some(name) => VideoChoice::Named(name),
+        None => VideoChoice::MaxHeight(options.max_video_height),
     }
 }
 
@@ -273,16 +281,13 @@ async fn wait_for_selection(
 /// subscriptions are read; they continue where it ends. A failed FETCH leaves
 /// a gap before the live part instead of ending the recording.
 async fn record_cached(
-    video: &MigratingTrack,
+    video: Option<&MigratingTrack>,
     audio: Option<&MigratingTrack>,
     recording: &mut Recording,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<ControlFlow<()>> {
     let mut video_fetch = open_cached(video).await;
-    let mut audio_fetch = match audio {
-        Some(audio) => open_cached(audio).await,
-        None => None,
-    };
+    let mut audio_fetch = open_cached(audio).await;
     while video_fetch.is_some() || audio_fetch.is_some() {
         tokio::select! {
             biased;
@@ -308,7 +313,7 @@ async fn record_cached(
 
 struct Subscriptions {
     catalog: CatalogReader,
-    video: MigratingTrack,
+    video: Option<MigratingTrack>,
     audio: Option<MigratingTrack>,
 }
 
@@ -316,15 +321,15 @@ async fn record_live(
     session: &MigratingSession,
     namespace: &str,
     tracks: &mut Subscriptions,
-    audio_name: Option<&str>,
+    options: &BroadcastOptions,
     recording: &mut Recording,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<()> {
     let mut catalog_open = true;
-    loop {
-        // `biased` polls the catalog before the media, so an audio track listed
-        // while the first video object waits joins the file before it is
-        // written to.
+    while catalog_open || tracks.video.is_some() || tracks.audio.is_some() {
+        // `biased` polls the catalog first: a track listed while the other
+        // track's first object is ready joins the file before that object is
+        // written.
         tokio::select! {
             biased;
             _ = stop_requested(stop) => {
@@ -336,35 +341,22 @@ async fn record_live(
                 return Ok(());
             }
             catalog = tracks.catalog.next(), if catalog_open => match catalog {
-                Ok(Some(catalog)) => {
-                    // A muted meeting participant unlists its audio before sending
-                    // PUBLISH_DONE, and `moqt` reports the track end 10 s after it; an
-                    // unmute within those 10 s would otherwise go unnoticed.
-                    if tracks.audio.as_ref().is_some_and(|audio| !lists(&catalog, audio)) {
-                        tracing::info!("catalog no longer lists the audio track; recording video until it lists one");
-                        tracks.audio = None;
-                    }
-                    if tracks.audio.is_none() {
-                        match add_listed_audio(session, namespace, &catalog, audio_name, recording).await {
-                            Ok(audio) => tracks.audio = audio,
-                            Err(error) => tracing::warn!(%error, "cannot add the audio track"),
-                        }
-                    }
-                }
+                Ok(Some(catalog)) => follow_catalog(session, namespace, &catalog, tracks, options, recording).await?,
                 Ok(None) => catalog_open = false,
                 Err(error) => tracing::warn!(%error, "catalog read error"),
             },
-            object = tracks.video.next_object() => match object {
+            object = next_object(tracks.video.as_mut()) => match object {
                 Ok(Some(object)) => recording.push_video(&object).await?,
                 Ok(None) => {
-                    tracing::info!("video track ended");
-                    return Ok(());
+                    tracing::info!("video track ended; recording audio until the catalog lists one");
+                    tracks.video = None;
+                    recording.end_video().await?;
                 }
                 Err(error) => {
                     tracing::warn!(%error, "video read error; continuing with the next group");
                 }
             },
-            object = next_audio_object(tracks.audio.as_mut()) => match object {
+            object = next_object(tracks.audio.as_mut()) => match object {
                 Ok(Some(object)) => recording.push_audio(&object).await?,
                 Ok(None) => {
                     tracing::info!("audio track ended; recording video until the catalog lists one");
@@ -376,6 +368,57 @@ async fn record_live(
             },
         }
     }
+    tracing::info!("catalog and media tracks ended");
+    Ok(())
+}
+
+/// Drops each track `catalog` no longer lists, then adds a listed video or
+/// audio track where the recording reads none. A meeting participant who
+/// mutes or turns the camera off unlists the track before sending
+/// PUBLISH_DONE, and `moqt` reports the track end 10 s later; without the
+/// drop, turning it back on within those 10 s would go unnoticed.
+async fn follow_catalog(
+    session: &MigratingSession,
+    namespace: &str,
+    catalog: &Catalog,
+    tracks: &mut Subscriptions,
+    options: &BroadcastOptions,
+    recording: &mut Recording,
+) -> Result<()> {
+    if tracks
+        .video
+        .as_ref()
+        .is_some_and(|video| !lists(catalog, video))
+    {
+        tracing::info!(
+            "catalog no longer lists the video track; recording audio until it lists one"
+        );
+        tracks.video = None;
+        recording.end_video().await?;
+    }
+    if tracks
+        .audio
+        .as_ref()
+        .is_some_and(|audio| !lists(catalog, audio))
+    {
+        tracing::info!(
+            "catalog no longer lists the audio track; recording video until it lists one"
+        );
+        tracks.audio = None;
+    }
+    if tracks.video.is_none() {
+        match add_listed_video(session, namespace, catalog, options, recording).await {
+            Ok(video) => tracks.video = video,
+            Err(error) => tracing::warn!(%error, "cannot add the video track"),
+        }
+    }
+    if tracks.audio.is_none() {
+        match add_listed_audio(session, namespace, catalog, options, recording).await {
+            Ok(audio) => tracks.audio = audio,
+            Err(error) => tracing::warn!(%error, "cannot add the audio track"),
+        }
+    }
+    Ok(())
 }
 
 fn lists(catalog: &Catalog, track: &MigratingTrack) -> bool {
@@ -383,14 +426,31 @@ fn lists(catalog: &Catalog, track: &MigratingTrack) -> bool {
     loc_tracks(catalog).any(|listed| listed.name == name)
 }
 
+async fn add_listed_video(
+    session: &MigratingSession,
+    namespace: &str,
+    catalog: &Catalog,
+    options: &BroadcastOptions,
+    recording: &mut Recording,
+) -> Result<Option<MigratingTrack>> {
+    let Some(video) = select_video(catalog, video_choice(options))? else {
+        return Ok(None);
+    };
+    let track =
+        relay::subscribe(session, namespace, &video.name, FilterType::NextGroupStart).await?;
+    recording.add_video(&video).await?;
+    tracing::info!(video = %video.name, "catalog lists the video track now; recording it");
+    Ok(Some(track))
+}
+
 async fn add_listed_audio(
     session: &MigratingSession,
     namespace: &str,
     catalog: &Catalog,
-    audio_name: Option<&str>,
+    options: &BroadcastOptions,
     recording: &mut Recording,
 ) -> Result<Option<MigratingTrack>> {
-    let Some(audio) = select_audio(catalog, audio_name)? else {
+    let Some(audio) = select_audio(catalog, options.audio_track.as_deref())? else {
         return Ok(None);
     };
     let track =
@@ -420,7 +480,8 @@ fn fetched_object(
     }
 }
 
-async fn open_cached(track: &MigratingTrack) -> Option<FetchDataReceiver> {
+async fn open_cached(track: Option<&MigratingTrack>) -> Option<FetchDataReceiver> {
+    let track = track?;
     relay::fetch_cached(track)
         .await
         .inspect_err(|error| {
@@ -437,7 +498,7 @@ async fn next_fetched(receiver: Option<&mut FetchDataReceiver>) -> Result<Fetch>
     }
 }
 
-async fn next_audio_object(track: Option<&mut MigratingTrack>) -> Result<Option<TrackObject>> {
+async fn next_object(track: Option<&mut MigratingTrack>) -> Result<Option<TrackObject>> {
     match track {
         Some(track) => track.next_object().await,
         None => std::future::pending().await,
