@@ -48,6 +48,14 @@ pub(crate) struct Uploader {
     pub(crate) started_at_ms: u64,
 }
 
+/// A file a recording closed, with the Unix time that presentation time 0 of
+/// the file stands for; `None` when nothing was written.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RecordedFile {
+    pub(crate) path: PathBuf,
+    pub(crate) capture_origin: Option<Timestamp>,
+}
+
 /// The files of one recording. They share one capture origin, the capture
 /// timestamp of the first object of the leading track, so their timelines
 /// line up. Each
@@ -68,6 +76,7 @@ pub(crate) struct Recording {
     capture_origin: Option<Timestamp>,
     pending_audio: VecDeque<TrackObject>,
     uploader: Option<Uploader>,
+    closed: Vec<RecordedFile>,
 }
 
 struct TrackFile {
@@ -96,6 +105,7 @@ impl Recording {
             capture_origin: None,
             pending_audio: VecDeque::new(),
             uploader,
+            closed: Vec::new(),
         };
         if layout == Layout::Combined {
             let tracks = FileTracks {
@@ -240,28 +250,32 @@ impl Recording {
     }
 
     async fn write(&mut self, index: usize, output: Output) -> Result<()> {
-        let file = &mut self.files[index];
-        if let (Some(closed), Some(uploader)) = (file.write(output).await?, &self.uploader) {
-            uploader.upload(file.track.as_deref(), closed, self.capture_origin);
+        if let Some(closed) = self.files[index].write(output).await? {
+            let track = self.files[index].track.clone();
+            self.close(track.as_deref(), closed);
         }
         Ok(())
     }
 
-    pub(crate) async fn finish(self) -> Result<()> {
-        let Self {
-            files,
-            capture_origin,
-            uploader,
-            ..
-        } = self;
-        for mut file in files {
+    /// Returns every file the recording wrote, the ones rotated away
+    /// included, in closing order.
+    pub(crate) async fn finish(mut self) -> Result<Vec<RecordedFile>> {
+        for mut file in std::mem::take(&mut self.files) {
             let tail = file.pipeline.finish()?;
             let closed = file.file.finish(&tail).await?;
-            if let Some(uploader) = &uploader {
-                uploader.upload(file.track.as_deref(), closed, capture_origin);
-            }
+            self.close(file.track.as_deref(), closed);
         }
-        Ok(())
+        Ok(self.closed)
+    }
+
+    fn close(&mut self, track: Option<&str>, closed: ClosedFile) {
+        self.closed.push(RecordedFile {
+            path: closed.path.clone(),
+            capture_origin: self.capture_origin,
+        });
+        if let Some(uploader) = &self.uploader {
+            uploader.upload(track, closed, self.capture_origin);
+        }
     }
 }
 
@@ -699,6 +713,55 @@ mod tests {
             video_samples(&fixture().events).len()
         );
         assert_eq!(audio_samples(&audio).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn finish_returns_every_file_written_with_the_capture_origin() {
+        // Arrange: an audio-only start, so the camera's first keyframe rotates into a second file
+        let fixture = fixture();
+        let start = first_video_capture(&fixture.video[0]);
+        let dir = scratch_dir();
+        let audio_only = Selection {
+            video: None,
+            ..selection()
+        };
+        let mut recording = Recording::create(
+            &audio_only,
+            Layout::Combined,
+            dir.join("rec.mp4"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        recording
+            .push_audio(&opus_object(1, 0, start - 1_000_000))
+            .await
+            .unwrap();
+        recording.add_video(&video_track()).await.unwrap();
+        for object in &fixture.video {
+            recording.push_video(object).await.unwrap();
+        }
+
+        // Act
+        let files = recording.finish().await.unwrap();
+
+        // Assert: both files on the first audio object's origin
+        std::fs::remove_dir_all(&dir).unwrap();
+        let capture_origin = Some(Timestamp::from_micros(start - 1_000_000));
+        assert_eq!(
+            files,
+            [
+                RecordedFile {
+                    path: dir.join("rec.mp4"),
+                    capture_origin,
+                },
+                RecordedFile {
+                    path: dir.join("rec-2.mp4"),
+                    capture_origin,
+                },
+            ]
+        );
     }
 
     #[tokio::test]

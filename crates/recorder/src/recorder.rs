@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use mediapack::Timestamp;
 use moqt::{
     Session, TrackObject,
     fetch::{Fetch, FetchDataReceiver},
@@ -20,7 +21,7 @@ use tokio::{
 use crate::{
     Args,
     catalog_reader::CatalogReader,
-    recording::{Layout, Recording, Uploader},
+    recording::{Layout, RecordedFile, Recording, Uploader},
     relay::{self, RelayConnection, Track},
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
@@ -132,7 +133,7 @@ async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> 
         tracing::info!("waiting for the uploads to finish");
         task.finish().await;
     }
-    result
+    result.map(drop)
 }
 
 /// An app's namespaces start with its app id, which the relay's token
@@ -154,18 +155,19 @@ async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
 /// Records `namespace` into `path` until `stop` turns true, or until the
 /// catalog and every media track read have ended. A stop before the catalog
 /// lists a track records nothing. A track the catalog unlists, or one that
-/// ends, is dropped; a later catalog that lists one adds it again.
+/// ends, is dropped; a later catalog that lists one adds it again. Returns
+/// every file written, in closing order.
 pub(crate) async fn record_broadcast(
     session: &Session,
     namespace: &str,
     path: PathBuf,
     options: &BroadcastOptions,
     mut stop: watch::Receiver<bool>,
-) -> Result<()> {
+) -> Result<Vec<RecordedFile>> {
     let mut catalog = CatalogReader::open(session, namespace).await?;
     let selection = tokio::select! {
         selection = wait_for_selection(&mut catalog, options) => selection?,
-        _ = stop_requested(&mut stop) => return Ok(()),
+        _ = stop_requested(&mut stop) => return Ok(Vec::new()),
     };
     tracing::info!(
         video = selection.video.as_ref().map(|video| video.name.as_str()),
@@ -236,9 +238,16 @@ pub(crate) async fn record_broadcast(
         .await?;
     }
 
-    recording.finish().await?;
+    let files = recording.finish().await?;
+    for file in &files {
+        tracing::info!(
+            path = %file.path.display(),
+            capture_origin_us = file.capture_origin.map(Timestamp::micros),
+            "recorded file closed"
+        );
+    }
     tracing::info!("recording finished");
-    Ok(())
+    Ok(files)
 }
 
 async fn wait_for_selection(
