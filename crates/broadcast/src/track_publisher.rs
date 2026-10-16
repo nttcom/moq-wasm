@@ -36,6 +36,15 @@ pub struct SharedTiming {
     pub alignment: Arc<GroupAlignment>,
 }
 
+impl SharedTiming {
+    /// The first call takes the wall clock as the capture time of
+    /// `presentation_time`; later calls ignore it.
+    pub(crate) fn loc_muxer(&self, presentation_time: Timestamp) -> &LocMuxer {
+        self.loc
+            .get_or_init(|| LocMuxer::new(wall_clock().saturating_sub(presentation_time)))
+    }
+}
+
 pub(crate) struct TrackPublisher {
     broadcast: Broadcast,
     tracks: SourceTracks,
@@ -114,6 +123,7 @@ impl TrackPublisher {
             keyframe = sample.is_keyframe
         );
         let Some(object) = self
+            .timing
             .loc_muxer(sample.pts)
             .push(&MediaEvent::Video(sample.clone()))
         else {
@@ -224,6 +234,7 @@ impl TrackPublisher {
             return Ok(());
         };
         let Some(object) = self
+            .timing
             .loc_muxer(sample.pts)
             .push(&MediaEvent::Audio(sample.clone()))
         else {
@@ -275,12 +286,6 @@ impl TrackPublisher {
             )
             .await?;
         Ok(())
-    }
-
-    fn loc_muxer(&self, presentation_time: Timestamp) -> &LocMuxer {
-        self.timing
-            .loc
-            .get_or_init(|| LocMuxer::new(wall_clock().saturating_sub(presentation_time)))
     }
 
     async fn announce(&mut self) -> Result<()> {

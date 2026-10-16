@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mediapack::MediaEvent;
+use mediapack::{AudioSample, MediaEvent, VideoSample};
 use moqt::executor::{self, JoinHandle};
 
 use crate::{
@@ -32,6 +32,14 @@ impl BroadcastWriter {
     }
 
     pub fn push(&mut self, event: MediaEvent) -> Result<()> {
+        // Take the capture origin here: the publish task reaches the first sample
+        // only after connecting to the relay, which would stamp every sample into
+        // the future.
+        if let MediaEvent::Video(VideoSample { pts, .. })
+        | MediaEvent::Audio(AudioSample { pts, .. }) = &event
+        {
+            self.timing.loc_muxer(*pts);
+        }
         self.queue.push(event)
     }
 
@@ -58,18 +66,55 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use mediapack::{Timestamp, VideoSample};
+    use mediapack::Timestamp;
 
     use super::*;
     use crate::relay_connection::{MoqtTarget, RelayConnection};
 
     fn keyframe() -> MediaEvent {
+        keyframe_at(Timestamp::ZERO)
+    }
+
+    fn keyframe_at(pts: Timestamp) -> MediaEvent {
         MediaEvent::Video(VideoSample {
             data: Bytes::from_static(b"nal"),
             is_keyframe: true,
-            pts: Timestamp::ZERO,
-            dts: Timestamp::ZERO,
+            pts,
+            dts: pts,
         })
+    }
+
+    fn wall_clock_micros() -> u64 {
+        executor::system_time().as_micros() as u64
+    }
+
+    #[tokio::test]
+    async fn the_capture_origin_is_taken_when_the_first_sample_is_pushed() {
+        // Arrange
+        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
+        let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+        let pts = Timestamp::from_micros(1_500_000);
+
+        // Act: without an await the publish task never runs, as while it connects to the relay
+        let before = wall_clock_micros();
+        writer.push(keyframe_at(pts)).unwrap();
+        let after = wall_clock_micros();
+        let captured = writer.shared_timing().loc.get().map(|muxer| {
+            muxer
+                .push(&keyframe_at(pts))
+                .unwrap()
+                .capture_timestamp()
+                .unwrap()
+        });
+
+        // Assert
+        let captured = captured
+            .expect("the push seeds the capture origin")
+            .micros();
+        assert!(
+            (before..=after).contains(&captured),
+            "{before} <= {captured} <= {after}"
+        );
     }
 
     #[tokio::test]

@@ -30,7 +30,7 @@ impl IngestPublisher {
         match &event {
             MediaEvent::VideoConfig(config) if self.transcode && self.renditions.is_none() => {
                 let source = VideoTrackInfo::from_record(config, "Video".to_string())?;
-                self.renditions = RenditionFanout::run(&self.writer, &source)?;
+                self.renditions = RenditionFanout::run(&self.writer, &source);
             }
             MediaEvent::Video(sample) => {
                 if let Some(renditions) = &self.renditions {
