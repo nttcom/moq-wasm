@@ -1,13 +1,20 @@
-use crate::modules::moqt::control_plane::control_messages::messages::fetch_cancel::FetchCancel;
+use std::sync::Arc;
+
+use crate::modules::moqt::{
+    control_plane::control_messages::messages::fetch_cancel::FetchCancel,
+    domains::session_context::SessionContext,
+};
 
 #[derive(Clone, Debug)]
 pub struct FetchCancelHandler {
+    pub(crate) session_context: Arc<SessionContext>,
     request_id: u64,
 }
 
 impl FetchCancelHandler {
-    pub(crate) fn new(fetch_cancel: FetchCancel) -> Self {
+    pub(crate) fn new(session_context: Arc<SessionContext>, fetch_cancel: FetchCancel) -> Self {
         Self {
+            session_context,
             request_id: fetch_cancel.request_id,
         }
     }

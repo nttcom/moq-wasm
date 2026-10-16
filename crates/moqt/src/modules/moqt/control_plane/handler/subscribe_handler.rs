@@ -21,7 +21,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct SubscribeHandler {
-    session_context: Arc<SessionContext>,
+    pub(crate) session_context: Arc<SessionContext>,
     request_id: u64,
     pub track_namespace: String,
     pub track_namespace_tuple: Vec<String>,

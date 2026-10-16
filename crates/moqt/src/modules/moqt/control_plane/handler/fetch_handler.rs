@@ -20,7 +20,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct FetchHandler {
-    session_context: Arc<SessionContext>,
+    pub(crate) session_context: Arc<SessionContext>,
     pub request_id: u64,
     pub group_order: GroupOrder,
     pub fetch: Fetch,

@@ -2,18 +2,18 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use futures::future::join_all;
 use tokio::sync::Mutex;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
 use crate::{
-    Session, TrackWriter, TransportSendError,
-    fetch::FetchHandler,
-    fetch::FetchParams,
-    modules::executor,
+    Publisher, Session, TrackWriter, TransportSendError,
+    fetch::{FetchCancelHandler, FetchHandler, FetchParams},
+    modules::{executor, moqt::domains::session_context::SessionContext},
     object::{ContentExists, ExtensionHeaders, Location},
     publish::PublishOption,
-    subscribe::{SubscribeHandler, TrackStatusHandler},
+    subscribe::{SubscribeHandler, TrackStatusHandler, UnsubscribeHandler},
 };
 
 mod fetch_serve_task;
@@ -32,6 +32,11 @@ const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
 
 type TrackKey = (String, String);
+/// The address of a session's `SessionContext`. An outlet or a FETCH task
+/// holds the context while its key is in use, so the address is not reused.
+type SessionKey = usize;
+/// A request id is unique within its session only.
+type RequestKey = (SessionKey, u64);
 
 #[derive(Clone)]
 pub struct OutgoingObject {
@@ -53,30 +58,34 @@ impl OutgoingObject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteOutcome {
     Sent(Placement),
-    /// The peer stopped the subgroup stream; the object stays cached and the
-    /// track resumes at the next group.
+    /// A peer stopped the subgroup stream and no other session sent the
+    /// object; the object stays cached and the track resumes at the next
+    /// group.
     Stopped(Placement),
     /// Dropped because no group is open for a `Within` object, or numbered and
-    /// cached only: the track has no writer, or its writer waits for the next
-    /// group to start.
+    /// cached only: no session has a writer for the track, or every writer
+    /// waits for the next group to start.
     NotSent,
 }
 
-/// Objects are numbered and cached from the first one handed over, whether or
-/// not the track is published yet, so the cache and the live stream agree on
-/// ids; a writer created while a group is open therefore sends from the next
-/// group on. Content Exists reports what was actually sent.
-#[derive(Clone)]
+/// Objects are numbered and cached once per track, from the first one handed
+/// over, whether or not any session takes the track yet, so the cache and the
+/// live streams agree on ids. Each session that takes the track (a SUBSCRIBE
+/// it sent or a PUBLISH it accepted) gets an outlet with its own writer, and a
+/// write goes to every outlet: a client moving to another server publishes on
+/// both until the old one stops subscribing (draft-22 §7.6.1). A writer
+/// created while a group is open sends from the next group on. Content Exists
+/// reports what was actually sent.
+#[derive(Clone, Default)]
 pub struct Origin {
-    session: Arc<Session>,
     state: Arc<Mutex<OriginState>>,
 }
 
 #[derive(Default)]
 struct OriginState {
     tracks: HashMap<TrackKey, OriginTrack>,
-    subscriptions: HashMap<u64, TrackKey>,
-    fetches: HashMap<u64, FetchServeTask>,
+    subscriptions: HashMap<RequestKey, TrackKey>,
+    fetches: HashMap<RequestKey, FetchServeTask>,
 }
 
 impl OriginState {
@@ -106,9 +115,15 @@ enum Publication {
 struct OriginTrack {
     numbering: ObjectNumbering,
     cache: ObjectCache,
+    largest_sent: Option<Location>,
+    outlets: Vec<Outlet>,
+}
+
+/// The track on one session.
+struct Outlet {
+    session: Arc<SessionContext>,
     publication: Publication,
     writer: Option<TrackWriter>,
-    largest_sent: Option<Location>,
 }
 
 impl OriginTrack {
@@ -116,12 +131,32 @@ impl OriginTrack {
         Self {
             numbering: ObjectNumbering::new(first_group_id),
             cache: ObjectCache::new(retention),
-            publication: Publication::Unpublished,
-            writer: None,
             largest_sent: None,
+            outlets: Vec::new(),
         }
     }
 
+    fn outlet_mut(&mut self, session: &Arc<SessionContext>) -> &mut Outlet {
+        let index = match self
+            .outlets
+            .iter()
+            .position(|outlet| Arc::ptr_eq(&outlet.session, session))
+        {
+            Some(index) => index,
+            None => {
+                self.outlets.push(Outlet {
+                    session: session.clone(),
+                    publication: Publication::Unpublished,
+                    writer: None,
+                });
+                self.outlets.len() - 1
+            }
+        };
+        &mut self.outlets[index]
+    }
+}
+
+impl Outlet {
     fn serve(&mut self, publication: Publication, writer: TrackWriter) {
         self.publication = publication;
         self.writer = Some(writer);
@@ -143,16 +178,6 @@ impl OriginTrack {
 }
 
 impl Origin {
-    // On wasm32 the browser transport is !Send, but the state is shared with
-    // the native build, where the tasks run on a multi-threaded executor.
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-    pub fn new(session: Arc<Session>) -> Self {
-        Self {
-            session,
-            state: Arc::new(Mutex::new(OriginState::default())),
-        }
-    }
-
     pub async fn ensure_track(
         &self,
         namespace: &str,
@@ -168,22 +193,27 @@ impl Origin {
             .or_insert_with(|| OriginTrack::new(first_group_id, retention));
     }
 
-    /// A no-op while a subscription to the track is served, and once a
-    /// PUBLISH of it has been released: the peer unsubscribed from what this
-    /// endpoint offered. A track released after a SUBSCRIBE is published
-    /// again.
-    pub async fn publish(&self, namespace: &str, track_name: &str) -> Result<()> {
+    /// Sends PUBLISH on `session`. A no-op while the peer of `session` takes
+    /// the track, and once that peer unsubscribed from a PUBLISH of it. A
+    /// track released after a SUBSCRIBE is published again.
+    pub async fn publish(
+        &self,
+        session: &Session,
+        namespace: &str,
+        track_name: &str,
+    ) -> Result<()> {
         let key = track_key(namespace, track_name);
+        let context = session.context();
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
+        let next_group_id = track.numbering.next_group_id();
         if !matches!(
-            track.publication,
+            track.outlet_mut(context).publication,
             Publication::Unpublished | Publication::Released { published: false }
         ) {
             return Ok(());
         }
-        let next_group_id = track.numbering.next_group_id();
-        let publisher = self.session.publisher();
+        let publisher = session.publisher();
         let subscription = publisher
             .publish(
                 namespace.to_string(),
@@ -192,11 +222,13 @@ impl Origin {
             )
             .await
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
-        state.track_mut(&key)?.serve(
+        state.track_mut(&key)?.outlet_mut(context).serve(
             Publication::Published,
             TrackWriter::new(publisher.create_stream(&subscription), next_group_id),
         );
-        state.subscriptions.insert(subscription.request_id(), key);
+        state
+            .subscriptions
+            .insert((session_key(context), subscription.request_id()), key);
         tracing::info!(
             namespace,
             track_name,
@@ -206,6 +238,8 @@ impl Origin {
         Ok(())
     }
 
+    /// Sends the object on every session that takes the track. A send error
+    /// is returned only when no session sent the object and none stopped it.
     pub async fn write(
         &self,
         namespace: &str,
@@ -213,7 +247,7 @@ impl Origin {
         object: OutgoingObject,
     ) -> Result<WriteOutcome> {
         let key = track_key(namespace, track_name);
-        let (placement, mut writer) = {
+        let (placement, writers) = {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
             let Some(placement) = track.numbering.place(object.group)? else {
@@ -227,13 +261,17 @@ impl Origin {
                 },
                 executor::now(),
             );
-            let Some(writer) = track.writer.take() else {
-                return Ok(WriteOutcome::NotSent);
-            };
-            (placement, writer)
+            (placement, take_writers(track))
         };
-        let result = send_placed(&mut writer, placement, object).await;
-        self.settle(&key, writer, placement, result).await
+        let results = join_all(writers.into_iter().map(|(session, mut writer)| {
+            let object = object.clone();
+            async move {
+                let result = send_placed(&mut writer, placement, object).await;
+                (session, writer, result)
+            }
+        }))
+        .await;
+        self.settle(&key, placement, results).await
     }
 
     pub async fn write_group(
@@ -243,7 +281,7 @@ impl Origin {
         payload: Bytes,
     ) -> Result<WriteOutcome> {
         let key = track_key(namespace, track_name);
-        let (placement, mut writer) = {
+        let (placement, writers) = {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
             let placement = track
@@ -258,19 +296,24 @@ impl Origin {
                 },
                 executor::now(),
             );
-            let Some(writer) = track.writer.take() else {
-                return Ok(WriteOutcome::NotSent);
-            };
-            (placement, writer)
+            (placement, take_writers(track))
         };
-        let result = writer
-            .write_group_at(placement.location.group_id, payload)
-            .await
-            .context("send group")
-            .map(|()| true);
-        self.settle(&key, writer, placement, result).await
+        let results = join_all(writers.into_iter().map(|(session, mut writer)| {
+            let payload = payload.clone();
+            async move {
+                let result = writer
+                    .write_group_at(placement.location.group_id, payload)
+                    .await
+                    .context("send group")
+                    .map(|()| true);
+                (session, writer, result)
+            }
+        }))
+        .await;
+        self.settle(&key, placement, results).await
     }
 
+    /// Serves the SUBSCRIBE on the session it arrived on.
     pub async fn accept_subscribe(&self, handler: SubscribeHandler) -> Result<()> {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
         let content_exists = {
@@ -282,17 +325,20 @@ impl Origin {
             .await
             .context("accept SUBSCRIBE")?;
         let subscription = handler.into_subscription(track_alias);
+        let context = &handler.session_context;
+        let publisher = Publisher {
+            session: context.clone(),
+        };
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
-        track.serve(
+        track.outlet_mut(context).serve(
             Publication::Subscribed,
-            TrackWriter::new(
-                self.session.publisher().create_stream(&subscription),
-                next_group_id,
-            ),
+            TrackWriter::new(publisher.create_stream(&subscription), next_group_id),
         );
-        state.subscriptions.insert(handler.request_id(), key);
+        state
+            .subscriptions
+            .insert((session_key(context), handler.request_id()), key);
         tracing::info!(
             namespace = %handler.track_namespace,
             track_name = %handler.track_name,
@@ -302,19 +348,29 @@ impl Origin {
         Ok(())
     }
 
-    /// Whether the peer still takes objects of any track: a SUBSCRIBE it sent
-    /// or a PUBLISH it accepted that it has not unsubscribed from.
-    pub async fn is_serving(&self) -> bool {
-        !self.state.lock().await.subscriptions.is_empty()
+    /// Whether the peer of `session` still takes objects of any track: a
+    /// SUBSCRIBE it sent or a PUBLISH it accepted that it has not
+    /// unsubscribed from.
+    pub async fn is_serving(&self, session: &Session) -> bool {
+        let key = session_key(session.context());
+        self.state
+            .lock()
+            .await
+            .subscriptions
+            .keys()
+            .any(|(session, _)| *session == key)
     }
 
     /// Returns the released track's `(namespace, name)`; its numbering and
     /// cache are kept.
-    pub async fn release(&self, request_id: u64) -> Option<(String, String)> {
+    pub async fn release(&self, handler: &UnsubscribeHandler) -> Option<(String, String)> {
+        let context = &handler.session_context;
         let mut state = self.state.lock().await;
-        let key = state.subscriptions.remove(&request_id)?;
+        let key = state
+            .subscriptions
+            .remove(&(session_key(context), handler.subscribe_id()))?;
         if let Some(track) = state.tracks.get_mut(&key) {
-            track.release();
+            track.outlet_mut(context).release();
         }
         Some(key)
     }
@@ -358,15 +414,15 @@ impl Origin {
                     objects = objects.len(),
                     "FETCH served from the origin cache"
                 );
-                let request_id = handler.request_id;
+                let request_key = (session_key(&handler.session_context), handler.request_id);
                 let task = FetchServeTask::run(
-                    self.session.clone(),
                     Arc::downgrade(&self.state),
+                    request_key,
                     handler,
                     objects,
                     end_location,
                 );
-                state.fetches.insert(request_id, task);
+                state.fetches.insert(request_key, task);
                 return Ok(());
             }
         };
@@ -375,16 +431,20 @@ impl Origin {
         Ok(())
     }
 
-    pub async fn cancel_fetch(&self, request_id: u64) {
+    pub async fn cancel_fetch(&self, handler: &FetchCancelHandler) {
+        let request_key = (session_key(&handler.session_context), handler.request_id());
         if self
             .state
             .lock()
             .await
             .fetches
-            .remove(&request_id)
+            .remove(&request_key)
             .is_some()
         {
-            tracing::info!(request_id, "FETCH_CANCEL received; response aborted");
+            tracing::info!(
+                request_id = handler.request_id(),
+                "FETCH_CANCEL received; response aborted"
+            );
         }
     }
 
@@ -417,32 +477,63 @@ impl Origin {
     async fn settle(
         &self,
         key: &TrackKey,
-        writer: TrackWriter,
         placement: Placement,
-        result: Result<bool>,
+        results: Vec<(Arc<SessionContext>, TrackWriter, Result<bool>)>,
     ) -> Result<WriteOutcome> {
         let mut state = self.state.lock().await;
         let track = state.track_mut(key)?;
-        if track.writer.is_none() && track.serving() {
-            track.writer = Some(writer);
+        let (mut sent, mut stopped, mut failure) = (false, false, None);
+        for (session, writer, result) in results {
+            let outlet = track.outlet_mut(&session);
+            if outlet.writer.is_none() && outlet.serving() {
+                outlet.writer = Some(writer);
+            }
+            match result {
+                Ok(true) => sent = true,
+                Ok(false) => {}
+                Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
+                    tracing::info!(
+                        namespace = %key.0,
+                        track_name = %key.1,
+                        "subscriber stopped a subgroup; the track resumes at the next group"
+                    );
+                    stopped = true;
+                }
+                Err(error) => {
+                    tracing::debug!(namespace = %key.0, track_name = %key.1, %error, "send failed on one session");
+                    failure.get_or_insert(error);
+                }
+            }
         }
-        match result {
-            Ok(true) => {
-                track.largest_sent = Some(placement.location);
-                Ok(WriteOutcome::Sent(placement))
-            }
-            Ok(false) => Ok(WriteOutcome::NotSent),
-            Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
-                tracing::info!(
-                    namespace = %key.0,
-                    track_name = %key.1,
-                    "subscriber stopped a subgroup; the track resumes at the next group"
-                );
-                Ok(WriteOutcome::Stopped(placement))
-            }
-            Err(error) => Err(error),
+        if sent {
+            track.largest_sent = Some(placement.location);
+            return Ok(WriteOutcome::Sent(placement));
+        }
+        if stopped {
+            return Ok(WriteOutcome::Stopped(placement));
+        }
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(WriteOutcome::NotSent),
         }
     }
+}
+
+fn take_writers(track: &mut OriginTrack) -> Vec<(Arc<SessionContext>, TrackWriter)> {
+    track
+        .outlets
+        .iter_mut()
+        .filter_map(|outlet| {
+            outlet
+                .writer
+                .take()
+                .map(|writer| (outlet.session.clone(), writer))
+        })
+        .collect()
+}
+
+fn session_key(session: &Arc<SessionContext>) -> SessionKey {
+    Arc::as_ptr(session) as SessionKey
 }
 
 fn track_key(namespace: &str, track_name: &str) -> TrackKey {
@@ -508,7 +599,7 @@ mod tests {
     async fn origin_with_track(name: &str, retention: Retention) -> Peers {
         let (client, server) = spawn_connected_dual_sessions(name).await;
         let client = Arc::new(client);
-        let origin = Origin::new(client.clone());
+        let origin = Origin::default();
         origin
             .ensure_track(NAMESPACE, TRACK, FIRST_GROUP_ID, retention)
             .await;
@@ -553,7 +644,7 @@ mod tests {
     async fn publish(peers: &Peers) -> Subscription {
         let (published, accepted) = within(async {
             tokio::join!(
-                peers.origin.publish(NAMESPACE, TRACK),
+                peers.origin.publish(&peers.client, NAMESPACE, TRACK),
                 accept_publish(&peers.server)
             )
         })
@@ -571,7 +662,7 @@ mod tests {
                 else {
                     panic!("expected UNSUBSCRIBE from the relay");
                 };
-                peers.origin.release(handler.subscribe_id()).await
+                peers.origin.release(&handler).await
             })
         })
         .await;
@@ -945,12 +1036,7 @@ mod tests {
             .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c0"))
             .await
             .unwrap();
-        let in_flight = origin
-            .state
-            .lock()
-            .await
-            .track_mut(&key)
-            .unwrap()
+        let in_flight = origin.state.lock().await.track_mut(&key).unwrap().outlets[0]
             .writer
             .take()
             .unwrap();
@@ -960,7 +1046,7 @@ mod tests {
             .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c1"))
             .await
             .unwrap();
-        origin.state.lock().await.track_mut(&key).unwrap().writer = Some(in_flight);
+        origin.state.lock().await.track_mut(&key).unwrap().outlets[0].writer = Some(in_flight);
         let after = origin
             .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c2"))
             .await
@@ -1009,9 +1095,14 @@ mod tests {
                     else {
                         panic!("expected FETCH from the relay");
                     };
-                    let request_id = handler.request_id;
+                    let cancel = FetchCancelHandler::new(
+                        peers.client.context().clone(),
+                        crate::modules::moqt::control_plane::control_messages::messages::fetch_cancel::FetchCancel {
+                            request_id: handler.request_id,
+                        },
+                    );
                     origin.serve_fetch(handler).await.unwrap();
-                    origin.cancel_fetch(request_id).await;
+                    origin.cancel_fetch(&cancel).await;
                 }
             )
         })
@@ -1020,6 +1111,42 @@ mod tests {
         // Assert
         assert!(origin.state.lock().await.fetches.is_empty());
         assert_eq!(rejection(result).code, RequestErrorCode::NotSupported);
+    }
+
+    #[tokio::test]
+    async fn a_track_taken_on_two_sessions_is_written_to_both_until_one_releases_it() {
+        // Arrange
+        let first = origin_with_track("origin-two-sessions-a", RETENTION).await;
+        let (client, server) = spawn_connected_dual_sessions("origin-two-sessions-b").await;
+        let second = Peers {
+            origin: first.origin.clone(),
+            client: Arc::new(client),
+            server,
+        };
+        let accepted_first = publish(&first).await;
+        let accepted_second = publish(&second).await;
+        let origin = &first.origin;
+
+        // Act
+        let both = origin
+            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"g0"))
+            .await
+            .unwrap();
+        let first_object = next_object(&first, &accepted_first).await;
+        let second_object = next_object(&second, &accepted_second).await;
+        unsubscribe(&first, &accepted_first).await;
+        let one = origin
+            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"g1"))
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(both, sent(FIRST_GROUP_ID, 0, true));
+        assert_eq!(first_object.payload, Bytes::from_static(b"g0"));
+        assert_eq!(second_object.payload, Bytes::from_static(b"g0"));
+        assert!(!origin.is_serving(&first.client).await);
+        assert!(origin.is_serving(&second.client).await);
+        assert_eq!(one, sent(FIRST_GROUP_ID + 1, 0, true));
     }
 
     #[test]

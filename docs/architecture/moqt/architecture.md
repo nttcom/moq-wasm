@@ -318,33 +318,41 @@ migration lives in `broadcast::RelayConnection` and the browser's
 ### `Origin` — the tracks this endpoint originates
 
 `Origin` (`domains/origin.rs`) is the opt-in bookkeeping of an original
-publisher: a `Clone` handle over `Arc<Session>` and a `tokio::sync::Mutex`
-of per-track state, shared between the application's session event loop and
-its media writers. Relays do not use it; they forward from their own cache
-through the raw stream senders.
+publisher: a `Clone` handle over a `tokio::sync::Mutex` of per-track state,
+shared between the application's session event loop and its media writers,
+and across the sessions that take its tracks. Relays do not use it; they
+forward from their own cache through the raw stream senders.
 
 - Per track (`ensure_track(namespace, name, first_group_id, retention)`):
   `ObjectNumbering` (`GroupBoundary::{Within, Next, At}` → `Placement`),
   an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`,
-  the publication state, the optional `TrackWriter` and the largest location
-  actually sent. The caller chooses the retention and the first group id.
+  the largest location actually sent, and one outlet per session that takes
+  the track: its publication state and its optional `TrackWriter`. A session
+  is identified by its `SessionContext`, which the SUBSCRIBE, UNSUBSCRIBE,
+  FETCH and FETCH_CANCEL handlers carry, so each request is answered on the
+  session it arrived on. The caller chooses the retention and the first
+  group id.
 - `write(namespace, name, OutgoingObject) -> WriteOutcome` numbers and
   caches the object first, whether or not the track is published, so the
-  cache and the live stream always agree on ids. The writer is taken out of
-  its slot for the duration of the awaited send and put back only if nothing
-  replaced or released it meanwhile. `Sent(placement)` and
+  cache and the live streams always agree on ids, then sends it to every
+  outlet at once. Each writer is taken out of its slot for the duration of
+  the awaited send and put back only if nothing replaced or released it
+  meanwhile. A send that fails on one session is returned only when no
+  session took the object. `Sent(placement)` and
   `Stopped(placement)` (STOP_SENDING by the peer; the track resumes at the
   next group) carry the placement so the caller can account the stream;
   `NotSent` covers a `Within` object with no open group, a track without a
   writer, and a writer that still waits for the next group start.
   `write_group` sends one object as a finished group (the MSF catalog layout).
-- `publish` sends PUBLISH and writes from the next group; it is a no-op while
-  a subscription is served and after a PUBLISH was released, but publishes a
-  track again whose SUBSCRIBE the peer released; `accept_subscribe`
+- `publish(session, …)` sends PUBLISH on that session and writes from the
+  next group; it is a no-op while the session takes the track and after it
+  released a PUBLISH, but publishes a track again whose SUBSCRIBE the peer
+  released; `accept_subscribe`
   answers a SUBSCRIBE the application decided to accept (Content Exists is the
-  largest sent location) and writes from the next group; `release(request_id)`
-  drops the writer on UNSUBSCRIBE and returns the track so the caller can
-  account it; `serve_fetch` answers a Standalone FETCH from the cache on its
+  largest sent location) and writes from the next group; `release(&handler)`
+  drops the session's writer on UNSUBSCRIBE and returns the track so the
+  caller can account it; `is_serving(session)` tells whether that session
+  still takes any track; `serve_fetch` answers a Standalone FETCH from the cache on its
   own stream (`FetchServeTask`, one per request, aborted by `cancel_fetch` and
   when the `Origin` is dropped; joining FETCH is NOT_SUPPORTED);
   `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.

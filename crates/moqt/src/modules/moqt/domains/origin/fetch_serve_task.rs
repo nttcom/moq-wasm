@@ -1,11 +1,14 @@
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use anyhow::Result;
 use tokio::sync::Mutex;
 
-use super::{FETCH_PUBLISHER_PRIORITY, FETCH_SUBGROUP_ID, OriginState, object_cache::CachedObject};
+use super::{
+    FETCH_PUBLISHER_PRIORITY, FETCH_SUBGROUP_ID, OriginState, RequestKey,
+    object_cache::CachedObject,
+};
 use crate::{
-    Session,
+    Publisher,
     fetch::FetchHandler,
     modules::executor::{self, JoinHandle},
     object::{ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
@@ -17,20 +20,23 @@ pub(super) struct FetchServeTask {
 
 impl FetchServeTask {
     pub(super) fn run(
-        session: Arc<Session>,
         state: Weak<Mutex<OriginState>>,
+        request_key: RequestKey,
         handler: FetchHandler,
         objects: Vec<CachedObject>,
         end_location: Location,
     ) -> Self {
         let handle = executor::spawn("Origin FETCH Serve", async move {
             let request_id = handler.request_id;
-            if let Err(error) = respond(&session, &handler, objects, end_location).await {
+            let publisher = Publisher {
+                session: handler.session_context.clone(),
+            };
+            if let Err(error) = respond(&publisher, &handler, objects, end_location).await {
                 tracing::warn!(request_id, ?error, "failed to serve FETCH");
             }
             if let Some(state) = state.upgrade() {
                 // Removing the entry aborts this very task, harmlessly: nothing is awaited after it.
-                state.lock().await.fetches.remove(&request_id);
+                state.lock().await.fetches.remove(&request_key);
             }
         });
         Self { handle }
@@ -44,16 +50,13 @@ impl Drop for FetchServeTask {
 }
 
 async fn respond(
-    session: &Session,
+    publisher: &Publisher,
     handler: &FetchHandler,
     objects: Vec<CachedObject>,
     end_location: Location,
 ) -> Result<()> {
     handler.ok(false, end_location).await?;
-    let sender = session
-        .publisher()
-        .create_fetch_stream(handler.request_id)
-        .await?;
+    let sender = publisher.create_fetch_stream(handler.request_id).await?;
     for object in in_group_order(objects, handler.group_order) {
         sender
             .send_object(&Object {
