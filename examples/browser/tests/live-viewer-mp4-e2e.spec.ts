@@ -77,7 +77,7 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     await expect
       .poll(async () => viewer.publishPreview.evaluate((element) => (element as HTMLCanvasElement).width))
       .toBe(MP4_FIXTURE.width)
-    await expect(viewer.publishLatency).toHaveText(/^viewer delay \d+ ms$/)
+    await expect(viewer.publishLatency).toHaveText(/^pub to sub delay \d+ ms$/)
     await expect(viewer.videoStats).toContainText(/delay \d+ ms/)
 
     // Assert: the audio of the file plays on the same clock as its picture
