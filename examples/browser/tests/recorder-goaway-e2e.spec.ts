@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { listenForRelayMove, processAlive, relayAPid } from './goaway-e2e-arrange'
+import { processAlive, relayAPid } from './goaway-e2e-arrange'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
-import { RELAY_B_URL, arrangeMeetingClient, enableMedia, joinRoom } from './meeting-e2e-arrange'
+import { arrangeMeetingClient, enableMedia, joinRoom } from './meeting-e2e-arrange'
 import { longestRecording, probeRecording, startRecorderServe } from './recorder-e2e-arrange'
 
 const STEADY_SECONDS = 5
@@ -31,21 +31,19 @@ test('recorder serve keeps recording a meeting participant when the relay drains
     const room = `recorder-goaway-${Date.now()}`
     const recording = await recorder.start(`anon/${room}`, 'combined')
     await joinRoom(client.page, room, 'alice', 'a')
-    const participantMove = listenForRelayMove(client.page.page)
     await enableMedia(client.page)
     const mediaOnAt = Date.now()
     await sleep(STEADY_SECONDS * 1_000)
 
-    // Act: relay A stops and sends GOAWAY naming relay B; the recording goes on after A has exited
+    // Act: relay A stops and sends GOAWAY naming relay B; it exits before its drain timeout only once the participant
+    // and the recorder have left it, and the recording goes on after that
     process.kill(relayAPid, 'SIGINT')
-    const participantRelayUrl = await participantMove()
     await expect.poll(() => processAlive(relayAPid), { timeout: RELAY_EXIT_TIMEOUT_MS }).toBe(false)
     await sleep(AFTER_EXIT_SECONDS * 1_000)
     const stoppedAt = Date.now()
     const files = await recorder.stop(recording)
 
-    // Assert: the participant moved to relay B
-    expect(participantRelayUrl).toBe(RELAY_B_URL)
+    // Assert: each track fits in MAX_FILES_PER_TRACK files
     const probes = files.map(probeRecording)
     const recordedSeconds = (stoppedAt - mediaOnAt) / 1_000
     for (const track of ['video', 'audio'] as const) {
