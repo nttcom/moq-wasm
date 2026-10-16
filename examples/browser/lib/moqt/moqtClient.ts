@@ -25,6 +25,7 @@ import {
   type SubgroupObjectMessageWithLoc
 } from './subscriptionStateManager'
 import { SubgroupWriter } from './subgroupWriter'
+import { loadMoqt } from './loadMoqt'
 
 type PendingResponse<T> = { resolve: (response: T) => void; reject: (error: Error) => void }
 type PendingResponses<T> = Map<bigint, PendingResponse<T>>
@@ -44,8 +45,7 @@ export type RawClientFactory = (url: string) => Promise<MOQTClient>
 /// The wasm package is loaded on first use so that this module can be
 /// imported where it cannot be instantiated.
 const defaultRawClientFactory: RawClientFactory = async (url) => {
-  const { default: init, MOQTClient } = await import('../../pkg/moqt')
-  await init()
+  const { MOQTClient } = await loadMoqt()
   return new MOQTClient(url)
 }
 
