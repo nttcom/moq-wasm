@@ -1,11 +1,14 @@
 use crate::{
+    h264::annexb::{nal_units, with_start_codes},
     loc::object::{LocExtension, LocObject, TIMESTAMP_ID},
     sample::{MediaEvent, Timestamp},
 };
 
 /// Emits the H.264 payload in Annex-B form, so parameter sets travel in band
 /// and no video config extension is attached: a decoder configured from
-/// extradata expects length-prefixed samples instead.
+/// extradata expects length-prefixed samples instead. Every start code is
+/// rewritten to 4 bytes, as draft-ietf-moq-loc-04 §2.1.4 recommends, so a
+/// receiver can tell it from a length prefix.
 pub struct Muxer {
     capture_origin: Timestamp,
 }
@@ -20,7 +23,7 @@ impl Muxer {
 
     pub fn push(&self, event: &MediaEvent) -> Option<LocObject> {
         let (payload, pts) = match event {
-            MediaEvent::Video(sample) => (sample.data.clone(), sample.pts),
+            MediaEvent::Video(sample) => (with_start_codes(nal_units(&sample.data)), sample.pts),
             MediaEvent::Audio(sample) => (sample.data.clone(), sample.pts),
             MediaEvent::Streams(_) | MediaEvent::VideoConfig(_) | MediaEvent::AudioConfig(_) => {
                 return None;
@@ -71,6 +74,30 @@ mod tests {
             Some(Timestamp::from_micros(1_700_000_000_040_000))
         );
         assert_eq!(object.video_config(), None);
+    }
+
+    #[test]
+    fn writes_every_start_code_with_four_bytes() {
+        // Arrange
+        let sample = VideoSample {
+            data: Bytes::from_static(&[
+                0, 0, 0, 1, 0x67, 0x42, 0, 0, 1, 0x68, 0xCE, 0, 0, 1, 0x65, 0x88,
+            ]),
+            is_keyframe: true,
+            pts: Timestamp::ZERO,
+            dts: Timestamp::ZERO,
+        };
+
+        // Act
+        let object = muxer().push(&MediaEvent::Video(sample)).unwrap();
+
+        // Assert
+        assert_eq!(
+            object.payload.as_ref(),
+            [
+                0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xCE, 0, 0, 0, 1, 0x65, 0x88
+            ]
+        );
     }
 
     #[test]
