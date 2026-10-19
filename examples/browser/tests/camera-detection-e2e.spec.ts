@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test'
-import { D3_FLASH_ORIGIN, answerDetectorWith, askCamera, joinCamera } from './camera-detection-e2e-arrange'
+import {
+  D3_FLASH_ORIGIN,
+  answerDetectorWith,
+  askCamera,
+  clickJoinCamera,
+  joinCamera
+} from './camera-detection-e2e-arrange'
 import { delayD3FlashAnswers } from './fake-d3-flash'
 import { leaveAllPages } from './leave-all-pages'
 
@@ -9,6 +15,18 @@ test.describe('MoQ Camera Detection', () => {
   test.afterEach(async ({ browser }) => {
     await leaveAllPages(browser, 'camera-detection-leave-button')
     await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
+  })
+
+  test('tells a page in a second room that no bot is free', async ({ browser, page }) => {
+    // Arrange
+    await joinCamera(page)
+    const otherPage = await browser.newPage()
+
+    // Act
+    await clickJoinCamera(otherPage, 'e2e-other')
+
+    // Assert
+    await expect(otherPage.locator('#bot-room')).toHaveText('空いているボットがありません')
   })
 
   test('follows the detector when its choice changes', async ({ page }) => {

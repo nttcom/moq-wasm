@@ -22,6 +22,7 @@ import {
 } from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
+  findFreePort,
   cameraDetectionPath,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
@@ -93,6 +94,7 @@ async function main() {
       waitForHttpOk(`${baseUrl}${cameraDetectionPath}`, 120_000),
     ]);
 
+    const botPort = await findFreePort();
     const bot = spawnProcess(
       "bot",
       "uv",
@@ -101,6 +103,8 @@ async function main() {
         "python",
         "-m",
         "moq_camera_detection.bot",
+        "--port",
+        String(botPort),
         "--relay-url",
         moqtUrl,
         "--insecure",
@@ -110,7 +114,7 @@ async function main() {
       { cwd: botDir },
     );
     childProcesses.push(bot);
-    await waitForOutput(bot, /pipeline is now ready/, "bot", 180_000);
+    await waitForOutput(bot, /serving rooms on/, "bot", 180_000);
 
     await runCommand(
       resolveCommandName("npm"),
@@ -121,6 +125,7 @@ async function main() {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
           CAMERA_DETECTION_E2E_MOQT_URL: moqtUrl,
+          CAMERA_DETECTION_E2E_BOT_URL: `http://127.0.0.1:${botPort}`,
           CAMERA_DETECTION_E2E_D3_FLASH_ORIGIN: fakeD3FlashOrigin,
         },
       },

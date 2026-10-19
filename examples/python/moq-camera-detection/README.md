@@ -30,11 +30,14 @@ IAM 認証が必須なので、bot を起動するアカウントには `roles/r
 
 ## 起動
 
-Cloud relay-1 には、常時動いている bot がつながっています。Cloud relay で試すだけなら bot を起動する必要はなく、
-ページを開いて既定の Cloud relay-1 のまま Join します。
+Cloud relay で試すだけなら bot を起動する必要はありません。ページを開いて既定の Cloud relay-1 のまま Join すると、
+ページは Cloud Run で動く bot（`https://moq-camera-detection.moqt.research.skyway.io`）にルームの bot を頼みます。
+デプロイした bot は平日 9:00〜17:30 だけルームを動かし、1 つのルームは 1 時間で止めます。
 
-手元の bot を Cloud relay につなぐと Cloud の bot と同じページを二重に処理するため、relay も手元で起動します。
-各コマンドを別々のターミナルで実行します。
+ルームは URL の `room` で、なければページが作って URL に書きます。同じ `room` の URL を開くと同じルームに入ります。
+
+手元で試すときは relay も手元で起動します。ローカルの relay を選んだページは、手元の bot（`http://127.0.0.1:8098`）を頼みます。
+`botUrl` で bot の URL を指定することもできます。各コマンドを別々のターミナルで実行します。
 
 1. relay を起動する
 

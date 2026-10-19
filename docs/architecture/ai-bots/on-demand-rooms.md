@@ -125,7 +125,10 @@ requests for it.
   does what `main()` does today, with the room's namespaces. Each room has its
   own relay session, so one room's failure or GOAWAY does not touch another.
 - Further requests for the same room only raise the count, so every page in a
-  room shares one bot.
+  room shares one bot. The pages of a room also share the namespace they
+  publish under, so a room still has one publishing page at a time, as the
+  fixed namespace had. In practice the count covers a second tab and the
+  reconnects of one page.
 - When the count drops to zero, the server waits 30 s and then cancels the
   task. The task closes its relay session before it ends. A request that
   arrives within the 30 s keeps the bot running, so a page reload or an

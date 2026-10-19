@@ -1,4 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { pageRoomId } from '../../utils/botRoom'
 import { SingleObjectGroupPublisher, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
 import { element, setStatus } from '../../utils/page'
 import {
@@ -9,8 +10,14 @@ import {
   parseModerationVerdicts
 } from './chatWire'
 
-const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', 'chat']
-const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', 'moderator']
+const ROOM = pageRoomId()
+const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', ROOM, 'chat']
+const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', ROOM, 'moderator']
+const BOT_SERVICE = {
+  param: 'botUrl',
+  local: 'http://127.0.0.1:8097',
+  cloud: 'https://moq-chat-moderation.moqt.research.skyway.io'
+}
 const CHAT_TRACK = 'chat'
 const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
 
@@ -31,6 +38,8 @@ setUpD3FlashBotPage({
   ownNamespace: CHAT_NAMESPACE,
   ownTracks: [CHAT_TRACK],
   botNamespace: MODERATOR_NAMESPACE,
+  room: ROOM,
+  botService: BOT_SERVICE,
   onSubscriber: ({ requestId, trackAlias }) =>
     setChatPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias)),
   onUnsubscribe: (requestId) => {

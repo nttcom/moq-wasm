@@ -34,7 +34,7 @@
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Cloud VM</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Cloud Run</small></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
@@ -86,8 +86,8 @@
               <li>
                 <h4>relay を起動する</h4>
                 <p class="hint">
-                  Cloud relay-1 には Cloud の bot がつながっているため、手元の bot はローカルの relay
-                  につなぎます。各コマンドは別々のターミナルで実行します
+                  ローカルの relay を選んだページは、手元の bot にルームの bot を頼みます。各コマンドは別々の
+                  ターミナルで実行します
                 </p>
                 <pre><code>make relay</code></pre>
               </li>
@@ -122,7 +122,7 @@ uv run python -m moq_chat_moderation.bot --insecure \
           </div>
           <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
           <span id="moderator-status" class="status-dot" data-state="idle">モデレーター未接続</span>
-          <span id="bot-hours" class="status-dot" data-state="review"></span>
+          <span id="bot-room" class="status-dot" data-state="review"></span>
           <span
             id="d3-flash-status"
             class="status-dot"

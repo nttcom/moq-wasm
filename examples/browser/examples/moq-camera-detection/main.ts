@@ -1,11 +1,18 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupWriter } from '@moqt/subgroupWriter'
+import { pageRoomId } from '../../utils/botRoom'
 import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
 import { timeSeededGroupId } from '../../utils/media/clock'
 import { element, setStatus } from '../../utils/page'
 
-const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', 'camera']
-const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', 'detector']
+const ROOM = pageRoomId()
+const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', ROOM, 'camera']
+const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', ROOM, 'detector']
+const BOT_SERVICE = {
+  param: 'botUrl',
+  local: 'http://127.0.0.1:8098',
+  cloud: 'https://moq-camera-detection.moqt.research.skyway.io'
+}
 const VIDEO_TRACK = 'video'
 const PROMPT_TRACK = 'prompt'
 const MAX_CHOICES = 9
@@ -68,6 +75,8 @@ setUpD3FlashBotPage({
   ownNamespace: CAMERA_NAMESPACE,
   ownTracks: [VIDEO_TRACK, PROMPT_TRACK],
   botNamespace: DETECTOR_NAMESPACE,
+  room: ROOM,
+  botService: BOT_SERVICE,
   beforeConnect: async () => {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { width: VIDEO_ENCODER_CONFIG.width, height: VIDEO_ENCODER_CONFIG.height },
