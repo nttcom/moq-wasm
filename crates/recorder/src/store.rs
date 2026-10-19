@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutPayload, path::Path};
 use serde_json::Value;
 use url::Url;
 
@@ -18,9 +18,18 @@ use crate::{
 /// - `state/<id>.json`: the `RoomRecord`, written by the API once and then by
 ///   the recording job.
 /// - `state/<id>.stop`: the API's request to stop.
-/// - `locks/<namespace prefix>/lock`: the id recording the room, created by
-///   the API only if absent and deleted by the recording job when it ends.
+/// - `state/<id>.composite.json`: the `CompositeState`, written by the
+///   composite job, or by the recording job when it cannot start one.
+/// - `locks/<namespace prefix>`: the id recording the room, created by the
+///   API only if absent, deleted by the recording job when it ends, or by
+///   the API once that recording is no longer active or its job failed to
+///   launch.
+/// - `rooms/<namespace prefix>/<id>`: every recording of a room, so that a
+///   room's recordings are listed without reading the others.
 /// - `<id>/...`: the recording's files and its manifest.
+///
+/// A namespace prefix is one path element (its `/` percent-encoded), so the
+/// room `anon/a` and the room `anon/a/b` never nest in a directory store.
 #[derive(Clone)]
 pub(crate) struct RecordingStore {
     store: Arc<dyn ObjectStore>,
@@ -71,6 +80,94 @@ impl RecordingStore {
             .await
     }
 
+    pub(crate) async fn read_composite(&self, id: &str) -> Result<Option<CompositeState>> {
+        self.get_json(&self.state_key(id, "composite.json"))
+            .await?
+            .map(|value| CompositeState::from_json(&value))
+            .transpose()
+            .with_context(|| format!("malformed composite state of recording {id}"))
+    }
+
+    pub(crate) async fn request_stop(&self, id: &str) -> Result<()> {
+        self.store
+            .put(&self.state_key(id, "stop"), PutPayload::new())
+            .await
+            .with_context(|| format!("cannot request recording {id} to stop"))?;
+        Ok(())
+    }
+
+    /// Takes the room for `id`; false when a recording holds it already.
+    pub(crate) async fn lock_room(&self, namespace_prefix: &str, id: &str) -> Result<bool> {
+        let key = self.lock_key(namespace_prefix);
+        match self
+            .store
+            .put_opts(
+                &key,
+                PutPayload::from(id.to_string()),
+                PutMode::Create.into(),
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(object_store::Error::AlreadyExists { .. }) => Ok(false),
+            Err(error) => Err(error).with_context(|| format!("cannot write {key}")),
+        }
+    }
+
+    /// The id of the recording holding the room.
+    pub(crate) async fn room_lock(&self, namespace_prefix: &str) -> Result<Option<String>> {
+        Ok(self
+            .get(&self.lock_key(namespace_prefix))
+            .await?
+            .map(|id| String::from_utf8_lossy(&id).into_owned()))
+    }
+
+    /// The ids of the recordings holding a room.
+    pub(crate) async fn lock_holders(&self) -> Result<Vec<String>> {
+        let locks = self.prefix.clone().join("locks");
+        let mut holders = Vec::new();
+        for lock in self.store.list_with_delimiter(Some(&locks)).await?.objects {
+            if let Some(id) = self.get(&lock.location).await? {
+                holders.push(String::from_utf8_lossy(&id).into_owned());
+            }
+        }
+        Ok(holders)
+    }
+
+    pub(crate) async fn add_to_room(&self, namespace_prefix: &str, id: &str) -> Result<()> {
+        let key = self.room_key(namespace_prefix).join(id);
+        self.store
+            .put(&key, PutPayload::new())
+            .await
+            .with_context(|| format!("cannot write {key}"))?;
+        Ok(())
+    }
+
+    pub(crate) async fn room_recording_ids(&self, namespace_prefix: &str) -> Result<Vec<String>> {
+        let listed = self
+            .store
+            .list_with_delimiter(Some(&self.room_key(namespace_prefix)))
+            .await?;
+        Ok(listed
+            .objects
+            .iter()
+            .filter_map(|object| object.location.filename().map(str::to_string))
+            .collect())
+    }
+
+    pub(crate) async fn recording_ids(&self) -> Result<Vec<String>> {
+        let state = self.prefix.clone().join("state");
+        let listed = self.store.list_with_delimiter(Some(&state)).await?;
+        Ok(listed
+            .objects
+            .iter()
+            .filter_map(|object| object.location.filename())
+            .filter(|name| !name.ends_with(".composite.json"))
+            .filter_map(|name| name.strip_suffix(".json"))
+            .map(str::to_string)
+            .collect())
+    }
+
     pub(crate) async fn stop_requested(&self, id: &str) -> Result<bool> {
         Ok(self.get(&self.state_key(id, "stop")).await?.is_some())
     }
@@ -84,7 +181,7 @@ impl RecordingStore {
         Ok(())
     }
 
-    pub(crate) async fn put_json(&self, key: &Path, value: &Value) -> Result<()> {
+    async fn put_json(&self, key: &Path, value: &Value) -> Result<()> {
         self.store
             .put(key, PutPayload::from(value.to_string()))
             .await
@@ -115,9 +212,11 @@ impl RecordingStore {
     }
 
     fn lock_key(&self, namespace_prefix: &str) -> Path {
-        let mut key = self.prefix.clone().join("locks");
-        key.extend(namespace_prefix.split('/'));
-        key.join("lock")
+        self.prefix.clone().join("locks").join(namespace_prefix)
+    }
+
+    fn room_key(&self, namespace_prefix: &str) -> Path {
+        self.prefix.clone().join("rooms").join(namespace_prefix)
     }
 }
 

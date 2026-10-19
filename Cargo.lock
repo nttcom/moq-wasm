@@ -2723,6 +2723,7 @@ dependencies = [
  "moqt",
  "msf",
  "object_store",
+ "reqwest",
  "serde_json",
  "tokio",
  "tracing",

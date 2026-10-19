@@ -19,9 +19,9 @@ use crate::{
 
 /// How often the job looks for a stop request and writes changed progress.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
-/// How often the state is written even when nothing changed, so that a
-/// reader can tell a running job from one that died.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+/// How often the state is written even when nothing changed, so that the
+/// API can tell a running job from one that died.
+pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Keeps a recording job's `state/<id>.json` in sync with its `RoomStatus`
 /// and turns a stop request in the store, SIGTERM (Cloud Run stopping the
