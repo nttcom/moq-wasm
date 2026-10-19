@@ -2,6 +2,7 @@ import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBu
 import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
+import { withLengthPrefixes } from './lengthPrefixes'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
@@ -288,7 +289,7 @@ async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBuff
   }
 
   try {
-    videoDecoder.decode(chunk)
+    videoDecoder.decode(lengthPrefixedChunk(chunk, resolvedConfig))
     if (chunk.type === 'key') {
       waitingForKeyFrame = false
       newestKeyframeGroupId = groupId
@@ -306,6 +307,19 @@ async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBuff
     }
     throw error
   }
+}
+
+function lengthPrefixedChunk(chunk: EncodedVideoChunk, config: VideoDecoderConfig): EncodedVideoChunk {
+  if (!config.codec.startsWith('avc') || !(config.description instanceof Uint8Array)) {
+    return chunk
+  }
+  const payload = new Uint8Array(chunk.byteLength)
+  chunk.copyTo(payload)
+  const data = withLengthPrefixes(payload, config.description)
+  if (data === payload) {
+    return chunk
+  }
+  return new EncodedVideoChunk({ type: chunk.type, timestamp: chunk.timestamp, data })
 }
 
 function isKeyFrameRequiredError(error: unknown): boolean {
