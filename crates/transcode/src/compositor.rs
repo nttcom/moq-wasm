@@ -9,8 +9,12 @@ use tokio::sync::mpsc;
 use crate::buffer::video_buffer;
 
 mod layout;
+mod loudness;
+mod speaker;
 
-use layout::FrameSpans;
+use layout::{FrameSpans, Picture};
+pub use loudness::Loudness;
+use speaker::Speakers;
 
 /// Yields a `VideoConfig` or `AudioConfig` first, then samples whose
 /// timestamps are already on the shared timeline of the composition. A later
@@ -19,7 +23,7 @@ pub type EventSource = Box<dyn Iterator<Item = Result<MediaEvent>> + Send>;
 
 const INPUT_QUEUE_BYTES: u64 = 4 * 1024 * 1024;
 /// A frame followed by a longer gap (a camera turned off) is shown this
-/// long; the participant then leaves the grid until its next frame.
+/// long; the participant then leaves the stage until its next frame.
 const MAX_FRAME_DURATION: gst::ClockTime = gst::ClockTime::SECOND;
 const OUTPUT_AUDIO_CAPS: &str = "audio/x-raw,format=F32LE,layout=interleaved,rate=48000,channels=2";
 
@@ -28,6 +32,9 @@ const OUTPUT_AUDIO_CAPS: &str = "audio/x-raw,format=F32LE,layout=interleaved,rat
 pub struct CompositeInput {
     pub video: Option<EventSource>,
     pub audio: Option<EventSource>,
+    /// `Loudness::measure` of the same audio; without it the participant is
+    /// never the active speaker.
+    pub loudness: Option<Loudness>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,10 +63,11 @@ enum Message {
     EndOfStream,
 }
 
-/// Composites the inputs offline into one progressive MP4: the videos that
-/// have a frame at each moment as a grid of equal tiles on a black background
-/// (H.264), the audio mixed into one stereo track (AAC). Dropping the
-/// compositor stops the pipeline.
+/// Composites the inputs offline into one progressive MP4 (H.264): the active
+/// speaker's video large on the left, the other videos that have a frame at
+/// each moment in a strip on the right, on a black background; the audio
+/// mixed into one stereo track (AAC). Dropping the compositor stops the
+/// pipeline.
 ///
 /// A later config event may change the resolution or the codec: decodebin3
 /// follows the new parameter sets or caps, and the picture rescales to its
@@ -81,9 +89,16 @@ impl Compositor {
             settings.width >= 2 && settings.height >= 2 && settings.framerate > 0,
             "invalid composite settings {settings:?}"
         );
-        let video_sources: Vec<EventSource> = inputs
+        let speakers = Speakers::detect(
+            &inputs
+                .iter()
+                .map(|input| input.loudness.as_ref())
+                .collect::<Vec<_>>(),
+        );
+        let video_sources: Vec<(usize, EventSource)> = inputs
             .iter_mut()
-            .filter_map(|input| input.video.take())
+            .enumerate()
+            .filter_map(|(owner, input)| Some((owner, input.video.take()?)))
             .collect();
         let audio_sources: Vec<EventSource> =
             inputs.into_iter().filter_map(|input| input.audio).collect();
@@ -113,14 +128,22 @@ impl Compositor {
             .collect();
         if !frames.is_empty() {
             let compositor = pipeline.by_name("comp").context("missing compositor")?;
-            layout::install(&compositor, frames.clone(), settings)?;
+            let pictures = video_sources
+                .iter()
+                .zip(&frames)
+                .map(|((owner, _), frames)| Picture {
+                    frames: frames.clone(),
+                    owner: *owner,
+                })
+                .collect();
+            layout::install(&compositor, pictures, speakers, settings)?;
         }
         let (message_sender, message_receiver) = mpsc::unbounded_channel();
         forward_bus_messages(&pipeline, message_sender.clone())?;
 
         let last_frame_duration = gst::ClockTime::SECOND / u64::from(settings.framerate);
         let mut feeders = Vec::new();
-        for (index, (events, frames)) in video_sources.into_iter().zip(frames).enumerate() {
+        for (index, ((_, events), frames)) in video_sources.into_iter().zip(frames).enumerate() {
             let source = app_source(&pipeline, &format!("video{index}"))?;
             let message_sender = message_sender.clone();
             feeders.push(spawn_feeder(
@@ -175,7 +198,7 @@ fn pipeline_description(
     audio_count: usize,
     settings: &CompositeSettings,
 ) -> String {
-    let source = format!("format=time block=true max-bytes={INPUT_QUEUE_BYTES}");
+    let source = source_properties();
     let mut description = String::from("mp4mux name=mux faststart=true ! filesink name=sink ");
     if video_count > 0 {
         description.push_str("compositor name=comp background=black ");
@@ -206,6 +229,10 @@ fn pipeline_description(
         }
     }
     description
+}
+
+fn source_properties() -> String {
+    format!("format=time block=true max-bytes={INPUT_QUEUE_BYTES}")
 }
 
 fn app_source(pipeline: &gst::Pipeline, name: &str) -> Result<AppSrc> {
@@ -518,19 +545,24 @@ mod tests {
 
     #[tokio::test]
     async fn composites_two_participants_into_one_mp4() {
-        // Arrange: the second participant joins 2 s later
+        // Arrange: the second participant joins 2 s later; both speak
         decode_in_software();
         let shift = Timestamp::from_millis(2_000);
         let later_video = shifted(video_events(), shift);
         let expected_end = video_end(&later_video);
+        let loudness = |shift| {
+            Some(Loudness::measure(source(shifted(audio_events(), shift)).unwrap()).unwrap())
+        };
         let inputs = vec![
             CompositeInput {
                 video: source(video_events()),
                 audio: source(audio_events()),
+                loudness: loudness(Timestamp::default()),
             },
             CompositeInput {
                 video: source(later_video),
                 audio: source(shifted(audio_events(), shift)),
+                loudness: loudness(shift),
             },
         ];
         let output = output_path("two");
@@ -567,6 +599,7 @@ mod tests {
         let inputs = vec![CompositeInput {
             video: source(events),
             audio: None,
+            loudness: None,
         }];
         let output = output_path("gap");
 
@@ -588,10 +621,12 @@ mod tests {
             CompositeInput {
                 video: None,
                 audio: source(audio_events()),
+                loudness: None,
             },
             CompositeInput {
                 video: source(video_events()),
                 audio: None,
+                loudness: None,
             },
         ];
         let output = output_path("audio-only");
@@ -637,6 +672,7 @@ mod tests {
             .map(|events| CompositeInput {
                 video: source(events),
                 audio: None,
+                loudness: None,
             })
             .collect();
         let output = output_path("codecs");
@@ -686,6 +722,7 @@ mod tests {
         let inputs = vec![CompositeInput {
             video: source(first.into_iter().chain(smaller).collect()),
             audio: None,
+            loudness: None,
         }];
         let output = output_path("resize");
 
@@ -703,6 +740,7 @@ mod tests {
         let inputs = vec![CompositeInput {
             video: None,
             audio: None,
+            loudness: None,
         }];
 
         // Act / Assert

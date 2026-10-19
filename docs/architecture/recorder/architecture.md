@@ -335,8 +335,9 @@ settings, so a request cannot point the recorder at another relay or bucket.
 On a recorder started with `--composite`, a `POST /recordings` with
 `"composite": true` also makes one MP4 of the whole room once the recording
 has ended; without the flag the request is refused with `400`. The MP4 holds
-every participant's video in a grid and their audio mixed
-(`transcode::Compositor`, see the transcode README). Compositing live was not
+the active speaker's video in focus, every other participant's video in a
+strip beside it, and their audio mixed (`transcode::Compositor`, see the
+transcode README). Compositing live was not
 chosen: offline the compositor waits for every participant's data instead of
 dropping late frames.
 

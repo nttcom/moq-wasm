@@ -54,6 +54,7 @@ pub(crate) async fn composite_room(members: &[MemberFiles], output: &Path) -> Re
             inputs.push(CompositeInput {
                 video: events(video, Kind::Video),
                 audio: events(audio, Kind::Audio),
+                loudness: None,
             });
         }
     }
