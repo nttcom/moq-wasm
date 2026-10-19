@@ -89,6 +89,7 @@ The stream carries the server's own events, each of which ends the response:
 | `full` | a new room would exceed `--max-rooms` |
 | `closed` | the request comes outside the opening hours, or the hours end while the room runs |
 | `expired` | the room has run for `--max-room-seconds` |
+| `failed` | the bot stopped with an exception |
 
 The page closes the `EventSource` on any of them, since `EventSource` reopens
 any stream the server ends, and shows why the bot left. `closed` shows the

@@ -17,6 +17,7 @@ on:
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
+      - "examples/python/moq-bot-rooms/**"
       - "crates/wasm/**"
       - "crates/live-ingest/**"
       - "crates/recorder/**"
@@ -59,6 +60,7 @@ on:
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
+      - "examples/python/moq-bot-rooms/**"
       - "crates/wasm/**"
       - "crates/live-ingest/**"
       - "crates/recorder/**"
@@ -157,13 +159,13 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-chat-moderation/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-chat-moderation/*|examples/python/moq-bot-rooms/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   chat_moderation=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-camera-detection/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-camera-detection/*|examples/python/moq-bot-rooms/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   camera_detection=true
                   ;;
               esac
@@ -525,6 +527,10 @@ jobs:
 
       - name: Run moderator unit tests
         working-directory: examples/python/moq-chat-moderation
+        run: uv run pytest
+
+      - name: Run room server unit tests
+        working-directory: examples/python/moq-bot-rooms
         run: uv run pytest
 
       - name: Prepare browser E2E environment
