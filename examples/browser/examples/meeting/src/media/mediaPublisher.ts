@@ -2,7 +2,7 @@ import { type IncomingFetchContext, MoqtClientWrapper, type SubgroupSender } fro
 import { SubgroupWriter } from '@moqt/subgroupWriter'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
-import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
+import { sendAudioChunkViaMoqt, sendAudioEndOfGroupViaMoqt } from '../../../../utils/media/audioTransport'
 import type { AudioLevel } from '../../../../utils/media/loc'
 import type { LocHeader } from '../../../../utils/media/loc'
 import { answerFetch, documentReplayTrack } from '../../../../utils/media/fetchReplay'
@@ -22,7 +22,6 @@ import {
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { timeSeededGroupId } from '../../../../utils/media/clock'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../../../utils/media/objectStatus'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 type VideoSource = 'camera' | 'screenshare'
@@ -391,19 +390,15 @@ export class MediaPublisher {
         this.startAudioTrackEncoding(context)
         return
       }
-      this.restartAudioTrackContext(trackName)
+      // A new subscriber starts at a fresh group, as a video subscriber starts at a forced keyframe.
+      await this.rotateAudioStreamGroupForTrackContext(context)
       return
     }
     this.syncAudioTrackContexts()
     const created = this.audioTrackContexts.get(trackName)
-    if (!created) {
-      return
-    }
-    if (!created.encodingStarted) {
+    if (created && !created.encodingStarted) {
       this.startAudioTrackEncoding(created)
-      return
     }
-    this.restartAudioTrackContext(trackName)
   }
 
   private syncVideoTrackContexts(source: VideoSource): void {
@@ -1095,25 +1090,7 @@ export class MediaPublisher {
     const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
       context.transportState.resetAlias(alias)
     })
-    if (!aliases.length) {
-      return
-    }
-    const currentGroupId = context.transportState.audio.groupId
-    const endObjectId = context.transportState.audio.nextObjectId
-    if (endObjectId === 0n) {
-      return
-    }
-    for (const alias of aliases) {
-      await this.client.sendSubgroupObject(
-        alias,
-        currentGroupId,
-        0n,
-        endObjectId,
-        OBJECT_STATUS_END_OF_GROUP,
-        new Uint8Array(0),
-        undefined
-      )
-    }
+    await sendAudioEndOfGroupViaMoqt(aliases, this.client, context.transportState)
   }
 
   private async broadcastCatalog(): Promise<void> {
