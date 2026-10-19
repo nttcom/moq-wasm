@@ -802,11 +802,33 @@ wheels = [
 ]
 
 [[package]]
+name = "moq-bot-rooms"
+version = "0.1.0"
+source = { editable = "../moq-bot-rooms" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "loguru" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11" },
+    { name = "loguru", specifier = ">=0.7" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
 name = "moq-chat-moderation"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "moq-bot-rooms" },
     { name = "pipecat-ai", extra = ["moq"] },
 ]
 
@@ -819,6 +841,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
+    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
     { name = "pipecat-ai", extras = ["moq"], specifier = ">=1.12" },
 ]
 

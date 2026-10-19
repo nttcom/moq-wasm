@@ -6,6 +6,13 @@ import { element, setStatus } from '../../utils/page'
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
 const VIEWER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'viewer']
 const TRACKER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'tracker']
+// There is one ONVIF camera, so the bot service runs this one room only.
+const ROOM = 'onvif'
+const BOT_SERVICE = {
+  param: 'botUrl',
+  local: 'http://127.0.0.1:8099',
+  cloud: 'https://moq-ptz-tracking.moqt.research.skyway.io'
+}
 const PROMPT_TRACK = 'prompt'
 const AUTH_INFO = ''
 
@@ -38,6 +45,8 @@ setUpD3FlashBotPage({
   ownNamespace: VIEWER_NAMESPACE,
   ownTracks: [PROMPT_TRACK],
   botNamespace: TRACKER_NAMESPACE,
+  room: ROOM,
+  botService: BOT_SERVICE,
   afterConnect: () => player.start(CAMERA_NAMESPACE, AUTH_INFO),
   onSubscriber: async ({ requestId, trackAlias }) => {
     setPromptPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias))

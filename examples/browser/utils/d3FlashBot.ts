@@ -1,9 +1,10 @@
 import { FilterType, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
-import { showBotOffHoursNotice } from './botHours'
+import { BOT_ROOM_END_TEXT, BotRoomRequest } from './botRoom'
 import { D3FlashStatusView } from './d3FlashStatus'
 import { timeSeededGroupId } from './media/clock'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
 import { setUpRelayUrlControls } from './relayPresets'
+import { type ServiceUrls, resolveServiceUrl } from './serviceUrl'
 
 const AUTH_INFO = ''
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
@@ -16,6 +17,9 @@ export type D3FlashBotPageOptions = {
   ownNamespace: string[]
   ownTracks: string[]
   botNamespace: string[]
+  /// The room the page asks the bot service to run a bot for while it is joined.
+  room: string
+  botService: ServiceUrls
   onSubscriber(subscriber: BotSubscriber): Promise<void> | void
   onUnsubscribe(requestId: bigint): void
   onTimelineObject(payload: Uint8Array): void
@@ -30,10 +34,16 @@ export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
   const joinButton = element<HTMLButtonElement>('joinBtn')
   const leaveButton = element<HTMLButtonElement>('leaveBtn')
   const d3FlashStatus = new D3FlashStatusView(element('d3-flash-status'))
-  showBotOffHoursNotice(element('bot-hours'))
+  const botRoomNotice = element<HTMLSpanElement>('bot-room')
+  const botRoom = new BotRoomRequest((reason) => {
+    botRoomNotice.textContent = BOT_ROOM_END_TEXT[reason]
+    botRoomNotice.style.display = ''
+  })
+  botRoomNotice.style.display = 'none'
   setUpRelayUrlControls(urlInput, element('urlPresets'))
 
   const reset = async (connectionText: string, connectionState: StatusState): Promise<void> => {
+    botRoom.close()
     d3FlashStatus.reset()
     await options.onReset()
     setStatus('connection-status', connectionText, connectionState)
@@ -60,9 +70,13 @@ export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
   const join = async (): Promise<void> => {
     joinButton.disabled = true
     setStatus('connection-status', '接続中', 'review')
+    botRoomNotice.style.display = 'none'
     try {
       await options.beforeConnect?.()
-      await session.connect(urlInput.value.trim())
+      const relayUrl = urlInput.value.trim()
+      // Asking before connecting lets the bot start while the page connects.
+      botRoom.open(resolveServiceUrl(window.location.search, relayUrl, options.botService), options.room)
+      await session.connect(relayUrl)
       session.setOnConnectionClosedHandler(() => void reset('切断されました', 'error'))
       session.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
         if (!isSuccess) {

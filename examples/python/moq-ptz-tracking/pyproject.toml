@@ -6,11 +6,15 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
     "av>=14",
+    "moq-bot-rooms",
     "pipecat-ai[moq]>=1.12",
 ]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[tool.uv.sources]
+moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

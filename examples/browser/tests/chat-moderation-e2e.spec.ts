@@ -68,6 +68,21 @@ test.describe('MoQ Chat Moderation', () => {
     await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT)
   })
 
+  test('moderates each room with its own moderator', async ({ browser, page }) => {
+    // Arrange
+    const otherPage = await browser.newPage()
+    const otherChat = await joinChat(otherPage, 'e2e-other')
+    const chat = await joinChat(page)
+
+    // Act
+    await otherChat.send(ABUSIVE_TEXT)
+    await chat.send(ABUSIVE_TEXT)
+
+    // Assert
+    await expect(otherChat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT)
+    await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT)
+  })
+
   test('shows the d3-flash status while its answers are late', async ({ page }) => {
     // Arrange
     const chat = await joinChat(page)

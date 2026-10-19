@@ -1,4 +1,6 @@
+import { once } from "node:events";
 import { existsSync } from "node:fs";
+import { createServer } from "node:net";
 import { resolve } from "node:path";
 
 import {
@@ -49,6 +51,15 @@ export function getDefaultBaseUrl() {
   return (
     process.env.MEDIA_E2E_BASE_URL ?? `http://127.0.0.1:${getDefaultWebPort()}`
   );
+}
+
+/// A TCP port nothing listens on, for a server started with an explicit port.
+export async function findFreePort() {
+  const server = createServer();
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address();
+  server.close();
+  return port;
 }
 
 export async function waitForHttpOk(url, timeoutMs = 60_000) {

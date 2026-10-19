@@ -72,7 +72,8 @@ ONVIF カメラは手元のネットワークにあるため、`onvif-ingest` �
 
 ### クラウドの relay と bot を使う
 
-bot は AI bots VM（平日 9:00〜17:30）で動き、Cloud relay-1 につながっています。
+bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動き、ページが Join している間だけ Cloud relay-1 につながります。
+平日 9:00〜17:30 だけ動き、1 時間で止まります。
 
 1. ONVIF カメラを Cloud relay-1 に配信する
 
@@ -88,7 +89,7 @@ bot は AI bots VM（平日 9:00〜17:30）で動き、Cloud relay-1 につな�
 
 ### 手元の relay と bot を使う
 
-Cloud relay-1 にはクラウドの bot がつながっているため、手元の bot は手元の relay につなぎます。
+手元の bot は手元の relay につなぎます。ローカルの relay を選んだページは、手元の bot（`http://127.0.0.1:8099`）を頼みます。
 各コマンドは別々のターミナルで実行します。
 
 1. relay を起動する
@@ -115,7 +116,9 @@ Cloud relay-1 にはクラウドの bot がつながっているため、手元�
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。認証は
-   [moq-camera-detection](../moq-camera-detection/README.md#d3-flash) と同じです。
+   [moq-camera-detection](../moq-camera-detection/README.md#d3-flash) と同じです。bot は `http://127.0.0.1:8099` で待ち受け、
+   ページが `onvif` ルームに参加している間だけ relay につなぎます。カメラが 1 台なので、ルームは `onvif` だけです。
+   オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
 
 4. ページを開く
 

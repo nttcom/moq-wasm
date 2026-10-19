@@ -10,31 +10,34 @@ sequenceDiagram
     participant R as Relay
     participant P as pipecat bot
     participant D as d3-flash (Cloud Run)
-    B->>R: prompt (anon/moq-camera-detection/camera)、{"question": "...", "choices": ["はい", "いいえ"]}
-    B->>R: video (anon/moq-camera-detection/camera)、1 キーフレーム 1 group
+    B->>R: prompt (anon/moq-camera-detection/{room}/camera)、{"question": "...", "choices": ["はい", "いいえ"]}
+    B->>R: video (anon/moq-camera-detection/{room}/camera)、1 キーフレーム 1 group
     R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
     P->>P: PyAV で H.264 をデコードし、0.1 秒ごとに 1 枚 JPEG に
     P->>D: /v1/systemone 画像 + 質問（choice、選択肢）
     D-->>P: はい
-    P->>R: eventtimeline (anon/moq-camera-detection/detector)
+    P->>R: eventtimeline (anon/moq-camera-detection/{room}/detector)
     R->>B: {"l": [groupId, objectId], "data": {"prompt": [promptGroupId, 0], "answer": "はい"}}
 ```
 
 ## d3-flash
 
 System One の `/v1/systemone` に画像付きで答える Cloud Run サービス `d3-flash`（asia-southeast1、MoQ Chat Moderation・MoQ PTZ Tracking と共用）です。
-IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、GCE の VM では `--metadata-auth` で ID トークンを送ります。停止後の最初の判定はコールドスタートで約 2 分 40 秒かかります。
+IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、Cloud Run や GCE では `--metadata-auth` で ID トークンを送ります。停止後の最初の判定はコールドスタートで約 2 分 40 秒かかります。
 デプロイ手順は [d3-flash を Cloud Run にデプロイする](../d3-flash-on-cloud-run.md) にあります。
 
 質問は `/v1/systemone` の choice 型で送り、選択肢を criteria にします。返った choice が選択肢になければ「判定できません」と表示します。
 
 ## 起動
 
-Cloud relay-1 には、常時動いている bot がつながっています。Cloud relay で試すだけなら bot を起動する必要はなく、
-ページを開いて既定の Cloud relay-1 のまま Join します。
+Cloud relay で試すだけなら bot を起動する必要はありません。ページを開いて既定の Cloud relay-1 のまま Join すると、
+ページは Cloud Run で動く bot（`https://moq-camera-detection.moqt.research.skyway.io`）にルームの bot を頼みます。
+デプロイした bot は平日 9:00〜17:30 だけルームを動かし、1 つのルームは 1 時間で止めます。
 
-手元の bot を Cloud relay につなぐと Cloud の bot と同じページを二重に処理するため、relay も手元で起動します。
-各コマンドを別々のターミナルで実行します。
+ルームは URL の `room` で、なければページが作って URL に書きます。同じ `room` の URL を開くと同じルームに入ります。
+
+手元で試すときは relay も手元で起動します。ローカルの relay を選んだページは、手元の bot（`http://127.0.0.1:8098`）を頼みます。
+`botUrl` で bot の URL を指定することもできます。各コマンドを別々のターミナルで実行します。
 
 1. relay を起動する
 
@@ -51,7 +54,9 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
      --gcloud-auth
    ```
 
-   `--insecure` は手元の relay の自己署名証明書を検証しない指定です。
+   `--insecure` は手元の relay の自己署名証明書を検証しない指定です。bot は `http://127.0.0.1:8098` で待ち受け、
+   ページが参加したルームごとに relay につなぎます。1 つのカメラで d3-flash の処理が埋まるため、既定では同時に 1 ルームです。
+   オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
 
 3. ページを開く
 
@@ -66,9 +71,9 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `anon/moq-camera-detection/camera` | `prompt` | ブラウザ | `{"question": "...", "choices": [...]}`。適用するたびに 1 件 1 group で送る。質問は 200 文字以内、選択肢は 2〜9 個で各 40 文字以内 |
-| `anon/moq-camera-detection/camera` | `video` | ブラウザ | H.264 Annex B（640x480、ソフトウェアエンコード）。キーフレームごとに group を始める |
-| `anon/moq-camera-detection/detector` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す |
+| `anon/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"question": "...", "choices": [...]}`。適用するたびに 1 件 1 group で送る。質問は 200 文字以内、選択肢は 2〜9 個で各 40 文字以内 |
+| `anon/moq-camera-detection/{room}/camera` | `video` | ブラウザ | H.264 Annex B（640x480、ソフトウェアエンコード）。キーフレームごとに group を始める |
+| `anon/moq-camera-detection/{room}/detector` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す |
 
 - bot は group ごとにデコーダを作って全フレームをデコードし、0.1 秒ごとに 1 枚を判定に回します。判定中のリクエストが 8 件に
   達している間の画像と、デコードから 2 秒以上たった画像は捨てるので、コールドスタート中にたまったフレームは判定されません。

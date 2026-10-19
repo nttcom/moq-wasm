@@ -1,17 +1,19 @@
 import argparse
 import asyncio
 import time
+from functools import partial
 
 import aiohttp
 import moq
 from loguru import logger
+from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from moq_ptz_tracking.d3_flash_status import D3FlashStatus
 from moq_ptz_tracking.event_timeline import EventTimeline
-from moq_ptz_tracking.identity_token import gcloud_identity_token, metadata_identity_token
+from moq_ptz_tracking.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
@@ -19,6 +21,9 @@ from moq_ptz_tracking.video import GroupDecoder, picture_to_jpeg
 from moq_ptz_tracking.vision import D3FlashVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
+DEFAULT_PORT = 8099
+# There is one ONVIF camera, so there is one room.
+ROOM_ID = "onvif"
 CAMERA_BROADCAST_PATH = "anon/onvif/client"
 COMMAND_BROADCAST_PATH = "anon/onvif/viewer"
 COMMAND_TRACK = "command"
@@ -38,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Pan and tilt the ONVIF camera so the MoQ PTZ tracking page's target stays centered"
     )
+    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=1)
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",
@@ -74,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     auth.add_argument(
         "--metadata-auth",
         action="store_true",
-        help="send the GCE metadata server's identity token, for the bot VM",
+        help="send the metadata server's identity token, for a bot on Cloud Run or GCE",
     )
     return parser.parse_args()
 
@@ -181,8 +187,9 @@ async def stay_connected(
         await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
 
-async def main():
-    args = parse_args()
+async def track_in_room(
+    args: argparse.Namespace, session: aiohttp.ClientSession, identity_token: IdentityToken | None, _room_id: str
+) -> None:
     publish_origin = moq.OriginProducer()
     tracker_broadcast = publish_origin.create_broadcast(TRACKER_BROADCAST_PATH)
     timeline = EventTimeline(tracker_broadcast, EVENT_TIMELINE_TRACK)
@@ -190,7 +197,21 @@ async def main():
     status.publish_on(tracker_broadcast)
     commands = PtzCommands(publish_origin.create_broadcast(COMMAND_BROADCAST_PATH), COMMAND_TRACK)
     latest_target = LatestTarget()
+    vision = D3FlashVisionClient(session, args.d3_flash_url, status, identity_token)
+    calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.dead_zone)
+    tracker = PtzTracker(vision, timeline, commands, calibration, latest_target)
+    worker = PipelineWorker(Pipeline([tracker]), enable_rtvi=False, idle_timeout_secs=None)
+    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    async with asyncio.TaskGroup() as tasks:
+        connecting = tasks.create_task(stay_connected(args, publish_origin, latest_target, worker))
+        await runner.run()
+        connecting.cancel()
 
+
+async def main():
+    args = parse_args()
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as session:
         identity_token = (
             gcloud_identity_token()
@@ -199,16 +220,7 @@ async def main():
             if args.metadata_auth
             else None
         )
-        vision = D3FlashVisionClient(session, args.d3_flash_url, status, identity_token)
-        calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.dead_zone)
-        tracker = PtzTracker(vision, timeline, commands, calibration, latest_target)
-        worker = PipelineWorker(Pipeline([tracker]), enable_rtvi=False, idle_timeout_secs=None)
-        runner = WorkerRunner()
-        await runner.add_workers(worker)
-        async with asyncio.TaskGroup() as tasks:
-            connecting = tasks.create_task(stay_connected(args, publish_origin, latest_target, worker))
-            await runner.run()
-            connecting.cancel()
+        await serve_rooms(args, partial(track_in_room, args, session, identity_token), only_room=ROOM_ID)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 import argparse
 import asyncio
-import signal
+from functools import partial
 
 import aiohttp
 import moq
 from loguru import logger
+from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.transports.moq.transport import MOQParams, MOQTransport
@@ -13,12 +14,13 @@ from pipecat.workers.runner import WorkerRunner
 from moq_chat_moderation.d3_flash import D3FlashClient
 from moq_chat_moderation.d3_flash_status import D3FlashStatus
 from moq_chat_moderation.event_timeline import EventTimeline
-from moq_chat_moderation.identity_token import gcloud_identity_token, metadata_identity_token
+from moq_chat_moderation.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_chat_moderation.moderator import ChatModerator
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
-CHAT_BROADCAST_PATH = "anon/moq-chat-moderation/chat"
-MODERATOR_BROADCAST_PATH = "anon/moq-chat-moderation/moderator"
+DEFAULT_PORT = 8097
+DEFAULT_MAX_ROOMS = 10
+NAMESPACE_ROOT = "anon/moq-chat-moderation"
 CHAT_TRACK = "chat"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
@@ -29,7 +31,8 @@ JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with d3-flash")
+    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with d3-flash, one bot per chat room")
+    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",
@@ -46,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     auth.add_argument(
         "--metadata-auth",
         action="store_true",
-        help="send the GCE metadata server's identity token, for the bot VM",
+        help="send the metadata server's identity token, for a bot on Cloud Run or GCE",
     )
     return parser.parse_args()
 
@@ -58,23 +61,23 @@ def moderator_broadcast(transport: MOQTransport) -> moq.BroadcastProducer:
     return transport._client._publish_broadcast
 
 
-async def moderate_until_transport_fails(
-    args: argparse.Namespace, d3_flash: D3FlashClient, timeline: EventTimeline, status: D3FlashStatus
-) -> bool:
+async def moderate_until_transport_stops(
+    args: argparse.Namespace, room_id: str, d3_flash: D3FlashClient, timeline: EventTimeline, status: D3FlashStatus
+) -> None:
     transport = MOQTransport(
         params=MOQParams(
             relay_url=args.relay_url,
             verify_ssl=not args.insecure,
-            request_path=CHAT_BROADCAST_PATH,
-            response_path=MODERATOR_BROADCAST_PATH,
+            request_path=f"{NAMESPACE_ROOT}/{room_id}/chat",
+            response_path=f"{NAMESPACE_ROOT}/{room_id}/moderator",
             transcript_track=CHAT_TRACK,
             audio_in_enabled=False,
             audio_out_enabled=False,
             connection_timeout=CHAT_PAGE_WAIT_SECONDS,
         )
     )
-    runner = WorkerRunner()
-    failed = False
+    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+    runner = WorkerRunner(handle_sigint=False)
 
     @transport.event_handler("on_connected")
     async def on_connected(transport: MOQTransport):
@@ -85,8 +88,6 @@ async def moderate_until_transport_fails(
     # MOQTransport stops for good after a failure it does not count as the peer leaving.
     @transport.event_handler("on_error")
     async def on_error(transport: MOQTransport, message: str, error: Exception):
-        nonlocal failed
-        failed = True
         await runner.cancel(reason=message)
 
     await runner.add_workers(
@@ -97,13 +98,25 @@ async def moderate_until_transport_fails(
         )
     )
     await runner.run()
-    return failed
+
+
+async def moderate_room(
+    args: argparse.Namespace, session: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
+) -> None:
+    timeline = EventTimeline(EVENT_TIMELINE_TRACK)
+    status = D3FlashStatus(STATUS_TRACK)
+    d3_flash = D3FlashClient(session, args.d3_flash_url, status, identity_token)
+    while True:
+        await moderate_until_transport_stops(args, room_id, d3_flash, timeline, status)
+        # WorkerRunner.run() swallows the cancellation that stops the room.
+        if asyncio.current_task().cancelling():
+            raise asyncio.CancelledError
+        logger.warning(f"room {room_id}: MOQ transport stopped; building a new one in {REBUILD_DELAY_SECONDS}s")
+        await asyncio.sleep(REBUILD_DELAY_SECONDS)
 
 
 async def main():
     args = parse_args()
-    timeline = EventTimeline(EVENT_TIMELINE_TRACK)
-    status = D3FlashStatus(STATUS_TRACK)
     async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as session:
         identity_token = (
             gcloud_identity_token()
@@ -112,13 +125,7 @@ async def main():
             if args.metadata_auth
             else None
         )
-        d3_flash = D3FlashClient(session, args.d3_flash_url, status, identity_token)
-        while await moderate_until_transport_fails(args, d3_flash, timeline, status):
-            # The finished runner leaves its SIGINT handler installed; restore the default one so
-            # Ctrl-C still stops the bot until the next runner takes over.
-            asyncio.get_running_loop().remove_signal_handler(signal.SIGINT)
-            logger.warning(f"MOQ transport stopped; building a new one in {REBUILD_DELAY_SECONDS}s")
-            await asyncio.sleep(REBUILD_DELAY_SECONDS)
+        await serve_rooms(args, partial(moderate_room, args, session, identity_token))
 
 
 if __name__ == "__main__":

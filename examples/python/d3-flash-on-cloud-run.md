@@ -112,7 +112,7 @@ gcloud run services add-iam-policy-binding d3-flash --project=${PROJECT} --regio
   --member=user:someone@example.com --role=roles/run.invoker
 ```
 
-手元の bot には `--gcloud-auth` を付け、`gcloud auth print-identity-token` の ID トークンで呼ばせます。GCE の VM で動かす bot には `--metadata-auth` を付け、VM のサービスアカウントの ID トークンをメタデータサーバーから取らせます。起動方法は各 bot の README を参照してください。
+手元の bot には `--gcloud-auth` を付け、`gcloud auth print-identity-token` の ID トークンで呼ばせます。Cloud Run や GCE で動かす bot には `--metadata-auth` を付け、サービスアカウントの ID トークンをメタデータサーバーから取らせます。起動方法は各 bot の README を参照してください。
 
 ## 費用と起動時間
 

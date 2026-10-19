@@ -1,3 +1,5 @@
+import { type ServiceUrls, resolveServiceUrl } from '../../../../utils/serviceUrl'
+
 export type RecordingLayout = 'combined' | 'per-track'
 
 export type RecordingState = 'starting' | 'recording' | 'stopping' | 'finished' | 'failed'
@@ -15,23 +17,15 @@ export interface RoomRecording {
   composite: { state: CompositeState; error: string | null } | null
 }
 
-/// `recorder serve` listens here by default.
-const LOCAL_RECORDER_URL = 'http://localhost:8096'
-const CLOUD_RECORDER_URL = 'https://recorder.moqt.research.skyway.io'
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+const RECORDER_URLS: ServiceUrls = {
+  param: 'recorderUrl',
+  /// `recorder serve` listens here by default.
+  local: 'http://localhost:8096',
+  cloud: 'https://recorder.moqt.research.skyway.io'
+}
 
-/// The `recorderUrl` query parameter, or the recorder that reaches the relay:
-/// the local one for a local relay, the deployed one otherwise.
 export function resolveRecorderUrl(search: string, relayUrl: string): string {
-  const configured = new URLSearchParams(search).get('recorderUrl')?.trim()
-  if (configured) {
-    return configured.replace(/\/+$/, '')
-  }
-  try {
-    return LOCAL_HOSTS.has(new URL(relayUrl).hostname) ? LOCAL_RECORDER_URL : CLOUD_RECORDER_URL
-  } catch {
-    return CLOUD_RECORDER_URL
-  }
+  return resolveServiceUrl(search, relayUrl, RECORDER_URLS)
 }
 
 export function activeRecording(recordings: RoomRecording[]): RoomRecording | undefined {

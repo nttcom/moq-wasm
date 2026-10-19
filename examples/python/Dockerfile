@@ -8,6 +8,9 @@ RUN pip uninstall -y setuptools
 
 WORKDIR /app
 # Copy only what each bot needs: a developer's checkout keeps an untracked .env next to them.
+# The bots install the room server from its source, so it comes before their dependencies.
+COPY examples/python/moq-bot-rooms/pyproject.toml moq-bot-rooms/
+COPY examples/python/moq-bot-rooms/moq_bot_rooms moq-bot-rooms/moq_bot_rooms
 COPY examples/python/moq-chat-moderation/pyproject.toml examples/python/moq-chat-moderation/uv.lock moq-chat-moderation/
 COPY examples/python/moq-camera-detection/pyproject.toml examples/python/moq-camera-detection/uv.lock moq-camera-detection/
 COPY examples/python/moq-ptz-tracking/pyproject.toml examples/python/moq-ptz-tracking/uv.lock moq-ptz-tracking/

@@ -1,0 +1,19 @@
+[project]
+name = "moq-bot-rooms"
+version = "0.1.0"
+description = "HTTP server that runs one MoQ bot per room while browser pages hold an event stream for it"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.11",
+    "loguru>=0.7",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
