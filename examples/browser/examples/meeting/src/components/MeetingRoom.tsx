@@ -689,7 +689,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     <div className="flex h-screen flex-col bg-slate-950 text-white">
       <RoomHeader
         roomName={roomName}
-        recording={recording?.active !== undefined}
+        recording={recording?.active?.state}
         members={Array.from(room.remoteMembers.values()).map((member) => ({
           id: member.id,
           name: member.name,
