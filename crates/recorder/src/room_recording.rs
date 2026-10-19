@@ -20,6 +20,7 @@ use crate::{
     recorder::{BroadcastOptions, UploadTarget, default_output_path, record_broadcast},
     recording::RecordedFile,
     relay::RelayConnection,
+    room_state::{CompositeState, MemberStatus, RoomState},
     upload_task::{Upload, UploadTask},
 };
 
@@ -39,32 +40,6 @@ pub(crate) struct RoomConfig {
     pub(crate) limits: RecordingLimits,
     /// Composite the room into one MP4 once the recording has ended.
     pub(crate) composite: Option<CompositeQueue>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum RoomState {
-    Recording,
-    Stopping,
-    Finished,
-    Failed(String),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct MemberStatus {
-    pub(crate) namespace: String,
-    pub(crate) started_at_ms: u64,
-    pub(crate) finished: bool,
-    pub(crate) error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum CompositeState {
-    /// While the room is recorded and while another room is composited.
-    Waiting,
-    Composing,
-    Done,
-    Skipped(String),
-    Failed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -161,12 +136,15 @@ impl Drop for RoomRecording {
     }
 }
 
-struct RecordedRoom {
+pub(crate) struct RecordedRoom {
     members: Vec<MemberFiles>,
     failed_uploads: Vec<PathBuf>,
 }
 
-async fn record(
+/// Records the room until `stop` turns true, the room stops by itself or the
+/// session closes; with an upload store, then waits for the uploads and
+/// writes the manifest.
+pub(crate) async fn record(
     config: RoomConfig,
     stop: watch::Receiver<bool>,
     status: &Arc<Mutex<RoomStatus>>,
@@ -464,7 +442,7 @@ impl AutoStop {
     }
 }
 
-fn stopping(status: &Mutex<RoomStatus>) {
+pub(crate) fn stopping(status: &Mutex<RoomStatus>) {
     let mut status = lock(status);
     if status.state == RoomState::Recording {
         status.state = RoomState::Stopping;
@@ -508,7 +486,7 @@ fn record_member(
     }
 }
 
-fn lock(status: &Mutex<RoomStatus>) -> std::sync::MutexGuard<'_, RoomStatus> {
+pub(crate) fn lock(status: &Mutex<RoomStatus>) -> std::sync::MutexGuard<'_, RoomStatus> {
     status
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
