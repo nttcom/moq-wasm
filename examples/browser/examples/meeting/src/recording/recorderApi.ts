@@ -1,6 +1,6 @@
 export type RecordingLayout = 'combined' | 'per-track'
 
-export type RecordingState = 'recording' | 'stopping' | 'finished' | 'failed'
+export type RecordingState = 'starting' | 'recording' | 'stopping' | 'finished' | 'failed'
 
 export type CompositeState = 'waiting' | 'composing' | 'done' | 'skipped' | 'failed'
 
@@ -34,9 +34,10 @@ export function resolveRecorderUrl(search: string, relayUrl: string): string {
   }
 }
 
-/// The recording still writing files, if any.
 export function activeRecording(recordings: RoomRecording[]): RoomRecording | undefined {
-  return recordings.find((recording) => recording.state === 'recording' || recording.state === 'stopping')
+  return recordings.find(
+    (recording) => recording.state === 'starting' || recording.state === 'recording' || recording.state === 'stopping'
+  )
 }
 
 export async function startRecording(
