@@ -10,7 +10,6 @@ use crate::{
     ServeArgs,
     api_server::ApiServer,
     recordings::{Recordings, ServeConfig},
-    room_recording::RecordingLimits,
 };
 
 /// Serves the recording API until SIGINT or SIGTERM, then stops every
@@ -29,18 +28,15 @@ pub(crate) async fn serve(args: ServeArgs) -> Result<()> {
         .await
         .with_context(|| format!("cannot create {}", args.output_dir.display()))?;
     let recordings = Arc::new(Recordings::new(ServeConfig {
-        relay: args.relay,
-        verify_certificate: !args.insecure_skip_tls_verify,
+        relay: args.room.relay.clone(),
+        verify_certificate: !args.room.insecure_skip_tls_verify,
         namespace_root: args.namespace_root,
         max_recordings: args.max_recordings,
         output_dir: args.output_dir,
         upload,
-        max_video_height: args.max_video_height,
-        segment_length: args.segment_seconds.map(Duration::from_secs),
-        limits: RecordingLimits {
-            max_duration: Duration::from_secs(args.max_recording_seconds),
-            empty_room_timeout: Duration::from_secs(args.empty_room_seconds),
-        },
+        max_video_height: args.room.max_video_height,
+        segment_length: args.room.segment_seconds.map(Duration::from_secs),
+        limits: args.room.limits(),
         composite_budget_bytes: args
             .composite
             .then(|| args.composite_max_gb.saturating_mul(1 << 30)),

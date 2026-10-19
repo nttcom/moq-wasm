@@ -11,9 +11,8 @@ use crate::{
     composite::CompositeQueue,
     recorder::BroadcastOptions,
     recording::Layout,
-    room_recording::{
-        CompositeState, MemberStatus, RecordingLimits, RoomConfig, RoomRecording, RoomState,
-    },
+    room_recording::{RecordingLimits, RoomConfig, RoomRecording},
+    room_state::{CompositeState, MemberStatus, RoomState},
 };
 
 /// What every recording the server starts shares.
@@ -173,15 +172,13 @@ impl Recordings {
 
 impl Entry {
     fn is_active(&self) -> bool {
-        matches!(
-            self.recording.status().state,
-            RoomState::Recording | RoomState::Stopping
-        )
+        self.recording.status().state.is_active()
     }
 
     fn to_json(&self) -> Value {
         let status = self.recording.status();
         let (state, error) = match &status.state {
+            RoomState::Starting => ("starting", None),
             RoomState::Recording => ("recording", None),
             RoomState::Stopping => ("stopping", None),
             RoomState::Finished => ("finished", None),
@@ -193,30 +190,10 @@ impl Entry {
             "layout": self.layout.name(),
             "state": state,
             "error": error,
-            "members": status.members.iter().map(member_json).collect::<Vec<_>>(),
-            "composite": status.composite.as_ref().map(composite_json),
+            "members": status.members.iter().map(MemberStatus::to_json).collect::<Vec<_>>(),
+            "composite": status.composite.as_ref().map(CompositeState::to_json),
         })
     }
-}
-
-fn composite_json(composite: &CompositeState) -> Value {
-    let (state, error) = match composite {
-        CompositeState::Waiting => ("waiting", None),
-        CompositeState::Composing => ("composing", None),
-        CompositeState::Done => ("done", None),
-        CompositeState::Skipped(reason) => ("skipped", Some(reason.as_str())),
-        CompositeState::Failed(error) => ("failed", Some(error.as_str())),
-    };
-    json!({ "state": state, "error": error })
-}
-
-fn member_json(member: &MemberStatus) -> Value {
-    json!({
-        "namespace": member.namespace,
-        "started_at_ms": member.started_at_ms,
-        "finished": member.finished,
-        "error": member.error,
-    })
 }
 
 /// `<root>/<room>[/...]` with no empty element.
