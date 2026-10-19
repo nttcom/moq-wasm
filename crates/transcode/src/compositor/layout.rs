@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use gstreamer::{self as gst, prelude::*};
 
-use super::CompositeSettings;
+use super::{CompositeSettings, speaker::Speakers};
 
 type Span = (gst::ClockTime, gst::ClockTime);
 
@@ -46,31 +46,60 @@ impl FrameSpans {
     }
 }
 
+/// Strip tiles are 1/`STRIP_FRACTION` of the output width.
+const STRIP_FRACTION: u32 = 5;
+
+/// The video an input feeds into compositor pad `sink_<index>`, where
+/// `index` is its place in the list `install` takes.
+pub(super) struct Picture {
+    pub(super) frames: FrameSpans,
+    pub(super) source: Source,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Source {
+    /// The input the picture belongs to.
+    pub(super) owner: usize,
+    pub(super) content: Content,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Content {
+    Camera,
+    ScreenShare,
+}
+
 struct Tile {
     pad: gst::Pad,
     frames: FrameSpans,
 }
 
-/// Before each output frame, lays out the inputs whose video covers it as a
-/// grid and hides the rest. A non-live compositor keeps drawing a pad's last
-/// frame until the next one arrives, however long the frame lasted, so a
-/// camera that went off would otherwise freeze in its tile.
+/// Before each output frame, puts a screen share or else the active
+/// speaker's camera in focus, the other pictures that cover the frame in a
+/// strip down the right edge, and hides the rest: a non-live compositor keeps
+/// drawing a pad's last frame until the next one arrives, so a camera that
+/// went off would freeze in its tile.
 pub(super) fn install(
     compositor: &gst::Element,
-    frames: Vec<FrameSpans>,
+    pictures: Vec<Picture>,
+    speakers: Speakers,
     settings: CompositeSettings,
 ) -> Result<()> {
-    let tiles = frames
+    let sources: Vec<Source> = pictures.iter().map(|picture| picture.source).collect();
+    let tiles = pictures
         .into_iter()
         .enumerate()
-        .map(|(index, frames)| {
+        .map(|(index, picture)| {
             let pad = compositor
                 .static_pad(&format!("sink_{index}"))
                 .with_context(|| format!("compositor has no sink_{index}"))?;
-            Ok(Tile { pad, frames })
+            Ok(Tile {
+                pad,
+                frames: picture.frames,
+            })
         })
         .collect::<Result<Vec<_>>>()?;
-    let shown = Mutex::new(Vec::new());
+    let shown: Mutex<Option<Stage>> = Mutex::new(None);
     compositor.set_property("emit-signals", true);
     compositor.connect("samples-selected", false, move |values| {
         let start = values.get(2).and_then(|value| value.get::<u64>().ok());
@@ -86,68 +115,124 @@ pub(super) fn install(
             .iter()
             .map(|tile| tile.frames.covers(start, end))
             .collect();
-        let mut shown = shown.lock().expect("shown tiles lock");
-        if *shown != visible {
-            arrange(&tiles, &visible, &settings);
-            *shown = visible;
+        let mut shown = shown.lock().expect("shown stage lock");
+        let previous_focus = shown.as_ref().map(|stage| stage.focus);
+        let stage = Stage::choose(&sources, &visible, speakers.at(start), previous_focus);
+        if *shown != stage {
+            arrange(&tiles, stage.as_ref(), &settings);
+            *shown = stage;
         }
         None
     });
     Ok(())
 }
 
-fn arrange(tiles: &[Tile], visible: &[bool], settings: &CompositeSettings) {
-    let grid = Grid::new(visible.iter().filter(|shown| **shown).count(), settings);
-    let mut slot = 0;
-    for (tile, shown) in tiles.iter().zip(visible) {
-        if !shown {
+fn arrange(tiles: &[Tile], stage: Option<&Stage>, settings: &CompositeSettings) {
+    let rects = stage.map(|stage| stage.rects(settings)).unwrap_or_default();
+    for (index, tile) in tiles.iter().enumerate() {
+        let Some((_, rect)) = rects.iter().find(|(shown, _)| *shown == index) else {
             tile.pad.set_property("alpha", 0.0f64);
             continue;
-        }
-        let (xpos, ypos) = grid.position(slot);
-        slot += 1;
-        tile.pad.set_property("xpos", xpos as i32);
-        tile.pad.set_property("ypos", ypos as i32);
-        tile.pad.set_property("width", grid.tile_width as i32);
-        tile.pad.set_property("height", grid.tile_height as i32);
+        };
+        tile.pad.set_property("xpos", rect.x as i32);
+        tile.pad.set_property("ypos", rect.y as i32);
+        tile.pad.set_property("width", rect.width as i32);
+        tile.pad.set_property("height", rect.height as i32);
         tile.pad.set_property("alpha", 1.0f64);
     }
 }
 
-/// Tile sizes are even so tile edges fall on 4:2:0 chroma sample boundaries.
-struct Grid {
-    columns: u32,
-    tile_width: u32,
-    tile_height: u32,
-    left: u32,
-    top: u32,
+/// The tile in focus and the visible others in the strip, top first, by tile
+/// index.
+#[derive(Debug, PartialEq)]
+struct Stage {
+    focus: usize,
+    strip: Vec<usize>,
 }
 
-impl Grid {
-    fn new(tiles: usize, settings: &CompositeSettings) -> Self {
-        let tiles = (tiles as u32).max(1);
-        let columns = (1..=tiles)
-            .find(|columns| columns * columns >= tiles)
-            .unwrap_or(1);
-        let rows = tiles.div_ceil(columns);
-        let tile_width = (settings.width / columns) & !1;
-        let tile_height = (settings.height / rows) & !1;
-        Self {
-            columns,
-            tile_width,
-            tile_height,
-            left: (settings.width - columns * tile_width) / 2,
-            top: (settings.height - rows * tile_height) / 2,
-        }
+impl Stage {
+    /// Focus goes to a visible screen share, keeping the one already in focus
+    /// over a later one; else the speaker's visible camera; else the previous
+    /// focus if visible; else the first visible tile. The speaker's camera
+    /// heads the strip. `None` while no tile is visible.
+    fn choose(
+        sources: &[Source],
+        visible: &[bool],
+        speaker: Option<usize>,
+        previous_focus: Option<usize>,
+    ) -> Option<Self> {
+        let is_visible = |tile: &usize| visible[*tile];
+        let is_share = |tile: &usize| sources[*tile].content == Content::ScreenShare;
+        let speaker_camera = speaker
+            .and_then(|speaker| {
+                let camera = Source {
+                    owner: speaker,
+                    content: Content::Camera,
+                };
+                sources.iter().position(|source| *source == camera)
+            })
+            .filter(is_visible);
+        let previous_focus = previous_focus.filter(is_visible);
+        let tiles = 0..sources.len();
+        let focus = match tiles
+            .clone()
+            .find(|tile| is_visible(tile) && is_share(tile))
+        {
+            Some(first_share) => previous_focus.filter(is_share).unwrap_or(first_share),
+            None => speaker_camera
+                .or(previous_focus)
+                .or_else(|| tiles.clone().find(is_visible))?,
+        };
+        let strip = speaker_camera
+            .into_iter()
+            .chain(tiles.filter(|tile| Some(*tile) != speaker_camera))
+            .filter(|tile| is_visible(tile) && *tile != focus)
+            .collect();
+        Some(Self { focus, strip })
     }
 
-    fn position(&self, slot: usize) -> (u32, u32) {
-        let slot = slot as u32;
-        (
-            self.left + (slot % self.columns) * self.tile_width,
-            self.top + (slot / self.columns) * self.tile_height,
-        )
+    /// Sizes are even so tile edges fall on 4:2:0 chroma sample boundaries.
+    fn rects(&self, settings: &CompositeSettings) -> Vec<(usize, Rect)> {
+        if self.strip.is_empty() {
+            return vec![(
+                self.focus,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: settings.width,
+                    height: settings.height,
+                },
+            )];
+        }
+        let strip_width = (settings.width / STRIP_FRACTION) & !1;
+        let tile_height =
+            (strip_width * 9 / 16).min(settings.height / self.strip.len() as u32) & !1;
+        let focus = Rect {
+            x: 0,
+            y: 0,
+            width: settings.width - strip_width,
+            height: settings.height,
+        };
+        let strip = self.strip.iter().enumerate().map(|(slot, tile)| {
+            let rect = Rect {
+                x: settings.width - strip_width,
+                y: slot as u32 * tile_height,
+                width: strip_width,
+                height: tile_height,
+            };
+            (*tile, rect)
+        });
+        std::iter::once((self.focus, focus)).chain(strip).collect()
     }
+}
+
+/// A box the picture is scaled into, keeping its aspect ratio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
 }
 
 #[cfg(test)]
@@ -162,33 +247,183 @@ mod tests {
         (ms(start_ms), ms(end_ms))
     }
 
+    fn rect(x: u32, y: u32, width: u32, height: u32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    fn camera(owner: usize) -> Source {
+        Source {
+            owner,
+            content: Content::Camera,
+        }
+    }
+
+    fn share(owner: usize) -> Source {
+        Source {
+            owner,
+            content: Content::ScreenShare,
+        }
+    }
+
     #[test]
-    fn lays_tiles_out_in_a_square_grid() {
-        // Arrange
-        let settings = CompositeSettings::default();
+    fn the_speaker_takes_the_focus_and_the_others_the_strip() {
+        // Arrange: three participants, input 1 speaks
+        let sources = [camera(0), camera(1), camera(2)];
 
         // Act
-        let grid = Grid::new(3, &settings);
+        let stage = Stage::choose(&sources, &[true, true, true], Some(1), Some(0)).unwrap();
 
-        // Assert: a 2x2 grid, the fourth cell stays black
-        assert_eq!((grid.tile_width, grid.tile_height), (640, 360));
+        // Assert
         assert_eq!(
-            (0..3).map(|slot| grid.position(slot)).collect::<Vec<_>>(),
-            [(0, 0), (640, 0), (0, 360)]
+            stage,
+            Stage {
+                focus: 1,
+                strip: vec![0, 2]
+            }
+        );
+        assert_eq!(
+            stage.rects(&CompositeSettings::default()),
+            [
+                (1, rect(0, 0, 1024, 720)),
+                (0, rect(1024, 0, 256, 144)),
+                (2, rect(1024, 144, 256, 144)),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_focus_stays_while_the_speaker_has_no_picture() {
+        // Arrange: input 1 speaks with the camera off, input 2 was in focus
+        let sources = [camera(0), camera(1), camera(2)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[true, false, true], Some(1), Some(2)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 2,
+                strip: vec![0]
+            }
+        );
+    }
+
+    #[test]
+    fn without_a_speaker_the_first_visible_tile_takes_the_focus() {
+        // Arrange
+        let sources = [camera(0), camera(1), camera(2)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[false, true, true], None, Some(0)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 1,
+                strip: vec![2]
+            }
+        );
+    }
+
+    #[test]
+    fn nothing_visible_shows_no_stage() {
+        // Act / Assert
+        assert_eq!(
+            Stage::choose(&[camera(0), camera(1)], &[false, false], Some(0), None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_screen_share_takes_the_focus_with_the_speaker_atop_the_strip() {
+        // Arrange: input 0 shares the screen while input 2 speaks
+        let sources = [camera(0), share(0), camera(1), camera(2)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[true; 4], Some(2), Some(3)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 1,
+                strip: vec![3, 0, 2]
+            }
+        );
+    }
+
+    #[test]
+    fn a_later_screen_share_waits_in_the_strip() {
+        // Arrange: input 1 shares while input 0's share is in focus
+        let sources = [camera(0), share(0), camera(1), share(1)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[true; 4], None, Some(1)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 1,
+                strip: vec![0, 2, 3]
+            }
+        );
+    }
+
+    #[test]
+    fn the_speaker_takes_the_focus_back_when_the_share_ends() {
+        // Arrange
+        let sources = [camera(0), share(0), camera(1)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[true, false, true], Some(1), Some(1)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 2,
+                strip: vec![0]
+            }
         );
     }
 
     #[test]
     fn a_single_tile_fills_the_output() {
         // Arrange
-        let settings = CompositeSettings::default();
+        let stage = Stage {
+            focus: 0,
+            strip: Vec::new(),
+        };
+
+        // Act / Assert
+        assert_eq!(
+            stage.rects(&CompositeSettings::default()),
+            [(0, rect(0, 0, 1280, 720))]
+        );
+    }
+
+    #[test]
+    fn a_long_strip_shrinks_its_tiles_to_the_output_height() {
+        // Arrange: eight tiles in the strip, 90 px each in 720 px
+        let stage = Stage {
+            focus: 0,
+            strip: (1..=8).collect(),
+        };
 
         // Act
-        let grid = Grid::new(1, &settings);
+        let rects = stage.rects(&CompositeSettings::default());
 
         // Assert
-        assert_eq!((grid.tile_width, grid.tile_height), (1280, 720));
-        assert_eq!(grid.position(0), (0, 0));
+        assert_eq!(rects[1], (1, rect(1024, 0, 256, 90)));
+        assert_eq!(rects[8], (8, rect(1024, 630, 256, 90)));
     }
 
     #[test]

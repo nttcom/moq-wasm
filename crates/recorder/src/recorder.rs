@@ -26,7 +26,7 @@ use crate::{
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
     track_selection::{
-        Selection, VideoChoice, loc_tracks, select_audio, select_tracks, select_video,
+        AudioChoice, Selection, VideoChoice, loc_tracks, select_audio, select_tracks, select_video,
     },
     upload_task::{UploadQueue, UploadTask},
 };
@@ -66,7 +66,9 @@ pub(crate) async fn run(args: Args) -> Result<()> {
 }
 
 /// What every broadcast of a recording shares.
+#[derive(Clone)]
 pub(crate) struct BroadcastOptions {
+    pub(crate) content: Content,
     pub(crate) video_track: Option<String>,
     pub(crate) max_video_height: u32,
     pub(crate) audio_track: Option<String>,
@@ -76,7 +78,17 @@ pub(crate) struct BroadcastOptions {
     pub(crate) upload: Option<UploadTarget>,
 }
 
-/// Objects go under `prefix`, then the broadcast's namespace.
+/// What a recording of a broadcast reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Content {
+    /// The camera, or whatever video the broadcast has, and the audio.
+    Camera,
+    /// A meeting participant's screen share alone.
+    ScreenShare,
+}
+
+/// Objects go under `prefix`, then the broadcast's namespace, then
+/// `screenshare` for `Content::ScreenShare`.
 #[derive(Clone)]
 pub(crate) struct UploadTarget {
     pub(crate) queue: UploadQueue,
@@ -96,6 +108,7 @@ async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> 
         })
         .transpose()?;
     let options = BroadcastOptions {
+        content: Content::Camera,
         video_track: args.video_track.clone(),
         max_video_height: args.max_video_height,
         audio_track: args.audio_track.clone(),
@@ -153,10 +166,10 @@ async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {
 }
 
 /// Records `namespace` into `path` until `stop` turns true, or until the
-/// catalog and every media track read have ended. A stop before the catalog
-/// lists a track records nothing. A track the catalog unlists, or one that
-/// ends, is dropped; a later catalog that lists one adds it again. Returns
-/// every file written, in closing order.
+/// catalog and every media track read have ended. A stop or the end of the
+/// catalog before it lists a track records nothing. A track the catalog
+/// unlists, or one that ends, is dropped; a later catalog that lists one adds
+/// it again. Returns every file written, in closing order.
 pub(crate) async fn record_broadcast(
     session: &Session,
     namespace: &str,
@@ -169,13 +182,17 @@ pub(crate) async fn record_broadcast(
         selection = wait_for_selection(&mut catalog, options) => selection?,
         _ = stop_requested(&mut stop) => return Ok(Vec::new()),
     };
+    let Some(selection) = selection else {
+        tracing::info!(content = ?options.content, "catalog ended before it listed a track to record");
+        return Ok(Vec::new());
+    };
     tracing::info!(
         video = selection.video.as_ref().map(|video| video.name.as_str()),
         video_codec = ?selection.video.as_ref().map(|video| video.codec),
         audio = selection.audio.as_ref().map(|audio| audio.name.as_str()),
         "catalog resolved"
     );
-    if selection.audio.is_none() {
+    if selection.audio.is_none() && options.content == Content::Camera {
         tracing::info!(
             track = options.audio_track.as_deref(),
             "catalog lists no LOC audio track that can be decoded yet; recording video until one is listed"
@@ -204,7 +221,7 @@ pub(crate) async fn record_broadcast(
     let uploader = options
         .upload
         .as_ref()
-        .map(|target| uploader(target, namespace, SystemTime::now()));
+        .map(|target| uploader(target, namespace, options.content, SystemTime::now()));
     let mut recording = Recording::create(
         &selection,
         options.layout,
@@ -250,31 +267,39 @@ pub(crate) async fn record_broadcast(
     Ok(files)
 }
 
+/// `None` once the catalog ends.
 async fn wait_for_selection(
     catalog: &mut CatalogReader,
     options: &BroadcastOptions,
-) -> Result<Selection> {
-    loop {
-        let selection = select_tracks(
-            &catalog.next().await?.context("catalog track ended")?,
-            video_choice(options),
-            options.audio_track.as_deref(),
-        )?;
-        if let Some(selection) = selection {
+) -> Result<Option<Selection>> {
+    while let Some(catalog) = catalog.next().await? {
+        let selection = select_tracks(&catalog, video_choice(options), audio_choice(options))?;
+        if selection.is_some() {
             return Ok(selection);
         }
         tracing::info!(
+            content = ?options.content,
             video = options.video_track.as_deref(),
             audio = options.audio_track.as_deref(),
-            "waiting for the catalog to list a video or an audio track"
+            "waiting for the catalog to list a track to record"
         );
     }
+    Ok(None)
 }
 
 fn video_choice(options: &BroadcastOptions) -> VideoChoice<'_> {
-    match &options.video_track {
-        Some(name) => VideoChoice::Named(name),
-        None => VideoChoice::MaxHeight(options.max_video_height),
+    match (options.content, &options.video_track) {
+        (Content::ScreenShare, _) => VideoChoice::ScreenShare,
+        (Content::Camera, Some(name)) => VideoChoice::Named(name),
+        (Content::Camera, None) => VideoChoice::MaxHeight(options.max_video_height),
+    }
+}
+
+fn audio_choice(options: &BroadcastOptions) -> AudioChoice<'_> {
+    match (options.content, &options.audio_track) {
+        (Content::ScreenShare, _) => AudioChoice::None,
+        (Content::Camera, Some(name)) => AudioChoice::Named(name),
+        (Content::Camera, None) => AudioChoice::HighestBitrate,
     }
 }
 
@@ -452,7 +477,7 @@ async fn add_listed_audio(
     options: &BroadcastOptions,
     recording: &mut Recording,
 ) -> Result<Option<Track>> {
-    let Some(audio) = select_audio(catalog, options.audio_track.as_deref())? else {
+    let Some(audio) = select_audio(catalog, audio_choice(options))? else {
         return Ok(None);
     };
     let track =
@@ -512,9 +537,12 @@ async fn stop_requested(stop: &mut watch::Receiver<bool>) {
     let _ = stop.wait_for(|stop| *stop).await;
 }
 
-fn uploader(target: &UploadTarget, namespace: &str, now: SystemTime) -> Uploader {
+fn uploader(target: &UploadTarget, namespace: &str, content: Content, now: SystemTime) -> Uploader {
     let mut prefix = target.prefix.clone();
     prefix.extend(namespace.split('/'));
+    if content == Content::ScreenShare {
+        prefix.extend(["screenshare"]);
+    }
     Uploader {
         queue: target.queue.clone(),
         prefix,

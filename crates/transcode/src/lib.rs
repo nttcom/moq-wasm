@@ -5,6 +5,6 @@ pub mod ladder;
 mod test_support;
 pub mod transcoder;
 
-pub use compositor::{CompositeInput, CompositeSettings, Compositor, EventSource};
+pub use compositor::{CompositeInput, CompositeSettings, Compositor, EventSource, Loudness};
 pub use ladder::{Rendition, ladder_for};
 pub use transcoder::{TranscodeInput, TranscodedEvent, Transcoder};

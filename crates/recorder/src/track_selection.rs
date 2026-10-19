@@ -23,12 +23,27 @@ pub(crate) struct AudioTrack {
     pub(crate) config: AudioConfig,
 }
 
+/// A meeting lists its screen share as `video` tracks named `screenshare…`.
+const SCREEN_SHARE_PREFIX: &str = "screenshare";
+/// Text on a shared screen needs more pixels than a face does.
+const SCREEN_SHARE_MAX_HEIGHT: u32 = 720;
+
 #[derive(Clone, Copy)]
 pub(crate) enum VideoChoice<'a> {
     Named(&'a str),
-    /// The tallest video track at most this many pixels high, or the shortest
-    /// one when all are taller; ties go to the lower `bitrate`.
+    /// The tallest camera track at most this many pixels high, or the
+    /// shortest one when all are taller; ties go to the lower `bitrate`.
     MaxHeight(u32),
+    /// `MaxHeight(SCREEN_SHARE_MAX_HEIGHT)` applied to the screen share tracks.
+    ScreenShare,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum AudioChoice<'a> {
+    Named(&'a str),
+    /// The decodable LOC track with role `audio` and the highest `bitrate`.
+    HighestBitrate,
+    None,
 }
 
 /// `Ok(None)` while the catalog lists neither a video track nor an audio
@@ -36,9 +51,9 @@ pub(crate) enum VideoChoice<'a> {
 /// only the audio. `Err` when the named video track, or every listed one, has
 /// a codec other than H.264, VP8, VP9 or AV1.
 ///
-/// Without a video name, only LOC tracks with role `video` qualify. Without an
-/// audio name, the audio track is the decodable LOC track with role `audio`
-/// and the highest `bitrate`. Remaining ties go to the track listed first.
+/// Without a video name, only LOC tracks with role `video` qualify; only
+/// `VideoChoice::ScreenShare` considers a screen share track. Remaining ties
+/// go to the track listed first.
 ///
 /// The audio is `None` while no such track can be decoded from the catalog:
 /// `broadcast` lists AAC audio before the first audio frame delivers its
@@ -46,26 +61,30 @@ pub(crate) enum VideoChoice<'a> {
 pub(crate) fn select_tracks(
     catalog: &Catalog,
     video: VideoChoice,
-    audio_name: Option<&str>,
+    audio: AudioChoice,
 ) -> Result<Option<Selection>> {
     let video = select_video(catalog, video)?;
-    let audio = select_audio(catalog, audio_name)?;
+    let audio = select_audio(catalog, audio)?;
     Ok((video.is_some() || audio.is_some()).then_some(Selection { video, audio }))
 }
 
 /// The video track `select_tracks` picks.
 pub(crate) fn select_video(catalog: &Catalog, choice: VideoChoice) -> Result<Option<VideoTrack>> {
-    let max_height = match choice {
+    let (max_height, screen_share) = match choice {
         VideoChoice::Named(name) => {
             return match loc_tracks(catalog).find(|track| track.name == name) {
                 Some(track) => video_track(track).map(Some),
                 None => Ok(None),
             };
         }
-        VideoChoice::MaxHeight(max_height) => max_height,
+        VideoChoice::MaxHeight(max_height) => (max_height, false),
+        VideoChoice::ScreenShare => (SCREEN_SHARE_MAX_HEIGHT, true),
     };
     let listed: Vec<&Track> = loc_tracks(catalog)
-        .filter(|track| has_role(track, KnownTrackRole::Video))
+        .filter(|track| {
+            has_role(track, KnownTrackRole::Video)
+                && track.name.starts_with(SCREEN_SHARE_PREFIX) == screen_share
+        })
         .collect();
     if listed.is_empty() {
         return Ok(None);
@@ -111,23 +130,28 @@ fn video_track(track: &Track) -> Result<VideoTrack> {
 }
 
 /// The audio track `select_tracks` picks.
-pub(crate) fn select_audio(catalog: &Catalog, name: Option<&str>) -> Result<Option<AudioTrack>> {
-    let Some(name) = name else {
-        let mut decodable = Vec::new();
-        for track in loc_tracks(catalog).filter(|track| has_role(track, KnownTrackRole::Audio)) {
-            if let Some(config) = audio_config(catalog, track)? {
-                let audio = AudioTrack {
-                    name: track.name.clone(),
-                    config,
-                };
-                decodable.push((track.bitrate, audio));
+pub(crate) fn select_audio(catalog: &Catalog, choice: AudioChoice) -> Result<Option<AudioTrack>> {
+    let name = match choice {
+        AudioChoice::Named(name) => name,
+        AudioChoice::None => return Ok(None),
+        AudioChoice::HighestBitrate => {
+            let mut decodable = Vec::new();
+            for track in loc_tracks(catalog).filter(|track| has_role(track, KnownTrackRole::Audio))
+            {
+                if let Some(config) = audio_config(catalog, track)? {
+                    let audio = AudioTrack {
+                        name: track.name.clone(),
+                        config,
+                    };
+                    decodable.push((track.bitrate, audio));
+                }
             }
+            return Ok(decodable
+                .into_iter()
+                .rev()
+                .max_by_key(|(bitrate, _)| *bitrate)
+                .map(|(_, audio)| audio));
         }
-        return Ok(decodable
-            .into_iter()
-            .rev()
-            .max_by_key(|(bitrate, _)| *bitrate)
-            .map(|(_, audio)| audio));
     };
     let Some(track) = loc_tracks(catalog).find(|track| track.name == name) else {
         return Ok(None);
@@ -276,11 +300,15 @@ mod tests {
         let catalog = renditions();
 
         // Act
-        let selection = select_tracks(&catalog, VideoChoice::MaxHeight(480), None)
-            .unwrap()
-            .unwrap();
+        let selection = select_tracks(
+            &catalog,
+            VideoChoice::MaxHeight(480),
+            AudioChoice::HighestBitrate,
+        )
+        .unwrap()
+        .unwrap();
 
-        // Assert: hevc_480p cannot be recorded, screenshare_480p has a higher bitrate, the two cameras tie and the first listed wins
+        // Assert: hevc_480p cannot be recorded, screenshare_480p is no camera, the two cameras tie and the first listed wins
         assert_eq!(selection.video.unwrap().name, "camera_base_480p");
         assert_eq!(selection.audio.unwrap().name, "audio_128kbps");
     }
@@ -291,16 +319,67 @@ mod tests {
         let catalog = renditions();
 
         // Act
-        let under = select_tracks(&catalog, VideoChoice::MaxHeight(900), None)
-            .unwrap()
-            .unwrap();
-        let over = select_tracks(&catalog, VideoChoice::MaxHeight(240), None)
-            .unwrap()
-            .unwrap();
+        let under = select_tracks(
+            &catalog,
+            VideoChoice::MaxHeight(900),
+            AudioChoice::HighestBitrate,
+        )
+        .unwrap()
+        .unwrap();
+        let over = select_tracks(
+            &catalog,
+            VideoChoice::MaxHeight(240),
+            AudioChoice::HighestBitrate,
+        )
+        .unwrap()
+        .unwrap();
 
         // Assert
         assert_eq!(under.video.unwrap().name, "camera_base_720p");
         assert_eq!(over.video.unwrap().name, "camera_base_480p");
+    }
+
+    #[test]
+    fn a_screen_share_is_chosen_apart_from_the_camera_and_the_audio() {
+        // Arrange: a participant who shares the screen with the camera off
+        let catalog = catalog(vec![
+            sized_video("screenshare_1080p", "av01.0.08M.08", 1080, 2_000_000),
+            sized_video("screenshare_720p", "av01.0.08M.08", 720, 1_200_000),
+            opus_track("audio_64kbps", 64_000),
+        ]);
+
+        // Act
+        let share = select_tracks(&catalog, VideoChoice::ScreenShare, AudioChoice::None)
+            .unwrap()
+            .unwrap();
+        let camera = select_tracks(
+            &catalog,
+            VideoChoice::MaxHeight(1080),
+            AudioChoice::HighestBitrate,
+        )
+        .unwrap()
+        .unwrap();
+
+        // Assert
+        assert_eq!(share.video.unwrap().name, "screenshare_720p");
+        assert_eq!(share.audio, None);
+        assert_eq!(camera.video, None);
+        assert_eq!(camera.audio.unwrap().name, "audio_64kbps");
+    }
+
+    #[test]
+    fn waits_while_no_screen_share_is_listed() {
+        // Arrange: the camera and the audio only
+        let catalog = catalog(vec![
+            sized_video("camera_base_480p", "avc1.42001F", 480, 200_000),
+            opus_track("audio_64kbps", 64_000),
+        ]);
+
+        // Act / Assert
+        assert_eq!(
+            select_tracks(&catalog, VideoChoice::ScreenShare, AudioChoice::None).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -312,7 +391,7 @@ mod tests {
         let selection = select_tracks(
             &catalog,
             VideoChoice::Named("camera_main_1080p"),
-            Some("audio_32kbps"),
+            AudioChoice::Named("audio_32kbps"),
         )
         .unwrap()
         .unwrap();
@@ -328,7 +407,12 @@ mod tests {
         let catalog = catalog(vec![sized_video("hevc", "hvc1.1.6.L93.B0", 1080, 0)]);
 
         // Act
-        let error = select_tracks(&catalog, VideoChoice::MaxHeight(480), None).unwrap_err();
+        let error = select_tracks(
+            &catalog,
+            VideoChoice::MaxHeight(480),
+            AudioChoice::HighestBitrate,
+        )
+        .unwrap_err();
 
         // Assert
         assert_eq!(
@@ -347,8 +431,12 @@ mod tests {
         catalog.init_data_list = Some(vec![init_data]);
 
         // Act
-        let selection =
-            select_tracks(&catalog, VideoChoice::Named("video"), Some("audio")).unwrap();
+        let selection = select_tracks(
+            &catalog,
+            VideoChoice::Named("video"),
+            AudioChoice::Named("audio"),
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -373,11 +461,21 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            select_tracks(&catalog, VideoChoice::Named("video"), Some("audio")).unwrap(),
+            select_tracks(
+                &catalog,
+                VideoChoice::Named("video"),
+                AudioChoice::Named("audio")
+            )
+            .unwrap(),
             None
         );
         assert_eq!(
-            select_tracks(&catalog, VideoChoice::MaxHeight(480), None).unwrap(),
+            select_tracks(
+                &catalog,
+                VideoChoice::MaxHeight(480),
+                AudioChoice::HighestBitrate
+            )
+            .unwrap(),
             None
         );
     }
@@ -388,9 +486,13 @@ mod tests {
         let catalog = catalog(vec![audio_track("opus")]);
 
         // Act
-        let selection = select_tracks(&catalog, VideoChoice::MaxHeight(480), None)
-            .unwrap()
-            .unwrap();
+        let selection = select_tracks(
+            &catalog,
+            VideoChoice::MaxHeight(480),
+            AudioChoice::HighestBitrate,
+        )
+        .unwrap()
+        .unwrap();
 
         // Assert
         assert_eq!(selection.video, None);
@@ -403,9 +505,13 @@ mod tests {
         let catalog = catalog(vec![video_track(), audio_track("mp4a.40.2")]);
 
         // Act
-        let selection = select_tracks(&catalog, VideoChoice::Named("video"), Some("audio"))
-            .unwrap()
-            .unwrap();
+        let selection = select_tracks(
+            &catalog,
+            VideoChoice::Named("video"),
+            AudioChoice::Named("audio"),
+        )
+        .unwrap()
+        .unwrap();
 
         // Assert
         assert_eq!(selection.audio, None);
@@ -423,19 +529,27 @@ mod tests {
         let catalog = catalog(vec![video_track(), audio_track("opus"), alaw, mp3]);
 
         // Act
-        let opus = select_tracks(&catalog, VideoChoice::Named("video"), Some("audio"))
-            .unwrap()
-            .unwrap();
-        let pcma = select_tracks(
+        let opus = select_tracks(
             &catalog,
             VideoChoice::Named("video"),
-            Some("audio/profile_1"),
+            AudioChoice::Named("audio"),
         )
         .unwrap()
         .unwrap();
-        let mp3 = select_tracks(&catalog, VideoChoice::Named("video"), Some("audio_mp3"))
-            .unwrap()
-            .unwrap();
+        let pcma = select_tracks(
+            &catalog,
+            VideoChoice::Named("video"),
+            AudioChoice::Named("audio/profile_1"),
+        )
+        .unwrap()
+        .unwrap();
+        let mp3 = select_tracks(
+            &catalog,
+            VideoChoice::Named("video"),
+            AudioChoice::Named("audio_mp3"),
+        )
+        .unwrap()
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -472,10 +586,19 @@ mod tests {
         let catalog = catalog(vec![av1, hevc]);
 
         // Act
-        let selection = select_tracks(&catalog, VideoChoice::Named("video"), Some("audio"))
-            .unwrap()
-            .unwrap();
-        let error = select_tracks(&catalog, VideoChoice::Named("hevc"), Some("audio")).unwrap_err();
+        let selection = select_tracks(
+            &catalog,
+            VideoChoice::Named("video"),
+            AudioChoice::Named("audio"),
+        )
+        .unwrap()
+        .unwrap();
+        let error = select_tracks(
+            &catalog,
+            VideoChoice::Named("hevc"),
+            AudioChoice::Named("audio"),
+        )
+        .unwrap_err();
 
         // Assert
         assert_eq!(selection.video.unwrap().codec, VideoCodec::Av1);
@@ -494,7 +617,12 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            select_tracks(&catalog, VideoChoice::Named("video"), Some("audio")).unwrap(),
+            select_tracks(
+                &catalog,
+                VideoChoice::Named("video"),
+                AudioChoice::Named("audio")
+            )
+            .unwrap(),
             None
         );
     }

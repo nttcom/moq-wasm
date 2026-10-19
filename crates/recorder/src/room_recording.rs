@@ -13,8 +13,7 @@ use tokio::{sync::watch, task::JoinSet, time::Instant};
 use crate::{
     composite::MemberFiles,
     manifest::{MANIFEST_NAME, manifest_json},
-    recorder::{BroadcastOptions, UploadTarget, default_output_path, record_broadcast},
-    recording::RecordedFile,
+    recorder::{BroadcastOptions, Content, UploadTarget, default_output_path, record_broadcast},
     relay::RelayConnection,
     room_state::{MemberStatus, RoomState},
     upload_task::UploadTask,
@@ -106,7 +105,7 @@ async fn follow_members(
         .await?;
     tracing::info!(prefix = namespace_prefix, "room recording started");
     let (member_stop_sender, member_stop) = watch::channel(false);
-    let mut members: JoinSet<(String, Vec<RecordedFile>)> = JoinSet::new();
+    let mut members: JoinSet<MemberFiles> = JoinSet::new();
     let mut recorded_files = Vec::new();
     let mut recorded: HashSet<String> = HashSet::new();
     let mut auto_stop = AutoStop::new(Instant::now(), limits);
@@ -124,9 +123,9 @@ async fn follow_members(
                 break;
             }
             Some(finished) = members.join_next(), if !members.is_empty() => {
-                if let Ok((namespace, files)) = finished {
-                    recorded.remove(&namespace);
-                    recorded_files.push((namespace, files));
+                if let Ok(files) = finished {
+                    recorded.remove(&files.namespace);
+                    recorded_files.push(files);
                 }
                 auto_stop.members_changed(recorded.len(), Instant::now());
                 continue;
@@ -175,19 +174,23 @@ async fn follow_members(
 
 /// A participant who joined again is recorded more than once; their files
 /// make one participant.
-fn by_member(recorded: Vec<(String, Vec<RecordedFile>)>) -> Vec<MemberFiles> {
+fn by_member(recorded: Vec<MemberFiles>) -> Vec<MemberFiles> {
     let mut members: Vec<MemberFiles> = Vec::new();
-    for (namespace, files) in recorded {
+    for recording in recorded {
         match members
             .iter_mut()
-            .find(|member| member.namespace == namespace)
+            .find(|member| member.namespace == recording.namespace)
         {
-            Some(member) => member.files.extend(files),
-            None => members.push(MemberFiles { namespace, files }),
+            Some(member) => {
+                member.files.extend(recording.files);
+                member.screen_share.extend(recording.screen_share);
+            }
+            None => members.push(recording),
         }
     }
     for member in &mut members {
         member.files.sort_by_key(|file| file.capture_origin);
+        member.screen_share.sort_by_key(|file| file.capture_origin);
     }
     members.sort_by_key(|member| {
         member
@@ -248,6 +251,8 @@ pub(crate) fn stopping(status: &Mutex<RoomStatus>) {
     }
 }
 
+/// Records the camera and the audio, and apart from them the screen share,
+/// each from its own catalog subscription.
 fn record_member(
     session: Arc<Session>,
     namespace: String,
@@ -255,7 +260,7 @@ fn record_member(
     options: Arc<BroadcastOptions>,
     stop: watch::Receiver<bool>,
     status: Arc<Mutex<RoomStatus>>,
-) -> impl Future<Output = (String, Vec<RecordedFile>)> + use<> {
+) -> impl Future<Output = MemberFiles> + use<> {
     let now = SystemTime::now();
     let index = {
         let mut status = lock(&status);
@@ -271,17 +276,36 @@ fn record_member(
         status.members.len() - 1
     };
     let path = output_dir.join(default_output_path(&namespace, now));
+    let share_path = output_dir.join(default_output_path(
+        &format!("{namespace}/screenshare"),
+        now,
+    ));
+    let share_options = BroadcastOptions {
+        content: Content::ScreenShare,
+        ..BroadcastOptions::clone(&options)
+    };
     async move {
-        let result = record_broadcast(&session, &namespace, path, &options, stop).await;
+        let (camera, screen_share) = tokio::join!(
+            record_broadcast(&session, &namespace, path, &options, stop.clone()),
+            record_broadcast(&session, &namespace, share_path, &share_options, stop),
+        );
         let mut status = lock(&status);
         let member = &mut status.members[index];
         member.finished = true;
-        let files = result.unwrap_or_else(|error| {
+        let files = camera.unwrap_or_else(|error| {
             tracing::warn!(%namespace, error = format!("{error:#}"), "participant recording failed");
             member.error = Some(format!("{error:#}"));
             Vec::new()
         });
-        (namespace, files)
+        let screen_share = screen_share.unwrap_or_else(|error| {
+            tracing::warn!(%namespace, error = format!("{error:#}"), "screen share recording failed");
+            Vec::new()
+        });
+        MemberFiles {
+            namespace,
+            files,
+            screen_share,
+        }
     }
 }
 
@@ -296,6 +320,7 @@ mod tests {
     use mediapack::Timestamp;
 
     use super::*;
+    use crate::recording::RecordedFile;
 
     const ORIGIN: Timestamp = Timestamp::from_micros(1_700_000_000_000_000);
 
@@ -307,49 +332,41 @@ mod tests {
         }
     }
 
+    fn member(namespace: &str, files: &[(&str, u64)], screen_share: &[(&str, u64)]) -> MemberFiles {
+        let recorded_files = |files: &[(&str, u64)]| {
+            files
+                .iter()
+                .map(|(path, origin_ms)| recorded(std::path::Path::new(path), *origin_ms))
+                .collect()
+        };
+        MemberFiles {
+            namespace: namespace.to_string(),
+            files: recorded_files(files),
+            screen_share: recorded_files(screen_share),
+        }
+    }
+
     #[test]
     fn groups_a_rejoined_participant_and_orders_by_first_recording() {
-        // Arrange: b recorded first; a left and joined again
+        // Arrange: b recorded first; a left and joined again, sharing the screen both times
         let recorded_files = vec![
-            (
-                "a".to_string(),
-                vec![recorded(std::path::Path::new("a-2.mp4"), 5_000)],
-            ),
-            (
-                "b".to_string(),
-                vec![recorded(std::path::Path::new("b.mp4"), 0)],
-            ),
-            (
-                "a".to_string(),
-                vec![recorded(std::path::Path::new("a-1.mp4"), 1_000)],
-            ),
+            member("a", &[("a-2.mp4", 5_000)], &[("a-share-2.mp4", 6_000)]),
+            member("b", &[("b.mp4", 0)], &[]),
+            member("a", &[("a-1.mp4", 1_000)], &[("a-share-1.mp4", 2_000)]),
         ];
 
         // Act
         let members = by_member(recorded_files);
 
         // Assert
-        let order: Vec<(&str, Vec<&std::path::Path>)> = members
-            .iter()
-            .map(|member| {
-                let paths = member
-                    .files
-                    .iter()
-                    .map(|file| file.path.as_path())
-                    .collect();
-                (member.namespace.as_str(), paths)
-            })
-            .collect();
         assert_eq!(
-            order,
+            members,
             [
-                ("b", vec![std::path::Path::new("b.mp4")]),
-                (
+                member("b", &[("b.mp4", 0)], &[]),
+                member(
                     "a",
-                    vec![
-                        std::path::Path::new("a-1.mp4"),
-                        std::path::Path::new("a-2.mp4")
-                    ]
+                    &[("a-1.mp4", 1_000), ("a-2.mp4", 5_000)],
+                    &[("a-share-1.mp4", 2_000), ("a-share-2.mp4", 6_000)]
                 ),
             ]
         );

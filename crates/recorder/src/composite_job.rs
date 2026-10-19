@@ -1,6 +1,7 @@
 use std::path::{Path as LocalPath, PathBuf};
 
 use anyhow::{Context, Result};
+use mediapack::Timestamp;
 use object_store::{ObjectStoreExt, buffered::BufReader, path::Path};
 use tokio::io::AsyncWriteExt;
 
@@ -51,23 +52,10 @@ async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Re
         .with_context(|| format!("cannot create {}", work_dir.display()))?;
     let mut members = Vec::new();
     for member in parse_manifest(&manifest)? {
-        let mut files = Vec::new();
-        for (key, capture_origin) in member.files {
-            let path = work_dir.join(key.as_ref().replace('/', "_"));
-            match download(store, &key, &path).await {
-                Ok(()) => files.push(RecordedFile {
-                    path,
-                    key: Some(key),
-                    capture_origin: Some(capture_origin),
-                }),
-                Err(error) => {
-                    tracing::warn!(%key, error = format!("{error:#}"), "leaving out a file that cannot be read");
-                }
-            }
-        }
         members.push(MemberFiles {
             namespace: member.namespace,
-            files,
+            files: download_all(store, member.files, work_dir).await,
+            screen_share: download_all(store, member.screen_share, work_dir).await,
         });
     }
     let output = work_dir.join(COMPOSITE_FILE_NAME);
@@ -84,6 +72,29 @@ async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Re
     );
     tracing::info!(id, "room composited");
     Ok(())
+}
+
+/// Leaves out a file that cannot be downloaded.
+async fn download_all(
+    store: &RecordingStore,
+    listed: Vec<(Path, Timestamp)>,
+    work_dir: &LocalPath,
+) -> Vec<RecordedFile> {
+    let mut files = Vec::new();
+    for (key, capture_origin) in listed {
+        let path = work_dir.join(key.as_ref().replace('/', "_"));
+        match download(store, &key, &path).await {
+            Ok(()) => files.push(RecordedFile {
+                path,
+                key: Some(key),
+                capture_origin: Some(capture_origin),
+            }),
+            Err(error) => {
+                tracing::warn!(%key, error = format!("{error:#}"), "leaving out a file that cannot be read");
+            }
+        }
+    }
+    files
 }
 
 async fn download(store: &RecordingStore, key: &Path, path: &PathBuf) -> Result<()> {
