@@ -885,6 +885,27 @@ wheels = [
 ]
 
 [[package]]
+name = "moq-bot-rooms"
+version = "0.1.0"
+source = { editable = "../moq-bot-rooms" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "loguru" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11" },
+    { name = "loguru", specifier = ">=0.7" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
 name = "moq-camera-detection"
 version = "0.1.0"
 source = { virtual = "." }
@@ -892,6 +913,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "av", version = "19.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "moq-bot-rooms" },
     { name = "pipecat-ai", extra = ["moq"] },
 ]
 
@@ -905,6 +927,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "av", specifier = ">=14" },
+    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
     { name = "pipecat-ai", extras = ["moq"], specifier = ">=1.12" },
 ]
 

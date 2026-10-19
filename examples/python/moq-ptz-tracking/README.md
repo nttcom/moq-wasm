@@ -115,7 +115,9 @@ Cloud relay-1 にはクラウドの bot がつながっているため、手元�
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。認証は
-   [moq-camera-detection](../moq-camera-detection/README.md#d3-flash) と同じです。
+   [moq-camera-detection](../moq-camera-detection/README.md#d3-flash) と同じです。bot は `http://127.0.0.1:8099` で待ち受け、
+   ページが `onvif` ルームに参加している間だけ relay につなぎます。カメラが 1 台なので、ルームは `onvif` だけです。
+   オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
 
 4. ページを開く
 

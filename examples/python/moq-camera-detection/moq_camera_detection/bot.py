@@ -1,10 +1,12 @@
 import argparse
 import asyncio
 import time
+from functools import partial
 
 import aiohttp
 import moq
 from loguru import logger
+from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
@@ -12,14 +14,16 @@ from pipecat.workers.runner import WorkerRunner
 from moq_camera_detection.d3_flash_status import D3FlashStatus
 from moq_camera_detection.detector import CameraDetector, CameraPicture
 from moq_camera_detection.event_timeline import EventTimeline
-from moq_camera_detection.identity_token import gcloud_identity_token, metadata_identity_token
+from moq_camera_detection.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_camera_detection.prompt import Prompt, parse_prompt
 from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
 from moq_camera_detection.vision import D3FlashVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
-CAMERA_BROADCAST_PATH = "anon/moq-camera-detection/camera"
-DETECTOR_BROADCAST_PATH = "anon/moq-camera-detection/detector"
+DEFAULT_PORT = 8098
+# d3-flash answers one batch at a time, and one camera already sends it a picture every 0.1 s.
+DEFAULT_MAX_ROOMS = 1
+NAMESPACE_ROOT = "anon/moq-camera-detection"
 VIDEO_TRACK = "video"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
@@ -32,7 +36,10 @@ VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Answer the MoQ camera page's question about its camera")
+    parser = argparse.ArgumentParser(
+        description="Answer the MoQ camera page's question about its camera, one bot per camera room"
+    )
+    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",
@@ -51,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     auth.add_argument(
         "--metadata-auth",
         action="store_true",
-        help="send the GCE metadata server's identity token, for the bot VM",
+        help="send the metadata server's identity token, for a bot on Cloud Run or GCE",
     )
     return parser.parse_args()
 
@@ -97,10 +104,10 @@ async def forward_pictures(video: moq.TrackConsumer, latest_prompt: LatestPrompt
             object_id += 1
 
 
-async def forward_camera(client: moq.Client, worker: PipelineWorker):
+async def forward_camera(client: moq.Client, camera_path: str, worker: PipelineWorker):
     while True:
         try:
-            camera = await client.announced_broadcast(CAMERA_BROADCAST_PATH)
+            camera = await client.announced_broadcast(camera_path)
             latest_prompt = LatestPrompt()
             following = asyncio.create_task(latest_prompt.follow(await camera.subscribe_track(PROMPT_TRACK)))
             try:
@@ -112,7 +119,9 @@ async def forward_camera(client: moq.Client, worker: PipelineWorker):
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
-async def stay_connected(args: argparse.Namespace, publish_origin: moq.OriginProducer, worker: PipelineWorker):
+async def stay_connected(
+    args: argparse.Namespace, camera_path: str, publish_origin: moq.OriginProducer, worker: PipelineWorker
+):
     while True:
         try:
             async with moq.Client(
@@ -123,7 +132,7 @@ async def stay_connected(args: argparse.Namespace, publish_origin: moq.OriginPro
             ) as client:
                 logger.info(f"connected to {args.relay_url}")
                 async with asyncio.TaskGroup() as tasks:
-                    forwarding = tasks.create_task(forward_camera(client, worker))
+                    forwarding = tasks.create_task(forward_camera(client, camera_path, worker))
                     await client.session.closed()
                     forwarding.cancel()
             logger.warning("relay session closed")
@@ -132,14 +141,32 @@ async def stay_connected(args: argparse.Namespace, publish_origin: moq.OriginPro
         await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
 
-async def main():
-    args = parse_args()
+async def detect_in_room(
+    args: argparse.Namespace, session: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
+) -> None:
     publish_origin = moq.OriginProducer()
-    detector_broadcast = publish_origin.create_broadcast(DETECTOR_BROADCAST_PATH)
+    detector_broadcast = publish_origin.create_broadcast(f"{NAMESPACE_ROOT}/{room_id}/detector")
     timeline = EventTimeline(detector_broadcast, EVENT_TIMELINE_TRACK)
     status = D3FlashStatus(STATUS_TRACK)
     status.publish_on(detector_broadcast)
+    vision = D3FlashVisionClient(session, args.d3_flash_url, status, identity_token)
+    worker = PipelineWorker(
+        Pipeline([CameraDetector(vision, timeline)]),
+        enable_rtvi=False,
+        idle_timeout_secs=None,
+    )
+    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    camera_path = f"{NAMESPACE_ROOT}/{room_id}/camera"
+    async with asyncio.TaskGroup() as tasks:
+        connecting = tasks.create_task(stay_connected(args, camera_path, publish_origin, worker))
+        await runner.run()
+        connecting.cancel()
 
+
+async def main():
+    args = parse_args()
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as session:
         identity_token = (
             gcloud_identity_token()
@@ -148,18 +175,7 @@ async def main():
             if args.metadata_auth
             else None
         )
-        vision = D3FlashVisionClient(session, args.d3_flash_url, status, identity_token)
-        worker = PipelineWorker(
-            Pipeline([CameraDetector(vision, timeline)]),
-            enable_rtvi=False,
-            idle_timeout_secs=None,
-        )
-        runner = WorkerRunner()
-        await runner.add_workers(worker)
-        async with asyncio.TaskGroup() as tasks:
-            connecting = tasks.create_task(stay_connected(args, publish_origin, worker))
-            await runner.run()
-            connecting.cancel()
+        await serve_rooms(args, partial(detect_in_room, args, session, identity_token))
 
 
 if __name__ == "__main__":
