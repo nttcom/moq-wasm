@@ -278,6 +278,7 @@ mod tests {
             namespace: namespace.to_string(),
             files: vec![RecordedFile {
                 path: path.clone(),
+                key: None,
                 capture_origin: Some(origin),
             }],
         };
@@ -311,6 +312,7 @@ mod tests {
             namespace: "anon/room/a".to_string(),
             files: vec![RecordedFile {
                 path: PathBuf::from("never-written.mp4"),
+                key: None,
                 capture_origin: None,
             }],
         }];

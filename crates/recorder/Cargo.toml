@@ -14,7 +14,7 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 mediapack = { path = "../mediapack", features = ["moqt"] }
 moqt = { path = "../moqt" }
 msf = { path = "../msf" }
-object_store = { version = "0.14.2", default-features = false, features = ["gcp"] }
+object_store = { version = "0.14.2", default-features = false, features = ["fs", "gcp"] }
 serde_json = "1"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1"

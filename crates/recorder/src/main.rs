@@ -2,6 +2,7 @@ mod api_server;
 mod catalog_reader;
 mod composite;
 mod file_writer;
+mod manifest;
 mod pipeline;
 mod recorder;
 mod recording;

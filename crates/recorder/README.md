@@ -127,8 +127,10 @@ the [transcode README](../transcode/README.md#compositing).
   keyframe on in the next file.
 - With `--upload`, each closed file becomes the object
   `<prefix>/<namespace>/<track>/<start Unix ms>-<index>.mp4` (no `<track>` for
-  the combined file), with the capture origin in its `capture-origin-us`
-  metadata. The credentials come from the environment, as for `gcloud`:
+  the combined file); `file:///<dir>` writes the same keys into a directory.
+  The capture origin is only logged (`recorded file closed`); a room
+  recording lists it per file in its manifest. The credentials come from the
+  environment, as for `gcloud`:
   `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_SERVICE_ACCOUNT`, the ADC file
   that `gcloud auth application-default login` writes, or the metadata server
   of a GCE VM or Cloud Run. A file whose upload fails stays on disk. A file

@@ -221,10 +221,12 @@ stays the write path, and the store only ever sees closed files:
 - An object is named `<url path>/<namespace>/<track>/<recording start Unix
   ms>-<segment index>.mp4`, without `<track>` for the combined file. A `/` in
   the namespace or the track name nests the key.
-- Every object carries the recording's capture origin as the metadata
-  `capture-origin-us`: the Unix time in microseconds that presentation time
-  0 of the file stands for. Files of different recordings can be placed on
-  one wall clock from it.
+- Objects carry no attributes: a `file://` store (`LocalFileSystem`) refuses
+  a put with any, so a store in a local directory and GCS behave the same.
+  The capture origin of a file, the Unix time in microseconds that
+  presentation time 0 stands for, goes into a room recording's
+  `manifest.json` instead (see "Recording API"); a single recording only
+  logs it.
 - At the end the recorder waits for the queued uploads before it exits.
 
 Writing straight into an in-progress multipart upload was not chosen: the
@@ -255,7 +257,10 @@ segment, and a network stall would hold up the recording.
 - `POST /recordings/{id}/stop` sends the stop signal every
   `record_broadcast` watches. The state goes from `stopping` to `finished`
   once each file is closed and, with `--upload`, uploaded. The objects go
-  under `<url path>/<recording id>/<namespace>/`.
+  under `<url path>/<recording id>/<namespace>/`, and
+  `<url path>/<recording id>/manifest.json` lists them by participant with
+  each file's capture origin (`capture_origin_us`), leaving out a file whose
+  upload failed.
 - A recording also stops by itself, the same way, `--max-recording-seconds`
   (2 h) after it started, or once no participant has been recorded for
   `--empty-room-seconds` (5 min), counted from the start too. A participant
@@ -300,8 +305,7 @@ frames.
   it. The room's files are reserved against `--composite-max-gb` (20 GB) when
   the recording ends; a room beyond the budget is `skipped`. Afterwards,
   composited or not, `composite.mp4` goes to `<upload prefix>/<recording
-  id>/composite.mp4` with the earliest origin as `capture-origin-us`, and the
-  uploaded files are deleted. A file whose upload failed stays on disk as
+  id>/composite.mp4`, and the uploaded files are deleted. A file whose upload failed stays on disk as
   before.
 - SIGINT or SIGTERM gives up a composite that waits or runs: dropping the
   `Compositor` stops its pipeline.
