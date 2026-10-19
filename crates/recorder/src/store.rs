@@ -5,7 +5,10 @@ use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde_json::Value;
 use url::Url;
 
-use crate::room_state::RoomRecord;
+use crate::{
+    manifest::MANIFEST_NAME,
+    room_state::{CompositeState, RoomRecord},
+};
 
 /// The store a recording service keeps its recordings in, and the objects
 /// through which the API and the jobs share their state. Every object is
@@ -56,6 +59,16 @@ impl RecordingStore {
             .map(|value| RoomRecord::from_json(&value))
             .transpose()
             .with_context(|| format!("malformed state of recording {id}"))
+    }
+
+    pub(crate) async fn write_composite(&self, id: &str, state: &CompositeState) -> Result<()> {
+        self.put_json(&self.state_key(id, "composite.json"), &state.to_json())
+            .await
+    }
+
+    pub(crate) async fn read_manifest(&self, id: &str) -> Result<Option<Value>> {
+        self.get_json(&self.recording_prefix(id).join(MANIFEST_NAME))
+            .await
     }
 
     pub(crate) async fn stop_requested(&self, id: &str) -> Result<bool> {

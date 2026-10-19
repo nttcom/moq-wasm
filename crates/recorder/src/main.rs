@@ -1,6 +1,7 @@
 mod api_server;
 mod catalog_reader;
 mod composite;
+mod composite_job;
 mod file_writer;
 mod manifest;
 mod pipeline;
@@ -177,6 +178,24 @@ pub(crate) struct RecordArgs {
     pub(crate) room: RoomArgs,
 }
 
+/// Composite one room recording into one MP4, then exit
+#[derive(Parser, Debug)]
+#[command(name = "recorder composite", bin_name = "recorder composite", version)]
+pub(crate) struct CompositeArgs {
+    /// Id of the recording; the store holds its manifest
+    #[arg(long)]
+    pub(crate) id: String,
+
+    /// Object store holding the recordings and their state, e.g.
+    /// gs://bucket/prefix or file:///directory
+    #[arg(long, env = "RECORDER_STORE_URL", value_name = "URL")]
+    pub(crate) store: url::Url,
+
+    /// Directory the recording's files are downloaded to while compositing
+    #[arg(long, default_value = "composites")]
+    pub(crate) work_dir: PathBuf,
+}
+
 /// How a room is recorded: what `recorder serve` passes on to every
 /// recording.
 #[derive(clap::Args, Debug, Clone)]
@@ -236,6 +255,7 @@ async fn main() -> Result<()> {
     match mode.as_ref().and_then(|mode| mode.to_str()) {
         Some("serve") => serve::serve(ServeArgs::parse_from(mode_args())).await,
         Some("record") => record_job::run(RecordArgs::parse_from(mode_args())).await,
+        Some("composite") => composite_job::run(CompositeArgs::parse_from(mode_args())).await,
         _ => recorder::run(Args::parse()).await,
     }
 }

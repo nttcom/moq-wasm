@@ -1,5 +1,8 @@
 use std::path::PathBuf;
 
+use anyhow::{Context, Result};
+use mediapack::Timestamp;
+use object_store::path::Path;
 use serde_json::{Value, json};
 
 use crate::composite::MemberFiles;
@@ -33,11 +36,46 @@ pub(crate) fn manifest_json(members: &[MemberFiles], failed_uploads: &[PathBuf])
     json!({ "members": members })
 }
 
+/// One participant's files as the manifest lists them: object key and
+/// capture origin.
+#[derive(Debug, PartialEq)]
+pub(crate) struct ManifestMember {
+    pub(crate) namespace: String,
+    pub(crate) files: Vec<(Path, Timestamp)>,
+}
+
+pub(crate) fn parse_manifest(manifest: &Value) -> Result<Vec<ManifestMember>> {
+    let members = manifest["members"]
+        .as_array()
+        .context("manifest without members")?;
+    members
+        .iter()
+        .map(|member| {
+            let files = member["files"]
+                .as_array()
+                .context("member without files")?
+                .iter()
+                .map(|file| {
+                    let key = file["key"].as_str().context("file without key")?;
+                    let origin = file["capture_origin_us"]
+                        .as_u64()
+                        .context("file without capture_origin_us")?;
+                    Ok((Path::from(key), Timestamp::from_micros(origin)))
+                })
+                .collect::<Result<_>>()?;
+            Ok(ManifestMember {
+                namespace: member["namespace"]
+                    .as_str()
+                    .context("member without namespace")?
+                    .to_string(),
+                files,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use mediapack::Timestamp;
-    use object_store::path::Path;
-
     use super::*;
     use crate::recording::RecordedFile;
 
@@ -76,6 +114,16 @@ mod tests {
                 "namespace": "anon/room/a",
                 "files": [{ "key": "1/anon/room/a/10-1.mp4", "capture_origin_us": 1_000 }],
             }] })
+        );
+        assert_eq!(
+            parse_manifest(&manifest).unwrap(),
+            [ManifestMember {
+                namespace: "anon/room/a".to_string(),
+                files: vec![(
+                    Path::from("1/anon/room/a/10-1.mp4"),
+                    Timestamp::from_micros(1_000)
+                )],
+            }]
         );
     }
 }
