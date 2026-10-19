@@ -900,6 +900,51 @@ mod tests {
         assert_eq!(from_b.track_name, "b");
     }
 
+    async fn serve_subscribe_with_alias(client: &Session) -> (u64, Subscription) {
+        let SessionEvent::Subscribe(handler) = client.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE");
+        };
+        let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+        (track_alias, handler.into_subscription(track_alias))
+    }
+
+    #[tokio::test]
+    async fn tracks_served_for_the_new_server_get_aliases_apart_from_those_of_the_first() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-aliases-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-aliases-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let mut subscriber_a = server_a.subscriber();
+        let (_, (alias_a, _)) = tokio::join!(
+            subscriber_a.subscribe("ns".into(), "a".into(), SubscribeOption::default()),
+            serve_subscribe_with_alias(&client)
+        );
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Act
+        let mut subscriber_b = server_b.subscriber();
+        let (subscribed_b, (alias_b, served_b)) = tokio::join!(
+            subscriber_b.subscribe("ns".into(), "b".into(), SubscribeOption::default()),
+            serve_subscribe_with_alias(&client)
+        );
+        let sender_b = client.publisher().create_stream(&served_b);
+        let mut group_1 = open_subgroup(&sender_b, 1, SubgroupId::None).await;
+        send_payload(&mut group_1, b"b1-0").await;
+        let mut reader_b = subscribed_track_reader(&server_b, &subscribed_b.unwrap()).await;
+        let on_b = next_payload(&mut reader_b).await;
+
+        // Assert: both connections number their SUBSCRIBE_OK aliases from 0
+        assert_ne!(alias_a, alias_b);
+        assert_eq!(served_b.track_alias(), alias_b);
+        assert_eq!(on_b, payload(1, b"b1-0"));
+    }
+
     async fn accept_namespace(server: &Session) {
         let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
             panic!("expected PUBLISH_NAMESPACE");

@@ -13,7 +13,7 @@ use crate::{
             handler::response_guard::ResponseGuard,
         },
         domains::{
-            connection::{Connection, logical_id},
+            connection::{Connection, logical_id, wire_part},
             session_context::SessionContext,
         },
     },
@@ -70,6 +70,7 @@ impl SubscribeHandler {
         }
     }
 
+    /// Returns the track alias to pass to `into_subscription`.
     pub async fn ok(
         &self,
         expires: u64,
@@ -81,6 +82,7 @@ impl SubscribeHandler {
         Ok(track_alias)
     }
 
+    /// `track_alias` comes from this handler's `allocate_track_alias`.
     pub async fn ok_with_track_alias(
         &self,
         track_alias: u64,
@@ -90,7 +92,7 @@ impl SubscribeHandler {
         self.guard.mark_responded();
         let subscribe_ok = SubscribeOk {
             request_id: self.guard.request_id(),
-            track_alias,
+            track_alias: wire_part(track_alias),
             expires,
             group_order: self.group_order.delivered(),
             content_exists,
@@ -108,8 +110,11 @@ impl SubscribeHandler {
         Ok(())
     }
 
+    /// The track alias to pass to `ok_with_track_alias` and `into_subscription`.
+    /// No track served on another connection of the session has it.
     pub fn allocate_track_alias(&self) -> u64 {
-        self.guard.connection().allocate_track_alias()
+        let connection = self.guard.connection();
+        logical_id(connection.generation, connection.allocate_track_alias())
     }
 
     pub async fn error(
@@ -124,11 +129,12 @@ impl SubscribeHandler {
         self.request_id
     }
 
-    /// Builds the subscription this handler represents. Receiving a SUBSCRIBE
-    /// makes it subscriber-initiated.
+    /// Builds the subscription this handler represents. `track_alias` is the
+    /// alias `ok` returned or the one passed to `ok_with_track_alias`.
+    /// Receiving a SUBSCRIBE makes it subscriber-initiated.
     pub fn into_subscription(&self, track_alias: u64) -> Subscription {
         Subscription::SubscriberInitiated(SubscriberInitiatedSubscription::from_subscribe_handler(
-            logical_id(self.guard.connection().generation, track_alias),
+            track_alias,
             self,
         ))
     }

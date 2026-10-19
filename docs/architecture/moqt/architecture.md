@@ -367,7 +367,9 @@ transport connection:
 - `control: ControlChannel` — the version adapter above; for draft-14 it
   holds the request id counter and `inflight_requests`.
 - `track_alias: AtomicU64` — the track aliases this side assigns, shared by
-  `SubscribeHandler::allocate_track_alias` and `Publisher::publish`.
+  `SubscribeHandler::allocate_track_alias` and `Publisher::publish`. Both
+  hand the application the logical alias (below); SUBSCRIBE_OK and PUBLISH
+  carry the wire part.
 - whether it is the server side and whether a GOAWAY arrived.
 - `generation` (0 for the first connection) and the ids of requests carried
   over from an earlier connection. A logical id, the id the application
