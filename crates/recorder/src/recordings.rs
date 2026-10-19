@@ -1,35 +1,36 @@
 use std::{
+    hash::{BuildHasher, RandomState},
     path::PathBuf,
-    sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
-use object_store::{ObjectStore, path::Path};
+use anyhow::Result;
 use serde_json::{Value, json};
+use url::Url;
 
 use crate::{
-    composite::CompositeQueue,
-    recorder::BroadcastOptions,
+    LauncherArgs, RoomArgs,
+    launcher::{Job, Launcher},
     recording::Layout,
-    room_recording::{RecordingLimits, RoomConfig, RoomRecording},
-    room_state::{CompositeState, MemberStatus, RoomState},
+    room_state::{CompositeState, MemberStatus, RoomRecord, RoomState},
+    state_sync_task::{HEARTBEAT_INTERVAL, now_ms},
+    store::RecordingStore,
 };
 
-/// What every recording the server starts shares.
+/// A recording job that has not written its state for this long is treated
+/// as dead.
+const STALE_AFTER: Duration = HEARTBEAT_INTERVAL.saturating_mul(3);
+
+/// What the server checks requests against and passes on to the jobs.
 pub(crate) struct ServeConfig {
-    pub(crate) relay: String,
-    pub(crate) verify_certificate: bool,
     /// The first element every recorded namespace prefix must have.
     pub(crate) namespace_root: String,
     pub(crate) max_recordings: usize,
+    pub(crate) composite: bool,
+    pub(crate) store_url: Url,
     pub(crate) output_dir: PathBuf,
-    pub(crate) upload: Option<(Arc<dyn ObjectStore>, Path)>,
-    pub(crate) max_video_height: u32,
-    pub(crate) segment_length: Option<Duration>,
-    pub(crate) limits: RecordingLimits,
-    /// `None` refuses compositing. With an upload store, the most bytes of
-    /// participants' files kept on disk for compositing at once.
-    pub(crate) composite_budget_bytes: Option<u64>,
+    pub(crate) room: RoomArgs,
+    pub(crate) launcher: LauncherArgs,
 }
 
 #[derive(Debug)]
@@ -39,33 +40,35 @@ pub(crate) enum StartRejection {
     AlreadyRecording,
     TooManyRecordings,
     CompositeDisabled,
+    /// The store or the launcher failed.
+    Internal(anyhow::Error),
 }
 
-/// The recordings the server started, finished ones included, so that
-/// `GET /recordings/{id}` keeps answering after a recording ended.
+impl From<anyhow::Error> for StartRejection {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Internal(error)
+    }
+}
+
+/// The recording API over the store: it keeps no state of its own, so any
+/// number of instances answer alike and none has to outlive a recording. A
+/// recording runs as a `recorder record` job, which writes its state back.
 pub(crate) struct Recordings {
     config: ServeConfig,
-    composite: Option<CompositeQueue>,
-    entries: Mutex<Vec<Entry>>,
-}
-
-struct Entry {
-    id: String,
-    namespace_prefix: String,
-    layout: Layout,
-    recording: RoomRecording,
+    store: RecordingStore,
+    launcher: Launcher,
 }
 
 impl Recordings {
-    pub(crate) fn new(config: ServeConfig) -> Self {
+    pub(crate) fn new(config: ServeConfig, store: RecordingStore, launcher: Launcher) -> Self {
         Self {
-            composite: config.composite_budget_bytes.map(CompositeQueue::new),
             config,
-            entries: Mutex::new(Vec::new()),
+            store,
+            launcher,
         }
     }
 
-    pub(crate) fn start(
+    pub(crate) async fn start(
         &self,
         namespace_prefix: &str,
         layout: Layout,
@@ -74,126 +77,175 @@ impl Recordings {
         if !within_root(namespace_prefix, &self.config.namespace_root) {
             return Err(StartRejection::OutsideRoot);
         }
-        if composite && self.composite.is_none() {
+        if composite && !self.config.composite {
             return Err(StartRejection::CompositeDisabled);
         }
-        let mut entries = self.lock();
-        let active: Vec<&Entry> = entries.iter().filter(|entry| entry.is_active()).collect();
-        if active
-            .iter()
-            .any(|entry| entry.namespace_prefix == namespace_prefix)
-        {
+        let id = recording_id();
+        if !self.lock_room(namespace_prefix, &id).await? {
             return Err(StartRejection::AlreadyRecording);
         }
-        if active.len() >= self.config.max_recordings {
+        // Counted after taking the room, and not atomically: concurrent
+        // requests can all pass and exceed the limit by their number.
+        if self.other_active_rooms(&id).await? >= self.config.max_recordings {
+            self.store.unlock_room(namespace_prefix, &id).await?;
             return Err(StartRejection::TooManyRecordings);
         }
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let id = format!("{now_ms}-{}", entries.len() + 1);
-        let recording = RoomRecording::run(RoomConfig {
-            relay: self.config.relay.clone(),
-            verify_certificate: self.config.verify_certificate,
-            namespace_prefix: namespace_prefix.to_string(),
-            output_dir: self.config.output_dir.join(&id),
-            upload: self.config.upload.as_ref().map(|(store, prefix)| {
-                let mut prefix = prefix.clone();
-                prefix.extend([id.as_str()]);
-                (Arc::clone(store), prefix)
-            }),
-            options: BroadcastOptions {
-                video_track: None,
-                max_video_height: self.config.max_video_height,
-                audio_track: None,
-                layout,
-                from_cache: false,
-                segment_length: self.config.segment_length,
-                upload: None,
-            },
-            limits: self.config.limits,
-            composite: self.composite.clone().filter(|_| composite),
-        });
-        tracing::info!(%id, namespace_prefix, ?layout, composite, "recording requested");
-        entries.push(Entry {
-            id,
+        let record = RoomRecord {
+            id: id.clone(),
             namespace_prefix: namespace_prefix.to_string(),
             layout,
-            recording,
-        });
-        Ok(entries.last().map(Entry::to_json).unwrap_or_default())
-    }
-
-    pub(crate) fn stop(&self, id: &str) -> Option<Value> {
-        let entries = self.lock();
-        let entry = entries.iter().find(|entry| entry.id == id)?;
-        entry.recording.stop();
-        Some(entry.to_json())
-    }
-
-    pub(crate) fn get(&self, id: &str) -> Option<Value> {
-        self.lock()
-            .iter()
-            .find(|entry| entry.id == id)
-            .map(Entry::to_json)
-    }
-
-    pub(crate) fn list(&self, namespace_prefix: Option<&str>) -> Value {
-        let recordings: Vec<Value> = self
-            .lock()
-            .iter()
-            .filter(|entry| namespace_prefix.is_none_or(|prefix| entry.namespace_prefix == prefix))
-            .map(Entry::to_json)
-            .collect();
-        json!({ "recordings": recordings })
-    }
-
-    /// Stops every recording and waits until each has closed and uploaded
-    /// its files. Composites not made yet are given up.
-    pub(crate) async fn stop_all(&self) {
-        let mut recordings: Vec<RoomRecording> =
-            self.lock().drain(..).map(|entry| entry.recording).collect();
-        for recording in &recordings {
-            recording.stop();
-            recording.cancel_composite();
+            composite,
+            state: RoomState::Starting,
+            members: Vec::new(),
+            updated_at_ms: now_ms(),
+        };
+        self.store.write_state(&record).await?;
+        self.store.add_to_room(namespace_prefix, &id).await?;
+        if let Err(error) = self
+            .launcher
+            .launch(Job::Record, self.record_args(&id))
+            .await
+        {
+            tracing::error!(%id, error = format!("{error:#}"), "cannot launch the recording job");
+            let failed = RoomRecord {
+                state: RoomState::Failed(format!("cannot launch the recording job: {error:#}")),
+                ..record
+            };
+            self.store.write_state(&failed).await?;
+            self.store.unlock_room(namespace_prefix, &id).await?;
+            return Err(StartRejection::Internal(error));
         }
-        for recording in &mut recordings {
-            recording.finished().await;
+        tracing::info!(%id, namespace_prefix, ?layout, composite, "recording requested");
+        Ok(self.view(record).await?)
+    }
+
+    /// `None` for an unknown recording; a finished one is answered as is.
+    pub(crate) async fn stop(&self, id: &str) -> Result<Option<Value>> {
+        let Some(record) = self.store.read_state(id).await? else {
+            return Ok(None);
+        };
+        if record.state.is_active() {
+            self.store.request_stop(id).await?;
+        }
+        Ok(Some(self.view(record).await?))
+    }
+
+    pub(crate) async fn get(&self, id: &str) -> Result<Option<Value>> {
+        match self.store.read_state(id).await? {
+            Some(record) => Ok(Some(self.view(record).await?)),
+            None => Ok(None),
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Entry>> {
-        self.entries
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    pub(crate) async fn list(&self, namespace_prefix: Option<&str>) -> Result<Value> {
+        let ids = match namespace_prefix {
+            Some(prefix) => self.store.room_recording_ids(prefix).await?,
+            None => self.store.recording_ids().await?,
+        };
+        let mut recordings = Vec::new();
+        for id in ids {
+            if let Some(record) = self.store.read_state(&id).await? {
+                recordings.push(self.view(record).await?);
+            }
+        }
+        Ok(json!({ "recordings": recordings }))
+    }
+
+    /// Takes the room, first releasing a lock whose recording is no longer
+    /// active.
+    async fn lock_room(&self, namespace_prefix: &str, id: &str) -> Result<bool> {
+        if self.store.lock_room(namespace_prefix, id).await? {
+            return Ok(true);
+        }
+        let Some(holder) = self.store.room_lock(namespace_prefix).await? else {
+            return self.store.lock_room(namespace_prefix, id).await;
+        };
+        if self.holds_active_recording(&holder).await? {
+            return Ok(false);
+        }
+        self.store.lock_room(namespace_prefix, id).await
+    }
+
+    /// The number of rooms held by an active recording other than `id`.
+    /// Releases each lock left by a recording that ended or whose job died.
+    async fn other_active_rooms(&self, id: &str) -> Result<usize> {
+        let mut active = 0;
+        for holder in self.store.lock_holders().await? {
+            if holder != id && self.holds_active_recording(&holder).await? {
+                active += 1;
+            }
+        }
+        Ok(active)
+    }
+
+    async fn holds_active_recording(&self, holder: &str) -> Result<bool> {
+        let Some(record) = self.store.read_state(holder).await? else {
+            return Ok(false);
+        };
+        if effective_state(&record, now_ms()).is_active() {
+            return Ok(true);
+        }
+        tracing::info!(%holder, prefix = %record.namespace_prefix, "releasing the room of a recording that ended");
+        self.store
+            .unlock_room(&record.namespace_prefix, holder)
+            .await?;
+        Ok(false)
+    }
+
+    fn record_args(&self, id: &str) -> Vec<String> {
+        let mut args = vec![
+            "--id".to_string(),
+            id.to_string(),
+            "--store".to_string(),
+            self.config.store_url.to_string(),
+            "--output-dir".to_string(),
+            self.config.output_dir.display().to_string(),
+        ];
+        args.extend(self.config.room.to_args());
+        args.extend(self.config.launcher.to_args());
+        args
+    }
+
+    async fn view(&self, record: RoomRecord) -> Result<Value> {
+        let state = effective_state(&record, now_ms());
+        let composite = if record.composite {
+            Some(match self.store.read_composite(&record.id).await? {
+                Some(composite) => composite,
+                None if matches!(state, RoomState::Failed(_)) => {
+                    CompositeState::Skipped("the recording failed".to_string())
+                }
+                None => CompositeState::Waiting,
+            })
+        } else {
+            None
+        };
+        let (state_name, error) = state.parts();
+        Ok(json!({
+            "id": record.id,
+            "namespace_prefix": record.namespace_prefix,
+            "layout": record.layout.name(),
+            "state": state_name,
+            "error": error,
+            "members": record.members.iter().map(MemberStatus::to_json).collect::<Vec<_>>(),
+            "composite": composite.as_ref().map(CompositeState::to_json),
+        }))
     }
 }
 
-impl Entry {
-    fn is_active(&self) -> bool {
-        self.recording.status().state.is_active()
+fn effective_state(record: &RoomRecord, now_ms: u64) -> RoomState {
+    let silent_ms = now_ms.saturating_sub(record.updated_at_ms);
+    if record.state.is_active() && silent_ms > STALE_AFTER.as_millis() as u64 {
+        RoomState::Failed("the recording job stopped".to_string())
+    } else {
+        record.state.clone()
     }
+}
 
-    fn to_json(&self) -> Value {
-        let status = self.recording.status();
-        let (state, error) = match &status.state {
-            RoomState::Starting => ("starting", None),
-            RoomState::Recording => ("recording", None),
-            RoomState::Stopping => ("stopping", None),
-            RoomState::Finished => ("finished", None),
-            RoomState::Failed(error) => ("failed", Some(error.as_str())),
-        };
-        json!({
-            "id": self.id,
-            "namespace_prefix": self.namespace_prefix,
-            "layout": self.layout.name(),
-            "state": state,
-            "error": error,
-            "members": status.members.iter().map(MemberStatus::to_json).collect::<Vec<_>>(),
-            "composite": status.composite.as_ref().map(CompositeState::to_json),
-        })
-    }
+/// `<Unix ms>-<6 hex digits>`: sorts by start time and does not collide
+/// between API instances.
+fn recording_id() -> String {
+    let random = RandomState::new().hash_one(now_ms()) & 0xff_ffff;
+    format!("{}-{random:06x}", now_ms())
 }
 
 /// `<root>/<room>[/...]` with no empty element.
@@ -205,6 +257,7 @@ fn within_root(namespace_prefix: &str, root: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::recordings;
 
     #[test]
     fn accepts_only_a_room_under_the_root() {
@@ -215,5 +268,82 @@ mod tests {
         assert!(!within_root("anon/", "anon"));
         assert!(!within_root("app/research", "anon"));
         assert!(!within_root("anon//research", "anon"));
+    }
+
+    #[tokio::test]
+    async fn starts_a_recording_once_per_room_and_stops_it_through_the_store() {
+        // Arrange
+        let recordings = recordings(2, true);
+
+        // Act
+        let started = recordings
+            .start("anon/research", Layout::Combined, true)
+            .await
+            .unwrap();
+        let again = recordings
+            .start("anon/research", Layout::Combined, false)
+            .await;
+        let id = started["id"].as_str().unwrap().to_string();
+        recordings.stop(&id).await.unwrap();
+        let listed = recordings.list(Some("anon/research")).await.unwrap();
+
+        // Assert
+        assert_eq!(started["state"], "starting");
+        assert_eq!(started["composite"]["state"], "waiting");
+        assert!(matches!(again, Err(StartRejection::AlreadyRecording)));
+        assert!(recordings.store.stop_requested(&id).await.unwrap());
+        assert_eq!(listed["recordings"][0]["id"], id.as_str());
+    }
+
+    #[tokio::test]
+    async fn takes_over_the_room_of_a_recording_whose_job_died() {
+        // Arrange: a recording that has not written its state for 100 s
+        let recordings = recordings(2, false);
+        let dead = RoomRecord {
+            id: "1700000000000-000001".to_string(),
+            namespace_prefix: "anon/research".to_string(),
+            layout: Layout::Combined,
+            composite: false,
+            state: RoomState::Recording,
+            members: Vec::new(),
+            updated_at_ms: now_ms() - 100_000,
+        };
+        recordings.store.write_state(&dead).await.unwrap();
+        recordings
+            .store
+            .lock_room("anon/research", &dead.id)
+            .await
+            .unwrap();
+
+        // Act
+        let dead_view = recordings.get(&dead.id).await.unwrap().unwrap();
+        let started = recordings
+            .start("anon/research", Layout::Combined, false)
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(dead_view["state"], "failed");
+        assert_eq!(dead_view["error"], "the recording job stopped");
+        assert_eq!(started["state"], "starting");
+    }
+
+    #[tokio::test]
+    async fn refuses_a_room_beyond_the_limit() {
+        // Arrange
+        let recordings = recordings(1, false);
+        recordings
+            .start("anon/first", Layout::Combined, false)
+            .await
+            .unwrap();
+
+        // Act
+        let second = recordings
+            .start("anon/second", Layout::Combined, false)
+            .await;
+
+        // Assert
+        assert!(matches!(second, Err(StartRejection::TooManyRecordings)));
+        assert_eq!(recordings.store.lock_holders().await.unwrap().len(), 1);
     }
 }

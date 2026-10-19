@@ -7,7 +7,13 @@ use mediapack::{
 };
 use moqt::TrackObject;
 
-use crate::pipeline::capture_timestamp;
+use crate::{
+    LauncherArgs, RoomArgs,
+    launcher::{Launcher, LauncherKind},
+    pipeline::capture_timestamp,
+    recordings::{Recordings, ServeConfig},
+    store::RecordingStore,
+};
 
 const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
 const CAPTURE_ORIGIN: Timestamp = Timestamp::from_micros(1_700_000_000_000_000);
@@ -153,4 +159,33 @@ pub(crate) fn write_fixture_fmp4(path: &std::path::Path) {
     )
     .unwrap();
     std::fs::write(path, output).unwrap();
+}
+
+/// A recording API over an in-memory store, whose jobs exit at once.
+pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
+    let store_url = url::Url::parse("memory:///").unwrap();
+    let config = ServeConfig {
+        namespace_root: "anon".to_string(),
+        max_recordings,
+        composite,
+        store_url: store_url.clone(),
+        output_dir: std::env::temp_dir(),
+        room: RoomArgs {
+            relay: "moqt://127.0.0.1:1".to_string(),
+            segment_seconds: None,
+            max_recording_seconds: 7200,
+            empty_room_seconds: 300,
+            max_video_height: 480,
+            insecure_skip_tls_verify: false,
+        },
+        launcher: LauncherArgs {
+            launcher: LauncherKind::Local,
+            record_job: None,
+            composite_job: None,
+        },
+    };
+    let launcher = Launcher::Local {
+        program: std::path::PathBuf::from("/usr/bin/true"),
+    };
+    Recordings::new(config, RecordingStore::open(&store_url).unwrap(), launcher)
 }

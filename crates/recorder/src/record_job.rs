@@ -8,19 +8,22 @@ use tokio::sync::watch;
 
 use crate::{
     RecordArgs,
+    launcher::{Job, Launcher},
     recorder::BroadcastOptions,
     room_recording::{RoomConfig, RoomStatus, lock, record},
-    room_state::{RoomRecord, RoomState},
+    room_state::{CompositeState, RoomRecord, RoomState},
     state_sync_task::{StateSyncTask, now_ms, with_status},
     store::RecordingStore,
 };
 
 /// Records the room of recording `args.id` as the API wrote it into the
 /// store, keeps its state there while it runs, and releases the room when it
-/// ends. A job whose recording is no longer `starting` was given up by the
-/// API and exits without recording.
+/// ends; then starts the composite if one was requested. A job whose
+/// recording is no longer `starting` was given up by the API and exits
+/// without recording.
 pub(crate) async fn run(args: RecordArgs) -> Result<()> {
     let store = RecordingStore::open(&args.store)?;
+    let launcher = Launcher::from_args(&args.launcher)?;
     let record_state = store
         .read_state(&args.id)
         .await?
@@ -35,7 +38,6 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
     let status = Arc::new(Mutex::new(RoomStatus {
         state: RoomState::Recording,
         members: Vec::new(),
-        composite: None,
     }));
     let (stop_sender, stop) = watch::channel(false);
     let sync = StateSyncTask::run(
@@ -49,7 +51,8 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
         verify_certificate: !args.room.insecure_skip_tls_verify,
         namespace_prefix: record_state.namespace_prefix.clone(),
         output_dir: args.output_dir.join(&args.id),
-        upload: Some((store.object_store(), store.recording_prefix(&args.id))),
+        store: store.object_store(),
+        prefix: store.recording_prefix(&args.id),
         options: BroadcastOptions {
             video_track: None,
             max_video_height: args.room.max_video_height,
@@ -60,7 +63,6 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
             upload: None,
         },
         limits: args.room.limits(),
-        composite: None,
     };
     let result = record(config, stop, &status).await;
     sync.finish().await;
@@ -84,5 +86,38 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
         .unlock_room(&record_state.namespace_prefix, &args.id)
         .await?;
     tracing::info!(id = %args.id, state = ?finished.state, "recording job finished");
-    result.map(drop)
+    if record_state.composite {
+        let composite = match &result {
+            Ok(()) => launch_composite(&launcher, &args).await,
+            Err(_) => Some(CompositeState::Skipped("the recording failed".to_string())),
+        };
+        if let Some(composite) = composite {
+            store.write_composite(&args.id, &composite).await?;
+        }
+    }
+    result
+}
+
+/// `None` once the composite job runs: it reports its own state.
+async fn launch_composite(launcher: &Launcher, args: &RecordArgs) -> Option<CompositeState> {
+    let composite_args = vec![
+        "--id".to_string(),
+        args.id.clone(),
+        "--store".to_string(),
+        args.store.to_string(),
+        "--work-dir".to_string(),
+        args.output_dir.display().to_string(),
+    ];
+    match launcher.launch(Job::Composite, composite_args).await {
+        Ok(()) => None,
+        Err(error) => {
+            tracing::error!(
+                error = format!("{error:#}"),
+                "cannot launch the composite job"
+            );
+            Some(CompositeState::Failed(format!(
+                "cannot launch the composite job: {error:#}"
+            )))
+        }
+    }
 }

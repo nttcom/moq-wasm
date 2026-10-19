@@ -73,7 +73,7 @@ async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Re
     let output = work_dir.join(COMPOSITE_FILE_NAME);
     tracing::info!(id, "compositing the room");
     composite_room(&members, &output).await?;
-    let task = UploadTask::run(store.object_store(), false);
+    let task = UploadTask::run(store.object_store());
     task.queue().upload(Upload {
         path: output,
         key: store.recording_prefix(id).join(COMPOSITE_FILE_NAME),

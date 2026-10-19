@@ -5,24 +5,19 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use moqt::{RequestErrorCode, Session, SessionEvent};
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
-use tokio::{
-    sync::watch,
-    task::{JoinHandle, JoinSet},
-    time::Instant,
-};
+use tokio::{sync::watch, task::JoinSet, time::Instant};
 
 use crate::{
-    composite::{CompositeQueue, MemberFiles, composite_room},
-    composite_job::COMPOSITE_FILE_NAME,
+    composite::MemberFiles,
     manifest::{MANIFEST_NAME, manifest_json},
     recorder::{BroadcastOptions, UploadTarget, default_output_path, record_broadcast},
     recording::RecordedFile,
     relay::RelayConnection,
-    room_state::{CompositeState, MemberStatus, RoomState},
-    upload_task::{Upload, UploadTask},
+    room_state::{MemberStatus, RoomState},
+    upload_task::UploadTask,
 };
 
 /// Where a room recording connects and what it records. Every broadcast whose
@@ -33,134 +28,34 @@ pub(crate) struct RoomConfig {
     pub(crate) verify_certificate: bool,
     pub(crate) namespace_prefix: String,
     pub(crate) output_dir: PathBuf,
-    /// The store and the key prefix the room's objects go under.
-    pub(crate) upload: Option<(Arc<dyn ObjectStore>, Path)>,
+    /// The store the room's files are uploaded to, under `prefix`.
+    pub(crate) store: Arc<dyn ObjectStore>,
+    pub(crate) prefix: Path,
     pub(crate) options: BroadcastOptions,
     pub(crate) limits: RecordingLimits,
-    /// Composite the room into one MP4 once the recording has ended.
-    pub(crate) composite: Option<CompositeQueue>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct RoomStatus {
     pub(crate) state: RoomState,
     pub(crate) members: Vec<MemberStatus>,
-    pub(crate) composite: Option<CompositeState>,
-}
-
-/// Records a room on its own relay session: SUBSCRIBE_NAMESPACE reports each
-/// participant's namespace as PUBLISH_NAMESPACE, and each one is recorded
-/// with `record_broadcast`. A participant who leaves ends their tracks, which
-/// ends their recording; one who joins again is recorded into new files.
-pub(crate) struct RoomRecording {
-    handle: JoinHandle<()>,
-    stop_sender: watch::Sender<bool>,
-    cancel_sender: watch::Sender<bool>,
-    status: Arc<Mutex<RoomStatus>>,
-}
-
-impl RoomRecording {
-    pub(crate) fn run(config: RoomConfig) -> Self {
-        let (stop_sender, stop) = watch::channel(false);
-        let (cancel_sender, cancel) = watch::channel(false);
-        let status = Arc::new(Mutex::new(RoomStatus {
-            state: RoomState::Recording,
-            members: Vec::new(),
-            composite: config.composite.as_ref().map(|_| CompositeState::Waiting),
-        }));
-        let task_status = Arc::clone(&status);
-        let handle = tokio::spawn(async move {
-            let composite = config.composite.clone();
-            let output_dir = config.output_dir.clone();
-            let upload = config.upload.clone();
-            match record(config, stop, &task_status).await {
-                Ok(room) => {
-                    lock(&task_status).state = RoomState::Finished;
-                    if let Some(queue) = composite {
-                        let job = CompositeJob {
-                            queue,
-                            output_dir,
-                            upload,
-                            cancel,
-                        };
-                        let state = job.run(room, &task_status).await;
-                        lock(&task_status).composite = Some(state);
-                    }
-                }
-                Err(error) => {
-                    tracing::error!(error = format!("{error:#}"), "room recording failed");
-                    let mut status = lock(&task_status);
-                    status.state = RoomState::Failed(format!("{error:#}"));
-                    if status.composite.is_some() {
-                        status.composite =
-                            Some(CompositeState::Skipped("the recording failed".to_string()));
-                    }
-                }
-            }
-        });
-        Self {
-            handle,
-            stop_sender,
-            cancel_sender,
-            status,
-        }
-    }
-
-    pub(crate) fn status(&self) -> RoomStatus {
-        lock(&self.status).clone()
-    }
-
-    /// Asks every participant's recording to close its files; `finished`
-    /// then waits for them and for the uploads.
-    pub(crate) fn stop(&self) {
-        stopping(&self.status);
-        let _ = self.stop_sender.send(true);
-    }
-
-    /// Gives up the composite this recording waits for or is making.
-    pub(crate) fn cancel_composite(&self) {
-        let _ = self.cancel_sender.send(true);
-    }
-
-    pub(crate) async fn finished(&mut self) {
-        if let Err(error) = (&mut self.handle).await {
-            tracing::error!(%error, "room recording task failed");
-        }
-    }
-}
-
-impl Drop for RoomRecording {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
-}
-
-pub(crate) struct RecordedRoom {
-    members: Vec<MemberFiles>,
-    failed_uploads: Vec<PathBuf>,
 }
 
 /// Records the room until `stop` turns true, the room stops by itself or the
-/// session closes; with an upload store, then waits for the uploads and
-/// writes the manifest.
+/// session closes, then waits for the uploads and writes the manifest.
 pub(crate) async fn record(
     config: RoomConfig,
     stop: watch::Receiver<bool>,
     status: &Arc<Mutex<RoomStatus>>,
-) -> Result<RecordedRoom> {
+) -> Result<()> {
     tokio::fs::create_dir_all(&config.output_dir)
         .await
         .with_context(|| format!("cannot create {}", config.output_dir.display()))?;
-    let upload_task = config.upload.as_ref().map(|(store, prefix)| {
-        (
-            UploadTask::run(Arc::clone(store), config.composite.is_some()),
-            prefix.clone(),
-        )
-    });
+    let upload_task = UploadTask::run(Arc::clone(&config.store));
     let options = Arc::new(BroadcastOptions {
-        upload: upload_task.as_ref().map(|(task, prefix)| UploadTarget {
-            queue: task.queue(),
-            prefix: prefix.clone(),
+        upload: Some(UploadTarget {
+            queue: upload_task.queue(),
+            prefix: config.prefix.clone(),
         }),
         ..config.options
     });
@@ -179,23 +74,17 @@ pub(crate) async fn record(
     connection.close().await;
     // The queues the options hold have to go before the upload task can end.
     drop(options);
-    let mut failed_uploads = Vec::new();
-    if let Some((task, _)) = upload_task {
-        tracing::info!(prefix = %config.namespace_prefix, "waiting for the uploads to finish");
-        failed_uploads = task.finish().await;
-    }
+    tracing::info!(prefix = %config.namespace_prefix, "waiting for the uploads to finish");
+    let failed_uploads = upload_task.finish().await;
     let members = result?;
-    if let Some((store, prefix)) = &config.upload {
-        let key = prefix.clone().join(MANIFEST_NAME);
-        let manifest = manifest_json(&members, &failed_uploads).to_string();
-        if let Err(error) = store.put(&key, PutPayload::from(manifest)).await {
-            tracing::error!(%key, %error, "cannot upload the manifest");
-        }
-    }
-    Ok(RecordedRoom {
-        members,
-        failed_uploads,
-    })
+    let key = config.prefix.clone().join(MANIFEST_NAME);
+    let manifest = manifest_json(&members, &failed_uploads).to_string();
+    config
+        .store
+        .put(&key, PutPayload::from(manifest))
+        .await
+        .with_context(|| format!("cannot upload {key}"))?;
+    Ok(())
 }
 
 /// Returns once `stop` turns true, the room stops by itself (see
@@ -310,95 +199,6 @@ fn by_member(recorded: Vec<(String, Vec<RecordedFile>)>) -> Vec<MemberFiles> {
     members
 }
 
-/// Composites a finished room into `composite.mp4` in its directory. With an
-/// upload store, the composite is uploaded next to the participants' files.
-/// The upload task kept those files for it; they count against the queue's
-/// budget until they are deleted afterwards.
-struct CompositeJob {
-    queue: CompositeQueue,
-    output_dir: PathBuf,
-    upload: Option<(Arc<dyn ObjectStore>, Path)>,
-    cancel: watch::Receiver<bool>,
-}
-
-impl CompositeJob {
-    async fn run(mut self, room: RecordedRoom, status: &Mutex<RoomStatus>) -> CompositeState {
-        let sources: Vec<&PathBuf> = room
-            .members
-            .iter()
-            .flat_map(|member| &member.files)
-            .map(|file| &file.path)
-            .collect();
-        let mut reserved = 0;
-        if self.upload.is_some() {
-            for path in &sources {
-                reserved += tokio::fs::metadata(path)
-                    .await
-                    .map_or(0, |metadata| metadata.len());
-            }
-        }
-        let state = if self.queue.try_reserve(reserved) {
-            let state = self.composite(&room.members, status).await;
-            self.queue.release(reserved);
-            state
-        } else {
-            CompositeState::Skipped("the files exceed the compositing budget".to_string())
-        };
-        if self.upload.is_some() {
-            for path in sources {
-                if room.failed_uploads.contains(path) {
-                    continue;
-                }
-                if let Err(error) = tokio::fs::remove_file(path).await {
-                    tracing::warn!(path = %path.display(), %error, "cannot delete an uploaded file");
-                }
-            }
-        }
-        state
-    }
-
-    async fn composite(
-        &mut self,
-        members: &[MemberFiles],
-        status: &Mutex<RoomStatus>,
-    ) -> CompositeState {
-        let shut_down = || CompositeState::Skipped("the recorder shut down".to_string());
-        let _turn = tokio::select! {
-            turn = self.queue.turn() => turn,
-            _ = self.cancel.wait_for(|cancel| *cancel) => return shut_down(),
-        };
-        lock(status).composite = Some(CompositeState::Composing);
-        let output = self.output_dir.join(COMPOSITE_FILE_NAME);
-        tracing::info!(path = %output.display(), "compositing the room");
-        let result = tokio::select! {
-            result = composite_room(members, &output) => result,
-            _ = self.cancel.wait_for(|cancel| *cancel) => Err(anyhow!("the recorder shut down")),
-        };
-        match result {
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(error = format!("{error:#}"), "compositing failed");
-                let _ = tokio::fs::remove_file(&output).await;
-                return CompositeState::Failed(format!("{error:#}"));
-            }
-        }
-        if let Some((store, prefix)) = &self.upload {
-            let task = UploadTask::run(Arc::clone(store), false);
-            task.queue().upload(Upload {
-                path: output,
-                key: prefix.clone().join(COMPOSITE_FILE_NAME),
-            });
-            if !task.finish().await.is_empty() {
-                return CompositeState::Failed(
-                    "cannot upload the composite; it stays on disk".to_string(),
-                );
-            }
-        }
-        tracing::info!("room composited");
-        CompositeState::Done
-    }
-}
-
 /// How long a room recording may run by itself.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RecordingLimits {
@@ -494,10 +294,8 @@ pub(crate) fn lock(status: &Mutex<RoomStatus>) -> std::sync::MutexGuard<'_, Room
 #[cfg(test)]
 mod tests {
     use mediapack::Timestamp;
-    use object_store::memory::InMemory;
 
     use super::*;
-    use crate::test_support::{scratch_dir, write_fixture_fmp4};
 
     const ORIGIN: Timestamp = Timestamp::from_micros(1_700_000_000_000_000);
 
@@ -507,30 +305,6 @@ mod tests {
             key: None,
             capture_origin: Some(ORIGIN.saturating_add(Timestamp::from_millis(origin_ms))),
         }
-    }
-
-    fn room_status() -> Mutex<RoomStatus> {
-        Mutex::new(RoomStatus {
-            state: RoomState::Finished,
-            members: Vec::new(),
-            composite: Some(CompositeState::Waiting),
-        })
-    }
-
-    /// The job and the cancel sender, which has to outlive it.
-    fn composite_job(
-        dir: &std::path::Path,
-        budget_bytes: u64,
-        store: Arc<InMemory>,
-    ) -> (CompositeJob, watch::Sender<bool>) {
-        let (cancel_sender, cancel) = watch::channel(false);
-        let job = CompositeJob {
-            queue: CompositeQueue::new(budget_bytes),
-            output_dir: dir.to_path_buf(),
-            upload: Some((store, Path::from("recordings/1"))),
-            cancel,
-        };
-        (job, cancel_sender)
     }
 
     #[test]
@@ -578,68 +352,6 @@ mod tests {
                     ]
                 ),
             ]
-        );
-    }
-
-    #[tokio::test]
-    async fn uploads_the_composite_and_deletes_the_kept_files() {
-        // Arrange
-        let dir = scratch_dir();
-        let source = dir.join("a.mp4");
-        write_fixture_fmp4(&source);
-        let store = Arc::new(InMemory::new());
-        let room = RecordedRoom {
-            members: vec![MemberFiles {
-                namespace: "anon/room/a".to_string(),
-                files: vec![recorded(&source, 0)],
-            }],
-            failed_uploads: Vec::new(),
-        };
-
-        // Act
-        let (job, _cancel_sender) = composite_job(&dir, 1 << 30, Arc::clone(&store));
-        let state = job.run(room, &room_status()).await;
-
-        // Assert
-        let composite = store.get(&Path::from("recordings/1/composite.mp4")).await;
-        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(state, CompositeState::Done);
-        assert!(composite.is_ok());
-        assert!(left.is_empty());
-    }
-
-    #[tokio::test]
-    async fn skips_a_room_over_the_budget_and_keeps_only_the_files_not_uploaded() {
-        // Arrange
-        let dir = scratch_dir();
-        let (uploaded, not_uploaded) = (dir.join("a.mp4"), dir.join("b.mp4"));
-        write_fixture_fmp4(&uploaded);
-        write_fixture_fmp4(&not_uploaded);
-        let store = Arc::new(InMemory::new());
-        let room = RecordedRoom {
-            members: vec![MemberFiles {
-                namespace: "anon/room/a".to_string(),
-                files: vec![recorded(&uploaded, 0), recorded(&not_uploaded, 1_000)],
-            }],
-            failed_uploads: vec![not_uploaded.clone()],
-        };
-
-        // Act
-        let (job, _cancel_sender) = composite_job(&dir, 1, Arc::clone(&store));
-        let state = job.run(room, &room_status()).await;
-
-        // Assert
-        let (uploaded_left, not_uploaded_left) = (uploaded.exists(), not_uploaded.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert!(matches!(state, CompositeState::Skipped(_)));
-        assert!(!uploaded_left);
-        assert!(not_uploaded_left);
-        assert!(
-            store
-                .get(&Path::from("recordings/1/composite.mp4"))
-                .await
-                .is_err()
         );
     }
 

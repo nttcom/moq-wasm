@@ -3,60 +3,15 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
 };
 
 use anyhow::{Context, Result, bail};
 use mediapack::{MediaEvent, StreamSet, Timestamp, mp4::Demuxer};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use transcode::{CompositeInput, CompositeSettings, Compositor, EventSource};
 
 use crate::recording::RecordedFile;
 
 const READ_CHUNK_BYTES: usize = 1 << 20;
-
-/// Rooms are composited one at a time, and the files that wait for it stay
-/// within a byte budget.
-#[derive(Clone)]
-pub(crate) struct CompositeQueue {
-    turn: Arc<Semaphore>,
-    remaining_bytes: Arc<Mutex<u64>>,
-}
-
-impl CompositeQueue {
-    pub(crate) fn new(budget_bytes: u64) -> Self {
-        Self {
-            turn: Arc::new(Semaphore::new(1)),
-            remaining_bytes: Arc::new(Mutex::new(budget_bytes)),
-        }
-    }
-
-    pub(crate) fn try_reserve(&self, bytes: u64) -> bool {
-        let mut remaining = self.lock();
-        if *remaining < bytes {
-            return false;
-        }
-        *remaining -= bytes;
-        true
-    }
-
-    pub(crate) fn release(&self, bytes: u64) {
-        *self.lock() += bytes;
-    }
-
-    pub(crate) async fn turn(&self) -> OwnedSemaphorePermit {
-        let Ok(permit) = Arc::clone(&self.turn).acquire_owned().await else {
-            unreachable!("the semaphore is never closed");
-        };
-        permit
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, u64> {
-        self.remaining_bytes
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
 
 /// The files one participant's recordings wrote, in recording order.
 pub(crate) struct MemberFiles {
@@ -323,22 +278,5 @@ mod tests {
                 .await
                 .is_err()
         );
-    }
-
-    #[test]
-    fn reserves_only_within_the_budget() {
-        // Arrange
-        let queue = CompositeQueue::new(100);
-
-        // Act
-        let first = queue.try_reserve(60);
-        let over = queue.try_reserve(60);
-        queue.release(60);
-        let after_release = queue.try_reserve(100);
-
-        // Assert
-        assert!(first);
-        assert!(!over);
-        assert!(after_release);
     }
 }

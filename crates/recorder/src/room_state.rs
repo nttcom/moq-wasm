@@ -92,6 +92,18 @@ impl CompositeState {
         };
         json!({ "state": state, "error": error })
     }
+
+    pub(crate) fn from_json(value: &Value) -> Result<Self> {
+        let error = value["error"].as_str().unwrap_or_default().to_string();
+        Ok(match value["state"].as_str() {
+            Some("waiting") => Self::Waiting,
+            Some("composing") => Self::Composing,
+            Some("done") => Self::Done,
+            Some("skipped") => Self::Skipped(error),
+            Some("failed") => Self::Failed(error),
+            other => bail!("unknown composite state {other:?}"),
+        })
+    }
 }
 
 /// A room recording as `state/<id>.json` holds it. The API writes it once

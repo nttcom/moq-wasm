@@ -74,3 +74,4 @@ cargo-flamegraph.trace/*
 !crates/mediapack/fixtures/*.flv
 !crates/mediapack/fixtures/*.mp4
 !examples/browser/public/icons.svg
+/recordings/

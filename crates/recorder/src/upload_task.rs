@@ -12,9 +12,8 @@ pub(crate) struct Upload {
 }
 
 /// Uploads closed files one at a time, in the order they were queued, and
-/// deletes each local file once its object is complete unless `run` was
-/// given `keep_local_files`. A file whose upload fails after the store's
-/// retries stays on disk.
+/// deletes each local file once its object is complete. A file whose upload
+/// fails after the store's retries stays on disk.
 pub(crate) struct UploadTask {
     handle: JoinHandle<Vec<PathBuf>>,
     /// An `Option` so that `finish` can drop it to close the queue, which
@@ -23,12 +22,12 @@ pub(crate) struct UploadTask {
 }
 
 impl UploadTask {
-    pub(crate) fn run(store: Arc<dyn ObjectStore>, keep_local_files: bool) -> Self {
+    pub(crate) fn run(store: Arc<dyn ObjectStore>) -> Self {
         let (upload_sender, mut upload_receiver) = mpsc::unbounded_channel::<Upload>();
         let handle = tokio::spawn(async move {
             let mut failed = Vec::new();
             while let Some(upload) = upload_receiver.recv().await {
-                match upload_file(&store, &upload, keep_local_files).await {
+                match upload_file(&store, &upload).await {
                     Ok(()) => tracing::info!(key = %upload.key, "uploaded"),
                     Err(error) => {
                         tracing::error!(
@@ -79,11 +78,7 @@ impl UploadQueue {
     }
 }
 
-async fn upload_file(
-    store: &Arc<dyn ObjectStore>,
-    upload: &Upload,
-    keep_local_file: bool,
-) -> Result<()> {
+async fn upload_file(store: &Arc<dyn ObjectStore>, upload: &Upload) -> Result<()> {
     let mut file = tokio::fs::File::open(&upload.path)
         .await
         .with_context(|| format!("cannot open {}", upload.path.display()))?;
@@ -98,9 +93,6 @@ async fn upload_file(
             tracing::warn!(key = %upload.key, %abort, "cannot abort the partial upload");
         }
         return Err(error).with_context(|| format!("cannot upload {}", upload.key));
-    }
-    if keep_local_file {
-        return Ok(());
     }
     tokio::fs::remove_file(&upload.path)
         .await
@@ -127,7 +119,7 @@ mod tests {
         let path = dir.join("rec-1.mp4");
         tokio::fs::write(&path, b"fragmented mp4").await.unwrap();
         let store = Arc::new(InMemory::new());
-        let task = UploadTask::run(store.clone(), false);
+        let task = UploadTask::run(store.clone());
         let key = Path::from("recordings/anon/live/1700000000000-1.mp4");
 
         // Act
@@ -154,7 +146,7 @@ mod tests {
         let store_dir = dir.join("store");
         tokio::fs::create_dir(&store_dir).await.unwrap();
         let store = Arc::new(LocalFileSystem::new_with_prefix(&store_dir).unwrap());
-        let task = UploadTask::run(store, false);
+        let task = UploadTask::run(store);
 
         // Act
         task.queue().upload(Upload {
