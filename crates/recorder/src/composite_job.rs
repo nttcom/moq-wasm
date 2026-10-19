@@ -68,6 +68,7 @@ async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Re
         members.push(MemberFiles {
             namespace: member.namespace,
             files,
+            screen_share: Vec::new(),
         });
     }
     let output = work_dir.join(COMPOSITE_FILE_NAME);

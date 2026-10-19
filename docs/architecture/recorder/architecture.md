@@ -43,8 +43,8 @@ both tracks into one init segment and one fragment stream.
    `--video-track` and `--audio-track`. Without a name it ranks the LOC
    tracks by their catalog role and quality fields instead of guessing names
    the publisher chose (a meeting participant lists `camera_main_720p` and
-   `audio_128kbps`): among the video tracks whose codec can be recorded, the
-   tallest at or below `--max-video-height` (480 by default; the shortest when
+   `audio_128kbps`): among the video tracks whose codec can be recorded,
+   leaving out the screen share (below), the tallest at or below `--max-video-height` (480 by default; the shortest when
    all are taller), then the lowest `bitrate`, and the audio track with the
    highest `bitrate` among those that can be decoded; remaining ties go to
    the track listed first. The video default is a light rendition because a
@@ -219,7 +219,8 @@ stays the write path, and the store only ever sees closed files:
   complete. A file whose upload still fails after the store's retries stays
   on disk with an error log, and the recording goes on.
 - An object is named `<url path>/<namespace>/<track>/<recording start Unix
-  ms>-<segment index>.mp4`, without `<track>` for the combined file. A `/` in
+  ms>-<segment index>.mp4`, without `<track>` for the combined file, with
+  `screenshare/` after the namespace for a screen share recording. A `/` in
   the namespace or the track name nests the key.
 - Objects carry no attributes: a `file://` store (`LocalFileSystem`) refuses
   a put with any, so a store in a local directory and GCS behave the same.
@@ -293,6 +294,14 @@ nothing. Otherwise it records the room as `room_recording::record`:
   requested layout. The tracks are picked from the catalog as without
   `--video-track` (`--max-video-height`, 480 by default), so a participant's
   browser encodes at most one extra light rendition for the recorder.
+- A second `record_broadcast` for the same namespace, with its own catalog
+  subscription, records the screen share alone (`Content::ScreenShare`) for
+  the composite. A meeting lists it as `video` tracks named `screenshare…`;
+  the recorder takes the tallest at or below 720 (text needs more pixels
+  than a face) and leaves those tracks out of the camera choice. It waits
+  for a share the way the camera recording waits for its tracks, follows a
+  share that stops and starts again into the same file, and records nothing
+  for a participant who never shares.
 - A forwarded PUBLISH is refused with PUBLISH_ERROR UNINTERESTED. Accepting
   it would deliver every track of the namespace, every rendition included.
 - A participant who leaves ends their tracks with PUBLISH_DONE, which ends
@@ -313,7 +322,8 @@ nothing. Otherwise it records the room as `room_recording::record`:
   counts until their recording ends, which is up to 10 s after the
   PUBLISH_DONE that follows their leaving.
 - At the end it writes `<id>/manifest.json`, which lists the uploaded files
-  by participant with each file's capture origin (`capture_origin_us`),
+  by participant, the camera and audio in `files` and the screen share in
+  `screen_share_files`, with each file's capture origin (`capture_origin_us`),
   leaving out a file whose upload failed; then the final state, and it
   deletes the room's lock.
 
@@ -387,11 +397,8 @@ the recorder started with.
 - Video outside H.264, VP8, VP9 and AV1 in the catalog a recording starts
   from ends the recorder with an error before anything is recorded. Listed
   later, it is logged and the recording goes on without it.
-- The automatic choice reads no track name, so it cannot tell a meeting's
-  camera from its screen share. At equal height the camera wins only
-  because its bitrate is lower; a participant who shares the screen with
-  the camera off is recorded from `screenshare_480p`, and stays so after
-  the camera is turned on while the screen share is listed.
+- A screen share is told from a camera only by the `screenshare` prefix of
+  its track name, the meeting's convention; MSF has no role for it.
 - A room recording that fails while `composite` was requested is not
   composited (`skipped`).
 - A composite job that dies stays `composing`: unlike the recording job it

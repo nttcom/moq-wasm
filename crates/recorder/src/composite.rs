@@ -13,10 +13,14 @@ use crate::recording::RecordedFile;
 
 const READ_CHUNK_BYTES: usize = 1 << 20;
 
-/// The files one participant's recordings wrote, in recording order.
+/// The files one participant's recordings wrote, each list in recording
+/// order.
+#[derive(Debug, PartialEq)]
 pub(crate) struct MemberFiles {
     pub(crate) namespace: String,
+    /// The camera and the audio.
     pub(crate) files: Vec<RecordedFile>,
+    pub(crate) screen_share: Vec<RecordedFile>,
 }
 
 /// Composites the room into `output` and returns the Unix time its
@@ -238,6 +242,7 @@ mod tests {
                 key: None,
                 capture_origin: Some(origin),
             }],
+            screen_share: Vec::new(),
         };
         let members = [
             member(
@@ -272,6 +277,7 @@ mod tests {
                 key: None,
                 capture_origin: None,
             }],
+            screen_share: Vec::new(),
         }];
 
         // Act / Assert

@@ -9,7 +9,7 @@ use tokio::sync::watch;
 use crate::{
     RecordArgs,
     launcher::{Job, Launcher},
-    recorder::BroadcastOptions,
+    recorder::{BroadcastOptions, Content},
     room_recording::{RoomConfig, RoomStatus, lock, record},
     room_state::{CompositeState, RoomRecord, RoomState},
     state_sync_task::{StateSyncTask, now_ms, with_status},
@@ -54,6 +54,7 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
         store: store.object_store(),
         prefix: store.recording_prefix(&args.id),
         options: BroadcastOptions {
+            content: Content::Camera,
             video_track: None,
             max_video_height: args.room.max_video_height,
             audio_track: None,
