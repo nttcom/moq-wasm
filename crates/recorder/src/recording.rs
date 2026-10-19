@@ -49,10 +49,12 @@ pub(crate) struct Uploader {
 }
 
 /// A file a recording closed, with the Unix time that presentation time 0 of
-/// the file stands for; `None` when nothing was written.
+/// the file stands for; `None` when nothing was written. `key` is the object
+/// it is uploaded to, if any.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RecordedFile {
     pub(crate) path: PathBuf,
+    pub(crate) key: Option<object_store::path::Path>,
     pub(crate) capture_origin: Option<Timestamp>,
 }
 
@@ -269,26 +271,29 @@ impl Recording {
     }
 
     fn close(&mut self, track: Option<&str>, closed: ClosedFile) {
+        let key = self
+            .uploader
+            .as_ref()
+            .map(|uploader| uploader.upload(track, &closed));
         self.closed.push(RecordedFile {
-            path: closed.path.clone(),
+            path: closed.path,
+            key,
             capture_origin: self.capture_origin,
         });
-        if let Some(uploader) = &self.uploader {
-            uploader.upload(track, closed, self.capture_origin);
-        }
     }
 }
 
 impl Uploader {
-    fn upload(&self, track: Option<&str>, closed: ClosedFile, capture_origin: Option<Timestamp>) {
+    /// Queues the file and returns the object it goes to.
+    fn upload(&self, track: Option<&str>, closed: &ClosedFile) -> object_store::path::Path {
         let mut key = self.prefix.clone();
         key.extend(track.iter().flat_map(|track| track.split('/')));
         key.extend([format!("{}-{}.mp4", self.started_at_ms, closed.index)]);
         self.queue.upload(Upload {
-            path: closed.path,
-            key,
-            capture_origin,
+            path: closed.path.clone(),
+            key: key.clone(),
         });
+        key
     }
 }
 
@@ -754,10 +759,12 @@ mod tests {
             [
                 RecordedFile {
                     path: dir.join("rec.mp4"),
+                    key: None,
                     capture_origin,
                 },
                 RecordedFile {
                     path: dir.join("rec-2.mp4"),
+                    key: None,
                     capture_origin,
                 },
             ]

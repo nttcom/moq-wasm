@@ -10,9 +10,10 @@ Accepted
 
 ## What
 
-Add `object_store` (Apache Arrow project, `gcp` feature only) to `crates/recorder`
-to upload closed recording files to Google Cloud Storage, and `url` to pass it the
-upload location, which `object_store::parse_url_opts` takes as a `url::Url`.
+Add `object_store` (Apache Arrow project, `gcp` and `fs` features) to
+`crates/recorder` to upload closed recording files to Google Cloud Storage, or to
+a local directory, and `url` to pass it the upload location, which
+`object_store::parse_url_opts` takes as a `url::Url`.
 
 ## Context
 
@@ -37,7 +38,10 @@ holding them in memory.
 
 ## Decision
 
-Use `object_store` with `default-features = false, features = ["gcp"]`. Its
+Use `object_store` with `default-features = false, features = ["fs", "gcp"]`.
+`fs` adds `LocalFileSystem` for `file://` URLs, so a recorder run locally keeps
+the same object layout in a directory without a bucket; it adds `walkdir` and
+`nix` to the lock file. Its
 `ObjectStore` trait is the seam: the recorder holds an `Arc<dyn ObjectStore>`
 built from the `--upload` URL, so S3 needs the `aws` feature and an `s3://`
 URL, and no recorder code of its own. Credentials are read from the

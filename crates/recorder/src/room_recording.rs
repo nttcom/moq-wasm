@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use moqt::{RequestErrorCode, Session, SessionEvent};
-use object_store::{ObjectStore, path::Path};
+use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use tokio::{
     sync::watch,
     task::{JoinHandle, JoinSet},
@@ -16,6 +16,7 @@ use tokio::{
 
 use crate::{
     composite::{CompositeQueue, MemberFiles, composite_room},
+    manifest::{MANIFEST_NAME, manifest_json},
     recorder::{BroadcastOptions, UploadTarget, default_output_path, record_broadcast},
     recording::RecordedFile,
     relay::RelayConnection,
@@ -173,9 +174,12 @@ async fn record(
     tokio::fs::create_dir_all(&config.output_dir)
         .await
         .with_context(|| format!("cannot create {}", config.output_dir.display()))?;
-    let upload_task = config
-        .upload
-        .map(|(store, prefix)| (UploadTask::run(store, config.composite.is_some()), prefix));
+    let upload_task = config.upload.as_ref().map(|(store, prefix)| {
+        (
+            UploadTask::run(Arc::clone(store), config.composite.is_some()),
+            prefix.clone(),
+        )
+    });
     let options = Arc::new(BroadcastOptions {
         upload: upload_task.as_ref().map(|(task, prefix)| UploadTarget {
             queue: task.queue(),
@@ -203,8 +207,16 @@ async fn record(
         tracing::info!(prefix = %config.namespace_prefix, "waiting for the uploads to finish");
         failed_uploads = task.finish().await;
     }
+    let members = result?;
+    if let Some((store, prefix)) = &config.upload {
+        let key = prefix.clone().join(MANIFEST_NAME);
+        let manifest = manifest_json(&members, &failed_uploads).to_string();
+        if let Err(error) = store.put(&key, PutPayload::from(manifest)).await {
+            tracing::error!(%key, %error, "cannot upload the manifest");
+        }
+    }
     Ok(RecordedRoom {
-        members: result?,
+        members,
         failed_uploads,
     })
 }
@@ -385,20 +397,19 @@ impl CompositeJob {
             result = composite_room(members, &output) => result,
             _ = self.cancel.wait_for(|cancel| *cancel) => Err(anyhow!("the recorder shut down")),
         };
-        let origin = match result {
-            Ok(origin) => origin,
+        match result {
+            Ok(_) => {}
             Err(error) => {
                 tracing::warn!(error = format!("{error:#}"), "compositing failed");
                 let _ = tokio::fs::remove_file(&output).await;
                 return CompositeState::Failed(format!("{error:#}"));
             }
-        };
+        }
         if let Some((store, prefix)) = &self.upload {
             let task = UploadTask::run(Arc::clone(store), false);
             task.queue().upload(Upload {
                 path: output,
                 key: prefix.clone().join(COMPOSITE_FILE_NAME),
-                capture_origin: Some(origin),
             });
             if !task.finish().await.is_empty() {
                 return CompositeState::Failed(
@@ -506,7 +517,7 @@ fn lock(status: &Mutex<RoomStatus>) -> std::sync::MutexGuard<'_, RoomStatus> {
 #[cfg(test)]
 mod tests {
     use mediapack::Timestamp;
-    use object_store::{Attribute, ObjectStoreExt, memory::InMemory};
+    use object_store::memory::InMemory;
 
     use super::*;
     use crate::test_support::{scratch_dir, write_fixture_fmp4};
@@ -516,6 +527,7 @@ mod tests {
     fn recorded(path: &std::path::Path, origin_ms: u64) -> RecordedFile {
         RecordedFile {
             path: path.to_path_buf(),
+            key: None,
             capture_origin: Some(ORIGIN.saturating_add(Timestamp::from_millis(origin_ms))),
         }
     }
@@ -612,18 +624,11 @@ mod tests {
         let state = job.run(room, &room_status()).await;
 
         // Assert
-        let object = store
-            .get(&Path::from("recordings/1/composite.mp4"))
-            .await
-            .unwrap();
-        let origin = object
-            .attributes
-            .get(&Attribute::Metadata("capture-origin-us".into()))
-            .cloned();
+        let composite = store.get(&Path::from("recordings/1/composite.mp4")).await;
         let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(state, CompositeState::Done);
-        assert_eq!(origin, Some(ORIGIN.micros().to_string().into()));
+        assert!(composite.is_ok());
         assert!(left.is_empty());
     }
 

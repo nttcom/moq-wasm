@@ -1,19 +1,14 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
-use mediapack::Timestamp;
-use object_store::{Attribute, Attributes, ObjectStore, buffered::BufWriter, path::Path};
+use object_store::{ObjectStore, buffered::BufWriter, path::Path};
 use tokio::{io::AsyncWriteExt, sync::mpsc, task::JoinHandle};
 
-/// The object metadata key holding the recording's capture origin, the Unix
-/// time in microseconds that presentation time 0 of every file stands for.
-const CAPTURE_ORIGIN_METADATA: &str = "capture-origin-us";
-
-/// A closed recording file and the object it becomes.
+/// A closed recording file and the object it becomes. Objects carry no
+/// attributes, since a `file://` store cannot hold them.
 pub(crate) struct Upload {
     pub(crate) path: PathBuf,
     pub(crate) key: Path,
-    pub(crate) capture_origin: Option<Timestamp>,
 }
 
 /// Uploads closed files one at a time, in the order they were queued, and
@@ -92,16 +87,7 @@ async fn upload_file(
     let mut file = tokio::fs::File::open(&upload.path)
         .await
         .with_context(|| format!("cannot open {}", upload.path.display()))?;
-    let mut attributes = Attributes::new();
-    attributes.insert(Attribute::ContentType, "video/mp4".into());
-    if let Some(origin) = upload.capture_origin {
-        attributes.insert(
-            Attribute::Metadata(CAPTURE_ORIGIN_METADATA.into()),
-            origin.micros().to_string().into(),
-        );
-    }
-    let mut writer =
-        BufWriter::new(Arc::clone(store), upload.key.clone()).with_attributes(attributes);
+    let mut writer = BufWriter::new(Arc::clone(store), upload.key.clone());
     let written = async {
         tokio::io::copy(&mut file, &mut writer).await?;
         writer.shutdown().await
@@ -129,13 +115,13 @@ impl Drop for UploadTask {
 
 #[cfg(test)]
 mod tests {
-    use object_store::{ObjectStoreExt, memory::InMemory};
+    use object_store::{ObjectStoreExt, local::LocalFileSystem, memory::InMemory};
 
     use super::*;
     use crate::test_support::scratch_dir;
 
     #[tokio::test]
-    async fn uploads_a_closed_file_with_its_capture_origin_and_deletes_it() {
+    async fn uploads_a_closed_file_and_deletes_it() {
         // Arrange
         let dir = scratch_dir();
         let path = dir.join("rec-1.mp4");
@@ -148,20 +134,39 @@ mod tests {
         task.queue().upload(Upload {
             path: path.clone(),
             key: key.clone(),
-            capture_origin: Some(Timestamp::from_micros(1_700_000_000_123_456)),
         });
         let failed = task.finish().await;
 
         // Assert
         assert!(failed.is_empty());
         let object = store.get(&key).await.unwrap();
-        let metadata = object
-            .attributes
-            .get(&Attribute::Metadata(CAPTURE_ORIGIN_METADATA.into()))
-            .cloned();
         assert_eq!(&object.bytes().await.unwrap()[..], b"fragmented mp4");
-        assert_eq!(metadata, Some("1700000000123456".into()));
         assert!(!path.exists());
         tokio::fs::remove_dir_all(&dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn uploads_into_a_directory_store() {
+        // Arrange
+        let dir = scratch_dir();
+        let path = dir.join("rec-1.mp4");
+        tokio::fs::write(&path, b"fragmented mp4").await.unwrap();
+        let store_dir = dir.join("store");
+        tokio::fs::create_dir(&store_dir).await.unwrap();
+        let store = Arc::new(LocalFileSystem::new_with_prefix(&store_dir).unwrap());
+        let task = UploadTask::run(store, false);
+
+        // Act
+        task.queue().upload(Upload {
+            path: path.clone(),
+            key: Path::from("1/anon/live/1700000000000-1.mp4"),
+        });
+        let failed = task.finish().await;
+
+        // Assert
+        let uploaded = std::fs::read(store_dir.join("1/anon/live/1700000000000-1.mp4")).unwrap();
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
+        assert!(failed.is_empty());
+        assert_eq!(uploaded, b"fragmented mp4");
     }
 }
