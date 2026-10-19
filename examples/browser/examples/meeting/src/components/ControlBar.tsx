@@ -142,13 +142,18 @@ function RecordButton({ recording }: { recording: RoomRecordingControls }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const active = recording.active
   if (active) {
-    const stopping = active.state === 'stopping'
+    const pending =
+      active.state === 'starting'
+        ? 'Starting the recording'
+        : active.state === 'stopping'
+          ? 'Stopping the recording'
+          : null
     return (
       <BarButton
-        label={stopping ? 'Stopping the recording' : 'Stop recording'}
+        label={pending ?? 'Stop recording'}
         testId="record-button"
         off
-        disabled={stopping || recording.busy}
+        disabled={pending !== null || recording.busy}
         onClick={() => void recording.stop()}
       >
         <CircleStop className="h-5 w-5" />

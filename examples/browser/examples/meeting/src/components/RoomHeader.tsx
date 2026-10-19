@@ -1,9 +1,12 @@
+import type { RecordingState } from '../recording/recorderApi'
+
 export type HeaderMember = { id: string; name: string; speaking: boolean; states: Record<string, string> }
 
 interface RoomHeaderProps {
   roomName: string
   members: HeaderMember[]
-  recording: boolean
+  /// The state of the room's active recording, if any.
+  recording: RecordingState | undefined
 }
 
 /// Every remote member appears here, on the stage or not.
@@ -13,7 +16,15 @@ export function RoomHeader({ roomName, members, recording }: RoomHeaderProps) {
       <h1 className="font-semibold" data-testid="room-name">
         {roomName}
       </h1>
-      {recording && (
+      {recording === 'starting' && (
+        <span
+          data-testid="recording-badge"
+          className="rounded bg-slate-700 px-2 py-0.5 text-xs font-semibold text-slate-200"
+        >
+          Starting
+        </span>
+      )}
+      {(recording === 'recording' || recording === 'stopping') && (
         <span
           data-testid="recording-badge"
           className="flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-semibold"

@@ -3,6 +3,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
   type RecordingLayout,
@@ -17,7 +18,8 @@ const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 /// The first run compiles the recorder unless CI built it beforehand.
 const RECORDER_START_TIMEOUT_MS = 180_000
 const RECORDER_SERVE_PORT = Number(process.env.RECORDER_E2E_PORT ?? 8096)
-const RECORDING_FINISH_TIMEOUT_MS = 15_000
+/// The recording job checks for a stop every 5 s, then waits up to 10 s for the participants' tracks to end.
+const RECORDING_FINISH_TIMEOUT_MS = 30_000
 /// Compositing re-encodes the whole room after it stopped, slower than real time in a debug build.
 const COMPOSITE_TIMEOUT_MS = 120_000
 const POLL_INTERVAL_MS = 200
@@ -69,9 +71,11 @@ export async function recordFromCache(namespace: string, liveSeconds: number): P
   return output
 }
 
+/// `recorder serve` with a directory store; it runs every recording and composite as a child process.
 export async function startRecorderServe() {
   const url = `http://127.0.0.1:${RECORDER_SERVE_PORT}`
-  const outputDir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
+  const dir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
+  const storeDir = join(dir, 'store')
   const recorder = spawn(
     'cargo',
     [
@@ -86,8 +90,10 @@ export async function startRecorderServe() {
       '--relay',
       liveViewerE2EConfig.moqtUrl,
       '--insecure-skip-tls-verify',
+      '--store',
+      pathToFileURL(storeDir).href + '/',
       '--output-dir',
-      outputDir,
+      join(dir, 'work'),
       '--composite'
     ],
     { cwd: REPO_ROOT, env: { ...process.env, RUST_LOG: 'info' }, stdio: 'inherit' }
@@ -104,43 +110,50 @@ export async function startRecorderServe() {
     }
     await sleep(POLL_INTERVAL_MS)
   }
+  const current = async (recording: RoomRecording) =>
+    (await listRecordings(url, recording.namespace_prefix)).find((candidate) => candidate.id === recording.id)
   return {
-    start: (namespacePrefix: string, layout: RecordingLayout, composite = false) =>
-      startRecording(url, namespacePrefix, layout, composite),
+    /// Returns once the recording job has joined the room, so that the recording covers what follows.
+    async start(namespacePrefix: string, layout: RecordingLayout, composite = false): Promise<RoomRecording> {
+      const recording = await startRecording(url, namespacePrefix, layout, composite)
+      const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
+      while ((await current(recording))?.state === 'starting') {
+        if (Date.now() > deadline) {
+          throw new Error(`recording ${recording.id} did not start`)
+        }
+        await sleep(POLL_INTERVAL_MS)
+      }
+      return recording
+    },
     /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
     async stop(recording: RoomRecording): Promise<string[]> {
       await stopRecording(url, recording.id)
       const deadline = Date.now() + RECORDING_FINISH_TIMEOUT_MS
       for (;;) {
-        const current = (await listRecordings(url, recording.namespace_prefix)).find(
-          (candidate) => candidate.id === recording.id
-        )
-        if (current?.state === 'finished') {
+        const state = (await current(recording))?.state
+        if (state === 'finished') {
           break
         }
-        if (current?.state === 'failed' || Date.now() > deadline) {
-          throw new Error(`recording ${recording.id} did not finish: ${JSON.stringify(current)}`)
+        if (state === 'failed' || Date.now() > deadline) {
+          throw new Error(`recording ${recording.id} did not finish: ${JSON.stringify(await current(recording))}`)
         }
         await sleep(POLL_INTERVAL_MS)
       }
-      const dir = join(outputDir, recording.id)
-      return readdirSync(dir, { recursive: true, encoding: 'utf8' })
-        .filter((name) => name.endsWith('.mp4'))
-        .map((name) => join(dir, name))
+      const recordingDir = join(storeDir, recording.id)
+      return readdirSync(recordingDir, { recursive: true, encoding: 'utf8' })
+        .filter((name) => name.endsWith('.mp4') && name !== 'composite.mp4')
+        .map((name) => join(recordingDir, name))
     },
     /// Waits for a stopped recording's composite and returns its path.
     async composite(recording: RoomRecording): Promise<string> {
       const deadline = Date.now() + COMPOSITE_TIMEOUT_MS
       for (;;) {
-        const current = (await listRecordings(url, recording.namespace_prefix)).find(
-          (candidate) => candidate.id === recording.id
-        )
-        const state = current?.composite?.state
+        const state = (await current(recording))?.composite?.state
         if (state === 'done') {
-          return join(outputDir, recording.id, 'composite.mp4')
+          return join(storeDir, recording.id, 'composite.mp4')
         }
         if (state === 'failed' || state === 'skipped' || Date.now() > deadline) {
-          throw new Error(`recording ${recording.id} was not composited: ${JSON.stringify(current)}`)
+          throw new Error(`recording ${recording.id} was not composited: ${JSON.stringify(await current(recording))}`)
         }
         await sleep(POLL_INTERVAL_MS)
       }

@@ -221,10 +221,12 @@ stays the write path, and the store only ever sees closed files:
 - An object is named `<url path>/<namespace>/<track>/<recording start Unix
   ms>-<segment index>.mp4`, without `<track>` for the combined file. A `/` in
   the namespace or the track name nests the key.
-- Every object carries the recording's capture origin as the metadata
-  `capture-origin-us`: the Unix time in microseconds that presentation time
-  0 of the file stands for. Files of different recordings can be placed on
-  one wall clock from it.
+- Objects carry no attributes: a `file://` store (`LocalFileSystem`) refuses
+  a put with any, so a store in a local directory and GCS behave the same.
+  The capture origin of a file, the Unix time in microseconds that
+  presentation time 0 stands for, goes into a room recording's
+  `manifest.json` instead (see "Recording API"); a single recording only
+  logs it.
 - At the end the recorder waits for the queued uploads before it exits.
 
 Writing straight into an in-progress multipart upload was not chosen: the
@@ -232,10 +234,58 @@ object is not readable until the upload completes, a crash loses the whole
 segment, and a network stall would hold up the recording.
 
 ## Recording API
-`recorder serve` keeps one HTTP API (`api_server::ApiServer`, see
-[hyper.md](hyper.md)) and a `recordings::Recordings` list. Each
-`POST /recordings` with `{"namespace_prefix", "layout"}` starts a
-`room_recording::RoomRecording`:
+`recorder serve` is an HTTP API (`api_server::ApiServer`, see
+[hyper.md](hyper.md)) that keeps no recording in its own memory or process.
+Every room recording runs as a `recorder record` job and every composite as a
+`recorder composite` job; the API and the jobs share the recordings' state
+through small JSON objects in the store (`--store`, `gs://` or `file://`), so
+any number of API instances answer alike, none has to outlive a recording,
+and on Cloud Run the API scales to zero while the jobs get the CPU they need.
+
+```mermaid
+flowchart LR
+  meeting[Meeting] -->|POST /recordings, stop, GET| api[recorder serve]
+  api -->|launch| record[recorder record job]
+  record -->|launch| composite[recorder composite job]
+  api <-->|state, stop, locks| store[(store)]
+  record <-->|state, files, manifest| store
+  composite <-->|files, composite state| store
+  record -->|SUBSCRIBE_NAMESPACE| relay[relay]
+```
+
+`store::RecordingStore` lays the objects out so that each has one writer, and
+so needs neither compare-and-swap nor a database: a `file://` directory and
+GCS behave the same.
+
+| Object | Writer | Holds |
+| --- | --- | --- |
+| `state/<id>.json` | the API once (`starting`), then the recording job | `room_state::RoomRecord`: prefix, layout, whether to composite, state, members, `updated_at_ms` |
+| `state/<id>.stop` | the API | a stop request |
+| `state/<id>.composite.json` | the composite job, or the recording job when it cannot start one | the composite's state |
+| `locks/<prefix>` | the API, only if absent (`PutMode::Create`); deleted by the recording job | the id recording the room |
+| `rooms/<prefix>/<id>` | the API | an empty marker, so a room's recordings are listed without reading the others |
+| `<id>/<namespace>/...`, `<id>/manifest.json` | the recording job | the files and the manifest |
+
+A namespace prefix is one path element (its `/` percent-encoded), so the rooms
+`anon/a` and `anon/a/b` do not nest in a directory store.
+
+`POST /recordings` with `{"namespace_prefix", "layout", "composite"}`:
+1. Takes the room's lock. A lock whose recording is no longer active (see
+   below) is released first; a held one answers `409`.
+2. Counts the other active recordings against `--max-recordings`. Two
+   requests at once can both pass the count, which only exceeds the limit by
+   as many.
+3. Writes the recording as `starting` (id `<Unix ms>-<6 hex digits>`, which
+   does not collide between instances), adds it to the room and launches
+   `recorder record --id <id>` with every flag the job needs: the store, the
+   relay, the limits and the launcher (`launcher::Launcher`). `--launcher
+   local` starts the same binary as a child process; `--launcher cloud-run`
+   starts an execution of `--record-job` through the Cloud Run Admin API with
+   the arguments overridden (see [reqwest.md](reqwest.md)).
+
+The recording job (`record_job::run`) exits at once unless the recording is
+still `starting`, so a job that starts after the API gave it up records
+nothing. Otherwise it records the room as `room_recording::record`:
 
 - It opens its own relay session and sends SUBSCRIBE_NAMESPACE for the
   prefix. Each PUBLISH_NAMESPACE under it, the participants already there and
@@ -252,62 +302,61 @@ segment, and a network stall would hold up the recording.
 - When the relay drains, the session sends SUBSCRIBE_NAMESPACE again on the
   relay its GOAWAY names; the PUBLISH_NAMESPACE that relay answers with for a
   participant already recorded is acknowledged and changes nothing.
-- `POST /recordings/{id}/stop` sends the stop signal every
-  `record_broadcast` watches. The state goes from `stopping` to `finished`
-  once each file is closed and, with `--upload`, uploaded. The objects go
-  under `<url path>/<recording id>/<namespace>/`.
+- `state_sync_task::StateSyncTask` writes the state whenever it changes and
+  at least every 30 s, and checks `state/<id>.stop` every 5 s. A stop
+  request, SIGTERM (Cloud Run stopping the job) or SIGINT sends the stop
+  signal every `record_broadcast` watches; the state goes from `stopping` to
+  `finished` once each file is closed and uploaded.
 - A recording also stops by itself, the same way, `--max-recording-seconds`
   (2 h) after it started, or once no participant has been recorded for
   `--empty-room-seconds` (5 min), counted from the start too. A participant
   counts until their recording ends, which is up to 10 s after the
-  PUBLISH_DONE that follows their leaving, so a forgotten stop or an empty
-  room cannot keep a recording running.
-- SIGINT or SIGTERM stops every recording the same way before the process
-  exits.
+  PUBLISH_DONE that follows their leaving.
+- At the end it writes `<id>/manifest.json`, which lists the uploaded files
+  by participant with each file's capture origin (`capture_origin_us`),
+  leaving out a file whose upload failed; then the final state, and it
+  deletes the room's lock.
+
+The API reports a recording that is `starting`, `recording` or `stopping` but
+has not written its state for 90 s (three heartbeats) as `failed` ("the
+recording job stopped"), and releases its room when it next needs the lock or
+counts the active recordings. The `starting` state lasts as long as the job
+takes to start, about 12 s on Cloud Run; the Meeting shows `Starting` instead
+of `REC` meanwhile, and nothing from before the job joined is recorded.
 
 The API has no authentication, so it accepts only a prefix of at least two
-elements under `--namespace-root` (`anon` by default), at most
-`--max-recordings` recordings at once and one recording per prefix. A POST
-whose `Origin` is not an `--allowed-origin` is refused, since CORS alone only
-hides the answer from that page and a `text/plain` POST needs no preflight. The relay URL, the bucket and the
-track choice are server settings, so a request cannot point the recorder at
-another relay or bucket.
+elements under `--namespace-root` (`anon` by default) and one recording per
+prefix. A POST whose `Origin` is not an `--allowed-origin` is refused, since
+CORS alone only hides the answer from that page and a `text/plain` POST needs
+no preflight. The relay URL, the store and the track choice are server
+settings, so a request cannot point the recorder at another relay or bucket.
 
 ## Composite
 On a recorder started with `--composite`, a `POST /recordings` with
 `"composite": true` also makes one MP4 of the whole room once the recording
-has ended; without the flag the request is refused with `400`, since
-compositing re-encodes every participant and keeps files on disk. The MP4
-holds every participant's video in a grid and their audio mixed
-(`transcode::Compositor`, see the transcode README).
-Compositing live was not chosen: the files are on disk anyway, and offline
-the compositor waits for every participant's data instead of dropping late
-frames.
+has ended; without the flag the request is refused with `400`. The MP4 holds
+every participant's video in a grid and their audio mixed
+(`transcode::Compositor`, see the transcode README). Compositing live was not
+chosen: offline the compositor waits for every participant's data instead of
+dropping late frames.
 
-- When every participant's recording has ended and, with `--upload`, every
-  file is uploaded, `RoomRecording` hands the files it collected to a
-  `CompositeJob`. `record_broadcast` returns each file with its capture
-  origin; a participant who joined again is one input.
+- When the recording ends, the recording job launches `recorder composite
+  --id <id>` through the same launcher; the compositor's CPU belongs to that
+  job alone, not to the API or to other recordings.
+- The composite job (`composite_job::run`) reads the manifest, downloads the
+  listed files into `--work-dir/<id>/`, leaving out one it cannot read, and
+  composites them with `composite::composite_room`.
 - `composite::FileEvents` reads a participant's files in order with
   `mediapack::mp4::Demuxer`, once for the video and once for the audio, on
   the compositor's feeder threads. Each sample is moved by the file's
   capture origin minus the room's earliest, so the participants share one
   timeline; presentation time 0 of `composite.mp4` is that earliest origin.
-- Rooms are composited one at a time (`CompositeQueue`). Without
-  `--upload`, `composite.mp4` is written next to the participants' files in
-  `--output-dir/<recording id>/` and nothing is deleted.
-- With `--upload`, the upload task keeps each file on disk after uploading
-  it. The room's files are reserved against `--composite-max-gb` (20 GB) when
-  the recording ends; a room beyond the budget is `skipped`. Afterwards,
-  composited or not, `composite.mp4` goes to `<upload prefix>/<recording
-  id>/composite.mp4` with the earliest origin as `capture-origin-us`, and the
-  uploaded files are deleted. A file whose upload failed stays on disk as
-  before.
-- SIGINT or SIGTERM gives up a composite that waits or runs: dropping the
-  `Compositor` stops its pipeline.
+- `composite.mp4` is uploaded to `<id>/composite.mp4` and the work directory
+  removed.
 
 The recording's JSON carries `composite` (`null` when not requested) with
-`state` `waiting`, `composing`, `done`, `skipped` or `failed`, and `error`.
+`state` `waiting` (until the composite job reports), `composing`, `done`,
+`skipped` (the recording failed) or `failed`, and `error`.
 
 ## Token refresh
 With `--auth-token-file` a `TokenRefreshTask` re-reads the file every 10 s and
@@ -343,8 +392,12 @@ the recorder started with.
   the camera off is recorded from `screenshare_480p`, and stays so after
   the camera is turned on while the screen share is listed.
 - A room recording that fails while `composite` was requested is not
-  composited, and with `--upload` its uploaded files stay on disk.
-- The budget counts the participants' files only, not `composite.mp4`
-  (about 1.4 GB for two hours at the default 2 Mbit/s).
+  composited (`skipped`).
+- A composite job that dies stays `composing`: unlike the recording job it
+  writes no heartbeat.
+- `--max-recordings` is checked without a lock, so requests that arrive at
+  the same moment can exceed it by as many.
+- A single recording (`recorder --upload`) writes no manifest; the capture
+  origin of its files is only logged.
 - Clocks of the participants' devices are trusted as they are; a skewed
   clock shifts that participant in the composite.

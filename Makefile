@@ -10,6 +10,7 @@ LIVE_EGRESS_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 RECORDER_MOQT_URL ?= $(LOCAL_MOQT_URL)
 RECORDER_NAMESPACE ?= anon/live/test
+RECORDER_STORE_URL ?= file://$(CURDIR)/recordings/store/
 GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # Only a local relay serves the self-signed development certificate; any other relay is verified.
 # A loopback MOQT_URL may resolve to the Docker bridge host, which is local as well.
@@ -32,7 +33,7 @@ LIVE_EGRESS_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= crates/vts/apps.example.json
@@ -192,6 +193,16 @@ recorder:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p recorder -- \
 		--relay $(RECORDER_MOQT_URL) \
 		--namespace $(RECORDER_NAMESPACE) \
+		$(RECORDER_TLS_FLAGS)
+
+# The recording API for the meeting example; it runs every recording and composite as a child process.
+recorder-serve:
+	@echo "Using MoQT relay URL: $(RECORDER_MOQT_URL)"
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p recorder -- serve \
+		--relay $(RECORDER_MOQT_URL) \
+		--store $(RECORDER_STORE_URL) \
+		--output-dir recordings/work \
+		--composite \
 		$(RECORDER_TLS_FLAGS)
 
 # Maintenance

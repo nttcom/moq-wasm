@@ -20,8 +20,9 @@ test('a local relay implies the local recorder and any other one the deployed re
   )
 })
 
-test('only a recording that still writes files is active', () => {
+test('only a recording that is about to write files or still writes them is active', () => {
   // Act / Assert
+  expect(activeRecording([recording('a', 'finished'), recording('b', 'starting')])?.id).toBe('b')
   expect(activeRecording([recording('a', 'finished'), recording('b', 'stopping')])?.id).toBe('b')
   expect(activeRecording([recording('a', 'finished'), recording('b', 'failed')])).toBeUndefined()
 })

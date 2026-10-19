@@ -36,7 +36,7 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 /// A POST from a page outside `allowed_origins` is refused: CORS alone would
 /// only hide the answer from that page, and a form or a `text/plain` fetch
 /// needs no preflight. Nothing authenticates a caller, so `Recordings` keeps
-/// every request under one namespace root.
+/// every request under one namespace root. A failing store answers 500.
 pub(crate) struct ApiServer {
     handle: JoinHandle<()>,
 }
@@ -109,26 +109,32 @@ async fn handle(
         (&Method::OPTIONS, _) => empty_response(StatusCode::NO_CONTENT),
         (&Method::GET, ["healthz"]) => json_response(StatusCode::OK, &json!({ "status": "ok" })),
         (&Method::POST, ["recordings"]) => match read_json(request).await {
-            Ok(body) => start(&state.recordings, &body),
+            Ok(body) => start(&state.recordings, &body).await,
             Err(error) => error_response(StatusCode::BAD_REQUEST, &format!("{error:#}")),
         },
-        (&Method::GET, ["recordings"]) => json_response(
-            StatusCode::OK,
-            &state
-                .recordings
-                .list(query.get("namespace_prefix").map(String::as_str)),
-        ),
-        (&Method::GET, ["recordings", id]) => found(state.recordings.get(id)),
-        (&Method::POST, ["recordings", id, "stop"]) => match state.recordings.stop(id) {
-            Some(recording) => json_response(StatusCode::ACCEPTED, &recording),
-            None => error_response(StatusCode::NOT_FOUND, "no such recording"),
+        (&Method::GET, ["recordings"]) => match state
+            .recordings
+            .list(query.get("namespace_prefix").map(String::as_str))
+            .await
+        {
+            Ok(recordings) => json_response(StatusCode::OK, &recordings),
+            Err(error) => internal_error(&error),
+        },
+        (&Method::GET, ["recordings", id]) => match state.recordings.get(id).await {
+            Ok(recording) => found(recording),
+            Err(error) => internal_error(&error),
+        },
+        (&Method::POST, ["recordings", id, "stop"]) => match state.recordings.stop(id).await {
+            Ok(Some(recording)) => json_response(StatusCode::ACCEPTED, &recording),
+            Ok(None) => error_response(StatusCode::NOT_FOUND, "no such recording"),
+            Err(error) => internal_error(&error),
         },
         _ => error_response(StatusCode::NOT_FOUND, "not_found"),
     };
     Ok(with_cors(response, origin))
 }
 
-fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
+async fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
     let Some(namespace_prefix) = body.get("namespace_prefix").and_then(Value::as_str) else {
         return error_response(StatusCode::BAD_REQUEST, "namespace_prefix is required");
     };
@@ -149,7 +155,7 @@ fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
         Some(Value::Bool(composite)) => *composite,
         Some(_) => return error_response(StatusCode::BAD_REQUEST, "composite must be a boolean"),
     };
-    match recordings.start(namespace_prefix, layout, composite) {
+    match recordings.start(namespace_prefix, layout, composite).await {
         Ok(recording) => json_response(StatusCode::CREATED, &recording),
         Err(StartRejection::OutsideRoot) => error_response(
             StatusCode::FORBIDDEN,
@@ -166,7 +172,13 @@ fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
             StatusCode::BAD_REQUEST,
             "this recorder does not composite; start it with --composite",
         ),
+        Err(StartRejection::Internal(error)) => internal_error(&error),
     }
+}
+
+fn internal_error(error: &anyhow::Error) -> JsonResponse {
+    tracing::error!(error = format!("{error:#}"), "recording API request failed");
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{error:#}"))
 }
 
 async fn read_json(request: Request<Incoming>) -> Result<Value> {
@@ -241,28 +253,8 @@ fn error_response(status: StatusCode, message: &str) -> JsonResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use crate::{recordings::ServeConfig, room_recording::RecordingLimits};
-
-    fn recordings() -> Recordings {
-        Recordings::new(ServeConfig {
-            relay: "moqt://127.0.0.1:1".to_string(),
-            verify_certificate: true,
-            namespace_root: "anon".to_string(),
-            max_recordings: 1,
-            output_dir: std::env::temp_dir(),
-            upload: None,
-            max_video_height: 480,
-            segment_length: Some(Duration::from_secs(60)),
-            limits: RecordingLimits {
-                max_duration: Duration::from_secs(7200),
-                empty_room_timeout: Duration::from_secs(300),
-            },
-            composite_budget_bytes: None,
-        })
-    }
+    use crate::test_support::recordings;
 
     async fn error_of(response: JsonResponse) -> (StatusCode, Value) {
         let status = response.status();
@@ -273,29 +265,35 @@ mod tests {
     #[tokio::test]
     async fn rejects_a_request_without_a_room_under_the_root_or_with_an_unknown_option() {
         // Arrange
-        let recordings = recordings();
+        let recordings = recordings(1, false);
 
         // Act
-        let missing = error_of(start(&recordings, &json!({}))).await;
-        let outside = error_of(start(
-            &recordings,
-            &json!({ "namespace_prefix": "app/room" }),
-        ))
+        let missing = error_of(start(&recordings, &json!({})).await).await;
+        let outside =
+            error_of(start(&recordings, &json!({ "namespace_prefix": "app/room" })).await).await;
+        let layout = error_of(
+            start(
+                &recordings,
+                &json!({ "namespace_prefix": "anon/room", "layout": "grid" }),
+            )
+            .await,
+        )
         .await;
-        let layout = error_of(start(
-            &recordings,
-            &json!({ "namespace_prefix": "anon/room", "layout": "grid" }),
-        ))
+        let composite = error_of(
+            start(
+                &recordings,
+                &json!({ "namespace_prefix": "anon/room", "composite": "yes" }),
+            )
+            .await,
+        )
         .await;
-        let composite = error_of(start(
-            &recordings,
-            &json!({ "namespace_prefix": "anon/room", "composite": "yes" }),
-        ))
-        .await;
-        let composite_disabled = error_of(start(
-            &recordings,
-            &json!({ "namespace_prefix": "anon/room", "composite": true }),
-        ))
+        let composite_disabled = error_of(
+            start(
+                &recordings,
+                &json!({ "namespace_prefix": "anon/room", "composite": true }),
+            )
+            .await,
+        )
         .await;
 
         // Assert: nothing was started
@@ -304,7 +302,10 @@ mod tests {
         assert_eq!(layout.0, StatusCode::BAD_REQUEST);
         assert_eq!(composite.0, StatusCode::BAD_REQUEST);
         assert_eq!(composite_disabled.0, StatusCode::BAD_REQUEST);
-        assert_eq!(recordings.list(None), json!({ "recordings": [] }));
+        assert_eq!(
+            recordings.list(None).await.unwrap(),
+            json!({ "recordings": [] })
+        );
     }
 
     #[test]

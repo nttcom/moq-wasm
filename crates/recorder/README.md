@@ -32,49 +32,56 @@ cargo run -p recorder -- \
 | `--layout` | `combined` | `combined` writes the video and the audio into one file; `per-track` writes each track to `<stem>-<track>.mp4` (a `/` in the name becomes `_`) |
 | `--from-cache` | off | Start with what the relay or the publisher still caches (60 s by default), then continue live |
 | `--segment-seconds` | — | Start the next numbered file at the first keyframe after this many seconds |
-| `--upload` (`RECORDER_UPLOAD_URL`) | — | Upload every closed file to `gs://<bucket>/<prefix>` and delete the local file once it is uploaded |
+| `--upload` (`RECORDER_UPLOAD_URL`) | — | Upload every closed file to `gs://<bucket>/<prefix>` (or a `file:///<dir>/`) and delete the local file once it is uploaded |
 | `--auth-token` (`MOQT_AUTH_TOKEN`) | — | JWT for namespaces outside `anon/**` |
 | `--auth-token-file` (`MOQT_AUTH_TOKEN_FILE`) | — | File holding the JWT; re-read every 10 s and a changed token is sent to the relay |
 | `--insecure-skip-tls-verify` | off | Accept the local relay's development certificate |
 
 ## Recording API
 
-`recorder serve` records whole rooms on request, for the meeting example:
+`recorder serve` records whole rooms on request, for the meeting example. It
+keeps no recording itself: each recording runs as `recorder record`, each
+composite as `recorder composite`, and their state lives in the store next to
+the files. Locally (`make recorder-serve`):
 
 ```bash
 cargo run -p recorder -- serve \
   --relay https://127.0.0.1:4433 --insecure-skip-tls-verify \
-  --upload gs://moq-recorder/meetings
+  --store file://$PWD/recordings/store/ --output-dir recordings/work --composite
 ```
 
 | Request | Answer |
 | --- | --- |
-| `POST /recordings` `{"namespace_prefix": "anon/research", "layout": "per-track", "composite": true}` | `201` with the recording; `layout` is `combined` by default. `composite: true` also makes `composite.mp4`, every participant in one grid with mixed audio, once the recording has ended; it needs `--composite` (`400` otherwise). `403` outside `--namespace-root` or from a page outside `--allowed-origin`, `409` when the prefix is already recorded, `503` past `--max-recordings` |
-| `POST /recordings/{id}/stop` | `202`; the state turns `stopping`, then `finished` once every file is closed and uploaded |
-| `GET /recordings/{id}` | `state` (`recording`, `stopping`, `finished`, `failed`), each participant's namespace, start time, `finished` and `error`, and `composite` (`null`, or `state` `waiting`, `composing`, `done`, `skipped`, `failed` with `error`) |
+| `POST /recordings` `{"namespace_prefix": "anon/research", "layout": "per-track", "composite": true}` | `201` with the recording, `starting` until its job has joined the room; `layout` is `combined` by default. `composite: true` also makes `composite.mp4`, every participant in one grid with mixed audio, once the recording has ended; it needs `--composite` (`400` otherwise). `403` outside `--namespace-root` or from a page outside `--allowed-origin`, `409` when the prefix is already recorded, `503` past `--max-recordings`, `500` when the store or the launcher fails |
+| `POST /recordings/{id}/stop` | `202`; the state turns `stopping` within 5 s, then `finished` once every file is closed and uploaded |
+| `GET /recordings/{id}` | `state` (`starting`, `recording`, `stopping`, `finished`, `failed`; a job silent for 90 s is reported `failed`), each participant's namespace, start time, `finished` and `error`, and `composite` (`null`, or `state` `waiting`, `composing`, `done`, `skipped`, `failed` with `error`) |
 | `GET /recordings?namespace_prefix=anon/research` | The recordings of that prefix |
 
 Every namespace under the prefix (one per meeting participant) is recorded
 from the moment it is published, with the tracks picked from its catalog
-(`--max-video-height`, 480 by default). Files go to
-`--output-dir/<recording id>/`, objects to
-`<upload prefix>/<recording id>/<namespace>/<track>/`. The composite is
-`composite.mp4` in the recording's directory or under `<upload
-prefix>/<recording id>/`; compositing needs the GStreamer plugins listed in
-the [transcode README](../transcode/README.md#compositing).
+(`--max-video-height`, 480 by default). The objects go to
+`<store>/<recording id>/<namespace>/<track>/`, with `manifest.json` and
+`composite.mp4` in `<store>/<recording id>/`; compositing needs the GStreamer
+plugins listed in the [transcode README](../transcode/README.md#compositing).
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--listen` | `127.0.0.1:8096` | Address of the API |
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
 | `--namespace-root` | `anon` | First element every recorded prefix must have; the API has no authentication |
-| `--max-recordings` | `4` | Recordings at once |
+| `--max-recordings` | `4` | Rooms recorded at once |
+| `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state |
+| `--output-dir` | `recordings` | Where a recording job writes its files until they are uploaded, and a composite job downloads them |
+| `--composite` | off | Accept `composite: true` |
+| `--launcher` | `local` | `local` runs the jobs as child processes; `cloud-run` starts executions of `--record-job` and `--composite-job` (`RECORDER_RECORD_JOB`, `RECORDER_COMPOSITE_JOB`, as `projects/<p>/locations/<r>/jobs/<j>`) with the service account of the instance |
 | `--max-recording-seconds` | `7200` | A recording stops by itself after this long |
 | `--empty-room-seconds` | `300` | A recording stops by itself once nobody has been recorded for this long, from the start too |
-| `--output-dir` | `recordings` | Where the files are written |
-| `--composite` | off | Accept `composite: true` |
-| `--composite-max-gb` | `20` | With `--composite` and `--upload`, the most gigabytes of participants' files kept on disk for compositing at once; a room beyond it is `skipped` |
-| `--upload`, `--segment-seconds`, `--max-video-height`, `--insecure-skip-tls-verify` | | As for a single recording |
+| `--segment-seconds`, `--max-video-height`, `--insecure-skip-tls-verify` | | As for a single recording |
+
+`recorder record --id <id> --store <url>` and `recorder composite --id <id>
+--store <url>` are the jobs; `recorder serve` passes them everything else.
+On Cloud Run the record job needs about 1 vCPU, the composite job as much
+CPU as the composite should take, and both a writable `--output-dir`.
 
 ## Behaviour
 
@@ -127,8 +134,10 @@ the [transcode README](../transcode/README.md#compositing).
   keyframe on in the next file.
 - With `--upload`, each closed file becomes the object
   `<prefix>/<namespace>/<track>/<start Unix ms>-<index>.mp4` (no `<track>` for
-  the combined file), with the capture origin in its `capture-origin-us`
-  metadata. The credentials come from the environment, as for `gcloud`:
+  the combined file); `file:///<dir>` writes the same keys into a directory.
+  The capture origin is only logged (`recorded file closed`); a room
+  recording lists it per file in its manifest. The credentials come from the
+  environment, as for `gcloud`:
   `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_SERVICE_ACCOUNT`, the ADC file
   that `gcloud auth application-default login` writes, or the metadata server
   of a GCE VM or Cloud Run. A file whose upload fails stays on disk. A file

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::{
@@ -9,46 +9,33 @@ use tokio::{
 use crate::{
     ServeArgs,
     api_server::ApiServer,
+    launcher::Launcher,
     recordings::{Recordings, ServeConfig},
-    room_recording::RecordingLimits,
+    store::RecordingStore,
 };
 
-/// Serves the recording API until SIGINT or SIGTERM, then stops every
-/// recording and waits for its files and uploads.
+/// Serves the recording API until SIGINT or SIGTERM. The recordings run as
+/// jobs of their own and go on after the server exits.
 pub(crate) async fn serve(args: ServeArgs) -> Result<()> {
-    let upload = args
-        .upload
-        .as_ref()
-        .map(|url| {
-            let (store, prefix) = object_store::parse_url_opts(url, std::env::vars())
-                .with_context(|| format!("cannot use {url} as the upload location"))?;
-            anyhow::Ok((Arc::from(store), prefix))
-        })
-        .transpose()?;
-    tokio::fs::create_dir_all(&args.output_dir)
-        .await
-        .with_context(|| format!("cannot create {}", args.output_dir.display()))?;
-    let recordings = Arc::new(Recordings::new(ServeConfig {
-        relay: args.relay,
-        verify_certificate: !args.insecure_skip_tls_verify,
-        namespace_root: args.namespace_root,
-        max_recordings: args.max_recordings,
-        output_dir: args.output_dir,
-        upload,
-        max_video_height: args.max_video_height,
-        segment_length: args.segment_seconds.map(Duration::from_secs),
-        limits: RecordingLimits {
-            max_duration: Duration::from_secs(args.max_recording_seconds),
-            empty_room_timeout: Duration::from_secs(args.empty_room_seconds),
+    let store = RecordingStore::open(&args.store)?;
+    let launcher = Launcher::from_args(&args.launcher)?;
+    let recordings = Arc::new(Recordings::new(
+        ServeConfig {
+            namespace_root: args.namespace_root,
+            max_recordings: args.max_recordings,
+            composite: args.composite,
+            store_url: args.store,
+            output_dir: args.output_dir,
+            room: args.room,
+            launcher: args.launcher,
         },
-        composite_budget_bytes: args
-            .composite
-            .then(|| args.composite_max_gb.saturating_mul(1 << 30)),
-    }));
+        store,
+        launcher,
+    ));
     let listener = TcpListener::bind(args.listen)
         .await
         .with_context(|| format!("cannot listen on {}", args.listen))?;
-    let server = ApiServer::run(listener, Arc::clone(&recordings), args.allowed_origins);
+    let server = ApiServer::run(listener, recordings, args.allowed_origins);
     tracing::info!(listen = %args.listen, "recording API listening");
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
@@ -56,8 +43,7 @@ pub(crate) async fn serve(args: ServeArgs) -> Result<()> {
         _ = interrupt.recv() => {}
         _ = terminate.recv() => {}
     }
-    tracing::info!("shutting down; finishing the running recordings");
+    tracing::info!("shutting down");
     drop(server);
-    recordings.stop_all().await;
     Ok(())
 }
