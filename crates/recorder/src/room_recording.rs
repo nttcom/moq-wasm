@@ -16,6 +16,7 @@ use tokio::{
 
 use crate::{
     composite::{CompositeQueue, MemberFiles, composite_room},
+    composite_job::COMPOSITE_FILE_NAME,
     manifest::{MANIFEST_NAME, manifest_json},
     recorder::{BroadcastOptions, UploadTarget, default_output_path, record_broadcast},
     recording::RecordedFile,
@@ -23,8 +24,6 @@ use crate::{
     room_state::{CompositeState, MemberStatus, RoomState},
     upload_task::{Upload, UploadTask},
 };
-
-const COMPOSITE_FILE_NAME: &str = "composite.mp4";
 
 /// Where a room recording connects and what it records. Every broadcast whose
 /// namespace starts with `namespace_prefix` is recorded on its own, from the
