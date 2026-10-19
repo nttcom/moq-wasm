@@ -219,7 +219,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     void publisher.setScreenShareEncodingSettings(initialScreenShareEncoding).catch((error) => {
       console.error('Failed to apply screen share encoding from catalog:', error)
     })
-    void publisher.setAudioEncodingSettings(initialAudioEncoding, false).catch((error) => {
+    void publisher.setAudioEncodingSettings(initialAudioEncoding).catch((error) => {
       console.error('Failed to apply audio encoding from catalog:', error)
     })
     publisher.setHandlers({
@@ -346,7 +346,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     }
     const { publisher } = session.getMediaController()
     publisher
-      .setAudioEncodingSettings(selectedAudioEncoding, false)
+      .setAudioEncodingSettings(selectedAudioEncoding)
       .catch((err) => console.error('Failed to apply initial audio encoding config', err))
   }, [selectedAudioEncoding, session])
 
@@ -391,7 +391,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       setSelectedAudioEncoding(nextAudioEncoding)
       await publisher.setVideoEncodingSettings(nextVideoEncoding, selectedVideoDeviceId ?? undefined, false)
       await publisher.setScreenShareEncodingSettings(nextScreenShareEncoding)
-      await publisher.setAudioEncodingSettings(nextAudioEncoding, false)
+      await publisher.setAudioEncodingSettings(nextAudioEncoding)
     },
     [selectedAudioEncoding, selectedScreenShareEncoding, selectedVideoDeviceId, selectedVideoEncoding, session]
   )
@@ -571,9 +571,9 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       const next = { ...selectedAudioEncoding, ...settings }
       setSelectedAudioEncoding(next)
       setAudioEncoderError(null)
-      await session?.getMediaController().publisher.setAudioEncodingSettings(next, microphoneEnabled)
+      await session?.getMediaController().publisher.setAudioEncodingSettings(next)
     },
-    [microphoneEnabled, selectedAudioEncoding, session]
+    [selectedAudioEncoding, session]
   )
 
   const updateCaptureSettings = useCallback((settings: Partial<CaptureSettingsState>) => {
@@ -606,7 +606,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
 
       if (captureSettings.audioEnabled) {
         await publisher.startAudio(selectedAudioDeviceId ?? undefined)
-        await publisher.setAudioEncodingSettings(selectedAudioEncoding, true)
+        await publisher.setAudioEncodingSettings(selectedAudioEncoding)
         if (!microphoneEnabled) {
           ensureCatalogPresetTracks('audio')
         }

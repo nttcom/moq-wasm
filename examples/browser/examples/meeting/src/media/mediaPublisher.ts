@@ -332,12 +332,8 @@ export class MediaPublisher {
     this.handlers.onScreenShareEncodingApplied?.(settings)
   }
 
-  async setAudioEncodingSettings(settings: AudioEncodingSettings, restartIfActive: boolean = false) {
+  async setAudioEncodingSettings(settings: AudioEncodingSettings) {
     this.audioEncodingSettings = settings
-    if (restartIfActive && this.audioStream) {
-      this.restartAllAudioTrackContexts()
-      return
-    }
     this.syncAudioTrackContexts()
   }
 
@@ -676,12 +672,6 @@ export class MediaPublisher {
     }
   }
 
-  private restartAllAudioTrackContexts(): void {
-    for (const trackName of Array.from(this.audioTrackContexts.keys())) {
-      this.restartAudioTrackContext(trackName)
-    }
-  }
-
   private restartVideoTrackContext(trackName: string): void {
     const context = this.videoTrackContexts.get(trackName)
     if (!context || !this.getSourceTrack(context.source)) {
@@ -720,29 +710,6 @@ export class MediaPublisher {
     }
     this.videoStreamRecoveryAttemptsByTrackName.set(trackName, attempt)
     this.restartVideoTrackContext(trackName)
-  }
-
-  private restartAudioTrackContext(trackName: string): void {
-    const context = this.audioTrackContexts.get(trackName)
-    if (!context) {
-      return
-    }
-    const sourceTrack = this.audioStream?.getAudioTracks()[0]
-    if (!sourceTrack) {
-      return
-    }
-    const { config, streamUpdateMode, streamUpdateIntervalSeconds, encodingStarted } = context
-    this.stopAudioTrackContext(trackName)
-    this.createAudioTrackContext(trackName, sourceTrack, config, {
-      mode: streamUpdateMode,
-      intervalSeconds: streamUpdateIntervalSeconds
-    })
-    if (encodingStarted) {
-      const next = this.audioTrackContexts.get(trackName)
-      if (next) {
-        this.startAudioTrackEncoding(next)
-      }
-    }
   }
 
   private handleVideoTrackChunk(
