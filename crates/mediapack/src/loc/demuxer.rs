@@ -37,9 +37,8 @@ impl VideoCodec {
     }
 }
 
-/// A LOC track carries one codec, and draft-ietf-moq-loc-01 leaves the track's
-/// kind, its codec and its audio configuration to the catalog, so the caller
-/// states them.
+/// A LOC track carries one codec, and its kind, codec and audio configuration
+/// come from the catalog, so the caller states them.
 pub struct Demuxer {
     track: Track,
     capture_origin: Option<Timestamp>,
@@ -168,7 +167,7 @@ fn config_change<T: Clone + PartialEq>(
     Some(MediaEvent::VideoConfig(to_video_config(parsed)))
 }
 
-/// draft-ietf-moq-loc-01 §2.1.3 lets a length prefix of 1 be read as a start
+/// draft-ietf-moq-loc-04 §2.1.3 lets a length prefix of 1 be read as a start
 /// code, so a leading start code identifies an Annex-B payload.
 fn to_annexb(object: &LocObject) -> Result<Bytes> {
     let payload = &object.payload;
@@ -192,7 +191,7 @@ mod tests {
     use super::*;
     use crate::{
         h264::annexb::annexb_to_avcc,
-        loc::object::{CAPTURE_TIMESTAMP_ID, LocExtension, VIDEO_CONFIG_ID},
+        loc::object::{LocExtension, TIMESTAMP_ID, VIDEO_CONFIG_ID},
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, delta_frame_annexb, fixture_record,
             fixture_video_config, ivf_frames, keyframe_annexb, mono_48k, video_samples,
@@ -201,7 +200,7 @@ mod tests {
 
     fn video_object(pts_micros: u64, payload: Bytes) -> LocObject {
         LocObject {
-            extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, pts_micros)],
+            extensions: vec![LocExtension::varint(TIMESTAMP_ID, pts_micros)],
             payload,
         }
     }
@@ -287,7 +286,7 @@ mod tests {
         let mut demuxer = Demuxer::video(VideoCodec::H264);
         let object = LocObject {
             extensions: vec![
-                LocExtension::varint(CAPTURE_TIMESTAMP_ID, 0),
+                LocExtension::varint(TIMESTAMP_ID, 0),
                 LocExtension::bytes(VIDEO_CONFIG_ID, config.to_bytes()),
             ],
             payload: annexb_to_avcc(&keyframe_annexb(), 2),
@@ -466,7 +465,7 @@ mod tests {
         // Arrange
         let mut demuxer = Demuxer::audio(AudioConfig::Aac(mono_48k()));
         let object = LocObject {
-            extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, 2_000_000)],
+            extensions: vec![LocExtension::varint(TIMESTAMP_ID, 2_000_000)],
             payload: Bytes::from_static(&[7, 7]),
         };
 

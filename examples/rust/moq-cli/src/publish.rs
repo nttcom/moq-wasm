@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use mediapack::loc::{CAPTURE_TIMESTAMP_ID, LocExtension, to_extension_headers};
+use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
 use moqt::{TrackWriter, object::ExtensionHeaders, publish::PublishOption};
 use tokio::io::AsyncReadExt;
 use tracing::info;
@@ -153,7 +153,7 @@ async fn publish_stdin(mut publishing: Publishing, args: &PublishArgs) -> Result
             let origin =
                 *capture_origin.get_or_insert_with(|| unix_micros_now() - frame.timestamp.0);
             let extension_headers = to_extension_headers(&[LocExtension::varint(
-                CAPTURE_TIMESTAMP_ID,
+                TIMESTAMP_ID,
                 (origin + frame.timestamp.0).max(0) as u64,
             )]);
             publishing

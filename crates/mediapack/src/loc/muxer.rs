@@ -1,5 +1,5 @@
 use crate::{
-    loc::object::{CAPTURE_TIMESTAMP_ID, LocExtension, LocObject},
+    loc::object::{LocExtension, LocObject, TIMESTAMP_ID},
     sample::{MediaEvent, Timestamp},
 };
 
@@ -12,8 +12,8 @@ pub struct Muxer {
 
 impl Muxer {
     /// `capture_origin` is the wall-clock time of presentation timestamp zero,
-    /// since draft-ietf-moq-loc-01 §2.3.1.1 defines the capture timestamp as
-    /// microseconds since the Unix epoch.
+    /// since draft-ietf-moq-loc-04 §2.3.1.1 reads a Timestamp without a
+    /// Timescale as microseconds since the Unix epoch.
     pub fn new(capture_origin: Timestamp) -> Self {
         Self { capture_origin }
     }
@@ -29,7 +29,7 @@ impl Muxer {
 
         Some(LocObject {
             extensions: vec![LocExtension::varint(
-                CAPTURE_TIMESTAMP_ID,
+                TIMESTAMP_ID,
                 self.capture_origin.saturating_add(pts).micros(),
             )],
             payload,

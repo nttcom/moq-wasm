@@ -111,10 +111,7 @@ pub(crate) fn opus_object(group_id: u64, object_id: u64, capture_micros: u64) ->
         group_id,
         object_id,
         LocObject {
-            extensions: vec![loc::LocExtension::varint(
-                loc::CAPTURE_TIMESTAMP_ID,
-                capture_micros,
-            )],
+            extensions: vec![loc::LocExtension::varint(loc::TIMESTAMP_ID, capture_micros)],
             payload: bytes::Bytes::from_static(&OPUS_20_MS_FRAME),
         },
     )

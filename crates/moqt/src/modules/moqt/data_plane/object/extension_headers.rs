@@ -117,11 +117,11 @@ mod tests {
 
     #[test]
     fn round_trip_preserves_unsupported_headers_in_order() {
-        // Keys 2 and 13 are LOC extension header types the transport does not
+        // Keys 0x10 and 0x0D are LOC properties the transport does not
         // interpret; draft-14 §10.2.1.2 requires them to be forwarded unmodified.
         let headers = ExtensionHeaders::new(vec![
             KeyValuePair {
-                key: 2,
+                key: 0x10,
                 value: VariantType::Even(123),
             },
             KeyValuePair {
@@ -129,7 +129,7 @@ mod tests {
                 value: VariantType::Even(7),
             },
             KeyValuePair {
-                key: 13,
+                key: 0x0D,
                 value: VariantType::Odd(Bytes::from(vec![0xAA, 0xBB])),
             },
         ]);
