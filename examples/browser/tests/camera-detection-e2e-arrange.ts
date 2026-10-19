@@ -3,7 +3,7 @@ import { CAMERA_DETECTION_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.CAMERA_DETECTION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const botUrl = process.env.CAMERA_DETECTION_E2E_BOT_URL!
-/// Every test joins one room unless it asks for another, so the tests share the one room the bot runs at a time.
+/// The bot runs one room at a time, so every test shares this room.
 const ROOM = 'e2e'
 export const D3_FLASH_ORIGIN = process.env.CAMERA_DETECTION_E2E_D3_FLASH_ORIGIN!
 

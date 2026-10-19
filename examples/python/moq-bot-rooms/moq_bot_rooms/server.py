@@ -13,7 +13,6 @@ from moq_bot_rooms.rooms import Membership, RoomEnd, Rooms, RunBot
 ROOM_ID_PATTERN = re.compile(r"[a-z0-9-]{1,32}")
 HEARTBEAT_SECONDS = 15.0
 HOURS_CHECK_SECONDS = 10.0
-DEFAULT_MAX_ROOM_SECONDS = 60 * 60
 
 
 def add_serve_arguments(parser: argparse.ArgumentParser, *, default_port: int, default_max_rooms: int) -> None:
@@ -23,7 +22,7 @@ def add_serve_arguments(parser: argparse.ArgumentParser, *, default_port: int, d
     parser.add_argument(
         "--max-room-seconds",
         type=float,
-        default=DEFAULT_MAX_ROOM_SECONDS,
+        default=60 * 60,
         help="how long a room may run before its bot leaves",
     )
     parser.add_argument(

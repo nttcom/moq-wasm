@@ -21,7 +21,7 @@ from moq_camera_detection.vision import D3FlashVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8098
-# d3-flash answers one batch at a time, and one camera already sends it a picture every 0.1 s.
+# d3-flash answers one batch at a time, and one camera already sends it a picture every SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
 NAMESPACE_ROOT = "anon/moq-camera-detection"
 VIDEO_TRACK = "video"

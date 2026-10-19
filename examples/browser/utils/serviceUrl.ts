@@ -1,4 +1,4 @@
-/// An HTTP service a page uses next to its relay: run locally for a local relay, deployed otherwise.
+/// An HTTP service a page uses next to its relay.
 export type ServiceUrls = {
   /// The query parameter that overrides both.
   param: string

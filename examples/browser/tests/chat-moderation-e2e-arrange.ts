@@ -4,7 +4,7 @@ import { leavePage } from './leave-all-pages'
 
 const moqtUrl = process.env.CHAT_MODERATION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const botUrl = process.env.CHAT_MODERATION_E2E_BOT_URL!
-/// Every test joins one room unless it asks for another, so pages that follow one another meet one moderator.
+/// The room every page joins unless a test passes another, so the pages of one test meet one moderator.
 const ROOM = 'e2e'
 export const D3_FLASH_ORIGIN = process.env.CHAT_MODERATION_E2E_D3_FLASH_ORIGIN!
 

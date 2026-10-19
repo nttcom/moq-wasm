@@ -1,6 +1,5 @@
 /// Why moq-bot-rooms ended the page's hold on its room, sent as the event name.
-export const BOT_ROOM_ENDS = ['full', 'closed', 'expired', 'failed'] as const
-export type BotRoomEnd = (typeof BOT_ROOM_ENDS)[number]
+export type BotRoomEnd = 'full' | 'closed' | 'expired' | 'failed'
 
 export const BOT_ROOM_END_TEXT: Record<BotRoomEnd, string> = {
   full: '空いているボットがありません',
@@ -39,7 +38,7 @@ export class BotRoomRequest {
   open(serviceUrl: string, roomId: string): void {
     this.close()
     const source = new EventSource(`${serviceUrl}/rooms/${roomId}`)
-    for (const reason of BOT_ROOM_ENDS) {
+    for (const reason of Object.keys(BOT_ROOM_END_TEXT) as BotRoomEnd[]) {
       source.addEventListener(reason, () => {
         // EventSource reopens any stream the server ends.
         this.close()

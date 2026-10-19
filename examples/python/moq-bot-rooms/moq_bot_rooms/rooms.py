@@ -19,7 +19,7 @@ class RoomEnd(StrEnum):
     FAILED = "failed"
 
 
-# Runs the bot of the room it is given until it is cancelled.
+# Runs the bot for a room ID until it is cancelled.
 RunBot = Callable[[str], Awaitable[None]]
 
 

@@ -18,7 +18,7 @@ from tests.helpers import WEEKDAY_HOURS
     ],
 )
 def test_contains_compares_local_time_at_the_offset(moment, expected):
-    # Act / Assert: Monday 2026-10-19 09:00–17:30 at +09:00; the last case is 09:30 there
+    # Act / Assert: 2026-10-18 is a Sunday; the last case is 09:30 at +09:00
     assert WEEKDAY_HOURS.contains(datetime.fromisoformat(moment)) is expected
 
 
