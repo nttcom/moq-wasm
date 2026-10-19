@@ -2,6 +2,7 @@ import type { SubgroupSender } from '@moqt/moqtClient'
 import { MediaTransportState } from './transportState'
 import { type AudioLevel, buildLocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
+import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
 
 export interface AudioChunkSendOptions {
   chunk: EncodedAudioChunk
@@ -49,4 +50,28 @@ export async function sendAudioChunkViaMoqt({
   }
 
   audio.nextObjectId += 1n
+}
+
+/// Skips an alias with no subgroup stream open in the current group, such as
+/// one that subscribed after the group's last object.
+export async function sendAudioEndOfGroupViaMoqt(
+  trackAliases: bigint[],
+  client: SubgroupSender,
+  transportState: MediaTransportState
+): Promise<void> {
+  const audio = transportState.audio
+  for (const alias of trackAliases) {
+    if (!audio.hasHeaderSent(alias, 0)) {
+      continue
+    }
+    await client.sendSubgroupObject(
+      alias,
+      audio.groupId,
+      0n,
+      audio.nextObjectId,
+      OBJECT_STATUS_END_OF_GROUP,
+      new Uint8Array(0),
+      undefined
+    )
+  }
 }
