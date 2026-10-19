@@ -46,15 +46,27 @@ impl FrameSpans {
     }
 }
 
-/// Strip tiles are this fraction of the output width.
+/// Strip tiles are 1/`STRIP_FRACTION` of the output width.
 const STRIP_FRACTION: u32 = 5;
 
 /// The video an input feeds into compositor pad `sink_<index>`, where
 /// `index` is its place in the list `install` takes.
 pub(super) struct Picture {
     pub(super) frames: FrameSpans,
+    pub(super) source: Source,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Source {
     /// The input the picture belongs to.
     pub(super) owner: usize,
+    pub(super) content: Content,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Content {
+    Camera,
+    ScreenShare,
 }
 
 struct Tile {
@@ -62,18 +74,18 @@ struct Tile {
     frames: FrameSpans,
 }
 
-/// Before each output frame, puts the active speaker's picture in focus and
-/// the other inputs whose video covers the frame in a strip down the right
-/// edge, and hides the rest. A non-live compositor keeps drawing a pad's last
-/// frame until the next one arrives, however long the frame lasted, so a
-/// camera that went off would otherwise freeze in its tile.
+/// Before each output frame, puts a screen share or else the active
+/// speaker's camera in focus, the other pictures that cover the frame in a
+/// strip down the right edge, and hides the rest: a non-live compositor keeps
+/// drawing a pad's last frame until the next one arrives, so a camera that
+/// went off would freeze in its tile.
 pub(super) fn install(
     compositor: &gst::Element,
     pictures: Vec<Picture>,
     speakers: Speakers,
     settings: CompositeSettings,
 ) -> Result<()> {
-    let owners: Vec<usize> = pictures.iter().map(|picture| picture.owner).collect();
+    let sources: Vec<Source> = pictures.iter().map(|picture| picture.source).collect();
     let tiles = pictures
         .into_iter()
         .enumerate()
@@ -105,7 +117,7 @@ pub(super) fn install(
             .collect();
         let mut shown = shown.lock().expect("shown stage lock");
         let previous_focus = shown.as_ref().map(|stage| stage.focus);
-        let stage = Stage::choose(&owners, &visible, speakers.at(start), previous_focus);
+        let stage = Stage::choose(&sources, &visible, speakers.at(start), previous_focus);
         if *shown != stage {
             arrange(&tiles, stage.as_ref(), &settings);
             *shown = stage;
@@ -139,31 +151,47 @@ struct Stage {
 }
 
 impl Stage {
-    /// The active speaker's picture takes the focus when it is visible;
-    /// otherwise the focus stays where it was, or goes to the first visible
-    /// tile. `None` while no tile is visible.
+    /// Focus goes to a visible screen share, keeping the one already in focus
+    /// over a later one; else the speaker's visible camera; else the previous
+    /// focus if visible; else the first visible tile. The speaker's camera
+    /// heads the strip. `None` while no tile is visible.
     fn choose(
-        owners: &[usize],
+        sources: &[Source],
         visible: &[bool],
         speaker: Option<usize>,
         previous_focus: Option<usize>,
     ) -> Option<Self> {
         let is_visible = |tile: &usize| visible[*tile];
-        let speaker_tile = speaker
-            .and_then(|speaker| owners.iter().position(|owner| *owner == speaker))
+        let is_share = |tile: &usize| sources[*tile].content == Content::ScreenShare;
+        let speaker_camera = speaker
+            .and_then(|speaker| {
+                let camera = Source {
+                    owner: speaker,
+                    content: Content::Camera,
+                };
+                sources.iter().position(|source| *source == camera)
+            })
             .filter(is_visible);
-        let focus = speaker_tile
-            .or(previous_focus.filter(is_visible))
-            .or_else(|| (0..owners.len()).find(is_visible))?;
-        let strip = (0..owners.len())
-            .filter(|tile| visible[*tile] && *tile != focus)
+        let previous_focus = previous_focus.filter(is_visible);
+        let tiles = 0..sources.len();
+        let focus = match tiles
+            .clone()
+            .find(|tile| is_visible(tile) && is_share(tile))
+        {
+            Some(first_share) => previous_focus.filter(is_share).unwrap_or(first_share),
+            None => speaker_camera
+                .or(previous_focus)
+                .or_else(|| tiles.clone().find(is_visible))?,
+        };
+        let strip = speaker_camera
+            .into_iter()
+            .chain(tiles.filter(|tile| Some(*tile) != speaker_camera))
+            .filter(|tile| is_visible(tile) && *tile != focus)
             .collect();
         Some(Self { focus, strip })
     }
 
-    /// Without a strip the focus fills the output. Strip tiles shrink to fit
-    /// the output height. Sizes are even so tile edges fall on 4:2:0 chroma
-    /// sample boundaries.
+    /// Sizes are even so tile edges fall on 4:2:0 chroma sample boundaries.
     fn rects(&self, settings: &CompositeSettings) -> Vec<(usize, Rect)> {
         if self.strip.is_empty() {
             return vec![(
@@ -228,13 +256,27 @@ mod tests {
         }
     }
 
+    fn camera(owner: usize) -> Source {
+        Source {
+            owner,
+            content: Content::Camera,
+        }
+    }
+
+    fn share(owner: usize) -> Source {
+        Source {
+            owner,
+            content: Content::ScreenShare,
+        }
+    }
+
     #[test]
     fn the_speaker_takes_the_focus_and_the_others_the_strip() {
         // Arrange: three participants, input 1 speaks
-        let owners = [0, 1, 2];
+        let sources = [camera(0), camera(1), camera(2)];
 
         // Act
-        let stage = Stage::choose(&owners, &[true, true, true], Some(1), Some(0)).unwrap();
+        let stage = Stage::choose(&sources, &[true, true, true], Some(1), Some(0)).unwrap();
 
         // Assert
         assert_eq!(
@@ -257,10 +299,10 @@ mod tests {
     #[test]
     fn the_focus_stays_while_the_speaker_has_no_picture() {
         // Arrange: input 1 speaks with the camera off, input 2 was in focus
-        let owners = [0, 1, 2];
+        let sources = [camera(0), camera(1), camera(2)];
 
         // Act
-        let stage = Stage::choose(&owners, &[true, false, true], Some(1), Some(2)).unwrap();
+        let stage = Stage::choose(&sources, &[true, false, true], Some(1), Some(2)).unwrap();
 
         // Assert
         assert_eq!(
@@ -275,10 +317,10 @@ mod tests {
     #[test]
     fn without_a_speaker_the_first_visible_tile_takes_the_focus() {
         // Arrange
-        let owners = [0, 1, 2];
+        let sources = [camera(0), camera(1), camera(2)];
 
         // Act
-        let stage = Stage::choose(&owners, &[false, true, true], None, Some(0)).unwrap();
+        let stage = Stage::choose(&sources, &[false, true, true], None, Some(0)).unwrap();
 
         // Assert
         assert_eq!(
@@ -293,7 +335,64 @@ mod tests {
     #[test]
     fn nothing_visible_shows_no_stage() {
         // Act / Assert
-        assert_eq!(Stage::choose(&[0, 1], &[false, false], Some(0), None), None);
+        assert_eq!(
+            Stage::choose(&[camera(0), camera(1)], &[false, false], Some(0), None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_screen_share_takes_the_focus_with_the_speaker_atop_the_strip() {
+        // Arrange: input 0 shares the screen while input 2 speaks
+        let sources = [camera(0), share(0), camera(1), camera(2)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[true; 4], Some(2), Some(3)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 1,
+                strip: vec![3, 0, 2]
+            }
+        );
+    }
+
+    #[test]
+    fn a_later_screen_share_waits_in_the_strip() {
+        // Arrange: input 1 shares while input 0's share is in focus
+        let sources = [camera(0), share(0), camera(1), share(1)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[true; 4], None, Some(1)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 1,
+                strip: vec![0, 2, 3]
+            }
+        );
+    }
+
+    #[test]
+    fn the_speaker_takes_the_focus_back_when_the_share_ends() {
+        // Arrange
+        let sources = [camera(0), share(0), camera(1)];
+
+        // Act
+        let stage = Stage::choose(&sources, &[true, false, true], Some(1), Some(1)).unwrap();
+
+        // Assert
+        assert_eq!(
+            stage,
+            Stage {
+                focus: 2,
+                strip: vec![0]
+            }
+        );
     }
 
     #[test]

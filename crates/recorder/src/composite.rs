@@ -53,6 +53,7 @@ pub(crate) async fn composite_room(members: &[MemberFiles], output: &Path) -> Re
         if !video.is_empty() || !audio.is_empty() {
             inputs.push(CompositeInput {
                 video: events(video, Kind::Video),
+                screen_share: None,
                 audio: events(audio, Kind::Audio),
                 loudness: None,
             });

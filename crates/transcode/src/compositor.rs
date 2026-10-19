@@ -12,7 +12,7 @@ mod layout;
 mod loudness;
 mod speaker;
 
-use layout::{FrameSpans, Picture};
+use layout::{Content, FrameSpans, Picture, Source};
 pub use loudness::Loudness;
 use speaker::Speakers;
 
@@ -25,12 +25,15 @@ const INPUT_QUEUE_BYTES: u64 = 4 * 1024 * 1024;
 /// A frame followed by a longer gap (a camera turned off) is shown this
 /// long; the participant then leaves the stage until its next frame.
 const MAX_FRAME_DURATION: gst::ClockTime = gst::ClockTime::SECOND;
+/// Browsers send a screen share's frames only when the screen changes.
+const MAX_SCREEN_SHARE_FRAME_DURATION: gst::ClockTime = gst::ClockTime::from_seconds(5);
 const OUTPUT_AUDIO_CAPS: &str = "audio/x-raw,format=F32LE,layout=interleaved,rate=48000,channels=2";
 
 /// One participant. An input without video only feeds the audio mix and
 /// takes no tile.
 pub struct CompositeInput {
     pub video: Option<EventSource>,
+    pub screen_share: Option<EventSource>,
     pub audio: Option<EventSource>,
     /// `Loudness::measure` of the same audio; without it the participant is
     /// never the active speaker.
@@ -63,11 +66,11 @@ enum Message {
     EndOfStream,
 }
 
-/// Composites the inputs offline into one progressive MP4 (H.264): the active
-/// speaker's video large on the left, the other videos that have a frame at
-/// each moment in a strip on the right, on a black background; the audio
-/// mixed into one stereo track (AAC). Dropping the compositor stops the
-/// pipeline.
+/// Composites the inputs offline into one progressive MP4. Video (H.264), on
+/// a black background: a screen share, or else the active speaker's video,
+/// large on the left; the other videos that have a frame at each moment in a
+/// strip on the right. Audio: mixed into one stereo track (AAC). Dropping the
+/// compositor stops the pipeline.
 ///
 /// A later config event may change the resolution or the codec: decodebin3
 /// follows the new parameter sets or caps, and the picture rescales to its
@@ -95,11 +98,18 @@ impl Compositor {
                 .map(|input| input.loudness.as_ref())
                 .collect::<Vec<_>>(),
         );
-        let video_sources: Vec<(usize, EventSource)> = inputs
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(owner, input)| Some((owner, input.video.take()?)))
-            .collect();
+        let mut video_sources: Vec<(Source, EventSource)> = Vec::new();
+        for (owner, input) in inputs.iter_mut().enumerate() {
+            let pictures = [
+                (Content::Camera, input.video.take()),
+                (Content::ScreenShare, input.screen_share.take()),
+            ];
+            for (content, events) in pictures {
+                if let Some(events) = events {
+                    video_sources.push((Source { owner, content }, events));
+                }
+            }
+        }
         let audio_sources: Vec<EventSource> =
             inputs.into_iter().filter_map(|input| input.audio).collect();
         ensure!(
@@ -131,9 +141,9 @@ impl Compositor {
             let pictures = video_sources
                 .iter()
                 .zip(&frames)
-                .map(|((owner, _), frames)| Picture {
+                .map(|((source, _), frames)| Picture {
                     frames: frames.clone(),
-                    owner: *owner,
+                    source: *source,
                 })
                 .collect();
             layout::install(&compositor, pictures, speakers, settings)?;
@@ -143,13 +153,18 @@ impl Compositor {
 
         let last_frame_duration = gst::ClockTime::SECOND / u64::from(settings.framerate);
         let mut feeders = Vec::new();
-        for (index, ((_, events), frames)) in video_sources.into_iter().zip(frames).enumerate() {
+        for (index, ((source, events), frames)) in video_sources.into_iter().zip(frames).enumerate()
+        {
+            let max_duration = match source.content {
+                Content::Camera => MAX_FRAME_DURATION,
+                Content::ScreenShare => MAX_SCREEN_SHARE_FRAME_DURATION,
+            };
             let source = app_source(&pipeline, &format!("video{index}"))?;
             let message_sender = message_sender.clone();
             feeders.push(spawn_feeder(
                 format!("video{index}"),
                 message_sender,
-                move || feed_video(&source, events, &frames, last_frame_duration),
+                move || feed_video(&source, events, &frames, max_duration, last_frame_duration),
             )?);
         }
         for (index, events) in audio_sources.into_iter().enumerate() {
@@ -267,6 +282,7 @@ fn feed_video(
     source: &AppSrc,
     events: EventSource,
     frames: &FrameSpans,
+    max_duration: gst::ClockTime,
     last_frame_duration: gst::ClockTime,
 ) -> Result<()> {
     let mut held: Option<VideoSample> = None;
@@ -281,7 +297,7 @@ fn feed_video(
                     let duration = gst::ClockTime::from_useconds(
                         sample.dts.saturating_sub(previous.dts).micros(),
                     )
-                    .min(MAX_FRAME_DURATION);
+                    .min(max_duration);
                     push_frame(source, frames, &previous, duration)?;
                 }
                 if let Some(caps) = next_caps.take() {
@@ -556,11 +572,13 @@ mod tests {
         let inputs = vec![
             CompositeInput {
                 video: source(video_events()),
+                screen_share: None,
                 audio: source(audio_events()),
                 loudness: loudness(Timestamp::default()),
             },
             CompositeInput {
                 video: source(later_video),
+                screen_share: None,
                 audio: source(shifted(audio_events(), shift)),
                 loudness: loudness(shift),
             },
@@ -598,6 +616,7 @@ mod tests {
         let events = first.into_iter().chain(second).collect();
         let inputs = vec![CompositeInput {
             video: source(events),
+            screen_share: None,
             audio: None,
             loudness: None,
         }];
@@ -614,17 +633,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn composites_a_screen_share_beside_the_cameras() {
+        // Arrange: the first participant shares the screen from 1 s on
+        decode_in_software();
+        let share = shifted(video_events(), Timestamp::from_millis(1_000));
+        let expected_end = video_end(&share);
+        let inputs = vec![
+            CompositeInput {
+                video: source(video_events()),
+                screen_share: source(share),
+                audio: None,
+                loudness: None,
+            },
+            CompositeInput {
+                video: source(video_events()),
+                screen_share: None,
+                audio: None,
+                loudness: None,
+            },
+        ];
+        let output = output_path("share");
+
+        // Act
+        composite(inputs, &output).await.unwrap();
+
+        // Assert
+        assert_duration(&read_index(&output), expected_end);
+        std::fs::remove_file(output).unwrap();
+    }
+
+    #[tokio::test]
     async fn mixes_an_audio_only_participant() {
         // Arrange
         decode_in_software();
         let inputs = vec![
             CompositeInput {
                 video: None,
+                screen_share: None,
                 audio: source(audio_events()),
                 loudness: None,
             },
             CompositeInput {
                 video: source(video_events()),
+                screen_share: None,
                 audio: None,
                 loudness: None,
             },
@@ -671,6 +722,7 @@ mod tests {
             .into_iter()
             .map(|events| CompositeInput {
                 video: source(events),
+                screen_share: None,
                 audio: None,
                 loudness: None,
             })
@@ -721,6 +773,7 @@ mod tests {
         let expected_end = video_end(&smaller);
         let inputs = vec![CompositeInput {
             video: source(first.into_iter().chain(smaller).collect()),
+            screen_share: None,
             audio: None,
             loudness: None,
         }];
@@ -739,6 +792,7 @@ mod tests {
         // Arrange
         let inputs = vec![CompositeInput {
             video: None,
+            screen_share: None,
             audio: None,
             loudness: None,
         }];

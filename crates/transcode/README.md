@@ -38,9 +38,9 @@ exactly where the source's do (draft-ietf-moq-cmsf-01 §3.2).
 ## Compositing
 
 `Compositor` composites several participants' recordings offline into one progressive MP4
-(`faststart`): the active speaker's video large on the left and the other videos in a strip
-on the right, on a black background, re-encoded as H.264, and their audio mixed into one
-stereo AAC track.
+(`faststart`), re-encoded as H.264 on a black background: a screen share, or else the active
+speaker's video, large on the left, the other videos in a strip on the right. Their audio is
+mixed into one stereo AAC track.
 
 ```
 EventSource ─> appsrc ─> decodebin3 ─> videoconvert ───────────────> compositor ─> x264enc ─┐
@@ -53,6 +53,7 @@ use transcode::{CompositeInput, CompositeSettings, Compositor, Loudness};
 let loudness = Loudness::measure(audio_events_again)?; // blocks; decodes the audio once more
 let inputs = vec![CompositeInput {
     video: Some(video_events),
+    screen_share: None,
     audio: Some(audio_events),
     loudness: Some(loudness),
 }];
@@ -68,11 +69,14 @@ it resumes. An input without video only joins the audio mix.
 `Loudness::measure` decodes a participant's audio before compositing and keeps its RMS level
 per 100 ms. From these the compositor picks the active speaker over the whole recording: the
 loudest participant above about -40 dBFS, who takes over after 1 s of speech, with pauses
-under 1.5 s kept in one turn. Knowing the recording in advance, the change happens where the
-new speaker starts talking, and the first speaker holds the stage from the start. The
-speaker's video takes the focus; while it has none, the focus stays where it was. The strip
-holds the other videos in input order, 1/5 of the output wide, its tiles shrinking to fit the
-height.
+under 1.5 s kept in one turn. Because the whole recording is known in advance, a switch lands
+where the new speaker starts talking, and the first speaker holds the stage from the start.
+
+A screen share takes the focus while it has frames, each lasting up to 5 s since browsers send
+frames only when the screen changes; a share started later waits in the strip until the first
+ends. Without a share, the speaker's camera takes the focus; while the speaker shows no video,
+the focus stays where it was. The strip holds the speaker's camera first, then the other
+videos in input order, 1/5 of the output wide, its tiles shrinking to fit the height.
 
 Inputs may be H.264, VP8, VP9 or AV1 video and AAC, Opus, A-law or MP3 audio, which needs
 these plugins on top of the transcoder's:
