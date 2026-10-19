@@ -345,9 +345,9 @@ settings, so a request cannot point the recorder at another relay or bucket.
 On a recorder started with `--composite`, a `POST /recordings` with
 `"composite": true` also makes one MP4 of the whole room once the recording
 has ended; without the flag the request is refused with `400`. The MP4 holds
-the active speaker's video in focus, every other participant's video in a
-strip beside it, and their audio mixed (`transcode::Compositor`, see the
-transcode README). Compositing live was not
+a screen share or else the active speaker's video in focus, every other
+participant's video in a strip beside it with the speaker on top, and their
+audio mixed (`transcode::Compositor`, see the transcode README). Compositing live was not
 chosen: offline the compositor waits for every participant's data instead of
 dropping late frames.
 
@@ -358,8 +358,11 @@ dropping late frames.
   listed files into `--work-dir/<id>/`, leaving out one it cannot read, and
   composites them with `composite::composite_room`.
 - `composite::FileEvents` reads a participant's files in order with
-  `mediapack::mp4::Demuxer`, once for the video and once for the audio, on
-  the compositor's feeder threads. Each sample is moved by the file's
+  `mediapack::mp4::Demuxer`, once each for the camera, the screen share and
+  the audio, on the compositor's feeder threads. Before that the audio is
+  read once more, every participant on its own blocking thread, for
+  `transcode::Loudness`, which picks the active speaker over the whole
+  recording. Each sample is moved by the file's
   capture origin minus the room's earliest, so the participants share one
   timeline; presentation time 0 of `composite.mp4` is that earliest origin.
 - `composite.mp4` is uploaded to `<id>/composite.mp4` and the work directory

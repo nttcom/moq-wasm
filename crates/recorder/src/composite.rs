@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use mediapack::{MediaEvent, StreamSet, Timestamp, mp4::Demuxer};
-use transcode::{CompositeInput, CompositeSettings, Compositor, EventSource};
+use transcode::{CompositeInput, CompositeSettings, Compositor, EventSource, Loudness};
 
 use crate::recording::RecordedFile;
 
@@ -27,45 +27,74 @@ pub(crate) struct MemberFiles {
 /// presentation time 0 stands for: the earliest capture origin of any file.
 /// Each file is shifted by its own capture origin minus that one. Fails when
 /// no file holds media.
+///
+/// Reads every participant's audio once more first, in parallel, to find
+/// the active speaker.
 pub(crate) async fn composite_room(members: &[MemberFiles], output: &Path) -> Result<Timestamp> {
     let Some(origin) = members
         .iter()
-        .flat_map(|member| &member.files)
+        .flat_map(|member| member.files.iter().chain(&member.screen_share))
         .filter_map(|file| file.capture_origin)
         .min()
     else {
         bail!("the room recording wrote no media");
     };
-    let mut inputs = Vec::with_capacity(members.len());
+    let mut placed = Vec::with_capacity(members.len());
     for member in members {
-        let mut video = Vec::new();
-        let mut audio = Vec::new();
-        for file in &member.files {
-            let Some(file_origin) = file.capture_origin else {
-                continue;
-            };
-            let shift = file_origin.saturating_sub(origin);
-            let path = file.path.clone();
-            let streams = tokio::task::spawn_blocking(move || read_streams(&path)).await??;
-            if streams.has_video {
-                video.push((file.path.clone(), shift));
-            }
-            if streams.has_audio {
-                audio.push((file.path.clone(), shift));
-            }
+        let (video, audio) = placed_files(&member.files, origin).await?;
+        let (screen_share, _) = placed_files(&member.screen_share, origin).await?;
+        if !video.is_empty() || !audio.is_empty() || !screen_share.is_empty() {
+            placed.push((video, audio, screen_share));
         }
-        if !video.is_empty() || !audio.is_empty() {
-            inputs.push(CompositeInput {
-                video: events(video, Kind::Video),
-                screen_share: None,
-                audio: events(audio, Kind::Audio),
-                loudness: None,
-            });
-        }
+    }
+    let measuring: Vec<_> = placed
+        .iter()
+        .map(|(_, audio, _)| {
+            let audio = events(audio.clone(), Kind::Audio);
+            tokio::task::spawn_blocking(move || audio.map(Loudness::measure).transpose())
+        })
+        .collect();
+    let mut inputs = Vec::with_capacity(placed.len());
+    for ((video, audio, screen_share), loudness) in placed.into_iter().zip(measuring) {
+        inputs.push(CompositeInput {
+            video: events(video, Kind::Video),
+            screen_share: events(screen_share, Kind::Video),
+            audio: events(audio, Kind::Audio),
+            loudness: loudness
+                .await?
+                .context("measure a participant's loudness")?,
+        });
     }
     let mut compositor = Compositor::start(inputs, CompositeSettings::default(), output)?;
     compositor.finished().await?;
     Ok(origin)
+}
+
+type PlacedFiles = Vec<(PathBuf, Timestamp)>;
+
+/// The files of `files` that hold video and those that hold audio, each
+/// with its shift onto the room's timeline from `origin`.
+async fn placed_files(
+    files: &[RecordedFile],
+    origin: Timestamp,
+) -> Result<(PlacedFiles, PlacedFiles)> {
+    let mut video = Vec::new();
+    let mut audio = Vec::new();
+    for file in files {
+        let Some(file_origin) = file.capture_origin else {
+            continue;
+        };
+        let shift = file_origin.saturating_sub(origin);
+        let path = file.path.clone();
+        let streams = tokio::task::spawn_blocking(move || read_streams(&path)).await??;
+        if streams.has_video {
+            video.push((file.path.clone(), shift));
+        }
+        if streams.has_audio {
+            audio.push((file.path.clone(), shift));
+        }
+    }
+    Ok((video, audio))
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -74,7 +103,7 @@ enum Kind {
     Audio,
 }
 
-fn events(files: Vec<(PathBuf, Timestamp)>, kind: Kind) -> Option<EventSource> {
+fn events(files: PlacedFiles, kind: Kind) -> Option<EventSource> {
     (!files.is_empty()).then(|| {
         Box::new(FileEvents {
             files: files.into(),
@@ -265,6 +294,39 @@ mod tests {
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
         let duration = index.duration().millis();
         assert!((3_900..4_300).contains(&duration), "duration {duration} ms");
+    }
+
+    #[tokio::test]
+    async fn composites_a_screen_share_on_the_room_timeline() {
+        // Arrange: the participant starts sharing the screen 3 s after the recording
+        let dir = scratch_dir();
+        let (camera, share) = (dir.join("camera.mp4"), dir.join("share.mp4"));
+        write_fixture_fmp4(&camera);
+        write_fixture_fmp4(&share);
+        let recorded = |path: &PathBuf, origin: Timestamp| RecordedFile {
+            path: path.clone(),
+            key: None,
+            capture_origin: Some(origin),
+        };
+        let members = [MemberFiles {
+            namespace: "anon/room/a".to_string(),
+            files: vec![recorded(&camera, ORIGIN)],
+            screen_share: vec![recorded(
+                &share,
+                ORIGIN.saturating_add(Timestamp::from_millis(3_000)),
+            )],
+        }];
+        let output = dir.join("composite.mp4");
+
+        // Act
+        let origin = composite_room(&members, &output).await.unwrap();
+
+        // Assert: the screen share's video ends near 5.1 s
+        let index = read_index(&output);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(origin, ORIGIN);
+        let duration = index.duration().millis();
+        assert!((4_900..5_300).contains(&duration), "duration {duration} ms");
     }
 
     #[tokio::test]
