@@ -174,12 +174,8 @@ collide with it. The track is `transcript`, an MSF event timeline
   an hour, the longest a room runs, and answers the relay's SUBSCRIBE and
   FETCH. Its group ids start at the wall-clock time in µs, since the relay
   isolates a track whose publisher reuses a location.
-- The first object of each group holds every record so far and later objects
-  add one record each (§8.3). A record that comes 10 s or more after the
-  group opened starts a new group. The origin sends a subscription that
-  starts in the middle of a group from the next group on, so this bounds how
-  long a viewer whose subscription the relay opens waits for the history, and
-  a viewer who joins later gets the current group by joining FETCH.
+- The track is one group: its first object is an empty record list, and
+  each later object adds one record (§8.3).
 - The bot publishes no MSF catalog. §8.2 requires an event timeline's catalog
   entry to list the tracks it applies to in `depends`, whose names MSF
   resolves in the event timeline's own namespace, and the audio it describes

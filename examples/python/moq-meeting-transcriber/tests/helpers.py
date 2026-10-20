@@ -45,14 +45,6 @@ class RecordingPublication:
         self.writes.append((new_group, json.loads(payload)))
 
 
-class FakeClock:
-    def __init__(self, now: float):
-        self.now = now
-
-    def __call__(self) -> float:
-        return self.now
-
-
 class NamedRecognizer:
     def __init__(self, name: str):
         self.name = name

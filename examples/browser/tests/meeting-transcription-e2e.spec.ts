@@ -49,15 +49,18 @@ test('captions bring the transcriber, show what a participant says and reach a l
   await expect(getMemberCard(bob.page.page, 'alice').getByTestId('tile-caption')).toHaveText(/\S/, {
     timeout: TRANSCRIPT_TIMEOUT_MS
   })
-  await expect((await openTranscript(bob.page)).filter({ hasText: 'alice' }).first()).toBeVisible()
+  const bobRecords = await openTranscript(bob.page)
+  await expect.poll(() => bobRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(2)
+  await alice.page.toggleMicrophoneButton.click()
+  await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone on')
+  const saidBefore = await bobRecords.count()
 
-  // Act: a participant who turns captions on later
+  // Act: carol turns captions on while alice is muted, so only the joining FETCH can bring her records
   const carol = await joinWithCaptionsOn(browser, room, 'carol')
 
-  // Assert: the joining FETCH brings what was said before
-  await expect((await openTranscript(carol.page)).filter({ hasText: 'alice' }).first()).toBeVisible({
-    timeout: TRANSCRIPT_TIMEOUT_MS
-  })
+  // Assert: carol gets every record bob saw before she joined
+  const carolRecords = await openTranscript(carol.page)
+  await expect.poll(() => carolRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(saidBefore)
 
   for (const client of [carol, bob, alice]) {
     await client.page.leaveButton.click()

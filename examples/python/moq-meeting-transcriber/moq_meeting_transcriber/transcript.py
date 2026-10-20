@@ -1,5 +1,4 @@
 import json
-import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -10,9 +9,6 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from moq_meeting_transcriber.stt import UtteranceTranscriptionFrame
 
 TRACK_NAME = "transcript"
-# A subscription that starts mid-group receives objects from the next group on, which opens with
-# every record so far. The first record this long after a group opened starts the next group.
-GROUP_SECONDS = 10
 
 
 class Publication(Protocol):
@@ -30,25 +26,16 @@ class TranscriptRecord:
 
 
 class TranscriptTimeline:
-    """draft-ietf-moq-msf-01 §8 event timeline indexed by wallclock time: each group opens with
-    every record so far, and later objects in the group carry one new record each."""
+    """draft-ietf-moq-msf-01 §8 event timeline indexed by wallclock time, published as one group."""
 
-    def __init__(self, publication: Publication, now=time.time):
+    def __init__(self, publication: Publication):
         self._publication = publication
-        self._now = now
-        self._records: list[dict] = []
-        self._group_opened_at: float | None = None
 
     async def open(self) -> None:
-        self._group_opened_at = self._now()
-        await self._publication.write(_encode(self._records), new_group=True)
+        await self._publication.write(_encode([]), new_group=True)
 
     async def append(self, record: TranscriptRecord) -> None:
-        self._records.append(record.to_json())
-        if self._group_opened_at is None or self._now() - self._group_opened_at >= GROUP_SECONDS:
-            await self.open()
-        else:
-            await self._publication.write(_encode([record.to_json()]))
+        await self._publication.write(_encode([record.to_json()]))
 
 
 class TranscriptWriter(FrameProcessor):
