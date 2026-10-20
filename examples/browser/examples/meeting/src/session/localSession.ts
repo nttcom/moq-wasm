@@ -331,8 +331,8 @@ export class LocalSession {
       buildTranscriberNamespace(this.roomName),
       TRANSCRIPT_TRACK_NAME,
       AUTH_INFO,
-      (groupId, objectId, payload) => {
-        if (timeline.add(groupId, objectId, payload)) {
+      (groupId, objectId, payload, fetched) => {
+        if (timeline.add(groupId, objectId, payload, !fetched)) {
           onRecords(timeline.records())
         }
       },

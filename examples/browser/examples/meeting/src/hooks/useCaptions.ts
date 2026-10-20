@@ -10,10 +10,8 @@ const TRANSCRIBER_SERVICE = {
   local: 'http://127.0.0.1:8100',
   cloud: 'https://moq-meeting-transcriber.moqt.research.skyway.io'
 }
-/// How long a speaker's newest utterance stays on their tile after it arrives.
+/// How long a speaker's newest live utterance stays on their tile after it arrives.
 const CAPTION_MS = 5_000
-/// Measured from the utterance's start, so history a joining FETCH brings is not shown as a caption.
-const CAPTION_MAX_AGE_MS = 15_000
 const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
   full: 'no transcriber free',
   closed: 'transcriber closed',
@@ -88,7 +86,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
         const receivedAt = Date.now()
         for (const record of next) {
           const key = recordKey(record)
-          if (!arrivals.current.has(key)) {
+          if (record.live && !arrivals.current.has(key)) {
             arrivals.current.set(key, receivedAt)
           }
         }
@@ -113,7 +111,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
     const fresh = new Map<string, string>()
     for (const record of records) {
       const receivedAt = arrivals.current.get(recordKey(record)) ?? 0
-      if (now - receivedAt < CAPTION_MS && now - record.startedAtMs < CAPTION_MAX_AGE_MS) {
+      if (now - receivedAt < CAPTION_MS) {
         fresh.set(record.speaker, record.text)
       }
     }

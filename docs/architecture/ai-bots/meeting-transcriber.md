@@ -192,8 +192,8 @@ collide with it. The track is `transcript`, an MSF event timeline
   carry the whole group. A group's first object replaces the records and
   later objects add to them, in whichever order the two deliver them.
 - The newest record of a speaker appears at the bottom of that speaker's
-  tile for 5 s after it arrives; records more than 15 s old, which a joining
-  FETCH brings, are not shown there. The sidebar gains a Transcript tab next
+  tile for 5 s after it arrives. Records from the joining FETCH are history
+  and are not shown there, however late a live record arrives. The sidebar gains a Transcript tab next
   to the chat that lists every record with speaker and time.
 
 ## Consequences
