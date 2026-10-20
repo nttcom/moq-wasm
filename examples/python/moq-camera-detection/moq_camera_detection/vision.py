@@ -1,9 +1,9 @@
 import base64
 
 import aiohttp
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_bot_rooms.identity_token import IdentityToken
 
-from moq_camera_detection.d3_flash_status import D3FlashStatus
-from moq_camera_detection.identity_token import IdentityToken
 from moq_camera_detection.prompt import Prompt
 
 QUESTION_ID = "answer"

@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
     "moq-bot-rooms",
+    "moq-d3-flash-bot",
     "moqt",
     "pipecat-ai>=1.12",
 ]
@@ -15,6 +16,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 [tool.uv.sources]
 moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
+moq-d3-flash-bot = { path = "../moq-d3-flash-bot", editable = true }
 moqt = { path = "../../../crates/python" }
 
 [tool.pytest.ini_options]

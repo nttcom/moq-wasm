@@ -4,7 +4,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
-from moq_ptz_tracking.event_timeline import Publication
+from moq_d3_flash_bot.publication import Publication
 
 # Cloud Run stops an idle d3-flash after about ten minutes, so a request after a longer pause waits for
 # a cold start. A warm d3-flash answers within a second, so a request still pending after

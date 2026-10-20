@@ -6,7 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from moq_ptz_tracking.event_timeline import Publication
+from moq_d3_flash_bot.publication import Publication
+
 from moq_ptz_tracking.vision import Position
 
 MOVE_VELOCITY = 0.5

@@ -1,7 +1,7 @@
 import pytest
 
-from moq_ptz_tracking import d3_flash_status
-from moq_ptz_tracking.d3_flash_status import IDLE_STOP_SECONDS, D3FlashStatus
+from moq_d3_flash_bot import d3_flash_status
+from moq_d3_flash_bot.d3_flash_status import IDLE_STOP_SECONDS, D3FlashStatus
 from tests.helpers import next_status, published_status
 
 

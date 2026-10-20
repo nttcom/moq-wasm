@@ -1,7 +1,6 @@
 import aiohttp
-
-from moq_chat_moderation.d3_flash_status import D3FlashStatus
-from moq_chat_moderation.identity_token import IdentityToken
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_bot_rooms.identity_token import IdentityToken
 
 ABUSIVE_QUESTION_ID = "abusive"
 ABUSIVE_QUESTION = {

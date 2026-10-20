@@ -879,6 +879,29 @@ dev = [
 ]
 
 [[package]]
+name = "moq-d3-flash-bot"
+version = "0.1.0"
+source = { editable = "../moq-d3-flash-bot" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "moq-bot-rooms" },
+    { name = "moqt" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11" },
+    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "moqt", directory = "../../../crates/python" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
 name = "moq-ptz-tracking"
 version = "0.1.0"
 source = { virtual = "." }
@@ -887,6 +910,7 @@ dependencies = [
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "av", version = "19.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "moq-bot-rooms" },
+    { name = "moq-d3-flash-bot" },
     { name = "moqt" },
     { name = "pipecat-ai" },
 ]
@@ -902,6 +926,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "av", specifier = ">=14" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "moq-d3-flash-bot", editable = "../moq-d3-flash-bot" },
     { name = "moqt", directory = "../../../crates/python" },
     { name = "pipecat-ai", specifier = ">=1.12" },
 ]

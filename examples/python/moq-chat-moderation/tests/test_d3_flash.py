@@ -1,8 +1,12 @@
 import aiohttp
+from moq_bot_rooms.identity_token import IdentityToken
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
 
 from moq_chat_moderation.d3_flash import ABUSIVE_QUESTION_ID, D3FlashClient
-from moq_chat_moderation.d3_flash_status import D3FlashStatus
-from moq_chat_moderation.identity_token import gcloud_identity_token
+
+
+async def identity_token_value() -> str:
+    return "identity-token"
 
 
 async def test_abusive_probability_is_the_noul_answer(fake_d3_flash_server):
@@ -35,7 +39,7 @@ async def test_request_asks_the_abusive_question_without_credentials(fake_d3_fla
 async def test_request_carries_the_identity_token_as_bearer(fake_d3_flash_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        token = gcloud_identity_token(command=("echo", "identity-token"))
+        token = IdentityToken(identity_token_value)
         client = D3FlashClient(session, fake_d3_flash_server.url, D3FlashStatus(), token)
 
         # Act
