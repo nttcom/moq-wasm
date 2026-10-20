@@ -11,6 +11,8 @@ interface ParticipantTileProps {
   stream?: MediaStream | null
   label?: string
   speaking: boolean
+  /// The member's newest transcribed utterance, while it is fresh.
+  caption?: string
   footer?: ReactNode
   /// Called with the shown height in device pixels whenever it changes.
   onHeight?: (heightPx: number) => void
@@ -25,6 +27,7 @@ export function ParticipantTile({
   stream,
   label,
   speaking,
+  caption,
   footer,
   onHeight,
   onOpenDetails,
@@ -57,6 +60,14 @@ export function ParticipantTile({
         <MediaStreamVideo stream={stream} muted fill />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-slate-800">{avatar}</div>
+      )}
+      {caption && (
+        <div
+          data-testid="tile-caption"
+          className="pointer-events-none absolute bottom-9 left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/70 px-3 py-1 text-center text-sm text-white"
+        >
+          {caption}
+        </div>
       )}
       <div className="pointer-events-none absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/60 px-2 py-0.5 text-xs font-medium text-white">
         {label ? `${name} · ${label}` : name}

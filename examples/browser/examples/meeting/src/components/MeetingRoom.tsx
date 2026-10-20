@@ -5,6 +5,7 @@ import { ChatMessage } from '../types/chat'
 import { RemoteMember } from '../types/member'
 import { ChatSidebar } from './ChatSidebar'
 import { MemberGrid, memberStates } from './MemberGrid'
+import { useCaptions } from '../hooks/useCaptions'
 import { useRoomRecording } from '../hooks/useRoomRecording'
 import { resolveRecorderUrl } from '../recording/recorderApi'
 import { RoomHeader } from './RoomHeader'
@@ -53,6 +54,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     resolveRecorderUrl(window.location.search, session.relayUrl),
     session.trackNamespacePrefix.join('/')
   )
+  const [transcriberPresent, setTranscriberPresent] = useState(false)
+  const captions = useCaptions(session, transcriberPresent)
   const [chatMessage, setChatMessage] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -256,7 +259,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     roomName,
     userName,
     setRoom,
-    setChatMessages
+    setChatMessages,
+    setTranscriberPresent
   })
 
   const applyRemoteCatalogTracks = (memberId: string, tracks: MeetingCatalogTrack[]) => {
@@ -691,6 +695,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       <RoomHeader
         roomName={roomName}
         recording={recording?.active?.state}
+        transcribing={transcriberPresent}
         members={Array.from(room.remoteMembers.values()).map((member) => ({
           id: member.id,
           name: member.name,
@@ -769,6 +774,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onToggleChat={() => setIsSidebarOpen((open) => !open)}
             onLeave={onLeave}
             recording={recording}
+            captions={captions}
             onTileHeight={handleTileHeight}
           />
         </main>
@@ -779,6 +785,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onMessageChange={setChatMessage}
             onSend={handleSendChatMessage}
             onToggle={() => setIsSidebarOpen(false)}
+            transcript={captions?.on ? captions.records : undefined}
           />
         )}
       </div>

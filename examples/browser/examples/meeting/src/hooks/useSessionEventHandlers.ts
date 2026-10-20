@@ -1,7 +1,7 @@
 import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
 import { PublishNamespaceDoneMessage, PublishNamespaceMessage } from '../../../../pkg/moqt'
 import { LocalSession, LocalSessionState } from '../session/localSession'
-import { parseTrackNamespace } from '../session/trackNamespace'
+import { isTranscriberNamespace, parseTrackNamespace } from '../session/trackNamespace'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
 import { RemoteMember } from '../types/member'
@@ -13,16 +13,37 @@ interface EventHandlerParams {
   userName: string
   setRoom: Dispatch<SetStateAction<Room>>
   setChatMessages: Dispatch<SetStateAction<ChatMessage[]>>
+  /// Whether the transcriber bot's namespace is published in the room.
+  setTranscriberPresent: Dispatch<SetStateAction<boolean>>
 }
 
-export function useSessionEventHandlers({ session, roomName, userName, setRoom, setChatMessages }: EventHandlerParams) {
+export function useSessionEventHandlers({
+  session,
+  roomName,
+  userName,
+  setRoom,
+  setChatMessages,
+  setTranscriberPresent
+}: EventHandlerParams) {
   const subscribedNamespacesRef = useRef<LocalSession | null>(null)
 
   useEffect(() => {
-    const handlePublishNamespace = createPublishNamespaceHandler({ session, roomName, userName, setRoom })
+    const handlePublishNamespace = createPublishNamespaceHandler({
+      session,
+      roomName,
+      userName,
+      setRoom,
+      setTranscriberPresent
+    })
     session.setOnPublishNamespaceHandler(handlePublishNamespace)
 
-    const handlePublishNamespaceDone = createPublishNamespaceDoneHandler({ session, roomName, userName, setRoom })
+    const handlePublishNamespaceDone = createPublishNamespaceDoneHandler({
+      session,
+      roomName,
+      userName,
+      setRoom,
+      setTranscriberPresent
+    })
     session.setOnPublishNamespaceDoneHandler(handlePublishNamespaceDone)
 
     const ensureSubscribeNamespace = async () => {
@@ -42,7 +63,7 @@ export function useSessionEventHandlers({ session, roomName, userName, setRoom, 
       session.setOnPublishNamespaceHandler(null)
       session.setOnPublishNamespaceDoneHandler(null)
     }
-  }, [roomName, session, setRoom, userName])
+  }, [roomName, session, setRoom, setTranscriberPresent, userName])
 
   useEffect(() => {
     const handleChat = createChatHandler(session, setChatMessages)
@@ -58,11 +79,22 @@ interface PublishNamespaceHandlerOptions {
   roomName: string
   userName: string
   setRoom: Dispatch<SetStateAction<Room>>
+  setTranscriberPresent: Dispatch<SetStateAction<boolean>>
 }
 
-function createPublishNamespaceHandler({ session, roomName, userName, setRoom }: PublishNamespaceHandlerOptions) {
+function createPublishNamespaceHandler({
+  session,
+  roomName,
+  userName,
+  setRoom,
+  setTranscriberPresent
+}: PublishNamespaceHandlerOptions) {
   return (publishNamespace: PublishNamespaceMessage) => {
     if (session.status !== LocalSessionState.Ready) {
+      return
+    }
+    if (isTranscriberNamespace(publishNamespace.trackNamespace, roomName)) {
+      setTranscriberPresent(true)
       return
     }
     const announced = parseTrackNamespace(publishNamespace.trackNamespace)
@@ -74,9 +106,19 @@ function createPublishNamespaceHandler({ session, roomName, userName, setRoom }:
   }
 }
 
-function createPublishNamespaceDoneHandler({ session, roomName, userName, setRoom }: PublishNamespaceHandlerOptions) {
+function createPublishNamespaceDoneHandler({
+  session,
+  roomName,
+  userName,
+  setRoom,
+  setTranscriberPresent
+}: PublishNamespaceHandlerOptions) {
   return (message: PublishNamespaceDoneMessage) => {
     if (session.status !== LocalSessionState.Ready) {
+      return
+    }
+    if (isTranscriberNamespace(message.trackNamespace, roomName)) {
+      setTranscriberPresent(false)
       return
     }
     const announced = parseTrackNamespace(message.trackNamespace)

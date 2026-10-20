@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from 'react'
 import {
   BarChart3,
+  Captions,
   CircleDot,
   CircleStop,
   LayoutGrid,
@@ -17,6 +18,7 @@ import {
   Video,
   VideoOff
 } from 'lucide-react'
+import type { CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import type { RecordingLayout } from '../recording/recorderApi'
 import type { StageView } from '../utils/stageLayout'
@@ -43,6 +45,7 @@ interface ControlBarProps {
   onToggleChat: () => void
   onLeave: () => void
   recording: RoomRecordingControls | null
+  captions: CaptionsControls | null
 }
 
 export function ControlBar(props: ControlBarProps) {
@@ -59,6 +62,22 @@ export function ControlBar(props: ControlBarProps) {
           <BarChart3 className="h-5 w-5" />
         </BarButton>
         {props.recording && <RecordButton recording={props.recording} />}
+        {props.captions && (
+          <BarButton
+            label={
+              props.captions.on
+                ? 'Turn captions off'
+                : props.captions.error
+                  ? `Captions (${props.captions.error})`
+                  : 'Turn captions on'
+            }
+            testId="captions-button"
+            active={props.captions.on}
+            onClick={props.captions.toggle}
+          >
+            <Captions className="h-5 w-5" />
+          </BarButton>
+        )}
       </div>
       <div className="flex items-center gap-3">
         <BarButton

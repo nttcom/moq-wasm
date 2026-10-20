@@ -1,4 +1,5 @@
 import { LocalMember, RemoteMember } from '../types/member'
+import type { CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import { ReactNode, useEffect, useState } from 'react'
 import type { PlayoutSettings } from '../types/playout'
@@ -111,6 +112,7 @@ interface MemberGridProps {
   chatOpen: boolean
   unreadChatMessageCount: number
   recording: RoomRecordingControls | null
+  captions: CaptionsControls | null
   onToggleChat: () => void
   onLeave: () => void
   onTileHeight: (tileKey: string, heightPx: number) => void
@@ -170,6 +172,7 @@ export function MemberGrid({
   chatOpen,
   unreadChatMessageCount,
   recording,
+  captions,
   onToggleChat,
   onLeave,
   onTileHeight
@@ -192,6 +195,7 @@ export function MemberGrid({
           stream={share ? localScreenShareStream : localVideoStream}
           label={share ? 'Screen' : 'You'}
           speaking={false}
+          caption={share ? undefined : captions?.captions.get(localMember.name)}
           onOpenDetails={() => setDetailsTarget(LOCAL_MEMBER_ID)}
         />
       )
@@ -222,6 +226,7 @@ export function MemberGrid({
         menuTestId={`member-menu-${member.name}`}
         picture={pictures?.camera ?? null}
         speaking={speakingMemberIds.has(member.id)}
+        caption={captions?.captions.get(member.name)}
         onHeight={(heightPx) => onTileHeight(tile.key, heightPx)}
         footer={
           <span data-testid={`member-stats-${member.name}`}>{stats ? formatLiveStats(stats) : 'Awaiting media'}</span>
@@ -288,6 +293,7 @@ export function MemberGrid({
         onToggleChat={onToggleChat}
         onLeave={onLeave}
         recording={recording}
+        captions={captions}
       />
       {isDeviceModalOpen && (
         <DeviceModal title="Select Devices" onClose={() => setIsDeviceModalOpen(false)}>

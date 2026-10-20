@@ -18,6 +18,8 @@ on:
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
       - "examples/python/moq-bot-rooms/**"
+      - "examples/python/moq-meeting-transcriber/**"
+      - "crates/python/**"
       - "crates/wasm/**"
       - "crates/live-ingest/**"
       - "crates/recorder/**"
@@ -61,6 +63,8 @@ on:
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
       - "examples/python/moq-bot-rooms/**"
+      - "examples/python/moq-meeting-transcriber/**"
+      - "crates/python/**"
       - "crates/wasm/**"
       - "crates/live-ingest/**"
       - "crates/recorder/**"
@@ -100,6 +104,7 @@ jobs:
       media: ${{ steps.filter.outputs.media }}
       message: ${{ steps.filter.outputs.message }}
       chat_moderation: ${{ steps.filter.outputs.chat_moderation }}
+      meeting_transcription: ${{ steps.filter.outputs.meeting_transcription }}
       camera_detection: ${{ steps.filter.outputs.camera_detection }}
       live_viewer: ${{ steps.filter.outputs.live_viewer }}
       meeting: ${{ steps.filter.outputs.meeting }}
@@ -124,6 +129,7 @@ jobs:
             media=true
             message=true
             chat_moderation=true
+            meeting_transcription=true
             camera_detection=true
             live_viewer=true
             meeting=true
@@ -140,6 +146,7 @@ jobs:
             media=false
             message=false
             chat_moderation=false
+            meeting_transcription=false
             camera_detection=false
             live_viewer=false
             meeting=false
@@ -161,6 +168,12 @@ jobs:
               case "$path" in
                 .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-chat-moderation/*|examples/python/moq-bot-rooms/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   chat_moderation=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-transcription-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|.cargo/config.toml|examples/browser/*|examples/python/moq-meeting-transcriber/*|examples/python/moq-bot-rooms/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  meeting_transcription=true
                   ;;
               esac
 
@@ -233,6 +246,7 @@ jobs:
             echo "media=$media"
             echo "message=$message"
             echo "chat_moderation=$chat_moderation"
+            echo "meeting_transcription=$meeting_transcription"
             echo "camera_detection=$camera_detection"
             echo "live_viewer=$live_viewer"
             echo "meeting=$meeting"
@@ -550,6 +564,84 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: chat-moderation-e2e-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  meeting_transcription_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.meeting_transcription == 'true' }}
+    runs-on: ubuntu-latest
+    # The first run also builds the moqt bindings for the bot.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/browser/package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.99.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      - name: Setup uv
+        # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: 0.12.21
+          checksum: 23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0
+          save-cache: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Install espeak-ng
+        # The E2E runner synthesizes the fake microphone's speech with it.
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+
+      - name: Cache Whisper model
+        # actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-tiny-${{ runner.os }}
+
+      - name: Prepare browser E2E environment
+        run: node tests/browser-e2e/setup-media-e2e.mjs
+
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
+
+      - name: Run meeting transcription E2E
+        env:
+          CI: "true"
+        run: node tests/browser-e2e/run-meeting-transcription-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-transcription-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report
