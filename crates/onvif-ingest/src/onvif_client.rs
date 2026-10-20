@@ -167,15 +167,7 @@ impl OnvifClient {
         command: &OnvifRequest,
     ) -> Result<soap_client::SoapResponse> {
         let action = format!("{}/{}", command.namespace, command.operation);
-        soap_client::send(
-            &self.client,
-            &self.target,
-            endpoint,
-            &action,
-            &command.body,
-            "",
-        )
-        .await
+        soap_client::send(&self.client, &self.target, endpoint, &action, &command.body).await
     }
 }
 

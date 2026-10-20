@@ -31,11 +31,7 @@ pub fn log_response_with_prefix(
         "SOAP response ({}): {} -> HTTP {} ({})",
         action, endpoint, response.status, status
     );
-    let line = if prefix.is_empty() {
-        format!("{message}")
-    } else {
-        format!("{prefix}{message}")
-    };
+    let line = format!("{prefix}{message}");
     if ok {
         log::info!("{line}");
     } else {
@@ -49,9 +45,8 @@ pub async fn send(
     endpoint: &str,
     action: &str,
     body: &str,
-    namespaces: &str,
 ) -> Result<SoapResponse> {
-    let envelope = build_envelope(target, body, namespaces)?;
+    let envelope = build_envelope(target, body)?;
     let content_type = "text/xml; charset=utf-8";
     let request = client
         .post(endpoint)
@@ -67,12 +62,12 @@ pub async fn send(
     Ok(SoapResponse { status, body })
 }
 
-fn build_envelope(target: &Target, body: &str, namespaces: &str) -> Result<String> {
+fn build_envelope(target: &Target, body: &str) -> Result<String> {
     let (user, pass) = target.credentials();
     let header = wsse_auth::build_wsse_header(user, pass)?;
     Ok(format!(
         r#"<s:Envelope
-  xmlns:s="http://www.w3.org/2003/05/soap-envelope"{namespaces}>
+  xmlns:s="http://www.w3.org/2003/05/soap-envelope">
 {header}  <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
     {body}
   </s:Body>
