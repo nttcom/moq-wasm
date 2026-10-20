@@ -76,6 +76,12 @@ that origin's host matches `Host`.
 | `CONSOLE_STATIC_DIR` | Directory of the built pages (`web/dist`); without it only the API is served |
 | `PORT` | Listen port, default `8080` (Cloud Run sets it) |
 
+## Image
+
+`crates/console/Dockerfile` builds `web/` with Node, the binary with
+`cargo-chef` as the VTS does, and puts both on `distroless/cc` with
+`CONSOLE_STATIC_DIR=/srv/console`. It runs as `nonroot` and listens on `PORT`.
+
 ## Invariants
 
 - No response carries an app's `secret`, and no log line carries a token.
