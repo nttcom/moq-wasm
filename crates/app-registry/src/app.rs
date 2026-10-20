@@ -57,6 +57,10 @@ impl Apps {
         self.0.iter().find(|app| app.app_id == app_id)
     }
 
+    pub fn find_by_sub(&self, sub: &str) -> Option<&App> {
+        self.0.iter().find(|app| app.sub.as_deref() == Some(sub))
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
