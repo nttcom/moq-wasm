@@ -53,6 +53,14 @@ class FakeClock:
         return self.now
 
 
+class NamedRecognizer:
+    def __init__(self, name: str):
+        self.name = name
+
+    async def ready(self) -> None:
+        pass
+
+
 class SessionRefusingNamespaces:
     """A relay session that stays open but fails SUBSCRIBE_NAMESPACE."""
 

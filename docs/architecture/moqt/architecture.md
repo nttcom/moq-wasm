@@ -321,7 +321,7 @@ forward from their own cache through the raw stream senders.
 - Per track (`ensure_track(namespace, name, first_group_id, retention)`):
   `ObjectNumbering` (`GroupBoundary::{Within, Next, At}` → `Placement`),
   an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`,
-  the largest location actually sent, and one outlet per subscription to
+  and one outlet per subscription to
   the track (a SUBSCRIBE served or a PUBLISH sent): its publication state and
   its optional `TrackWriter`. An outlet is keyed by the session, identified
   by its `SessionContext`, which the SUBSCRIBE, UNSUBSCRIBE, FETCH and
@@ -346,7 +346,7 @@ forward from their own cache through the raw stream senders.
   released a PUBLISH, but publishes a track again whose SUBSCRIBE the peer
   released; `accept_subscribe`
   answers a SUBSCRIBE the application decided to accept (Content Exists is the
-  largest sent location) and writes from its filter's Start Location
+  largest cached location, the last one FETCH can serve) and writes from its filter's Start Location
   (draft-14 §9.7), computed from the largest object written so far. Objects
   before the Start Location are skipped; when the first object at or after it
   does not start a group, the writer opens that group on a new stream starting

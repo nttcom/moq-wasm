@@ -1,6 +1,14 @@
 # moq-meeting-transcriber
 
-Meeting（`examples/browser/examples/meeting`）のルームに HTTP で呼ばれて入り、参加者全員の音声を Whisper で書き起こす pipecat の bot です。
+Meeting（`examples/browser/examples/meeting`）のルームに HTTP で呼ばれて入り、参加者全員の音声を書き起こす pipecat の bot です。
+音声認識は、ページがルームを頼むときに `?asr=` で選びます。
+
+| `asr` | モデル | 動く場所 |
+| --- | --- | --- |
+| `whisper`（既定） | faster-whisper `medium`（`--model` で変更） | bot の中の CPU |
+| `qwen3-asr` | Qwen3-ASR-1.7B | GPU の Cloud Run（[音声認識を Cloud Run の GPU にデプロイする](../asr-on-cloud-run.md)） |
+| `moss-transcribe-diarize` | MOSS-Transcribe-Diarize 0.9B | GPU の Cloud Run（同上） |
+
 書き起こしは MSF の event timeline として publish します。設計は [Live transcription for the Meeting example](../../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
 relay とは、このリポジトリの Python バインディング [`moqt`](../../../crates/python/README.md) でつなぎます。
@@ -36,7 +44,7 @@ sequenceDiagram
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。bot は `http://127.0.0.1:8100` で待ち受け、
-   最初に Whisper のモデル（既定は `small`）を読み込みます。初回はモデルをダウンロードします。
+   最初に Whisper のモデル（既定は `medium`）を読み込みます。初回はモデルをダウンロードします。
    `moqt` を maturin でビルドするので、初回の `uv run` には Rust のツールチェーンが要ります。
 
 3. ルームに bot を呼ぶ
@@ -55,7 +63,9 @@ sequenceDiagram
 | --- | --- | --- |
 | `--relay-url` | `https://127.0.0.1:4433` | 接続する relay |
 | `--insecure` | なし | relay の証明書を検証しない |
-| `--model` | `small` | faster-whisper のモデル |
+| `--model` | `medium` | `whisper` で使う faster-whisper のモデル |
+| `--asr NAME=URL` | なし | OpenAI 互換の書き起こし API を持つ音声認識サービス。ページは `?asr=NAME` で選ぶ。複数指定できる |
+| `--gcloud-auth` / `--metadata-auth` | なし | `--asr` のサービスに ID トークンを付ける。手元では `gcloud`、Cloud Run ではメタデータサーバーから取る |
 | `--max-rooms` | `2` | 同時に動かすルームの数。Whisper は全ルームで 1 つを順番に使う |
 
 ルーム名は `/` を含まない 1〜64 文字です。対象は `anon` のルームだけで、`?jwt=` で入ったルームには入れません。
@@ -66,6 +76,7 @@ sequenceDiagram
 | --- | --- | --- |
 | `anon/{room}/{user}` | `catalog`、`audio_*` | 参加者が publish するもの。bot は最も高いビットレートの音声を購読する |
 | `anon/{room}/bots/transcriber` | `transcript` | draft-ietf-moq-msf-01 §8 の event timeline。`{"t": 発話開始の ms, "data": {"speaker", "text"}}` |
+| `anon/{room}/bots/transcriber` | `status` | 1 group 1 object の `{"asr": 名前, "state": "starting" か "ready"}`。GPU のサービスが答えるまで `starting` |
 
 group の最初の object はそれまでの全記録、続く object は 1 件ずつです。前の group から 10 秒以上たって届いた記録で新しい group を始めます。
 

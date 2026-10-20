@@ -79,7 +79,8 @@ pub enum WriteOutcome {
 /// the new server each subscribe on their own. A PUBLISH sends from the next
 /// group; a SUBSCRIBE sends from its filter's Start Location
 /// (draft-ietf-moq-transport-14 §9.7), so a Largest Object filter takes the
-/// rest of the open group. Content Exists reports what was actually sent.
+/// rest of the open group. Content Exists reports the largest cached object,
+/// the last one FETCH can serve.
 #[derive(Clone, Default)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
@@ -117,7 +118,6 @@ enum Publication {
 struct OriginTrack {
     numbering: ObjectNumbering,
     cache: ObjectCache,
-    largest_sent: Option<Location>,
     outlets: Vec<Outlet>,
 }
 
@@ -135,7 +135,6 @@ impl OriginTrack {
         Self {
             numbering: ObjectNumbering::new(first_group_id),
             cache: ObjectCache::new(retention),
-            largest_sent: None,
             outlets: Vec::new(),
         }
     }
@@ -345,7 +344,7 @@ impl Origin {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
         let content_exists = {
             let mut state = self.state.lock().await;
-            content_exists(state.track_mut(&key)?.largest_sent)
+            content_exists(state.track_mut(&key)?.numbering.largest())
         };
         let track_alias = handler
             .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists)
@@ -498,15 +497,15 @@ impl Origin {
             handler.track_namespace().to_string(),
             handler.track_name().to_string(),
         );
-        let largest_sent = self
+        let largest = self
             .state
             .lock()
             .await
             .tracks
             .get(&key)
-            .map(|track| track.largest_sent);
-        match largest_sent {
-            Some(largest_sent) => handler.ok(0, content_exists(largest_sent)).await?,
+            .map(|track| track.numbering.largest());
+        match largest {
+            Some(largest) => handler.ok(0, content_exists(largest)).await?,
             None => {
                 handler
                     .error(
@@ -553,7 +552,6 @@ impl Origin {
             }
         }
         if sent {
-            track.largest_sent = Some(placement.location);
             return Ok(WriteOutcome::Sent(placement));
         }
         if stopped {
@@ -585,8 +583,8 @@ fn track_key(namespace: &str, track_name: &str) -> TrackKey {
     (namespace.to_string(), track_name.to_string())
 }
 
-fn content_exists(largest_sent: Option<Location>) -> ContentExists {
-    match largest_sent {
+fn content_exists(largest: Option<Location>) -> ContentExists {
+    match largest {
         Some(location) => ContentExists::True { location },
         None => ContentExists::False,
     }
@@ -885,7 +883,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepted_subscribe_starts_at_the_next_group_and_status_reports_what_was_sent() {
+    async fn accepted_subscribe_starts_at_the_next_group_and_reports_the_largest_cached_object() {
         // Arrange
         let peers = origin_with_track("origin-subscribe", RETENTION).await;
         let origin = &peers.origin;
@@ -909,7 +907,12 @@ mod tests {
         let unknown = track_status(&peers, "other").await;
 
         // Assert
-        assert_eq!(subscription.content_exists(), ContentExists::False);
+        assert_eq!(
+            subscription.content_exists(),
+            ContentExists::True {
+                location: location(FIRST_GROUP_ID, 0)
+            }
+        );
         assert_eq!(mid_group, WriteOutcome::NotSent);
         assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
         assert_eq!(
@@ -1293,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn content_exists_reports_the_largest_sent_location() {
+    fn content_exists_reports_the_largest_location() {
         // Act / Assert
         assert_eq!(content_exists(None), ContentExists::False);
         assert_eq!(

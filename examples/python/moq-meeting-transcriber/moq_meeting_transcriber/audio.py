@@ -4,7 +4,7 @@ SAMPLE_RATE = 16_000
 
 
 class OpusDecoder:
-    """Turns the Opus packets of a LOC audio track into 16 kHz mono 16-bit PCM, the input of Whisper."""
+    """Turns the Opus packets of a LOC audio track into 16 kHz mono 16-bit PCM, the input of the speech recognizer."""
 
     def __init__(self):
         self._decoder = av.CodecContext.create("opus", "r")

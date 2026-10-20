@@ -10,7 +10,7 @@ from moq_meeting_transcriber.stt import (
     NO_SPEECH_PROB,
     TRAILING_SILENCE_SECONDS,
     SharedWhisper,
-    SharedWhisperSTTService,
+    UtteranceSTTService,
     UtteranceTranscriptionFrame,
 )
 
@@ -36,7 +36,7 @@ def segment_of(seconds: float) -> bytes:
 
 
 async def transcribe(model: StubModel, audio: bytes, stopped_at: float, monkeypatch) -> list:
-    service = SharedWhisperSTTService(SharedWhisper(model, "stub"), "alice")
+    service = UtteranceSTTService(SharedWhisper(model), "alice")
     monkeypatch.setattr(stt.time, "time", lambda: stopped_at)
     await service.process_frame(VADUserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
     return [frame async for frame in service.run_stt(audio)]

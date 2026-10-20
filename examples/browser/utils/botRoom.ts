@@ -35,9 +35,10 @@ export class BotRoomRequest {
 
   constructor(private readonly onEnd: (reason: BotRoomEnd) => void) {}
 
-  open(serviceUrl: string, roomId: string): void {
+  /// `query` reaches the bot of a room this request starts, such as the Meeting transcriber's `asr`.
+  open(serviceUrl: string, roomId: string, query: Record<string, string> = {}): void {
     this.close()
-    const source = new EventSource(`${serviceUrl}/rooms/${encodeURIComponent(roomId)}`)
+    const source = new EventSource(`${serviceUrl}/rooms/${encodeURIComponent(roomId)}?${new URLSearchParams(query)}`)
     for (const reason of Object.keys(BOT_ROOM_END_TEXT) as BotRoomEnd[]) {
       source.addEventListener(reason, () => {
         // EventSource reopens any stream the server ends.
@@ -45,6 +46,14 @@ export class BotRoomRequest {
         this.onEnd(reason)
       })
     }
+    // A response that is not an event stream, such as the 400 for a query the bot refuses, closes
+    // the source for good; a dropped stream leaves it reconnecting.
+    source.addEventListener('error', () => {
+      if (source.readyState === EventSource.CLOSED) {
+        this.close()
+        this.onEnd('failed')
+      }
+    })
     this.source = source
   }
 

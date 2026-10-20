@@ -18,7 +18,7 @@ import {
   Video,
   VideoOff
 } from 'lucide-react'
-import type { CaptionsControls } from '../hooks/useCaptions'
+import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import type { RecordingLayout } from '../recording/recorderApi'
 import type { StageView } from '../utils/stageLayout'
@@ -62,22 +62,7 @@ export function ControlBar(props: ControlBarProps) {
           <BarChart3 className="h-5 w-5" />
         </BarButton>
         {props.recording && <RecordButton recording={props.recording} />}
-        {props.captions && (
-          <BarButton
-            label={
-              props.captions.on
-                ? 'Turn captions off'
-                : props.captions.error
-                  ? `Captions (${props.captions.error})`
-                  : 'Turn captions on'
-            }
-            testId="captions-button"
-            active={props.captions.on}
-            onClick={props.captions.toggle}
-          >
-            <Captions className="h-5 w-5" />
-          </BarButton>
-        )}
+        {props.captions && <CaptionsButton captions={props.captions} />}
       </div>
       <div className="flex items-center gap-3">
         <BarButton
@@ -156,6 +141,46 @@ const RECORDING_CHOICES: { id: string; layout: RecordingLayout; composite: boole
   { id: 'per-track', layout: 'per-track', composite: false, label: 'One file per track' },
   { id: 'composite', layout: 'combined', composite: true, label: 'Everyone in one video' }
 ]
+
+function CaptionsButton({ captions }: { captions: CaptionsControls }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  if (captions.on) {
+    return (
+      <BarButton label="Turn captions off" testId="captions-button" active onClick={captions.stop}>
+        <Captions className="h-5 w-5" />
+      </BarButton>
+    )
+  }
+  return (
+    <div className="relative">
+      <BarButton
+        label={captions.error ? `Captions (${captions.error})` : 'Turn captions on'}
+        testId="captions-button"
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        <Captions className="h-5 w-5" />
+      </BarButton>
+      {menuOpen && (
+        <div className="absolute bottom-14 left-0 z-20 w-56 rounded-lg border border-white/10 bg-slate-900 p-1 shadow-lg">
+          {ASR_CHOICES.map(({ asr, label }) => (
+            <button
+              key={asr}
+              type="button"
+              data-testid={`captions-${asr}`}
+              onClick={() => {
+                setMenuOpen(false)
+                captions.start(asr)
+              }}
+              className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-700"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function RecordButton({ recording }: { recording: RoomRecordingControls }) {
   const [menuOpen, setMenuOpen] = useState(false)

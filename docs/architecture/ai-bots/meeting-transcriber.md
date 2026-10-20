@@ -107,18 +107,53 @@ characters without `/`.
   takes it. `PUBLISH_NAMESPACE_DONE` ends the participant.
 
 ### Transcription
-Each participant gets a pipeline of `VADProcessor(SileroVADAnalyzer())` and a
-Whisper STT service. The language is fixed to Japanese, since Whisper's
-language detection on a short utterance guesses wrong more often than a demo
-of a Japanese meeting gains from it. The Opus packets of the participant's audio objects are
+Each participant gets a pipeline of `VADProcessor(SileroVADAnalyzer())` and an
+STT service. The language is fixed to Japanese, since language detection on a
+short utterance guesses wrong more often than a demo of a Japanese meeting
+gains from it. The Opus packets of the participant's audio objects are
 decoded with PyAV and pushed as `UserAudioRawFrame`s whose `user_id` is the
-participant's user name.
+participant's user name. The STT service is a `SegmentedSTTService` subclass
+that dates each utterance (below) and hands the segment to one of three speech
+recognizers:
 
-All pipelines share one faster-whisper model, so memory does not grow with
-the number of speakers. pipecat's `WhisperSTTService` loads a model per
-instance, so the bot runs a `SegmentedSTTService` subclass around the shared
-model, and transcribes one segment at a time. Speech that overlaps waits for
-the segment in front of it.
+| Name | Model | Where it runs |
+| --- | --- | --- |
+| `whisper` (default) | faster-whisper `medium` (`--model`) | in the bot, on the CPU |
+| `qwen3-asr` | Qwen3-ASR-1.7B | its own Cloud Run service with an L4 GPU, served by vLLM |
+| `moss-transcribe-diarize` | MOSS-Transcribe-Diarize 0.9B | its own Cloud Run service with an L4 GPU, served by vLLM |
+
+- `whisper`: all pipelines share one faster-whisper model, so memory does not
+  grow with the number of speakers, and transcribe one segment at a time.
+  pipecat's `WhisperSTTService` loads a model per instance, so the bot holds
+  the model itself.
+- `qwen3-asr` and `moss-transcribe-diarize`: the bot posts each segment as a
+  WAV file to the service's OpenAI-compatible `/v1/audio/transcriptions`,
+  with an identity token from the metadata server, as the other bots call
+  d3-flash. Each model has a service of its own, since each needs a vLLM
+  nightly pinned for it and a service then runs the official vLLM image with
+  arguments only. Neither is d3-flash: d3-flash already fills most of an L4's
+  24 GB with its own weights, and it runs its own server rather than vLLM.
+- MOSS-Transcribe-Diarize writes each segment as `[start][S01]text[end]`. A
+  participant's track carries one speaker, so the bot drops the times and
+  speaker tags; the diarization helps only audio in which several people
+  share a microphone, which the Meeting does not send.
+- None of the models transcribes while a participant speaks: each takes a
+  whole utterance, so a caption follows the end of the utterance.
+
+### Choosing the speech recognizer
+The page sends its choice with the room request,
+`GET /rooms/{room}?asr=qwen3-asr`. `moq-bot-rooms` hands the query to the bot
+of a new room; the bot accepts `whisper` and the names it was started with
+(`--asr qwen3-asr=<service URL>`, once per GPU service), and refuses anything else, so a request
+cannot point the bot at another server. A room runs with the choice of the
+request that started it; later requests join the running room whatever they
+ask for.
+
+The bot publishes a `status` track next to `transcript`: one object per group
+holding `{"asr": <name>, "state": "starting" | "ready"}`. A GPU service that
+scaled to zero takes minutes to answer, so the state stays `starting` until
+its `/health` answers. Every page in the room shows the name and the state in
+the `CC` badge.
 
 ### The transcript track
 The bot publishes under `{root}/{room}/bots/transcriber`. The namespace has
@@ -191,11 +226,23 @@ Each speaker's text would sit next to their audio, but the bot cannot publish
 into a participant's namespace. One track with a `speaker` field gives the
 page the same information with one subscription.
 
-### Whisper behind its own GPU service
-A faster-whisper server with an OpenAI-compatible API on a GPU, which pipecat's
-OpenAI STT service can call, would remove the CPU limit. It adds a service
-with a cold start of minutes, like d3-flash, for a demo that starts per room.
-It stays an option if the CPU path turns out too slow.
+### Whisper large on the GPU as well
+Whisper large-v3 is too slow on the CPU, so it would need a GPU service of
+its own: vLLM serves one model per process, and Qwen3-ASR needs a nightly
+vLLM that Whisper does not. One service running both behind a path router
+saves an instance only when two rooms use different models at once, and ties
+both to one vLLM build. Whisper `medium` on the CPU covers the case of a
+transcriber that needs no GPU.
+
+### Qwen3-ASR and the d3-flash models in one service
+The weights would not fit one L4 together, so the service would have to swap
+models by request path, reloading d3-flash's 17 GB whenever chat moderation and
+captions run at once.
+
+### Ming-3.0-asr-tiny
+inclusionAI's ASR model of October 2026 lists Chinese, English and Chinese
+dialects only, has 8.9B parameters (a mixture of experts with about 2B
+active), and is served with SGLang.
 
 ### A hosted speech-to-text API
 It needs no model in the bot, but sends meeting audio outside the deployment

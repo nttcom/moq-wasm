@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import re
 import signal
+from collections.abc import Callable, Mapping
 
 from aiohttp import web
 from loguru import logger
@@ -44,8 +45,13 @@ def room_app(
     only_room: str | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
+    bot_from_query: Callable[[Mapping[str, str]], RunBot] | None = None,
 ) -> web.Application:
-    """`GET /rooms/{room}` holds the room while the page keeps the event stream open."""
+    """`GET /rooms/{room}` holds the room while the page keeps the event stream open.
+
+    With `bot_from_query`, the query of the request that starts a room picks the room's bot; it
+    raises `ValueError` for a query it refuses, which the page gets as 400.
+    """
 
     async def room_events(request: web.Request) -> web.StreamResponse:
         origin = request.headers.get("Origin")
@@ -55,6 +61,10 @@ def room_app(
         room_id = request.match_info["room"]
         if not room_id_pattern.fullmatch(room_id) or (only_room is not None and room_id != only_room):
             raise web.HTTPNotFound()
+        try:
+            run_bot = bot_from_query(request.query) if bot_from_query else None
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
         response = web.StreamResponse(
             headers={
                 "Content-Type": "text/event-stream",
@@ -63,7 +73,7 @@ def room_app(
             }
         )
         await response.prepare(request)
-        membership = rooms.join(room_id)
+        membership = rooms.join(room_id, run_bot)
         try:
             reason = await hold(response, membership, heartbeat_seconds)
             if reason is not None:
@@ -95,6 +105,7 @@ async def serve_rooms(
     run_bot: RunBot,
     only_room: str | None = None,
     room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
+    bot_from_query: Callable[[Mapping[str, str]], RunBot] | None = None,
 ) -> None:
     """Serves rooms until SIGINT or SIGTERM, then stops every bot before it returns."""
     rooms = Rooms(
@@ -103,7 +114,9 @@ async def serve_rooms(
         max_room_seconds=args.max_room_seconds,
         open_hours=args.open_hours,
     )
-    runner = web.AppRunner(room_app(rooms, args.allowed_origin, only_room, room_id_pattern=room_id_pattern))
+    runner = web.AppRunner(
+        room_app(rooms, args.allowed_origin, only_room, room_id_pattern=room_id_pattern, bot_from_query=bot_from_query)
+    )
     await runner.setup()
     await web.TCPSite(runner, args.host, args.port).start()
     logger.info(f"serving rooms on http://{args.host}:{args.port}")

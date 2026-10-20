@@ -20,6 +20,7 @@ async function joinWithCaptionsOn(browser: import('@playwright/test').Browser, r
   const client = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
   await joinRoom(client.page, room, user, 'a')
   await client.page.page.getByTestId('captions-button').click()
+  await client.page.page.getByTestId('captions-whisper').click()
   return client
 }
 
@@ -42,7 +43,9 @@ test('captions bring the transcriber, show what a participant says and reach a l
 
   // Assert: everyone sees that the room is transcribed, and bob reads alice
   await expect(bob.page.page.getByTestId('transcriber-badge')).toBeVisible({ timeout: BOT_JOIN_TIMEOUT_MS })
-  await expect(alice.page.page.getByTestId('transcriber-badge')).toBeVisible()
+  await expect(alice.page.page.getByTestId('transcriber-badge')).toHaveText('CC · Whisper (CPU)', {
+    timeout: BOT_JOIN_TIMEOUT_MS
+  })
   await expect(getMemberCard(bob.page.page, 'alice').getByTestId('tile-caption')).toHaveText(/\S/, {
     timeout: TRANSCRIPT_TIMEOUT_MS
   })

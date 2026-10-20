@@ -15,6 +15,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
   | `failed` | bot が例外で止まった |
 
 - ルーム ID は既定で `[a-z0-9-]` の 1〜32 文字で、bot が `serve_rooms` に別の規則を渡せます。namespace の 1 要素になります。
+- bot が `serve_rooms` に `bot_from_query` を渡すと、ルームを始めたリクエストのクエリでそのルームの bot を選べます（例: 書き起こしのモデル）。受け付けないクエリには 400 を返します。
 
 ## オプション
 

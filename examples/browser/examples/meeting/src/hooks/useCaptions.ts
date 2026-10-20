@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { type BotRoomEnd, BotRoomRequest } from '../../../../utils/botRoom'
 import { resolveServiceUrl } from '../../../../utils/serviceUrl'
-import type { TranscriptRecord } from '../media/transcript'
+import type { TranscriberStatus, TranscriptRecord } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
 import { TRANSCRIBER_AVAILABLE } from '../session/trackNamespace'
 
@@ -21,10 +21,25 @@ const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
   failed: 'transcriber stopped'
 }
 
+/// The recognizers the deployed transcriber offers (docs/architecture/ai-bots/meeting-transcriber.md).
+export const ASR_CHOICES = [
+  { asr: 'whisper', label: 'Whisper (CPU)' },
+  { asr: 'qwen3-asr', label: 'Qwen3-ASR (GPU)' },
+  { asr: 'moss-transcribe-diarize', label: 'MOSS (GPU)' }
+] as const
+
+export function asrLabel(asr: string): string {
+  return ASR_CHOICES.find((choice) => choice.asr === asr)?.label ?? asr
+}
+
 export type CaptionsControls = {
   /// Whether this page keeps the transcriber in the room and shows its text.
   on: boolean
-  toggle: () => void
+  /// Asks the transcriber in with `asr`; a transcriber already in the room keeps its own.
+  start: (asr: string) => void
+  stop: () => void
+  /// `undefined` until the transcriber's status arrives and after it leaves.
+  status: TranscriberStatus | undefined
   /// Why the transcriber left while this page asked for it.
   error: string | undefined
   records: TranscriptRecord[]
@@ -34,23 +49,35 @@ export type CaptionsControls = {
 
 /// `null` in a room the transcriber does not serve.
 export function useCaptions(session: LocalSession, transcriberPresent: boolean): CaptionsControls | null {
-  const [on, setOn] = useState(false)
+  const [asr, setAsr] = useState<string>()
+  const on = asr !== undefined
+  const [status, setStatus] = useState<TranscriberStatus>()
   const [error, setError] = useState<string>()
   const [records, setRecords] = useState<TranscriptRecord[]>([])
   const arrivals = useRef(new Map<string, number>())
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    if (!on) {
+    if (asr === undefined) {
       return
     }
     const request = new BotRoomRequest((reason) => {
-      setOn(false)
+      setAsr(undefined)
       setError(TRANSCRIBER_END_TEXT[reason])
     })
-    request.open(resolveServiceUrl(window.location.search, session.relayUrl, TRANSCRIBER_SERVICE), session.roomName)
+    request.open(resolveServiceUrl(window.location.search, session.relayUrl, TRANSCRIBER_SERVICE), session.roomName, {
+      asr
+    })
     return () => request.close()
-  }, [on, session])
+  }, [asr, session])
+
+  useEffect(() => {
+    if (!transcriberPresent) {
+      setStatus(undefined)
+      return
+    }
+    return holdSubscription(session, session.subscribeTranscriberStatus(setStatus), 'transcriber status')
+  }, [session, transcriberPresent])
 
   useEffect(() => {
     if (!on || !transcriberPresent) {
@@ -69,12 +96,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       },
       () => setRecords([])
     )
-    subscribed.catch((reason) => console.warn('[meeting][captions] transcript subscribe failed', reason))
-    return () => {
-      void subscribed
-        .then((id) => (session.isSubscribed(id) ? session.unsubscribe(id) : undefined))
-        .catch(() => undefined)
-    }
+    return holdSubscription(session, subscribed, 'transcript')
   }, [on, session, transcriberPresent])
 
   useEffect(() => {
@@ -103,13 +125,25 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   }
   return {
     on,
-    toggle: () => {
+    start: (choice) => {
       setError(undefined)
-      setOn((current) => !current)
+      setAsr(choice)
     },
+    stop: () => setAsr(undefined),
+    status,
     error,
     records,
     captions
+  }
+}
+
+/// The effect's cleanup: unsubscribes whether or not the SUBSCRIBE has been answered yet.
+function holdSubscription(session: LocalSession, subscribed: Promise<bigint>, track: string): () => void {
+  subscribed.catch((reason) => console.warn(`[meeting][captions] ${track} subscribe failed`, reason))
+  return () => {
+    void subscribed
+      .then((id) => (session.isSubscribed(id) ? session.unsubscribe(id) : undefined))
+      .catch(() => undefined)
   }
 }
 

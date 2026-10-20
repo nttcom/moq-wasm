@@ -6,7 +6,12 @@ import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'
 import type { VideoAdaptation } from '../media/mediaSubscriber'
 import { parseMeetingCatalogTracks } from '../media/meetingCatalog'
-import { TranscriptTimeline, type TranscriptRecord } from '../media/transcript'
+import {
+  TranscriptTimeline,
+  parseTranscriberStatus,
+  type TranscriberStatus,
+  type TranscriptRecord
+} from '../media/transcript'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import { readMeetingAuth } from './authToken'
 import {
@@ -28,6 +33,7 @@ const AUTH_INFO = 'secret'
 const VIDEO_SUBSCRIBER_PRIORITY = 128
 const CATALOG_SUBSCRIBE_TIMEOUT_MS = 5000
 const TRANSCRIPT_TRACK_NAME = 'transcript'
+const TRANSCRIBER_STATUS_TRACK_NAME = 'status'
 
 export enum LocalSessionState {
   Idle = 'idle',
@@ -336,6 +342,25 @@ export class LocalSession {
           onEnded()
         }
       }
+    )
+    this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
+    return requestId
+  }
+
+  /// The transcriber's recognizer and whether it answers yet: one object per group.
+  async subscribeTranscriberStatus(onStatus: (status: TranscriberStatus) => void): Promise<bigint> {
+    this.assertReady('subscribe transcriber status')
+    const { requestId, subscribeOk } = await this.client.subscribeLatest(
+      buildTranscriberNamespace(this.roomName),
+      TRANSCRIBER_STATUS_TRACK_NAME,
+      AUTH_INFO,
+      (payload) => {
+        const status = parseTranscriberStatus(payload)
+        if (status) {
+          onStatus(status)
+        }
+      },
+      { onPublishDone: ({ requestId }) => this.forgetSubscription(requestId) }
     )
     this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
     return requestId

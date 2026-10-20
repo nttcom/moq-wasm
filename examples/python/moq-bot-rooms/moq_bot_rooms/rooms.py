@@ -79,7 +79,9 @@ class Rooms:
         self._rooms: dict[str, _Room] = {}
         self._shutting_down = False
 
-    def join(self, room_id: str) -> Membership:
+    def join(self, room_id: str, run_bot: RunBot | None = None) -> Membership:
+        """`run_bot`, when given, runs the room's bot instead of the default one if this join
+        starts the room; a join to a running room leaves its bot as it is."""
         if self._shutting_down:
             return Membership.refused(None)
         room = self._rooms.get(room_id)
@@ -88,7 +90,7 @@ class Rooms:
                 return Membership.refused(RoomEnd.CLOSED)
             if sum(not other.ended.done() for other in self._rooms.values()) >= self._max_rooms:
                 return Membership.refused(RoomEnd.FULL)
-            room = self._start(room_id)
+            room = self._start(room_id, run_bot or self._run_bot)
         elif room.ended.done():
             # The room ended while pages held it and is remembered until they are gone, so a
             # page that reconnects learns why instead of starting the room again.
@@ -115,17 +117,17 @@ class Rooms:
     def _is_open(self) -> bool:
         return self._open_hours is None or self._open_hours.contains(self._now())
 
-    def _start(self, room_id: str) -> _Room:
+    def _start(self, room_id: str, run_bot: RunBot) -> _Room:
         room = _Room(room_id)
         self._rooms[room_id] = room
-        room.task = asyncio.create_task(self._run(room))
+        room.task = asyncio.create_task(self._run(room, run_bot))
         room.expiry = asyncio.get_running_loop().call_later(self._max_room_seconds, self._end, room, RoomEnd.EXPIRED)
         logger.info(f"room {room_id}: bot started")
         return room
 
-    async def _run(self, room: _Room) -> None:
+    async def _run(self, room: _Room, run_bot: RunBot) -> None:
         try:
-            await self._run_bot(room.room_id)
+            await run_bot(room.room_id)
         except asyncio.CancelledError:
             raise
         except Exception:
