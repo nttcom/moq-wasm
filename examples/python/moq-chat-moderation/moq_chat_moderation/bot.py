@@ -3,14 +3,14 @@ import asyncio
 from functools import partial
 
 import aiohttp
-import moq
+import moqt
 from loguru import logger
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
-from pipecat.transports.moq.transport import MOQParams, MOQTransport
 from pipecat.workers.runner import WorkerRunner
 
+from moq_chat_moderation.chat import ChatMessage
 from moq_chat_moderation.d3_flash import D3FlashClient
 from moq_chat_moderation.d3_flash_status import D3FlashStatus
 from moq_chat_moderation.event_timeline import EventTimeline
@@ -20,12 +20,15 @@ from moq_chat_moderation.moderator import ChatModerator
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8097
 DEFAULT_MAX_ROOMS = 10
-NAMESPACE_ROOT = "anon/moq-chat-moderation"
+NAMESPACE_ROOT = ["anon", "moq-chat-moderation"]
 CHAT_TRACK = "chat"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
-CHAT_PAGE_WAIT_SECONDS = 365 * 24 * 60 * 60
-REBUILD_DELAY_SECONDS = 2.0
+# The verdicts and the d3-flash status are kept for FETCH as long as a room runs by default
+# (--max-room-seconds).
+RETENTION_SECONDS = 60 * 60
+RESUBSCRIBE_DELAY_SECONDS = 1.0
+RECONNECT_DELAY_SECONDS = 2.0
 # d3-flash scales to zero; a cold start copies 17 GB of weights before it answers.
 JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
@@ -54,78 +57,112 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def moderator_broadcast(transport: MOQTransport) -> moq.BroadcastProducer:
-    # MOQTransport has no public API for an extra track. It rebuilds this broadcast right
-    # before every redial and announces it on connect, so the event timeline follows it
-    # from on_connected, before a subscriber's round trip through the relay can reach it.
-    return transport._client._publish_broadcast
+def room_namespace(room_id: str) -> list[str]:
+    return [*NAMESPACE_ROOT, room_id]
 
 
-async def moderate_until_transport_stops(
-    args: argparse.Namespace, room_id: str, d3_flash: D3FlashClient, timeline: EventTimeline, status: D3FlashStatus
+async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker: PipelineWorker) -> None:
+    while True:
+        try:
+            track = await session.subscribe(chat_namespace, CHAT_TRACK)
+            async for chat_object in track:
+                chat = ChatMessage.parse(chat_object)
+                if chat is None:
+                    logger.warning(f"ignoring a chat object that is not UTF-8 text in group {chat_object.group_id}")
+                    continue
+                await worker.queue_frame(chat)
+            logger.info("chat track ended")
+        except RuntimeError as error:
+            logger.info(f"chat track ended: {error}")
+        # The relay ends the track when the page it subscribed to leaves; another page in the room
+        # may still publish the chat namespace, so subscribe again.
+        await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
+
+
+async def follow_chat_page(session: moqt.Session, room_id: str, worker: PipelineWorker) -> None:
+    chat_namespace = [*room_namespace(room_id), "chat"]
+    forwarding: asyncio.Task | None = None
+    try:
+        async for event in await session.subscribe_namespace(room_namespace(room_id)):
+            if event.namespace != chat_namespace:
+                continue
+            if forwarding is not None:
+                forwarding.cancel()
+            forwarding = asyncio.create_task(forward_chat(session, chat_namespace, worker)) if event.active else None
+    finally:
+        if forwarding is not None:
+            forwarding.cancel()
+
+
+async def moderate_session(
+    session: moqt.Session, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
 ) -> None:
-    transport = MOQTransport(
-        params=MOQParams(
-            relay_url=args.relay_url,
-            verify_ssl=not args.insecure,
-            request_path=f"{NAMESPACE_ROOT}/{room_id}/chat",
-            response_path=f"{NAMESPACE_ROOT}/{room_id}/moderator",
-            transcript_track=CHAT_TRACK,
-            audio_in_enabled=False,
-            audio_out_enabled=False,
-            connection_timeout=CHAT_PAGE_WAIT_SECONDS,
+    moderator_namespace = [*room_namespace(room_id), "moderator"]
+    # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
+    for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
+        await publisher.publish_on(
+            await session.track(moderator_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
-    )
-    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
-    runner = WorkerRunner(handle_sigint=False)
+    await session.publish_namespace(moderator_namespace)
+    following = asyncio.create_task(follow_chat_page(session, room_id, worker))
+    try:
+        await session.closed()
+    finally:
+        following.cancel()
 
-    @transport.event_handler("on_connected")
-    async def on_connected(transport: MOQTransport):
-        broadcast = moderator_broadcast(transport)
-        timeline.publish_on(broadcast)
-        status.publish_on(broadcast)
 
-    # MOQTransport stops for good after a failure it does not count as the peer leaving.
-    @transport.event_handler("on_error")
-    async def on_error(transport: MOQTransport, message: str, error: Exception):
-        await runner.cancel(reason=message)
-
-    await runner.add_workers(
-        PipelineWorker(
-            Pipeline([ChatModerator(d3_flash, timeline), transport.input()]),
-            enable_rtvi=False,
-            idle_timeout_secs=None,
-        )
-    )
-    await runner.run()
+async def stay_connected(
+    args: argparse.Namespace, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
+) -> None:
+    while True:
+        try:
+            session = await moqt.connect(args.relay_url, verify_certificate=not args.insecure)
+        except RuntimeError as error:
+            logger.warning(f"room {room_id}: cannot connect to {args.relay_url}: {error}")
+            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+            continue
+        logger.info(f"room {room_id}: connected to {args.relay_url}")
+        try:
+            await moderate_session(session, room_id, timeline, status, worker)
+            logger.warning(f"room {room_id}: relay session closed")
+        except RuntimeError as error:
+            logger.warning(f"room {room_id}: relay session failed: {error}")
+        finally:
+            await session.close()
+        await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
 
 async def moderate_room(
-    args: argparse.Namespace, session: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
+    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
 ) -> None:
-    timeline = EventTimeline(EVENT_TIMELINE_TRACK)
-    status = D3FlashStatus(STATUS_TRACK)
-    d3_flash = D3FlashClient(session, args.d3_flash_url, status, identity_token)
-    while True:
-        await moderate_until_transport_stops(args, room_id, d3_flash, timeline, status)
-        # WorkerRunner.run() swallows the cancellation that stops the room.
-        if asyncio.current_task().cancelling():
-            raise asyncio.CancelledError
-        logger.warning(f"room {room_id}: MOQ transport stopped; building a new one in {REBUILD_DELAY_SECONDS}s")
-        await asyncio.sleep(REBUILD_DELAY_SECONDS)
+    timeline = EventTimeline()
+    status = D3FlashStatus()
+    d3_flash = D3FlashClient(http, args.d3_flash_url, status, identity_token)
+    worker = PipelineWorker(
+        Pipeline([ChatModerator(d3_flash, timeline)]),
+        enable_rtvi=False,
+        idle_timeout_secs=None,
+    )
+    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    async with asyncio.TaskGroup() as tasks:
+        connecting = tasks.create_task(stay_connected(args, room_id, timeline, status, worker))
+        await runner.run()
+        connecting.cancel()
 
 
 async def main():
     args = parse_args()
-    async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as session:
+    async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as http:
         identity_token = (
             gcloud_identity_token()
             if args.gcloud_auth
-            else metadata_identity_token(session, args.d3_flash_url)
+            else metadata_identity_token(http, args.d3_flash_url)
             if args.metadata_auth
             else None
         )
-        await serve_rooms(args, partial(moderate_room, args, session, identity_token))
+        await serve_rooms(args, partial(moderate_room, args, http, identity_token))
 
 
 if __name__ == "__main__":

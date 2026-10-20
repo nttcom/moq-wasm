@@ -10,6 +10,7 @@ crates/relay/logs
 
 node_modules
 **/node_modules
+**/.venv
 
 .env
 .env.*

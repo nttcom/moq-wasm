@@ -1,27 +1,22 @@
+from types import SimpleNamespace
+
 import pytest
 
 from moq_chat_moderation.chat import ChatMessage
 
 
-def test_chat_record_carries_its_text_and_location():
+def test_chat_object_carries_its_text_at_its_location():
+    # Arrange
+    chat_object = SimpleNamespace(group_id=1790000000000000, object_id=0, payload="こんにちは".encode())
+
     # Act
-    chat = ChatMessage.parse({"text": "hello", "location": [1790000000000000, 0]})
+    chat = ChatMessage.parse(chat_object)
 
     # Assert
-    assert chat == ChatMessage(text="hello", location=(1790000000000000, 0))
+    assert (chat.text, chat.location) == ("こんにちは", (1790000000000000, 0))
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "hello",
-        {"location": [1, 0]},
-        {"text": "hello"},
-        {"text": "hello", "location": [1]},
-        {"text": "hello", "location": [True, 0]},
-        {"text": "hello", "location": ["1", 0]},
-    ],
-)
-def test_message_without_text_and_location_is_not_a_chat(message):
+@pytest.mark.parametrize("payload", [b"", b"\xff\xfe"])
+def test_object_without_utf8_text_is_not_a_chat(payload):
     # Act / Assert
-    assert ChatMessage.parse(message) is None
+    assert ChatMessage.parse(SimpleNamespace(group_id=1, object_id=0, payload=payload)) is None

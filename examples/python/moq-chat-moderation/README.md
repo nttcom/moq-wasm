@@ -1,7 +1,7 @@
 # moq-chat-moderation
 
 ブラウザの MoQ Chat Moderation ページ（`examples/browser/examples/moq-chat-moderation`）で打ったチャットを
-pipecat の bot が `MOQTransport` で受け取り、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) で暴言かどうかを判定します。
+pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) で暴言かどうかを判定します。
 判定結果は MSF の event timeline として publish され、ページは暴言のメッセージを「モデレーターによって削除されました」に置き換えます。
 
 ```mermaid
@@ -15,7 +15,7 @@ sequenceDiagram
     P->>D: /v1/systemone noul "abusive"
     D-->>P: probability
     P->>R: eventtimeline (anon/moq-chat-moderation/{room}/moderator)
-    R->>B: {"l": [groupId, objectId], "data": {"abusive": true}}
+    R->>B: [{"l": [groupId, objectId], "data": {"abusive": true}}]
 ```
 
 ## d3-flash
@@ -44,6 +44,8 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
 
 2. bot を起動する
 
+   bot は `moqt` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。初回の `uv run` はビルドに数分かかります。
+
    ```shell
    cd examples/python/moq-chat-moderation
    uv run python -m moq_chat_moderation.bot --insecure \
@@ -68,14 +70,15 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `anon/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | `{"text", "location": [groupId, objectId]}`。1 メッセージ 1 group |
+| `anon/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | メッセージの UTF-8 テキスト。1 メッセージ 1 group |
 | `anon/moq-chat-moderation/{room}/moderator` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で chat の Location を指す |
+| `anon/moq-chat-moderation/{room}/moderator` | `status` | bot | d3-flash の状態 `{"d3_flash", "since"}`。1 状態 1 group |
 
-- pipecat の `MOQTransport` は peer の transcript トラックを moq-rs の圧縮 JSON stream として読みます。ブラウザは
-  各レコードを DEFLATE の stored block で包み、group の先頭 object として送ります。
-- chat の group id と eventtimeline の group id は wall clock から採番します。relay は publisher が替わっても
-  track のキャッシュを保持し、同じ Location を再利用した track を隔離するためです。
-- `MOQTransport` は peer を 1 つしか扱わないので、1 つのルームでチャットを送るページは同時に 1 つです。
+- eventtimeline は relay につなぐたびに、それまでのすべての判定を持つ group を開き、以降の判定を 1 件 1 object で足します。
+- group id は wall clock から採番します。relay は publisher が替わっても track のキャッシュを保持し、同じ Location を
+  再利用した track を隔離するためです。
+- ルームのページは同じ chat の namespace を publish し、relay は bot の SUBSCRIBE をそのうち 1 つに送るので、
+  1 つのルームでチャットを送れるページは同時に 1 つです。そのページが去ると bot は購読し直し、残ったページが送れるようになります。
 
 ## テスト
 

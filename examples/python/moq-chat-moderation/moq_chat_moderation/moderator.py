@@ -1,6 +1,6 @@
 import aiohttp
 from loguru import logger
-from pipecat.frames.frames import Frame, InputTransportMessageFrame
+from pipecat.frames.frames import Frame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from moq_chat_moderation.chat import ChatMessage
@@ -18,15 +18,10 @@ class ChatModerator(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        chat = (
-            ChatMessage.parse(frame.message)
-            if isinstance(frame, InputTransportMessageFrame)
-            else None
-        )
-        if chat is None:
+        if isinstance(frame, ChatMessage):
+            await self._moderate(frame)
+        else:
             await self.push_frame(frame, direction)
-            return
-        await self._moderate(chat)
 
     async def _moderate(self, chat: ChatMessage):
         try:
@@ -36,6 +31,6 @@ class ChatModerator(FrameProcessor):
             return
         abusive = probability >= ABUSIVE_THRESHOLD
         logger.info(f"chat {chat.location} abusive={abusive} (p={probability:.2f})")
-        self._timeline.append(
+        await self._timeline.append(
             location_record(chat.location, {"abusive": abusive, "probability": probability})
         )
