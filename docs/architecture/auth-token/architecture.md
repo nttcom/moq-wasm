@@ -10,7 +10,7 @@ and its HS256 signing and verification.
 
 | Module | Responsibility |
 | --- | --- |
-| `lib.rs` | `Claims` and `decode_claims`, which reads `Claims` without checking the signature. |
+| `lib.rs` | `Claims`. |
 | `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `ring`. |
 
 The payload claims:
@@ -28,15 +28,12 @@ Producers and consumers:
 - `crates/relay` (`modules/auth/token_claims.rs`) deserialises `Claims` from the
   VTS `/verify` response and applies its time and path policy. It holds no
   secret and never signs or verifies.
-- `decode_claims` is for clients that need to look at their own token without
-  verifying it. The browser counterpart is
-  `examples/browser/examples/meeting/src/session/authToken.ts`.
 
 ## Invariants
 
-- `decode_claims` and `decode_payload` never check the signature. Neither may
-  be used as an authorisation decision; only a successful `verify_signature`
-  with the app's secret is.
+- `decode_payload` never checks the signature. It may not be used as an
+  authorisation decision; only a successful `verify_signature` with the app's
+  secret is.
 - A header whose `alg` is anything other than `HS256` is `InvalidSignature`.
 - Unknown claims are ignored on read and never produced on write, so the VTS
   can pass the signed payload through unchanged while the relay reads only
