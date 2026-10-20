@@ -28,6 +28,7 @@ Application and integration components (draft reference is normally not required
 | Component | Description |
 | --- | --- |
 | `crates/wasm` | WebAssembly bindings to use `moqt` from the browser |
+| `crates/python` | Python (PyO3) bindings to use `moqt` from the Python bots |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `crates/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |

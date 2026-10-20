@@ -1,2 +1,6 @@
 [build]
 rustflags = ["--cfg", "tokio_unstable", "--cfg", "web_sys_unstable_apis"]
+# Lets cargo build crates/python, an abi3 extension module, without a Python interpreter.
+[env]
+PYO3_NO_PYTHON = "1"
+PYO3_BUILD_EXTENSION_MODULE = "1"

@@ -1,0 +1,82 @@
+import asyncio
+import uuid
+
+import pytest
+
+import moqt
+
+TIMEOUT_SECONDS = 10
+TRACK = "timeline"
+
+
+def room() -> list[str]:
+    return ["anon", f"room-{uuid.uuid4().hex[:8]}"]
+
+
+async def within(awaitable):
+    return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
+
+
+async def connect(relay_url: str) -> moqt.Session:
+    # The relay serves this workspace's self-signed certificate.
+    return await moqt.connect(relay_url, verify_certificate=False)
+
+
+async def publisher_with_track(relay_url: str, namespace: list[str]):
+    session = await connect(relay_url)
+    # Registered before the namespace, since the relay may forward a SUBSCRIBE at once.
+    track = await session.track(namespace, TRACK, retention_seconds=60)
+    await session.publish_namespace(namespace)
+    return session, track
+
+
+async def test_a_published_namespace_and_its_withdrawal_reach_the_prefix_subscriber(relay_url):
+    # Arrange
+    prefix = room()
+    watcher = await connect(relay_url)
+    events = await within(watcher.subscribe_namespace(prefix))
+    publisher = await connect(relay_url)
+
+    # Act
+    await publisher.publish_namespace([*prefix, "alice"])
+    published = await within(events.__anext__())
+    await publisher.close()
+    withdrawn = await within(events.__anext__())
+
+    # Assert
+    assert (published.namespace, published.active) == ([*prefix, "alice"], True)
+    assert (withdrawn.namespace, withdrawn.active) == ([*prefix, "alice"], False)
+    await watcher.close()
+
+
+async def test_current_group_brings_the_object_the_relay_already_holds(relay_url):
+    # Arrange: a first subscriber makes the relay hold the track before the second one comes
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    first = await connect(relay_url)
+    first_track = await within(first.subscribe(namespace, TRACK))
+    await track.write(b"v1", new_group=True)
+    assert (await within(first_track.__anext__())).payload == b"v1"
+    late = await connect(relay_url)
+
+    # Act
+    late_track = await within(late.subscribe(namespace, TRACK, current_group=True))
+    await track.write(b"v2", new_group=True)
+
+    # Assert
+    assert [(await within(late_track.__anext__())).payload for _ in range(2)] == [b"v1", b"v2"]
+    for session in (late, first, publisher):
+        await session.close()
+
+
+async def test_a_subscribe_to_a_track_the_publisher_does_not_have_fails(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, _ = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="TrackDoesNotExist"):
+        await within(subscriber.subscribe(namespace, "unknown"))
+    for session in (subscriber, publisher):
+        await session.close()
