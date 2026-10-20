@@ -9,7 +9,8 @@ use tracing::Span;
 
 use crate::modules::{
     control_plane::{
-        control_message_forwarder::ControlMessageForwarder, sequences::subscribe::cached_largest,
+        control_message_forwarder::ControlMessageForwarder,
+        sequences::subscribe::existing_track_largest,
     },
     data_plane::{
         cache::store::TrackCacheStore,
@@ -54,11 +55,8 @@ impl DownstreamPublish {
         let Some(upstream_track) = self.table.get_upstream_track(track_key) else {
             bail!("upstream track ended before PUBLISH was sent");
         };
-        let upstream_largest = match upstream_track.content_exists() {
-            ContentExists::True { location } => Some(location),
-            ContentExists::False => None,
-        };
-        let largest_location = cached_largest(&self.cache_store, track_key).max(upstream_largest);
+        let largest_location =
+            existing_track_largest(&self.cache_store, track_key, &upstream_track);
         let content_exists = largest_location.map_or(ContentExists::False, |location| {
             ContentExists::True { location }
         });
