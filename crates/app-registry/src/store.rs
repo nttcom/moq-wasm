@@ -19,7 +19,8 @@ pub enum Endpoint {
 }
 
 impl Endpoint {
-    /// Uses the emulator at `STORAGE_EMULATOR_HOST` (a URL such as `http://localhost:4443`) when it is set, Cloud Storage otherwise.
+    /// Uses the emulator at `STORAGE_EMULATOR_HOST` when it is set and non-empty, Cloud Storage
+    /// otherwise. Fails when the value is not a URL such as `http://localhost:4443`.
     pub fn from_env() -> anyhow::Result<Self> {
         match std::env::var(EMULATOR_HOST_ENV) {
             Ok(host) if !host.is_empty() => {
@@ -125,8 +126,10 @@ impl RegistryStore {
     }
 
     /// Runs `change` on the latest apps and stores the result only if no other writer stored the
-    /// registry in between. On such a conflict it loads again and runs `change` again, up to five
-    /// times, so `change` must not have side effects beyond the apps it is given.
+    /// registry in between. On such a conflict it reloads and runs `change` again, at most five runs
+    /// in total, so `change` must have no side effects beyond the apps it is given. Fails without
+    /// storing when the registry object does not exist, when `change` fails, when the changed apps
+    /// break the rules `Apps::new` checks, or when all five runs conflict.
     pub async fn update<T>(
         &self,
         mut change: impl FnMut(&mut Vec<App>) -> anyhow::Result<T>,
