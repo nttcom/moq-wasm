@@ -6,6 +6,8 @@ on:
       - ".github/workflows/python.yml"
       - ".cargo/config.toml"
       - "crates/python/**"
+      - "examples/python/moq-meeting-transcriber/**"
+      - "examples/python/moq-bot-rooms/**"
       - "crates/moqt/**"
       - "crates/relay/**"
       - "crates/vts/**"
@@ -19,6 +21,8 @@ on:
       - ".github/workflows/python.yml"
       - ".cargo/config.toml"
       - "crates/python/**"
+      - "examples/python/moq-meeting-transcriber/**"
+      - "examples/python/moq-bot-rooms/**"
       - "crates/moqt/**"
       - "crates/relay/**"
       - "crates/vts/**"
@@ -62,4 +66,8 @@ jobs:
       # The tests start a relay and a VTS built from this workspace.
       - name: Run binding tests
         working-directory: crates/python
+        run: uv run pytest
+
+      - name: Run transcriber unit tests
+        working-directory: examples/python/moq-meeting-transcriber
         run: uv run pytest
