@@ -17,6 +17,8 @@ const SETTLE_MS = 3_000
 /// objects such as keyframes.
 const CONGESTED_EXCESS_LAG_MS = 400
 const RECENT_LAG_WINDOW_MS = 1_000
+/// Long enough to hold a keyframe at the meeting camera's 2 s interval.
+const SPREAD_WINDOW_MS = 3_000
 /// The share of the measured throughput a lower rendition may use.
 const THROUGHPUT_SAFETY = 0.8
 const INITIAL_UP_HOLD_MS = 10_000
@@ -78,8 +80,9 @@ function estimateBitrate(track: MediaCatalogTrack, reference: MediaCatalogTrack 
 ///   path keeps up does not show how much more it could carry.
 /// - A rising capture-to-arrival lag or a stall shows the rendition does not
 ///   fit; the throughput measured then is what the path carries. With a
-///   `targetLagMs`, the least lag of the last second standing above it also
-///   counts as not fitting.
+///   `targetLagMs`, the largest lag of the last `SPREAD_WINDOW_MS` standing
+///   above it also counts as not fitting, since the jitter buffer holds the
+///   playout back by the spread keyframes add to the least lag.
 /// - A step down goes to the highest rendition that fits that throughput.
 /// - A step up tries the next rendition after a calm spell; a failed trial
 ///   doubles the spell before the next one.
@@ -108,7 +111,7 @@ export class AdaptiveBitrate {
       return
     }
     this.samples.push(sample)
-    const horizon = sample.arrivedAtMs - Math.max(THROUGHPUT_WINDOW_MS, RECENT_LAG_WINDOW_MS)
+    const horizon = sample.arrivedAtMs - Math.max(THROUGHPUT_WINDOW_MS, RECENT_LAG_WINDOW_MS, SPREAD_WINDOW_MS)
     while (this.samples.length > 0 && this.samples[0].arrivedAtMs < horizon) {
       this.samples.shift()
     }
@@ -162,16 +165,17 @@ export class AdaptiveBitrate {
     if (this.baselineLagMs === undefined) {
       return false
     }
-    let recentLeastLagMs: number | undefined
-    for (const sample of this.samples) {
-      if (sample.arrivedAtMs >= nowMs - RECENT_LAG_WINDOW_MS && sample.lagMs !== undefined) {
-        recentLeastLagMs = Math.min(recentLeastLagMs ?? sample.lagMs, sample.lagMs)
-      }
+    const recentLags = this.lagsSince(nowMs - RECENT_LAG_WINDOW_MS)
+    if (recentLags.length > 0 && Math.min(...recentLags) - this.baselineLagMs > CONGESTED_EXCESS_LAG_MS) {
+      return true
     }
-    return (
-      recentLeastLagMs !== undefined &&
-      (recentLeastLagMs - this.baselineLagMs > CONGESTED_EXCESS_LAG_MS ||
-        (this.targetLagMs !== undefined && recentLeastLagMs > this.targetLagMs))
+    const spreadLags = this.lagsSince(nowMs - SPREAD_WINDOW_MS)
+    return this.targetLagMs !== undefined && spreadLags.length > 0 && Math.max(...spreadLags) > this.targetLagMs
+  }
+
+  private lagsSince(fromMs: number): number[] {
+    return this.samples.flatMap((sample) =>
+      sample.arrivedAtMs >= fromMs && sample.lagMs !== undefined ? [sample.lagMs] : []
     )
   }
 
