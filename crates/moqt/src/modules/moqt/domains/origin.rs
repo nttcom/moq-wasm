@@ -13,7 +13,7 @@ use crate::{
     modules::{executor, moqt::domains::session_context::SessionContext},
     object::{ContentExists, ExtensionHeaders, Location},
     publish::PublishOption,
-    subscribe::{SubscribeHandler, TrackStatusHandler, UnsubscribeHandler},
+    subscribe::{FilterType, SubscribeHandler, TrackStatusHandler, UnsubscribeHandler},
 };
 
 mod fetch_serve_task;
@@ -66,8 +66,8 @@ pub enum WriteOutcome {
     /// group.
     Stopped(Placement),
     /// Dropped because no group is open for a `Within` object, or numbered and
-    /// cached only: no session has a writer for the track, or every writer
-    /// waits for the next group to start.
+    /// cached only: no session has a writer for the track, or every writer starts
+    /// after the object or waits for the next group after a stopped stream.
     NotSent,
 }
 
@@ -76,9 +76,10 @@ pub enum WriteOutcome {
 /// live streams agree on ids. Each subscription to the track (a SUBSCRIBE a
 /// peer sent or a PUBLISH this endpoint sent) gets an outlet with its own
 /// writer, and a write goes to every outlet; during a migration the old and
-/// the new server each subscribe on their own. A writer created while a group
-/// is open sends from the next group on. Content Exists reports what was
-/// actually sent.
+/// the new server each subscribe on their own. A PUBLISH sends from the next
+/// group; a SUBSCRIBE sends from its filter's Start Location
+/// (draft-ietf-moq-transport-14 §9.7), so a Largest Object filter takes the
+/// rest of the open group. Content Exists reports what was actually sent.
 #[derive(Clone, Default)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
@@ -124,6 +125,8 @@ struct OriginTrack {
 struct Outlet {
     request: RequestKey,
     publication: Publication,
+    /// The Start Location (draft-14 §9.7); objects before it are not sent.
+    start: Location,
     writer: Option<TrackWriter>,
 }
 
@@ -181,6 +184,7 @@ impl Origin {
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
+        let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
         let key_of_session = session_key(context);
         if track
             .outlets
@@ -202,6 +206,7 @@ impl Origin {
         state.track_mut(&key)?.outlets.push(Outlet {
             request,
             publication: Publication::Published,
+            start,
             writer: Some(TrackWriter::new(
                 publisher.create_stream(&subscription),
                 next_group_id,
@@ -242,10 +247,10 @@ impl Origin {
             );
             (placement, take_writers(track))
         };
-        let results = join_all(writers.into_iter().map(|(session, mut writer)| {
+        let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
             let object = object.clone();
             async move {
-                let result = send_placed(&mut writer, placement, object).await;
+                let result = send_placed(&mut writer, start, placement, object).await;
                 (session, writer, result)
             }
         }))
@@ -277,14 +282,18 @@ impl Origin {
             );
             (placement, take_writers(track))
         };
-        let results = join_all(writers.into_iter().map(|(session, mut writer)| {
+        let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
             let payload = payload.clone();
             async move {
-                let result = writer
-                    .write_group_at(placement.location.group_id, payload)
-                    .await
-                    .context("send group")
-                    .map(|()| true);
+                let result = if placement.location < start {
+                    Ok(false)
+                } else {
+                    writer
+                        .write_group_at(placement.location.group_id, payload)
+                        .await
+                        .context("send group")
+                        .map(|()| true)
+                };
                 (session, writer, result)
             }
         }))
@@ -311,10 +320,14 @@ impl Origin {
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
+        let start = handler
+            .filter_type
+            .start_location(track.numbering.largest());
         let request = (session_key(context), handler.request_id());
         track.outlets.push(Outlet {
             request,
             publication: Publication::Subscribed,
+            start,
             writer: Some(TrackWriter::new(
                 publisher.create_stream(&subscription),
                 next_group_id,
@@ -514,11 +527,14 @@ impl Origin {
     }
 }
 
-fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, TrackWriter)> {
+fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Location, TrackWriter)> {
     track
         .outlets
         .iter_mut()
-        .filter_map(|outlet| outlet.writer.take().map(|writer| (outlet.request, writer)))
+        .filter_map(|outlet| {
+            let writer = outlet.writer.take()?;
+            Some((outlet.request, outlet.start, writer))
+        })
         .collect()
 }
 
@@ -537,18 +553,34 @@ fn content_exists(largest_sent: Option<Location>) -> ContentExists {
     }
 }
 
+/// A writer that has sent nothing joins the group the object is in; one whose
+/// group a peer stopped or the transport reset resumes at the next group.
 async fn send_placed(
     writer: &mut TrackWriter,
+    start: Location,
     placement: Placement,
     object: OutgoingObject,
 ) -> Result<bool> {
+    let Location {
+        group_id,
+        object_id,
+    } = placement.location;
+    if placement.location < start {
+        return Ok(false);
+    }
     if placement.starts_group {
         writer
-            .start_group_at(placement.location.group_id)
+            .start_group_at(group_id)
             .await
             .context("start group")?;
-    } else if writer.current_group_id() != Some(placement.location.group_id) {
-        return Ok(false);
+    } else if writer.current_group_id() != Some(group_id) {
+        if writer.groups() > 0 {
+            return Ok(false);
+        }
+        writer
+            .join_group_at(group_id, object_id)
+            .await
+            .context("join group")?;
     }
     writer
         .write_with_extension_headers(object.payload, object.extension_headers)
@@ -660,9 +692,9 @@ mod tests {
         released
     }
 
-    async fn subscribe(peers: &Peers) -> Subscription {
+    async fn subscribe(peers: &Peers, filter_type: FilterType) -> Subscription {
         let option = SubscribeOption {
-            filter_type: FilterType::NextGroupStart,
+            filter_type,
             ..SubscribeOption::default()
         };
         let mut subscriber = peers.server.subscriber();
@@ -803,7 +835,7 @@ mod tests {
         let peers = origin_with_track("origin-subscribe-expires", RETENTION).await;
 
         // Act
-        let subscription = subscribe(&peers).await;
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
 
         // Assert
         assert_eq!(subscription.expires(), Some(0));
@@ -820,7 +852,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let subscription = subscribe(&peers).await;
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
         let mid_group = origin
             .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
             .await
@@ -848,6 +880,71 @@ mod tests {
             }
         );
         assert_eq!(rejection(unknown).code, RequestErrorCode::TrackDoesNotExist);
+    }
+
+    #[tokio::test]
+    async fn a_largest_object_subscribe_takes_the_rest_of_the_open_group() {
+        // Arrange
+        let peers = origin_with_track("origin-subscribe-largest", RETENTION).await;
+        let origin = &peers.origin;
+        origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+
+        // Act
+        let subscription = subscribe(&peers, FilterType::LargestObject).await;
+        let mid_group = origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+            .await
+            .unwrap();
+        let received = next_object(&peers, &subscription).await;
+
+        // Assert
+        assert_eq!(mid_group, sent(FIRST_GROUP_ID, 1, false));
+        assert_eq!(
+            (received.group_id, received.object_id, received.payload),
+            (FIRST_GROUP_ID, 1, Bytes::from_static(b"b"))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_absolute_start_subscribe_skips_what_precedes_its_start() {
+        // Arrange
+        let peers = origin_with_track("origin-subscribe-absolute", RETENTION).await;
+        let origin = &peers.origin;
+        let start = location(FIRST_GROUP_ID + 1, 1);
+
+        // Act
+        let subscription = subscribe(&peers, FilterType::AbsoluteStart { location: start }).await;
+        let mut outcomes = Vec::new();
+        for (group, payload) in [
+            (GroupBoundary::Next, b"a" as &'static [u8]),
+            (GroupBoundary::Next, b"b"),
+            (GroupBoundary::Within, b"c"),
+        ] {
+            outcomes.push(
+                origin
+                    .write(NAMESPACE, TRACK, plain(group, payload))
+                    .await
+                    .unwrap(),
+            );
+        }
+        let received = next_object(&peers, &subscription).await;
+
+        // Assert
+        assert_eq!(
+            outcomes,
+            [
+                WriteOutcome::NotSent,
+                WriteOutcome::NotSent,
+                sent(FIRST_GROUP_ID + 1, 1, false)
+            ]
+        );
+        assert_eq!(
+            (received.group_id, received.object_id, received.payload),
+            (FIRST_GROUP_ID + 1, 1, Bytes::from_static(b"c"))
+        );
     }
 
     #[tokio::test]
@@ -933,7 +1030,7 @@ mod tests {
     async fn a_track_released_after_a_subscribe_is_published_again() {
         // Arrange
         let peers = origin_with_track("origin-republish", RETENTION).await;
-        let subscription = subscribe(&peers).await;
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
         unsubscribe(&peers, &subscription).await;
 
         // Act
@@ -954,7 +1051,7 @@ mod tests {
         // Arrange
         let peers = origin_with_track("origin-release", RETENTION).await;
         let origin = &peers.origin;
-        let subscription = subscribe(&peers).await;
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
         let live = origin
             .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
             .await

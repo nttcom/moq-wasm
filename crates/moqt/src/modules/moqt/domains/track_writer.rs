@@ -46,6 +46,21 @@ impl TrackWriter {
         self.start_group().await
     }
 
+    /// Opens `group_id` on a new stream whose first object id is `object_id`, so
+    /// a subscription can start in the middle of a group. Call it only while no
+    /// group is open.
+    pub(crate) async fn join_group_at(
+        &mut self,
+        group_id: u64,
+        object_id: u64,
+    ) -> anyhow::Result<()> {
+        self.skip_to_group(group_id)?;
+        let mut group = self.open_group().await?;
+        group.next_object_id = object_id;
+        self.group = Some(group);
+        Ok(())
+    }
+
     pub(crate) async fn write_group_at(
         &mut self,
         group_id: u64,
