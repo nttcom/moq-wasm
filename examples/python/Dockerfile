@@ -29,9 +29,10 @@ COPY examples/python/moq-ptz-tracking/pyproject.toml examples/python/moq-ptz-tra
 COPY --from=moqt-wheel /wheels /wheels
 # This stage has no crates/python for the lock's path source, so uv skips moqt and the prebuilt
 # wheel is installed instead.
-RUN uv sync --frozen --no-dev --no-install-project --no-install-package moqt --directory moq-chat-moderation \
-    && uv pip install --python moq-chat-moderation/.venv/bin/python --no-deps /wheels/moqt-*.whl \
-    && uv sync --frozen --no-dev --no-install-project --directory moq-camera-detection \
+RUN for bot in moq-chat-moderation moq-camera-detection; do \
+        uv sync --frozen --no-dev --no-install-project --no-install-package moqt --directory $bot \
+        && uv pip install --python $bot/.venv/bin/python --no-deps /wheels/moqt-*.whl || exit 1; \
+    done \
     && uv sync --frozen --no-dev --no-install-project --directory moq-ptz-tracking
 COPY examples/python/moq-chat-moderation/moq_chat_moderation moq-chat-moderation/moq_chat_moderation
 COPY examples/python/moq-camera-detection/moq_camera_detection moq-camera-detection/moq_camera_detection

@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import av
-import moq
 from aiohttp import web
 
 from moq_camera_detection.d3_flash_status import D3FlashStatus
@@ -12,8 +11,6 @@ from moq_camera_detection.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt
 
 READ_TIMEOUT_SECONDS = 2
-TRACK_NAME = "eventtimeline"
-STATUS_TRACK_NAME = "status"
 
 
 def h264_group(frame_count: int) -> list[bytes]:
@@ -29,18 +26,28 @@ def h264_group(frame_count: int) -> list[bytes]:
     return [bytes(packet) for packet in packets]
 
 
-async def next_records(group: moq.GroupConsumer) -> list[dict[str, Any]]:
-    frame = await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS)
-    return json.loads(frame.payload)
+class RecordingPublication:
+    def __init__(self):
+        self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()
+
+    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
+        self._writes.put_nowait((new_group, json.loads(payload)))
+
+    async def next_write(self, timeout: float = READ_TIMEOUT_SECONDS) -> tuple[bool, Any]:
+        return await asyncio.wait_for(self._writes.get(), timeout)
 
 
-async def published_timeline() -> tuple[EventTimeline, moq.GroupConsumer]:
-    broadcast = moq.BroadcastProducer()
-    timeline = EventTimeline(broadcast, TRACK_NAME)
-    track = await broadcast.consume().subscribe_track(TRACK_NAME)
-    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
-    await next_records(group)
-    return timeline, group
+async def next_records(publication: RecordingPublication) -> list[dict[str, Any]]:
+    _, records = await publication.next_write()
+    return records
+
+
+async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
+    timeline = EventTimeline()
+    publication = RecordingPublication()
+    await timeline.publish_on(publication)
+    await publication.next_write()
+    return timeline, publication
 
 
 YES_NO_PROMPT = Prompt("Is there a person?", ("yes", "no"), (7, 0))
@@ -77,13 +84,12 @@ class FakeMetadataServer:
         return web.Response(text="metadata-token")
 
 
-async def published_status(status: D3FlashStatus) -> moq.TrackConsumer:
-    broadcast = moq.BroadcastProducer()
-    status.publish_on(broadcast)
-    return await broadcast.consume().subscribe_track(STATUS_TRACK_NAME)
+async def published_status(status: D3FlashStatus) -> RecordingPublication:
+    publication = RecordingPublication()
+    await status.publish_on(publication)
+    return publication
 
 
-async def next_status(track: moq.TrackConsumer) -> str:
-    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
-    frame = await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS)
-    return json.loads(frame.payload)["d3_flash"]
+async def next_status(publication: RecordingPublication) -> str:
+    _, status = await publication.next_write()
+    return status["d3_flash"]
