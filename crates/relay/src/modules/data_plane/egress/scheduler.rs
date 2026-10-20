@@ -198,7 +198,7 @@ impl EgressScheduler {
     }
 
     /// Schedules every cached group at or after the filter Start Location and
-    /// before the End Group of `control`.
+    /// before the End Group of `control`, in the subscription's Group Order.
     ///
     /// The Start Location is a lower bound (§9.7), not a group that has to
     /// exist: group ids may start anywhere and skip values (§2.3.1), so the
@@ -215,10 +215,13 @@ impl EgressScheduler {
         control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
-        for group_id in self.cache.groups_at_or_after(start.group_id) {
-            if control.is_past_end(group_id) {
-                return;
-            }
+        let mut group_ids = self.cache.groups_at_or_after(start.group_id);
+        group_ids.retain(|&group_id| !control.is_past_end(group_id));
+        // §7.1: Descending sends groups with higher group IDs first.
+        if matches!(self.group_order, GroupOrder::Descending) {
+            group_ids.reverse();
+        }
+        for group_id in group_ids {
             let object_id = if group_id == start.group_id {
                 start.object_id
             } else {
@@ -226,9 +229,6 @@ impl EgressScheduler {
             };
             for run in self.cache.subgroup_runs_in_group(group_id) {
                 let _ = self.schedule(run, object_id, scheduled).await;
-            }
-            if matches!(self.group_order, GroupOrder::Descending) {
-                return;
             }
         }
     }
@@ -295,14 +295,22 @@ mod tests {
         filter_type: FilterType,
         largest_location: Option<moqt::object::Location>,
     ) -> RunningScheduler {
-        start_scheduler_with_forward(cache, filter_type, largest_location, true).await
+        start_scheduler_with(
+            cache,
+            filter_type,
+            largest_location,
+            true,
+            GroupOrder::Ascending,
+        )
+        .await
     }
 
-    async fn start_scheduler_with_forward(
+    async fn start_scheduler_with(
         cache: Arc<TrackCache>,
         filter_type: FilterType,
         largest_location: Option<moqt::object::Location>,
         forward: bool,
+        group_order: GroupOrder,
     ) -> RunningScheduler {
         let (task_sender, task_receiver) = mpsc::channel(16);
         let (ready_sender, ready_receiver) = oneshot::channel();
@@ -311,7 +319,7 @@ mod tests {
         );
         let scheduler = EgressScheduler::new(
             cache,
-            GroupOrder::Ascending,
+            group_order,
             task_sender,
             largest_location,
             delivery_control_receiver,
@@ -361,8 +369,14 @@ mod tests {
         insert_closed_group(&cache, 1, &[0]);
 
         // Act
-        let mut scheduler =
-            start_scheduler_with_forward(cache, FilterType::LargestObject, None, false).await;
+        let mut scheduler = start_scheduler_with(
+            cache,
+            FilterType::LargestObject,
+            None,
+            false,
+            GroupOrder::Ascending,
+        )
+        .await;
 
         // Assert
         assert!(scheduler.task_receiver.try_recv().is_err());
@@ -582,6 +596,44 @@ mod tests {
                 key: stream_key(7),
                 object_id: 0
             }
+        );
+    }
+
+    // A group cached before the scheduler subscribed to open events is reachable
+    // only through the cache, whatever the Group Order. A returning publisher
+    // causes this: the cache keeps the previous publisher's groups, so the
+    // subscribe-time Largest Object lies in an old group.
+    #[tokio::test]
+    async fn descending_order_schedules_every_cached_group_after_the_largest_newest_first() {
+        // Arrange: group 3 holds the Largest Object; groups 7 and 9 arrived before egress started
+        let cache = Arc::new(TrackCache::new());
+        insert_closed_group(&cache, 3, &[0]);
+        insert_closed_group(&cache, 7, &[0]);
+        insert_closed_group(&cache, 9, &[0]);
+        // Act
+        let mut scheduler = start_scheduler_with(
+            cache,
+            FilterType::AbsoluteStart {
+                location: location(0, 0),
+            },
+            Some(location(3, 0)),
+            true,
+            GroupOrder::Descending,
+        )
+        .await;
+        // Assert: group 3 resumes after the Largest Object
+        let mut tasks = Vec::new();
+        for _ in 0..3 {
+            let task = tokio::time::timeout(EXIT_TIMEOUT, scheduler.task_receiver.recv()).await;
+            tasks.push(task.ok().flatten().map(|task| (task.key, task.object_id)));
+        }
+        assert_eq!(
+            tasks,
+            [
+                Some((stream_key(9), 0)),
+                Some((stream_key(7), 0)),
+                Some((stream_key(3), 1)),
+            ]
         );
     }
 

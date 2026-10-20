@@ -736,8 +736,9 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   `SubgroupKey` and run generation: a reopened run is scheduled again from
   the later of the key's previous task start and the run's first object id,
   while further opens of an already scheduled run are skipped. It subscribes to open events first and then schedules every
-  cached group at or after the start, so a group that ingress opened and
-  closed before the scheduler existed is still delivered. While the
+  cached group at or after the start (newest first under Descending Group
+  Order, §7.1), so a group that ingress opened and closed before the
+  scheduler existed is still delivered. While the
   registration's Forward State is 0 it drops open events, and a runner that
   starts at Forward 0 skips that cache scan, so no subgroup opened meanwhile is
   ever sent; streams already scheduled run to their end, and
