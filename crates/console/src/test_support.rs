@@ -92,11 +92,19 @@ pub(crate) struct FakeIapKeys {
 
 impl FakeIapKeys {
     pub(crate) async fn run(keys: &[&TestIapKey]) -> Self {
+        Self::serve(keys.iter().map(|key| key.jwk()).collect()).await
+    }
+
+    pub(crate) async fn run_with_extra(keys: &[&TestIapKey], extra: Value) -> Self {
+        let mut jwks: Vec<Value> = keys.iter().map(|key| key.jwk()).collect();
+        jwks.push(extra);
+        Self::serve(jwks).await
+    }
+
+    async fn serve(jwks: Vec<Value>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = Url::parse(&format!("http://{}/keys", listener.local_addr().unwrap())).unwrap();
-        let body = Bytes::from(
-            json!({ "keys": keys.iter().map(|key| key.jwk()).collect::<Vec<_>>() }).to_string(),
-        );
+        let body = Bytes::from(json!({ "keys": jwks }).to_string());
         let fetches = Arc::new(AtomicUsize::new(0));
         Self {
             url,

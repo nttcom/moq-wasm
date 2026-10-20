@@ -111,9 +111,9 @@ struct KeySet {
 struct Jwk {
     kid: String,
     kty: String,
-    crv: String,
-    x: String,
-    y: String,
+    crv: Option<String>,
+    x: Option<String>,
+    y: Option<String>,
 }
 
 impl IapKeys {
@@ -150,8 +150,13 @@ impl IapKeys {
         key_set
             .keys
             .into_iter()
-            .filter(|jwk| jwk.kty == "EC" && jwk.crv == "P-256")
-            .map(|jwk| Ok((jwk.kid, uncompressed_point(&jwk.x, &jwk.y)?)))
+            .filter_map(
+                |jwk| match (jwk.kty.as_str(), jwk.crv.as_deref(), jwk.x, jwk.y) {
+                    ("EC", Some("P-256"), Some(x), Some(y)) => Some((jwk.kid, x, y)),
+                    _ => None,
+                },
+            )
+            .map(|(kid, x, y)| Ok((kid, uncompressed_point(&x, &y)?)))
             .collect()
     }
 }
@@ -305,6 +310,21 @@ mod tests {
 
         // Act / Assert
         assert!(verifier(&keys).verify(&assertion, NOW).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn skips_keys_of_other_kinds_in_the_key_set() {
+        // Arrange
+        let key = TestIapKey::new("key-1");
+        let keys = FakeIapKeys::run_with_extra(
+            &[&key],
+            json!({ "kid": "rsa", "kty": "RSA", "n": "AQAB", "e": "AQAB" }),
+        )
+        .await;
+        let assertion = key.sign(&iap_claims("accounts.google.com:1"));
+
+        // Act / Assert
+        assert!(verifier(&keys).verify(&assertion, NOW).await.is_ok());
     }
 
     #[tokio::test]
