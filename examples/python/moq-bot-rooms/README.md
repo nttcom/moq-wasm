@@ -14,7 +14,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
   | `expired` | ルームが `--max-room-seconds` 動き続けた |
   | `failed` | bot が例外で止まった |
 
-- ルーム ID は `[a-z0-9-]` の 1〜32 文字です。namespace の 1 要素になります。
+- ルーム ID は既定で `[a-z0-9-]` の 1〜32 文字で、bot が `serve_rooms` に別の規則を渡せます。namespace の 1 要素になります。
 
 ## オプション
 

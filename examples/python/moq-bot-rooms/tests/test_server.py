@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -102,3 +103,18 @@ async def test_server_for_one_room_refuses_any_other(open_client):
     assert other.status == 404
     assert fixed.status == 200
     fixed.close()
+
+
+async def test_room_id_follows_the_pattern_the_bot_passes(open_client):
+    # Arrange
+    bots = FakeBots()
+    client = await open_client(bots, allowed_origins=[], room_id_pattern=re.compile(r"[^/]{1,64}"))
+
+    # Act
+    response = await client.get("/rooms/Team%20A")
+
+    # Assert
+    assert response.status == 200
+    await settle()
+    assert bots.started == ["Team A"]
+    response.close()
