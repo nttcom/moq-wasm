@@ -78,7 +78,7 @@ sequenceDiagram
 | `anon/{room}/bots/transcriber` | `transcript` | draft-ietf-moq-msf-01 §8 の event timeline。`{"t": 発話開始の ms, "data": {"speaker", "text"}}` |
 | `anon/{room}/bots/transcriber` | `status` | 1 group 1 object の `{"asr": 名前, "state": "starting" か "ready"}`。GPU のサービスが答えるまで `starting` |
 
-group の最初の object はそれまでの全記録、続く object は 1 件ずつです。前の group から 10 秒以上たって届いた記録で新しい group を始めます。
+記録は 1 つの group に追記します。最初の object は空の配列 `[]`、続く object は 1 件ずつです。
 
 ## テスト
 
