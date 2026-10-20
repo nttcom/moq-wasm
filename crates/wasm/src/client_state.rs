@@ -175,17 +175,6 @@ impl ClientState {
         Some(track_alias)
     }
 
-    pub(crate) fn get_track_subscribers(
-        &self,
-        namespace: Vec<String>,
-        track_name: String,
-    ) -> Vec<u64> {
-        self.publishing_track_aliases
-            .get(&TrackKey::new(namespace, track_name))
-            .map(|aliases| aliases.iter().copied().collect())
-            .unwrap_or_default()
-    }
-
     pub(crate) fn record_published_object(&mut self, track_alias: u64, location: Location) {
         let Some(track_key) = self
             .publishing_track_aliases
@@ -375,10 +364,6 @@ impl ClientState {
 
     pub(crate) fn increment_subgroup_object(&mut self, track_alias: u64) {
         self.subgroup_state_entry(track_alias).increment_object_id();
-    }
-
-    pub(crate) fn reset_subgroup_state(&mut self, track_alias: u64) {
-        self.subgroup_states.remove(&track_alias);
     }
 }
 
