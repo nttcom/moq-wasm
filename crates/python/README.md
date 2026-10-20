@@ -26,7 +26,10 @@ moqt = { path = "../../../crates/python" }
 ```
 
 uv builds the module with maturin, so building the project needs the Rust
-toolchain of this repository.
+toolchain of this repository. uv rebuilds it when the bindings' sources change
+or the checkout moves to another commit. After an uncommitted change to the
+`moqt` crate, or in a git worktree, whose commit uv 0.7 cannot read, run
+`uv sync --reinstall-package moqt`.
 
 ## Test
 
