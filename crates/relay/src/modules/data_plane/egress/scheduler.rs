@@ -119,12 +119,14 @@ impl EgressScheduler {
         }
 
         let mut delivery_control_open = true;
+        let mut last_event_group_id = None;
         loop {
             tokio::select! {
                 event = receiver.recv() => match event {
                     Ok(run) => {
                         let control = *delivery_control_receiver.borrow();
                         let group_id = run.key.group_id();
+                        last_event_group_id = Some(group_id);
                         if control.is_past_end(group_id) {
                             return SchedulerExit::EndGroupReached;
                         }
@@ -132,18 +134,26 @@ impl EgressScheduler {
                             continue;
                         }
                         progress.raise(control.start);
-                        if let Some(object_id) = progress.accept(group_id)
-                            && self
-                                .schedule(run, object_id, &mut scheduled)
-                                .await
-                                .is_some()
-                        {
-                            self.recover_lagged_groups(group_id, &control, &mut scheduled)
-                                .await;
+                        if let Some(object_id) = progress.accept(group_id) {
+                            let _ = self.schedule(run, object_id, &mut scheduled).await;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(n, "egress scheduler receiver lagged");
+                        let control = *delivery_control_receiver.borrow();
+                        if control.forward {
+                            progress.raise(control.start);
+                            self.recover_lagged_groups(
+                                last_event_group_id,
+                                progress.start,
+                                &control,
+                                &mut scheduled,
+                            )
+                            .await;
+                        }
+                        if self.range_ended(&progress, &control) {
+                            return SchedulerExit::EndGroupReached;
+                        }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         return SchedulerExit::OpenEventsClosed;
@@ -174,27 +184,25 @@ impl EgressScheduler {
         progress.start.group_id >= end_group || !self.cache.groups_at_or_after(end_group).is_empty()
     }
 
-    /// Re-schedules cached groups after `group_id`, recovering groups whose
-    /// open events were lost to receiver lag. Duplicates are filtered by the
-    /// `scheduled` map.
+    /// Schedules cached groups past the last received open event, since the
+    /// dropped events follow it. Starting there rather than at the Start
+    /// Location keeps groups opened while Forward was 0 unsent. Duplicates are
+    /// filtered by the `scheduled` map.
     async fn recover_lagged_groups(
         &self,
-        group_id: u64,
+        last_event_group_id: Option<u64>,
+        start: moqt::object::Location,
         control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
-        if matches!(self.group_order, GroupOrder::Descending) {
-            return;
-        }
-        self.schedule_cached_objects(
-            &moqt::object::Location {
+        let start = last_event_group_id.map_or(start, |group_id| {
+            start.max(moqt::object::Location {
                 group_id: group_id + 1,
                 object_id: 0,
-            },
-            control,
-            scheduled,
-        )
-        .await;
+            })
+        });
+        self.schedule_cached_objects(&start, control, scheduled)
+            .await;
     }
 
     /// Schedules every cached group at or after the filter Start Location and
@@ -635,6 +643,55 @@ mod tests {
                 Some((stream_key(3), 1)),
             ]
         );
+    }
+
+    // §7.1: Group Order only orders delivery.
+    #[tokio::test]
+    async fn groups_lost_to_receiver_lag_are_recovered_in_either_group_order() {
+        // Act / Assert
+        for group_order in [GroupOrder::Ascending, GroupOrder::Descending] {
+            assert_eq!(
+                groups_missed_after_receiver_lag(group_order).await,
+                Vec::<u64>::new(),
+                "{group_order:?}"
+            );
+        }
+    }
+
+    async fn groups_missed_after_receiver_lag(group_order: GroupOrder) -> Vec<u64> {
+        // Arrange: the task channel is full, so the scheduler blocks sending group 16
+        let cache = Arc::new(TrackCache::new());
+        let mut scheduler = start_scheduler_with(
+            cache.clone(),
+            FilterType::LargestObject,
+            None,
+            true,
+            group_order,
+        )
+        .await;
+        for group_id in 0..=16 {
+            insert_closed_group(&cache, group_id, &[0]);
+        }
+        while scheduler.task_receiver.len() < scheduler.task_receiver.max_capacity() {
+            tokio::task::yield_now().await;
+        }
+        tokio::task::yield_now().await;
+        // Act: while the scheduler is blocked, open more groups than the open-event channel holds
+        for group_id in 17..=316 {
+            insert_closed_group(&cache, group_id, &[0]);
+        }
+        let mut scheduled_groups = std::collections::BTreeSet::new();
+        while let Ok(Some(task)) = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            scheduler.task_receiver.recv(),
+        )
+        .await
+        {
+            scheduled_groups.insert(task.key.group_id());
+        }
+        (0..=316)
+            .filter(|group_id| !scheduled_groups.contains(group_id))
+            .collect()
     }
 
     #[tokio::test]
