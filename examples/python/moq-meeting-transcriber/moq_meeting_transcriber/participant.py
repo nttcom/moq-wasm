@@ -11,7 +11,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from moq_meeting_transcriber.audio import SAMPLE_RATE, OpusDecoder
 from moq_meeting_transcriber.catalog import audio_track_name
-from moq_meeting_transcriber.stt import SharedWhisper, SharedWhisperSTTService
+from moq_meeting_transcriber.stt import Recognizer, UtteranceSTTService
 from moq_meeting_transcriber.transcript import TranscriptTimeline, TranscriptWriter
 
 CATALOG_TRACK = "catalog"
@@ -25,13 +25,13 @@ class Participant:
         self,
         session: moqt.Session,
         namespace: list[str],
-        whisper: SharedWhisper,
+        recognizer: Recognizer,
         timeline: TranscriptTimeline,
     ):
         self._session = session
         self._namespace = namespace
         self._name = namespace[-1]
-        self._whisper = whisper
+        self._recognizer = recognizer
         self._timeline = timeline
 
     async def run(self) -> None:
@@ -58,7 +58,7 @@ class Participant:
             Pipeline(
                 [
                     VADProcessor(vad_analyzer=SileroVADAnalyzer()),
-                    SharedWhisperSTTService(self._whisper, self._name),
+                    UtteranceSTTService(self._recognizer, self._name),
                     TranscriptWriter(self._timeline),
                 ]
             ),

@@ -4,8 +4,9 @@ import moqt
 from loguru import logger
 
 from moq_meeting_transcriber.participant import Participant
-from moq_meeting_transcriber.stt import SharedWhisper
-from moq_meeting_transcriber.transcript import TRACK_NAME, TranscriptTimeline
+from moq_meeting_transcriber import status
+from moq_meeting_transcriber.stt import Recognizer
+from moq_meeting_transcriber.transcript import TRACK_NAME, Publication, TranscriptTimeline
 
 # The anonymous app's namespace root; a room under another app's root needs a token the bot lacks.
 NAMESPACE_ROOT = "anon"
@@ -28,10 +29,10 @@ def participant_name(namespace: list[str], room_id: str) -> str | None:
 
 
 class Room:
-    def __init__(self, relay_url: str, verify_certificate: bool, whisper: SharedWhisper, room_id: str):
+    def __init__(self, relay_url: str, verify_certificate: bool, recognizer: Recognizer, room_id: str):
         self._relay_url = relay_url
         self._verify_certificate = verify_certificate
-        self._whisper = whisper
+        self._recognizer = recognizer
         self._room_id = room_id
 
     async def run(self) -> None:
@@ -57,7 +58,12 @@ class Room:
         publication = await session.track(bot_namespace, TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
         timeline = TranscriptTimeline(publication)
         await timeline.open()
+        status_publication = await session.track(
+            bot_namespace, status.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS
+        )
+        await status.write_status(status_publication, self._recognizer.name, status.STARTING)
         await session.publish_namespace(bot_namespace)
+        announcing = asyncio.create_task(self._announce_ready(status_publication))
         following = asyncio.create_task(self._follow_participants(session, timeline))
         # The binding's methods return futures, not coroutines.
         closed = asyncio.ensure_future(session.closed())
@@ -67,8 +73,13 @@ class Room:
                 # Raises what stopped following the participants, so the room fails instead of going quiet.
                 following.result()
         finally:
-            following.cancel()
-            closed.cancel()
+            for task in (announcing, following, closed):
+                task.cancel()
+
+    async def _announce_ready(self, status_publication: Publication) -> None:
+        await self._recognizer.ready()
+        logger.info(f"room {self._room_id}: {self._recognizer.name} is ready")
+        await status.write_status(status_publication, self._recognizer.name, status.READY)
 
     async def _follow_participants(self, session: moqt.Session, timeline: TranscriptTimeline) -> None:
         participants: dict[str, asyncio.Task] = {}
@@ -80,7 +91,7 @@ class Room:
                 if name in participants:
                     participants.pop(name).cancel()
                 if event.active:
-                    participant = Participant(session, event.namespace, self._whisper, timeline)
+                    participant = Participant(session, event.namespace, self._recognizer, timeline)
                     participants[name] = asyncio.create_task(self._run_participant(name, participant))
                 else:
                     logger.info(f"room {self._room_id}: {name} left")

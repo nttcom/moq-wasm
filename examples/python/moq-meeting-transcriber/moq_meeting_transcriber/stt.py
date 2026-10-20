@@ -2,6 +2,7 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import numpy as np
 from faster_whisper import WhisperModel
@@ -20,13 +21,37 @@ NO_SPEECH_PROB = 0.4
 TRAILING_SILENCE_SECONDS = 0.5
 
 
+class Recognizer(Protocol):
+    """Turns one utterance of 16 kHz mono 16-bit PCM into text."""
+
+    name: str
+
+    async def ready(self) -> None:
+        """Returns once the recognizer answers; a GPU service scaled to zero takes minutes."""
+
+    async def recognize(self, pcm: bytes) -> str: ...
+
+
 @dataclass
 class SharedWhisper:
-    """The process's one Whisper model, which the participants' pipelines take turns on."""
+    """The process's one faster-whisper model on the CPU, which the participants' pipelines take turns on."""
 
     model: WhisperModel
-    name: str
+    name: str = "whisper"
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def ready(self) -> None:
+        pass
+
+    async def recognize(self, pcm: bytes) -> str:
+        samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        async with self.lock:
+            return await asyncio.to_thread(self._transcribe, samples)
+
+    def _transcribe(self, samples: np.ndarray) -> str:
+        # faster-whisper decodes lazily while the segments are iterated, so they are read here, off the loop.
+        segments, _ = self.model.transcribe(samples, language=LANGUAGE.value)
+        return "".join(segment.text for segment in segments if segment.no_speech_prob < NO_SPEECH_PROB).strip()
 
 
 @dataclass
@@ -36,19 +61,16 @@ class UtteranceTranscriptionFrame(TranscriptionFrame):
     started_at_ms: int = 0
 
 
-class SharedWhisperSTTService(SegmentedSTTService):
-    """Transcribes one participant's speech with the Whisper model the whole process shares.
+class UtteranceSTTService(SegmentedSTTService):
+    """Hands each utterance of one participant to the room's recognizer and dates it."""
 
-    pipecat's WhisperSTTService loads a model per instance, which would hold one copy per participant.
-    """
-
-    def __init__(self, whisper: SharedWhisper, speaker: str):
+    def __init__(self, recognizer: Recognizer, speaker: str):
         super().__init__(
             sample_rate=SAMPLE_RATE,
             trailing_silence_secs=TRAILING_SILENCE_SECONDS,
-            settings=STTSettings(model=whisper.name, language=LANGUAGE),
+            settings=STTSettings(model=recognizer.name, language=LANGUAGE),
         )
-        self._whisper = whisper
+        self._recognizer = recognizer
         self._speaker = speaker
         # One entry per queued segment: segments are transcribed in order, after the stop that closed them.
         self._stopped_at: deque[float] = deque()
@@ -65,9 +87,7 @@ class SharedWhisperSTTService(SegmentedSTTService):
     async def run_stt(self, audio: bytes):
         stopped_at = self._stopped_at.popleft()
         speech_seconds = len(audio) / (2 * SAMPLE_RATE) - TRAILING_SILENCE_SECONDS
-        samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
-        async with self._whisper.lock:
-            text = await asyncio.to_thread(self._transcribe, samples)
+        text = (await self._recognizer.recognize(audio)).strip()
         if text:
             yield UtteranceTranscriptionFrame(
                 text,
@@ -76,8 +96,3 @@ class SharedWhisperSTTService(SegmentedSTTService):
                 LANGUAGE,
                 started_at_ms=int((stopped_at - speech_seconds) * 1000),
             )
-
-    def _transcribe(self, samples: np.ndarray) -> str:
-        # faster-whisper decodes lazily while the segments are iterated, so they are read here, off the loop.
-        segments, _ = self._whisper.model.transcribe(samples, language=LANGUAGE.value)
-        return "".join(segment.text for segment in segments if segment.no_speech_prob < NO_SPEECH_PROB).strip()
