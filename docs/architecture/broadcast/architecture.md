@@ -89,7 +89,9 @@ starts sending at the next group so the live and cached object ids agree.
 
 The mechanism is `moqt::Origin` (see the `moqt` architecture document): it
 numbers and caches the objects, writes them to the relay, and answers FETCH,
-TRACK_STATUS, UNSUBSCRIBE and FETCH_CANCEL for the tracks registered with it.
+FETCH_CANCEL and TRACK_STATUS for the tracks registered with it through
+`Origin::handle`. The crate answers SUBSCRIBE and UNSUBSCRIBE itself, since
+they also update the subscriber signal and the stream ledger.
 This crate decides the policy: which tracks exist, the 60 second retention,
 that the catalog keeps only its newest object, which tracks are published
 eagerly and which wait for a SUBSCRIBE, and that a SUBSCRIBE for anything
