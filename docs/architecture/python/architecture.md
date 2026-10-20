@@ -9,8 +9,8 @@ Accepted
 ## Scope
 A new crate `crates/python` that builds the Python module `moqt` with PyO3, a
 helper moved into `moqt` so the module and `broadcast` share one way of serving
-published tracks, and the switch of the Meeting transcriber, the chat
-moderation bot and the camera detection bot from moq-rs to the module.
+published tracks, and the switch of the Meeting transcriber and the AI demo
+bots under `examples/python/` from moq-rs to the module.
 
 ## Context
 The Python bots reach the relay through moq-rs (`moq-rs` 0.4.7, via pipecat).
@@ -127,13 +127,11 @@ The chat moderation bot is the second:
 - the verdicts and the d3-flash status are published through `session.track`
   instead of the broadcast inside pipecat's `MOQTransport`.
 
-Camera detection follows: it subscribes to its page's prompt and video while
-the camera namespace is published, and publishes its event timeline and
-d3-flash status through `session.track`. A video subscription that joins a
-group in the middle decodes nothing until the next group, which starts at a
-keyframe.
-
-PTZ tracking keeps moq-rs.
+Camera detection and PTZ tracking follow: each subscribes to its page's
+prompt and the camera's video while their namespaces are published, and
+publishes its event timeline, d3-flash status and, for PTZ, the ONVIF
+commands through `session.track`. A video subscription that joins a group in
+the middle decodes nothing until the next group, which starts at a keyframe.
 
 ## Consequences
 

@@ -12,7 +12,6 @@ from moq_ptz_tracking.vision import Answer, Position
 from tests.helpers import (
     MUG_TARGET,
     StubVision,
-    next_move,
     next_records,
     published_commands,
     published_timeline,
@@ -43,10 +42,10 @@ class StoppingVision:
 
 
 async def tracker_with(vision, latest_target: LatestTarget | None = None):
-    timeline, group = await published_timeline()
-    commands, command_track = await published_commands()
+    timeline, timeline_publication = await published_timeline()
+    commands, command_publication = await published_commands()
     latest_target = latest_target or tracking(MUG_TARGET)
-    return PtzTracker(vision, timeline, commands, CALIBRATION, latest_target), group, command_track
+    return PtzTracker(vision, timeline, commands, CALIBRATION, latest_target), timeline_publication, command_publication
 
 
 async def test_off_center_target_moves_the_camera_and_records_where_it_was():
@@ -57,7 +56,7 @@ async def test_off_center_target_moves_the_camera_and_records_where_it_was():
     await run_test(tracker, frames_to_send=[picture((42, 3)), SleepFrame()], expected_down_frames=[])
 
     # Assert
-    assert [command["type"] for command in await next_move(command_track)] == ["continuous", "stop"]
+    assert [command["type"] for command in await command_track.next_group()] == ["continuous", "stop"]
     assert await next_records(group) == [
         {
             "l": [42, 3],
@@ -82,7 +81,7 @@ async def test_target_near_the_center_leaves_the_camera_still():
     # Assert
     assert (await next_records(group))[0]["data"]["position"] == [0.52, 0.47]
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(command_track.next_group(), NOTHING_MORE_WAIT_SECONDS)
+        await command_track.next_write(NOTHING_MORE_WAIT_SECONDS)
 
 
 async def test_target_never_seen_returns_the_camera_to_home_before_searching():
@@ -93,7 +92,7 @@ async def test_target_never_seen_returns_the_camera_to_home_before_searching():
     await run_test(tracker, frames_to_send=[picture((42, 3)), SleepFrame()], expected_down_frames=[])
 
     # Assert
-    assert await next_move(command_track) == [{"type": "center", "speed": 1.0}]
+    assert await command_track.next_group() == [{"type": "center", "speed": 1.0}]
     assert (await next_records(group))[0]["data"]["position"] == "not visible"
 
 
@@ -141,6 +140,6 @@ async def test_answer_for_a_target_stopped_meanwhile_does_not_move_the_camera():
 
     # Assert
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(command_track.next_group(), NOTHING_MORE_WAIT_SECONDS)
+        await command_track.next_write(NOTHING_MORE_WAIT_SECONDS)
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(group.read_frame(), NOTHING_MORE_WAIT_SECONDS)
+        await group.next_write(NOTHING_MORE_WAIT_SECONDS)

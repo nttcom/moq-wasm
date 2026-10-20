@@ -26,7 +26,7 @@ def test_position_is_the_probability_weighted_center_of_the_grid_cells(given, an
 async def locate_with(server, description: str = "a red mug"):
     async with aiohttp.ClientSession() as session:
         token = gcloud_identity_token(command=("echo", "identity-token"))
-        client = D3FlashVisionClient(session, server.url, D3FlashStatus("status"), token)
+        client = D3FlashVisionClient(session, server.url, D3FlashStatus(), token)
         return await client.locate(b"jpeg", description)
 
 

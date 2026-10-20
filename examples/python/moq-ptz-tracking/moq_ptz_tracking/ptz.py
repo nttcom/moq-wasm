@@ -6,8 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import moq
-
+from moq_ptz_tracking.event_timeline import Publication
 from moq_ptz_tracking.vision import Position
 
 MOVE_VELOCITY = 0.5
@@ -52,37 +51,39 @@ class PtzCommands:
     JSON object for each axis it turns, or one sweep. Groups travel on separate streams, so only objects in one
     group reach onvif-ingest in order and a Stop never overtakes the next ContinuousMove."""
 
-    def __init__(self, broadcast: moq.BroadcastProducer, track_name: str):
-        # The broadcast is unannounced once its producer is garbage collected; its tracks do not keep it.
-        self._broadcast = broadcast
-        self._track = broadcast.publish_track(track_name)
-        # The relay isolates a track whose publisher repeats a location, and the browser's ONVIF
-        # page writes the same track, so group ids are seeded from the wall clock.
-        self._next_group_id = time.time_ns() // 1_000
+    def __init__(self):
+        self._publication: Publication | None = None
 
-    def sweep(self, heading: "Heading") -> "Sweep":
-        return Sweep(self._open_group(), heading)
+    async def publish_on(self, publication: Publication) -> None:
+        self._publication = publication
 
-    def center(self) -> None:
+    async def sweep(self, heading: "Heading") -> "Sweep":
+        command = {"pan": heading.pan * MOVE_VELOCITY, "tilt": heading.tilt * MOVE_VELOCITY}
+        await self.write({"type": "continuous", **command, "zoom": 0.0, "speed": 1.0}, new_group=True)
+        return Sweep(self, heading)
+
+    async def center(self) -> None:
         """AbsoluteMove to pan 0, tilt 0: the known origin the search starts from."""
-        group = self._open_group()
-        write_command(group, {"type": "center", "speed": 1.0})
-        group.finish()
+        await self.write({"type": "center", "speed": 1.0}, new_group=True)
 
     async def move(self, move: PtzMove) -> None:
-        group = self._open_group()
-        try:
-            if move.pan_seconds:
-                await turn(group, math.copysign(MOVE_VELOCITY, move.pan_seconds), 0.0, abs(move.pan_seconds))
-            if move.tilt_seconds:
-                await turn(group, 0.0, math.copysign(MOVE_VELOCITY, move.tilt_seconds), abs(move.tilt_seconds))
-        finally:
-            group.finish()
+        turns = []
+        if move.pan_seconds:
+            turns.append((math.copysign(MOVE_VELOCITY, move.pan_seconds), 0.0, abs(move.pan_seconds)))
+        if move.tilt_seconds:
+            turns.append((0.0, math.copysign(MOVE_VELOCITY, move.tilt_seconds), abs(move.tilt_seconds)))
+        for index, (pan, tilt, seconds) in enumerate(turns):
+            continuous = {"type": "continuous", "pan": pan, "tilt": tilt, "zoom": 0.0, "speed": 1.0}
+            await self.write(continuous, new_group=index == 0)
+            try:
+                await asyncio.sleep(seconds)
+            finally:
+                await self.write({"type": "stop"})
 
-    def _open_group(self) -> moq.GroupProducer:
-        group = self._track.create_group(self._next_group_id)
-        self._next_group_id += 1
-        return group
+    async def write(self, command: dict[str, Any], *, new_group: bool = False) -> None:
+        if self._publication is not None:
+            payload = json.dumps(command, separators=(",", ":")).encode()
+            await self._publication.write(payload, new_group=new_group)
 
 
 @dataclass(frozen=True)
@@ -97,13 +98,11 @@ class Sweep:
     """One command group turning at MOVE_VELOCITY along `heading` until `stop()`, or until
     SWEEP_LEASE_SECONDS pass without `renew()`."""
 
-    def __init__(self, group: moq.GroupProducer, heading: Heading):
+    def __init__(self, commands: PtzCommands, heading: Heading):
         self.heading = heading
-        self._group = group
+        self._commands = commands
         self._renewed_at = time.monotonic()
         self._stop_requested = asyncio.Event()
-        command = {"pan": heading.pan * MOVE_VELOCITY, "tilt": heading.tilt * MOVE_VELOCITY}
-        write_command(group, {"type": "continuous", **command, "zoom": 0.0, "speed": 1.0})
         self._task = asyncio.create_task(self._stop_when_released())
 
     @property
@@ -125,17 +124,4 @@ class Sweep:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stop_requested.wait(), remaining)
         finally:
-            write_command(self._group, {"type": "stop"})
-            self._group.finish()
-
-
-async def turn(group: moq.GroupProducer, pan: float, tilt: float, seconds: float) -> None:
-    write_command(group, {"type": "continuous", "pan": pan, "tilt": tilt, "zoom": 0.0, "speed": 1.0})
-    try:
-        await asyncio.sleep(seconds)
-    finally:
-        write_command(group, {"type": "stop"})
-
-
-def write_command(group: moq.GroupProducer, command: dict[str, Any]) -> None:
-    group.write_frame(json.dumps(command, separators=(",", ":")).encode())
+            await self._commands.write({"type": "stop"})

@@ -1,6 +1,6 @@
 # moq-ptz-tracking
 
-`onvif-ingest` が配信する ONVIF カメラの映像を pipecat の bot が受け取り、ブラウザの MoQ PTZ Tracking ページ
+`onvif-ingest` が配信する ONVIF カメラの映像を pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、ブラウザの MoQ PTZ Tracking ページ
 （`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) に尋ねます。
 対象が中央から外れていれば、`onvif-ingest` に ContinuousMove と Stop を送ってカメラを対象の方へ向けます。
 
@@ -108,6 +108,8 @@ bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動�
 
 3. bot を起動する
 
+   bot は `moqt` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。初回の `uv run` はビルドに数分かかります。
+
    ```shell
    cd examples/python/moq-ptz-tracking
    uv run python -m moq_ptz_tracking.bot --insecure \
@@ -142,8 +144,8 @@ bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動�
 
 - ページは自分が再生している映像トラックを prompt で伝えます。`onvif-ingest` は最初に subscribe されたプロファイルしか
   配信しないため、bot は別のプロファイルを選びません。
-- bot が group の途中で subscribe すると、relay はその group を途中のオブジェクトから送ります（draft-14 §9.7）。moq ライブラリは
-  オブジェクト 0 から始まらない group を読めないため、bot はその group を飛ばして次の group から判定します。
+- bot が group の途中で subscribe すると、relay はその group を途中のオブジェクトから送ります（draft-14 §9.7）。その group には
+  キーフレームがないので、bot は次の group から判定します。
 - relay とのセッションが閉じると、bot は 2 秒後に接続し直します。
 
 ## テスト
