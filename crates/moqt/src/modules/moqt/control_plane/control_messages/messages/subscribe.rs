@@ -28,13 +28,7 @@ pub struct Subscribe {
 impl Subscribe {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
-        let track_namespace_tuple_length =
-            buf.try_get_varint().context("track namespace length")?;
-        let mut track_namespace_tuple: Vec<String> = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().context("track namespace")?;
-            track_namespace_tuple.push(track_namespace);
-        }
+        let track_namespace_tuple = buf.try_get_tuple().context("track namespace")?;
         let track_name = buf.try_get_string().context("track name")?;
         let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
         let group_order_u8 = buf.try_get_u8().context("group order u8")?;
@@ -81,12 +75,7 @@ impl Subscribe {
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        // Track Namespace Number of elements
-        let track_namespace_tuple_length = self.track_namespace.len();
-        payload.put_varint(track_namespace_tuple_length as u64);
-        self.track_namespace.iter().for_each(|track_namespace| {
-            payload.put_string(track_namespace);
-        });
+        payload.put_tuple(&self.track_namespace);
         payload.put_string(&self.track_name);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);

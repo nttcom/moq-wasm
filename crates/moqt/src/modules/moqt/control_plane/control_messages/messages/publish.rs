@@ -30,14 +30,7 @@ pub struct Publish {
 impl Publish {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
-        let track_namespace_tuple_length = buf
-            .try_get_varint()
-            .context("track namespace tuple length")?;
-        let mut track_namespace_tuple: Vec<String> = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().context("track namespace")?;
-            track_namespace_tuple.push(track_namespace);
-        }
+        let track_namespace_tuple = buf.try_get_tuple().context("track namespace")?;
         let track_name = buf.try_get_string().context("track name")?;
         let track_alias = buf.try_get_varint().context("track alias")?;
         let group_order_u8 = buf.try_get_u8().context("group order u8")?;
@@ -92,14 +85,7 @@ impl Publish {
     pub fn encode(&self) -> bytes::BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        // Track Namespace Number of elements
-        let track_namespace_tuple_length = self.track_namespace_tuple.len();
-        payload.put_varint(track_namespace_tuple_length as u64);
-        self.track_namespace_tuple
-            .iter()
-            .for_each(|track_namespace| {
-                payload.put_string(track_namespace);
-            });
+        payload.put_tuple(&self.track_namespace_tuple);
         payload.put_string(&self.track_name);
         payload.put_varint(self.track_alias);
         payload.put_u8(self.group_order as u8);

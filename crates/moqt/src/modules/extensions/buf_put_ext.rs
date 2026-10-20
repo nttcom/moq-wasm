@@ -3,6 +3,7 @@ use bytes::{BufMut, BytesMut};
 pub trait BufPutExt: BufMut {
     fn put_varint(&mut self, value: u64);
     fn put_string(&mut self, value: &str);
+    fn put_tuple(&mut self, value: &[String]);
 }
 
 impl BufPutExt for BytesMut {
@@ -24,6 +25,11 @@ impl BufPutExt for BytesMut {
         let length = value.len() as u64;
         self.put_varint(length);
         self.extend_from_slice(value.as_bytes());
+    }
+
+    fn put_tuple(&mut self, value: &[String]) {
+        self.put_varint(value.len() as u64);
+        value.iter().for_each(|element| self.put_string(element));
     }
 }
 
@@ -76,6 +82,21 @@ mod tests {
             let mut bytes = std::io::Cursor::new(&bytes[..]);
             let result = bytes.try_get_string().unwrap();
             assert_eq!(result, "abcd");
+        }
+
+        #[test]
+        fn put_tuple_round_trips() {
+            // Arrange
+            let tuple = vec!["room".to_string(), "alice".to_string()];
+            let mut bytes = BytesMut::new();
+
+            // Act
+            bytes.put_tuple(&tuple);
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
+            let result = bytes.try_get_tuple().unwrap();
+
+            // Assert
+            assert_eq!(result, tuple);
         }
     }
 }

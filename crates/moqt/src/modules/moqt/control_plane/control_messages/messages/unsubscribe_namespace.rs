@@ -15,14 +15,7 @@ impl UnsubscribeNamespace {
     }
 
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
-        let track_namespace_prefix_tuple_length = buf
-            .try_get_varint()
-            .context("track namespace prefix length")?;
-        let mut track_namespace_prefix_tuple = Vec::new();
-        for _ in 0..track_namespace_prefix_tuple_length {
-            let track_namespace_prefix = buf.try_get_string().context("track namespace prefix")?;
-            track_namespace_prefix_tuple.push(track_namespace_prefix);
-        }
+        let track_namespace_prefix_tuple = buf.try_get_tuple().context("track namespace prefix")?;
 
         Ok(Self {
             track_namespace_prefix: track_namespace_prefix_tuple,
@@ -31,10 +24,7 @@ impl UnsubscribeNamespace {
 
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.track_namespace_prefix.len() as u64);
-        for track_namespace_prefix in &self.track_namespace_prefix {
-            payload.put_string(track_namespace_prefix);
-        }
+        payload.put_tuple(&self.track_namespace_prefix);
         payload
     }
 }

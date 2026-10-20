@@ -62,12 +62,7 @@ impl FetchParams {
         let wire_type = FetchTypeValue::try_from(fetch_type_value).context("fetch type value")?;
         match wire_type {
             FetchTypeValue::Standalone => {
-                let namespace_length = buf.try_get_varint().context("namespace length")?;
-                let mut track_namespace = Vec::new();
-                for _ in 0..namespace_length {
-                    let ns = buf.try_get_string().context("namespace")?;
-                    track_namespace.push(ns);
-                }
+                let track_namespace = buf.try_get_tuple().context("namespace")?;
                 let track_name = buf.try_get_string().context("track name")?;
                 let start_location = Location::decode(buf)?;
                 let end_location = Location::decode(buf)?;
@@ -107,10 +102,7 @@ impl FetchParams {
                 end_location,
             } => {
                 payload.put_varint(FetchTypeValue::Standalone as u64);
-                payload.put_varint(track_namespace.len() as u64);
-                for ns in track_namespace {
-                    payload.put_string(ns);
-                }
+                payload.put_tuple(track_namespace);
                 payload.put_string(track_name);
                 payload.unsplit(start_location.encode());
                 payload.unsplit(end_location.encode());

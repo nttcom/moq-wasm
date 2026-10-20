@@ -13,13 +13,7 @@ impl PublishNamespaceDone {
     }
 
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
-        let track_namespace_tuple_length =
-            buf.try_get_varint().context("track namespace length")?;
-        let mut track_namespace_tuple = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().context("track namespace")?;
-            track_namespace_tuple.push(track_namespace);
-        }
+        let track_namespace_tuple = buf.try_get_tuple().context("track namespace")?;
 
         Ok(Self {
             track_namespace: track_namespace_tuple,
@@ -28,10 +22,7 @@ impl PublishNamespaceDone {
 
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.track_namespace.len() as u64);
-        for track_namespace in &self.track_namespace {
-            payload.put_string(track_namespace);
-        }
+        payload.put_tuple(&self.track_namespace);
         payload
     }
 }
