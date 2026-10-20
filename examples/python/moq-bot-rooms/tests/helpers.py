@@ -1,5 +1,8 @@
 import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime
+
+from aiohttp import web
 
 from moq_bot_rooms.open_hours import OpenHours
 from moq_bot_rooms.rooms import Rooms
@@ -59,3 +62,13 @@ def make_rooms(
 
 async def settle() -> None:
     await asyncio.sleep(SETTLE_SECONDS)
+
+
+@dataclass
+class FakeMetadataServer:
+    url: str = ""
+    requests: list[tuple[str | None, str | None]] = field(default_factory=list)
+
+    async def handle(self, request: web.Request) -> web.Response:
+        self.requests.append((request.headers.get("Metadata-Flavor"), request.query.get("audience")))
+        return web.Response(text="metadata-token")
