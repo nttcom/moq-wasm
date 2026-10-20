@@ -722,6 +722,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn composites_a_room_where_nobody_has_video() {
+        // Arrange: both participants keep the camera off; the second speaks 2 s later
+        decode_in_software();
+        let shift = Timestamp::from_millis(2_000);
+        let loudness = |shift| {
+            Some(Loudness::measure(source(shifted(audio_events(), shift)).unwrap()).unwrap())
+        };
+        let inputs = vec![
+            CompositeInput {
+                video: None,
+                screen_share: None,
+                audio: source(audio_events()),
+                loudness: loudness(Timestamp::default()),
+            },
+            CompositeInput {
+                video: None,
+                screen_share: None,
+                audio: source(shifted(audio_events(), shift)),
+                loudness: loudness(shift),
+            },
+        ];
+        let output = output_path("nobody-has-video");
+
+        // Act
+        composite(inputs, &output).await.unwrap();
+
+        // Assert: an audio-only file
+        let index = read_index(&output);
+        assert!(index.video.is_none());
+        assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
+        std::fs::remove_file(output).unwrap();
+    }
+
+    #[tokio::test]
     async fn decodes_vp8_vp9_and_av1_inputs() {
         // Arrange
         let vp8 = ivf_events(FIXTURE_VP8_IVF, |data| {
