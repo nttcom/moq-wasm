@@ -74,7 +74,7 @@ impl IapVerifier {
         if claims.aud != self.audience {
             bail!("the IAP assertion is for {:?}", claims.aud);
         }
-        if claims.exp + CLOCK_SKEW_SECONDS <= now {
+        if claims.exp + CLOCK_SKEW_SECONDS < now {
             bail!("the IAP assertion expired at {}", claims.exp);
         }
         if claims.iat > now + CLOCK_SKEW_SECONDS {
@@ -264,8 +264,8 @@ mod tests {
         let assertion = key.sign(&claims);
 
         // Act / Assert
-        assert!(verifier.verify(&assertion, NOW + 29).await.is_ok());
-        assert!(verifier.verify(&assertion, NOW + 30).await.is_err());
+        assert!(verifier.verify(&assertion, NOW + 30).await.is_ok());
+        assert!(verifier.verify(&assertion, NOW + 31).await.is_err());
     }
 
     #[tokio::test]
