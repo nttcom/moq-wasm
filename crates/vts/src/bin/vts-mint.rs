@@ -5,8 +5,9 @@ use std::{
 };
 
 use anyhow::Context;
+use app_registry::Apps;
 use clap::Parser;
-use vts::{MintRequest, mint_token, parse_apps};
+use vts::{MintRequest, mint_token};
 
 /// Signs a token for an app registered in the apps file
 #[derive(Parser)]
@@ -23,7 +24,7 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let text = fs::read_to_string(&args.apps)
         .with_context(|| format!("failed to read apps file {}", args.apps.display()))?;
-    let apps = parse_apps(&text)?;
+    let apps = Apps::parse(&text)?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let token = mint_token(&apps, &args.request, now)
         .with_context(|| format!("in {}", args.apps.display()))?;

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 
-use crate::{apps::Apps, verify::verify_token};
+use crate::{registry::Registry, verify::verify_token};
 
 const MAX_BODY_BYTES: usize = 16 * 1024;
 
@@ -22,14 +22,14 @@ pub struct VtsServer {
 }
 
 impl VtsServer {
-    pub fn run(listener: TcpListener, apps: Arc<Apps>) -> Self {
+    pub fn run(listener: TcpListener, registry: Arc<Registry>) -> Self {
         Self {
-            _accept_handle: tokio::spawn(accept_connections(listener, apps)),
+            _accept_handle: tokio::spawn(accept_connections(listener, registry)),
         }
     }
 }
 
-async fn accept_connections(listener: TcpListener, apps: Arc<Apps>) {
+async fn accept_connections(listener: TcpListener, registry: Arc<Registry>) {
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -38,9 +38,9 @@ async fn accept_connections(listener: TcpListener, apps: Arc<Apps>) {
                 continue;
             }
         };
-        let apps = apps.clone();
+        let registry = registry.clone();
         tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, apps.clone()));
+            let service = service_fn(move |request| handle(request, registry.clone()));
             if let Err(error) = http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), service)
                 .await
@@ -58,17 +58,20 @@ struct VerifyRequest {
     token: String,
 }
 
-async fn handle(request: Request<Incoming>, apps: Arc<Apps>) -> Result<JsonResponse, Infallible> {
+async fn handle(
+    request: Request<Incoming>,
+    registry: Arc<Registry>,
+) -> Result<JsonResponse, Infallible> {
     let (head, body) = request.into_parts();
     let response = match (head.method, head.uri.path()) {
         (Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
-        (Method::POST, "/verify") => verify(body, &apps).await,
+        (Method::POST, "/verify") => verify(body, &registry).await,
         _ => error_response(StatusCode::NOT_FOUND, "not_found"),
     };
     Ok(response)
 }
 
-async fn verify(body: Incoming, apps: &Apps) -> JsonResponse {
+async fn verify(body: Incoming, registry: &Registry) -> JsonResponse {
     let request = match Limited::new(body, MAX_BODY_BYTES).collect().await {
         Ok(collected) => serde_json::from_slice::<VerifyRequest>(&collected.to_bytes()).ok(),
         Err(_) => None,
@@ -76,7 +79,8 @@ async fn verify(body: Incoming, apps: &Apps) -> JsonResponse {
     let Some(request) = request else {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
-    match verify_token(&request.token, apps) {
+    let apps = registry.current().await;
+    match verify_token(&request.token, &apps) {
         Ok(verified) => {
             tracing::info!(app_id = %verified.app_id, is_relay = verified.is_relay, "verify ok");
             json_response(
@@ -111,19 +115,26 @@ fn json_response(status: StatusCode, body: Value) -> JsonResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{APP_SECRET, app_claims, test_apps, token};
+    use crate::test_support::{
+        APP_SECRET, TemporaryRegistryFile, app_claims, test_apps_json, token,
+    };
 
     struct TestServer {
         base_url: String,
+        _registry_file: TemporaryRegistryFile,
         _server: VtsServer,
     }
 
     async fn start_server() -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let registry_file = TemporaryRegistryFile::new();
+        registry_file.write(&test_apps_json());
+        let registry = Registry::load(registry_file.store()).await.unwrap();
         TestServer {
             base_url,
-            _server: VtsServer::run(listener, Arc::new(test_apps())),
+            _registry_file: registry_file,
+            _server: VtsServer::run(listener, Arc::new(registry)),
         }
     }
 
