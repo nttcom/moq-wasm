@@ -55,6 +55,22 @@ pub(super) fn cached_largest(
         .and_then(|cache| cache.largest_location())
 }
 
+/// The upstream SUBSCRIBE uses the Largest Object filter, which starts after
+/// the Largest Location its SUBSCRIBE_OK reports (§9.7), so the cache lacks
+/// that object until the track's next one; a meeting catalog sends that only
+/// when it changes.
+pub(super) fn existing_track_largest(
+    cache_store: &TrackCacheStore,
+    track_key: &TrackKey,
+    upstream_track: &UpstreamTrack,
+) -> Option<moqt::object::Location> {
+    let upstream_largest = match upstream_track.content_exists() {
+        ContentExists::True { location } => Some(location),
+        ContentExists::False => None,
+    };
+    cached_largest(cache_store, track_key).max(upstream_largest)
+}
+
 /// `late_publishers` are the upstream SUBSCRIBEs still unanswered when the
 /// first publisher answered; they join the track once the downstream
 /// subscription that asked for it is registered, so the track wants them.
