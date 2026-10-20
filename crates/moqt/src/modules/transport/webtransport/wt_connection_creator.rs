@@ -1,12 +1,8 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
-use anyhow::Context;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
-use quinn::rustls::{
-    self,
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-};
+use quinn::rustls;
 
 use web_transport_quinn::proto::{ConnectRequest, ConnectResponse};
 
@@ -18,8 +14,8 @@ use crate::modules::transport::{
         client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
     },
     connect_target::{ClientTransport, ConnectTarget},
-    crypto_provider::install_default_crypto_provider,
     dual_stack_bind::bind_dual_stack,
+    server_transport_config::load_cert_and_key,
     transport_connection_creator::TransportConnectionCreator,
 };
 
@@ -108,17 +104,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         _keep_alive_sec: u64,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        install_default_crypto_provider();
-
-        // 証明書を同期的に読み込む
-        let certs: Vec<_> = CertificateDer::pem_file_iter(cert_path)
-            .context("failed to open the certificate file")?
-            .collect::<Result<Vec<_>, _>>()
-            .context("failed to parse the certificate file")?;
-
-        // 秘密鍵を同期的に読み込む
-        let key = PrivateKeyDer::from_pem_file(key_path)
-            .context("failed to read the private key file")?;
+        let (certs, key) = load_cert_and_key(cert_path, key_path)?;
 
         let server = bind_dual_stack(port_num, |address| {
             Ok(web_transport_quinn::ServerBuilder::new()
