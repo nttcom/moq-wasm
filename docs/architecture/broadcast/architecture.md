@@ -52,9 +52,10 @@ video a tracking bot subscribes to directly. A SUBSCRIBE for any other track is 
 TRACK_DOES_NOT_EXIST.
 
 ## Track format
-Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the
+Video and audio objects are LOC (draft-ietf-moq-loc-04): the payload is the
 codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law, Opus or MP3 frames,
-and the capture timestamp travels as MoQT extension header 2. The capture
+and the capture timestamp travels as the Timestamp property, MoQT extension
+header 0x10, with no Timescale, so it reads as Unix µs. The capture
 timestamp is the wall clock at which `BroadcastWriter::push` received the first
 sample, advanced by each later sample's presentation time offset from that
 sample, so the time the publish task spends connecting to the relay does not

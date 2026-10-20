@@ -232,7 +232,7 @@ pub(crate) fn ivf_events(codec: loc::VideoCodec, fixture: &[u8]) -> Vec<MediaEve
     for (index, payload) in ivf_frames(fixture).into_iter().enumerate() {
         let object = loc::LocObject {
             extensions: vec![loc::LocExtension::varint(
-                loc::CAPTURE_TIMESTAMP_ID,
+                loc::TIMESTAMP_ID,
                 index as u64 * 33_333,
             )],
             payload,

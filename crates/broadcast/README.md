@@ -12,7 +12,7 @@ on it produces the tracks below, so one player,
 | Track | Packaging | Content |
 | --- | --- | --- |
 | `catalog` | MSF (draft-ietf-moq-msf-01) | Track list. `initDataList` carries the AAC config and the CMAF init segments, each named by the `initRef` of its track |
-| `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-01) | H.264 Annex-B, parameter sets in band, capture timestamp in extension header 2 |
+| `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-04) | H.264 Annex-B, parameter sets in band, capture timestamp as the Timestamp property (extension header 0x10) |
 | `audio` | LOC | Raw AAC, G.711 A-law, Opus or MP3 frames (CMAF sibling for AAC only) |
 | `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample |
 | `timeline` | MSF media timeline | `[presentation time, [group, object], encode wallclock]` per keyframe |

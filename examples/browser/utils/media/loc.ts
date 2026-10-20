@@ -4,9 +4,11 @@ export type LocExtension = { id: number; value: LocValue }
 
 export type LocHeader = LocExtension[]
 
-export const CAPTURE_TIMESTAMP_ID = 2
-export const VIDEO_CONFIG_ID = 13
-export const AUDIO_LEVEL_ID = 6
+// draft-ietf-moq-loc-04 §6.1 property ids.
+export const TIMESCALE_ID = 0x08
+export const AUDIO_LEVEL_ID = 0x0c
+export const VIDEO_CONFIG_ID = 0x0d
+export const TIMESTAMP_ID = 0x10
 
 /// RFC 6464 §3: `level` is the audio level in -dBov, 0 the loudest and 127 the
 /// quietest, and `voiceActivity` the V bit.
@@ -24,7 +26,7 @@ const LEVEL_MASK = 0x7f
 export function buildLocHeader(meta: LocMetadata): LocHeader {
   const extensions: LocHeader = []
   if (typeof meta.captureTimestampMicros === 'number') {
-    extensions.push({ id: CAPTURE_TIMESTAMP_ID, value: { varint: meta.captureTimestampMicros } })
+    extensions.push({ id: TIMESTAMP_ID, value: { varint: meta.captureTimestampMicros } })
   }
   if (meta.videoConfig) {
     extensions.push({ id: VIDEO_CONFIG_ID, value: { bytes: meta.videoConfig } })
@@ -39,12 +41,16 @@ export function buildLocHeader(meta: LocMetadata): LocHeader {
   return extensions
 }
 
+/// A Timestamp sent with a Timescale property is media time with an
+/// application-defined epoch (draft-ietf-moq-loc-04 §2.3.1.2), not the Unix µs
+/// capture time, so it is not read.
 export function readLocHeader(header?: LocHeader): LocMetadata {
   const meta: LocMetadata = {}
+  const mediaTime = (header ?? []).some((ext) => ext.id === TIMESCALE_ID && 'varint' in ext.value)
   for (const ext of header ?? []) {
     if (ext.id === VIDEO_CONFIG_ID && 'bytes' in ext.value) {
       meta.videoConfig = ext.value.bytes
-    } else if (ext.id === CAPTURE_TIMESTAMP_ID && 'varint' in ext.value) {
+    } else if (ext.id === TIMESTAMP_ID && 'varint' in ext.value && !mediaTime) {
       meta.captureTimestampMicros = ext.value.varint
     } else if (ext.id === AUDIO_LEVEL_ID && 'varint' in ext.value) {
       meta.audioLevel = {

@@ -18,12 +18,12 @@ unit test.
 
 ## Context
 
-`crates/wasm` hands LOC header extensions across the JavaScript boundary
+`crates/wasm` hands LOC properties across the JavaScript boundary
 with `serde_wasm_bindgen`, and previously did so through a parallel set of LOC
 types in the `packages` crate. Folding `packages` into `mediapack` leaves the
 `mediapack` types as the only LOC model, so they must be the ones that cross
 the boundary. The shape is `{ id, value: { varint } | { bytes } }`, which is
-the draft-ietf-moq-loc-01 §2.3 representation and is mirrored by
+the draft-ietf-moq-loc-04 §2.3 representation and is mirrored by
 `examples/browser/utils/media/loc.ts`.
 
 ## Alternatives

@@ -375,7 +375,7 @@ mod tests {
         let mut late_audio = fixture.audio[0].clone();
         let video_capture = first_video_capture(&first_video);
         late_audio.extension_headers = loc::to_extension_headers(&[loc::LocExtension::varint(
-            loc::CAPTURE_TIMESTAMP_ID,
+            loc::TIMESTAMP_ID,
             video_capture + 30_000,
         )]);
         let mut file = BytesMut::new();
@@ -433,7 +433,7 @@ mod tests {
                     index,
                     LocObject {
                         extensions: vec![loc::LocExtension::varint(
-                            loc::CAPTURE_TIMESTAMP_ID,
+                            loc::TIMESTAMP_ID,
                             start + index * frame_micros,
                         )],
                         payload: frame.clone(),
@@ -496,10 +496,7 @@ mod tests {
             99,
             0,
             LocObject {
-                extensions: vec![loc::LocExtension::varint(
-                    loc::CAPTURE_TIMESTAMP_ID,
-                    capture,
-                )],
+                extensions: vec![loc::LocExtension::varint(loc::TIMESTAMP_ID, capture)],
                 payload: changed.with_parameter_sets(Bytes::from_static(IDR_SLICE)),
             },
         );
@@ -513,7 +510,7 @@ mod tests {
                     1,
                     LocObject {
                         extensions: vec![loc::LocExtension::varint(
-                            loc::CAPTURE_TIMESTAMP_ID,
+                            loc::TIMESTAMP_ID,
                             capture + 40_000,
                         )],
                         payload: Bytes::from_static(&[0, 0, 0, 1, 0x41, 0x9a, 0x22]),
@@ -592,10 +589,7 @@ mod tests {
             group_id,
             object_id,
             LocObject {
-                extensions: vec![loc::LocExtension::varint(
-                    loc::CAPTURE_TIMESTAMP_ID,
-                    capture_micros,
-                )],
+                extensions: vec![loc::LocExtension::varint(loc::TIMESTAMP_ID, capture_micros)],
                 payload: Bytes::from(vec![0xD5; 160]),
             },
         )

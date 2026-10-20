@@ -9,7 +9,7 @@ const SPEAKER_HOLD_MS = 1_500
 type Voice = { lastVoiceAtMs: number; level: number }
 
 /// Picks the member to focus from the LOC Audio Level of their audio
-/// (draft-ietf-moq-loc-01 §2.3.3.1): the loudest member speaking takes the
+/// (draft-ietf-moq-loc-04 §2.3.3.2): the loudest member speaking takes the
 /// focus once the current speaker has been quiet for `SPEAKER_HOLD_MS`, and
 /// the last speaker keeps it while nobody speaks.
 export class DominantSpeaker {

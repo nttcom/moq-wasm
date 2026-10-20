@@ -24,7 +24,7 @@ camera's Annex-B packets through as received and attached its own avcC as the
 LOC Video Config extension. With a Tapo C2xx camera, which carries SPS/PPS in
 band, that combination meant every browser decoder failed on every keyframe: a
 WebCodecs `description` makes the decoder read length prefixes
-(draft-ietf-moq-loc-01 §2.1). Without the extension, a camera that sends the
+(draft-ietf-moq-loc-04 §2.1). Without the extension, a camera that sends the
 parameter sets only in the SDP produces groups no late joiner can decode.
 
 Every other LOC publisher in the repository (browser, `live-ingest`,

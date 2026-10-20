@@ -37,9 +37,8 @@ impl VideoCodec {
     }
 }
 
-/// A LOC track carries one codec, and draft-ietf-moq-loc-01 leaves the track's
-/// kind, its codec and its audio configuration to the catalog, so the caller
-/// states them.
+/// A LOC track carries one codec, and its kind, codec and audio configuration
+/// come from the catalog, so the caller states them.
 pub struct Demuxer {
     track: Track,
     capture_origin: Option<Timestamp>,
@@ -49,7 +48,7 @@ pub struct Demuxer {
 
 /// The VP8, VP9 and AV1 variants hold the configuration last reported.
 enum Track {
-    H264(ParameterSetTracker),
+    H264(H264Track),
     Vp8(Option<Vp8Config>),
     Vp9(Option<Vp9Config>),
     Av1(Option<Av1Config>),
@@ -59,7 +58,10 @@ enum Track {
 impl Demuxer {
     pub fn video(codec: VideoCodec) -> Self {
         Self::new(match codec {
-            VideoCodec::H264 => Track::H264(ParameterSetTracker::new()),
+            VideoCodec::H264 => Track::H264(H264Track {
+                parameter_sets: ParameterSetTracker::new(),
+                nal_length_size: None,
+            }),
             VideoCodec::Vp8 => Track::Vp8(None),
             VideoCodec::Vp9 => Track::Vp9(None),
             VideoCodec::Av1 => Track::Av1(None),
@@ -104,9 +106,9 @@ impl Demuxer {
         let pts = self.presentation_timestamp(object);
         let payload = &object.payload;
         let (data, is_keyframe) = match &mut self.track {
-            Track::H264(parameter_sets) => {
-                let annexb = to_annexb(object)?;
-                let Some(unit) = parameter_sets.track(&annexb)? else {
+            Track::H264(track) => {
+                let annexb = track.read_annexb(object)?;
+                let Some(unit) = track.parameter_sets.track(&annexb)? else {
                     return Ok(events);
                 };
                 if let Some(config) = unit.config_changed {
@@ -168,40 +170,53 @@ fn config_change<T: Clone + PartialEq>(
     Some(MediaEvent::VideoConfig(to_video_config(parsed)))
 }
 
-/// draft-ietf-moq-loc-01 §2.1.3 lets a length prefix of 1 be read as a start
-/// code, so a leading start code identifies an Annex-B payload.
-fn to_annexb(object: &LocObject) -> Result<Bytes> {
-    let payload = &object.payload;
-    if payload.starts_with(&[0, 0, 0, 1]) || payload.starts_with(&[0, 0, 1]) {
-        return Ok(payload.clone());
-    }
-    avcc_to_annexb(payload, nal_length_size(object))
+struct H264Track {
+    parameter_sets: ParameterSetTracker,
+    /// The NAL length size of the last Video Config; `Some` once the track has
+    /// carried one.
+    nal_length_size: Option<usize>,
 }
 
-fn nal_length_size(object: &LocObject) -> usize {
-    object
-        .video_config()
-        .and_then(|config| AvcDecoderConfigurationRecord::parse(&config).ok())
-        .map_or(DEFAULT_NAL_LENGTH_SIZE, |config| {
-            config.nal_length_size as usize
-        })
+impl H264Track {
+    /// draft-ietf-moq-loc-04 §2.1.3–2.1.4: a length of 1 is a 4-byte start code,
+    /// and a 3-byte start code is allowed only on a track that never carried
+    /// Video Config, so only such a track reads `00 00 01` as one.
+    fn read_annexb(&mut self, object: &LocObject) -> Result<Bytes> {
+        if let Some(config) = object
+            .video_config()
+            .and_then(|config| AvcDecoderConfigurationRecord::parse(&config).ok())
+        {
+            self.nal_length_size = Some(config.nal_length_size as usize);
+        }
+        let payload = &object.payload;
+        if payload.starts_with(&[0, 0, 0, 1])
+            || (self.nal_length_size.is_none() && payload.starts_with(&[0, 0, 1]))
+        {
+            return Ok(payload.clone());
+        }
+        avcc_to_annexb(
+            payload,
+            self.nal_length_size.unwrap_or(DEFAULT_NAL_LENGTH_SIZE),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        h264::annexb::annexb_to_avcc,
-        loc::object::{CAPTURE_TIMESTAMP_ID, LocExtension, VIDEO_CONFIG_ID},
+        h264::annexb::{annexb_to_avcc, with_start_codes},
+        loc::object::{LocExtension, TIMESTAMP_ID, VIDEO_CONFIG_ID},
         test_support::{
-            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, delta_frame_annexb, fixture_record,
-            fixture_video_config, ivf_frames, keyframe_annexb, mono_48k, video_samples,
+            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, NON_IDR_SLICE, delta_frame_annexb,
+            fixture_record, fixture_video_config, ivf_frames, keyframe_annexb, mono_48k,
+            video_samples,
         },
     };
 
     fn video_object(pts_micros: u64, payload: Bytes) -> LocObject {
         LocObject {
-            extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, pts_micros)],
+            extensions: vec![LocExtension::varint(TIMESTAMP_ID, pts_micros)],
             payload,
         }
     }
@@ -287,7 +302,7 @@ mod tests {
         let mut demuxer = Demuxer::video(VideoCodec::H264);
         let object = LocObject {
             extensions: vec![
-                LocExtension::varint(CAPTURE_TIMESTAMP_ID, 0),
+                LocExtension::varint(TIMESTAMP_ID, 0),
                 LocExtension::bytes(VIDEO_CONFIG_ID, config.to_bytes()),
             ],
             payload: annexb_to_avcc(&keyframe_annexb(), 2),
@@ -295,6 +310,64 @@ mod tests {
 
         // Act
         let events = demuxer.push(&object).unwrap();
+
+        // Assert
+        assert_eq!(
+            events.last(),
+            Some(&MediaEvent::Video(VideoSample {
+                data: keyframe_annexb(),
+                is_keyframe: true,
+                pts: Timestamp::ZERO,
+                dts: Timestamp::ZERO
+            }))
+        );
+    }
+
+    #[test]
+    fn reads_a_length_of_256_as_a_length_on_a_track_with_video_config() {
+        // Arrange
+        let mut demuxer = Demuxer::video(VideoCodec::H264);
+        demuxer
+            .push(&LocObject {
+                extensions: vec![
+                    LocExtension::varint(TIMESTAMP_ID, 0),
+                    LocExtension::bytes(VIDEO_CONFIG_ID, fixture_record().to_bytes()),
+                ],
+                payload: annexb_to_avcc(&keyframe_annexb(), 4),
+            })
+            .unwrap();
+        let mut slice = NON_IDR_SLICE.to_vec();
+        slice.resize(256, 0xAA);
+        let delta = with_start_codes([&slice[..]]);
+
+        // Act: the 4-byte length 0x00000100 begins like a 3-byte start code
+        let events = demuxer
+            .push(&video_object(40_000, annexb_to_avcc(&delta, 4)))
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            events.last(),
+            Some(&MediaEvent::Video(VideoSample {
+                data: delta,
+                is_keyframe: false,
+                pts: Timestamp::from_millis(40),
+                dts: Timestamp::from_millis(40)
+            }))
+        );
+    }
+
+    #[test]
+    fn reads_a_three_byte_start_code_on_a_track_without_video_config() {
+        // Arrange
+        let mut demuxer = Demuxer::video(VideoCodec::H264);
+        let mut payload = vec![0, 0, 1];
+        payload.extend_from_slice(&keyframe_annexb()[4..]);
+
+        // Act
+        let events = demuxer
+            .push(&video_object(0, Bytes::from(payload)))
+            .unwrap();
 
         // Assert
         assert_eq!(
@@ -466,7 +539,7 @@ mod tests {
         // Arrange
         let mut demuxer = Demuxer::audio(AudioConfig::Aac(mono_48k()));
         let object = LocObject {
-            extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, 2_000_000)],
+            extensions: vec![LocExtension::varint(TIMESTAMP_ID, 2_000_000)],
             payload: Bytes::from_static(&[7, 7]),
         };
 

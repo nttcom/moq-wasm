@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { audioLevelOfSamples, louderAudioLevel } from './audioLevel'
-import { buildLocHeader, readLocHeader } from './loc'
+import { AUDIO_LEVEL_ID, buildLocHeader, readLocHeader } from './loc'
 
 test('a full-scale square wave is level 0 with voice activity', () => {
   // Arrange
@@ -31,7 +31,7 @@ test('the LOC header carries the level and the V bit in one varint', () => {
   const header = buildLocHeader({ captureTimestampMicros: 1, audioLevel })
 
   // Assert
-  expect(header).toContainEqual({ id: 6, value: { varint: 0x80 | 33 } })
+  expect(header).toContainEqual({ id: AUDIO_LEVEL_ID, value: { varint: 0x80 | 33 } })
   expect(readLocHeader(header).audioLevel).toEqual(audioLevel)
 })
 

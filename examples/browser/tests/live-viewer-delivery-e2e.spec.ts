@@ -59,7 +59,8 @@ test('every sample the bridge publishes while the viewer watches reaches it', as
       const object = message?.subgroupStreamObject
       if (message?.groupId !== undefined && object && object.objectStatus == null && object.objectPayloadLength > 0) {
         const capture = (object.locHeader as { id: number; value: { varint?: number } }[] | undefined)?.find(
-          (extension) => extension.id === 2
+          // draft-ietf-moq-loc-04 §2.3.1.1 Timestamp
+          (extension) => extension.id === 0x10
         )
         received.push({
           track: (this as any).__track,

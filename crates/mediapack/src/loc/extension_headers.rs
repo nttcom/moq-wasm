@@ -2,8 +2,8 @@ use moqt::object::{ExtensionHeaders, KeyValuePair, VariantType};
 
 use crate::loc::object::{LocExtension, LocValue};
 
-/// draft-ietf-moq-loc-01 §2.3: each LOC header extension is its own MoQT
-/// extension header keyed by the LOC id; even ids carry varints, odd ids bytes.
+/// draft-ietf-moq-loc-04 §2.2: each LOC public property is its own MoQT
+/// extension header keyed by the property id.
 pub fn to_extension_headers(extensions: &[LocExtension]) -> ExtensionHeaders {
     ExtensionHeaders::new(
         extensions
@@ -35,11 +35,11 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::loc::object::{CAPTURE_TIMESTAMP_ID, VIDEO_CONFIG_ID};
+    use crate::loc::object::{TIMESTAMP_ID, VIDEO_CONFIG_ID};
 
     fn extensions() -> Vec<LocExtension> {
         vec![
-            LocExtension::varint(CAPTURE_TIMESTAMP_ID, 7),
+            LocExtension::varint(TIMESTAMP_ID, 7),
             LocExtension::bytes(VIDEO_CONFIG_ID, Bytes::from_static(&[1, 2])),
             LocExtension::bytes(21, Bytes::from_static(&[0xFF])),
         ]
@@ -55,7 +55,7 @@ mod tests {
             headers.key_value_pairs,
             vec![
                 KeyValuePair {
-                    key: CAPTURE_TIMESTAMP_ID,
+                    key: TIMESTAMP_ID,
                     value: VariantType::Even(7),
                 },
                 KeyValuePair {
