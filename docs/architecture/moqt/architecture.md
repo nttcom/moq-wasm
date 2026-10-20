@@ -352,9 +352,10 @@ forward from their own cache through the raw stream senders.
   does not start a group, the writer opens that group on a new stream starting
   at that object, so Largest Object takes the rest of the open group;
   `release(&handler)`
-  drops the session's writer on UNSUBSCRIBE and returns the track so the
-  caller can account it; `is_serving(session)` tells whether that session
-  still takes any track; `serve_fetch` answers a Standalone FETCH from the cache on its
+  drops the session's writer on UNSUBSCRIBE, resetting its open group with
+  CANCELLED rather than finishing it (draft-14 §10.4.3), and returns the
+  track so the caller can account it; `is_serving(session)` tells whether
+  that session still takes any track; `serve_fetch` answers a Standalone FETCH from the cache on its
   own stream (`FetchServeTask`, one per request, aborted by `cancel_fetch` and
   when the `Origin` is dropped; joining FETCH is NOT_SUPPORTED);
   `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.

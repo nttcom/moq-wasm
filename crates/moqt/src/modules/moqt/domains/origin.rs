@@ -403,18 +403,23 @@ impl Origin {
         );
         let mut state = self.state.lock().await;
         let key = state.subscriptions.remove(&request)?;
+        let mut released = None;
         if let Some(track) = state.tracks.get_mut(&key) {
             track.outlets.retain_mut(|outlet| {
                 if outlet.request != request {
                     return true;
                 }
+                released = outlet.writer.take();
                 if outlet.publication != Publication::Published {
                     return false;
                 }
                 outlet.publication = Publication::Released;
-                outlet.writer = None;
                 true
             });
+        }
+        drop(state);
+        if let Some(writer) = released {
+            writer.cancel().await;
         }
         Some(key)
     }
@@ -527,12 +532,15 @@ impl Origin {
         let mut state = self.state.lock().await;
         let track = state.track_mut(key)?;
         let (mut sent, mut stopped, mut failure) = (false, false, None);
+        // Writers whose outlet was released or replaced during the write; reset,
+        // not dropped (a drop FINs).
+        let mut orphaned = Vec::new();
         for (request, writer, result) in results {
-            if let Some(outlet) = track.outlet_mut(request)
-                && outlet.writer.is_none()
-                && outlet.serving()
-            {
-                outlet.writer = Some(writer);
+            match track.outlet_mut(request) {
+                Some(outlet) if outlet.writer.is_none() && outlet.serving() => {
+                    outlet.writer = Some(writer)
+                }
+                _ => orphaned.push(writer),
             }
             match result {
                 Ok(true) => sent = true,
@@ -550,6 +558,10 @@ impl Origin {
                     failure.get_or_insert(error);
                 }
             }
+        }
+        drop(state);
+        for writer in orphaned {
+            writer.cancel().await;
         }
         if sent {
             return Ok(WriteOutcome::Sent(placement));
@@ -640,7 +652,7 @@ mod tests {
             HANDSHAKE_TIMEOUT, accept_publish, read_fetch_objects, rejection,
             spawn_connected_dual_sessions, subscribed_track_reader,
         },
-        object::{GroupOrder, Object},
+        object::{DataReceiver, GroupOrder, Object, Subgroup},
         subscribe::{FilterType, SubscribeOption},
     };
 
@@ -991,6 +1003,42 @@ mod tests {
             (received.group_id, received.object_id, received.payload),
             (FIRST_GROUP_ID + 1, 1, Bytes::from_static(b"c"))
         );
+    }
+
+    #[tokio::test]
+    async fn an_unsubscribe_resets_the_open_group_instead_of_finishing_it() {
+        // Arrange: the subscriber reads the first object of a group that stays open
+        let peers = origin_with_track("origin-release-reset", RETENTION).await;
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        let DataReceiver::Stream(mut streams) = peers
+            .server
+            .subscriber()
+            .accept_data_receiver(&subscription)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a subgroup stream receiver");
+        };
+        let mut subgroup = within(streams.next()).await.unwrap();
+        assert!(matches!(
+            within(subgroup.receive()).await,
+            Ok(Some(Subgroup::Header(_)))
+        ));
+        assert!(matches!(
+            within(subgroup.receive()).await,
+            Ok(Some(Subgroup::Object(_)))
+        ));
+
+        // Act
+        unsubscribe(&peers, &subscription).await;
+
+        // Assert: the stream is reset (receive errors), not finished
+        assert!(within(subgroup.receive()).await.is_err());
     }
 
     #[tokio::test]
