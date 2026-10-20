@@ -4098,7 +4098,6 @@ dependencies = [
  "mediapack",
  "moqt",
  "msf",
- "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "tokio",
