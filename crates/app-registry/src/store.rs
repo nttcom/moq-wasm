@@ -54,8 +54,8 @@ impl RegistryStore {
         }
     }
 
-    /// Runs `change` on the latest apps and stores the result only if no other writer stored the
-    /// registry in between. On such a conflict it reloads and runs `change` again, at most five runs
+    /// Runs `change` on the latest apps and stores the result only if `change` altered them and no
+    /// other writer stored the registry in between. On such a conflict it reloads and runs `change` again, at most five runs
     /// in total, so `change` must have no side effects beyond the apps it is given. Fails without
     /// storing when the registry does not exist, when `change` fails, when the changed apps break
     /// the rules `Apps::new` checks, or when all five runs conflict.
@@ -65,9 +65,13 @@ impl RegistryStore {
     ) -> anyhow::Result<T> {
         for _ in 0..MAX_UPDATE_ATTEMPTS {
             let snapshot = self.load().await?;
-            let mut apps = snapshot.apps.into_vec();
+            let mut apps = snapshot.apps.clone().into_vec();
             let outcome = change(&mut apps)?;
-            match self.store(&Apps::new(apps)?, snapshot.generation).await? {
+            let apps = Apps::new(apps)?;
+            if apps == snapshot.apps {
+                return Ok(outcome);
+            }
+            match self.store(&apps, snapshot.generation).await? {
                 Stored::Written => return Ok(outcome),
                 Stored::Conflict => continue,
             }
@@ -143,6 +147,20 @@ mod tests {
                 { "appId": "a", "secret": "a-secret", "isRelay": false, "sub": "sub-1" },
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn update_does_not_store_when_the_change_leaves_the_apps_alone() {
+        // Arrange
+        let storage = FakeCloudStorage::run().await;
+        storage.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false }]));
+
+        // Act
+        let outcome = storage.store().update(|_| Ok("unchanged")).await.unwrap();
+
+        // Assert
+        assert_eq!(outcome, "unchanged");
+        assert_eq!(storage.generation(), 1);
     }
 
     #[tokio::test]

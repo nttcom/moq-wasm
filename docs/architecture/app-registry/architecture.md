@@ -54,7 +54,8 @@ sequenceDiagram
   one writing process; Cloud Storage holds it for any number of machines.
 - A reader of the file backend never sees a half-written registry, because a
   store renames a complete temporary file over it.
-- A change that leaves the registry invalid is never stored.
+- A change that leaves the registry invalid is never stored, and a change that
+  leaves the apps as they were stores nothing.
 - `update` may run the change more than once, so a change must not have side
   effects beyond the apps it is given.
 - `load` fails when the registry does not exist. It is created once, out of
