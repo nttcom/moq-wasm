@@ -1,5 +1,4 @@
 mod apps;
-mod jwt;
 mod mint;
 mod server;
 #[cfg(test)]

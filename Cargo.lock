@@ -205,8 +205,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "ring",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3952,13 +3954,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auth-token",
- "base64 0.23.1",
  "clap",
  "http-body-util",
  "hyper",
  "hyper-util",
  "reqwest",
- "ring",
  "serde",
  "serde_json",
  "tokio",

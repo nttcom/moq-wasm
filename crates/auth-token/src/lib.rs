@@ -1,6 +1,10 @@
-use anyhow::{Context, bail};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+mod jwt;
+
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub use jwt::{SignatureError, decode_payload, sign_token, verify_signature};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,20 +20,16 @@ pub struct Claims {
     pub exp: Option<u64>,
 }
 
-/// Reads the claims without checking the signature; only the VTS can verify it.
+/// Reads the claims without checking the signature.
 pub fn decode_claims(token: &str) -> anyhow::Result<Claims> {
-    let segments: Vec<&str> = token.split('.').collect();
-    let [_, payload, _] = segments[..] else {
-        bail!("token is not a compact JWS");
-    };
-    let payload = URL_SAFE_NO_PAD
-        .decode(payload)
-        .context("token payload is not base64url")?;
-    serde_json::from_slice(&payload).context("token payload is not a claims object")
+    let payload =
+        decode_payload(token).context("token is not a compact JWS with a JSON object payload")?;
+    serde_json::from_value(Value::Object(payload)).context("token payload is not a claims object")
 }
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use serde_json::json;
 
     use super::*;
