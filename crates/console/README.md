@@ -6,13 +6,16 @@ from the app registry.
 
 ## API
 
-```
-GET /api/me
-200 { "app": { "appId": "...", "name": "...", "createdAt": 1760900000 } }
-200 { "app": null }
-401 { "error": "unauthenticated" }
-503 { "error": "registry_unavailable" }
-```
+| Route                  | Body                                                         | Answer                                                |
+| ---------------------- | ------------------------------------------------------------ | ----------------------------------------------------- |
+| `GET /api/me`          |                                                              | `{ "app": { "appId", "name", "createdAt" } \| null }` |
+| `POST /api/app`        | `{ "name": "camera site 1" }`                                | `201 { "app": … }`, `409` when the caller has an app  |
+| `POST /api/tokens`     | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }`        |
+| `POST /api/app/secret` |                                                              | `{ "app": … }`; tokens issued before stop working     |
+| `DELETE /api/app`      |                                                              | `204`                                                 |
+
+Requests other than `GET` must carry `X-Console-Request`; a request whose
+`Origin` is another site is refused.
 
 ## Running locally
 

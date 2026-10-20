@@ -527,6 +527,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "app-registry",
+ "auth-token",
  "base64 0.23.1",
  "http-body-util",
  "hyper",

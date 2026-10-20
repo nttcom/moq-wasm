@@ -7,6 +7,7 @@ description = "Internal MoQ console: identifies an employee through IAP and serv
 [dependencies]
 anyhow = "1.0.102"
 app-registry = { path = "../app-registry" }
+auth-token = { path = "../auth-token" }
 base64 = "0.23.1"
 http-body-util = "0.1.4"
 hyper = { version = "1.10.1", features = ["http1", "server"] }
