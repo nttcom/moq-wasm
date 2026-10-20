@@ -6,9 +6,7 @@ use moqt::object::ContentExists;
 
 use crate::modules::session::{
     data_sender::{
-        DataSender,
-        fetch_sender::FetchSender,
-        stream_sender_factory::{ConcreteStreamSenderFactory, StreamSenderFactory},
+        DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
     },
     subscription::DownstreamSubscription,
 };
@@ -95,8 +93,7 @@ impl Publisher for moqt::Publisher {
         &self,
         downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory> {
-        let inner = self.create_stream(downstream_subscription.as_moqt());
-        Box::new(ConcreteStreamSenderFactory::new(inner))
+        Box::new(self.create_stream(downstream_subscription.as_moqt()))
     }
 
     fn new_datagram(

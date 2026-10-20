@@ -8,23 +8,13 @@ pub(crate) trait StreamSenderFactory: Send + 'static {
     ) -> anyhow::Result<Box<dyn DataSender>>;
 }
 
-pub(crate) struct ConcreteStreamSenderFactory {
-    inner: moqt::object::StreamDataSenderFactory,
-}
-
-impl ConcreteStreamSenderFactory {
-    pub(crate) fn new(inner: moqt::object::StreamDataSenderFactory) -> Self {
-        Self { inner }
-    }
-}
-
 #[async_trait::async_trait]
-impl StreamSenderFactory for ConcreteStreamSenderFactory {
+impl StreamSenderFactory for moqt::object::StreamDataSenderFactory {
     async fn next(
         &mut self,
         priority: moqt::object::StreamPriority,
     ) -> anyhow::Result<Box<dyn DataSender>> {
-        let sender = self.inner.next().await?;
+        let sender = moqt::object::StreamDataSenderFactory::next(self).await?;
         sender.set_priority(priority).await?;
         Ok(Box::new(StreamSender::new(sender)))
     }
