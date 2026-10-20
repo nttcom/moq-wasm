@@ -37,7 +37,7 @@ export class BotRoomRequest {
 
   open(serviceUrl: string, roomId: string): void {
     this.close()
-    const source = new EventSource(`${serviceUrl}/rooms/${roomId}`)
+    const source = new EventSource(`${serviceUrl}/rooms/${encodeURIComponent(roomId)}`)
     for (const reason of Object.keys(BOT_ROOM_END_TEXT) as BotRoomEnd[]) {
       source.addEventListener(reason, () => {
         // EventSource reopens any stream the server ends.
