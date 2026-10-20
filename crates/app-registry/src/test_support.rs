@@ -1,0 +1,141 @@
+use std::{
+    convert::Infallible,
+    sync::{Arc, Mutex},
+};
+
+use http_body_util::{BodyExt, Full};
+use hyper::{
+    Method, Request, Response, StatusCode,
+    body::{Bytes, Incoming},
+    server::conn::http1,
+    service::service_fn,
+};
+use hyper_util::rt::TokioIo;
+use reqwest::Url;
+use serde_json::json;
+use tokio::{net::TcpListener, task::JoinHandle};
+
+use crate::store::{Endpoint, RegistryStore};
+
+pub(crate) const BUCKET: &str = "registry-bucket";
+pub(crate) const OBJECT: &str = "registry.json";
+
+struct StoredObject {
+    body: Vec<u8>,
+    generation: u64,
+}
+
+pub(crate) struct FakeCloudStorage {
+    url: Url,
+    object: Arc<Mutex<Option<StoredObject>>>,
+    _accept_handle: JoinHandle<()>,
+}
+
+impl FakeCloudStorage {
+    pub(crate) async fn run() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let object = Arc::new(Mutex::new(None));
+        Self {
+            url,
+            object: object.clone(),
+            _accept_handle: tokio::spawn(accept_connections(listener, object)),
+        }
+    }
+
+    pub(crate) fn store(&self) -> RegistryStore {
+        RegistryStore::new(Endpoint::Emulator(self.url.clone()), BUCKET, OBJECT)
+    }
+
+    pub(crate) fn put(&self, body: &serde_json::Value) {
+        let mut object = self.object.lock().unwrap();
+        let generation = object.as_ref().map_or(1, |stored| stored.generation + 1);
+        *object = Some(StoredObject {
+            body: serde_json::to_vec(body).unwrap(),
+            generation,
+        });
+    }
+
+    pub(crate) fn body(&self) -> serde_json::Value {
+        let object = self.object.lock().unwrap();
+        serde_json::from_slice(&object.as_ref().unwrap().body).unwrap()
+    }
+}
+
+async fn accept_connections(listener: TcpListener, object: Arc<Mutex<Option<StoredObject>>>) {
+    loop {
+        let (stream, _) = listener.accept().await.unwrap();
+        let object = object.clone();
+        tokio::spawn(async move {
+            let service = service_fn(move |request| handle(request, object.clone()));
+            let _ = http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
+        });
+    }
+}
+
+async fn handle(
+    request: Request<Incoming>,
+    object: Arc<Mutex<Option<StoredObject>>>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let url = Url::parse(&format!("http://fake{}", request.uri())).unwrap();
+    let query = |name: &str| {
+        url.query_pairs()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
+    };
+    let object_path = format!("/storage/v1/b/{BUCKET}/o/{OBJECT}");
+    let upload_path = format!("/upload/storage/v1/b/{BUCKET}/o");
+    let method = request.method().clone();
+    let body = request.into_body().collect().await.unwrap().to_bytes();
+    let mut object = object.lock().unwrap();
+
+    let response = match (method, url.path()) {
+        (Method::GET, path) if path == object_path => {
+            match (object.as_ref(), query("alt"), query("fields")) {
+                (None, _, _) => respond(StatusCode::NOT_FOUND, Vec::new()),
+                (Some(stored), Some(alt), _) if alt == "media" => {
+                    let mut response = respond(StatusCode::OK, stored.body.clone());
+                    response
+                        .headers_mut()
+                        .insert("x-goog-generation", stored.generation.into());
+                    response
+                }
+                (Some(stored), _, Some(fields)) if fields == "generation" => respond(
+                    StatusCode::OK,
+                    json!({ "generation": stored.generation.to_string() })
+                        .to_string()
+                        .into_bytes(),
+                ),
+                _ => respond(StatusCode::BAD_REQUEST, Vec::new()),
+            }
+        }
+        (Method::POST, path)
+            if path == upload_path
+                && query("uploadType").as_deref() == Some("media")
+                && query("name").as_deref() == Some(OBJECT) =>
+        {
+            let current = object.as_ref().map_or(0, |stored| stored.generation);
+            match query("ifGenerationMatch").map(|value| value.parse::<u64>()) {
+                Some(Ok(expected)) if expected == current => {
+                    *object = Some(StoredObject {
+                        body: body.to_vec(),
+                        generation: current + 1,
+                    });
+                    respond(StatusCode::OK, Vec::new())
+                }
+                Some(Ok(_)) => respond(StatusCode::PRECONDITION_FAILED, Vec::new()),
+                _ => respond(StatusCode::BAD_REQUEST, Vec::new()),
+            }
+        }
+        _ => respond(StatusCode::NOT_FOUND, Vec::new()),
+    };
+    Ok(response)
+}
+
+fn respond(status: StatusCode, body: Vec<u8>) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::from(body)));
+    *response.status_mut() = status;
+    response
+}
