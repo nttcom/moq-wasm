@@ -16,7 +16,6 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use reqwest::Url;
-use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
@@ -105,25 +104,17 @@ async fn handle(
     let mut object = object.lock().unwrap();
 
     let response = match (method, url.path()) {
-        (Method::GET, path) if path == object_path => {
-            match (object.as_ref(), query("alt"), query("fields")) {
-                (None, _, _) => respond(StatusCode::NOT_FOUND, Vec::new()),
-                (Some(stored), Some(alt), _) if alt == "media" => {
-                    let mut response = respond(StatusCode::OK, stored.body.clone());
-                    response
-                        .headers_mut()
-                        .insert("x-goog-generation", stored.generation.into());
-                    response
-                }
-                (Some(stored), _, Some(fields)) if fields == "generation" => respond(
-                    StatusCode::OK,
-                    json!({ "generation": stored.generation.to_string() })
-                        .to_string()
-                        .into_bytes(),
-                ),
-                _ => respond(StatusCode::BAD_REQUEST, Vec::new()),
+        (Method::GET, path) if path == object_path => match (object.as_ref(), query("alt")) {
+            (None, _) => respond(StatusCode::NOT_FOUND, Vec::new()),
+            (Some(stored), Some(alt)) if alt == "media" => {
+                let mut response = respond(StatusCode::OK, stored.body.clone());
+                response
+                    .headers_mut()
+                    .insert("x-goog-generation", stored.generation.into());
+                response
             }
-        }
+            _ => respond(StatusCode::BAD_REQUEST, Vec::new()),
+        },
         (Method::POST, path)
             if path == upload_path
                 && query("uploadType").as_deref() == Some("media")

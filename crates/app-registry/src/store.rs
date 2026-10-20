@@ -64,13 +64,6 @@ impl RegistryStore {
         }
     }
 
-    pub async fn generation(&self) -> anyhow::Result<Generation> {
-        match &self.backend {
-            Backend::CloudStorage(object) => object.generation().await,
-            Backend::File(file) => file.generation().await,
-        }
-    }
-
     /// Runs `change` on the latest apps and stores the result only if no other writer stored the
     /// registry in between. On such a conflict it reloads and runs `change` again, at most five runs
     /// in total, so `change` must have no side effects beyond the apps it is given. Fails without

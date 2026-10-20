@@ -19,8 +19,7 @@ fields added, kept in Cloud Storage or in a local file.
 | `CloudStorage { endpoint, bucket, object }` | The object's generation | Upload with `ifGenerationMatch`, safe for writers on any number of machines |
 | `File(path)` | A hash of the contents | Compare the hash, write a temporary file and rename it over the registry; one writing process only |
 
-`RegistryStore::load` reads the apps and the generation,
-`RegistryStore::generation` reads only the generation, and
+`RegistryStore::load` reads the apps and their generation, and
 `RegistryStore::update` changes the apps, reloading and running the change
 again when another writer stored first.
 

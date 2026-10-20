@@ -1,6 +1,5 @@
 use anyhow::{Context, bail};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url, header::CONTENT_TYPE};
-use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -31,11 +30,6 @@ impl Endpoint {
             _ => Ok(Self::CloudStorage),
         }
     }
-}
-
-#[derive(Deserialize)]
-struct ObjectMetadata {
-    generation: String,
 }
 
 pub(crate) struct CloudStorageObject {
@@ -97,18 +91,6 @@ impl CloudStorageObject {
             apps,
             generation: Generation(generation),
         })
-    }
-
-    pub(crate) async fn generation(&self) -> anyhow::Result<Generation> {
-        let mut url = self.object_url.clone();
-        url.query_pairs_mut().append_pair("fields", "generation");
-        let metadata: ObjectMetadata = self.send(self.http.get(url)).await?.json().await?;
-        Ok(Generation(
-            metadata
-                .generation
-                .parse()
-                .context("the registry generation is not a number")?,
-        ))
     }
 
     pub(crate) async fn store(
@@ -198,17 +180,6 @@ mod tests {
             .unwrap()
         );
         assert_eq!(snapshot.generation, Generation(1));
-    }
-
-    #[tokio::test]
-    async fn generation_follows_every_write_to_the_object() {
-        // Arrange
-        let storage = FakeCloudStorage::run().await;
-        storage.put(&json!([]));
-        storage.put(&json!([]));
-
-        // Act / Assert
-        assert_eq!(storage.store().generation().await.unwrap(), Generation(2));
     }
 
     #[tokio::test]

@@ -30,10 +30,6 @@ impl RegistryFile {
         })
     }
 
-    pub(crate) async fn generation(&self) -> anyhow::Result<Generation> {
-        Ok(generation_of(&self.read().await?))
-    }
-
     pub(crate) async fn store(
         &self,
         apps: &Apps,
@@ -87,18 +83,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generation_changes_when_the_contents_change() {
+    async fn load_reports_another_generation_after_the_contents_change() {
         // Arrange
         let file = TemporaryRegistryFile::new();
         file.put(&json!([]));
         let store = file.store();
-        let before = store.generation().await.unwrap();
+        let before = store.load().await.unwrap().generation;
 
         // Act
         file.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false }]));
 
         // Assert
-        assert_ne!(store.generation().await.unwrap(), before);
+        assert_ne!(store.load().await.unwrap().generation, before);
     }
 
     #[tokio::test]
