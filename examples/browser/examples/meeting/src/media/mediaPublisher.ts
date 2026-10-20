@@ -22,6 +22,7 @@ import {
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { timeSeededGroupId } from '../../../../utils/media/clock'
+import { captureWithRetry } from './captureRetry'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 type VideoSource = 'camera' | 'screenshare'
@@ -37,6 +38,10 @@ interface MediaPublisherHandlers {
   onAudioEncodingAdjusted?: (settings: AudioEncodingSettings) => void
   onScreenShareEncodingApplied?: (settings: VideoEncodingSettings) => void
   onLocalVideoSendTiming?: (timing: VideoSendTiming | null, source: VideoSource) => void
+  /// The microphone track ended and was replaced by `track`, captured from the default device.
+  onMicrophoneSwitched?: (track: MediaStreamTrack) => void
+  /// The microphone track ended and no device could replace it; the microphone is off.
+  onMicrophoneLost?: () => void
 }
 
 type VideoTrackEncoderContext = {
@@ -77,6 +82,9 @@ const CATALOG_TRACK_NAME = 'catalog'
 const CHAT_TRACK_NAME = 'chat'
 const VIDEO_PUBLISHER_LOG_PREFIX = '[meeting][publisher][video]'
 const MAX_VIDEO_STREAM_RECOVERY_ATTEMPTS = 3
+const AUDIO_PUBLISHER_LOG_PREFIX = '[meeting][publisher][audio]'
+const MAX_MICROPHONE_RECAPTURE_ATTEMPTS = 3
+const MICROPHONE_RECAPTURE_RETRY_DELAY_MS = 1000
 
 export class MediaPublisher {
   private handlers: MediaPublisherHandlers = {}
@@ -284,21 +292,41 @@ export class MediaPublisher {
     if (this.audioStream) {
       return
     }
+    this.attachAudioStream(await this.captureAudio(deviceId))
+  }
 
-    const desiredChannels = this.audioEncodingSettings.channels
-    const stream = await navigator.mediaDevices.getUserMedia({
+  async stopAudio(): Promise<void> {
+    this.releaseAudioStream()
+    this.handlers.onLocalAudioStream?.(null)
+  }
+
+  private releaseAudioStream(): void {
+    this.stopAllAudioTrackContexts()
+    this.audioStream?.getTracks().forEach((track) => {
+      track.onended = null
+      track.stop()
+    })
+    this.audioStream = null
+  }
+
+  private captureAudio(deviceId?: string): Promise<MediaStream> {
+    return navigator.mediaDevices.getUserMedia({
       audio: {
         ...this.audioCaptureConstraints,
-        channelCount: { ideal: desiredChannels },
+        channelCount: { ideal: this.audioEncodingSettings.channels },
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },
       video: false
     })
+  }
 
+  private attachAudioStream(stream: MediaStream): void {
     this.audioStream = stream
     this.handlers.onLocalAudioStream?.(stream)
 
     const [track] = stream.getAudioTracks()
+    track.onended = () => void this.recaptureEndedAudio(stream)
+    const desiredChannels = this.audioEncodingSettings.channels
     const actualChannels = track.getSettings().channelCount ?? desiredChannels
     if (desiredChannels > 1 && (!actualChannels || actualChannels < desiredChannels)) {
       const effectiveChannels = actualChannels > 0 ? actualChannels : 1
@@ -310,11 +338,29 @@ export class MediaPublisher {
     this.syncAudioTrackContexts()
   }
 
-  async stopAudio(): Promise<void> {
-    this.stopAllAudioTrackContexts()
-    this.audioStream?.getTracks().forEach((track) => track.stop())
-    this.audioStream = null
-    this.handlers.onLocalAudioStream?.(null)
+  // Unplugging the device or revoking the permission ends the track. The encoding
+  // contexts hold clones of it, so they are rebuilt on a new capture of the default device.
+  private async recaptureEndedAudio(endedStream: MediaStream): Promise<void> {
+    console.warn(`${AUDIO_PUBLISHER_LOG_PREFIX} microphone track ended; capturing the default device`)
+    let stream: MediaStream | null
+    try {
+      stream = await captureWithRetry(() => this.captureAudio(), {
+        maxAttempts: MAX_MICROPHONE_RECAPTURE_ATTEMPTS,
+        retryDelayMs: MICROPHONE_RECAPTURE_RETRY_DELAY_MS,
+        isCancelled: () => this.audioStream !== endedStream
+      })
+    } catch (error) {
+      console.warn(`${AUDIO_PUBLISHER_LOG_PREFIX} no microphone to replace the ended one`, error)
+      await this.stopAudio()
+      this.handlers.onMicrophoneLost?.()
+      return
+    }
+    if (!stream) {
+      return
+    }
+    this.releaseAudioStream()
+    this.attachAudioStream(stream)
+    this.handlers.onMicrophoneSwitched?.(stream.getAudioTracks()[0])
   }
 
   async setVideoEncodingSettings(settings: VideoEncodingSettings, deviceId?: string, restartIfActive: boolean = false) {

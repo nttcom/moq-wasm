@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import type { RemotePictures } from '../media/mediaSubscriber'
 import type { PlayoutSettings } from '../types/playout'
@@ -40,6 +40,7 @@ import type { VideoSendTiming } from '../types/stats'
 import { DominantSpeaker } from '../media/dominantSpeaker'
 
 const SPEAKER_UPDATE_INTERVAL_MS = 250
+const NOTICE_DURATION_MS = 4000
 
 function sameMembers(a: Set<string>, b: Set<string>): boolean {
   return a.size === b.size && [...a].every((member) => b.has(member))
@@ -97,6 +98,8 @@ interface UseMeetingMediaResult {
   addCatalogTrack: (track: Omit<EditableMeetingCatalogTrack, 'id'>) => void
   updateCatalogTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   removeCatalogTrack: (id: string) => void
+  /// A transient message for the user.
+  notice: string | null
 }
 
 const INITIAL_CAMERA_ENCODING_SETTINGS: VideoEncodingSettings = E2E_CAMERA_SETTINGS
@@ -162,6 +165,9 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   })
   const [catalogTracks, setCatalogTracks] = useState<EditableMeetingCatalogTrack[]>([])
   const [subscribedCatalogTracks, setSubscribedCatalogTracks] = useState<SubscribedCatalogTrack[]>([])
+  const [notice, setNotice] = useState<string | null>(null)
+  /// Publisher handlers are set once per session; they call the latest `removeCatalogPresetTracks` through this ref.
+  const removeCatalogPresetTracksRef = useRef<(source: CatalogPresetSource) => void>(() => {})
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -253,7 +259,15 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       onVideoEncodeError: (message) => setVideoEncoderError(message),
       onAudioEncodeError: (message) => setAudioEncoderError(message),
       onAudioEncodingAdjusted: (settings) => setSelectedAudioEncoding(settings),
-      onScreenShareEncodingApplied: (settings) => setSelectedScreenShareEncoding(settings)
+      onScreenShareEncodingApplied: (settings) => setSelectedScreenShareEncoding(settings),
+      onMicrophoneSwitched: (track) => {
+        setSelectedAudioDeviceId(track.getSettings().deviceId ?? null)
+        setNotice(`Microphone: ${track.label}`)
+      },
+      onMicrophoneLost: () => {
+        removeCatalogPresetTracksRef.current('audio')
+        setNotice('Microphone unavailable')
+      }
     })
     const dominantSpeaker = new DominantSpeaker()
     subscriber.setHandlers({
@@ -320,6 +334,14 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     const timerId = window.setInterval(syncSubscribedCatalogTracks, 500)
     return () => window.clearInterval(timerId)
   }, [session])
+
+  useEffect(() => {
+    if (!notice) {
+      return
+    }
+    const timerId = window.setTimeout(() => setNotice(null), NOTICE_DURATION_MS)
+    return () => window.clearTimeout(timerId)
+  }, [notice])
 
   useEffect(() => {
     refreshDevices().catch((err) => console.error('Failed to enumerate devices', err))
@@ -437,6 +459,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     },
     [updateCatalogTracks]
   )
+  removeCatalogPresetTracksRef.current = removeCatalogPresetTracks
 
   const toggleCamera = useCallback(async () => {
     if (!session || cameraBusy) {
@@ -705,7 +728,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     subscribedCatalogTracks,
     addCatalogTrack,
     updateCatalogTrack,
-    removeCatalogTrack
+    removeCatalogTrack,
+    notice
   }
 }
 

@@ -128,7 +128,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     subscribedCatalogTracks,
     addCatalogTrack,
     updateCatalogTrack,
-    removeCatalogTrack
+    removeCatalogTrack,
+    notice
   } = useMeetingMedia(session)
 
   const statsSnapshotRef = useRef<StatsSnapshot>({
@@ -781,6 +782,14 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           />
         )}
       </div>
+      {notice && (
+        <div
+          role="status"
+          className="pointer-events-none fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-white/10 bg-slate-900 px-4 py-2 text-sm shadow-lg"
+        >
+          {notice}
+        </div>
+      )}
     </div>
   )
 }
