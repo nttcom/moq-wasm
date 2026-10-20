@@ -1,11 +1,14 @@
 import { createBitrateLogger } from '../bitrate'
 import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
+import { fitEncodeSize } from './encodeSize'
 
 let videoEncoder: VideoEncoder | undefined
 // Default keeps periodic keyframes alive even before the first keyframeInterval message.
 let keyframeInterval: number = 30
 let encoderConfig: VideoEncoderConfig | null = null
+// null makes the next frame reconfigure the encoder.
+let configuredFrameSize: string | null = null
 let forceNextKeyframe = false
 const captureTimestamps = new CaptureTimestamps()
 
@@ -64,7 +67,29 @@ async function initializeVideoEncoder() {
     self.postMessage({ type: 'configError', reason: 'unsupported', config })
     return undefined
   }
+  configuredFrameSize = null
   return encoder
+}
+
+function configureForFrame(encoder: VideoEncoder, frame: VideoFrame) {
+  const frameSize = `${frame.displayWidth}x${frame.displayHeight}`
+  if (frameSize === configuredFrameSize) {
+    return
+  }
+  configuredFrameSize = frameSize
+  const requested = encoderConfig ?? buildDefaultConfig()
+  const config = {
+    ...requested,
+    ...fitEncodeSize(requested, { width: frame.displayWidth, height: frame.displayHeight })
+  }
+  try {
+    encoder.configure(config)
+  } catch (e) {
+    console.error('[videoEncoder] reconfigure failed', e)
+    self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config })
+    return
+  }
+  forceNextKeyframe = true
 }
 
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
@@ -108,6 +133,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       continue
     }
 
+    configureForFrame(videoEncoder, videoFrame)
     const forced = forceNextKeyframe
     const keyFrame = forced || frameCounter % keyframeInterval === 0
     if (forced) {
@@ -127,16 +153,8 @@ self.onmessage = async (event) => {
   } else if (event.data.type === 'forceKeyframe') {
     forceNextKeyframe = true
   } else if (event.data.type === 'encoderConfig') {
-    const newConfig = buildConfigFromMessage(event.data.config)
-    encoderConfig = newConfig
-    if (videoEncoder && videoEncoder.state !== 'closed') {
-      try {
-        videoEncoder.configure(newConfig)
-      } catch (e) {
-        console.error('[videoEncoder] reconfigure failed', e)
-        self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config: newConfig })
-      }
-    }
+    encoderConfig = buildConfigFromMessage(event.data.config)
+    configuredFrameSize = null
   } else if (event.data.type === 'videoStream') {
     const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream
     if (!videoReadableStream) {
