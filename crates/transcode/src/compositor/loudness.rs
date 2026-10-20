@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_app::AppSink;
 
-use super::{EventSource, app_source, feed_audio, source_properties};
+use super::{EventSource, app_source, feed_audio, source_properties, with_samples};
 
 /// Length of the windows the level is measured over.
 pub(super) const WINDOW: gst::ClockTime = gst::ClockTime::from_mseconds(100);
@@ -22,8 +22,11 @@ pub struct Loudness {
 impl Loudness {
     /// Decodes an audio source whose timestamps are on the composition's
     /// timeline. Blocks until the whole source is read; fails when it cannot
-    /// be decoded.
+    /// be decoded. A source without samples is silent.
     pub fn measure(events: EventSource) -> Result<Self> {
+        let Some(events) = with_samples(events)? else {
+            return Ok(Self { rms: Vec::new() });
+        };
         gst::init()?;
         let pipeline = gst::parse::launch(&format!(
             "appsrc name=audio {} ! decodebin3 ! audioconvert ! audioresample ! \
@@ -182,6 +185,21 @@ mod tests {
             Some(start + 10)
         );
         assert!(on_time.rms[start + 1..].iter().all(|rms| *rms > 0.05));
+    }
+
+    #[test]
+    fn a_source_without_samples_is_silent() {
+        // Arrange: a recorded audio track that never received a sample
+        let events: Vec<MediaEvent> = fixture_events()
+            .into_iter()
+            .filter(|event| matches!(event, MediaEvent::AudioConfig(_)))
+            .collect();
+
+        // Act
+        let loudness = Loudness::measure(Box::new(events.into_iter().map(Ok))).unwrap();
+
+        // Assert
+        assert!(loudness.rms.is_empty());
     }
 
     #[test]

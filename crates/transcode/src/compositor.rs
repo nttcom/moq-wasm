@@ -83,6 +83,8 @@ pub struct Compositor {
 
 impl Compositor {
     /// Fails when no input carries media or the settings cannot be encoded.
+    /// Blocks while it reads each source up to its first sample; a source
+    /// without samples is treated as `None`.
     pub fn start(
         mut inputs: Vec<CompositeInput>,
         settings: CompositeSettings,
@@ -92,6 +94,11 @@ impl Compositor {
             settings.width >= 2 && settings.height >= 2 && settings.framerate > 0,
             "invalid composite settings {settings:?}"
         );
+        for input in &mut inputs {
+            for events in [&mut input.video, &mut input.screen_share, &mut input.audio] {
+                *events = events.take().map(with_samples).transpose()?.flatten();
+            }
+        }
         let speakers = Speakers::detect(
             &inputs
                 .iter()
@@ -244,6 +251,22 @@ fn pipeline_description(
         }
     }
     description
+}
+
+/// `None` when `events` ends without a sample: decodebin3 exposes no pad for
+/// a stream that carries no data, so the end of such a source would never
+/// reach the compositor, the mixer or a sink.
+fn with_samples(mut events: EventSource) -> Result<Option<EventSource>> {
+    let mut read = Vec::new();
+    while let Some(event) = events.next() {
+        let event = event?;
+        let is_sample = matches!(event, MediaEvent::Video(_) | MediaEvent::Audio(_));
+        read.push(event);
+        if is_sample {
+            return Ok(Some(Box::new(read.into_iter().map(Ok).chain(events))));
+        }
+    }
+    Ok(None)
 }
 
 fn source_properties() -> String {
@@ -784,6 +807,48 @@ mod tests {
 
         // Assert
         assert_duration(&read_index(&output), expected_end);
+        std::fs::remove_file(output).unwrap();
+    }
+
+    fn config_only(events: Vec<MediaEvent>) -> Vec<MediaEvent> {
+        events
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    MediaEvent::VideoConfig(_) | MediaEvent::AudioConfig(_)
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn finishes_with_sources_that_hold_no_samples() {
+        // Arrange: one participant's audio and another's camera never received a sample
+        decode_in_software();
+        let inputs = vec![
+            CompositeInput {
+                video: source(video_events()),
+                screen_share: None,
+                audio: source(config_only(audio_events())),
+                loudness: None,
+            },
+            CompositeInput {
+                video: source(config_only(video_events())),
+                screen_share: None,
+                audio: source(audio_events()),
+                loudness: None,
+            },
+        ];
+        let output = output_path("no-samples");
+
+        // Act
+        composite(inputs, &output).await.unwrap();
+
+        // Assert
+        let index = read_index(&output);
+        assert!(index.video.is_some());
+        assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
         std::fs::remove_file(output).unwrap();
     }
 
