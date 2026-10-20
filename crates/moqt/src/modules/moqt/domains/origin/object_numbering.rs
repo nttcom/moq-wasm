@@ -38,6 +38,13 @@ impl ObjectNumbering {
         self.next_group_id
     }
 
+    pub(super) fn largest(&self) -> Option<Location> {
+        self.open_group.as_ref().map(|group| Location {
+            group_id: group.group_id,
+            object_id: group.next_object_id - 1,
+        })
+    }
+
     pub(super) fn place(&mut self, boundary: GroupBoundary) -> Result<Option<Placement>> {
         match boundary {
             GroupBoundary::Within => Ok(self.next_in_open_group()),

@@ -338,14 +338,20 @@ forward from their own cache through the raw stream senders.
   `Stopped(placement)` (STOP_SENDING by the peer; the track resumes at the
   next group) carry the placement so the caller can account the stream;
   `NotSent` covers a `Within` object with no open group, a track without a
-  writer, and a writer that still waits for the next group start.
+  writer, and writers that start after the object or wait for the next group
+  after a stopped stream.
   `write_group` sends one object as a finished group (the MSF catalog layout).
 - `publish(session, …)` sends PUBLISH on that session and writes from the
   next group; it is a no-op while the session takes the track and after it
   released a PUBLISH, but publishes a track again whose SUBSCRIBE the peer
   released; `accept_subscribe`
   answers a SUBSCRIBE the application decided to accept (Content Exists is the
-  largest sent location) and writes from the next group; `release(&handler)`
+  largest sent location) and writes from its filter's Start Location
+  (draft-14 §9.7), computed from the largest object written so far. Objects
+  before the Start Location are skipped; when the first object at or after it
+  does not start a group, the writer opens that group on a new stream starting
+  at that object, so Largest Object takes the rest of the open group;
+  `release(&handler)`
   drops the session's writer on UNSUBSCRIBE and returns the track so the
   caller can account it; `is_serving(session)` tells whether that session
   still takes any track; `serve_fetch` answers a Standalone FETCH from the cache on its
