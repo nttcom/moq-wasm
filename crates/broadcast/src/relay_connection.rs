@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
     time::Duration,
 };
@@ -417,21 +417,10 @@ impl ConnectedRelay {
         track_name: &str,
         info: VideoTrackInfo,
     ) -> Result<()> {
-        self.announce(namespace).await?;
-        let namespace_path = namespace.join("/");
-
-        {
-            let mut guard = self.state.lock().await;
-            if guard.disconnected {
-                bail!("MoQ publisher disconnected");
-            }
-            let metadata = guard.catalogs.entry(namespace_path.clone()).or_default();
-            if metadata.video_tracks.get(track_name) == Some(&info) {
-                return Ok(());
-            }
-            metadata.video_tracks.insert(track_name.to_string(), info);
-        }
-        self.send_catalog(&namespace_path).await
+        self.update_catalog(namespace, track_name, info, |metadata| {
+            &mut metadata.video_tracks
+        })
+        .await
     }
 
     pub(crate) async fn update_audio_catalog(
@@ -439,6 +428,19 @@ impl ConnectedRelay {
         namespace: &[String],
         track_name: &str,
         info: AudioTrackInfo,
+    ) -> Result<()> {
+        self.update_catalog(namespace, track_name, info, |metadata| {
+            &mut metadata.audio_tracks
+        })
+        .await
+    }
+
+    async fn update_catalog<T: PartialEq>(
+        &self,
+        namespace: &[String],
+        track_name: &str,
+        info: T,
+        tracks: fn(&mut CatalogMetadata) -> &mut BTreeMap<String, T>,
     ) -> Result<()> {
         self.announce(namespace).await?;
         let namespace_path = namespace.join("/");
@@ -448,11 +450,11 @@ impl ConnectedRelay {
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
-            let metadata = guard.catalogs.entry(namespace_path.clone()).or_default();
-            if metadata.audio_tracks.get(track_name) == Some(&info) {
+            let tracks = tracks(guard.catalogs.entry(namespace_path.clone()).or_default());
+            if tracks.get(track_name) == Some(&info) {
                 return Ok(());
             }
-            metadata.audio_tracks.insert(track_name.to_string(), info);
+            tracks.insert(track_name.to_string(), info);
         }
         self.send_catalog(&namespace_path).await
     }
