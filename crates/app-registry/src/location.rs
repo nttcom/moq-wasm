@@ -22,9 +22,8 @@ pub struct LocationVariables<'a> {
 }
 
 impl Location {
-    /// Reads the bucket variable (with the object variable, default `registry.json`, and
-    /// `STORAGE_EMULATOR_HOST`) for Cloud Storage, or the file variable for a local file. Returns
-    /// `None` when neither is set and fails when both are.
+    /// Returns `None` when the bucket and file variables are both unset or empty. Fails when both
+    /// are set, or when `STORAGE_EMULATOR_HOST` is set but is not a URL.
     pub fn from_env(variables: &LocationVariables) -> anyhow::Result<Option<Self>> {
         match (
             non_empty_env(variables.bucket),

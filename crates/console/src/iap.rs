@@ -47,9 +47,10 @@ impl IapVerifier {
         }
     }
 
-    /// Returns the `sub` of an IAP assertion. Fails when the assertion is malformed, is not
-    /// ES256-signed by a key IAP currently publishes, names another issuer or audience, or lies
-    /// outside its `iat` / `exp` window by more than 30 seconds.
+    /// `now` is Unix seconds. Fails when the assertion is malformed, is not ES256-signed by a key
+    /// from the fetched IAP key set, names another issuer or audience, has an empty `sub`, or lies
+    /// outside its `iat` / `exp` window by more than 30 seconds, and when the keys cannot be
+    /// fetched.
     pub async fn verify(&self, assertion: &str, now: u64) -> anyhow::Result<String> {
         let [header_segment, payload_segment, signature_segment] = split(assertion)?;
         let header: Header = decode_json(header_segment)?;
@@ -292,9 +293,9 @@ mod tests {
         let published = TestIapKey::new("key-1");
         let impostor = TestIapKey::new("key-1");
         let keys = FakeIapKeys::run(&[&published]).await;
+        let assertion = impostor.sign(&iap_claims("accounts.google.com:1"));
 
         // Act / Assert
-        let assertion = impostor.sign(&iap_claims("accounts.google.com:1"));
         assert!(verifier(&keys).verify(&assertion, NOW).await.is_err());
     }
 

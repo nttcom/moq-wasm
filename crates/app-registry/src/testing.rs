@@ -12,7 +12,6 @@ pub struct TemporaryRegistryFile {
 }
 
 impl TemporaryRegistryFile {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
             "app-registry-{}-{}.json",
@@ -36,6 +35,12 @@ impl TemporaryRegistryFile {
 
     pub fn body(&self) -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(&self.path).unwrap()).unwrap()
+    }
+}
+
+impl Default for TemporaryRegistryFile {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
