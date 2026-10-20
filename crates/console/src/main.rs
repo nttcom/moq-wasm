@@ -1,4 +1,4 @@
-use std::{future, sync::Arc};
+use std::{future, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
@@ -40,7 +40,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(apps = apps.len(), "registry loaded");
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    let _server = ConsoleServer::run(listener, Arc::new(ConsoleState { identity, store }));
+    let static_dir = non_empty_env("CONSOLE_STATIC_DIR").map(PathBuf::from);
+    let state = ConsoleState::new(identity, store, static_dir);
+    let _server = ConsoleServer::run(listener, Arc::new(state));
     tracing::info!(port, "console listening");
 
     future::pending().await
