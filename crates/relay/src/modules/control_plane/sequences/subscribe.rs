@@ -254,7 +254,7 @@ impl Subscribe {
         let track_key = TrackKey::new(track_namespace, track_name);
         // Fast path: cache hit without acquiring the per-track lock.
         if let Some(upstream_track) = table.get_upstream_track(&track_key) {
-            let largest_location = cached_largest(cache_store, &track_key);
+            let largest_location = existing_track_largest(cache_store, &track_key, &upstream_track);
             return Ok(UpstreamTrackAccess {
                 track_key,
                 upstream_track,
@@ -276,7 +276,7 @@ impl Subscribe {
                 track_name = %track_name,
                 "upstream subscription found after serializer lock (joined existing)"
             );
-            let largest_location = cached_largest(cache_store, &track_key);
+            let largest_location = existing_track_largest(cache_store, &track_key, &upstream_track);
             return Ok(UpstreamTrackAccess {
                 track_key,
                 upstream_track,
@@ -665,6 +665,23 @@ mod tests {
         content_exists: moqt::object::ContentExists,
         bursts_on_subscribe: bool,
     ) -> Option<moqt::object::Location> {
+        resolve_largest_per_subscribe(
+            cache_store,
+            track_key,
+            content_exists,
+            bursts_on_subscribe,
+            1,
+        )
+        .await[0]
+    }
+
+    async fn resolve_largest_per_subscribe(
+        cache_store: Arc<TrackCacheStore>,
+        track_key: TrackKey,
+        content_exists: moqt::object::ContentExists,
+        bursts_on_subscribe: bool,
+        subscribe_count: usize,
+    ) -> Vec<Option<moqt::object::Location>> {
         const SUBSCRIBER_SESSION: SessionId = 2;
 
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
@@ -695,27 +712,30 @@ mod tests {
         let serializer = UpstreamCreationSerializer::default();
         let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
 
-        let Ok(UpstreamTrackAccess {
-            largest_location, ..
-        }) = Subscribe
-            .get_or_create_upstream_subscription(
-                SUBSCRIBER_SESSION,
-                SessionPeer::Client,
-                &track_key.track_namespace,
-                &track_key.track_name,
-                &table,
-                &forwarder,
-                &ingress_sender,
-                &resolver,
-                &serializer,
-                &cache_store,
-            )
-            .await
-        else {
-            panic!("upstream subscription should be created");
-        };
-
-        largest_location
+        let mut largest_locations = Vec::new();
+        for _ in 0..subscribe_count {
+            let Ok(UpstreamTrackAccess {
+                largest_location, ..
+            }) = Subscribe
+                .get_or_create_upstream_subscription(
+                    SUBSCRIBER_SESSION,
+                    SessionPeer::Client,
+                    &track_key.track_namespace,
+                    &track_key.track_name,
+                    &table,
+                    &forwarder,
+                    &ingress_sender,
+                    &resolver,
+                    &serializer,
+                    &cache_store,
+                )
+                .await
+            else {
+                panic!("upstream subscription should be created");
+            };
+            largest_locations.push(largest_location);
+        }
+        largest_locations
     }
 
     const DEAD_PUBLISHER_SESSION: SessionId = 1;
@@ -927,6 +947,28 @@ mod tests {
                 object_id: 0,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_joining_the_upstream_takes_its_subscribe_ok_largest() {
+        // Arrange: SUBSCRIBE_OK reports Largest {7, 0}; the cache is empty
+        let location = moqt::object::Location {
+            group_id: 7,
+            object_id: 0,
+        };
+
+        // Act
+        let largest_locations = resolve_largest_per_subscribe(
+            Arc::new(TrackCacheStore::new()),
+            TrackKey::new("ns", "catalog"),
+            moqt::object::ContentExists::True { location },
+            false,
+            2,
+        )
+        .await;
+
+        // Assert: both the creating and the joining SUBSCRIBE take it
+        assert_eq!(largest_locations, vec![Some(location), Some(location)]);
     }
 
     async fn accept_downstream(
