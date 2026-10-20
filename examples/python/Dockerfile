@@ -28,13 +28,19 @@ COPY examples/python/moq-d3-flash-bot/moq_d3_flash_bot moq-d3-flash-bot/moq_d3_f
 COPY examples/python/moq-chat-moderation/pyproject.toml examples/python/moq-chat-moderation/uv.lock moq-chat-moderation/
 COPY examples/python/moq-camera-detection/pyproject.toml examples/python/moq-camera-detection/uv.lock moq-camera-detection/
 COPY examples/python/moq-ptz-tracking/pyproject.toml examples/python/moq-ptz-tracking/uv.lock moq-ptz-tracking/
+COPY examples/python/moq-meeting-transcriber/pyproject.toml examples/python/moq-meeting-transcriber/uv.lock moq-meeting-transcriber/
 COPY --from=moqt-wheel /wheels /wheels
 # This stage has no crates/python for the lock's path source, so uv skips moqt and the prebuilt
 # wheel is installed instead.
-RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking; do \
+RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking moq-meeting-transcriber; do \
         uv sync --frozen --no-dev --no-install-project --no-install-package moqt --directory $bot \
         && uv pip install --python $bot/.venv/bin/python --no-deps /wheels/moqt-*.whl || exit 1; \
     done
 COPY examples/python/moq-chat-moderation/moq_chat_moderation moq-chat-moderation/moq_chat_moderation
 COPY examples/python/moq-camera-detection/moq_camera_detection moq-camera-detection/moq_camera_detection
 COPY examples/python/moq-ptz-tracking/moq_ptz_tracking moq-ptz-tracking/moq_ptz_tracking
+COPY examples/python/moq-meeting-transcriber/moq_meeting_transcriber moq-meeting-transcriber/moq_meeting_transcriber
+# Bake the transcriber's default Whisper model into the image so a new room does not wait for a
+# 1.5 GB download.
+ENV HF_HOME=/opt/huggingface
+RUN moq-meeting-transcriber/.venv/bin/python -c "from faster_whisper import download_model; download_model('medium')"
