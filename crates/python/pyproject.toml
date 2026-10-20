@@ -15,5 +15,6 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 asyncio_mode = "auto"
 
 [tool.uv]
-# Rebuild the extension module when its Rust sources change.
-cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "src/**/*.rs" }, { file = "../moqt/src/**/*.rs" }]
+# Rebuild the extension module when its Rust sources change. uv ignores files
+# outside this directory, so a change to the moqt crate is caught by the commit.
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "src/**/*.rs" }, { git = { commit = true } }]
