@@ -43,6 +43,7 @@ def room_app(
     allowed_origins: list[str],
     only_room: str | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
+    room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
 ) -> web.Application:
     """`GET /rooms/{room}` holds the room while the page keeps the event stream open."""
 
@@ -52,7 +53,7 @@ def room_app(
         if allowed_origins and origin not in allowed_origins:
             raise web.HTTPForbidden()
         room_id = request.match_info["room"]
-        if not ROOM_ID_PATTERN.fullmatch(room_id) or (only_room is not None and room_id != only_room):
+        if not room_id_pattern.fullmatch(room_id) or (only_room is not None and room_id != only_room):
             raise web.HTTPNotFound()
         response = web.StreamResponse(
             headers={
@@ -89,7 +90,12 @@ async def hold(response: web.StreamResponse, membership: Membership, heartbeat_s
             await response.write(b": heartbeat\n\n")
 
 
-async def serve_rooms(args: argparse.Namespace, run_bot: RunBot, only_room: str | None = None) -> None:
+async def serve_rooms(
+    args: argparse.Namespace,
+    run_bot: RunBot,
+    only_room: str | None = None,
+    room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
+) -> None:
     """Serves rooms until SIGINT or SIGTERM, then stops every bot before it returns."""
     rooms = Rooms(
         run_bot,
@@ -97,7 +103,7 @@ async def serve_rooms(args: argparse.Namespace, run_bot: RunBot, only_room: str 
         max_room_seconds=args.max_room_seconds,
         open_hours=args.open_hours,
     )
-    runner = web.AppRunner(room_app(rooms, args.allowed_origin, only_room))
+    runner = web.AppRunner(room_app(rooms, args.allowed_origin, only_room, room_id_pattern=room_id_pattern))
     await runner.setup()
     await web.TCPSite(runner, args.host, args.port).start()
     logger.info(f"serving rooms on http://{args.host}:{args.port}")
