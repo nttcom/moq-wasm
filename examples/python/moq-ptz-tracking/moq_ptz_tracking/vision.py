@@ -3,9 +3,8 @@ import enum
 from dataclasses import dataclass
 
 import aiohttp
-
-from moq_ptz_tracking.d3_flash_status import D3FlashStatus
-from moq_ptz_tracking.identity_token import IdentityToken
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_bot_rooms.identity_token import IdentityToken
 
 COLUMNS = ("far left", "left", "center", "right", "far right")
 ROWS = ("top", "upper middle", "middle", "lower middle", "bottom")

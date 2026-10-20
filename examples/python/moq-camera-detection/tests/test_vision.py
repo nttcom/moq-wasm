@@ -1,15 +1,19 @@
 import aiohttp
+from moq_bot_rooms.identity_token import IdentityToken
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
 
-from moq_camera_detection.d3_flash_status import D3FlashStatus
-from moq_camera_detection.identity_token import gcloud_identity_token
 from moq_camera_detection.vision import D3FlashVisionClient
 from tests.helpers import YES_NO_PROMPT
+
+
+async def identity_token_value() -> str:
+    return "identity-token"
 
 
 async def test_image_is_asked_as_a_choice_between_the_prompt_choices(fake_vision_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        token = gcloud_identity_token(command=("echo", "identity-token"))
+        token = IdentityToken(identity_token_value)
         client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus(), token)
 
         # Act

@@ -6,15 +6,17 @@ from functools import partial
 import aiohttp
 import moqt
 from loguru import logger
+from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_d3_flash_bot.namespace import while_published
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from moq_camera_detection.d3_flash_status import D3FlashStatus
 from moq_camera_detection.detector import CameraDetector, CameraPicture
 from moq_camera_detection.event_timeline import EventTimeline
-from moq_camera_detection.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_camera_detection.prompt import Prompt, parse_prompt
 from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
 from moq_camera_detection.vision import D3FlashVisionClient
@@ -52,17 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d3-flash-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
     )
-    auth = parser.add_mutually_exclusive_group()
-    auth.add_argument(
-        "--gcloud-auth",
-        action="store_true",
-        help="send a gcloud identity token, for a Cloud Run service that requires IAM",
-    )
-    auth.add_argument(
-        "--metadata-auth",
-        action="store_true",
-        help="send the metadata server's identity token, for a bot on Cloud Run or GCE",
-    )
+    add_identity_token_arguments(parser)
     return parser.parse_args()
 
 
@@ -133,24 +125,6 @@ async def forward_camera(session: moqt.Session, camera_namespace: list[str], wor
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
-async def follow_camera_page(session: moqt.Session, room_id: str, worker: PipelineWorker) -> None:
-    camera_namespace = [*room_namespace(room_id), "camera"]
-    forwarding: asyncio.Task | None = None
-    try:
-        async for event in await session.subscribe_namespace(room_namespace(room_id)):
-            if event.namespace != camera_namespace:
-                continue
-            if forwarding is not None:
-                forwarding.cancel()
-            if event.active:
-                forwarding = asyncio.create_task(forward_camera(session, camera_namespace, worker))
-            else:
-                forwarding = None
-    finally:
-        if forwarding is not None:
-            forwarding.cancel()
-
-
 async def detect_in_session(
     session: moqt.Session, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
 ) -> None:
@@ -161,7 +135,10 @@ async def detect_in_session(
             await session.track(detector_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
     await session.publish_namespace(detector_namespace)
-    following = asyncio.create_task(follow_camera_page(session, room_id, worker))
+    camera_namespace = [*room_namespace(room_id), "camera"]
+    following = asyncio.create_task(
+        while_published(session, camera_namespace, partial(forward_camera, session, camera_namespace, worker))
+    )
     try:
         await session.closed()
     finally:
@@ -212,13 +189,7 @@ async def detect_in_room(
 async def main():
     args = parse_args()
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as http:
-        identity_token = (
-            gcloud_identity_token()
-            if args.gcloud_auth
-            else metadata_identity_token(http, args.d3_flash_url)
-            if args.metadata_auth
-            else None
-        )
+        identity_token = identity_token_from_arguments(args, http, args.d3_flash_url)
         await serve_rooms(args, partial(detect_in_room, args, http, identity_token))
 
 

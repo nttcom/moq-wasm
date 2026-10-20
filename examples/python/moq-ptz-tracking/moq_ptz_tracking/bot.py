@@ -1,20 +1,21 @@
 import argparse
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
 from functools import partial
 
 import aiohttp
 import moqt
 from loguru import logger
+from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_d3_flash_bot.namespace import while_published
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from moq_ptz_tracking.d3_flash_status import D3FlashStatus
 from moq_ptz_tracking.event_timeline import EventTimeline
-from moq_ptz_tracking.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
@@ -74,33 +75,8 @@ def parse_args() -> argparse.Namespace:
         default=0.05,
         help="largest offset of the target from the center, as a fraction of the picture, that leaves the camera still",
     )
-    auth = parser.add_mutually_exclusive_group()
-    auth.add_argument(
-        "--gcloud-auth",
-        action="store_true",
-        help="send a gcloud identity token, for a Cloud Run service that requires IAM",
-    )
-    auth.add_argument(
-        "--metadata-auth",
-        action="store_true",
-        help="send the metadata server's identity token, for a bot on Cloud Run or GCE",
-    )
+    add_identity_token_arguments(parser)
     return parser.parse_args()
-
-
-async def while_published(session: moqt.Session, namespace: list[str], run: Callable[[], Awaitable[None]]):
-    """Runs `run` for as long as `namespace` is published, and again each time it is published anew."""
-    running: asyncio.Task | None = None
-    try:
-        async for event in await session.subscribe_namespace(namespace[:-1]):
-            if event.namespace != namespace:
-                continue
-            if running is not None:
-                running.cancel()
-            running = asyncio.create_task(run()) if event.active else None
-    finally:
-        if running is not None:
-            running.cancel()
 
 
 async def follow_prompts(session: moqt.Session, latest_target: LatestTarget):
@@ -253,13 +229,7 @@ async def track_in_room(
 async def main():
     args = parse_args()
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as http:
-        identity_token = (
-            gcloud_identity_token()
-            if args.gcloud_auth
-            else metadata_identity_token(http, args.d3_flash_url)
-            if args.metadata_auth
-            else None
-        )
+        identity_token = identity_token_from_arguments(args, http, args.d3_flash_url)
         await serve_rooms(args, partial(track_in_room, args, http, identity_token), only_room=ROOM_ID)
 
 

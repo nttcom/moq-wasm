@@ -6,7 +6,6 @@ from typing import Any
 import av
 from aiohttp import web
 
-from moq_camera_detection.d3_flash_status import D3FlashStatus
 from moq_camera_detection.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt
 
@@ -72,24 +71,3 @@ class FakeVisionServer:
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Authorization"), await request.json()))
         return web.json_response({"answers": {"answer": {"choice": self.choice}}})
-
-
-@dataclass
-class FakeMetadataServer:
-    url: str = ""
-    requests: list[tuple[str | None, str | None]] = field(default_factory=list)
-
-    async def handle(self, request: web.Request) -> web.Response:
-        self.requests.append((request.headers.get("Metadata-Flavor"), request.query.get("audience")))
-        return web.Response(text="metadata-token")
-
-
-async def published_status(status: D3FlashStatus) -> RecordingPublication:
-    publication = RecordingPublication()
-    await status.publish_on(publication)
-    return publication
-
-
-async def next_status(publication: RecordingPublication) -> str:
-    _, status = await publication.next_write()
-    return status["d3_flash"]

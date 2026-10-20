@@ -5,16 +5,18 @@ from functools import partial
 import aiohttp
 import moqt
 from loguru import logger
+from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
+from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_d3_flash_bot.namespace import while_published
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from moq_chat_moderation.chat import ChatMessage
 from moq_chat_moderation.d3_flash import D3FlashClient
-from moq_chat_moderation.d3_flash_status import D3FlashStatus
 from moq_chat_moderation.event_timeline import EventTimeline
-from moq_chat_moderation.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_chat_moderation.moderator import ChatModerator
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
@@ -43,17 +45,7 @@ def parse_args() -> argparse.Namespace:
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
     parser.add_argument("--d3-flash-url", required=True, help="a System One /v1/systemone endpoint, such as d3-flash")
-    auth = parser.add_mutually_exclusive_group()
-    auth.add_argument(
-        "--gcloud-auth",
-        action="store_true",
-        help="send a gcloud identity token, for a Cloud Run service that requires IAM",
-    )
-    auth.add_argument(
-        "--metadata-auth",
-        action="store_true",
-        help="send the metadata server's identity token, for a bot on Cloud Run or GCE",
-    )
+    add_identity_token_arguments(parser)
     return parser.parse_args()
 
 
@@ -79,21 +71,6 @@ async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker:
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
-async def follow_chat_page(session: moqt.Session, room_id: str, worker: PipelineWorker) -> None:
-    chat_namespace = [*room_namespace(room_id), "chat"]
-    forwarding: asyncio.Task | None = None
-    try:
-        async for event in await session.subscribe_namespace(room_namespace(room_id)):
-            if event.namespace != chat_namespace:
-                continue
-            if forwarding is not None:
-                forwarding.cancel()
-            forwarding = asyncio.create_task(forward_chat(session, chat_namespace, worker)) if event.active else None
-    finally:
-        if forwarding is not None:
-            forwarding.cancel()
-
-
 async def moderate_session(
     session: moqt.Session, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
 ) -> None:
@@ -104,7 +81,10 @@ async def moderate_session(
             await session.track(moderator_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
     await session.publish_namespace(moderator_namespace)
-    following = asyncio.create_task(follow_chat_page(session, room_id, worker))
+    chat_namespace = [*room_namespace(room_id), "chat"]
+    following = asyncio.create_task(
+        while_published(session, chat_namespace, partial(forward_chat, session, chat_namespace, worker))
+    )
     try:
         await session.closed()
     finally:
@@ -155,13 +135,7 @@ async def moderate_room(
 async def main():
     args = parse_args()
     async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as http:
-        identity_token = (
-            gcloud_identity_token()
-            if args.gcloud_auth
-            else metadata_identity_token(http, args.d3_flash_url)
-            if args.metadata_auth
-            else None
-        )
+        identity_token = identity_token_from_arguments(args, http, args.d3_flash_url)
         await serve_rooms(args, partial(moderate_room, args, http, identity_token))
 
 
