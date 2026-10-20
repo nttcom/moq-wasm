@@ -118,3 +118,26 @@ async def test_room_id_follows_the_pattern_the_bot_passes(open_client):
     await settle()
     assert bots.started == ["Team A"]
     response.close()
+
+
+async def test_the_query_picks_the_bot_and_a_refused_query_is_a_bad_request(open_client):
+    # Arrange
+    picked = FakeBots()
+
+    def bot_from_query(query):
+        if query.get("asr") != "qwen3-asr":
+            raise ValueError("unknown asr")
+        return picked.run
+
+    client = await open_client(FakeBots(), allowed_origins=[], bot_from_query=bot_from_query)
+
+    # Act
+    refused = await client.get("/rooms/abc?asr=other")
+    accepted = await client.get("/rooms/abc?asr=qwen3-asr")
+    await settle()
+
+    # Assert
+    assert refused.status == 400
+    assert accepted.status == 200
+    assert picked.started == ["abc"]
+    accepted.close()
