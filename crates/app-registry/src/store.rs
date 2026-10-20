@@ -59,7 +59,7 @@ struct ObjectMetadata {
 }
 
 impl RegistryStore {
-    pub fn new(endpoint: Endpoint, bucket: &str, object: &str) -> Self {
+    pub fn new(endpoint: Endpoint, bucket: &str, object: &str) -> anyhow::Result<Self> {
         let (base, credentials) = match endpoint {
             Endpoint::CloudStorage => (
                 Url::parse(CLOUD_STORAGE_URL).expect("CLOUD_STORAGE_URL is a valid URL"),
@@ -67,6 +67,9 @@ impl RegistryStore {
             ),
             Endpoint::Emulator(url) => (url, Credentials::None),
         };
+        if !matches!(base.scheme(), "http" | "https") {
+            bail!("the Cloud Storage endpoint {base} is not an http(s) URL");
+        }
         let mut object_url = base.clone();
         object_url
             .path_segments_mut()
@@ -83,12 +86,12 @@ impl RegistryStore {
             .query_pairs_mut()
             .append_pair("uploadType", "media")
             .append_pair("name", object);
-        Self {
+        Ok(Self {
             http: Client::new(),
             object_url,
             upload_url,
             credentials,
-        }
+        })
     }
 
     pub async fn load(&self) -> anyhow::Result<Snapshot> {
@@ -196,6 +199,20 @@ mod tests {
             sub: sub.map(Into::into),
             created_at: None,
         }
+    }
+
+    #[test]
+    fn new_rejects_an_emulator_endpoint_without_an_http_scheme() {
+        // Arrange
+        let endpoint = Endpoint::Emulator(Url::parse("localhost:4443").unwrap());
+
+        // Act
+        let error = RegistryStore::new(endpoint, "bucket", "registry.json")
+            .err()
+            .unwrap();
+
+        // Assert
+        assert!(error.to_string().contains("http(s)"), "{error}");
     }
 
     #[tokio::test]

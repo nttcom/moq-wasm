@@ -44,7 +44,7 @@ impl FakeCloudStorage {
     }
 
     pub(crate) fn store(&self) -> RegistryStore {
-        RegistryStore::new(Endpoint::Emulator(self.url.clone()), BUCKET, OBJECT)
+        RegistryStore::new(Endpoint::Emulator(self.url.clone()), BUCKET, OBJECT).unwrap()
     }
 
     pub(crate) fn put(&self, body: &serde_json::Value) {
