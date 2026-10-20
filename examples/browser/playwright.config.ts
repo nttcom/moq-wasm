@@ -39,7 +39,11 @@ export default defineConfig({
         '--use-fake-device-for-media-stream',
         '--use-file-for-fake-video-capture=' + fakeVideoPath,
         '--use-fake-ui-for-media-stream',
-        '--autoplay-policy=no-user-gesture-required'
+        '--autoplay-policy=no-user-gesture-required',
+        // A runner that needs speech on the fake microphone points this at a WAV file.
+        ...(process.env.E2E_FAKE_AUDIO_FILE
+          ? [`--use-file-for-fake-audio-capture=${process.env.E2E_FAKE_AUDIO_FILE}`]
+          : [])
       ]
     },
     trace: 'retain-on-failure',
