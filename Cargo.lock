@@ -2192,7 +2192,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "url",
 ]
 
 [[package]]
