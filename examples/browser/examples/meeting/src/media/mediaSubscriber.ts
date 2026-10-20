@@ -75,8 +75,8 @@ export class MediaSubscriber {
   /// without a gap; call `canReplaceVideo` first and unsubscribe the playing
   /// track when it returns false. With `adaptation`, the picture asks for the
   /// ladder track that fits its shown height and the delivery: no taller than
-  /// the picture, lower when the capture-to-arrival lag rises or exceeds
-  /// `TARGET_LAG_MS` (see `AdaptiveBitrate`).
+  /// the picture, lower when the capture-to-arrival lag rises or, keyframes
+  /// included, exceeds `TARGET_LAG_MS` (see `AdaptiveBitrate`).
   registerVideoTrack(
     userId: string,
     trackName: string,
