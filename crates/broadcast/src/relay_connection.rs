@@ -226,6 +226,33 @@ impl ConnectedRelay {
                     }
                 };
 
+                // Answered here instead of by `origin.handle`: a SUBSCRIBE is checked
+                // against the catalog and raises the subscribed signal, and an
+                // UNSUBSCRIBE finishes the track in the stream ledger.
+                let event = match event {
+                    SessionEvent::Subscribe(handler) => {
+                        Self::serve_subscribe(&origin, &state, handler).await;
+                        continue;
+                    }
+                    SessionEvent::Unsubscribe(handler) => {
+                        let request_id = handler.subscribe_id();
+                        match origin.release(&handler).await {
+                            Some((namespace, track_name)) => {
+                                ledger.finish(&track_name);
+                                tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
+                            }
+                            None => {
+                                tracing::warn!(request_id, "UNSUBSCRIBE for unknown request");
+                            }
+                        }
+                        continue;
+                    }
+                    event => match origin.handle(event).await {
+                        Some(event) => event,
+                        None => continue,
+                    },
+                };
+
                 match event {
                     SessionEvent::PublishNamespace(handler) => {
                         if let Err(err) = handler.ok().await {
@@ -240,21 +267,6 @@ impl ConnectedRelay {
                             tracing::warn!(prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
                         }
                     }
-                    SessionEvent::Subscribe(handler) => {
-                        Self::serve_subscribe(&origin, &state, handler).await;
-                    }
-                    SessionEvent::Unsubscribe(handler) => {
-                        let request_id = handler.subscribe_id();
-                        match origin.release(&handler).await {
-                            Some((namespace, track_name)) => {
-                                ledger.finish(&track_name);
-                                tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
-                            }
-                            None => {
-                                tracing::warn!(request_id, "UNSUBSCRIBE for unknown request");
-                            }
-                        }
-                    }
                     SessionEvent::UnsubscribeNamespace(handler) => {
                         tracing::info!(prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
                     }
@@ -265,27 +277,7 @@ impl ConnectedRelay {
                     SessionEvent::Publish(handler) => {
                         tracing::warn!(namespace = %handler.track_namespace, track = %handler.track_name, "unexpected PUBLISH received");
                     }
-                    SessionEvent::Fetch(handler) => {
-                        let request_id = handler.request_id;
-                        if let Err(err) = origin.serve_fetch(handler).await {
-                            tracing::warn!(request_id, ?err, "failed to answer FETCH");
-                        }
-                    }
-                    SessionEvent::FetchCancel(handler) => {
-                        origin.cancel_fetch(&handler).await;
-                    }
-                    SessionEvent::TrackStatus(handler) => {
-                        let request_id = handler.request_id();
-                        if let Err(err) = origin.answer_track_status(handler).await {
-                            tracing::warn!(request_id, ?err, "failed to answer TRACK_STATUS");
-                        }
-                    }
-                    event @ (SessionEvent::GoAway(_)
-                    | SessionEvent::MaxRequestId(_)
-                    | SessionEvent::RequestsBlocked(_)
-                    | SessionEvent::PublishNamespaceCancel(_)
-                    | SessionEvent::PublishDone(_)
-                    | SessionEvent::SubscribeUpdate(_)) => {
+                    event => {
                         tracing::debug!(?event, "unhandled control message");
                     }
                 }
