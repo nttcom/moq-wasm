@@ -18,11 +18,7 @@ use hyper_util::rt::TokioIo;
 use reqwest::Url;
 use tokio::{net::TcpListener, task::JoinHandle};
 
-use crate::{
-    app::App,
-    cloud_storage::Endpoint,
-    store::{Location, RegistryStore},
-};
+use crate::{app::App, cloud_storage::Endpoint, location::Location, store::RegistryStore};
 
 pub(crate) const BUCKET: &str = "registry-bucket";
 pub(crate) const OBJECT: &str = "registry.json";

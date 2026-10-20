@@ -20,6 +20,7 @@ create an app or how a secret is generated; those rules belong to its callers.
 | --- | --- |
 | `app.rs` | `App` (one row) and `Apps` (a validated list). `Apps::new` rejects an empty `appId` or `secret`, a duplicated `appId`, and a `sub` that owns more than one app. |
 | `store.rs` | `RegistryStore`, the one entry point: `load` (apps and generation) and `update` (load, change, conditional store, retry). `Location` picks the backend. |
+| `location.rs` | `Location`, the backend a store uses. `Location::from_env` reads it from environment variables whose names each caller passes, so the VTS and the console keep their own names. |
 | `cloud_storage.rs` | The Cloud Storage backend over the JSON API. The generation is the object's; a store is an upload with `ifGenerationMatch`. `Endpoint` picks Cloud Storage or an emulator. |
 | `file.rs` | The local file backend. The generation is a hash of the contents; a store compares it, writes a temporary file and renames it over the registry. |
 | `credentials.rs` | The bearer token for Cloud Storage, taken from the metadata server and reused until 60 seconds before it expires. No token is sent to an emulator. |
