@@ -10,7 +10,7 @@ async def test_image_is_asked_as_a_choice_between_the_prompt_choices(fake_vision
     # Arrange
     async with aiohttp.ClientSession() as session:
         token = gcloud_identity_token(command=("echo", "identity-token"))
-        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus("status"), token)
+        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus(), token)
 
         # Act
         choice = await client.choose(b"jpeg", YES_NO_PROMPT)
@@ -31,7 +31,7 @@ async def test_answer_outside_the_prompt_choices_is_no_choice(fake_vision_server
     # Arrange
     fake_vision_server.choice = "maybe"
     async with aiohttp.ClientSession() as session:
-        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus("status"))
+        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus())
 
         # Act
         choice = await client.choose(b"jpeg", YES_NO_PROMPT)

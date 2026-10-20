@@ -80,7 +80,7 @@ class PtzTracker(FrameProcessor):
                 return
             decision = self._planner.decide(answer, time.monotonic())
             move = decision if isinstance(decision, PtzMove) else NO_MOVE
-            self._timeline.append(
+            await self._timeline.append(
                 location_record(
                     picture.location,
                     {
@@ -99,7 +99,7 @@ class PtzTracker(FrameProcessor):
                 return
             await self._stop_sweep()
             if isinstance(decision, Home):
-                self._commands.center()
+                await self._commands.center()
                 self._stopped_at = time.monotonic() + CENTER_SECONDS
             elif move != NO_MOVE:
                 await self._commands.move(move)
@@ -112,7 +112,7 @@ class PtzTracker(FrameProcessor):
             self._sweep.renew()
             return
         await self._stop_sweep()
-        self._sweep = self._commands.sweep(heading)
+        self._sweep = await self._commands.sweep(heading)
 
     async def _stop_sweep(self) -> None:
         if self._sweep is None:

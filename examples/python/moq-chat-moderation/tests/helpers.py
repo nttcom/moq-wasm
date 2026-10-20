@@ -3,43 +3,31 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-import moq
 from aiohttp import web
 
 from moq_chat_moderation.d3_flash_status import D3FlashStatus
 from moq_chat_moderation.event_timeline import EventTimeline
 
 READ_TIMEOUT_SECONDS = 2
-TRACK_NAME = "eventtimeline"
-STATUS_TRACK_NAME = "status"
 
 
-class TimelineReader:
-    def __init__(self, group: moq.GroupConsumer):
-        self._group = group
+class RecordingPublication:
+    def __init__(self):
+        self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()
 
-    @property
-    def group_id(self) -> int:
-        return self._group.sequence
+    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
+        self._writes.put_nowait((new_group, json.loads(payload)))
 
-    async def next_records(self) -> list[dict[str, Any]]:
-        frame = await asyncio.wait_for(self._group.read_frame(), READ_TIMEOUT_SECONDS)
-        return json.loads(frame.payload)
+    async def next_write(self) -> tuple[bool, Any]:
+        return await asyncio.wait_for(self._writes.get(), READ_TIMEOUT_SECONDS)
 
 
-async def open_timeline(broadcast: moq.BroadcastProducer) -> TimelineReader:
-    track = await broadcast.consume().subscribe_track(TRACK_NAME)
-    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
-    return TimelineReader(group)
-
-
-async def published_timeline() -> tuple[EventTimeline, TimelineReader]:
-    timeline = EventTimeline(TRACK_NAME)
-    broadcast = moq.BroadcastProducer()
-    timeline.publish_on(broadcast)
-    reader = await open_timeline(broadcast)
-    await reader.next_records()
-    return timeline, reader
+async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
+    timeline = EventTimeline()
+    publication = RecordingPublication()
+    await timeline.publish_on(publication)
+    await publication.next_write()
+    return timeline, publication
 
 
 @dataclass
@@ -73,13 +61,12 @@ class FakeMetadataServer:
         return web.Response(text="metadata-token")
 
 
-async def published_status(status: D3FlashStatus) -> moq.TrackConsumer:
-    broadcast = moq.BroadcastProducer()
-    status.publish_on(broadcast)
-    return await broadcast.consume().subscribe_track(STATUS_TRACK_NAME)
+async def published_status(status: D3FlashStatus) -> RecordingPublication:
+    publication = RecordingPublication()
+    await status.publish_on(publication)
+    return publication
 
 
-async def next_status(track: moq.TrackConsumer) -> str:
-    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
-    frame = await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS)
-    return json.loads(frame.payload)["d3_flash"]
+async def next_status(publication: RecordingPublication) -> str:
+    _, status = await publication.next_write()
+    return status["d3_flash"]

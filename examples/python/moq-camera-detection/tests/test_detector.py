@@ -30,7 +30,7 @@ class LateFirstAnswerVision:
 
 async def test_fresh_picture_answer_is_recorded_at_its_location_with_its_prompt():
     # Arrange
-    timeline, group = await published_timeline()
+    timeline, publication = await published_timeline()
     vision = StubVision(answer="yes")
 
     # Act
@@ -41,7 +41,7 @@ async def test_fresh_picture_answer_is_recorded_at_its_location_with_its_prompt(
     )
 
     # Assert
-    assert await next_records(group) == [{"l": [42, 3], "data": {"prompt": [7, 0], "answer": "yes"}}]
+    assert await next_records(publication) == [{"l": [42, 3], "data": {"prompt": [7, 0], "answer": "yes"}}]
 
 
 async def test_stale_picture_is_not_judged():
@@ -63,7 +63,7 @@ async def test_stale_picture_is_not_judged():
 
 async def test_answer_returned_after_a_newer_one_is_not_recorded():
     # Arrange
-    timeline, group = await published_timeline()
+    timeline, publication = await published_timeline()
 
     # Act
     await run_test(
@@ -73,6 +73,6 @@ async def test_answer_returned_after_a_newer_one_is_not_recorded():
     )
 
     # Assert
-    assert await next_records(group) == [{"l": [44, 1], "data": {"prompt": [7, 0], "answer": "no"}}]
+    assert await next_records(publication) == [{"l": [44, 1], "data": {"prompt": [7, 0], "answer": "no"}}]
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(group.read_frame(), NO_MORE_RECORDS_WAIT_SECONDS)
+        await publication.next_write(NO_MORE_RECORDS_WAIT_SECONDS)

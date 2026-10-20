@@ -103,9 +103,11 @@ sequenceDiagram
     participant D as d3-flash (Cloud Run)
     P->>S: GET /rooms/abc (event-stream, held open)
     Note over S: first request for abc: start the room's bot
-    S->>R: connect, PUBLISH_NAMESPACE anon/moq-chat-moderation/abc/moderator
+    S->>R: connect, PUBLISH_NAMESPACE anon/moq-chat-moderation/abc/moderator, SUBSCRIBE_NAMESPACE .../abc
     P->>R: connect, PUBLISH_NAMESPACE .../abc/chat, SUBSCRIBE_NAMESPACE .../abc/moderator
     R->>P: PUBLISH_NAMESPACE .../abc/moderator
+    R->>S: PUBLISH_NAMESPACE .../abc/chat
+    S->>R: SUBSCRIBE .../abc/chat
     P->>R: chat object
     R->>S: chat object
     S->>D: /v1/systemone
@@ -126,8 +128,10 @@ requests for it.
   own relay session, so one room's failure or GOAWAY does not touch another.
 - Further requests for the same room only raise the count, so every page in a
   room shares one bot. The pages of a room also share the namespace they
-  publish under, so a room still has one publishing page at a time, as the
-  fixed namespace had. In practice the count covers a second tab and the
+  publish under. The relay forwards the bot's SUBSCRIBE to one of them, so the
+  bot reads one page's chat at a time, as with the fixed namespace. When that
+  page leaves, the relay ends the track and the bot subscribes again, reaching
+  a page that stayed. In practice the count covers a second tab and the
   reconnects of one page.
 - When the count drops to zero, the server waits 30 s and then cancels the
   task. The task closes its relay session before it ends. A request that

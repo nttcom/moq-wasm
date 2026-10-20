@@ -1,12 +1,13 @@
 import json
-import time
-from typing import Any
-
-import moq
+from typing import Any, Protocol
 
 Location = tuple[int, int]
 
 EventRecord = dict[str, Any]
+
+
+class Publication(Protocol):
+    async def write(self, payload: bytes, *, new_group: bool = False) -> None: ...
 
 
 def location_record(location: Location, data: dict[str, Any]) -> EventRecord:
@@ -14,18 +15,19 @@ def location_record(location: Location, data: dict[str, Any]) -> EventRecord:
 
 
 class EventTimeline:
-    """draft-ietf-moq-msf-01 §8 event timeline: the group opens with every record so far (none),
-    and later objects in the group carry one new record each."""
+    """draft-ietf-moq-msf-01 §8 event timeline: each relay session's group opens with an empty
+    record list, and later objects in the group carry one new record each."""
 
-    def __init__(self, broadcast: moq.BroadcastProducer, track_name: str):
-        # The relay keeps a track's cache across publisher sessions and isolates a track
-        # whose publisher repeats a location, so group ids are seeded from the wall clock.
-        self._track = broadcast.publish_track(track_name)
-        self._group = self._track.create_group(time.time_ns() // 1_000)
-        self._group.write_frame(_encode([]))
+    def __init__(self):
+        self._publication: Publication | None = None
 
-    def append(self, record: EventRecord) -> None:
-        self._group.write_frame(_encode([record]))
+    async def publish_on(self, publication: Publication) -> None:
+        self._publication = publication
+        await publication.write(_encode([]), new_group=True)
+
+    async def append(self, record: EventRecord) -> None:
+        if self._publication is not None:
+            await self._publication.write(_encode([record]))
 
 
 def _encode(records: list[EventRecord]) -> bytes:

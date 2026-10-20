@@ -64,6 +64,6 @@ class CameraDetector(FrameProcessor):
         if picture.location <= self._latest_recorded:
             return
         self._latest_recorded = picture.location
-        self._timeline.append(
+        await self._timeline.append(
             location_record(picture.location, {"prompt": picture.prompt.location, "answer": answer})
         )

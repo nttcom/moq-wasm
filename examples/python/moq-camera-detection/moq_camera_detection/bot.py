@@ -4,7 +4,7 @@ import time
 from functools import partial
 
 import aiohttp
-import moq
+import moqt
 from loguru import logger
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from pipecat.pipeline.pipeline import Pipeline
@@ -23,11 +23,14 @@ DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8098
 # d3-flash answers one batch at a time, and one camera already sends it a picture every SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
-NAMESPACE_ROOT = "anon/moq-camera-detection"
+NAMESPACE_ROOT = ["anon", "moq-camera-detection"]
 VIDEO_TRACK = "video"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
+# The event timeline and the d3-flash status are kept for FETCH as long as a room runs by default
+# (--max-room-seconds).
+RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
@@ -63,93 +66,135 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def room_namespace(room_id: str) -> list[str]:
+    return [*NAMESPACE_ROOT, room_id]
+
+
 class LatestPrompt:
     def __init__(self):
         self.prompt: Prompt | None = None
 
-    async def follow(self, track: moq.TrackConsumer):
+    async def follow(self, track: moqt.Track):
         try:
-            async for group in track:
-                frame = await group.read_frame()
-                prompt = parse_prompt(frame.payload, (group.sequence, 0)) if frame else None
+            async for prompt_object in track:
+                location = (prompt_object.group_id, prompt_object.object_id)
+                prompt = parse_prompt(prompt_object.payload, location)
                 if prompt is None:
-                    logger.warning(f"ignoring an invalid prompt in group {group.sequence}")
+                    logger.warning(f"ignoring an invalid prompt at {location}")
                     continue
                 logger.info(f"prompt {prompt.location}: {prompt.question} {prompt.choices}")
                 self.prompt = prompt
-        except moq.Error as error:
+        except RuntimeError as error:
             logger.info(f"prompt track ended: {error}")
 
 
-async def forward_pictures(video: moq.TrackConsumer, latest_prompt: LatestPrompt, worker: PipelineWorker):
+async def forward_pictures(video: moqt.Track, latest_prompt: LatestPrompt, worker: PipelineWorker):
     next_sample_at = 0.0
-    async for group in video:
-        decoder = GroupDecoder()
-        object_id = 0
-        while (frame := await group.read_frame()) is not None:
-            picture = await asyncio.to_thread(decoder.decode, frame.payload)
-            decoded_at = time.monotonic()
-            prompt = latest_prompt.prompt
-            if picture is not None and prompt is not None and decoded_at >= next_sample_at:
-                next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
-                jpeg = await asyncio.to_thread(picture_to_jpeg, picture)
-                await worker.queue_frame(
-                    CameraPicture(
-                        jpeg=jpeg,
-                        location=(group.sequence, object_id),
-                        decoded_at=decoded_at,
-                        prompt=prompt,
-                    )
+    decoder: GroupDecoder | None = None
+    group_id: int | None = None
+    async for video_object in video:
+        # Each group starts at a keyframe, so each gets a fresh decoder. A group joined in the middle
+        # has no keyframe and decodes to nothing.
+        if video_object.group_id != group_id:
+            decoder = GroupDecoder()
+            group_id = video_object.group_id
+        picture = await asyncio.to_thread(decoder.decode, video_object.payload)
+        decoded_at = time.monotonic()
+        prompt = latest_prompt.prompt
+        if picture is not None and prompt is not None and decoded_at >= next_sample_at:
+            next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
+            jpeg = await asyncio.to_thread(picture_to_jpeg, picture)
+            await worker.queue_frame(
+                CameraPicture(
+                    jpeg=jpeg,
+                    location=(video_object.group_id, video_object.object_id),
+                    decoded_at=decoded_at,
+                    prompt=prompt,
                 )
-            object_id += 1
+            )
 
 
-async def forward_camera(client: moq.Client, camera_path: str, worker: PipelineWorker):
+async def forward_camera(session: moqt.Session, camera_namespace: list[str], worker: PipelineWorker):
     while True:
         try:
-            camera = await client.announced_broadcast(camera_path)
             latest_prompt = LatestPrompt()
-            following = asyncio.create_task(latest_prompt.follow(await camera.subscribe_track(PROMPT_TRACK)))
+            prompts = await session.subscribe(camera_namespace, PROMPT_TRACK)
+            following = asyncio.create_task(latest_prompt.follow(prompts))
             try:
-                await forward_pictures(await camera.subscribe_track(VIDEO_TRACK), latest_prompt, worker)
+                video = await session.subscribe(camera_namespace, VIDEO_TRACK)
+                await forward_pictures(video, latest_prompt, worker)
+                logger.info("camera track ended")
             finally:
                 following.cancel()
-        except moq.Error as error:
+        except RuntimeError as error:
             logger.info(f"camera track ended: {error}")
+        # The relay ends the tracks when the page it subscribed to leaves; another page in the room
+        # may still publish the camera namespace, so subscribe again.
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
+async def follow_camera_page(session: moqt.Session, room_id: str, worker: PipelineWorker) -> None:
+    camera_namespace = [*room_namespace(room_id), "camera"]
+    forwarding: asyncio.Task | None = None
+    try:
+        async for event in await session.subscribe_namespace(room_namespace(room_id)):
+            if event.namespace != camera_namespace:
+                continue
+            if forwarding is not None:
+                forwarding.cancel()
+            if event.active:
+                forwarding = asyncio.create_task(forward_camera(session, camera_namespace, worker))
+            else:
+                forwarding = None
+    finally:
+        if forwarding is not None:
+            forwarding.cancel()
+
+
+async def detect_in_session(
+    session: moqt.Session, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
+) -> None:
+    detector_namespace = [*room_namespace(room_id), "detector"]
+    # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
+    for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
+        await publisher.publish_on(
+            await session.track(detector_namespace, track_name, retention_seconds=RETENTION_SECONDS)
+        )
+    await session.publish_namespace(detector_namespace)
+    following = asyncio.create_task(follow_camera_page(session, room_id, worker))
+    try:
+        await session.closed()
+    finally:
+        following.cancel()
+
+
 async def stay_connected(
-    args: argparse.Namespace, camera_path: str, publish_origin: moq.OriginProducer, worker: PipelineWorker
-):
+    args: argparse.Namespace, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
+) -> None:
     while True:
         try:
-            async with moq.Client(
-                args.relay_url,
-                tls_verify=not args.insecure,
-                publish=publish_origin,
-                subscribe=moq.OriginProducer(),
-            ) as client:
-                logger.info(f"connected to {args.relay_url}")
-                async with asyncio.TaskGroup() as tasks:
-                    forwarding = tasks.create_task(forward_camera(client, camera_path, worker))
-                    await client.session.closed()
-                    forwarding.cancel()
-            logger.warning("relay session closed")
-        except* moq.Error as errors:
-            logger.warning(f"relay session failed: {errors.exceptions[0]}")
+            session = await moqt.connect(args.relay_url, verify_certificate=not args.insecure)
+        except RuntimeError as error:
+            logger.warning(f"room {room_id}: cannot connect to {args.relay_url}: {error}")
+            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+            continue
+        logger.info(f"room {room_id}: connected to {args.relay_url}")
+        try:
+            await detect_in_session(session, room_id, timeline, status, worker)
+            logger.warning(f"room {room_id}: relay session closed")
+        except RuntimeError as error:
+            logger.warning(f"room {room_id}: relay session failed: {error}")
+        finally:
+            await session.close()
         await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
 
 async def detect_in_room(
-    args: argparse.Namespace, session: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
+    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
 ) -> None:
-    publish_origin = moq.OriginProducer()
-    detector_broadcast = publish_origin.create_broadcast(f"{NAMESPACE_ROOT}/{room_id}/detector")
-    timeline = EventTimeline(detector_broadcast, EVENT_TIMELINE_TRACK)
-    status = D3FlashStatus(STATUS_TRACK)
-    status.publish_on(detector_broadcast)
-    vision = D3FlashVisionClient(session, args.d3_flash_url, status, identity_token)
+    timeline = EventTimeline()
+    status = D3FlashStatus()
+    vision = D3FlashVisionClient(http, args.d3_flash_url, status, identity_token)
     worker = PipelineWorker(
         Pipeline([CameraDetector(vision, timeline)]),
         enable_rtvi=False,
@@ -158,24 +203,23 @@ async def detect_in_room(
     # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
-    camera_path = f"{NAMESPACE_ROOT}/{room_id}/camera"
     async with asyncio.TaskGroup() as tasks:
-        connecting = tasks.create_task(stay_connected(args, camera_path, publish_origin, worker))
+        connecting = tasks.create_task(stay_connected(args, room_id, timeline, status, worker))
         await runner.run()
         connecting.cancel()
 
 
 async def main():
     args = parse_args()
-    async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as session:
+    async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as http:
         identity_token = (
             gcloud_identity_token()
             if args.gcloud_auth
-            else metadata_identity_token(session, args.d3_flash_url)
+            else metadata_identity_token(http, args.d3_flash_url)
             if args.metadata_auth
             else None
         )
-        await serve_rooms(args, partial(detect_in_room, args, session, identity_token))
+        await serve_rooms(args, partial(detect_in_room, args, http, identity_token))
 
 
 if __name__ == "__main__":

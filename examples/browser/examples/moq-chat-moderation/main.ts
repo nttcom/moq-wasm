@@ -2,13 +2,7 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { pageRoomId } from '../../utils/botRoom'
 import { SingleObjectGroupPublisher, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
 import { element, setStatus } from '../../utils/page'
-import {
-  type Location,
-  MAX_CHAT_TEXT_LENGTH,
-  type ModerationVerdict,
-  encodeChatRecord,
-  parseModerationVerdicts
-} from './chatWire'
+import { type Location, type ModerationVerdict, parseModerationVerdicts } from './chatWire'
 
 const ROOM = pageRoomId()
 const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', ROOM, 'chat']
@@ -29,8 +23,6 @@ const messageList = element<HTMLOListElement>('messages')
 const chatForm = element<HTMLFormElement>('chatForm')
 const chatInput = element<HTMLInputElement>('chatInput')
 const sendButton = element<HTMLButtonElement>('sendBtn')
-
-chatInput.maxLength = MAX_CHAT_TEXT_LENGTH
 
 setUpD3FlashBotPage({
   session,
@@ -76,7 +68,7 @@ async function sendChat(): Promise<void> {
   const location = { groupId: chatPublisher.reserveGroupId(), objectId: 0n }
   const item = appendMessage(text, location)
   try {
-    await chatPublisher.send(encodeChatRecord(text, location), location.groupId)
+    await chatPublisher.send(new TextEncoder().encode(text), location.groupId)
   } catch (error) {
     console.error('[moq-chat-moderation] chat send failed', error)
     setVerdict(item, 'failed', '送信失敗')

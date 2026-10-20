@@ -8,7 +8,7 @@ from moq_chat_moderation.identity_token import gcloud_identity_token
 async def test_abusive_probability_is_the_noul_answer(fake_d3_flash_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        client = D3FlashClient(session, fake_d3_flash_server.url, D3FlashStatus("status"))
+        client = D3FlashClient(session, fake_d3_flash_server.url, D3FlashStatus())
 
         # Act
         probability = await client.abusive_probability("you are an idiot")
@@ -20,7 +20,7 @@ async def test_abusive_probability_is_the_noul_answer(fake_d3_flash_server):
 async def test_request_asks_the_abusive_question_without_credentials(fake_d3_flash_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        client = D3FlashClient(session, fake_d3_flash_server.url, D3FlashStatus("status"))
+        client = D3FlashClient(session, fake_d3_flash_server.url, D3FlashStatus())
 
         # Act
         await client.abusive_probability("you are an idiot")
@@ -36,7 +36,7 @@ async def test_request_carries_the_identity_token_as_bearer(fake_d3_flash_server
     # Arrange
     async with aiohttp.ClientSession() as session:
         token = gcloud_identity_token(command=("echo", "identity-token"))
-        client = D3FlashClient(session, fake_d3_flash_server.url, D3FlashStatus("status"), token)
+        client = D3FlashClient(session, fake_d3_flash_server.url, D3FlashStatus(), token)
 
         # Act
         await client.abusive_probability("hello")

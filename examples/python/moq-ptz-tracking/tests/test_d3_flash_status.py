@@ -1,10 +1,8 @@
-import asyncio
-
 import pytest
 
 from moq_ptz_tracking import d3_flash_status
 from moq_ptz_tracking.d3_flash_status import IDLE_STOP_SECONDS, D3FlashStatus
-from tests.helpers import READ_TIMEOUT_SECONDS, STATUS_TRACK_NAME, next_status, published_status
+from tests.helpers import next_status, published_status
 
 
 class FakeClock:
@@ -28,47 +26,47 @@ async def answered_once(status: D3FlashStatus) -> None:
 
 async def test_first_request_reports_a_cold_start_until_d3_flash_answers():
     # Arrange
-    status = D3FlashStatus(STATUS_TRACK_NAME)
-    track = await published_status(status)
-    assert await next_status(track) == "ready"
+    status = D3FlashStatus()
+    publication = await published_status(status)
+    assert await next_status(publication) == "ready"
 
     # Act
     async with status.request():
-        starting = await next_status(track)
+        starting = await next_status(publication)
 
     # Assert
     assert starting == "starting"
-    assert await next_status(track) == "ready"
+    assert await next_status(publication) == "ready"
 
 
 async def test_late_answer_while_warm_reports_slow_then_a_cold_start(short_escalation):
     # Arrange
-    status = D3FlashStatus(STATUS_TRACK_NAME)
+    status = D3FlashStatus()
     await answered_once(status)
-    track = await published_status(status)
-    assert await next_status(track) == "ready"
+    publication = await published_status(status)
+    assert await next_status(publication) == "ready"
 
     # Act
     async with status.request():
-        reported = [await next_status(track), await next_status(track)]
+        reported = [await next_status(publication), await next_status(publication)]
 
     # Assert
     assert reported == ["slow", "starting"]
-    assert await next_status(track) == "ready"
+    assert await next_status(publication) == "ready"
 
 
 async def test_request_after_an_idle_stop_reports_a_cold_start():
     # Arrange
     clock = FakeClock()
-    status = D3FlashStatus(STATUS_TRACK_NAME, clock)
+    status = D3FlashStatus(clock)
     await answered_once(status)
-    track = await published_status(status)
-    assert await next_status(track) == "ready"
+    publication = await published_status(status)
+    assert await next_status(publication) == "ready"
     clock.now += IDLE_STOP_SECONDS + 1
 
     # Act
     async with status.request():
-        starting = await next_status(track)
+        starting = await next_status(publication)
 
     # Assert
     assert starting == "starting"
@@ -76,29 +74,15 @@ async def test_request_after_an_idle_stop_reports_a_cold_start():
 
 async def test_failed_request_reports_ready_again():
     # Arrange
-    status = D3FlashStatus(STATUS_TRACK_NAME)
-    track = await published_status(status)
-    assert await next_status(track) == "ready"
+    status = D3FlashStatus()
+    publication = await published_status(status)
+    assert await next_status(publication) == "ready"
 
     # Act
     with pytest.raises(RuntimeError):
         async with status.request():
-            assert await next_status(track) == "starting"
+            assert await next_status(publication) == "starting"
             raise RuntimeError("d3-flash failed")
 
     # Assert
-    assert await next_status(track) == "ready"
-
-
-async def test_each_status_is_a_finished_group_of_one_object():
-    # Arrange
-    status = D3FlashStatus(STATUS_TRACK_NAME)
-    track = await published_status(status)
-
-    # Act
-    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
-    frames = [await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS) for _ in range(2)]
-
-    # Assert
-    assert frames[0] is not None
-    assert frames[1] is None
+    assert await next_status(publication) == "ready"

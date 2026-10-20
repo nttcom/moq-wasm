@@ -1,7 +1,7 @@
 # moq-camera-detection
 
 ブラウザの MoQ Camera Detection ページ（`examples/browser/examples/moq-camera-detection`）が H.264 で配信したカメラ映像を
-pipecat の bot が受け取り、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) で
+pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) で
 ページが送った質問に選択肢から答えます。答えは MSF の event timeline として publish され、ページに表示されます。
 
 ```mermaid
@@ -46,6 +46,8 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
    ```
 
 2. bot を起動する
+
+   bot は `moqt` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。初回の `uv run` はビルドに数分かかります。
 
    ```shell
    cd examples/python/moq-camera-detection
