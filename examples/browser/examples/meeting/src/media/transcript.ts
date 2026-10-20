@@ -1,5 +1,13 @@
 export type TranscriptRecord = { startedAtMs: number; speaker: string; text: string }
 
+/// The transcriber's `status` track: its recognizer, and `starting` until that answers.
+export type TranscriberStatus = { asr: string; state: 'starting' | 'ready' }
+
+export function parseTranscriberStatus(payload: Uint8Array): TranscriberStatus | undefined {
+  const { asr, state } = JSON.parse(new TextDecoder().decode(payload)) ?? {}
+  return typeof asr === 'string' && (state === 'starting' || state === 'ready') ? { asr, state } : undefined
+}
+
 /// draft-ietf-moq-msf-01 §8.3 for the transcriber's event timeline: the first
 /// object of a group holds every record so far and each later object one new
 /// record. The joining FETCH and the live subscription deliver the objects of

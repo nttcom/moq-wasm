@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { TranscriptTimeline } from './transcript'
+import { TranscriptTimeline, parseTranscriberStatus } from './transcript'
 
 const encode = (records: { t: number; speaker: string; text: string }[]) =>
   new TextEncoder().encode(JSON.stringify(records.map(({ t, speaker, text }) => ({ t, data: { speaker, text } }))))
@@ -49,4 +49,16 @@ test('a new group replaces the history and an older one is ignored', () => {
     { startedAtMs: 2_000, speaker: 'bob', text: '今日は良い天気ですね' },
     { startedAtMs: 3_000, speaker: 'carol', text: 'よろしくお願いします' }
   ])
+})
+
+test('the transcriber status names its recognizer and state, and anything else reads as none', () => {
+  // Arrange
+  const encodeJson = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
+
+  // Act / Assert
+  expect(parseTranscriberStatus(encodeJson({ asr: 'qwen3-asr', state: 'starting' }))).toEqual({
+    asr: 'qwen3-asr',
+    state: 'starting'
+  })
+  expect(parseTranscriberStatus(encodeJson({ asr: 'qwen3-asr', state: 'loading' }))).toBeUndefined()
 })
