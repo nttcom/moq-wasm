@@ -358,7 +358,13 @@ forward from their own cache through the raw stream senders.
   own stream (`FetchServeTask`, one per request, aborted by `cancel_fetch` and
   when the `Origin` is dropped; joining FETCH is NOT_SUPPORTED);
   `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.
-- Left to the application: whether to accept a SUBSCRIBE, namespace
+- `handle(event)` is the session event loop's shortcut to all of the above:
+  it accepts a SUBSCRIBE to a registered track, releases on UNSUBSCRIBE,
+  serves FETCH, aborts on FETCH_CANCEL and answers TRACK_STATUS, and hands
+  back every other event, and a SUBSCRIBE or UNSUBSCRIBE for a track or
+  request it does not know, to the caller.
+- Left to the application: whether to accept a SUBSCRIBE for a track it
+  has not registered yet (`handle` returns it), namespace
   announcements, when to PUBLISH, retention and first group ids, and
   disconnect handling. The FETCH End Location arithmetic is the free function
   `resolve_fetch_range` (`domains/fetch_range.rs`), shared with the wasm

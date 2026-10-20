@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
 use crate::{
-    Publisher, Session, TrackWriter, TransportSendError,
+    Publisher, Session, SessionEvent, TrackWriter, TransportSendError,
     fetch::{FetchCancelHandler, FetchHandler, FetchParams},
     modules::{executor, moqt::domains::session_context::SessionContext},
     object::{ContentExists, ExtensionHeaders, Location},
@@ -299,6 +299,45 @@ impl Origin {
         }))
         .await;
         self.settle(&key, placement, results).await
+    }
+
+    /// Answers a SUBSCRIBE to a track registered with `ensure_track`, the
+    /// UNSUBSCRIBE of a subscription it serves, FETCH, FETCH_CANCEL and
+    /// TRACK_STATUS, logging a failed answer. Returns every other event for the
+    /// caller to answer, including a SUBSCRIBE to an unregistered track and an
+    /// UNSUBSCRIBE of a request it does not serve.
+    pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+        match event {
+            SessionEvent::Subscribe(handler) => {
+                let key = (handler.track_namespace.clone(), handler.track_name.clone());
+                if !self.state.lock().await.tracks.contains_key(&key) {
+                    return Some(SessionEvent::Subscribe(handler));
+                }
+                if let Err(err) = self.accept_subscribe(handler).await {
+                    tracing::warn!(namespace = %key.0, track_name = %key.1, ?err, "failed to accept SUBSCRIBE");
+                }
+            }
+            SessionEvent::Unsubscribe(handler) => {
+                if self.release(&handler).await.is_none() {
+                    return Some(SessionEvent::Unsubscribe(handler));
+                }
+            }
+            SessionEvent::Fetch(handler) => {
+                let request_id = handler.request_id;
+                if let Err(err) = self.serve_fetch(handler).await {
+                    tracing::warn!(request_id, ?err, "failed to answer FETCH");
+                }
+            }
+            SessionEvent::FetchCancel(handler) => self.cancel_fetch(&handler).await,
+            SessionEvent::TrackStatus(handler) => {
+                let request_id = handler.request_id();
+                if let Err(err) = self.answer_track_status(handler).await {
+                    tracing::warn!(request_id, ?err, "failed to answer TRACK_STATUS");
+                }
+            }
+            event => return Some(event),
+        }
+        None
     }
 
     /// Serves the SUBSCRIBE on the session it arrived on.
@@ -692,11 +731,15 @@ mod tests {
         released
     }
 
-    async fn subscribe(peers: &Peers, filter_type: FilterType) -> Subscription {
-        let option = SubscribeOption {
+    fn subscribe_option(filter_type: FilterType) -> SubscribeOption {
+        SubscribeOption {
             filter_type,
             ..SubscribeOption::default()
-        };
+        }
+    }
+
+    async fn subscribe(peers: &Peers, filter_type: FilterType) -> Subscription {
+        let option = subscribe_option(filter_type);
         let mut subscriber = peers.server.subscriber();
         let (subscription, ()) = within(async {
             tokio::join!(
@@ -1259,5 +1302,101 @@ mod tests {
                 location: location(3, 4)
             }
         );
+    }
+
+    #[tokio::test]
+    async fn handle_serves_a_subscribe_to_a_track_it_has() {
+        // Arrange
+        let peers = origin_with_track("origin-handle-subscribe", RETENTION).await;
+        let mut subscriber = peers.server.subscriber();
+
+        // Act
+        let (subscription, unhandled) = within(async {
+            tokio::join!(
+                subscriber.subscribe(
+                    NAMESPACE.to_string(),
+                    TRACK.to_string(),
+                    subscribe_option(FilterType::NextGroupStart)
+                ),
+                async {
+                    let event = peers.client.receive_event().await.unwrap();
+                    peers.origin.handle(event).await
+                }
+            )
+        })
+        .await;
+
+        // Assert
+        assert!(unhandled.is_none());
+        let subscription = subscription.unwrap();
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_object(&peers, &subscription).await.payload,
+            Bytes::from_static(b"a")
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_returns_a_subscribe_to_a_track_it_does_not_have() {
+        // Arrange
+        let peers = origin_with_track("origin-handle-unknown-subscribe", RETENTION).await;
+        let mut subscriber = peers.server.subscriber();
+
+        // Act
+        let (subscription, ()) = within(async {
+            tokio::join!(
+                subscriber.subscribe(
+                    NAMESPACE.to_string(),
+                    "other".to_string(),
+                    subscribe_option(FilterType::NextGroupStart)
+                ),
+                async {
+                    let event = peers.client.receive_event().await.unwrap();
+                    let Some(SessionEvent::Subscribe(handler)) = peers.origin.handle(event).await
+                    else {
+                        panic!("expected the SUBSCRIBE back");
+                    };
+                    handler
+                        .error(RequestErrorCode::TrackDoesNotExist, "unknown".to_string())
+                        .await
+                        .unwrap();
+                }
+            )
+        })
+        .await;
+
+        // Assert: the caller's answer reaches the subscriber
+        assert_eq!(
+            rejection(subscription).code,
+            RequestErrorCode::TrackDoesNotExist
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_returns_events_that_are_not_about_its_tracks() {
+        // Arrange
+        let peers = origin_with_track("origin-handle-other", RETENTION).await;
+        let publisher = peers.server.publisher();
+
+        // Act
+        let (published, unhandled) = within(async {
+            tokio::join!(publisher.publish_namespace("other".to_string()), async {
+                let event = peers.client.receive_event().await.unwrap();
+                let unhandled = peers.origin.handle(event).await;
+                if let Some(SessionEvent::PublishNamespace(handler)) = &unhandled {
+                    handler.ok().await.unwrap();
+                }
+                unhandled
+            })
+        })
+        .await;
+
+        // Assert
+        assert!(matches!(unhandled, Some(SessionEvent::PublishNamespace(_))));
+        published.unwrap();
     }
 }
