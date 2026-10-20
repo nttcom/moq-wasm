@@ -1,4 +1,5 @@
-export type TranscriptRecord = { startedAtMs: number; speaker: string; text: string }
+/// `live` is false for a record that came with history, from the joining FETCH.
+export type TranscriptRecord = { startedAtMs: number; speaker: string; text: string; live: boolean }
 
 /// The transcriber's `status` track: its recognizer, and `starting` until that answers.
 export type TranscriberStatus = { asr: string; state: 'starting' | 'ready' }
@@ -18,7 +19,7 @@ export class TranscriptTimeline {
   private current: bigint | undefined
 
   /// Returns whether the records changed.
-  add(groupId: bigint, objectId: bigint, payload: Uint8Array): boolean {
+  add(groupId: bigint, objectId: bigint, payload: Uint8Array, live: boolean): boolean {
     if (this.current !== undefined && groupId < this.current) {
       return false
     }
@@ -26,7 +27,7 @@ export class TranscriptTimeline {
     if (objects.has(objectId)) {
       return false
     }
-    objects.set(objectId, parseRecords(payload))
+    objects.set(objectId, parseRecords(payload, live))
     this.groups.set(groupId, objects)
     if (objectId === 0n && (this.current === undefined || groupId > this.current)) {
       this.current = groupId
@@ -48,7 +49,7 @@ export class TranscriptTimeline {
   }
 }
 
-function parseRecords(payload: Uint8Array): TranscriptRecord[] {
+function parseRecords(payload: Uint8Array, live: boolean): TranscriptRecord[] {
   const records: unknown = JSON.parse(new TextDecoder().decode(payload))
   if (!Array.isArray(records)) {
     return []
@@ -56,7 +57,7 @@ function parseRecords(payload: Uint8Array): TranscriptRecord[] {
   return records.flatMap((record) => {
     const { t, data } = record ?? {}
     return typeof t === 'number' && typeof data?.speaker === 'string' && typeof data?.text === 'string'
-      ? [{ startedAtMs: t, speaker: data.speaker, text: data.text }]
+      ? [{ startedAtMs: t, speaker: data.speaker, text: data.text, live }]
       : []
   })
 }
