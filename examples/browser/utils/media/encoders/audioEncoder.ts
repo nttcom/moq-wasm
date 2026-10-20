@@ -2,6 +2,7 @@ import { louderAudioLevel, measureAudioLevel } from '../audioLevel'
 import type { AudioLevel } from '../loc'
 import { createBitrateLogger } from '../bitrate'
 import { CaptureTimestamps } from './captureTimestamps'
+import { encoderConfigForInput } from './audioInputFormat'
 
 let audioEncoder: AudioEncoder | undefined
 let encoderConfig: AudioEncoderConfig = {
@@ -54,22 +55,43 @@ async function initializeAudioEncoder() {
 
 async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) {
   captureTimestamps.reset()
-  if (!audioEncoder) {
-    audioEncoder = await initializeAudioEncoder()
-  }
-  if (!audioEncoder) {
-    return
-  }
   const audioReader = audioReadableStream.getReader()
   while (true) {
     const audioResult = await audioReader.read()
     if (audioResult.done) break
     const audio = audioResult.value
+    const encoder = await encoderFor(audio)
+    if (!encoder) {
+      audio.close()
+      return
+    }
     captureTimestamps.recordCapture(audio.timestamp)
     pendingAudioLevel = louderAudioLevel(pendingAudioLevel, measureAudioLevel(audio))
-    audioEncoder.encode(audio)
+    encoder.encode(audio)
     audio.close()
   }
+}
+
+/// An encoder error closes the encoder, so replace a closed one to keep the track sending.
+async function encoderFor(audio: AudioData): Promise<AudioEncoder | undefined> {
+  const inputConfig = encoderConfigForInput(encoderConfig, audio)
+  if (inputConfig !== encoderConfig) {
+    console.info('[audioEncoder] input format changed', {
+      sampleRate: audio.sampleRate,
+      numberOfChannels: audio.numberOfChannels
+    })
+    encoderConfig = inputConfig
+    if (audioEncoder?.state === 'configured') {
+      audioEncoder.configure(encoderConfig)
+    }
+  }
+  if (!audioEncoder || audioEncoder.state === 'closed') {
+    if (audioEncoder) {
+      console.info('[audioEncoder] re-initializing a closed encoder')
+    }
+    audioEncoder = await initializeAudioEncoder()
+  }
+  return audioEncoder
 }
 
 self.onmessage = async (event) => {
