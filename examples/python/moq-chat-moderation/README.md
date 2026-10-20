@@ -20,7 +20,7 @@ sequenceDiagram
 
 ## d3-flash
 
-d3-flash は System One の `/v1/systemone` に答える Cloud Run サービス `d3-flash`（asia-southeast1、MoQ Camera Detection・MoQ PTZ Tracking と共用）として動いています。
+d3-flash は System One の `/v1/systemone` に答える Cloud Run サービス `moqt-d3-flash`（asia-southeast1、MoQ Camera Detection・MoQ PTZ Tracking と共用）として動いています。
 IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。bot は `--gcloud-auth` を付けると
 `gcloud auth print-identity-token` の ID トークンを Bearer で送ります。Cloud Run や GCE では `--metadata-auth` を付けると、サービスアカウントの ID トークンをメタデータサーバーから取って送ります。`--min-instances=0` のため、しばらく使われずに停止した後の最初の判定は、コールドスタートで約 2 分 40 秒かかります。
 デプロイ手順は [d3-flash を Cloud Run にデプロイする](../d3-flash-on-cloud-run.md) にあります。
@@ -49,7 +49,7 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
    ```shell
    cd examples/python/moq-chat-moderation
    uv run python -m moq_chat_moderation.bot --insecure \
-     --d3-flash-url "$(gcloud run services describe d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --d3-flash-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 

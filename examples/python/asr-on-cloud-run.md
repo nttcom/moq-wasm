@@ -4,7 +4,7 @@ Meeting の書き起こし bot（`moq-meeting-transcriber`）が `?asr=` で呼�
 どちらのモデルも vLLM で動かし、OpenAI 互換の `/v1/audio/transcriptions` で答えます。
 bot は発話の区間ごとに WAV を送ります。設計は [Live transcription for the Meeting example](../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
-| `asr`（サービス名） | モデル | vLLM の起動引数 |
+| `asr`（サービス名は `moqt-<asr>`） | モデル | vLLM の起動引数 |
 | --- | --- | --- |
 | `qwen3-asr` | [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | なし |
 | `moss-transcribe-diarize` | [OpenMOSS-Team/MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize)（0.9B） | `--trust-remote-code` |
@@ -41,7 +41,7 @@ export VLLM_ARGS=
 export HF_REVISION=<commit of the model repository>
 export VLLM_IMAGE=vllm/vllm-openai:nightly@sha256:<digest>
 export BUCKET=${PROJECT}-${ASR}-weights
-export SA=${ASR}@${PROJECT}.iam.gserviceaccount.com
+export SA=moqt-${ASR}@${PROJECT}.iam.gserviceaccount.com
 ```
 
 ## 1. 重みを GCS に置く
@@ -72,7 +72,7 @@ gcloud builds submit --project=${PROJECT} --region=${REGION} --config=/tmp/${ASR
 ## 2. サービスアカウントを作る
 
 ```shell
-gcloud iam service-accounts create ${ASR} --project=${PROJECT}
+gcloud iam service-accounts create moqt-${ASR} --project=${PROJECT}
 gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \
   --member=serviceAccount:${SA} --role=roles/storage.objectViewer
 ```
@@ -80,7 +80,7 @@ gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \
 ## 3. デプロイする
 
 ```shell
-gcloud beta run deploy ${ASR} \
+gcloud beta run deploy moqt-${ASR} \
   --project=${PROJECT} --region=${REGION} --image=${VLLM_IMAGE} \
   --service-account=${SA} --no-allow-unauthenticated \
   --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy \
@@ -100,9 +100,9 @@ bot のサービスアカウント（手元ならそのアカウント）に `ro
 `--asr` は、デプロイしたモデルの数だけ繰り返せます。
 
 ```shell
-gcloud run services add-iam-policy-binding ${ASR} --project=${PROJECT} --region=${REGION} \
+gcloud run services add-iam-policy-binding moqt-${ASR} --project=${PROJECT} --region=${REGION} \
   --member=serviceAccount:<bot のサービスアカウント> --role=roles/run.invoker
-ASR_URL=$(gcloud run services describe ${ASR} --project=${PROJECT} --region=${REGION} --format 'value(status.url)')
+ASR_URL=$(gcloud run services describe moqt-${ASR} --project=${PROJECT} --region=${REGION} --format 'value(status.url)')
 uv run python -m moq_meeting_transcriber.bot --asr ${ASR}=${ASR_URL} --metadata-auth
 ```
 
