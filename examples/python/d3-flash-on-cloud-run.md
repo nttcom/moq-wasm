@@ -1,7 +1,7 @@
 # d3-flash を Cloud Run にデプロイする
 
 MoQ Chat Moderation（`moq-chat-moderation`）、MoQ Camera Detection（`moq-camera-detection`）と MoQ PTZ Tracking（`moq-ptz-tracking`）の bot が呼ぶ判定サーバです。
-どれも 1 つの Cloud Run サービス `d3-flash` で動く決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) に、System One の `/v1/systemone` で質問します。
+どれも 1 つの Cloud Run サービス `moqt-d3-flash` で動く決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) に、System One の `/v1/systemone` で質問します。
 
 | bot | 用途 | 質問 |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ gcloud compute networks subnets create d3-flash --project=${PROJECT} --network=d
 ## 3. デプロイする
 
 ```shell
-gcloud beta run deploy d3-flash \
+gcloud beta run deploy moqt-d3-flash \
   --project=${PROJECT} --region=${REGION} --image=${IMAGE} \
   --service-account=${SA} --no-allow-unauthenticated \
   --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy \
@@ -108,7 +108,7 @@ gcloud beta run deploy d3-flash \
 プロジェクトのオーナー以外が bot を起動する場合は、そのアカウントに `roles/run.invoker` を付けます。
 
 ```shell
-gcloud run services add-iam-policy-binding d3-flash --project=${PROJECT} --region=${REGION} \
+gcloud run services add-iam-policy-binding moqt-d3-flash --project=${PROJECT} --region=${REGION} \
   --member=user:someone@example.com --role=roles/run.invoker
 ```
 

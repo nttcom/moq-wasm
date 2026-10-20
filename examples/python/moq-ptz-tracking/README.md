@@ -113,7 +113,7 @@ bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動�
    ```shell
    cd examples/python/moq-ptz-tracking
    uv run python -m moq_ptz_tracking.bot --insecure \
-     --d3-flash-url "$(gcloud run services describe d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --d3-flash-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 
