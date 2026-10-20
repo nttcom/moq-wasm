@@ -9,7 +9,6 @@ use bytes::BytesMut;
 pub struct SubscribeNamespace {
     pub request_id: u64,
     pub track_namespace_prefix: Vec<String>,
-    pub number_of_parameters: u64,
     pub authorization_token: Vec<AuthorizationToken>,
 }
 
@@ -19,11 +18,9 @@ impl SubscribeNamespace {
         track_namespace_prefix: Vec<String>,
         authorization_token: Vec<AuthorizationToken>,
     ) -> Self {
-        let number_of_parameters = authorization_token.len() as u64;
         SubscribeNamespace {
             request_id,
             track_namespace_prefix,
-            number_of_parameters,
             authorization_token,
         }
     }
@@ -52,7 +49,6 @@ impl SubscribeNamespace {
         Ok(SubscribeNamespace {
             request_id,
             track_namespace_prefix: track_namespace_prefix_tuple,
-            number_of_parameters,
             authorization_token: authorization_tokens,
         })
     }
