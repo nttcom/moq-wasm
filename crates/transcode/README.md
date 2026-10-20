@@ -64,7 +64,8 @@ compositor.finished().await?;                  // dropping the compositor cancel
 Each `EventSource` yields a config event, then samples already on the shared timeline. The
 stage follows the participants whose video covers each output frame: someone alone fills the
 picture, and a participant whose video stops for more than a second leaves the stage until
-it resumes. An input without video only joins the audio mix.
+it resumes. An input without video only joins the audio mix. A source that yields no sample,
+such as a recorded track that never received one, is treated as `None`.
 
 `Loudness::measure` decodes a participant's audio before compositing and keeps its RMS level
 per 100 ms. From these the compositor picks the active speaker over the whole recording: the
