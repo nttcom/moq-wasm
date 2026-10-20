@@ -46,6 +46,14 @@ export class BotRoomRequest {
         this.onEnd(reason)
       })
     }
+    // A response that is not an event stream, such as the 400 for a query the bot refuses, closes
+    // the source for good; a dropped stream leaves it reconnecting.
+    source.addEventListener('error', () => {
+      if (source.readyState === EventSource.CLOSED) {
+        this.close()
+        this.onEnd('failed')
+      }
+    })
     this.source = source
   }
 
