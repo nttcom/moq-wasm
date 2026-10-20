@@ -6,9 +6,15 @@ import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'
 import type { VideoAdaptation } from '../media/mediaSubscriber'
 import { parseMeetingCatalogTracks } from '../media/meetingCatalog'
+import { TranscriptTimeline, type TranscriptRecord } from '../media/transcript'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import { readMeetingAuth } from './authToken'
-import { buildNamespacePrefix, buildTrackNamespace, parseTrackNamespace } from './trackNamespace'
+import {
+  buildNamespacePrefix,
+  buildTrackNamespace,
+  buildTranscriberNamespace,
+  parseTrackNamespace
+} from './trackNamespace'
 
 interface LocalSessionOptions {
   roomName: string
@@ -21,6 +27,7 @@ const AUTH_INFO = 'secret'
 /// video yields the downlink to audio when the two compete.
 const VIDEO_SUBSCRIBER_PRIORITY = 128
 const CATALOG_SUBSCRIBE_TIMEOUT_MS = 5000
+const TRANSCRIPT_TRACK_NAME = 'transcript'
 
 export enum LocalSessionState {
   Idle = 'idle',
@@ -308,6 +315,30 @@ export class LocalSession {
     } finally {
       window.clearTimeout(timeoutId)
     }
+  }
+
+  /// The transcriber's event timeline, from the current group on.
+  async subscribeTranscript(onRecords: (records: TranscriptRecord[]) => void, onEnded: () => void): Promise<bigint> {
+    this.assertReady('subscribe transcript')
+    const timeline = new TranscriptTimeline()
+    const { requestId, subscribeOk } = await this.client.subscribeCurrentGroup(
+      buildTranscriberNamespace(this.roomName),
+      TRANSCRIPT_TRACK_NAME,
+      AUTH_INFO,
+      (groupId, objectId, payload) => {
+        if (timeline.add(groupId, objectId, payload)) {
+          onRecords(timeline.records())
+        }
+      },
+      {
+        onPublishDone: ({ requestId }) => {
+          this.forgetSubscription(requestId)
+          onEnded()
+        }
+      }
+    )
+    this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
+    return requestId
   }
 
   isSubscribed(subscribeId: bigint): boolean {

@@ -1,0 +1,54 @@
+export type TranscriptRecord = { startedAtMs: number; speaker: string; text: string }
+
+/// draft-ietf-moq-msf-01 §8.3 for the transcriber's event timeline: the first
+/// object of a group holds every record so far and each later object one new
+/// record. The joining FETCH and the live subscription deliver the objects of
+/// a group in any order, so the records follow the newest group whose first
+/// object has arrived.
+export class TranscriptTimeline {
+  private readonly groups = new Map<bigint, Map<bigint, TranscriptRecord[]>>()
+  private current: bigint | undefined
+
+  /// Returns whether the records changed.
+  add(groupId: bigint, objectId: bigint, payload: Uint8Array): boolean {
+    if (this.current !== undefined && groupId < this.current) {
+      return false
+    }
+    const objects = this.groups.get(groupId) ?? new Map<bigint, TranscriptRecord[]>()
+    if (objects.has(objectId)) {
+      return false
+    }
+    objects.set(objectId, parseRecords(payload))
+    this.groups.set(groupId, objects)
+    if (objectId === 0n && (this.current === undefined || groupId > this.current)) {
+      this.current = groupId
+      for (const older of this.groups.keys()) {
+        if (older < groupId) {
+          this.groups.delete(older)
+        }
+      }
+    }
+    return groupId === this.current
+  }
+
+  records(): TranscriptRecord[] {
+    const objects = this.current === undefined ? undefined : this.groups.get(this.current)
+    if (!objects) {
+      return []
+    }
+    return [...objects.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).flatMap(([, records]) => records)
+  }
+}
+
+function parseRecords(payload: Uint8Array): TranscriptRecord[] {
+  const records: unknown = JSON.parse(new TextDecoder().decode(payload))
+  if (!Array.isArray(records)) {
+    return []
+  }
+  return records.flatMap((record) => {
+    const { t, data } = record ?? {}
+    return typeof t === 'number' && typeof data?.speaker === 'string' && typeof data?.text === 'string'
+      ? [{ startedAtMs: t, speaker: data.speaker, text: data.text }]
+      : []
+  })
+}

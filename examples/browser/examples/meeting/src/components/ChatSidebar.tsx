@@ -1,4 +1,5 @@
-import { FormEvent } from 'react'
+import { FormEvent, useState } from 'react'
+import type { TranscriptRecord } from '../media/transcript'
 import { ChatMessage } from '../types/chat'
 
 interface ChatSidebarProps {
@@ -7,13 +8,36 @@ interface ChatSidebarProps {
   onMessageChange: (value: string) => void
   onSend: (event?: FormEvent) => void
   onToggle: () => void
+  /// The room's transcript while captions are on.
+  transcript: TranscriptRecord[] | undefined
 }
 
-export function ChatSidebar({ messages, chatMessage, onMessageChange, onSend, onToggle }: ChatSidebarProps) {
+export function ChatSidebar({
+  messages,
+  chatMessage,
+  onMessageChange,
+  onSend,
+  onToggle,
+  transcript
+}: ChatSidebarProps) {
+  const [tab, setTab] = useState<'chat' | 'transcript'>('chat')
   return (
     <aside className="h-full w-80 shrink-0 overflow-y-auto border-l border-white/10 bg-slate-900 px-4 py-4">
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex gap-1">
+            {transcript && (
+              <>
+                <SidebarTab label="Chat" active={tab === 'chat'} onClick={() => setTab('chat')} />
+                <SidebarTab
+                  label="Transcript"
+                  testId="transcript-tab"
+                  active={tab === 'transcript'}
+                  onClick={() => setTab('transcript')}
+                />
+              </>
+            )}
+          </div>
           <button
             type="button"
             onClick={onToggle}
@@ -22,7 +46,11 @@ export function ChatSidebar({ messages, chatMessage, onMessageChange, onSend, on
             Close
           </button>
         </div>
-        <ChatPanel messages={messages} chatMessage={chatMessage} onMessageChange={onMessageChange} onSend={onSend} />
+        {tab === 'transcript' && transcript ? (
+          <TranscriptPanel records={transcript} />
+        ) : (
+          <ChatPanel messages={messages} chatMessage={chatMessage} onMessageChange={onMessageChange} onSend={onSend} />
+        )}
       </div>
     </aside>
   )
@@ -83,6 +111,55 @@ function ChatPanel({
           Send
         </button>
       </form>
+    </div>
+  )
+}
+
+function SidebarTab({
+  label,
+  testId,
+  active,
+  onClick
+}: {
+  label: string
+  testId?: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+        active ? 'bg-blue-600 text-white' : 'bg-white/10 text-blue-100 hover:bg-white/20'
+      }`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function TranscriptPanel({ records }: { records: TranscriptRecord[] }) {
+  return (
+    <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+      {records.length === 0 ? (
+        <p className="text-blue-100">Nothing transcribed yet.</p>
+      ) : (
+        records.map((record) => (
+          <div
+            key={`${record.startedAtMs}-${record.speaker}`}
+            data-testid="transcript-record"
+            className="rounded-xl border border-white/10 bg-gray-900/70 px-4 py-3"
+          >
+            <div className="flex items-center justify-between text-sm text-blue-200">
+              <span className="font-semibold">{record.speaker}</span>
+              <span>{new Date(record.startedAtMs).toLocaleTimeString()}</span>
+            </div>
+            <p className="mt-2 whitespace-pre-wrap break-words text-base text-white">{record.text}</p>
+          </div>
+        ))
+      )}
     </div>
   )
 }

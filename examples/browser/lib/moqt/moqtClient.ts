@@ -580,9 +580,9 @@ export class MoqtClientWrapper {
     await client.sendSubscribeEndBeforeGroup(subscriptionRequestId, groupId, forward)
   }
 
-  /// A LargestObject SUBSCRIBE delivers only what follows the current largest
-  /// object, so a joining FETCH supplies that one. The two race, so the newest
-  /// group wins whichever arrives first.
+  /// The newest group's object, from `subscribeCurrentGroup`. The SUBSCRIBE
+  /// and the joining FETCH race, so the newest group wins whichever arrives
+  /// first.
   async subscribeLatest(
     trackNamespace: string[],
     trackName: string,
@@ -591,12 +591,35 @@ export class MoqtClientWrapper {
     options: Pick<SubscribeOptions, 'onPublishDone'> = {}
   ): Promise<SubscribeResult> {
     let newestGroupId: bigint | undefined
-    const deliver = (groupId: bigint, payload: Uint8Array) => {
-      if (payload.length === 0 || (newestGroupId !== undefined && groupId <= newestGroupId)) {
-        return
+    return this.subscribeCurrentGroup(
+      trackNamespace,
+      trackName,
+      authInfo,
+      (groupId, _objectId, payload) => {
+        if (newestGroupId !== undefined && groupId <= newestGroupId) {
+          return
+        }
+        newestGroupId = groupId
+        onLatest(payload, groupId)
+      },
+      options
+    )
+  }
+
+  /// Every non-empty object from the current group on. A LargestObject
+  /// SUBSCRIBE delivers only what follows the current largest object, so a
+  /// joining FETCH supplies the current group up to it.
+  async subscribeCurrentGroup(
+    trackNamespace: string[],
+    trackName: string,
+    authInfo: string,
+    onObject: (groupId: bigint, objectId: bigint, payload: Uint8Array) => void,
+    options: Pick<SubscribeOptions, 'onPublishDone'> = {}
+  ): Promise<SubscribeResult> {
+    const deliver = (groupId: bigint, objectId: bigint, payload: Uint8Array) => {
+      if (payload.length > 0) {
+        onObject(groupId, objectId, payload)
       }
-      newestGroupId = groupId
-      onLatest(payload, groupId)
     }
     const result = await this.subscribe(trackNamespace, trackName, authInfo, {
       filterType: FilterType.LargestObject,
@@ -605,12 +628,12 @@ export class MoqtClientWrapper {
     })
     this.setOnSubgroupObjectHandler(result.subscribeOk.trackAlias, (groupId, object) => {
       if (object.objectStatus === undefined) {
-        deliver(groupId, new Uint8Array(object.objectPayload))
+        deliver(groupId, object.objectId, new Uint8Array(object.objectPayload))
       }
     })
     if (result.subscribeOk.contentExists) {
       await this.relativeJoiningFetch(result.requestId, 0n, {
-        onObject: (object) => deliver(object.groupId, object.objectPayload)
+        onObject: (object) => deliver(object.groupId, object.objectId, object.objectPayload)
       })
     }
     return result

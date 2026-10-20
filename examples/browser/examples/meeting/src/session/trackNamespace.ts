@@ -21,3 +21,16 @@ export function parseTrackNamespace(trackNamespace: string[] | undefined): Parse
   }
   return { roomName: trackNamespace[1], userName: trackNamespace[2] }
 }
+
+/// Where the transcriber bot publishes its transcript (docs/architecture/ai-bots/meeting-transcriber.md):
+/// four elements, so it never reads as a member.
+export function buildTranscriberNamespace(roomName: string): string[] {
+  return [...buildNamespacePrefix(roomName), 'bots', 'transcriber']
+}
+
+export function isTranscriberNamespace(trackNamespace: string[] | undefined, roomName: string): boolean {
+  return trackNamespace?.join('/') === buildTranscriberNamespace(roomName).join('/')
+}
+
+/// The transcriber serves rooms of the anonymous app only, whose root a page without a JWT uses.
+export const TRANSCRIBER_AVAILABLE = !readMeetingAuth().token
