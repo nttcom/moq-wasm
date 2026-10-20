@@ -3,8 +3,8 @@ use bytes::Bytes;
 
 use crate::{
     object::{
-        ExtensionHeaders, ForwardingPreference, Object, ObjectStatus, StreamDataSenderFactory,
-        SubgroupObjectSender, SubgroupStart,
+        DataStreamResetCode, ExtensionHeaders, ForwardingPreference, Object, ObjectStatus,
+        StreamDataSenderFactory, SubgroupObjectSender, SubgroupStart,
     },
     wire::Location,
 };
@@ -123,6 +123,18 @@ impl TrackWriter {
         let extension_headers = self.with_pending_group_gap(ExtensionHeaders::default());
         group.write_object(payload, extension_headers).await?;
         group.finish().await
+    }
+
+    /// Resets the open group's stream with CANCELLED instead of finishing it:
+    /// draft-ietf-moq-transport-14 §10.4.3 forbids a FIN when the subscription
+    /// ends before the group, because a FIN tells the receiver it has the whole
+    /// subgroup.
+    pub(crate) async fn cancel(mut self) {
+        if let Some(mut group) = self.group.take()
+            && let Err(error) = group.sender.reset(DataStreamResetCode::Cancelled).await
+        {
+            tracing::debug!(?error, "open group could not be reset");
+        }
     }
 
     pub async fn finish(mut self) -> anyhow::Result<()> {
