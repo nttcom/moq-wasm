@@ -7,9 +7,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum SignatureError {
-    #[error("token is not a compact JWS with a JSON object header")]
+    #[error("token is not a compact JWS")]
     MalformedToken,
-    #[error("token signature does not match the secret")]
+    #[error("token is not HS256-signed with the secret")]
     InvalidSignature,
 }
 
@@ -27,13 +27,13 @@ pub fn sign_token(claims: &impl Serialize, secret: &str) -> anyhow::Result<Strin
     ))
 }
 
-/// Reads the payload without checking the signature.
-pub fn decode_payload(token: &str) -> Option<Map<String, Value>> {
+pub fn decode_unverified_payload(token: &str) -> Option<Map<String, Value>> {
     let [_, payload, _] = split_compact(token)?;
     decode_json_object(payload)
 }
 
-/// Fails with `InvalidSignature` when the header's `alg` is not `HS256`, as well as when the HMAC does not match.
+/// Fails with `MalformedToken` when the token, its header, its `alg` or its signature cannot be read,
+/// and with `InvalidSignature` when `alg` is not `HS256` or the HMAC does not match.
 pub fn verify_signature(token: &str, secret: &str) -> Result<(), SignatureError> {
     let [header_segment, payload_segment, signature_segment] =
         split_compact(token).ok_or(SignatureError::MalformedToken)?;
@@ -82,12 +82,12 @@ mod tests {
     }
 
     #[test]
-    fn decoded_payload_is_the_signed_payload() {
+    fn decoded_unverified_payload_is_the_signed_payload() {
         // Arrange
         let token = sign_token(&json!({ "appId": "APP", "iat": 1 }), "secret").unwrap();
 
         // Act
-        let payload = decode_payload(&token).unwrap();
+        let payload = decode_unverified_payload(&token).unwrap();
 
         // Assert
         assert_eq!(Value::Object(payload), json!({ "appId": "APP", "iat": 1 }));
@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn token_without_three_segments_is_malformed() {
         // Act / Assert
-        assert_eq!(decode_payload("not-a-jwt"), None);
+        assert_eq!(decode_unverified_payload("not-a-jwt"), None);
         assert_eq!(
             verify_signature("a.b", "secret"),
             Err(SignatureError::MalformedToken)
@@ -135,7 +135,7 @@ mod tests {
         let token = sign_token(&json!(["APP"]), "secret").unwrap();
 
         // Act / Assert
-        assert_eq!(decode_payload(&token), None);
+        assert_eq!(decode_unverified_payload(&token), None);
     }
 
     #[test]

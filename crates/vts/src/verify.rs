@@ -1,4 +1,4 @@
-use auth_token::{SignatureError, decode_payload, verify_signature};
+use auth_token::{SignatureError, decode_unverified_payload, verify_signature};
 use serde_json::{Map, Value};
 
 use crate::apps::Apps;
@@ -37,7 +37,7 @@ pub(crate) struct VerifiedToken {
 }
 
 pub(crate) fn verify_token(token: &str, apps: &Apps) -> Result<VerifiedToken, RejectReason> {
-    let claims = decode_payload(token).ok_or(RejectReason::MalformedToken)?;
+    let claims = decode_unverified_payload(token).ok_or(RejectReason::MalformedToken)?;
     let app_id = claims
         .get("appId")
         .and_then(Value::as_str)

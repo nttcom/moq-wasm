@@ -2,7 +2,7 @@ mod jwt;
 
 use serde::{Deserialize, Serialize};
 
-pub use jwt::{SignatureError, decode_payload, sign_token, verify_signature};
+pub use jwt::{SignatureError, decode_unverified_payload, sign_token, verify_signature};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

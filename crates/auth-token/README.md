@@ -9,7 +9,7 @@ verification, used by the VTS (which verifies them, and signs them in
 { "appId": "ac8adbc8-...", "publish": "site1/cam1", "subscribe": "site1", "iat": 1759591600, "exp": 1759678000 }
 ```
 
-`decode_payload` reads the payload of a compact JWS without verifying the
+`decode_unverified_payload` reads the payload of a compact JWS without verifying the
 signature. Only a successful `verify_signature` with the app's secret is an
 authorisation decision.
 
