@@ -1,10 +1,6 @@
 use std::{
     convert::Infallible,
-    path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use http_body_util::{BodyExt, Full};
@@ -180,40 +176,5 @@ pub(crate) fn app(app_id: &str, sub: Option<&str>) -> App {
         is_relay: false,
         sub: sub.map(Into::into),
         created_at: None,
-    }
-}
-
-static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
-
-pub(crate) struct TemporaryRegistryFile {
-    path: PathBuf,
-}
-
-impl TemporaryRegistryFile {
-    pub(crate) fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "app-registry-{}-{}.json",
-            std::process::id(),
-            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
-        ));
-        Self { path }
-    }
-
-    pub(crate) fn store(&self) -> RegistryStore {
-        RegistryStore::new(Location::File(self.path.clone())).unwrap()
-    }
-
-    pub(crate) fn put(&self, body: &serde_json::Value) {
-        std::fs::write(&self.path, serde_json::to_vec(body).unwrap()).unwrap();
-    }
-
-    pub(crate) fn body(&self) -> serde_json::Value {
-        serde_json::from_slice(&std::fs::read(&self.path).unwrap()).unwrap()
-    }
-}
-
-impl Drop for TemporaryRegistryFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
     }
 }

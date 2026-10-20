@@ -67,7 +67,7 @@ fn generation_of(bytes: &[u8]) -> Generation {
 mod tests {
     use serde_json::json;
 
-    use crate::test_support::{TemporaryRegistryFile, app};
+    use crate::{test_support::app, testing::TemporaryRegistryFile};
 
     #[tokio::test]
     async fn load_reads_the_apps_written_to_the_file() {

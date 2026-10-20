@@ -1,9 +1,4 @@
-use std::{
-    path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-
-use app_registry::{Apps, Location, RegistryStore};
+use app_registry::Apps;
 use auth_token::sign_token;
 use serde_json::{Value, json};
 
@@ -37,35 +32,4 @@ pub(crate) fn app_claims() -> Value {
 
 pub(crate) fn token(claims: &Value, secret: &str) -> String {
     sign_token(claims, secret).unwrap()
-}
-
-static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
-
-pub(crate) struct TemporaryRegistryFile {
-    path: PathBuf,
-}
-
-impl TemporaryRegistryFile {
-    pub(crate) fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "vts-registry-{}-{}.json",
-            std::process::id(),
-            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
-        ));
-        Self { path }
-    }
-
-    pub(crate) fn store(&self) -> RegistryStore {
-        RegistryStore::new(Location::File(self.path.clone())).unwrap()
-    }
-
-    pub(crate) fn write(&self, contents: &str) {
-        std::fs::write(&self.path, contents).unwrap();
-    }
-}
-
-impl Drop for TemporaryRegistryFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
 }

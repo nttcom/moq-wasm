@@ -6,6 +6,8 @@ mod location;
 mod store;
 #[cfg(test)]
 mod test_support;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use app::{App, Apps};
 pub use cloud_storage::Endpoint;

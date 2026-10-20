@@ -46,7 +46,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::test_support::TemporaryRegistryFile;
+    use app_registry::testing::TemporaryRegistryFile;
 
     #[tokio::test]
     async fn current_reads_the_registry_again_on_every_call() {
