@@ -1,7 +1,7 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        key_value_pair::{KeyValuePair, find_even, odd_values},
         messages::parameters::{authorization_token::AuthorizationToken, location::Location},
         util,
     },
@@ -31,28 +31,11 @@ impl SubscribeUpdate {
         let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
         let forward_u8 = buf.try_get_u8().context("forward u8")?;
         let forward = util::u8_to_bool(forward_u8).context("forward")?;
-        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let parameter = KeyValuePair::decode(buf)?;
-            parameters.push(parameter);
-        }
-        let authorization_tokens = parameters
-            .iter()
-            .filter(|kv_pair| kv_pair.key == 0x03)
-            .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
-                VariantType::Even(_) => unreachable!(),
-            })
+        let parameters = KeyValuePair::decode_list(buf)?;
+        let authorization_tokens = odd_values(&parameters, 0x03)
+            .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
-        let delivery_timeout =
-            parameters
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x02)
-                .map(|kv_pair| match kv_pair.value {
-                    VariantType::Odd(_) => unreachable!(),
-                    VariantType::Even(value) => value,
-                });
+        let delivery_timeout = find_even(&parameters, 0x02);
 
         Ok(Self {
             request_id,
@@ -74,28 +57,16 @@ impl SubscribeUpdate {
         payload.put_varint(self.end_group);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.forward as u8);
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        for token in &self.authorization_tokens {
-            let token_payload = KeyValuePair {
-                key: 0x03,
-                value: VariantType::Odd(token.encode().freeze()),
-            }
-            .encode();
-            parameters_payload.unsplit(token_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(delivery_timeout) = self.delivery_timeout {
-            let delivery_timeout_payload = KeyValuePair {
-                key: 0x02,
-                value: VariantType::Even(delivery_timeout),
-            }
-            .encode();
-            parameters_payload.unsplit(delivery_timeout_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+        let parameters: Vec<KeyValuePair> = self
+            .authorization_tokens
+            .iter()
+            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .chain(
+                self.delivery_timeout
+                    .map(|value| KeyValuePair::even(0x02, value)),
+            )
+            .collect();
+        payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
     }
 }

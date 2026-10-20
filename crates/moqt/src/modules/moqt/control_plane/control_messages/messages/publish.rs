@@ -4,7 +4,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        key_value_pair::{KeyValuePair, find_even, odd_values},
         messages::parameters::{
             authorization_token::AuthorizationToken, content_exists::ContentExists,
             group_order::GroupOrder,
@@ -39,35 +39,12 @@ impl Publish {
 
         let forward_u8 = buf.try_get_u8().context("forward u8")?;
         let forward = util::u8_to_bool(forward_u8).context("forward")?;
-        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let params = KeyValuePair::decode(buf)?;
-            parameters.push(params);
-        }
-        let authorization_tokens = parameters
-            .iter()
-            .filter(|kv_pair| kv_pair.key == 0x03)
-            .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
-                VariantType::Even(_) => unreachable!(),
-            })
+        let parameters = KeyValuePair::decode_list(buf)?;
+        let authorization_tokens = odd_values(&parameters, 0x03)
+            .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
-        let delivery_timeout =
-            parameters
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x02)
-                .map(|kv_pair| match kv_pair.value {
-                    VariantType::Odd(_) => unreachable!(),
-                    VariantType::Even(value) => value,
-                });
-        let max_duration = parameters
-            .iter()
-            .find(|kv_pair| kv_pair.key == 0x04)
-            .map(|kv_pair| match kv_pair.value {
-                VariantType::Odd(_) => unreachable!(),
-                VariantType::Even(value) => value,
-            });
+        let delivery_timeout = find_even(&parameters, 0x02);
+        let max_duration = find_even(&parameters, 0x04);
         Ok(Self {
             request_id,
             track_namespace_tuple,
@@ -92,37 +69,22 @@ impl Publish {
         payload.unsplit(self.content_exists.encode());
         payload.put_u8(self.forward as u8);
 
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        for token in &self.authorization_tokens {
-            let token_payload = KeyValuePair {
-                key: 0x03,
-                value: VariantType::Odd(token.encode().freeze()),
-            }
-            .encode();
-            parameters_payload.unsplit(token_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(delivery_timeout) = self.delivery_timeout {
-            let delivery_timeout_payload = KeyValuePair {
-                key: 0x02,
-                value: VariantType::Even(delivery_timeout),
-            }
-            .encode();
-            parameters_payload.unsplit(delivery_timeout_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(max_duration) = self.max_duration {
-            let max_duration_payload = KeyValuePair {
-                key: 0x04,
-                value: VariantType::Even(max_duration),
-            }
-            .encode();
-            parameters_payload.unsplit(max_duration_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+        let parameters: Vec<KeyValuePair> = self
+            .authorization_tokens
+            .iter()
+            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .chain(
+                [
+                    self.delivery_timeout
+                        .map(|value| KeyValuePair::even(0x02, value)),
+                    self.max_duration
+                        .map(|value| KeyValuePair::even(0x04, value)),
+                ]
+                .into_iter()
+                .flatten(),
+            )
+            .collect();
+        payload.unsplit(KeyValuePair::encode_list(&parameters));
 
         payload
     }

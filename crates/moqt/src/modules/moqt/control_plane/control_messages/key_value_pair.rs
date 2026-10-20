@@ -57,6 +57,52 @@ impl KeyValuePair {
         }
         buf
     }
+
+    pub(crate) fn decode_list(bytes: &mut impl Buf) -> anyhow::Result<Vec<Self>> {
+        let length = bytes.try_get_varint().context("number of parameters")?;
+        (0..length).map(|_| Self::decode(bytes)).collect()
+    }
+
+    pub(crate) fn encode_list(pairs: &[Self]) -> BytesMut {
+        let mut buf = BytesMut::new();
+        buf.put_varint(pairs.len() as u64);
+        pairs.iter().for_each(|pair| buf.unsplit(pair.encode()));
+        buf
+    }
+
+    pub(crate) fn even(key: u64, value: u64) -> Self {
+        Self {
+            key,
+            value: VariantType::Even(value),
+        }
+    }
+
+    pub(crate) fn odd(key: u64, value: Bytes) -> Self {
+        Self {
+            key,
+            value: VariantType::Odd(value),
+        }
+    }
+}
+
+pub(crate) fn find_even(pairs: &[KeyValuePair], key: u64) -> Option<u64> {
+    pairs
+        .iter()
+        .find(|pair| pair.key == key)
+        .and_then(|pair| match pair.value {
+            VariantType::Even(value) => Some(value),
+            VariantType::Odd(_) => None,
+        })
+}
+
+pub(crate) fn odd_values(pairs: &[KeyValuePair], key: u64) -> impl Iterator<Item = &Bytes> {
+    pairs
+        .iter()
+        .filter(move |pair| pair.key == key)
+        .filter_map(|pair| match &pair.value {
+            VariantType::Odd(value) => Some(value),
+            VariantType::Even(_) => None,
+        })
 }
 
 #[cfg(test)]
@@ -64,7 +110,7 @@ mod tests {
     mod success {
 
         use crate::modules::moqt::control_plane::control_messages::key_value_pair::{
-            KeyValuePair, VariantType,
+            KeyValuePair, VariantType, find_even, odd_values,
         };
         use bytes::Bytes;
 
@@ -130,6 +176,29 @@ mod tests {
             // key (0x0b) + value length (3) + value ([0x01, 0x02, 0x03])
             let expected_bytes = vec![0x0b, 0x03, 0x01, 0x02, 0x03];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+
+        #[test]
+        fn list_round_trips_and_finds_values_by_key() {
+            // Arrange
+            let pairs = vec![
+                KeyValuePair::odd(0x03, Bytes::from_static(b"a")),
+                KeyValuePair::even(0x02, 10),
+                KeyValuePair::odd(0x03, Bytes::from_static(b"b")),
+            ];
+
+            // Act
+            let buf = KeyValuePair::encode_list(&pairs);
+            let decoded = KeyValuePair::decode_list(&mut std::io::Cursor::new(&buf[..])).unwrap();
+
+            // Assert
+            assert_eq!(decoded, pairs);
+            assert_eq!(find_even(&decoded, 0x02), Some(10));
+            assert_eq!(find_even(&decoded, 0x04), None);
+            assert_eq!(
+                odd_values(&decoded, 0x03).collect::<Vec<_>>(),
+                [&Bytes::from_static(b"a"), &Bytes::from_static(b"b")]
+            );
         }
     }
 
