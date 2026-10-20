@@ -70,6 +70,7 @@ Application and integration components (draft reference is normally not required
 - Lint (JavaScript): `npx prettier --check`
 - Test (browser unit): `npm --prefix examples/browser test`
 - Wasm: `wasm-pack build crates/wasm --out-name moqt`
+- Console web: `npm --prefix crates/console/web run lint && npm --prefix crates/console/web run build`
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`

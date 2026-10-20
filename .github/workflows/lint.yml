@@ -155,3 +155,22 @@ jobs:
       - name: Run browser unit tests
         run: npm test
         working-directory: examples/browser
+  console-web:
+    runs-on: ubuntu-latest
+    container:
+      image: cimg/node:22.12.0@sha256:0dae71c56fb15a93a8223b5bfe2e93395b97efbf5509a48fe75b890bf1ad0b4e
+    defaults:
+      run:
+        working-directory: crates/console/web
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: npm ci
+      - name: Check code formatting
+        run: npm run format:check
+      - name: Type check
+        run: npm run lint
+      - name: Build
+        run: npm run build

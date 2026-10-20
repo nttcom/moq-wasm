@@ -19,11 +19,20 @@ Requests other than `GET` must carry `X-Console-Request`; a request whose
 
 ## Running locally
 
-Without IAP, give the console a fixed identity and a registry file:
+Without IAP, give the console a fixed identity and a registry file, then open
+the pages through the Vite dev server, which forwards `/api` to the console:
 
 ```
 CONSOLE_DEV_SUB=dev CONSOLE_REGISTRY_FILE=crates/vts/apps.example.json cargo run -p console
-curl http://localhost:8080/api/me
+npm --prefix crates/console/web install
+npm --prefix crates/console/web run dev
+```
+
+To serve the built pages from the console itself, as on Cloud Run:
+
+```
+npm --prefix crates/console/web run build
+CONSOLE_STATIC_DIR=crates/console/web/dist CONSOLE_DEV_SUB=dev CONSOLE_REGISTRY_FILE=crates/vts/apps.example.json cargo run -p console
 ```
 
 `CONSOLE_DEV_SUB` is refused on Cloud Run. There, set `CONSOLE_IAP_AUDIENCE`
