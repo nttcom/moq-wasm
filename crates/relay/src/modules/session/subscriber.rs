@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::modules::session::{
     data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
-    handler::publish::SubscribeOption,
     subscription::UpstreamSubscription,
 };
 
@@ -12,7 +11,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         &mut self,
         track_namespace: String,
         track_name: String,
-        option: SubscribeOption,
+        option: moqt::subscribe::SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription>;
     async fn send_unsubscribe(&self, subscription: &UpstreamSubscription) -> anyhow::Result<()>;
     async fn send_unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()>;
@@ -47,14 +46,8 @@ impl Subscriber for moqt::Subscriber {
         &mut self,
         track_namespace: String,
         track_name: String,
-        option: SubscribeOption,
+        option: moqt::subscribe::SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription> {
-        let option = moqt::subscribe::SubscribeOption {
-            subscriber_priority: option.subscriber_priority,
-            group_order: option.group_order,
-            forward: option.forward,
-            filter_type: option.filter_type,
-        };
         let moqt_sub = self.subscribe(track_namespace, track_name, option).await?;
         Ok(UpstreamSubscription::from(moqt_sub))
     }
