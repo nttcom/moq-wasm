@@ -2,14 +2,14 @@
 name = "app-registry"
 version = "0.1.0"
 edition = "2024"
-description = "The registry of apps whose secrets sign client JWTs, kept as one JSON object in Cloud Storage"
+description = "The registry of apps whose secrets sign client JWTs, kept as one JSON document in Cloud Storage or a local file"
 
 [dependencies]
 anyhow = "1.0.102"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.52.3", features = ["sync"] }
+tokio = { version = "1.52.3", features = ["sync", "fs"] }
 
 [dev-dependencies]
 http-body-util = "0.1.4"

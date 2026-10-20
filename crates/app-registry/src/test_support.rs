@@ -1,6 +1,10 @@
 use std::{
     convert::Infallible,
-    sync::{Arc, Mutex},
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use http_body_util::{BodyExt, Full};
@@ -15,7 +19,11 @@ use reqwest::Url;
 use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle};
 
-use crate::store::{Endpoint, RegistryStore};
+use crate::{
+    app::App,
+    cloud_storage::Endpoint,
+    store::{Location, RegistryStore},
+};
 
 pub(crate) const BUCKET: &str = "registry-bucket";
 pub(crate) const OBJECT: &str = "registry.json";
@@ -44,7 +52,12 @@ impl FakeCloudStorage {
     }
 
     pub(crate) fn store(&self) -> RegistryStore {
-        RegistryStore::new(Endpoint::Emulator(self.url.clone()), BUCKET, OBJECT).unwrap()
+        RegistryStore::new(Location::CloudStorage {
+            endpoint: Endpoint::Emulator(self.url.clone()),
+            bucket: BUCKET.into(),
+            object: OBJECT.into(),
+        })
+        .unwrap()
     }
 
     pub(crate) fn put(&self, body: &serde_json::Value) {
@@ -138,4 +151,50 @@ fn respond(status: StatusCode, body: Vec<u8>) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::new(Bytes::from(body)));
     *response.status_mut() = status;
     response
+}
+
+pub(crate) fn app(app_id: &str, sub: Option<&str>) -> App {
+    App {
+        app_id: app_id.into(),
+        name: None,
+        secret: format!("{app_id}-secret"),
+        is_relay: false,
+        sub: sub.map(Into::into),
+        created_at: None,
+    }
+}
+
+static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) struct TemporaryRegistryFile {
+    path: PathBuf,
+}
+
+impl TemporaryRegistryFile {
+    pub(crate) fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "app-registry-{}-{}.json",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        Self { path }
+    }
+
+    pub(crate) fn store(&self) -> RegistryStore {
+        RegistryStore::new(Location::File(self.path.clone())).unwrap()
+    }
+
+    pub(crate) fn put(&self, body: &serde_json::Value) {
+        std::fs::write(&self.path, serde_json::to_vec(body).unwrap()).unwrap();
+    }
+
+    pub(crate) fn body(&self) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(&self.path).unwrap()).unwrap()
+    }
+}
+
+impl Drop for TemporaryRegistryFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
