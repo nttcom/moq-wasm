@@ -91,17 +91,17 @@ mod tests {
 
     #[test]
     fn a_name_must_be_one_to_64_characters_without_control_characters() {
-        // Act / Assert
-        assert_eq!(app_request("   ").name(), Err(InvalidInput("invalid_name")));
-        assert_eq!(
-            app_request(&"あ".repeat(65)).name(),
-            Err(InvalidInput("invalid_name"))
-        );
-        assert_eq!(
-            app_request("line\nbreak").name(),
-            Err(InvalidInput("invalid_name"))
-        );
-        assert!(app_request(&"あ".repeat(64)).name().is_ok());
+        // Act
+        let blank = app_request("   ").name();
+        let too_long = app_request(&"あ".repeat(65)).name();
+        let with_newline = app_request("line\nbreak").name();
+        let longest = app_request(&"あ".repeat(64)).name();
+
+        // Assert
+        assert_eq!(blank, Err(InvalidInput("invalid_name")));
+        assert_eq!(too_long, Err(InvalidInput("invalid_name")));
+        assert_eq!(with_newline, Err(InvalidInput("invalid_name")));
+        assert!(longest.is_ok());
     }
 
     #[test]
@@ -137,21 +137,16 @@ mod tests {
 
     #[test]
     fn the_lifetime_is_one_second_to_24_hours() {
-        // Act / Assert
-        assert_eq!(
-            token_request(Some(""), None, 0).scope().err(),
-            Some(InvalidInput("invalid_ttl"))
-        );
-        assert_eq!(
-            token_request(Some(""), None, MAX_TOKEN_TTL_SECONDS + 1)
-                .scope()
-                .err(),
-            Some(InvalidInput("invalid_ttl"))
-        );
-        assert!(
-            token_request(Some(""), None, MAX_TOKEN_TTL_SECONDS)
-                .scope()
-                .is_ok()
-        );
+        // Act
+        let zero = token_request(Some(""), None, 0).scope().err();
+        let too_long = token_request(Some(""), None, MAX_TOKEN_TTL_SECONDS + 1)
+            .scope()
+            .err();
+        let longest = token_request(Some(""), None, MAX_TOKEN_TTL_SECONDS).scope();
+
+        // Assert
+        assert_eq!(zero, Some(InvalidInput("invalid_ttl")));
+        assert_eq!(too_long, Some(InvalidInput("invalid_ttl")));
+        assert!(longest.is_ok());
     }
 }

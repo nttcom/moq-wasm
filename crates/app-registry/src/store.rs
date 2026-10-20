@@ -55,10 +55,10 @@ impl RegistryStore {
     }
 
     /// Runs `change` on the latest apps and stores the result only if `change` altered them and no
-    /// other writer stored the registry in between. On such a conflict it reloads and runs `change` again, at most five runs
-    /// in total, so `change` must have no side effects beyond the apps it is given. Fails without
-    /// storing when the registry does not exist, when `change` fails, when the changed apps break
-    /// the rules `Apps::new` checks, or when all five runs conflict.
+    /// other writer stored the registry in between. When another writer did, it reloads and runs
+    /// `change` again, at most five runs in total, so `change` must have no side effects beyond the
+    /// apps it is given. Fails without storing when the registry does not exist, when `change` fails,
+    /// when the changed apps break the rules `Apps::new` checks, or when all five runs conflict.
     pub async fn update<T>(
         &self,
         mut change: impl FnMut(&mut Vec<App>) -> anyhow::Result<T>,

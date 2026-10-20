@@ -155,10 +155,11 @@ mod tests {
     #[test]
     fn secrets_are_32_random_bytes_in_base64() {
         // Act
-        let secret = random_secret().unwrap();
+        let first = random_secret().unwrap();
+        let second = random_secret().unwrap();
 
         // Assert
-        assert_eq!(STANDARD.decode(&secret).unwrap().len(), 32);
-        assert_ne!(secret, random_secret().unwrap());
+        assert_eq!(STANDARD.decode(&first).unwrap().len(), 32);
+        assert_ne!(first, second);
     }
 }
