@@ -65,7 +65,11 @@ pub(crate) async fn composite_room(members: &[MemberFiles], output: &Path) -> Re
                 .context("measure a participant's loudness")?,
         });
     }
-    let mut compositor = Compositor::start(inputs, CompositeSettings::default(), output)?;
+    let output = output.to_path_buf();
+    let mut compositor = tokio::task::spawn_blocking(move || {
+        Compositor::start(inputs, CompositeSettings::default(), &output)
+    })
+    .await??;
     compositor.finished().await?;
     Ok(origin)
 }
