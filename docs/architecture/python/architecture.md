@@ -116,9 +116,7 @@ The Meeting transcriber is the first user:
   leave;
 - catalogs are subscribed with `current_group=True`;
 - the transcript is published through `session.track`, so a late joiner's
-  FETCH is answered from the cache;
-- `t` becomes the LOC Timestamp of the utterance's first audio object, read
-  from the extension headers, instead of the time the bot received it.
+  FETCH is answered from the cache.
 
 The other bots keep moq-rs.
 
