@@ -35,9 +35,10 @@ export class BotRoomRequest {
 
   constructor(private readonly onEnd: (reason: BotRoomEnd) => void) {}
 
-  open(serviceUrl: string, roomId: string): void {
+  /// `query` reaches the bot of a room this request starts, such as the Meeting transcriber's `asr`.
+  open(serviceUrl: string, roomId: string, query: Record<string, string> = {}): void {
     this.close()
-    const source = new EventSource(`${serviceUrl}/rooms/${encodeURIComponent(roomId)}`)
+    const source = new EventSource(`${serviceUrl}/rooms/${encodeURIComponent(roomId)}?${new URLSearchParams(query)}`)
     for (const reason of Object.keys(BOT_ROOM_END_TEXT) as BotRoomEnd[]) {
       source.addEventListener(reason, () => {
         // EventSource reopens any stream the server ends.
