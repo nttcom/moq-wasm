@@ -449,7 +449,7 @@ async fn follow_catalog(
 }
 
 fn lists(catalog: &Catalog, track: &Track) -> bool {
-    let name = track.subscription().track_name();
+    let name = track.subscription.track_name();
     loc_tracks(catalog).any(|listed| listed.name == name)
 }
 
@@ -512,7 +512,7 @@ async fn open_cached(session: &Session, track: Option<&Track>) -> Option<FetchDa
     relay::fetch_cached(session, track)
         .await
         .inspect_err(|error| {
-            tracing::warn!(track = track.subscription().track_name(), %error, "cannot FETCH the cached part")
+            tracing::warn!(track = track.subscription.track_name(), %error, "cannot FETCH the cached part")
         })
         .ok()
         .flatten()
@@ -527,7 +527,7 @@ async fn next_fetched(receiver: Option<&mut FetchDataReceiver>) -> Result<Fetch>
 
 async fn next_object(track: Option<&mut Track>) -> Result<Option<TrackObject>> {
     match track {
-        Some(track) => track.next_object().await,
+        Some(track) => track.reader.next_object().await,
         None => std::future::pending().await,
     }
 }

@@ -50,19 +50,8 @@ impl RelayConnection {
 }
 
 pub(crate) struct Track {
-    subscription: Subscription,
-    reader: TrackReader,
-}
-
-impl Track {
-    pub(crate) fn subscription(&self) -> &Subscription {
-        &self.subscription
-    }
-
-    /// May be polled in `select!`.
-    pub(crate) async fn next_object(&mut self) -> Result<Option<TrackObject>> {
-        self.reader.next_object().await
-    }
+    pub(crate) subscription: Subscription,
+    pub(crate) reader: TrackReader,
 }
 
 /// `NextGroupStart` begins a live recording on a keyframe; `LargestObject`
@@ -79,9 +68,8 @@ pub(crate) async fn subscribe(
         forward: true,
         filter_type,
     };
-    let subscriber = session.subscriber();
-    let subscription = session
-        .subscriber()
+    let mut subscriber = session.subscriber();
+    let subscription = subscriber
         .subscribe(namespace.to_string(), name.to_string(), option)
         .await
         .with_context(|| format!("failed to subscribe {namespace}/{name}"))?;
@@ -97,7 +85,7 @@ pub(crate) async fn subscribe(
 pub(crate) async fn fetch_joining_group(session: &Session, track: &Track) -> Result<Option<Bytes>> {
     let mut subscriber = session.subscriber();
     let handle = subscriber
-        .fetch_relative_joining(track.subscription(), 0, FetchOption::default())
+        .fetch_relative_joining(&track.subscription, 0, FetchOption::default())
         .await?;
     let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut latest = None;
@@ -119,7 +107,7 @@ pub(crate) async fn fetch_cached(
     session: &Session,
     track: &Track,
 ) -> Result<Option<FetchDataReceiver>> {
-    let subscription = track.subscription();
+    let subscription = &track.subscription;
     let ContentExists::True { location: largest } = subscription.content_exists() else {
         return Ok(None);
     };

@@ -36,7 +36,7 @@ impl CatalogReader {
     pub(crate) async fn next(&mut self) -> Result<Option<Catalog>> {
         let payload = match self.current.take() {
             Some(payload) => payload,
-            None => match self.track.next_object().await? {
+            None => match self.track.reader.next_object().await? {
                 Some(object) => object.payload,
                 None => return Ok(None),
             },
