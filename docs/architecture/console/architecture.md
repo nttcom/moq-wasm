@@ -54,9 +54,9 @@ sequenceDiagram
 | Route | Answer |
 | --- | --- |
 | `GET /api/me` | `200 {app: {appId, name, createdAt} \| null}` |
-| `POST /api/app` `{name}` | `201 {app}`; `409 app_exists` when the caller has one |
+| `POST /api/app` `{name}` | `201 {app, secret}`; `409 app_exists` when the caller has one |
 | `POST /api/tokens` `{publish?, subscribe?, ttlSeconds}` | `200 {token, expiresAt}`; `404 no_app` |
-| `POST /api/app/secret` | `200 {app}`; `404 no_app` |
+| `POST /api/app/secret` | `200 {app, secret}`; `404 no_app` |
 | `DELETE /api/app` | `204`; `404 no_app` |
 
 Every route answers `401 unauthenticated` without a verified `sub`, `400` with
@@ -84,7 +84,7 @@ that origin's host matches `Host`.
 
 ## Invariants
 
-- No response carries an app's `secret`, and no log line carries a token.
+- Only the answers to creating an app and rotating its secret carry the `secret`, so its owner can sign tokens on their own server; no other response, and no log line, carries a secret or a token.
 - The caller's app is always found from the verified `sub`; no request names
   an `appId`, and the relay's app, which has no `sub`, is never touched.
 - A cross-site page cannot make a signed-in browser change an app: it cannot

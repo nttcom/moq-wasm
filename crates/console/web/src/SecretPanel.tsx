@@ -1,17 +1,19 @@
 import { useState } from 'react'
 
 import { api, describeError, type ConsoleApp } from './api'
+import { SecretReveal } from './SecretReveal'
 
 export function SecretPanel({ onRotated }: { onRotated: (app: ConsoleApp) => void }) {
   const [confirming, setConfirming] = useState(false)
-  const [done, setDone] = useState(false)
+  const [secret, setSecret] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const rotate = async () => {
     setError(null)
     try {
-      onRotated((await api.rotateSecret()).app)
-      setDone(true)
+      const rotated = await api.rotateSecret()
+      onRotated(rotated.app)
+      setSecret(rotated.secret)
       setConfirming(false)
     } catch (caught) {
       setError(describeError(caught))
@@ -22,7 +24,9 @@ export function SecretPanel({ onRotated }: { onRotated: (app: ConsoleApp) => voi
     <div className="flex flex-col gap-4">
       <div>
         <h2 className="text-lg font-semibold">secret</h2>
-        <p className="mt-1 text-sm text-muted">JWT が漏れたときに、secret を作り直します。appId は変わりません。</p>
+        <p className="mt-1 text-sm text-muted">
+          secret か JWT が漏れたときに、secret を作り直します。appId は変わりません。
+        </p>
       </div>
       <section className="rounded-md border border-line p-4">
         <h3 className="text-sm font-semibold">secret を作り直す</h3>
@@ -30,7 +34,6 @@ export function SecretPanel({ onRotated }: { onRotated: (app: ConsoleApp) => voi
           今までに発行した JWT は、すぐに使えなくなります。配信中のクライアントは、次に接続するときから断られます。
         </p>
         {error && <p className="mt-2 text-sm text-danger">{error}</p>}
-        {done && <p className="mt-2 text-sm text-accent">作り直しました。新しい JWT を発行してください。</p>}
         {confirming ? (
           <div className="mt-3 flex gap-2">
             <button
@@ -52,7 +55,7 @@ export function SecretPanel({ onRotated }: { onRotated: (app: ConsoleApp) => voi
           <button
             type="button"
             onClick={() => {
-              setDone(false)
+              setSecret(null)
               setConfirming(true)
             }}
             className="mt-3 rounded-md border border-danger px-4 py-2 text-sm text-danger"
@@ -61,6 +64,7 @@ export function SecretPanel({ onRotated }: { onRotated: (app: ConsoleApp) => voi
           </button>
         )}
       </section>
+      {secret && <SecretReveal secret={secret} />}
     </div>
   )
 }
