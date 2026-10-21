@@ -41,7 +41,7 @@ export function describeError(error: unknown): string {
   if (error instanceof ApiError) {
     return messages[error.code] ?? `予期しないエラーです（${error.status} ${error.code}）。`
   }
-  return 'コンソールに接続できませんでした。'
+  return 'コンソールに接続できませんでした。ページを開き直してください。'
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
