@@ -82,47 +82,49 @@ export function App() {
   const scoped = isAppPage(page)
 
   return (
-    <div className="grid min-h-screen grid-cols-[248px_1fr] bg-surface font-sans text-body">
-      <div className="sticky top-0 h-screen">
-        <Sidebar
-          apps={apps}
-          current={current}
-          page={page}
-          email={me.email}
-          onSelectApp={selectApp}
-          onNavigate={setPage}
-          onCreateApp={startCreate}
-        />
-      </div>
-      <div className="flex min-w-0 flex-col">
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-line bg-white px-7">
-          <nav aria-label="現在の場所" className="flex items-center gap-2 text-sm text-muted">
-            <span>MoQ Console</span>
-            {scoped && current && (
-              <>
-                <span aria-hidden="true">›</span>
-                <span className="font-mono text-[13px]">{displayName(current)}</span>
-              </>
-            )}
-            <span aria-hidden="true">›</span>
-            <span className="font-bold text-strong">{pageTitles[page]}</span>
-          </nav>
-          <a href={docsUrl} target="_blank" rel="noreferrer" className="text-[13px] text-primary hover:underline">
-            ドキュメント
-          </a>
-        </header>
-        <main key={`${page}-${currentId}`} className="animate-fade overflow-y-auto p-7">
-          <PageBody
-            page={page}
+    <>
+      <div inert={dialog !== null} className="grid min-h-screen grid-cols-[248px_1fr] bg-surface font-sans text-body">
+        <div className="sticky top-0 h-screen">
+          <Sidebar
             apps={apps}
             current={current}
-            relayUrl={me.relayUrl}
+            page={page}
+            email={me.email}
+            onSelectApp={selectApp}
             onNavigate={setPage}
-            onOpenApp={openApp}
-            onCreate={startCreate}
-            onDialog={setDialog}
+            onCreateApp={startCreate}
           />
-        </main>
+        </div>
+        <div className="flex min-w-0 flex-col">
+          <header className="flex h-16 shrink-0 items-center justify-between border-b border-line bg-white px-7">
+            <nav aria-label="現在の場所" className="flex items-center gap-2 text-sm text-muted">
+              <span>MoQ Console</span>
+              {scoped && current && (
+                <>
+                  <span aria-hidden="true">›</span>
+                  <span className="font-mono text-[13px]">{displayName(current)}</span>
+                </>
+              )}
+              <span aria-hidden="true">›</span>
+              <span className="font-bold text-strong">{pageTitles[page]}</span>
+            </nav>
+            <a href={docsUrl} target="_blank" rel="noreferrer" className="text-[13px] text-primary hover:underline">
+              ドキュメント
+            </a>
+          </header>
+          <main key={`${page}-${currentId}`} className="animate-fade overflow-y-auto p-7">
+            <PageBody
+              page={page}
+              apps={apps}
+              current={current}
+              relayUrl={me.relayUrl}
+              onNavigate={setPage}
+              onOpenApp={openApp}
+              onCreate={startCreate}
+              onDialog={setDialog}
+            />
+          </main>
+        </div>
       </div>
       {dialog?.kind === 'create' && <CreateAppModal onCreated={created} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'secret' && (
@@ -137,7 +139,7 @@ export function App() {
       {dialog?.kind === 'token' && (
         <TokenModal issued={dialog.issued} summary={dialog.summary} onClose={() => setDialog(null)} />
       )}
-    </div>
+    </>
   )
 }
 
