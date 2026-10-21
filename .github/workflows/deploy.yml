@@ -43,7 +43,7 @@ jobs:
         # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22
+          node-version: 22.23.4
           # no lockfile at repo root; opt out of the v5+ default auto-caching
           package-manager-cache: false
 
