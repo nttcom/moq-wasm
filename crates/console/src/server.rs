@@ -93,14 +93,12 @@ async fn accept_connections(listener: TcpListener, state: Arc<ConsoleState>) {
 
 type JsonResponse = Response<Full<Bytes>>;
 
-struct Refusal {
-    status: StatusCode,
-    error: &'static str,
-}
+/// The status and error code of a refused request.
+struct Refusal(StatusCode, &'static str);
 
 impl Refusal {
     fn response(self) -> JsonResponse {
-        error_response(self.status, self.error)
+        error_response(self.0, self.1)
     }
 }
 
@@ -137,21 +135,25 @@ async fn route(
     body: Incoming,
     state: &ConsoleState,
 ) -> JsonResponse {
-    if let Some((app_id, action)) = app_route(path) {
-        return match (method, action) {
+    let handled = if let Some((app_id, action)) = app_route(path) {
+        match (method, action) {
             (Method::POST, Some("tokens")) => issue_token(headers, body, app_id, state).await,
             (Method::POST, Some("secret")) => rotate_secret(headers, app_id, state).await,
             (Method::DELETE, None) => delete_app(headers, app_id, state).await,
-            _ => error_response(StatusCode::NOT_FOUND, "not_found"),
-        };
-    }
-    match (method, path) {
-        (Method::GET, "/api/me") => me(headers, state).await,
-        (Method::GET, "/api/apps") => list_apps(headers, state).await,
-        (Method::POST, "/api/apps") => create_app(headers, body, state).await,
-        (Method::GET, path) if !path.starts_with("/api/") => static_file(path, state).await,
-        _ => error_response(StatusCode::NOT_FOUND, "not_found"),
-    }
+            _ => Err(Refusal(StatusCode::NOT_FOUND, "not_found")),
+        }
+    } else {
+        match (method, path) {
+            (Method::GET, "/api/me") => me(headers, state).await,
+            (Method::GET, "/api/apps") => list_apps(headers, state).await,
+            (Method::POST, "/api/apps") => create_app(headers, body, state).await,
+            (Method::GET, path) if !path.starts_with("/api/") => {
+                return static_file(path, state).await;
+            }
+            _ => Err(Refusal(StatusCode::NOT_FOUND, "not_found")),
+        }
+    };
+    handled.unwrap_or_else(Refusal::response)
 }
 
 fn app_route(path: &str) -> Option<(&str, Option<&str>)> {
@@ -184,56 +186,46 @@ async fn static_file(path: &str, state: &ConsoleState) -> JsonResponse {
     response
 }
 
-async fn me(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
-    let caller = match authenticate(headers, state).await {
-        Ok(caller) => caller,
-        Err(refusal) => return refusal.response(),
-    };
-    json_response(
+async fn me(headers: &HeaderMap, state: &ConsoleState) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
+    Ok(json_response(
         StatusCode::OK,
         json!({ "email": caller.email, "relayUrl": state.relay_url }),
-    )
+    ))
 }
 
-async fn list_apps(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
-    let caller = match authenticate(headers, state).await {
-        Ok(caller) => caller,
-        Err(refusal) => return refusal.response(),
-    };
-    match state.store.load().await {
-        Ok(snapshot) => {
-            let apps: Vec<Value> = snapshot
-                .apps
-                .iter()
-                .filter(|app| apps::owned_by(app, &caller.sub))
-                .map(app_json)
-                .collect();
-            json_response(StatusCode::OK, json!({ "apps": apps }))
-        }
-        Err(error) => registry_unavailable(&error),
-    }
+async fn list_apps(headers: &HeaderMap, state: &ConsoleState) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
+    let snapshot = state.store.load().await.map_err(registry_unavailable)?;
+    let apps: Vec<Value> = snapshot
+        .apps
+        .iter()
+        .filter(|app| apps::owned_by(app, &caller.sub))
+        .map(app_json)
+        .collect();
+    Ok(json_response(StatusCode::OK, json!({ "apps": apps })))
 }
 
-async fn create_app(headers: &HeaderMap, body: Incoming, state: &ConsoleState) -> JsonResponse {
-    let caller = match authenticate(headers, state).await {
-        Ok(caller) => caller,
-        Err(refusal) => return refusal.response(),
-    };
-    let request: CreateAppRequest = match read_json(body).await {
-        Ok(request) => request,
-        Err(refusal) => return refusal.response(),
-    };
-    let name = match request.name() {
-        Ok(name) => name,
-        Err(invalid) => return invalid_input(invalid),
-    };
-    match apps::create_app(&state.store, &caller.sub, name, unix_now()).await {
-        Ok(Creation::Created(app)) => {
+async fn create_app(
+    headers: &HeaderMap,
+    body: Incoming,
+    state: &ConsoleState,
+) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
+    let request: CreateAppRequest = read_json(body).await?;
+    let name = request.name().map_err(invalid_input)?;
+    match apps::create_app(&state.store, &caller.sub, name, unix_now())
+        .await
+        .map_err(registry_unavailable)?
+    {
+        Creation::Created(app) => {
             tracing::info!(app_id = %app.app_id, "app created");
-            json_response(StatusCode::CREATED, app_with_secret_json(&app))
+            Ok(json_response(
+                StatusCode::CREATED,
+                app_with_secret_json(&app),
+            ))
         }
-        Ok(Creation::LimitReached) => error_response(StatusCode::BAD_REQUEST, "too_many_apps"),
-        Err(error) => registry_unavailable(&error),
+        Creation::LimitReached => Err(Refusal(StatusCode::BAD_REQUEST, "too_many_apps")),
     }
 }
 
@@ -242,19 +234,10 @@ async fn issue_token(
     body: Incoming,
     app_id: &str,
     state: &ConsoleState,
-) -> JsonResponse {
-    let caller = match authenticate(headers, state).await {
-        Ok(caller) => caller,
-        Err(refusal) => return refusal.response(),
-    };
-    let request: IssueTokenRequest = match read_json(body).await {
-        Ok(request) => request,
-        Err(refusal) => return refusal.response(),
-    };
-    let scope = match request.scope() {
-        Ok(scope) => scope,
-        Err(invalid) => return invalid_input(invalid),
-    };
+) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
+    let request: IssueTokenRequest = read_json(body).await?;
+    let scope = request.scope().map_err(invalid_input)?;
     respond(
         apps::issue_token(&state.store, &caller.sub, app_id, scope, unix_now()).await,
         |issued| {
@@ -267,11 +250,12 @@ async fn issue_token(
     )
 }
 
-async fn rotate_secret(headers: &HeaderMap, app_id: &str, state: &ConsoleState) -> JsonResponse {
-    let caller = match authenticate(headers, state).await {
-        Ok(caller) => caller,
-        Err(refusal) => return refusal.response(),
-    };
+async fn rotate_secret(
+    headers: &HeaderMap,
+    app_id: &str,
+    state: &ConsoleState,
+) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
     respond(
         apps::rotate_secret(&state.store, &caller.sub, app_id, unix_now()).await,
         |app| {
@@ -281,11 +265,12 @@ async fn rotate_secret(headers: &HeaderMap, app_id: &str, state: &ConsoleState) 
     )
 }
 
-async fn delete_app(headers: &HeaderMap, app_id: &str, state: &ConsoleState) -> JsonResponse {
-    let caller = match authenticate(headers, state).await {
-        Ok(caller) => caller,
-        Err(refusal) => return refusal.response(),
-    };
+async fn delete_app(
+    headers: &HeaderMap,
+    app_id: &str,
+    state: &ConsoleState,
+) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
     respond(
         apps::delete_app(&state.store, &caller.sub, app_id).await,
         |()| {
@@ -302,10 +287,7 @@ async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<Calle
         .await
         .map_err(|error| {
             tracing::info!(error = format!("{error:#}"), "request not authenticated");
-            Refusal {
-                status: StatusCode::UNAUTHORIZED,
-                error: "unauthenticated",
-            }
+            Refusal(StatusCode::UNAUTHORIZED, "unauthenticated")
         })
 }
 
@@ -336,10 +318,7 @@ fn authority(url: &Url) -> Option<String> {
 }
 
 async fn read_json<T: DeserializeOwned>(body: Incoming) -> Result<T, Refusal> {
-    let invalid_request = || Refusal {
-        status: StatusCode::BAD_REQUEST,
-        error: "invalid_request",
-    };
+    let invalid_request = || Refusal(StatusCode::BAD_REQUEST, "invalid_request");
     let bytes = Limited::new(body, MAX_BODY_BYTES)
         .collect()
         .await
@@ -351,11 +330,10 @@ async fn read_json<T: DeserializeOwned>(body: Incoming) -> Result<T, Refusal> {
 fn respond<T>(
     result: anyhow::Result<Option<T>>,
     done: impl FnOnce(T) -> JsonResponse,
-) -> JsonResponse {
-    match result {
-        Ok(Some(value)) => done(value),
-        Ok(None) => error_response(StatusCode::NOT_FOUND, "no_app"),
-        Err(error) => registry_unavailable(&error),
+) -> Result<JsonResponse, Refusal> {
+    match result.map_err(registry_unavailable)? {
+        Some(value) => Ok(done(value)),
+        None => Err(Refusal(StatusCode::NOT_FOUND, "no_app")),
     }
 }
 
@@ -372,13 +350,13 @@ fn app_json(app: &App) -> Value {
     })
 }
 
-fn invalid_input(invalid: InvalidInput) -> JsonResponse {
-    error_response(StatusCode::BAD_REQUEST, invalid.0)
+fn invalid_input(invalid: InvalidInput) -> Refusal {
+    Refusal(StatusCode::BAD_REQUEST, invalid.0)
 }
 
-fn registry_unavailable(error: &anyhow::Error) -> JsonResponse {
+fn registry_unavailable(error: anyhow::Error) -> Refusal {
     tracing::warn!(error = format!("{error:#}"), "registry access failed");
-    error_response(StatusCode::SERVICE_UNAVAILABLE, "registry_unavailable")
+    Refusal(StatusCode::SERVICE_UNAVAILABLE, "registry_unavailable")
 }
 
 fn unix_now() -> u64 {
