@@ -74,6 +74,38 @@ impl FakeCloudStorage {
     }
 }
 
+pub(crate) struct SilentServer {
+    url: Url,
+    _accept_handle: JoinHandle<()>,
+}
+
+impl SilentServer {
+    pub(crate) async fn run() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        Self {
+            url,
+            _accept_handle: tokio::spawn(hold_connections(listener)),
+        }
+    }
+
+    pub(crate) fn store(&self) -> RegistryStore {
+        RegistryStore::new(Location::CloudStorage {
+            endpoint: Endpoint::Emulator(self.url.clone()),
+            bucket: BUCKET.into(),
+            object: OBJECT.into(),
+        })
+        .unwrap()
+    }
+}
+
+async fn hold_connections(listener: TcpListener) {
+    let mut connections = Vec::new();
+    loop {
+        connections.push(listener.accept().await.unwrap().0);
+    }
+}
+
 async fn accept_connections(listener: TcpListener, object: Arc<Mutex<Option<StoredObject>>>) {
     loop {
         let (stream, _) = listener.accept().await.unwrap();

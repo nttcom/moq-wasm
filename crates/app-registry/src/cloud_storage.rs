@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, bail};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url, header::CONTENT_TYPE};
 use tokio::sync::Mutex;
@@ -11,6 +13,9 @@ use crate::{
 const CLOUD_STORAGE_URL: &str = "https://storage.googleapis.com/";
 const EMULATOR_HOST_ENV: &str = "STORAGE_EMULATOR_HOST";
 const GENERATION_HEADER: &str = "x-goog-generation";
+// Shorter than the 3 seconds the relay waits for the VTS, so the VTS can still answer from the
+// registry it read last.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub enum Endpoint {
     CloudStorage,
@@ -68,7 +73,7 @@ impl CloudStorageObject {
             .append_pair("uploadType", "media")
             .append_pair("name", object);
         Ok(Self {
-            http: Client::new(),
+            http: Client::builder().timeout(REQUEST_TIMEOUT).build()?,
             object_url,
             upload_url,
             credentials,
@@ -144,7 +149,7 @@ mod tests {
     use super::*;
     use crate::{
         App,
-        test_support::{FakeCloudStorage, app},
+        test_support::{FakeCloudStorage, SilentServer, app},
     };
 
     #[test]
@@ -180,6 +185,26 @@ mod tests {
             .unwrap()
         );
         assert_eq!(snapshot.generation, Generation(1));
+    }
+
+    #[tokio::test]
+    async fn load_gives_up_within_the_request_timeout_on_a_server_that_never_answers() {
+        // Arrange
+        let server = SilentServer::run().await;
+
+        // Act
+        let result = tokio::time::timeout(
+            REQUEST_TIMEOUT + Duration::from_secs(1),
+            server.store().load(),
+        )
+        .await;
+
+        // Assert
+        assert!(
+            result
+                .expect("load must not wait past its timeout")
+                .is_err()
+        );
     }
 
     #[tokio::test]
