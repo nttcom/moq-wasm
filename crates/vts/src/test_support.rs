@@ -1,6 +1,7 @@
+use auth_token::sign_token;
 use serde_json::{Value, json};
 
-use crate::{apps::Apps, apps::parse_apps, jwt::sign_token};
+use crate::apps::{Apps, parse_apps};
 
 pub(crate) const APP_ID: &str = "APP";
 pub(crate) const APP_SECRET: &str = "app-secret";

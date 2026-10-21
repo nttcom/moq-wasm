@@ -1,12 +1,22 @@
+use auth_token::{SignatureError, decode_unverified_payload, verify_signature};
 use serde_json::{Map, Value};
 
-use crate::{apps::Apps, jwt};
+use crate::apps::Apps;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RejectReason {
     MalformedToken,
     UnknownApp,
     InvalidSignature,
+}
+
+impl From<SignatureError> for RejectReason {
+    fn from(error: SignatureError) -> Self {
+        match error {
+            SignatureError::MalformedToken => Self::MalformedToken,
+            _ => Self::InvalidSignature,
+        }
+    }
 }
 
 impl RejectReason {
@@ -27,14 +37,14 @@ pub(crate) struct VerifiedToken {
 }
 
 pub(crate) fn verify_token(token: &str, apps: &Apps) -> Result<VerifiedToken, RejectReason> {
-    let claims = jwt::decode_claims(token).ok_or(RejectReason::MalformedToken)?;
+    let claims = decode_unverified_payload(token).ok_or(RejectReason::MalformedToken)?;
     let app_id = claims
         .get("appId")
         .and_then(Value::as_str)
         .filter(|app_id| !app_id.is_empty())
         .ok_or(RejectReason::MalformedToken)?;
     let app = apps.get(app_id).ok_or(RejectReason::UnknownApp)?;
-    jwt::verify_signature(token, &app.secret)?;
+    verify_signature(token, &app.secret)?;
     Ok(VerifiedToken {
         app_id: app_id.to_owned(),
         is_relay: app.is_relay,

@@ -20,10 +20,9 @@ clock and one rule set govern both accepting a session and expiring it later.
 | Module | Responsibility |
 | --- | --- |
 | `apps.rs` | Parse the apps file into `Apps` (`HashMap<appId, App { secret, is_relay }>`). serde enforces the row shape (`appId`, `secret`, boolean `isRelay`); empty strings and duplicate `appId`s are rejected explicitly. |
-| `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_claims` (payload only, no signature check) and `verify_signature`. HMAC uses `ring`. |
-| `verify.rs` | `verify_token`: decode claims → require string `appId` → look up the app → verify the signature with that app's secret. Returns `VerifiedToken { app_id, is_relay, claims }` or a `RejectReason`. |
+| `verify.rs` | `verify_token`: `auth_token::decode_unverified_payload` → require string `appId` → look up the app → `auth_token::verify_signature` with that app's secret. Returns `VerifiedToken { app_id, is_relay, claims }` or a `RejectReason`; a `SignatureError` maps onto `malformed_token` or `invalid_signature`. |
 | `server.rs` | `VtsServer`: owns the accept-loop `JoinHandle`; one `tokio::spawn` per connection running hyper HTTP/1. Routes `GET /healthz` and `POST /verify`; everything else is 404. |
-| `mint.rs` | `MintRequest` (also the clap argument group of `vts-mint`) and `mint_token`: fills `auth_token::Claims` with `iat` / `exp` and signs it; `parse_ttl` for `30m` / `12h` / `365d`. |
+| `mint.rs` | `MintRequest` (also the clap argument group of `vts-mint`) and `mint_token`: fills `auth_token::Claims` with `iat` / `exp` and signs it with `auth_token::sign_token`; `parse_ttl` for `30m` / `12h` / `365d`. |
 | `main.rs` | Reads `VTS_PORT` and `VTS_APPS_FILE`, loads the apps once, binds `0.0.0.0:<port>` and serves until the process is terminated. |
 | `bin/vts-mint.rs` | `vts-mint` CLI: `--apps` plus the `MintRequest` arguments, over `mint_token`. |
 
@@ -40,7 +39,7 @@ sequenceDiagram
         S-->>R: 400 {error: invalid_request}
     end
     S->>V: verify_token(token, apps)
-    V->>V: decode_claims → appId
+    V->>V: decode_unverified_payload → appId
     V->>V: apps.get(appId)
     V->>V: verify_signature(token, app.secret)
     alt rejected

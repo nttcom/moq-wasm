@@ -5,7 +5,15 @@ Living document. Update this file in the same change whenever the design intent,
 module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
-`auth-token` defines the one JWT payload shape used across the workspace:
+`auth-token` is the client JWT: the one payload shape used across the workspace,
+and its HS256 signing and verification.
+
+| Module | Responsibility |
+| --- | --- |
+| `lib.rs` | `Claims`. |
+| `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_unverified_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `ring`. |
+
+The payload claims:
 
 | Claim | Meaning |
 | --- | --- |
@@ -15,19 +23,20 @@ module boundaries, runtime flow, or invariants described here change.
 
 Producers and consumers:
 
-- `crates/vts` (`mint.rs`) serialises `Claims` into the token it signs.
+- `crates/vts` (`verify.rs`) reads the payload with `decode_unverified_payload` and checks
+  it with `verify_signature`; `mint.rs` signs `Claims` with `sign_token`.
 - `crates/relay` (`modules/auth/token_claims.rs`) deserialises `Claims` from the
-  VTS `/verify` response and applies its time and path policy.
-- `decode_claims` is for clients that need to look at their own token without
-  verifying it. The browser counterpart is
-  `examples/browser/examples/meeting/src/session/authToken.ts`.
+  VTS `/verify` response and applies its time and path policy. It holds no
+  secret and never signs or verifies.
 
 ## Invariants
 
-- The crate holds no cryptography. Signing and verification stay in `vts`;
-  `decode_claims` must never be used as an authorisation decision.
+- `decode_unverified_payload` never checks the signature. It may not be used as an
+  authorisation decision; only a successful `verify_signature` with the app's
+  secret is.
+- A header whose `alg` is anything other than `HS256` is `InvalidSignature`.
 - Unknown claims are ignored on read and never produced on write, so the VTS
   can pass the signed payload through unchanged while the relay reads only
   the fields above.
-- Dependencies are limited to `serde`, `serde_json`, `base64` and `anyhow` so
-  the crate can be used from `wasm`.
+- The crate holds no secret. Callers pass the secret of the app that signs or
+  verifies.

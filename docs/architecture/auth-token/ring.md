@@ -6,19 +6,20 @@ Accepted
 
 ## Date
 
-2026-10-05
+2026-10-20
 
 ## What
 
-Add `ring` as a direct dependency of the `vts` crate. `jwt.rs` signs and
+Add `ring` as a direct dependency of the `auth-token` crate. `jwt.rs` signs and
 verifies HS256 JWTs with `ring::hmac` (`HMAC_SHA256`, constant-time
 `verify`).
 
 ## Context
 
-VTS tokens are HS256 JWTs. The Node.js implementation used `jose`; the Rust
-crate needs one HMAC-SHA256 primitive plus base64url, and the relay decides
-everything else about the claims.
+Client tokens are HS256 JWTs. The VTS verifies them, and both `vts-mint` and
+the console sign them, so signing and verification live next to the claims
+they carry instead of inside the VTS. The crate needs one HMAC-SHA256
+primitive plus base64url; the relay decides everything else about the claims.
 
 ## Alternatives
 
@@ -34,7 +35,7 @@ everything else about the claims.
 ## Decision
 
 Use `ring`. It is already compiled in the workspace as the crypto provider
-under `rustls` (QUIC and the relay's TLS), its HMAC API is a dozen lines for
-sign and verify, and `verify` is constant-time. Header and payload encoding
-are done in `jwt.rs` with the `base64` crate, which other workspace crates
-already depend on.
+under `rustls` and `quinn`, so the relay, which depends on `auth-token` only
+for `Claims`, gains no new crate. Its HMAC API is a dozen lines for sign and
+verify, and `verify` is constant-time. Header and payload encoding use the
+`base64` crate, which `auth-token` already depends on.

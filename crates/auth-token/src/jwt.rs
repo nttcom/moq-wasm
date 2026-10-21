@@ -2,10 +2,18 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::hmac;
 use serde::Serialize;
 use serde_json::{Map, Value};
+use thiserror::Error;
 
-use crate::verify::RejectReason;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum SignatureError {
+    #[error("token is not a compact JWS")]
+    MalformedToken,
+    #[error("token is not HS256-signed with the secret")]
+    InvalidSignature,
+}
 
-pub(crate) fn sign_token(claims: &impl Serialize, secret: &str) -> anyhow::Result<String> {
+pub fn sign_token(claims: &impl Serialize, secret: &str) -> anyhow::Result<String> {
     let payload = serde_json::to_vec(claims)?;
     let signing_input = format!(
         "{}.{}",
@@ -19,28 +27,30 @@ pub(crate) fn sign_token(claims: &impl Serialize, secret: &str) -> anyhow::Resul
     ))
 }
 
-pub(crate) fn decode_claims(token: &str) -> Option<Map<String, Value>> {
+pub fn decode_unverified_payload(token: &str) -> Option<Map<String, Value>> {
     let [_, payload, _] = split_compact(token)?;
     decode_json_object(payload)
 }
 
-pub(crate) fn verify_signature(token: &str, secret: &str) -> Result<(), RejectReason> {
+/// Fails with `MalformedToken` when the token, its header, its `alg` or its signature cannot be read,
+/// and with `InvalidSignature` when `alg` is not `HS256` or the HMAC does not match.
+pub fn verify_signature(token: &str, secret: &str) -> Result<(), SignatureError> {
     let [header_segment, payload_segment, signature_segment] =
-        split_compact(token).ok_or(RejectReason::MalformedToken)?;
-    let header = decode_json_object(header_segment).ok_or(RejectReason::MalformedToken)?;
+        split_compact(token).ok_or(SignatureError::MalformedToken)?;
+    let header = decode_json_object(header_segment).ok_or(SignatureError::MalformedToken)?;
     let alg = header
         .get("alg")
         .and_then(Value::as_str)
-        .ok_or(RejectReason::MalformedToken)?;
+        .ok_or(SignatureError::MalformedToken)?;
     if alg != "HS256" {
-        return Err(RejectReason::InvalidSignature);
+        return Err(SignatureError::InvalidSignature);
     }
     let signature = URL_SAFE_NO_PAD
         .decode(signature_segment)
-        .map_err(|_| RejectReason::MalformedToken)?;
+        .map_err(|_| SignatureError::MalformedToken)?;
     let signing_input = &token[..header_segment.len() + 1 + payload_segment.len()];
     hmac::verify(&hmac_key(secret), signing_input.as_bytes(), &signature)
-        .map_err(|_| RejectReason::InvalidSignature)
+        .map_err(|_| SignatureError::InvalidSignature)
 }
 
 fn hmac_key(secret: &str) -> hmac::Key {
@@ -72,15 +82,15 @@ mod tests {
     }
 
     #[test]
-    fn decoded_claims_are_the_signed_payload() {
+    fn decoded_unverified_payload_is_the_signed_payload() {
         // Arrange
         let token = sign_token(&json!({ "appId": "APP", "iat": 1 }), "secret").unwrap();
 
         // Act
-        let claims = decode_claims(&token).unwrap();
+        let payload = decode_unverified_payload(&token).unwrap();
 
         // Assert
-        assert_eq!(Value::Object(claims), json!({ "appId": "APP", "iat": 1 }));
+        assert_eq!(Value::Object(payload), json!({ "appId": "APP", "iat": 1 }));
     }
 
     #[test]
@@ -91,7 +101,7 @@ mod tests {
         // Act / Assert
         assert_eq!(
             verify_signature(&token, "other"),
-            Err(RejectReason::InvalidSignature)
+            Err(SignatureError::InvalidSignature)
         );
     }
 
@@ -105,17 +115,17 @@ mod tests {
         // Act / Assert
         assert_eq!(
             verify_signature(&token, "secret"),
-            Err(RejectReason::InvalidSignature)
+            Err(SignatureError::InvalidSignature)
         );
     }
 
     #[test]
     fn token_without_three_segments_is_malformed() {
         // Act / Assert
-        assert_eq!(decode_claims("not-a-jwt"), None);
+        assert_eq!(decode_unverified_payload("not-a-jwt"), None);
         assert_eq!(
             verify_signature("a.b", "secret"),
-            Err(RejectReason::MalformedToken)
+            Err(SignatureError::MalformedToken)
         );
     }
 
@@ -125,7 +135,7 @@ mod tests {
         let token = sign_token(&json!(["APP"]), "secret").unwrap();
 
         // Act / Assert
-        assert_eq!(decode_claims(&token), None);
+        assert_eq!(decode_unverified_payload(&token), None);
     }
 
     #[test]
@@ -138,7 +148,7 @@ mod tests {
         // Act / Assert
         assert_eq!(
             verify_signature(&tampered, "secret"),
-            Err(RejectReason::MalformedToken)
+            Err(SignatureError::MalformedToken)
         );
     }
 }
