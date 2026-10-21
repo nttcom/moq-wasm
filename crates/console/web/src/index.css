@@ -1,12 +1,60 @@
 @import 'tailwindcss';
 
 @theme {
-  --font-sans: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, monospace;
-  --color-ink: #1f2430;
-  --color-muted: #6b7280;
-  --color-line: #d8dce3;
-  --color-wash: #f3f4f7;
-  --color-accent: #0f766e;
-  --color-danger: #b42318;
+  --font-sans: 'Yu Gothic', YuGothic, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', system-ui, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+
+  --color-primary: #3078c3;
+  --color-primary-hover: #2a6bb0;
+  --color-primary-active: #235d99;
+  --color-navy: #0e367d;
+  --color-navy-deep: #0a2a63;
+  --color-brand-700: #154a9c;
+  --color-brand-300: #6fa9dc;
+  --color-brand-50: #eff5fb;
+  --color-strong: #222222;
+  --color-body: #333333;
+  --color-muted: #6b6b6b;
+  --color-subtle: #8a8a8a;
+  --color-line: #e3e5e9;
+  --color-divider: #eceef1;
+  --color-line-strong: #d4d4d4;
+  --color-surface: #f5f6f8;
+  --color-success: #1e9e5a;
+  --color-success-50: #e6f5ec;
+  --color-warning: #ffae00;
+  --color-warning-50: #fff4db;
+  --color-warning-ink: #9a6a00;
+  --color-danger: #d32f2f;
+  --color-danger-50: #fcebea;
+  --color-scrim: rgb(14 30 54 / 0.55);
+
+  --shadow-card: 0 1px 3px rgb(20 40 72 / 0.08), 0 1px 2px rgb(20 40 72 / 0.06);
+  --shadow-pop: 0 12px 28px rgb(20 40 72 / 0.14), 0 4px 8px rgb(20 40 72 / 0.08);
+  --shadow-modal: 0 24px 56px rgb(20 40 72 / 0.2);
+
+  --animate-fade: fade 280ms cubic-bezier(0.2, 0, 0, 1);
+  --animate-pop: pop 220ms cubic-bezier(0.2, 0, 0, 1);
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.98);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
