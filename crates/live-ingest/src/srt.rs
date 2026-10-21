@@ -36,33 +36,16 @@ async fn handle_request(request: ConnectionRequest, options: IngestOptions) {
     let namespace = namespace_from_stream_id(stream_id.as_deref());
     let remote = request.remote();
     tracing::info!(%remote, ?stream_id, namespace = %namespace.join("/"), "SRT publisher connected");
-    match publish(request, &options, namespace).await {
-        Ok(summary) => tracing::info!(
-            %remote,
-            packets = summary.packets,
-            discontinuities = summary.discontinuities,
-            rx_loss = summary.rx_loss,
-            rx_dropped = summary.rx_dropped,
-            rx_retransmit = summary.rx_retransmit,
-            "SRT stream ended"
-        ),
-        Err(err) => tracing::warn!(%remote, ?err, "SRT publisher failed"),
+    if let Err(err) = publish(request, &options, namespace).await {
+        tracing::warn!(%remote, ?err, "SRT publisher failed");
     }
-}
-
-struct StreamSummary {
-    packets: u64,
-    discontinuities: u64,
-    rx_loss: u64,
-    rx_dropped: u64,
-    rx_retransmit: u64,
 }
 
 async fn publish(
     request: ConnectionRequest,
     options: &IngestOptions,
     namespace: Vec<String>,
-) -> Result<StreamSummary> {
+) -> Result<()> {
     let remote = request.remote();
     let mut socket = request.accept(None).await?;
     let mut demuxer = mpegts::Demuxer::new();
@@ -92,15 +75,16 @@ async fn publish(
         publisher.push(event)?;
     }
     let statistics = socket.statistics().next().now_or_never().flatten();
-    Ok(StreamSummary {
+    tracing::info!(
+        %remote,
         packets,
         discontinuities,
-        rx_loss: statistics.as_ref().map_or(0, |stats| stats.rx_loss_data),
-        rx_dropped: statistics.as_ref().map_or(0, |stats| stats.rx_dropped_data),
-        rx_retransmit: statistics
-            .as_ref()
-            .map_or(0, |stats| stats.rx_retransmit_data),
-    })
+        rx_loss = statistics.as_ref().map_or(0, |stats| stats.rx_loss_data),
+        rx_dropped = statistics.as_ref().map_or(0, |stats| stats.rx_dropped_data),
+        rx_retransmit = statistics.as_ref().map_or(0, |stats| stats.rx_retransmit_data),
+        "SRT stream ended"
+    );
+    Ok(())
 }
 
 fn namespace_from_stream_id(stream_id: Option<&str>) -> Vec<String> {
