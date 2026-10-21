@@ -7,7 +7,6 @@ use tokio::{
 
 pub async fn perform_handshake(socket: &mut TcpStream, label: &str) -> Result<Vec<u8>> {
     let mut handshake = Handshake::new(PeerType::Server);
-    let leftover;
     let mut buf = [0u8; 4096];
 
     loop {
@@ -25,12 +24,9 @@ pub async fn perform_handshake(socket: &mut TcpStream, label: &str) -> Result<Ve
                 remaining_bytes,
             } => {
                 socket.write_all(&response_bytes).await?;
-                leftover = remaining_bytes;
-                break;
+                tracing::debug!(peer = %label, "RTMP handshake completed");
+                return Ok(remaining_bytes);
             }
         }
     }
-
-    tracing::debug!(peer = %label, "RTMP handshake completed");
-    Ok(leftover)
 }

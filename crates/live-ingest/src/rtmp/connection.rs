@@ -1,10 +1,7 @@
 use std::collections::VecDeque;
 
 use anyhow::{Context, Result};
-use rml_rtmp::{
-    chunk_io::Packet,
-    sessions::{ServerSession, ServerSessionConfig, ServerSessionResult},
-};
+use rml_rtmp::sessions::{ServerSession, ServerSessionConfig, ServerSessionResult};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -56,7 +53,8 @@ async fn handle_connection(
     )
     .await?;
     if !leftover.is_empty() {
-        handle_session_bytes(&mut session, &mut socket, &leftover, label, &mut state).await?;
+        let results = session.handle_input(&leftover)?;
+        handle_results(&mut session, &mut socket, results, label, &mut state).await?;
     }
 
     tracing::info!(peer = %label, "RTMP session ready");
@@ -67,21 +65,11 @@ async fn handle_connection(
             break;
         }
 
-        handle_session_bytes(&mut session, &mut socket, &buf[..read], label, &mut state).await?;
+        let results = session.handle_input(&buf[..read])?;
+        handle_results(&mut session, &mut socket, results, label, &mut state).await?;
     }
 
     Ok(())
-}
-
-async fn handle_session_bytes(
-    session: &mut ServerSession,
-    socket: &mut TcpStream,
-    bytes: &[u8],
-    label: &str,
-    state: &mut RtmpState,
-) -> Result<()> {
-    let results = session.handle_input(bytes)?;
-    handle_results(session, socket, results, label, state).await
 }
 
 async fn handle_results(
@@ -95,7 +83,10 @@ async fn handle_results(
 
     while let Some(result) = queue.pop_front() {
         match result {
-            ServerSessionResult::OutboundResponse(packet) => send_packet(socket, &packet).await?,
+            ServerSessionResult::OutboundResponse(packet) => socket
+                .write_all(&packet.bytes)
+                .await
+                .context("send RTMP packet")?,
             ServerSessionResult::RaisedEvent(event) => {
                 handle_event(session, &mut queue, event, label, state).await?;
             }
@@ -106,11 +97,4 @@ async fn handle_results(
     }
 
     Ok(())
-}
-
-async fn send_packet(socket: &mut TcpStream, packet: &Packet) -> Result<()> {
-    socket
-        .write_all(&packet.bytes)
-        .await
-        .context("send RTMP packet")
 }
