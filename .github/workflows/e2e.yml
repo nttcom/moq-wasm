@@ -537,8 +537,8 @@ jobs:
         # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
-          version: 0.12.21
-          checksum: 23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0
+          version: 0.13.4
+          checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
           save-cache: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Run moderator unit tests
@@ -616,8 +616,8 @@ jobs:
         # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
-          version: 0.12.21
-          checksum: 23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0
+          version: 0.13.4
+          checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
           save-cache: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install espeak-ng
@@ -693,8 +693,8 @@ jobs:
         # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
-          version: 0.12.21
-          checksum: 23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0
+          version: 0.13.4
+          checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
           save-cache: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Run camera detection unit tests
