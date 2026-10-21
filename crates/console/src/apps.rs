@@ -5,6 +5,12 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use ring::rand::{SecureRandom, SystemRandom};
 
 pub(crate) const MAX_TOKEN_TTL_SECONDS: u64 = 24 * 60 * 60;
+pub(crate) const MAX_APPS_PER_OWNER: usize = 20;
+
+pub(crate) enum Creation {
+    Created(App),
+    LimitReached,
+}
 
 pub(crate) struct TokenScope {
     pub(crate) publish: Option<String>,
@@ -22,7 +28,7 @@ pub(crate) async fn create_app(
     sub: &str,
     name: String,
     now: u64,
-) -> anyhow::Result<App> {
+) -> anyhow::Result<Creation> {
     let app = App {
         app_id: random_app_id()?,
         name: Some(name),
@@ -34,8 +40,16 @@ pub(crate) async fn create_app(
     };
     store
         .update(|apps| {
+            if apps
+                .iter()
+                .filter(|existing| owned_by(existing, sub))
+                .count()
+                >= MAX_APPS_PER_OWNER
+            {
+                return Ok(Creation::LimitReached);
+            }
             apps.push(app.clone());
-            Ok(app.clone())
+            Ok(Creation::Created(app.clone()))
         })
         .await
 }

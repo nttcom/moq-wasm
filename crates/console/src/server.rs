@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
-    apps,
+    apps::{self, Creation},
     identity::{Caller, Identity},
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
     static_files::StaticFiles,
@@ -228,10 +228,11 @@ async fn create_app(headers: &HeaderMap, body: Incoming, state: &ConsoleState) -
         Err(invalid) => return invalid_input(invalid),
     };
     match apps::create_app(&state.store, &caller.sub, name, unix_now()).await {
-        Ok(app) => {
+        Ok(Creation::Created(app)) => {
             tracing::info!(app_id = %app.app_id, "app created");
             json_response(StatusCode::CREATED, app_with_secret_json(&app))
         }
+        Ok(Creation::LimitReached) => error_response(StatusCode::BAD_REQUEST, "too_many_apps"),
         Err(error) => registry_unavailable(&error),
     }
 }
@@ -545,6 +546,34 @@ mod tests {
             .filter(|row| row["sub"] == "accounts.google.com:1")
             .count();
         assert_eq!(owned, 2);
+    }
+
+    #[tokio::test]
+    async fn create_app_refuses_an_app_beyond_the_limit_per_owner() {
+        // Arrange
+        let console = start_console(development("dev")).await;
+        let owned: Vec<Value> = (0..apps::MAX_APPS_PER_OWNER)
+            .map(|index| json!({ "appId": format!("app-{index}"), "secret": "s", "isRelay": false, "sub": "dev" }))
+            .collect();
+        console.registry_file.put(&Value::Array(owned));
+        let before = console.registry_file.body();
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::POST,
+            "/api/apps",
+            Some(json!({ "name": "one more" })),
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"],
+            "too_many_apps"
+        );
+        assert_eq!(console.registry_file.body(), before);
     }
 
     #[tokio::test]

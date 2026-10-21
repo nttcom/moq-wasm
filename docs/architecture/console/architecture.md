@@ -22,7 +22,7 @@ account.
 | `identity.rs` | `Identity`: how a request names its `sub`. `Iap` reads the `x-goog-iap-jwt-assertion` header and verifies it; `Development` returns a fixed `sub` for local runs. `Identity::new` refuses `Development` on Cloud Run and refuses both or neither. |
 | `server.rs` | `ConsoleServer`: owns the accept-loop `JoinHandle`, refuses a write that fails the CSRF check, identifies the caller and routes the API. |
 | `input.rs` | The request bodies and their rules: an app name is 1 to 64 characters after trimming, without control characters; a publish or subscribe path is `""` or `/`-separated non-empty elements, up to 255 characters; a token lives 1 second to 24 hours and names publish, subscribe or both. Unknown fields are refused. |
-| `apps.rs` | The operations on the caller's apps over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`), issue a token signed with the app's secret, rotate the secret (recording `rotatedAt`), delete. An operation on an `appId` the caller does not own answers `None`. |
+| `apps.rs` | The operations on the caller's apps over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`; at most 20 apps per owner, because the VTS reads the whole registry on every verification), issue a token signed with the app's secret, rotate the secret (recording `rotatedAt`), delete. An operation on an `appId` the caller does not own answers `None`. |
 | `static_files.rs` | `StaticFiles`: the built pages under `CONSOLE_STATIC_DIR`. `/` is `index.html`; every other path element must be plain ASCII (letters, digits, `.`, `_`, `-`) that does not start with a dot, and only html, js, css, svg, png, ico and woff2 are served. |
 | `main.rs` | Reads the configuration, loads the registry once to fail fast, binds `0.0.0.0:$PORT` and serves. |
 | `web/` | The pages: React and Tailwind built by Vite. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
@@ -55,7 +55,7 @@ sequenceDiagram
 | --- | --- |
 | `GET /api/me` | `200 {email, relayUrl}` |
 | `GET /api/apps` | `200 {apps: [{appId, name, createdAt, rotatedAt}]}`, the caller's apps |
-| `POST /api/apps` `{name}` | `201 {app, secret}` |
+| `POST /api/apps` `{name}` | `201 {app, secret}`; `400 too_many_apps` when the caller already owns 20 apps |
 | `POST /api/apps/{appId}/tokens` `{publish?, subscribe?, ttlSeconds}` | `200 {token, expiresAt}`; `404 no_app` |
 | `POST /api/apps/{appId}/secret` | `200 {app, secret}`; `404 no_app` |
 | `DELETE /api/apps/{appId}` | `204`; `404 no_app` |

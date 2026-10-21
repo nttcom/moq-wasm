@@ -6,14 +6,14 @@ from the app registry.
 
 ## API
 
-| Route                           | Body                                                         | Answer                                                         |
-| ------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------- |
-| `GET /api/me`                   |                                                              | `{ "email": …, "relayUrl": … }`                                |
-| `GET /api/apps`                 |                                                              | `{ "apps": [{ "appId", "name", "createdAt", "rotatedAt" }] }`  |
-| `POST /api/apps`                | `{ "name": "camera site 1" }`                                | `201 { "app": …, "secret": … }`                                |
-| `POST /api/apps/{appId}/tokens` | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }`                 |
-| `POST /api/apps/{appId}/secret` |                                                              | `{ "app": …, "secret": … }`; tokens issued before stop working |
-| `DELETE /api/apps/{appId}`      |                                                              | `204`                                                          |
+| Route                           | Body                                                         | Answer                                                             |
+| ------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `GET /api/me`                   |                                                              | `{ "email": …, "relayUrl": … }`                                    |
+| `GET /api/apps`                 |                                                              | `{ "apps": [{ "appId", "name", "createdAt", "rotatedAt" }] }`      |
+| `POST /api/apps`                | `{ "name": "camera site 1" }`                                | `201 { "app": …, "secret": … }`, `400` beyond 20 apps per employee |
+| `POST /api/apps/{appId}/tokens` | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }`                     |
+| `POST /api/apps/{appId}/secret` |                                                              | `{ "app": …, "secret": … }`; tokens issued before stop working     |
+| `DELETE /api/apps/{appId}`      |                                                              | `204`                                                              |
 
 Requests other than `GET` must carry `X-Console-Request`; a request whose
 `Origin` is another site is refused.
