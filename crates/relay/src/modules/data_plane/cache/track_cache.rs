@@ -25,7 +25,7 @@ pub(crate) struct TrackMalformed;
 /// How long a track's persisted objects outlive its publisher.
 const PUBLISHER_GONE_GRACE: Duration = Duration::from_secs(10);
 
-fn location(group_id: u64, object_id: u64) -> moqt::object::Location {
+pub(crate) fn location(group_id: u64, object_id: u64) -> moqt::object::Location {
     moqt::object::Location {
         group_id,
         object_id,

@@ -106,16 +106,10 @@ fn before_end(location: Location, end: Location) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::test_support::location;
 
     const RETENTION: Duration = Duration::from_secs(30);
     const START: Duration = Duration::from_secs(1_000);
-
-    fn location(group_id: u64, object_id: u64) -> Location {
-        Location {
-            group_id,
-            object_id,
-        }
-    }
 
     fn object(group_id: u64, object_id: u64) -> CachedObject {
         CachedObject {

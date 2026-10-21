@@ -645,6 +645,7 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
+    use crate::modules::test_support::location;
     use crate::{
         RequestFailure, SessionEvent, Subscription, TrackObject,
         fetch::{FetchHandle, FetchOption},
@@ -685,13 +686,6 @@ mod tests {
         tokio::time::timeout(HANDSHAKE_TIMEOUT, future)
             .await
             .expect("the exchange timed out")
-    }
-
-    fn location(group_id: u64, object_id: u64) -> Location {
-        Location {
-            group_id,
-            object_id,
-        }
     }
 
     fn plain(group: GroupBoundary, payload: &'static [u8]) -> OutgoingObject {

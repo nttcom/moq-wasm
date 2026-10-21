@@ -59,13 +59,7 @@ fn response_end_location(requested_end: Location, largest: Location) -> Location
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn location(group_id: u64, object_id: u64) -> Location {
-        Location {
-            group_id,
-            object_id,
-        }
-    }
+    use crate::modules::test_support::location;
 
     #[test]
     fn a_range_ending_before_the_largest_object_keeps_its_end() {
