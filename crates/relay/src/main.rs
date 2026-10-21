@@ -1,4 +1,7 @@
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use moqt::server::write_self_signed_cert;
 use tokio::signal::unix::{SignalKind, signal};
@@ -25,22 +28,13 @@ fn cert_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CERT_DIR))
 }
 
-fn get_cert_path() -> PathBuf {
-    cert_dir().join("cert.pem")
-}
-
-fn get_key_path() -> PathBuf {
-    cert_dir().join("key.pem")
-}
-
-pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
+fn create_certs_for_test_if_needed(cert_dir: &Path) -> anyhow::Result<()> {
     unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
-    let cert_dir = cert_dir();
     tracing::info!("relay cert dir: {}", cert_dir.to_string_lossy());
-    if get_cert_path().exists() && get_key_path().exists() {
+    if cert_dir.join("cert.pem").exists() && cert_dir.join("key.pem").exists() {
         tracing::info!("Certificates already exist");
     } else {
-        write_self_signed_cert(&cert_dir, &["localhost", "127.0.0.1", "relay-a", "relay-b"])?;
+        write_self_signed_cert(cert_dir, &["localhost", "127.0.0.1", "relay-a", "relay-b"])?;
     }
     Ok(())
 }
@@ -48,11 +42,12 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _logging = relay::init_logging("relay")?;
-    create_certs_for_test_if_needed()?;
+    let cert_dir = cert_dir();
+    create_certs_for_test_if_needed(&cert_dir)?;
     let config = relay::RelayConfig::from_env()?;
 
-    let key_path = get_key_path().to_str().unwrap().to_string();
-    let cert_path = get_cert_path().to_str().unwrap().to_string();
+    let key_path = cert_dir.join("key.pem").to_str().unwrap().to_string();
+    let cert_path = cert_dir.join("cert.pem").to_str().unwrap().to_string();
 
     let server = relay::RelayServer::new_with_config(&key_path, &cert_path, config.clone()).await?;
     let mut client_handler = server.spawn_client_transport::<moqt::DUAL>(config.port)?;
