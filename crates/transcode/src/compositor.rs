@@ -813,12 +813,13 @@ mod tests {
             bitrate_kbps: 100,
         }])
         .unwrap();
+        let input = transcoder.input();
         for event in &first {
             if let MediaEvent::Video(sample) = event {
-                transcoder.push(sample).unwrap();
+                input.push(sample).unwrap();
             }
         }
-        transcoder.finish().unwrap();
+        input.finish().unwrap();
         let mut smaller = Vec::new();
         while let Some(output) = transcoder.next().await {
             smaller.push(output.unwrap().event);

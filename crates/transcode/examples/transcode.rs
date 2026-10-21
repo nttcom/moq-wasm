@@ -38,12 +38,13 @@ async fn main() -> Result<()> {
     }
 
     let mut transcoder = Transcoder::new(&renditions)?;
+    let input = transcoder.input();
     for event in &events {
         if let MediaEvent::Video(sample) = event {
-            transcoder.push(sample)?;
+            input.push(sample)?;
         }
     }
-    transcoder.finish()?;
+    input.finish()?;
 
     let mut muxers: Vec<Fmp4Muxer> = renditions.iter().map(|_| Fmp4Muxer::new()).collect();
     let mut outputs: Vec<bytes::BytesMut> = renditions.iter().map(|_| Default::default()).collect();
