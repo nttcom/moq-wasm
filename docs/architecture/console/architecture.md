@@ -25,7 +25,7 @@ account.
 | `apps.rs` | The operations on the caller's apps over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`; at most 20 apps per owner, because the VTS reads the whole registry on every verification), issue a token signed with the app's secret, rotate the secret (recording `rotatedAt`), delete. An operation on an `appId` the caller does not own answers `None`. |
 | `static_files.rs` | `StaticFiles`: the built pages under `CONSOLE_STATIC_DIR`. `/` is `index.html`; every other path element must be plain ASCII (letters, digits, `.`, `_`, `-`) that does not start with a dot, and only html, js, css, svg, png, ico and woff2 are served. |
 | `main.rs` | Reads the configuration, loads the registry once to fail fast, binds `0.0.0.0:$PORT` and serves. |
-| `web/` | The pages: React and Tailwind built by Vite. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
+| `web/` | The pages: React and Tailwind built by Vite. `App.tsx` holds the apps, the chosen app, the page and the open dialog; `Sidebar.tsx` switches apps and pages; `pages.tsx` renders the pages of an app, the list of apps and the pages still to come; `modals.tsx` shows a secret or a token once, a secret only until the employee confirms saving it. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
 
 ## Request flow
 
