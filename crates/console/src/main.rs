@@ -41,7 +41,8 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     let static_dir = non_empty_env("CONSOLE_STATIC_DIR").map(PathBuf::from);
-    let state = ConsoleState::new(identity, store, static_dir);
+    let relay_url = non_empty_env("CONSOLE_RELAY_URL");
+    let state = ConsoleState::new(identity, store, static_dir, relay_url);
     let _server = ConsoleServer::run(listener, Arc::new(state));
     tracing::info!(port, "console listening");
 

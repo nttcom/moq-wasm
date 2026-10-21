@@ -40,7 +40,7 @@ Application and integration components (draft reference is normally not required
 | `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
 | `crates/observability` | Subscribes to every relay's stats track, stores the snapshots in ClickHouse and serves them over HTTP |
 | `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
-| `crates/console` | Backend of the internal console: identifies an employee through IAP and serves their app from `app-registry` |
+| `crates/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
