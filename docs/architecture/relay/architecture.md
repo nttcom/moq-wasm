@@ -738,7 +738,11 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   while further opens of an already scheduled run are skipped. It subscribes to open events first and then schedules every
   cached group at or after the start (newest first under Descending Group
   Order, §7.1), so a group that ingress opened and closed before the
-  scheduler existed is still delivered. When the channel reports lag it scans
+  scheduler existed is still delivered. The scan skips a closed subgroup that
+  holds nothing at or after the start, such as one only a joining FETCH
+  filled. A task for it would end at once, and the open event of its live
+  stream would then be dropped as already scheduled. When the channel
+  reports lag it scans
   the cache the same way from just past the last open event it received, so a
   group whose open event was dropped is still delivered under either Group
   Order. While the

@@ -179,9 +179,13 @@ impl Ledger {
         self.live_groups.contains_key(&group_id)
     }
 
-    pub(super) fn subgroup_runs_in_group(&self, group_id: u64) -> Vec<SubgroupRun> {
+    pub(super) fn subgroup_runs_in_group(
+        &self,
+        group_id: u64,
+        from_object_id: u64,
+    ) -> Vec<SubgroupRun> {
         let mut keys: BTreeSet<SubgroupKey> = self
-            .group_objects(group_id, 0)
+            .group_objects(group_id, from_object_id)
             .map(|object| object.subgroup_key())
             .collect();
         keys.extend(self.open_keys_in_group(group_id));

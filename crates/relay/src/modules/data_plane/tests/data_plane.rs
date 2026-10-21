@@ -5,7 +5,10 @@ use crate::modules::session::data_object::DataObject;
 
 use crate::modules::test_support::relay_harness::{
     OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery, downstream_object_ids,
-    fixtures::{cached_object::FIXTURE_PRIORITY, location},
+    fixtures::{
+        cached_object::{FIXTURE_PRIORITY, stream_object},
+        location,
+    },
     ordered_payload, payloads_of, receive_objects_until_close, receive_objects_until_end,
 };
 
@@ -112,6 +115,27 @@ async fn egress_started_with_pre_subscribe_snapshot_delivers_head_objects_cached
     // Assert
     let objects = receive_objects_until_close(&mut egress).await;
     assert_full_ordered_delivery(&objects);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn egress_joining_a_fetch_filled_subgroup_delivers_its_live_stream_opened_later() {
+    // Arrange: a joining FETCH cached object 0 before the upstream stream opened
+    let harness = RelayHarness::new();
+    let _ = harness.cache().insert(stream_object(0, 0));
+    let mut egress = harness.start_egress(Some(location(0, 0))).await;
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(100))
+        .await;
+
+    // Act
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.object_with_gap(1, 1);
+    upstream_stream.fin();
+
+    // Assert
+    let objects = receive_objects_until_close(&mut egress).await;
+    assert_eq!(downstream_object_ids(&objects), vec![1]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
