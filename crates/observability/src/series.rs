@@ -48,36 +48,24 @@ pub struct Series {
 
 #[derive(Clone, Copy)]
 enum Metric {
-    Rate {
-        columns: &'static [&'static str],
-        scale: f64,
-    },
-    RateRatio {
-        numerator: &'static str,
-        denominator: &'static str,
-        scale: f64,
-    },
-    Mean {
-        column: &'static str,
-        scale: f64,
-    },
-    Max {
-        column: &'static str,
-        scale: f64,
-    },
+    /// Per-second rate of the summed counter columns, times the scale.
+    Rate(&'static [&'static str], f64),
+    /// Rate of the numerator counter over the rate of the denominator counter,
+    /// times the scale.
+    RateRatio(&'static str, &'static str, f64),
+    /// Mean of the gauge column, times the scale.
+    Mean(&'static str, f64),
+    /// Maximum of the gauge column, times the scale.
+    Max(&'static str, f64),
     Entities,
 }
 
 impl Metric {
     fn counters(self) -> Vec<&'static str> {
         match self {
-            Self::Rate { columns, .. } => columns.to_vec(),
-            Self::RateRatio {
-                numerator,
-                denominator,
-                ..
-            } => vec![numerator, denominator],
-            Self::Mean { .. } | Self::Max { .. } | Self::Entities => vec![],
+            Self::Rate(columns, _) => columns.to_vec(),
+            Self::RateRatio(numerator, denominator, _) => vec![numerator, denominator],
+            Self::Mean(..) | Self::Max(..) | Self::Entities => vec![],
         }
     }
 }
@@ -85,217 +73,98 @@ impl Metric {
 const MBPS: f64 = BITS_PER_BYTE / MEGA;
 
 const SESSION_METRICS: &[(&str, Metric)] = &[
-    (
-        "sent_mbps",
-        Metric::Rate {
-            columns: &["sent_bytes"],
-            scale: MBPS,
-        },
-    ),
-    (
-        "received_mbps",
-        Metric::Rate {
-            columns: &["received_bytes"],
-            scale: MBPS,
-        },
-    ),
-    (
-        "rtt_ms",
-        Metric::Mean {
-            column: "rtt_us",
-            scale: 1e-3,
-        },
-    ),
-    (
-        "cwnd_kb",
-        Metric::Mean {
-            column: "cwnd",
-            scale: 1.0 / 1024.0,
-        },
-    ),
+    ("sent_mbps", Metric::Rate(&["sent_bytes"], MBPS)),
+    ("received_mbps", Metric::Rate(&["received_bytes"], MBPS)),
+    ("rtt_ms", Metric::Mean("rtt_us", 1e-3)),
+    ("cwnd_kb", Metric::Mean("cwnd", 1.0 / 1024.0)),
     (
         "loss_percent",
-        Metric::RateRatio {
-            numerator: "lost_packets",
-            denominator: "sent_packets",
-            scale: 100.0,
-        },
+        Metric::RateRatio("lost_packets", "sent_packets", 100.0),
     ),
     (
         "congestion_per_s",
-        Metric::Rate {
-            columns: &["congestion_events"],
-            scale: 1.0,
-        },
+        Metric::Rate(&["congestion_events"], 1.0),
     ),
     (
         "relay_blocked_per_s",
-        Metric::Rate {
-            columns: &["sent_stream_data_blocked", "sent_data_blocked"],
-            scale: 1.0,
-        },
+        Metric::Rate(&["sent_stream_data_blocked", "sent_data_blocked"], 1.0),
     ),
     (
         "peer_blocked_per_s",
-        Metric::Rate {
-            columns: &["received_stream_data_blocked", "received_data_blocked"],
-            scale: 1.0,
-        },
+        Metric::Rate(
+            &["received_stream_data_blocked", "received_data_blocked"],
+            1.0,
+        ),
     ),
     (
         "peer_resets_per_s",
-        Metric::Rate {
-            columns: &["received_reset_stream"],
-            scale: 1.0,
-        },
+        Metric::Rate(&["received_reset_stream"], 1.0),
     ),
     (
         "stop_sending_per_s",
-        Metric::Rate {
-            columns: &["received_stop_sending"],
-            scale: 1.0,
-        },
+        Metric::Rate(&["received_stop_sending"], 1.0),
     ),
 ];
 
 const RELAY_METRICS: &[(&str, Metric)] = &[
-    (
-        "ingress_mbps",
-        Metric::Rate {
-            columns: &["received_bytes"],
-            scale: MBPS,
-        },
-    ),
-    (
-        "egress_mbps",
-        Metric::Rate {
-            columns: &["sent_bytes"],
-            scale: MBPS,
-        },
-    ),
+    ("ingress_mbps", Metric::Rate(&["received_bytes"], MBPS)),
+    ("egress_mbps", Metric::Rate(&["sent_bytes"], MBPS)),
     (
         "egress_loss_percent",
-        Metric::RateRatio {
-            numerator: "lost_packets",
-            denominator: "sent_packets",
-            scale: 100.0,
-        },
+        Metric::RateRatio("lost_packets", "sent_packets", 100.0),
     ),
     (
         "congestion_per_s",
-        Metric::Rate {
-            columns: &["congestion_events"],
-            scale: 1.0,
-        },
+        Metric::Rate(&["congestion_events"], 1.0),
     ),
     (
         "relay_blocked_per_s",
-        Metric::Rate {
-            columns: &["sent_stream_data_blocked", "sent_data_blocked"],
-            scale: 1.0,
-        },
+        Metric::Rate(&["sent_stream_data_blocked", "sent_data_blocked"], 1.0),
     ),
     (
         "peers_blocked_per_s",
-        Metric::Rate {
-            columns: &["received_stream_data_blocked", "received_data_blocked"],
-            scale: 1.0,
-        },
+        Metric::Rate(
+            &["received_stream_data_blocked", "received_data_blocked"],
+            1.0,
+        ),
     ),
     (
         "peer_resets_per_s",
-        Metric::Rate {
-            columns: &["received_reset_stream"],
-            scale: 1.0,
-        },
+        Metric::Rate(&["received_reset_stream"], 1.0),
     ),
     ("sessions", Metric::Entities),
 ];
 
 const TRACK_METRICS: &[(&str, Metric)] = &[
-    (
-        "received_mbps",
-        Metric::Rate {
-            columns: &["bytes_received"],
-            scale: MBPS,
-        },
-    ),
+    ("received_mbps", Metric::Rate(&["bytes_received"], MBPS)),
     (
         "max_arrival_gap_ms",
-        Metric::Max {
-            column: "max_arrival_gap_since_last_snapshot_us",
-            scale: 1e-3,
-        },
+        Metric::Max("max_arrival_gap_since_last_snapshot_us", 1e-3),
     ),
 ];
 
 const SUBSCRIPTION_METRICS: &[(&str, Metric)] = &[
-    (
-        "sent_mbps",
-        Metric::Rate {
-            columns: &["bytes_sent"],
-            scale: MBPS,
-        },
-    ),
-    (
-        "resets_per_s",
-        Metric::Rate {
-            columns: &["streams_reset"],
-            scale: 1.0,
-        },
-    ),
-    (
-        "lag_ms",
-        Metric::Max {
-            column: "lag_behind_newest_received_us",
-            scale: 1e-3,
-        },
-    ),
+    ("sent_mbps", Metric::Rate(&["bytes_sent"], MBPS)),
+    ("resets_per_s", Metric::Rate(&["streams_reset"], 1.0)),
+    ("lag_ms", Metric::Max("lag_behind_newest_received_us", 1e-3)),
 ];
 
 const PROCESS_METRICS: &[(&str, Metric)] = &[
-    (
-        "rss_mb",
-        Metric::Max {
-            column: "rss_bytes",
-            scale: 1.0 / MEBIBYTE,
-        },
-    ),
+    ("rss_mb", Metric::Max("rss_bytes", 1.0 / MEBIBYTE)),
     (
         "cache_mb",
-        Metric::Max {
-            column: "cache_payload_bytes",
-            scale: 1.0 / MEBIBYTE,
-        },
+        Metric::Max("cache_payload_bytes", 1.0 / MEBIBYTE),
     ),
-    (
-        "cache_objects",
-        Metric::Max {
-            column: "cache_objects",
-            scale: 1.0,
-        },
-    ),
+    ("cache_objects", Metric::Max("cache_objects", 1.0)),
     (
         "disk_cache_mb",
-        Metric::Max {
-            column: "disk_cache_bytes",
-            scale: 1.0 / MEBIBYTE,
-        },
+        Metric::Max("disk_cache_bytes", 1.0 / MEBIBYTE),
     ),
     (
         "disk_cache_max_mb",
-        Metric::Max {
-            column: "disk_cache_max_bytes",
-            scale: 1.0 / MEBIBYTE,
-        },
+        Metric::Max("disk_cache_max_bytes", 1.0 / MEBIBYTE),
     ),
-    (
-        "client_sessions",
-        Metric::Max {
-            column: "client_sessions",
-            scale: 1.0,
-        },
-    ),
+    ("client_sessions", Metric::Max("client_sessions", 1.0)),
 ];
 
 struct Plan {
@@ -384,10 +253,10 @@ fn select_sql(database: &str, plan: &Plan) -> String {
             columns.insert(format!("max({counter}) AS {counter}"));
         }
         match metric {
-            Metric::Mean { column, .. } => {
+            Metric::Mean(column, _) => {
                 columns.insert(format!("avg({column}) AS {column}"));
             }
-            Metric::Max { column, .. } => {
+            Metric::Max(column, _) => {
                 columns.insert(format!("max({column}) AS {column}"));
             }
             _ => {}
@@ -473,14 +342,10 @@ fn compute(rows: &[Map<String, Value>], metrics: &[(&'static str, Metric)]) -> S
                 };
                 let previous = position.checked_sub(1).map(|p| entity_rows[p]);
                 let value = match *metric {
-                    Metric::Rate { columns, scale } => previous
+                    Metric::Rate(columns, scale) => previous
                         .and_then(|previous| rate(previous, row, columns))
                         .map(|v| v * scale),
-                    Metric::RateRatio {
-                        numerator,
-                        denominator,
-                        ..
-                    } => {
+                    Metric::RateRatio(numerator, denominator, _) => {
                         if let Some(previous) = previous
                             && let (Some(top), Some(bottom)) = (
                                 rate(previous, row, &[numerator]),
@@ -492,7 +357,7 @@ fn compute(rows: &[Map<String, Value>], metrics: &[(&'static str, Metric)]) -> S
                         }
                         None
                     }
-                    Metric::Mean { column, scale } | Metric::Max { column, scale } => {
+                    Metric::Mean(column, scale) | Metric::Max(column, scale) => {
                         number(row, column).map(|v| v * scale)
                     }
                     Metric::Entities => Some(1.0),
@@ -502,7 +367,7 @@ fn compute(rows: &[Map<String, Value>], metrics: &[(&'static str, Metric)]) -> S
                 }
             }
         }
-        if let Metric::RateRatio { scale, .. } = metric {
+        if let Metric::RateRatio(_, _, scale) = metric {
             values = ratio_parts
                 .iter()
                 .map(|parts| {
@@ -566,13 +431,7 @@ mod tests {
             row(json!({ "t": 0, "sent_bytes": 1_000 })),
             row(json!({ "t": 2_000, "sent_bytes": 5_000 })),
         ];
-        let metrics = [(
-            "sent",
-            Metric::Rate {
-                columns: &["sent_bytes"],
-                scale: 1.0,
-            },
-        )];
+        let metrics = [("sent", Metric::Rate(&["sent_bytes"], 1.0))];
 
         // Act
         let series = compute(&rows, &metrics);
@@ -589,13 +448,7 @@ mod tests {
             row(json!({ "t": 0, "sampled_ms": 39_000, "sent_bytes": 39_000 })),
             row(json!({ "t": 40_000, "sampled_ms": 44_000, "sent_bytes": 44_000 })),
         ];
-        let metrics = [(
-            "sent",
-            Metric::Rate {
-                columns: &["sent_bytes"],
-                scale: 1.0,
-            },
-        )];
+        let metrics = [("sent", Metric::Rate(&["sent_bytes"], 1.0))];
 
         // Act / Assert
         assert_eq!(
@@ -611,13 +464,7 @@ mod tests {
             row(json!({ "t": 0, "sent_bytes": 5_000 })),
             row(json!({ "t": 1_000, "sent_bytes": 10 })),
         ];
-        let metrics = [(
-            "sent",
-            Metric::Rate {
-                columns: &["sent_bytes"],
-                scale: 1.0,
-            },
-        )];
+        let metrics = [("sent", Metric::Rate(&["sent_bytes"], 1.0))];
 
         // Act / Assert
         assert_eq!(compute(&rows, &metrics).series["sent"], vec![None, None]);
@@ -633,21 +480,8 @@ mod tests {
             row(json!({ "t": 1_000, "entity": 2, "lost": 0, "sent": 900 })),
         ];
         let metrics = [
-            (
-                "sent",
-                Metric::Rate {
-                    columns: &["sent"],
-                    scale: 1.0,
-                },
-            ),
-            (
-                "loss",
-                Metric::RateRatio {
-                    numerator: "lost",
-                    denominator: "sent",
-                    scale: 100.0,
-                },
-            ),
+            ("sent", Metric::Rate(&["sent"], 1.0)),
+            ("loss", Metric::RateRatio("lost", "sent", 100.0)),
             ("entities", Metric::Entities),
         ];
 
@@ -664,13 +498,7 @@ mod tests {
     fn gauges_are_scaled_per_bucket() {
         // Arrange
         let rows = vec![row(json!({ "t": 0, "rtt_us": 12_000.0 }))];
-        let metrics = [(
-            "rtt_ms",
-            Metric::Mean {
-                column: "rtt_us",
-                scale: 1e-3,
-            },
-        )];
+        let metrics = [("rtt_ms", Metric::Mean("rtt_us", 1e-3))];
 
         // Act / Assert
         assert_eq!(compute(&rows, &metrics).series["rtt_ms"], vec![Some(12.0)]);
