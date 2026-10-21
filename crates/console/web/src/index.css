@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --color-ink: #1f2430;
+  --color-muted: #6b7280;
+  --color-line: #d8dce3;
+  --color-wash: #f3f4f7;
+  --color-accent: #0f766e;
+  --color-danger: #b42318;
+}

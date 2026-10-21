@@ -1,5 +1,6 @@
 use std::{
     convert::Infallible,
+    path::PathBuf,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -9,7 +10,10 @@ use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::{CONTENT_TYPE, HOST, HeaderValue, ORIGIN},
+    header::{
+        CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderValue, ORIGIN,
+        X_CONTENT_TYPE_OPTIONS,
+    },
     server::conn::http1,
     service::service_fn,
 };
@@ -23,14 +27,27 @@ use crate::{
     apps::{self, Outcome},
     identity::Identity,
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
+    static_files::StaticFiles,
 };
 
 pub const CSRF_HEADER: &str = "x-console-request";
 const MAX_BODY_BYTES: usize = 16 * 1024;
+const CONTENT_SECURITY: &str = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 pub struct ConsoleState {
-    pub identity: Identity,
-    pub store: RegistryStore,
+    identity: Identity,
+    store: RegistryStore,
+    static_files: Option<StaticFiles>,
+}
+
+impl ConsoleState {
+    pub fn new(identity: Identity, store: RegistryStore, static_dir: Option<PathBuf>) -> Self {
+        Self {
+            identity,
+            store,
+            static_files: static_dir.map(StaticFiles::new),
+        }
+    }
 }
 
 pub struct ConsoleServer {
@@ -85,19 +102,65 @@ async fn handle(
     state: Arc<ConsoleState>,
 ) -> Result<JsonResponse, Infallible> {
     let (head, body) = request.into_parts();
-    if head.method != Method::GET && !is_same_origin_request(&head.headers) {
-        return Ok(error_response(StatusCode::FORBIDDEN, "forbidden"));
-    }
-    let headers = &head.headers;
-    let response = match (head.method.clone(), head.uri.path()) {
-        (Method::GET, "/api/me") => me(headers, &state).await,
-        (Method::POST, "/api/app") => create_app(headers, body, &state).await,
-        (Method::POST, "/api/tokens") => issue_token(headers, body, &state).await,
-        (Method::POST, "/api/app/secret") => rotate_secret(headers, &state).await,
-        (Method::DELETE, "/api/app") => delete_app(headers, &state).await,
-        _ => error_response(StatusCode::NOT_FOUND, "not_found"),
+    let mut response = if head.method != Method::GET && !is_same_origin_request(&head.headers) {
+        error_response(StatusCode::FORBIDDEN, "forbidden")
+    } else {
+        route(
+            head.method.clone(),
+            head.uri.path(),
+            &head.headers,
+            body,
+            &state,
+        )
+        .await
     };
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CONTENT_SECURITY),
+    );
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     Ok(response)
+}
+
+async fn route(
+    method: Method,
+    path: &str,
+    headers: &HeaderMap,
+    body: Incoming,
+    state: &ConsoleState,
+) -> JsonResponse {
+    match (method, path) {
+        (Method::GET, "/api/me") => me(headers, state).await,
+        (Method::POST, "/api/app") => create_app(headers, body, state).await,
+        (Method::POST, "/api/tokens") => issue_token(headers, body, state).await,
+        (Method::POST, "/api/app/secret") => rotate_secret(headers, state).await,
+        (Method::DELETE, "/api/app") => delete_app(headers, state).await,
+        (Method::GET, path) if !path.starts_with("/api/") => static_file(path, state).await,
+        _ => error_response(StatusCode::NOT_FOUND, "not_found"),
+    }
+}
+
+async fn static_file(path: &str, state: &ConsoleState) -> JsonResponse {
+    let file = match &state.static_files {
+        Some(static_files) => static_files.get(path).await,
+        None => None,
+    };
+    let Some(file) = file else {
+        return error_response(StatusCode::NOT_FOUND, "not_found");
+    };
+    let mut response = Response::new(Full::from(file.bytes));
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static(file.content_type));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static(if file.immutable {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        }),
+    );
+    response
 }
 
 async fn me(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
@@ -282,15 +345,18 @@ fn error_response(status: StatusCode, error: &str) -> JsonResponse {
 fn json_response(status: StatusCode, body: Value) -> JsonResponse {
     let mut response = Response::new(Full::from(body.to_string()));
     *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
 fn empty_response(status: StatusCode) -> JsonResponse {
     let mut response = Response::new(Full::default());
     *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
@@ -312,6 +378,13 @@ mod tests {
     }
 
     async fn start_console(identity: Identity) -> TestConsole {
+        start_console_with_static_dir(identity, None).await
+    }
+
+    async fn start_console_with_static_dir(
+        identity: Identity,
+        static_dir: Option<PathBuf>,
+    ) -> TestConsole {
         let registry_file = TemporaryRegistryFile::new();
         registry_file.put(&json!([
             { "appId": "app-1", "name": "camera", "secret": "s", "isRelay": false,
@@ -320,10 +393,11 @@ mod tests {
         ]));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let state = Arc::new(ConsoleState {
+        let state = Arc::new(ConsoleState::new(
             identity,
-            store: registry_file.store(),
-        });
+            registry_file.store(),
+            static_dir,
+        ));
         TestConsole {
             base_url,
             registry_file,
@@ -602,6 +676,117 @@ mod tests {
 
         // Assert
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    struct StaticDir(PathBuf);
+
+    impl StaticDir {
+        fn with_index_and_asset() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "console-static-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(root.join("assets")).unwrap();
+            std::fs::write(root.join("index.html"), "<!doctype html>").unwrap();
+            std::fs::write(root.join("assets/app-1.js"), "export {}").unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for StaticDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn get(console: &TestConsole, path: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .get(format!("{}{path}", console.base_url))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_root_serves_the_index_without_caching() {
+        // Arrange
+        let static_dir = StaticDir::with_index_and_asset();
+        let console =
+            start_console_with_static_dir(development("dev"), Some(static_dir.0.clone())).await;
+
+        // Act
+        let response = get(&console, "/").await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(response.headers()["cache-control"], "no-cache");
+        assert!(
+            response.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("frame-ancestors 'none'")
+        );
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(response.text().await.unwrap(), "<!doctype html>");
+    }
+
+    #[tokio::test]
+    async fn assets_are_cached_for_a_year() {
+        // Arrange
+        let static_dir = StaticDir::with_index_and_asset();
+        let console =
+            start_console_with_static_dir(development("dev"), Some(static_dir.0.clone())).await;
+
+        // Act
+        let response = get(&console, "/assets/app-1.js").await;
+
+        // Assert
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(
+            response.headers()["cache-control"],
+            "public, max-age=31536000, immutable"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_api_path_is_not_answered_with_a_static_file() {
+        // Arrange
+        let static_dir = StaticDir::with_index_and_asset();
+        let console =
+            start_console_with_static_dir(development("dev"), Some(static_dir.0.clone())).await;
+
+        // Act
+        let response = get(&console, "/api/unknown").await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"],
+            "not_found"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_answers_are_never_stored() {
+        // Arrange
+        let console = start_console(development("accounts.google.com:1")).await;
+
+        // Act
+        let response = get(&console, "/api/me").await;
+
+        // Assert
+        assert_eq!(response.headers()["cache-control"], "no-store");
     }
 
     #[tokio::test]

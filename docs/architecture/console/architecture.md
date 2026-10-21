@@ -23,7 +23,9 @@ account.
 | `server.rs` | `ConsoleServer`: owns the accept-loop `JoinHandle`, refuses a write that fails the CSRF check, identifies the caller and routes the API. |
 | `input.rs` | The request bodies and their rules: an app name is 1 to 64 characters after trimming, without control characters; a publish or subscribe path is `""` or `/`-separated non-empty elements, up to 255 characters; a token lives 1 second to 24 hours and names publish, subscribe or both. Unknown fields are refused. |
 | `apps.rs` | The operations on the caller's app over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`), issue a token signed with the app's secret, rotate the secret, delete. Each answers `Done`, `NoApp` or `AlreadyHasApp`. |
+| `static_files.rs` | `StaticFiles`: the built pages under `CONSOLE_STATIC_DIR`. `/` is `index.html`; every other path element must be plain ASCII (letters, digits, `.`, `_`, `-`) that does not start with a dot, and only html, js, css, svg, png, ico and woff2 are served. |
 | `main.rs` | Reads the configuration, loads the registry once to fail fast, binds `0.0.0.0:$PORT` and serves. |
+| `web/` | The pages: React and Tailwind built by Vite. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
 
 ## Request flow
 
@@ -71,6 +73,7 @@ that origin's host matches `Host`.
 | `CONSOLE_DEV_SUB` | Fixed `sub` for local runs instead of IAP; refused when `K_SERVICE` is set |
 | `CONSOLE_REGISTRY_FILE` | Registry in a local file |
 | `CONSOLE_REGISTRY_BUCKET` / `CONSOLE_REGISTRY_OBJECT` | Registry in Cloud Storage (object defaults to `registry.json`) |
+| `CONSOLE_STATIC_DIR` | Directory of the built pages (`web/dist`); without it only the API is served |
 | `PORT` | Listen port, default `8080` (Cloud Run sets it) |
 
 ## Invariants
@@ -86,3 +89,9 @@ that origin's host matches `Host`.
   always set.
 - Of the IAP claims the console keeps only `sub`; `email` and the rest are
   read and discarded.
+- Every response carries a Content-Security-Policy that allows only
+  same-origin resources and no framing, and `X-Content-Type-Options: nosniff`.
+  API answers are `no-store`; `index.html` is `no-cache`; files under
+  `assets/`, whose names carry a content hash, are cached for a year.
+- A static path can name nothing outside `CONSOLE_STATIC_DIR` and nothing that
+  is not a page asset, so a stray file such as a registry is never served.
