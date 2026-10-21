@@ -64,10 +64,11 @@ fn snapshot_for_browser(snapshot: &RelaySnapshot) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use relay_stats::{ProcessStats, RelaySnapshot, SubscriptionStats};
+    use relay_stats::{RelaySnapshot, SubscriptionStats};
     use serde_json::json;
 
     use super::{masked_client_address, snapshots_for_browser};
+    use crate::test_support::snapshot;
 
     #[test]
     fn a_client_address_keeps_its_network_and_port_but_not_its_host() {
@@ -91,11 +92,6 @@ mod tests {
     fn ids_beyond_53_bits_reach_the_browser_unrounded() {
         // Arrange
         let snapshot = RelaySnapshot {
-            relay_id: "relay-a".to_string(),
-            timestamp_ms: 1,
-            process: ProcessStats::default(),
-            sessions: vec![],
-            tracks: vec![],
             subscriptions: vec![SubscriptionStats {
                 namespace: "app".to_string(),
                 name: "video".to_string(),
@@ -106,6 +102,7 @@ mod tests {
                 streams_reset: 0,
                 lag_behind_newest_received_us: 6,
             }],
+            ..snapshot(1)
         };
 
         // Act
