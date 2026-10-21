@@ -139,3 +139,30 @@ async fn serve_keys(listener: TcpListener, body: Bytes, fetches: Arc<AtomicUsize
         });
     }
 }
+
+pub(crate) struct SilentServer {
+    url: Url,
+    _accept_handle: JoinHandle<()>,
+}
+
+impl SilentServer {
+    pub(crate) async fn run() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}/keys", listener.local_addr().unwrap())).unwrap();
+        Self {
+            url,
+            _accept_handle: tokio::spawn(hold_connections(listener)),
+        }
+    }
+
+    pub(crate) fn url(&self) -> Url {
+        self.url.clone()
+    }
+}
+
+async fn hold_connections(listener: TcpListener) {
+    let mut connections = Vec::new();
+    loop {
+        connections.push(listener.accept().await.unwrap().0);
+    }
+}

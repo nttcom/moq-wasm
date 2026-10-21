@@ -14,6 +14,7 @@ pub const GOOGLE_IAP_KEYS_URL: &str = "https://www.gstatic.com/iap/verify/public
 const ISSUER: &str = "https://cloud.google.com/iap";
 const CLOCK_SKEW_SECONDS: u64 = 30;
 const MIN_KEY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const KEYS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct IapVerifier {
     audience: String,
@@ -36,15 +37,15 @@ struct Claims {
 }
 
 impl IapVerifier {
-    pub fn new(audience: String, keys_url: Url) -> Self {
-        Self {
+    pub fn new(audience: String, keys_url: Url) -> anyhow::Result<Self> {
+        Ok(Self {
             audience,
             keys: IapKeys {
-                http: Client::new(),
+                http: Client::builder().timeout(KEYS_REQUEST_TIMEOUT).build()?,
                 url: keys_url,
                 cache: Mutex::new(KeyCache::default()),
             },
-        }
+        })
     }
 
     /// `now` is Unix seconds. Fails when the assertion is malformed, is not ES256-signed by a key
@@ -200,10 +201,10 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::test_support::{AUDIENCE, FakeIapKeys, NOW, TestIapKey, iap_claims};
+    use crate::test_support::{AUDIENCE, FakeIapKeys, NOW, SilentServer, TestIapKey, iap_claims};
 
     fn verifier(keys: &FakeIapKeys) -> IapVerifier {
-        IapVerifier::new(AUDIENCE.into(), keys.url())
+        IapVerifier::new(AUDIENCE.into(), keys.url()).unwrap()
     }
 
     #[tokio::test]
@@ -326,6 +327,28 @@ mod tests {
 
         // Act / Assert
         assert!(verifier(&keys).verify(&assertion, NOW).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn gives_up_within_the_request_timeout_when_the_key_server_never_answers() {
+        // Arrange
+        let server = SilentServer::run().await;
+        let verifier = IapVerifier::new(AUDIENCE.into(), server.url()).unwrap();
+        let assertion = TestIapKey::new("key-1").sign(&iap_claims("accounts.google.com:1"));
+
+        // Act
+        let result = tokio::time::timeout(
+            KEYS_REQUEST_TIMEOUT + Duration::from_secs(1),
+            verifier.verify(&assertion, NOW),
+        )
+        .await;
+
+        // Assert
+        assert!(
+            result
+                .expect("verify must not wait past the keys timeout")
+                .is_err()
+        );
     }
 
     #[tokio::test]

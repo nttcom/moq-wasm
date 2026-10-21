@@ -30,7 +30,7 @@ impl Identity {
             (Some(audience), None) => Ok(Self::Iap(Box::new(IapVerifier::new(
                 audience,
                 iap_keys_url,
-            )))),
+            )?))),
             (None, None) => bail!("set CONSOLE_IAP_AUDIENCE"),
         }
     }
