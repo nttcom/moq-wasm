@@ -22,7 +22,7 @@ account.
 | `identity.rs` | `Identity`: how a request names its `sub`. `Iap` reads the `x-goog-iap-jwt-assertion` header and verifies it; `Development` returns a fixed `sub` for local runs. `Identity::new` refuses `Development` on Cloud Run and refuses both or neither. |
 | `server.rs` | `ConsoleServer`: owns the accept-loop `JoinHandle`, refuses a write that fails the CSRF check, identifies the caller and routes the API. |
 | `input.rs` | The request bodies and their rules: an app name is 1 to 64 characters after trimming, without control characters; a publish or subscribe path is `""` or `/`-separated non-empty elements, up to 255 characters; a token lives 1 second to 24 hours and names publish, subscribe or both. Unknown fields are refused. |
-| `apps.rs` | The operations on the caller's app over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`), issue a token signed with the app's secret, rotate the secret, delete. Each answers `Done`, `NoApp` or `AlreadyHasApp`. |
+| `apps.rs` | The operations on the caller's apps over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`), issue a token signed with the app's secret, rotate the secret (recording `rotatedAt`), delete. An operation on an `appId` the caller does not own answers `None`. |
 | `static_files.rs` | `StaticFiles`: the built pages under `CONSOLE_STATIC_DIR`. `/` is `index.html`; every other path element must be plain ASCII (letters, digits, `.`, `_`, `-`) that does not start with a dot, and only html, js, css, svg, png, ico and woff2 are served. |
 | `main.rs` | Reads the configuration, loads the registry once to fail fast, binds `0.0.0.0:$PORT` and serves. |
 | `web/` | The pages: React and Tailwind built by Vite. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
@@ -36,9 +36,9 @@ sequenceDiagram
     participant S as server.rs
     participant D as identity.rs
     participant R as app registry
-    B->>I: GET /api/me
+    B->>I: GET /api/apps
     I->>S: request + x-goog-iap-jwt-assertion
-    S->>D: sub(headers)
+    S->>D: caller(headers)
     alt assertion missing or invalid
         S-->>B: 401 {error: unauthenticated}
     end
@@ -46,18 +46,19 @@ sequenceDiagram
     alt registry unreadable
         S-->>B: 503 {error: registry_unavailable}
     end
-    S-->>B: 200 {app: {appId, name, createdAt} | null}
+    S-->>B: 200 {apps: [{appId, name, createdAt, rotatedAt}]}
 ```
 
 ## API
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/me` | `200 {app: {appId, name, createdAt} \| null}` |
-| `POST /api/app` `{name}` | `201 {app, secret}`; `409 app_exists` when the caller has one |
-| `POST /api/tokens` `{publish?, subscribe?, ttlSeconds}` | `200 {token, expiresAt}`; `404 no_app` |
-| `POST /api/app/secret` | `200 {app, secret}`; `404 no_app` |
-| `DELETE /api/app` | `204`; `404 no_app` |
+| `GET /api/me` | `200 {email, relayUrl}` |
+| `GET /api/apps` | `200 {apps: [{appId, name, createdAt, rotatedAt}]}`, the caller's apps |
+| `POST /api/apps` `{name}` | `201 {app, secret}` |
+| `POST /api/apps/{appId}/tokens` `{publish?, subscribe?, ttlSeconds}` | `200 {token, expiresAt}`; `404 no_app` |
+| `POST /api/apps/{appId}/secret` | `200 {app, secret}`; `404 no_app` |
+| `DELETE /api/apps/{appId}` | `204`; `404 no_app` |
 
 Every route answers `401 unauthenticated` without a verified `sub`, `400` with
 the rule a body breaks, and `503 registry_unavailable` when the registry
@@ -74,6 +75,7 @@ that origin's host matches `Host`.
 | `CONSOLE_REGISTRY_FILE` | Registry in a local file |
 | `CONSOLE_REGISTRY_BUCKET` / `CONSOLE_REGISTRY_OBJECT` | Registry in Cloud Storage (object defaults to `registry.json`) |
 | `CONSOLE_STATIC_DIR` | Directory of the built pages (`web/dist`); without it only the API is served |
+| `CONSOLE_RELAY_URL` | Relay URL the pages show for connecting; `relayUrl` is `null` without it |
 | `PORT` | Listen port, default `8080` (Cloud Run sets it) |
 
 ## Image
@@ -85,16 +87,17 @@ that origin's host matches `Host`.
 ## Invariants
 
 - Only the answers to creating an app and rotating its secret carry the `secret`, so its owner can sign tokens on their own server; no other response, and no log line, carries a secret or a token.
-- The caller's app is always found from the verified `sub`; no request names
-  an `appId`, and the relay's app, which has no `sub`, is never touched.
+- A request names an `appId`, but an app is read or changed only when its
+  `sub` is the verified caller's, so another employee's app answers
+  `404 no_app`; the relay's app, which has no `sub`, is never touched.
 - A cross-site page cannot make a signed-in browser change an app: it cannot
   add `X-Console-Request` without a CORS preflight the console never grants.
 - The `sub` comes only from a verified assertion or, outside Cloud Run, from
-  `CONSOLE_DEV_SUB`. A request never names its own `sub` or `appId`.
+  `CONSOLE_DEV_SUB`. A request never names its own `sub`.
 - The development identity cannot start on Cloud Run, where `K_SERVICE` is
   always set.
-- Of the IAP claims the console keeps only `sub`; `email` and the rest are
-  read and discarded.
+- Of the IAP claims the console stores only `sub`. `email` is returned to the
+  caller by `/api/me` and never stored; the rest are discarded.
 - Every response carries a Content-Security-Policy that allows only
   same-origin resources and no framing, and `X-Content-Type-Options: nosniff`.
   API answers are `no-store`; `index.html` is `no-cache`; files under

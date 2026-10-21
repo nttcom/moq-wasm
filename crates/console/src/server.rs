@@ -24,8 +24,8 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
-    apps::{self, Outcome},
-    identity::Identity,
+    apps,
+    identity::{Caller, Identity},
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
     static_files::StaticFiles,
 };
@@ -38,14 +38,21 @@ pub struct ConsoleState {
     identity: Identity,
     store: RegistryStore,
     static_files: Option<StaticFiles>,
+    relay_url: Option<String>,
 }
 
 impl ConsoleState {
-    pub fn new(identity: Identity, store: RegistryStore, static_dir: Option<PathBuf>) -> Self {
+    pub fn new(
+        identity: Identity,
+        store: RegistryStore,
+        static_dir: Option<PathBuf>,
+        relay_url: Option<String>,
+    ) -> Self {
         Self {
             identity,
             store,
             static_files: static_dir.map(StaticFiles::new),
+            relay_url,
         }
     }
 }
@@ -130,15 +137,29 @@ async fn route(
     body: Incoming,
     state: &ConsoleState,
 ) -> JsonResponse {
+    if let Some((app_id, action)) = app_route(path) {
+        return match (method, action) {
+            (Method::POST, Some("tokens")) => issue_token(headers, body, app_id, state).await,
+            (Method::POST, Some("secret")) => rotate_secret(headers, app_id, state).await,
+            (Method::DELETE, None) => delete_app(headers, app_id, state).await,
+            _ => error_response(StatusCode::NOT_FOUND, "not_found"),
+        };
+    }
     match (method, path) {
         (Method::GET, "/api/me") => me(headers, state).await,
-        (Method::POST, "/api/app") => create_app(headers, body, state).await,
-        (Method::POST, "/api/tokens") => issue_token(headers, body, state).await,
-        (Method::POST, "/api/app/secret") => rotate_secret(headers, state).await,
-        (Method::DELETE, "/api/app") => delete_app(headers, state).await,
+        (Method::GET, "/api/apps") => list_apps(headers, state).await,
+        (Method::POST, "/api/apps") => create_app(headers, body, state).await,
         (Method::GET, path) if !path.starts_with("/api/") => static_file(path, state).await,
         _ => error_response(StatusCode::NOT_FOUND, "not_found"),
     }
+}
+
+fn app_route(path: &str) -> Option<(&str, Option<&str>)> {
+    let rest = path.strip_prefix("/api/apps/")?;
+    Some(match rest.split_once('/') {
+        Some((app_id, action)) => (app_id, Some(action)),
+        None => (rest, None),
+    })
 }
 
 async fn static_file(path: &str, state: &ConsoleState) -> JsonResponse {
@@ -164,26 +185,38 @@ async fn static_file(path: &str, state: &ConsoleState) -> JsonResponse {
 }
 
 async fn me(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
-    let sub = match authenticate(headers, state).await {
-        Ok(sub) => sub,
+    let caller = match authenticate(headers, state).await {
+        Ok(caller) => caller,
+        Err(refusal) => return refusal.response(),
+    };
+    json_response(
+        StatusCode::OK,
+        json!({ "email": caller.email, "relayUrl": state.relay_url }),
+    )
+}
+
+async fn list_apps(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
+    let caller = match authenticate(headers, state).await {
+        Ok(caller) => caller,
         Err(refusal) => return refusal.response(),
     };
     match state.store.load().await {
         Ok(snapshot) => {
-            let app = snapshot
+            let apps: Vec<Value> = snapshot
                 .apps
                 .iter()
-                .find(|app| apps::owned_by(app, &sub))
-                .map(app_json);
-            json_response(StatusCode::OK, json!({ "app": app }))
+                .filter(|app| apps::owned_by(app, &caller.sub))
+                .map(app_json)
+                .collect();
+            json_response(StatusCode::OK, json!({ "apps": apps }))
         }
         Err(error) => registry_unavailable(&error),
     }
 }
 
 async fn create_app(headers: &HeaderMap, body: Incoming, state: &ConsoleState) -> JsonResponse {
-    let sub = match authenticate(headers, state).await {
-        Ok(sub) => sub,
+    let caller = match authenticate(headers, state).await {
+        Ok(caller) => caller,
         Err(refusal) => return refusal.response(),
     };
     let request: CreateAppRequest = match read_json(body).await {
@@ -194,18 +227,23 @@ async fn create_app(headers: &HeaderMap, body: Incoming, state: &ConsoleState) -
         Ok(name) => name,
         Err(invalid) => return invalid_input(invalid),
     };
-    respond(
-        apps::create_app(&state.store, &sub, name, unix_now()).await,
-        |app| {
+    match apps::create_app(&state.store, &caller.sub, name, unix_now()).await {
+        Ok(app) => {
             tracing::info!(app_id = %app.app_id, "app created");
             json_response(StatusCode::CREATED, app_with_secret_json(&app))
-        },
-    )
+        }
+        Err(error) => registry_unavailable(&error),
+    }
 }
 
-async fn issue_token(headers: &HeaderMap, body: Incoming, state: &ConsoleState) -> JsonResponse {
-    let sub = match authenticate(headers, state).await {
-        Ok(sub) => sub,
+async fn issue_token(
+    headers: &HeaderMap,
+    body: Incoming,
+    app_id: &str,
+    state: &ConsoleState,
+) -> JsonResponse {
+    let caller = match authenticate(headers, state).await {
+        Ok(caller) => caller,
         Err(refusal) => return refusal.response(),
     };
     let request: IssueTokenRequest = match read_json(body).await {
@@ -217,9 +255,9 @@ async fn issue_token(headers: &HeaderMap, body: Incoming, state: &ConsoleState) 
         Err(invalid) => return invalid_input(invalid),
     };
     respond(
-        apps::issue_token(&state.store, &sub, scope, unix_now()).await,
+        apps::issue_token(&state.store, &caller.sub, app_id, scope, unix_now()).await,
         |issued| {
-            tracing::info!(expires_at = issued.expires_at, "token issued");
+            tracing::info!(app_id, expires_at = issued.expires_at, "token issued");
             json_response(
                 StatusCode::OK,
                 json!({ "token": issued.token, "expiresAt": issued.expires_at }),
@@ -228,32 +266,38 @@ async fn issue_token(headers: &HeaderMap, body: Incoming, state: &ConsoleState) 
     )
 }
 
-async fn rotate_secret(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
-    let sub = match authenticate(headers, state).await {
-        Ok(sub) => sub,
+async fn rotate_secret(headers: &HeaderMap, app_id: &str, state: &ConsoleState) -> JsonResponse {
+    let caller = match authenticate(headers, state).await {
+        Ok(caller) => caller,
         Err(refusal) => return refusal.response(),
     };
-    respond(apps::rotate_secret(&state.store, &sub).await, |app| {
-        tracing::info!(app_id = %app.app_id, "secret rotated");
-        json_response(StatusCode::OK, app_with_secret_json(&app))
-    })
+    respond(
+        apps::rotate_secret(&state.store, &caller.sub, app_id, unix_now()).await,
+        |app| {
+            tracing::info!(app_id = %app.app_id, "secret rotated");
+            json_response(StatusCode::OK, app_with_secret_json(&app))
+        },
+    )
 }
 
-async fn delete_app(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
-    let sub = match authenticate(headers, state).await {
-        Ok(sub) => sub,
+async fn delete_app(headers: &HeaderMap, app_id: &str, state: &ConsoleState) -> JsonResponse {
+    let caller = match authenticate(headers, state).await {
+        Ok(caller) => caller,
         Err(refusal) => return refusal.response(),
     };
-    respond(apps::delete_app(&state.store, &sub).await, |()| {
-        tracing::info!("app deleted");
-        empty_response(StatusCode::NO_CONTENT)
-    })
+    respond(
+        apps::delete_app(&state.store, &caller.sub, app_id).await,
+        |()| {
+            tracing::info!(app_id, "app deleted");
+            empty_response(StatusCode::NO_CONTENT)
+        },
+    )
 }
 
-async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<String, Refusal> {
+async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<Caller, Refusal> {
     state
         .identity
-        .sub(headers, unix_now())
+        .caller(headers, unix_now())
         .await
         .map_err(|error| {
             tracing::info!(error = format!("{error:#}"), "request not authenticated");
@@ -304,13 +348,12 @@ async fn read_json<T: DeserializeOwned>(body: Incoming) -> Result<T, Refusal> {
 }
 
 fn respond<T>(
-    result: anyhow::Result<Outcome<T>>,
+    result: anyhow::Result<Option<T>>,
     done: impl FnOnce(T) -> JsonResponse,
 ) -> JsonResponse {
     match result {
-        Ok(Outcome::Done(value)) => done(value),
-        Ok(Outcome::NoApp) => error_response(StatusCode::NOT_FOUND, "no_app"),
-        Ok(Outcome::AlreadyHasApp) => error_response(StatusCode::CONFLICT, "app_exists"),
+        Ok(Some(value)) => done(value),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "no_app"),
         Err(error) => registry_unavailable(&error),
     }
 }
@@ -324,6 +367,7 @@ fn app_json(app: &App) -> Value {
         "appId": app.app_id,
         "name": app.name,
         "createdAt": app.created_at,
+        "rotatedAt": app.rotated_at,
     })
 }
 
@@ -375,6 +419,8 @@ mod tests {
         test_support::{AUDIENCE, FakeIapKeys, TestIapKey, iap_claims},
     };
 
+    const RELAY_URL: &str = "https://relay.example.com";
+
     struct TestConsole {
         base_url: String,
         registry_file: TemporaryRegistryFile,
@@ -393,6 +439,8 @@ mod tests {
         registry_file.put(&json!([
             { "appId": "app-1", "name": "camera", "secret": "s", "isRelay": false,
               "sub": "accounts.google.com:1", "createdAt": 1760900000 },
+            { "appId": "app-2", "name": "other", "secret": "t", "isRelay": false,
+              "sub": "accounts.google.com:2", "createdAt": 1760900000 },
             { "appId": "relay", "secret": "r", "isRelay": true },
         ]));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -401,6 +449,7 @@ mod tests {
             identity,
             registry_file.store(),
             static_dir,
+            Some(RELAY_URL.into()),
         ));
         TestConsole {
             base_url,
@@ -453,7 +502,7 @@ mod tests {
         let response = send(
             &console,
             reqwest::Method::POST,
-            "/api/app",
+            "/api/apps",
             Some(json!({ "name": "  site 2  " })),
         )
         .await;
@@ -473,23 +522,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_app_refuses_a_second_app_for_the_same_caller() {
+    async fn create_app_lets_the_caller_own_several_apps() {
         // Arrange
         let console = start_console(development("accounts.google.com:1")).await;
-        let before = console.registry_file.body();
 
         // Act
         let response = send(
             &console,
             reqwest::Method::POST,
-            "/api/app",
+            "/api/apps",
             Some(json!({ "name": "again" })),
         )
         .await;
 
         // Assert
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        assert_eq!(console.registry_file.body(), before);
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let registry = console.registry_file.body();
+        let owned = registry
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["sub"] == "accounts.google.com:1")
+            .count();
+        assert_eq!(owned, 2);
     }
 
     #[tokio::test]
@@ -501,7 +556,7 @@ mod tests {
         let response = send(
             &console,
             reqwest::Method::POST,
-            "/api/app",
+            "/api/apps",
             Some(json!({ "name": "" })),
         )
         .await;
@@ -523,7 +578,7 @@ mod tests {
         let response = send(
             &console,
             reqwest::Method::POST,
-            "/api/tokens",
+            "/api/apps/app-1/tokens",
             Some(json!({ "publish": "cam1", "ttlSeconds": 3600 })),
         )
         .await;
@@ -553,7 +608,7 @@ mod tests {
         let response = send(
             &console,
             reqwest::Method::POST,
-            "/api/tokens",
+            "/api/apps/app-1/tokens",
             Some(json!({ "publish": "", "ttlSeconds": 60, "appId": "relay" })),
         )
         .await;
@@ -563,15 +618,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn issue_token_answers_404_for_a_caller_without_an_app() {
+    async fn issue_token_answers_404_for_an_app_of_another_caller() {
         // Arrange
-        let console = start_console(development("nobody")).await;
+        let console = start_console(development("accounts.google.com:1")).await;
 
         // Act
         let response = send(
             &console,
             reqwest::Method::POST,
-            "/api/tokens",
+            "/api/apps/app-2/tokens",
             Some(json!({ "publish": "", "ttlSeconds": 60 })),
         )
         .await;
@@ -581,13 +636,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rotate_secret_returns_the_new_secret_and_invalidates_tokens_issued_before() {
+    async fn rotate_secret_returns_the_new_secret_records_when_and_invalidates_tokens_issued_before()
+     {
         // Arrange
         let console = start_console(development("accounts.google.com:1")).await;
         let issued = send(
             &console,
             reqwest::Method::POST,
-            "/api/tokens",
+            "/api/apps/app-1/tokens",
             Some(json!({ "publish": "", "ttlSeconds": 60 })),
         )
         .await
@@ -596,7 +652,13 @@ mod tests {
         .unwrap();
 
         // Act
-        let response = send(&console, reqwest::Method::POST, "/api/app/secret", None).await;
+        let response = send(
+            &console,
+            reqwest::Method::POST,
+            "/api/apps/app-1/secret",
+            None,
+        )
+        .await;
 
         // Assert
         assert_eq!(response.status(), StatusCode::OK);
@@ -608,22 +670,41 @@ mod tests {
             .to_owned();
         assert_ne!(secret, "s");
         assert_eq!(rotated["secret"], secret.as_str());
+        assert!(rotated["app"]["rotatedAt"].as_u64().is_some());
+        assert_eq!(
+            row(&registry, "app-1").unwrap()["rotatedAt"],
+            rotated["app"]["rotatedAt"]
+        );
         assert!(auth_token::verify_signature(issued["token"].as_str().unwrap(), &secret).is_err());
     }
 
     #[tokio::test]
-    async fn delete_app_removes_only_the_callers_app() {
+    async fn delete_app_removes_only_the_named_app() {
         // Arrange
         let console = start_console(development("accounts.google.com:1")).await;
 
         // Act
-        let response = send(&console, reqwest::Method::DELETE, "/api/app", None).await;
+        let response = send(&console, reqwest::Method::DELETE, "/api/apps/app-1", None).await;
 
         // Assert
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         let registry = console.registry_file.body();
         assert!(row(&registry, "app-1").is_none());
+        assert!(row(&registry, "app-2").is_some());
         assert!(row(&registry, "relay").is_some());
+    }
+
+    #[tokio::test]
+    async fn delete_app_answers_404_for_an_app_of_another_caller() {
+        // Arrange
+        let console = start_console(development("accounts.google.com:1")).await;
+
+        // Act
+        let response = send(&console, reqwest::Method::DELETE, "/api/apps/app-2", None).await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(row(&console.registry_file.body(), "app-2").is_some());
     }
 
     #[tokio::test]
@@ -633,7 +714,7 @@ mod tests {
 
         // Act
         let response = reqwest::Client::new()
-            .delete(format!("{}/api/app", console.base_url))
+            .delete(format!("{}/api/apps/app-1", console.base_url))
             .send()
             .await
             .unwrap();
@@ -650,7 +731,7 @@ mod tests {
 
         // Act
         let response = reqwest::Client::new()
-            .delete(format!("{}/api/app", console.base_url))
+            .delete(format!("{}/api/apps/app-1", console.base_url))
             .header(CSRF_HEADER, "1")
             .header("origin", "https://attacker.example")
             .send()
@@ -668,7 +749,7 @@ mod tests {
 
         // Act
         let response = reqwest::Client::new()
-            .delete(format!("{}/api/app", console.base_url))
+            .delete(format!("{}/api/apps/app-1", console.base_url))
             .header(CSRF_HEADER, "1")
             .header("origin", &console.base_url)
             .send()
@@ -791,7 +872,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn me_returns_the_app_of_the_sub_without_its_secret() {
+    async fn list_apps_returns_only_the_callers_apps_without_their_secrets() {
+        // Arrange
+        let console = start_console(development("accounts.google.com:1")).await;
+
+        // Act
+        let response = get(&console, "/api/apps").await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.json::<Value>().await.unwrap(),
+            json!({ "apps": [{ "appId": "app-1", "name": "camera", "createdAt": 1760900000,
+                               "rotatedAt": null }] })
+        );
+    }
+
+    #[tokio::test]
+    async fn list_apps_is_empty_for_a_caller_without_apps() {
+        // Arrange
+        let console = start_console(development("accounts.google.com:3")).await;
+
+        // Act
+        let response = get(&console, "/api/apps").await;
+
+        // Assert
+        assert_eq!(
+            response.json::<Value>().await.unwrap(),
+            json!({ "apps": [] })
+        );
+    }
+
+    #[tokio::test]
+    async fn me_has_no_email_for_a_development_identity() {
         // Arrange
         let console = start_console(development("accounts.google.com:1")).await;
 
@@ -799,30 +912,14 @@ mod tests {
         let response = get_me(&console, None).await;
 
         // Assert
-        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.json::<Value>().await.unwrap(),
-            json!({ "app": { "appId": "app-1", "name": "camera", "createdAt": 1760900000 } })
+            json!({ "email": null, "relayUrl": RELAY_URL })
         );
     }
 
     #[tokio::test]
-    async fn me_returns_no_app_for_a_sub_without_one() {
-        // Arrange
-        let console = start_console(development("accounts.google.com:2")).await;
-
-        // Act
-        let response = get_me(&console, None).await;
-
-        // Assert
-        assert_eq!(
-            response.json::<Value>().await.unwrap(),
-            json!({ "app": null })
-        );
-    }
-
-    #[tokio::test]
-    async fn me_identifies_the_sub_from_a_valid_iap_assertion() {
+    async fn me_returns_the_email_of_a_valid_iap_assertion() {
         // Arrange
         let key = TestIapKey::new("key-1");
         let keys = FakeIapKeys::run(&[&key]).await;
@@ -845,8 +942,8 @@ mod tests {
 
         // Assert
         assert_eq!(
-            response.json::<Value>().await.unwrap()["app"]["appId"],
-            "app-1"
+            response.json::<Value>().await.unwrap()["email"],
+            "someone@example.com"
         );
     }
 
@@ -872,13 +969,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn me_answers_503_when_the_registry_cannot_be_read() {
+    async fn list_apps_answers_503_when_the_registry_cannot_be_read() {
         // Arrange
         let console = start_console(development("accounts.google.com:1")).await;
         console.registry_file.write("not a registry");
 
         // Act
-        let response = get_me(&console, None).await;
+        let response = get(&console, "/api/apps").await;
 
         // Assert
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

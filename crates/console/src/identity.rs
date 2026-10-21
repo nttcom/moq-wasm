@@ -11,6 +11,11 @@ pub enum Identity {
     Development { sub: String },
 }
 
+pub struct Caller {
+    pub sub: String,
+    pub email: Option<String>,
+}
+
 pub struct IdentitySettings {
     pub iap_audience: Option<String>,
     pub development_sub: Option<String>,
@@ -35,9 +40,12 @@ impl Identity {
         }
     }
 
-    pub async fn sub(&self, headers: &HeaderMap, now: u64) -> anyhow::Result<String> {
+    pub async fn caller(&self, headers: &HeaderMap, now: u64) -> anyhow::Result<Caller> {
         match self {
-            Self::Development { sub } => Ok(sub.clone()),
+            Self::Development { sub } => Ok(Caller {
+                sub: sub.clone(),
+                email: None,
+            }),
             Self::Iap(verifier) => {
                 let assertion = headers
                     .get(IAP_ASSERTION_HEADER)
@@ -95,7 +103,10 @@ mod tests {
         let identity = Identity::new(settings(None, Some("dev"), false), keys_url()).unwrap();
 
         // Act / Assert
-        assert_eq!(identity.sub(&HeaderMap::new(), NOW).await.unwrap(), "dev");
+        assert_eq!(
+            identity.caller(&HeaderMap::new(), NOW).await.unwrap().sub,
+            "dev"
+        );
     }
 
     #[tokio::test]
@@ -104,6 +115,6 @@ mod tests {
         let identity = Identity::new(settings(Some(AUDIENCE), None, true), keys_url()).unwrap();
 
         // Act / Assert
-        assert!(identity.sub(&HeaderMap::new(), NOW).await.is_err());
+        assert!(identity.caller(&HeaderMap::new(), NOW).await.is_err());
     }
 }

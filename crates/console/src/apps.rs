@@ -6,12 +6,6 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 pub(crate) const MAX_TOKEN_TTL_SECONDS: u64 = 24 * 60 * 60;
 
-pub(crate) enum Outcome<T> {
-    Done(T),
-    NoApp,
-    AlreadyHasApp,
-}
-
 pub(crate) struct TokenScope {
     pub(crate) publish: Option<String>,
     pub(crate) subscribe: Option<String>,
@@ -28,7 +22,7 @@ pub(crate) async fn create_app(
     sub: &str,
     name: String,
     now: u64,
-) -> anyhow::Result<Outcome<App>> {
+) -> anyhow::Result<App> {
     let app = App {
         app_id: random_app_id()?,
         name: Some(name),
@@ -40,11 +34,8 @@ pub(crate) async fn create_app(
     };
     store
         .update(|apps| {
-            if apps.iter().any(|existing| owned_by(existing, sub)) {
-                return Ok(Outcome::AlreadyHasApp);
-            }
             apps.push(app.clone());
-            Ok(Outcome::Done(app.clone()))
+            Ok(app.clone())
         })
         .await
 }
@@ -52,12 +43,13 @@ pub(crate) async fn create_app(
 pub(crate) async fn issue_token(
     store: &RegistryStore,
     sub: &str,
+    app_id: &str,
     scope: TokenScope,
     now: u64,
-) -> anyhow::Result<Outcome<IssuedToken>> {
+) -> anyhow::Result<Option<IssuedToken>> {
     let apps = store.load().await?.apps;
-    let Some(app) = apps.iter().find(|app| owned_by(app, sub)) else {
-        return Ok(Outcome::NoApp);
+    let Some(app) = apps.get(app_id).filter(|app| owned_by(app, sub)) else {
+        return Ok(None);
     };
     let expires_at = now + scope.ttl_seconds;
     let claims = Claims {
@@ -67,7 +59,7 @@ pub(crate) async fn issue_token(
         iat: Some(now),
         exp: Some(expires_at),
     };
-    Ok(Outcome::Done(IssuedToken {
+    Ok(Some(IssuedToken {
         token: sign_token(&claims, &app.secret)?,
         expires_at,
     }))
@@ -76,27 +68,40 @@ pub(crate) async fn issue_token(
 pub(crate) async fn rotate_secret(
     store: &RegistryStore,
     sub: &str,
-) -> anyhow::Result<Outcome<App>> {
+    app_id: &str,
+    now: u64,
+) -> anyhow::Result<Option<App>> {
     let secret = random_secret()?;
     store
         .update(|apps| {
-            let Some(app) = apps.iter_mut().find(|app| owned_by(app, sub)) else {
-                return Ok(Outcome::NoApp);
+            let Some(app) = apps
+                .iter_mut()
+                .find(|app| app.app_id == app_id && owned_by(app, sub))
+            else {
+                return Ok(None);
             };
             app.secret = secret.clone();
-            Ok(Outcome::Done(app.clone()))
+            app.rotated_at = Some(now);
+            Ok(Some(app.clone()))
         })
         .await
 }
 
-pub(crate) async fn delete_app(store: &RegistryStore, sub: &str) -> anyhow::Result<Outcome<()>> {
+pub(crate) async fn delete_app(
+    store: &RegistryStore,
+    sub: &str,
+    app_id: &str,
+) -> anyhow::Result<Option<()>> {
     store
         .update(|apps| {
-            let Some(index) = apps.iter().position(|app| owned_by(app, sub)) else {
-                return Ok(Outcome::NoApp);
+            let Some(index) = apps
+                .iter()
+                .position(|app| app.app_id == app_id && owned_by(app, sub))
+            else {
+                return Ok(None);
             };
             apps.remove(index);
-            Ok(Outcome::Done(()))
+            Ok(Some(()))
         })
         .await
 }

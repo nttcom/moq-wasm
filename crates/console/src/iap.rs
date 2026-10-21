@@ -10,6 +10,8 @@ use ring::signature::{ECDSA_P256_SHA256_FIXED, UnparsedPublicKey};
 use serde::{Deserialize, de::DeserializeOwned};
 use tokio::sync::Mutex;
 
+use crate::identity::Caller;
+
 pub const GOOGLE_IAP_KEYS_URL: &str = "https://www.gstatic.com/iap/verify/public_key-jwk";
 const ISSUER: &str = "https://cloud.google.com/iap";
 const CLOCK_SKEW_SECONDS: u64 = 30;
@@ -32,6 +34,7 @@ struct Claims {
     iss: String,
     aud: String,
     sub: String,
+    email: Option<String>,
     iat: u64,
     exp: u64,
 }
@@ -52,7 +55,7 @@ impl IapVerifier {
     /// from the fetched IAP key set, names another issuer or audience, has an empty `sub`, or lies
     /// outside its `iat` / `exp` window by more than 30 seconds, and when the keys cannot be
     /// fetched.
-    pub async fn verify(&self, assertion: &str, now: u64) -> anyhow::Result<String> {
+    pub async fn verify(&self, assertion: &str, now: u64) -> anyhow::Result<Caller> {
         let [header_segment, payload_segment, signature_segment] = split(assertion)?;
         let header: Header = decode_json(header_segment)?;
         if header.alg != "ES256" {
@@ -88,7 +91,10 @@ impl IapVerifier {
         if claims.sub.is_empty() {
             bail!("the IAP assertion has an empty sub");
         }
-        Ok(claims.sub)
+        Ok(Caller {
+            sub: claims.sub,
+            email: claims.email,
+        })
     }
 }
 
@@ -208,17 +214,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_the_sub_of_a_valid_assertion() {
+    async fn returns_the_sub_and_email_of_a_valid_assertion() {
         // Arrange
         let key = TestIapKey::new("key-1");
         let keys = FakeIapKeys::run(&[&key]).await;
         let assertion = key.sign(&iap_claims("accounts.google.com:1"));
 
         // Act
-        let sub = verifier(&keys).verify(&assertion, NOW).await.unwrap();
+        let caller = verifier(&keys).verify(&assertion, NOW).await.unwrap();
 
         // Assert
-        assert_eq!(sub, "accounts.google.com:1");
+        assert_eq!(caller.sub, "accounts.google.com:1");
+        assert_eq!(caller.email.as_deref(), Some("someone@example.com"));
     }
 
     #[tokio::test]

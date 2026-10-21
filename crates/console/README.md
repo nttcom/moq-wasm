@@ -1,23 +1,24 @@
 # console
 
 Backend of the internal MoQ console. It runs behind IAP on Cloud Run, takes
-the employee's identity (`sub`) from the IAP assertion and serves their app
+the employee's identity (`sub`) from the IAP assertion and serves their apps
 from the app registry.
 
 ## API
 
-| Route                  | Body                                                         | Answer                                                            |
-| ---------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `GET /api/me`          |                                                              | `{ "app": { "appId", "name", "createdAt" } \| null }`             |
-| `POST /api/app`        | `{ "name": "camera site 1" }`                                | `201 { "app": …, "secret": … }`, `409` when the caller has an app |
-| `POST /api/tokens`     | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }`                    |
-| `POST /api/app/secret` |                                                              | `{ "app": …, "secret": … }`; tokens issued before stop working    |
-| `DELETE /api/app`      |                                                              | `204`                                                             |
+| Route                           | Body                                                         | Answer                                                         |
+| ------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------- |
+| `GET /api/me`                   |                                                              | `{ "email": …, "relayUrl": … }`                                |
+| `GET /api/apps`                 |                                                              | `{ "apps": [{ "appId", "name", "createdAt", "rotatedAt" }] }`  |
+| `POST /api/apps`                | `{ "name": "camera site 1" }`                                | `201 { "app": …, "secret": … }`                                |
+| `POST /api/apps/{appId}/tokens` | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }`                 |
+| `POST /api/apps/{appId}/secret` |                                                              | `{ "app": …, "secret": … }`; tokens issued before stop working |
+| `DELETE /api/apps/{appId}`      |                                                              | `204`                                                          |
 
 Requests other than `GET` must carry `X-Console-Request`; a request whose
 `Origin` is another site is refused.
 
-Only the answers to creating the app and rotating its secret carry the
+Only the answers to creating an app and rotating its secret carry the
 `secret`, once; nothing else returns it.
 
 ## Signing tokens on your own server
