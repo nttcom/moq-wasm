@@ -1,23 +1,13 @@
-use std::path::PathBuf;
-
 use anyhow::bail;
 
 use crate::{
     app::{App, Apps},
-    cloud_storage::{CloudStorageObject, Endpoint},
+    cloud_storage::CloudStorageObject,
     file::RegistryFile,
+    location::Location,
 };
 
 const MAX_UPDATE_ATTEMPTS: usize = 5;
-
-pub enum Location {
-    CloudStorage {
-        endpoint: Endpoint,
-        bucket: String,
-        object: String,
-    },
-    File(PathBuf),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Generation(pub(crate) u64);

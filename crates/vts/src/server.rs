@@ -114,10 +114,10 @@ fn json_response(status: StatusCode, body: Value) -> JsonResponse {
 
 #[cfg(test)]
 mod tests {
+    use app_registry::testing::TemporaryRegistryFile;
+
     use super::*;
-    use crate::test_support::{
-        APP_SECRET, TemporaryRegistryFile, app_claims, test_apps_json, token,
-    };
+    use crate::test_support::{APP_SECRET, app_claims, test_apps_json, token};
 
     struct TestServer {
         base_url: String,

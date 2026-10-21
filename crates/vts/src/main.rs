@@ -1,7 +1,7 @@
 use std::{future, path::PathBuf, sync::Arc};
 
-use anyhow::{Context, bail};
-use app_registry::{Endpoint, Location, RegistryStore};
+use anyhow::Context;
+use app_registry::{Location, LocationVariables, RegistryStore};
 use tokio::net::TcpListener;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use vts::{Registry, VtsServer};
@@ -30,20 +30,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn registry_location() -> anyhow::Result<Location> {
-    match (
-        non_empty_env("VTS_REGISTRY_BUCKET"),
-        non_empty_env("VTS_APPS_FILE"),
-    ) {
-        (Some(_), Some(_)) => bail!("set VTS_REGISTRY_BUCKET or VTS_APPS_FILE, not both"),
-        (Some(bucket), None) => Ok(Location::CloudStorage {
-            endpoint: Endpoint::from_env()?,
-            bucket,
-            object: env_or("VTS_REGISTRY_OBJECT", "registry.json"),
-        }),
-        (None, apps_file) => Ok(Location::File(PathBuf::from(
-            apps_file.unwrap_or_else(|| "/etc/vts/apps.json".to_owned()),
-        ))),
-    }
+    let variables = LocationVariables {
+        file: "VTS_APPS_FILE",
+        bucket: "VTS_REGISTRY_BUCKET",
+        object: "VTS_REGISTRY_OBJECT",
+    };
+    Ok(Location::from_env(&variables)?
+        .unwrap_or_else(|| Location::File(PathBuf::from("/etc/vts/apps.json"))))
 }
 
 fn non_empty_env(name: &str) -> Option<String> {

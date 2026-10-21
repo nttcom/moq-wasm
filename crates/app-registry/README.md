@@ -12,7 +12,7 @@ fields added, kept in Cloud Storage or in a local file.
 ]
 ```
 
-`RegistryStore::new` takes a `Location`:
+`RegistryStore::new` takes a `Location`, which `Location::from_env` can read from environment variables named by the caller:
 
 | Location | Generation | Write |
 | --- | --- | --- |
