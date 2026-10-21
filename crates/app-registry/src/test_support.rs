@@ -64,6 +64,10 @@ impl FakeCloudStorage {
         let object = self.object.lock().unwrap();
         serde_json::from_slice(&object.as_ref().unwrap().body).unwrap()
     }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.object.lock().unwrap().as_ref().unwrap().generation
+    }
 }
 
 pub(crate) struct SilentServer {
