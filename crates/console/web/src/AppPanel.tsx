@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 
-import { api, describeError, formatUnixTime, type ConsoleApp } from './api'
+import { api, describeError, formatUnixTime, type AppWithSecret, type ConsoleApp } from './api'
+import { SecretReveal } from './SecretReveal'
 
 type Props = {
   app: ConsoleApp | null
@@ -8,10 +9,19 @@ type Props = {
 }
 
 export function AppPanel({ app, onChange }: Props) {
-  return app ? <OwnedApp app={app} onDeleted={() => onChange(null)} /> : <CreateApp onCreated={onChange} />
+  const [createdSecret, setCreatedSecret] = useState<string | null>(null)
+  const created = (result: AppWithSecret) => {
+    setCreatedSecret(result.secret)
+    onChange(result.app)
+  }
+  return app ? (
+    <OwnedApp app={app} createdSecret={createdSecret} onDeleted={() => onChange(null)} />
+  ) : (
+    <CreateApp onCreated={created} />
+  )
 }
 
-function CreateApp({ onCreated }: { onCreated: (app: ConsoleApp) => void }) {
+function CreateApp({ onCreated }: { onCreated: (result: AppWithSecret) => void }) {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -21,7 +31,7 @@ function CreateApp({ onCreated }: { onCreated: (app: ConsoleApp) => void }) {
     setBusy(true)
     setError(null)
     try {
-      onCreated((await api.createApp(name)).app)
+      onCreated(await api.createApp(name))
     } catch (caught) {
       setError(describeError(caught))
     } finally {
@@ -57,7 +67,9 @@ function CreateApp({ onCreated }: { onCreated: (app: ConsoleApp) => void }) {
   )
 }
 
-function OwnedApp({ app, onDeleted }: { app: ConsoleApp; onDeleted: () => void }) {
+type OwnedAppProps = { app: ConsoleApp; createdSecret: string | null; onDeleted: () => void }
+
+function OwnedApp({ app, createdSecret, onDeleted }: OwnedAppProps) {
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -73,6 +85,7 @@ function OwnedApp({ app, onDeleted }: { app: ConsoleApp; onDeleted: () => void }
 
   return (
     <div className="flex flex-col gap-6">
+      {createdSecret && <SecretReveal secret={createdSecret} />}
       <div>
         <h2 className="text-lg font-semibold">あなたの app</h2>
         <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 text-sm">

@@ -6,16 +6,46 @@ from the app registry.
 
 ## API
 
-| Route                  | Body                                                         | Answer                                                |
-| ---------------------- | ------------------------------------------------------------ | ----------------------------------------------------- |
-| `GET /api/me`          |                                                              | `{ "app": { "appId", "name", "createdAt" } \| null }` |
-| `POST /api/app`        | `{ "name": "camera site 1" }`                                | `201 { "app": … }`, `409` when the caller has an app  |
-| `POST /api/tokens`     | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }`        |
-| `POST /api/app/secret` |                                                              | `{ "app": … }`; tokens issued before stop working     |
-| `DELETE /api/app`      |                                                              | `204`                                                 |
+| Route                  | Body                                                         | Answer                                                            |
+| ---------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `GET /api/me`          |                                                              | `{ "app": { "appId", "name", "createdAt" } \| null }`             |
+| `POST /api/app`        | `{ "name": "camera site 1" }`                                | `201 { "app": …, "secret": … }`, `409` when the caller has an app |
+| `POST /api/tokens`     | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }`                    |
+| `POST /api/app/secret` |                                                              | `{ "app": …, "secret": … }`; tokens issued before stop working    |
+| `DELETE /api/app`      |                                                              | `204`                                                             |
 
 Requests other than `GET` must carry `X-Console-Request`; a request whose
 `Origin` is another site is refused.
+
+Only the answers to creating the app and rotating its secret carry the
+`secret`, once; nothing else returns it.
+
+## Signing tokens on your own server
+
+A service that hands out tokens signs them itself with the app's secret: a
+compact JWS with the header `{"alg":"HS256"}`, keyed by the UTF-8 bytes of the
+secret string as shown (do not base64-decode it), and these claims:
+
+| Claim        | Value                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------- |
+| `appId`      | The app's `appId`                                                                     |
+| `publish`    | Path under the app the token may publish to; `""` for the whole app; omitted for none |
+| `subscribe`  | The same for subscribing                                                              |
+| `iat`, `exp` | Unix seconds; the relay refuses `exp - iat` over 24 hours                             |
+
+```python
+import base64, hashlib, hmac, json, time
+
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+def sign(app_id: str, secret: str, publish: str, ttl: int) -> str:
+    now = int(time.time())
+    claims = {"appId": app_id, "publish": publish, "iat": now, "exp": now + ttl}
+    signing_input = b64url(b'{"alg":"HS256"}') + "." + b64url(json.dumps(claims).encode())
+    signature = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    return signing_input + "." + b64url(signature)
+```
 
 ## Running locally
 

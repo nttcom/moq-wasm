@@ -198,7 +198,7 @@ async fn create_app(headers: &HeaderMap, body: Incoming, state: &ConsoleState) -
         apps::create_app(&state.store, &sub, name, unix_now()).await,
         |app| {
             tracing::info!(app_id = %app.app_id, "app created");
-            json_response(StatusCode::CREATED, json!({ "app": app_json(&app) }))
+            json_response(StatusCode::CREATED, app_with_secret_json(&app))
         },
     )
 }
@@ -235,7 +235,7 @@ async fn rotate_secret(headers: &HeaderMap, state: &ConsoleState) -> JsonRespons
     };
     respond(apps::rotate_secret(&state.store, &sub).await, |app| {
         tracing::info!(app_id = %app.app_id, "secret rotated");
-        json_response(StatusCode::OK, json!({ "app": app_json(&app) }))
+        json_response(StatusCode::OK, app_with_secret_json(&app))
     })
 }
 
@@ -313,6 +313,10 @@ fn respond<T>(
         Ok(Outcome::AlreadyHasApp) => error_response(StatusCode::CONFLICT, "app_exists"),
         Err(error) => registry_unavailable(&error),
     }
+}
+
+fn app_with_secret_json(app: &App) -> Value {
+    json!({ "app": app_json(app), "secret": app.secret })
 }
 
 fn app_json(app: &App) -> Value {
@@ -441,7 +445,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_app_registers_an_app_owned_by_the_caller() {
+    async fn create_app_registers_an_app_owned_by_the_caller_and_returns_its_secret_once() {
         // Arrange
         let console = start_console(development("dev")).await;
 
@@ -456,16 +460,16 @@ mod tests {
 
         // Assert
         assert_eq!(response.status(), StatusCode::CREATED);
-        let app_id = response.json::<Value>().await.unwrap()["app"]["appId"]
-            .as_str()
-            .unwrap()
-            .to_owned();
+        let created = response.json::<Value>().await.unwrap();
+        let app_id = created["app"]["appId"].as_str().unwrap().to_owned();
         let registry = console.registry_file.body();
         let stored = row(&registry, &app_id).unwrap();
         assert_eq!(stored["sub"], "dev");
         assert_eq!(stored["name"], "site 2");
         assert_eq!(stored["isRelay"], false);
         assert!(!stored["secret"].as_str().unwrap().is_empty());
+        assert_eq!(created["secret"], stored["secret"]);
+        assert!(created["app"].get("secret").is_none());
     }
 
     #[tokio::test]
@@ -577,7 +581,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rotate_secret_invalidates_tokens_issued_before() {
+    async fn rotate_secret_returns_the_new_secret_and_invalidates_tokens_issued_before() {
         // Arrange
         let console = start_console(development("accounts.google.com:1")).await;
         let issued = send(
@@ -596,17 +600,14 @@ mod tests {
 
         // Assert
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(
-            response.json::<Value>().await.unwrap()["app"]
-                .get("secret")
-                .is_none()
-        );
+        let rotated = response.json::<Value>().await.unwrap();
         let registry = console.registry_file.body();
         let secret = row(&registry, "app-1").unwrap()["secret"]
             .as_str()
             .unwrap()
             .to_owned();
         assert_ne!(secret, "s");
+        assert_eq!(rotated["secret"], secret.as_str());
         assert!(auth_token::verify_signature(issued["token"].as_str().unwrap(), &secret).is_err());
     }
 

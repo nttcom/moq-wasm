@@ -10,6 +10,11 @@ export type TokenScope = {
   ttlSeconds: number
 }
 
+export type AppWithSecret = {
+  app: ConsoleApp
+  secret: string
+}
+
 export type IssuedToken = {
   token: string
   expiresAt: number
@@ -63,9 +68,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   me: () => request<{ app: ConsoleApp | null }>('GET', '/api/me'),
-  createApp: (name: string) => request<{ app: ConsoleApp }>('POST', '/api/app', { name }),
+  createApp: (name: string) => request<AppWithSecret>('POST', '/api/app', { name }),
   issueToken: (scope: TokenScope) => request<IssuedToken>('POST', '/api/tokens', scope),
-  rotateSecret: () => request<{ app: ConsoleApp }>('POST', '/api/app/secret'),
+  rotateSecret: () => request<AppWithSecret>('POST', '/api/app/secret'),
   deleteApp: () => request<void>('DELETE', '/api/app')
 }
 
