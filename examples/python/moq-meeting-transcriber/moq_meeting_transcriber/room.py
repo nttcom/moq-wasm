@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import moqt
 from loguru import logger
@@ -6,7 +7,7 @@ from loguru import logger
 from moq_meeting_transcriber.participant import Participant
 from moq_meeting_transcriber import status
 from moq_meeting_transcriber.stt import Recognizer
-from moq_meeting_transcriber.transcript import TRACK_NAME, Publication, TranscriptTimeline
+from moq_meeting_transcriber.transcript import TRACK_NAME, Publication, TranscriptRecord, TranscriptTimeline
 
 # The anonymous app's namespace root; a room under another app's root needs a token the bot lacks.
 NAMESPACE_ROOT = "anon"
@@ -15,6 +16,7 @@ BOT_NAMESPACE = ["bots", "transcriber"]
 # The transcript is kept for FETCH as long as a room runs by default (--max-room-seconds).
 TRANSCRIPT_RETENTION_SECONDS = 60 * 60
 RECONNECT_DELAY_SECONDS = 2.0
+STARTING_NOTICE_AFTER_SECONDS = 2.0
 
 
 def room_namespace(room_id: str) -> list[str]:
@@ -63,8 +65,7 @@ class Room:
         )
         await status.write_status(status_publication, self._recognizer.name, status.STARTING)
         await session.publish_namespace(bot_namespace)
-        announcing = asyncio.create_task(self._announce_ready(status_publication))
-        following = asyncio.create_task(self._follow_participants(session, timeline))
+        following = asyncio.create_task(self._follow_participants(session, timeline, status_publication))
         # The binding's methods return futures, not coroutines.
         closed = asyncio.ensure_future(session.closed())
         try:
@@ -73,15 +74,25 @@ class Room:
                 # Raises what stopped following the participants, so the room fails instead of going quiet.
                 following.result()
         finally:
-            for task in (announcing, following, closed):
+            for task in (following, closed):
                 task.cancel()
 
-    async def _announce_ready(self, status_publication: Publication) -> None:
-        await self._recognizer.ready()
+    async def _follow_participants(
+        self, session: moqt.Session, timeline: TranscriptTimeline, status_publication: Publication
+    ) -> None:
+        # Audio is subscribed only once the recognizer answers, so a GPU service starting from zero
+        # does not receive every utterance of its startup minutes at once.
+        ready = asyncio.ensure_future(self._recognizer.ready())
+        try:
+            done, _ = await asyncio.wait([ready], timeout=STARTING_NOTICE_AFTER_SECONDS)
+            if not done:
+                notice = f"{self._recognizer.name} を起動しています。書き起こしが始まるまで時間がかかることがあります（目安: 約 5 分）"
+                await timeline.append(TranscriptRecord(int(time.time() * 1000), "transcriber", notice))
+            await ready
+        finally:
+            ready.cancel()
         logger.info(f"room {self._room_id}: {self._recognizer.name} is ready")
         await status.write_status(status_publication, self._recognizer.name, status.READY)
-
-    async def _follow_participants(self, session: moqt.Session, timeline: TranscriptTimeline) -> None:
         participants: dict[str, asyncio.Task] = {}
         try:
             async for event in await session.subscribe_namespace(room_namespace(self._room_id)):
