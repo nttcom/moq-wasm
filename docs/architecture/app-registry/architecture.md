@@ -6,8 +6,9 @@ module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
 `app-registry` keeps the registry of apps: each app's `appId`, `secret` and
-`isRelay`, plus an optional `name`, the `sub` of the account that owns it and
-`createdAt`. The registry is one JSON document, an array of rows in the shape
+`isRelay`, plus an optional `name`, the `sub` of the account that owns it,
+`createdAt` and `rotatedAt` (when its secret was last replaced). One `sub` may
+own several apps. The registry is one JSON document, an array of rows in the shape
 of the VTS apps file, kept in Cloud Storage in production or in a local file
 for development, tests and a single on-premises server.
 
@@ -18,7 +19,7 @@ create an app or how a secret is generated; those rules belong to its callers.
 
 | Module | Responsibility |
 | --- | --- |
-| `app.rs` | `App` (one row) and `Apps` (a validated list). `Apps::new` rejects an empty `appId` or `secret`, a duplicated `appId`, and a `sub` that owns more than one app. |
+| `app.rs` | `App` (one row) and `Apps` (a validated list). `Apps::new` rejects an empty `appId` or `secret` and a duplicated `appId`. |
 | `store.rs` | `RegistryStore`, the one entry point: `load` (apps and generation) and `update` (load, change, conditional store, retry). `Location` picks the backend. |
 | `location.rs` | `Location`, the backend a store uses. `Location::from_env` reads it from environment variables whose names each caller passes, so the VTS and the console keep their own names. |
 | `cloud_storage.rs` | The Cloud Storage backend over the JSON API. The generation is the object's; a store is an upload with `ifGenerationMatch`. `Endpoint` picks Cloud Storage or an emulator. |

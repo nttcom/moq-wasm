@@ -36,6 +36,7 @@ pub(crate) async fn create_app(
         is_relay: false,
         sub: Some(sub.to_owned()),
         created_at: Some(now),
+        rotated_at: None,
     };
     store
         .update(|apps| {
@@ -55,7 +56,7 @@ pub(crate) async fn issue_token(
     now: u64,
 ) -> anyhow::Result<Outcome<IssuedToken>> {
     let apps = store.load().await?.apps;
-    let Some(app) = apps.find_by_sub(sub).filter(|app| !app.is_relay) else {
+    let Some(app) = apps.iter().find(|app| owned_by(app, sub)) else {
         return Ok(Outcome::NoApp);
     };
     let expires_at = now + scope.ttl_seconds;
@@ -100,7 +101,7 @@ pub(crate) async fn delete_app(store: &RegistryStore, sub: &str) -> anyhow::Resu
         .await
 }
 
-fn owned_by(app: &App, sub: &str) -> bool {
+pub(crate) fn owned_by(app: &App, sub: &str) -> bool {
     !app.is_relay && app.sub.as_deref() == Some(sub)
 }
 

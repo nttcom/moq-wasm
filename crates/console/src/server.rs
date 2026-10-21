@@ -172,8 +172,8 @@ async fn me(headers: &HeaderMap, state: &ConsoleState) -> JsonResponse {
         Ok(snapshot) => {
             let app = snapshot
                 .apps
-                .find_by_sub(&sub)
-                .filter(|app| !app.is_relay)
+                .iter()
+                .find(|app| apps::owned_by(app, &sub))
                 .map(app_json);
             json_response(StatusCode::OK, json!({ "app": app }))
         }

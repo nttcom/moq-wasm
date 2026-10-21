@@ -173,14 +173,14 @@ mod tests {
         let error = storage
             .store()
             .update(|apps| {
-                apps.push(app("b", Some("sub-1")));
+                apps.push(app("a", Some("sub-2")));
                 Ok(())
             })
             .await
             .unwrap_err();
 
         // Assert
-        assert!(error.to_string().contains("sub"), "{error}");
+        assert!(error.to_string().contains("duplicated"), "{error}");
         assert_eq!(
             storage.body(),
             json!([{ "appId": "a", "secret": "s", "isRelay": false, "sub": "sub-1" }])
