@@ -38,6 +38,16 @@ CONSOLE_STATIC_DIR=crates/console/web/dist CONSOLE_DEV_SUB=dev CONSOLE_REGISTRY_
 `CONSOLE_DEV_SUB` is refused on Cloud Run. There, set `CONSOLE_IAP_AUDIENCE`
 and `CONSOLE_REGISTRY_BUCKET` instead.
 
+## Image
+
+`crates/console/Dockerfile` builds the pages and the binary into one
+distroless image that serves both, with `CONSOLE_STATIC_DIR` set. Build it
+from the repository root:
+
+```
+docker build -f crates/console/Dockerfile -t moqt-console .
+```
+
 ## Design
 
 [Architecture document](../../docs/architecture/console/architecture.md).
