@@ -1,7 +1,6 @@
+use app_registry::Apps;
 use auth_token::{SignatureError, decode_unverified_payload, verify_signature};
 use serde_json::{Map, Value};
-
-use crate::apps::Apps;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RejectReason {

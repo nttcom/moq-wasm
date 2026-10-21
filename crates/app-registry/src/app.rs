@@ -57,6 +57,14 @@ impl Apps {
         self.0.iter().find(|app| app.app_id == app_id)
     }
 
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn into_vec(self) -> Vec<App> {
         self.0
     }
