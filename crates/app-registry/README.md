@@ -7,7 +7,7 @@ fields added, kept in Cloud Storage or in a local file.
 ```json
 [
   { "appId": "ac8adbc8-...", "name": "camera site 1", "secret": "...", "isRelay": false,
-    "sub": "accounts.google.com:1234...", "createdAt": 1760900000 },
+    "sub": "accounts.google.com:1234...", "createdAt": 1760900000, "rotatedAt": 1760990000 },
   { "appId": "11111111-...", "secret": "...", "isRelay": true }
 ]
 ```

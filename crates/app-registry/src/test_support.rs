@@ -180,5 +180,6 @@ pub(crate) fn app(app_id: &str, sub: Option<&str>) -> App {
         is_relay: false,
         sub: sub.map(Into::into),
         created_at: None,
+        rotated_at: None,
     }
 }

@@ -15,6 +15,8 @@ pub struct App {
     pub sub: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +25,6 @@ pub struct Apps(Vec<App>);
 impl Apps {
     pub fn new(apps: Vec<App>) -> anyhow::Result<Self> {
         let mut app_ids = HashSet::new();
-        let mut subs = HashSet::new();
         for (index, app) in apps.iter().enumerate() {
             if app.app_id.is_empty() {
                 bail!("apps[{index}].appId must be a non-empty string");
@@ -33,11 +34,6 @@ impl Apps {
             }
             if !app_ids.insert(app.app_id.as_str()) {
                 bail!("apps[{index}].appId {:?} is duplicated", app.app_id);
-            }
-            if let Some(sub) = &app.sub
-                && !subs.insert(sub.as_str())
-            {
-                bail!("apps[{index}].sub {sub:?} already owns another app");
             }
         }
         Ok(Self(apps))
@@ -57,8 +53,8 @@ impl Apps {
         self.0.iter().find(|app| app.app_id == app_id)
     }
 
-    pub fn find_by_sub(&self, sub: &str) -> Option<&App> {
-        self.0.iter().find(|app| app.sub.as_deref() == Some(sub))
+    pub fn iter(&self) -> impl Iterator<Item = &App> {
+        self.0.iter()
     }
 
     pub fn len(&self) -> usize {
@@ -102,6 +98,7 @@ mod tests {
                 is_relay: true,
                 sub: None,
                 created_at: None,
+                rotated_at: None,
             })
         );
     }
@@ -117,6 +114,7 @@ mod tests {
                 is_relay: false,
                 sub: Some("accounts.google.com:1".into()),
                 created_at: Some(1),
+                rotated_at: Some(2),
             },
             App {
                 app_id: "r".into(),
@@ -125,6 +123,7 @@ mod tests {
                 is_relay: true,
                 sub: None,
                 created_at: None,
+                rotated_at: None,
             },
         ])
         .unwrap();
@@ -137,7 +136,7 @@ mod tests {
             json,
             json!([
                 { "appId": "a", "name": "camera", "secret": "s1", "isRelay": false,
-                  "sub": "accounts.google.com:1", "createdAt": 1 },
+                  "sub": "accounts.google.com:1", "createdAt": 1, "rotatedAt": 2 },
                 { "appId": "r", "secret": "s2", "isRelay": true },
             ])
         );
@@ -161,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_second_app_for_the_same_sub() {
+    fn one_sub_may_own_several_apps() {
         // Arrange
         let text = json!([
             { "appId": "a", "secret": "s1", "isRelay": false, "sub": "accounts.google.com:1" },
@@ -169,11 +168,8 @@ mod tests {
         ])
         .to_string();
 
-        // Act
-        let error = Apps::parse(&text).unwrap_err();
-
-        // Assert
-        assert!(error.to_string().contains("sub"), "{error}");
+        // Act / Assert
+        assert_eq!(Apps::parse(&text).unwrap().len(), 2);
     }
 
     #[test]
