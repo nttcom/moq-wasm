@@ -31,7 +31,7 @@ export function asrLabel(asr: string): string {
 }
 
 export type CaptionsControls = {
-  /// Whether this page keeps the transcriber in the room and shows its text.
+  /// Whether this page keeps the transcriber in the room and shows captions on the tiles.
   on: boolean
   /// Asks the transcriber in with `asr`; a transcriber already in the room keeps its own.
   start: (asr: string) => void
@@ -40,6 +40,7 @@ export type CaptionsControls = {
   status: TranscriberStatus | undefined
   /// Why the transcriber left while this page asked for it.
   error: string | undefined
+  /// The room's transcript while the transcriber is in the room, whether or not `on`.
   records: TranscriptRecord[]
   /// The newest utterance of each speaker, while it is fresh.
   captions: Map<string, string>
@@ -78,7 +79,9 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   }, [session, transcriberPresent])
 
   useEffect(() => {
-    if (!on || !transcriberPresent) {
+    if (!transcriberPresent) {
+      setRecords([])
+      arrivals.current.clear()
       return
     }
     const subscribed = session.subscribeTranscript(
@@ -95,12 +98,10 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       () => setRecords([])
     )
     return holdSubscription(session, subscribed, 'transcript')
-  }, [on, session, transcriberPresent])
+  }, [session, transcriberPresent])
 
   useEffect(() => {
     if (!on) {
-      setRecords([])
-      arrivals.current.clear()
       return
     }
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
@@ -109,6 +110,9 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
 
   const captions = useMemo(() => {
     const fresh = new Map<string, string>()
+    if (!on) {
+      return fresh
+    }
     for (const record of records) {
       const receivedAt = arrivals.current.get(recordKey(record)) ?? 0
       if (now - receivedAt < CAPTION_MS) {
@@ -116,7 +120,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       }
     }
     return fresh
-  }, [now, records])
+  }, [now, on, records])
 
   if (!TRANSCRIBER_AVAILABLE) {
     return null
@@ -124,6 +128,8 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   return {
     on,
     start: (choice) => {
+      // The clock stops while captions are off, so records that arrived meanwhile would read as fresh.
+      setNow(Date.now())
       setError(undefined)
       setAsr(choice)
     },

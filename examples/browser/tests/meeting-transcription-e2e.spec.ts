@@ -51,6 +51,9 @@ test('captions bring the transcriber, show what a participant says and reach a l
   })
   const bobRecords = await openTranscript(bob.page)
   await expect.poll(() => bobRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(2)
+  // Assert: alice never turned captions on, yet reads the transcript too
+  const aliceRecords = await openTranscript(alice.page)
+  await expect.poll(() => aliceRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(2)
   await alice.page.toggleMicrophoneButton.click()
   await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone on')
   const saidBefore = await bobRecords.count()
