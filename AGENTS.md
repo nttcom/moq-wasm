@@ -75,6 +75,7 @@ Application and integration components (draft reference is normally not required
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
 - E2E Test (auth): `./tests/auth-e2e/run.sh`
+- E2E Test (console): `node tests/browser-e2e/run-console-e2e.mjs`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
