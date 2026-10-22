@@ -51,17 +51,9 @@ pub use crate::modules::moqt::data_plane::object::subgroup::{
     SubgroupHeader, SubgroupHeaderType, SubgroupId, SubgroupObject, SubgroupObjectField,
 };
 
-pub type PublishNamespaceOk = NamespaceOk;
-pub type SubscribeNamespaceOk = NamespaceOk;
-pub type PublishNamespaceError = RequestError;
-pub type SubscribeNamespaceError = RequestError;
-pub type PublishError = RequestError;
-pub type SubscribeError = RequestError;
-pub type FetchError = RequestError;
 // draft-14 §9.20-9.22: identical payload formats.
 pub type TrackStatus = Subscribe;
 pub type TrackStatusOk = SubscribeOk;
-pub type TrackStatusError = RequestError;
 
 pub fn encode_control_message(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {
     let mut buf = BytesMut::new();
