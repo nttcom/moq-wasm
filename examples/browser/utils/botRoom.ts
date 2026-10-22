@@ -32,8 +32,9 @@ export function pageRoomId(): string {
 /// Keeps the room's bot running while the request is open (docs/architecture/ai-bots/on-demand-rooms.md).
 export class BotRoomRequest {
   private source: EventSource | undefined
-  /// Where to say the page leaves, once the server has named the hold.
+  /// Set from the server's `member` event; `close` POSTs to it.
   private leaveUrl: string | undefined
+  private readonly closeOnPageHide = () => this.close()
 
   constructor(private readonly onEnd: (reason: BotRoomEnd) => void) {}
 
@@ -61,11 +62,14 @@ export class BotRoomRequest {
       }
     })
     this.source = source
+    window.addEventListener('pagehide', this.closeOnPageHide)
   }
 
-  /// Tells the server the page leaves, since a service behind a proxy such as Cloud Run's does not
-  /// learn that the stream closed; the bot then leaves at once if no other page holds the room.
+  /// Closes the stream and tells the server the page leaves, since a server behind a proxy such as
+  /// Cloud Run's does not see the stream close. The bot then leaves at once if no other page holds
+  /// the room.
   close(): void {
+    window.removeEventListener('pagehide', this.closeOnPageHide)
     this.source?.close()
     this.source = undefined
     if (this.leaveUrl) {

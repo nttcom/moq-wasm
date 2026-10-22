@@ -71,8 +71,7 @@ accepts no other room.
 `GET /rooms/{room}` answers with `text/event-stream` and keeps the response
 open. The page opens it with `EventSource` when the user presses Join, before
 it connects to the relay, so the bot's start overlaps with the page's own
-connect. The page closes it on Leave. A closed tab or a `pagehide` closes it
-as well.
+connect. The page closes it on Leave or `pagehide`.
 
 The stream starts with a `member` event that names the hold. When the page
 closes the stream, it also sends `POST /rooms/{room}/leave?member={id}`,
