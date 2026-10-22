@@ -159,15 +159,19 @@ are concurrent (`concurrency` well above the expected number of open pages).
 ### Cloud Run settings
 | Setting | Value | Reason |
 | --- | --- | --- |
-| Billing | instance-based (`--no-cpu-throttling`) | The relay session, the 30 s grace period and the teardown run outside any request. Request-based billing throttles the CPU as soon as the last request closes, which freezes them. |
+| Billing | request-based (`--cpu-throttling`) | A room runs only while a page holds its request, so the room keeps the CPU. The 30 s grace period and the teardown after the last page leaves run throttled. |
 | Instances | min 0, max 1 | Zero rooms means zero instances. The room map needs a single instance. |
 | Request timeout | 3600 s (the maximum) | A request is held for the whole time a page stays in the room, which `--max-room-seconds` keeps within this. If a request still drops, `EventSource` opens a new one and the grace period covers the gap. |
 | Ingress | all, unauthenticated | A browser opens the request directly. See "Limits" for abuse. |
 | Service account | own, with `roles/run.invoker` on d3-flash | The bot keeps sending the identity token it gets from the metadata server (`--metadata-auth`), which Cloud Run provides as GCE does. |
 
-An instance with no open request may stay up for up to about 15 minutes
-before Cloud Run stops it. With instance-based billing that idle tail is
-billed, at the CPU-only rate (well under $0.10/h for 1 vCPU).
+Request-based billing does not bill an instance's idle tail, the up to
+about 15 minutes it may stay up with no open request before Cloud Run stops
+it. Scanners request the public URL many times a day, and each of their
+requests starts an instance.
+
+The throttled teardown may not reach the relay. The relay then ends the bot's session at its idle timeout, and the
+bot's namespaces outlive the room until then.
 
 ### Limits
 The endpoint has no authentication, so the server bounds what a request can
@@ -263,7 +267,8 @@ the deployed state differs from its declared configuration every evening, and
 a page sees only a failed request. A check in the server needs no
 infrastructure, and the page can tell the user why.
 
-### Request-based billing on the bot service
-It is cheaper while idle, but Cloud Run throttles the CPU outside requests.
-The grace period and the relay teardown after the last page leaves would not
-run, and the relay would keep the bot's session until its idle timeout.
+### Instance-based billing on the bot service
+It bills each instance's idle tail, and every scanner request starts an
+instance: one hour of real use on 2026-10-21 billed 6.7 hours on the
+transcriber. It would keep the CPU for the grace period and the relay
+teardown.
