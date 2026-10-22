@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use anyhow::bail;
-use auth_token::Claims;
-
-use crate::{apps::Apps, jwt::sign_token};
+use app_registry::Apps;
+use auth_token::{Claims, sign_token};
 
 #[derive(clap::Args)]
 pub struct MintRequest {

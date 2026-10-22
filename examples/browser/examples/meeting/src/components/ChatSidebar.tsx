@@ -8,7 +8,7 @@ interface ChatSidebarProps {
   onMessageChange: (value: string) => void
   onSend: (event?: FormEvent) => void
   onToggle: () => void
-  /// The room's transcript while captions are on.
+  /// The room's transcript; `undefined` while no transcriber is in the room, which hides the Transcript tab.
   transcript: TranscriptRecord[] | undefined
 }
 

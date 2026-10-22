@@ -6,13 +6,12 @@ use std::sync::Arc;
 
 use moqt::{
     object::{ContentExists, GroupOrder},
-    subscribe::FilterType,
+    subscribe::{FilterType, SubscribeOption},
 };
 
 use crate::modules::{
     domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
     session::{
-        handler::publish::SubscribeOption,
         publisher::Publisher,
         session_repository::SessionRepository,
         subscriber::Subscriber,

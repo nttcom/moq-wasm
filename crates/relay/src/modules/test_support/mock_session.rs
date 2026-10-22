@@ -22,10 +22,8 @@ use crate::modules::{
             DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
         },
         handler::{
-            fetch::FetchHandler,
-            publish::{PublishHandler, SubscribeOption},
-            publish_namespace::PublishNamespaceHandler,
-            subscribe::SubscribeHandler,
+            fetch::FetchHandler, publish::PublishHandler,
+            publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
         },
         moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
@@ -432,7 +430,7 @@ impl Subscriber for MockUpstreamSubscriber {
         &mut self,
         track_namespace: String,
         track_name: String,
-        _option: SubscribeOption,
+        _option: moqt::subscribe::SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription> {
         let answer_subscribe = match &self.answer_subscribe {
             Some(SubscribeAnswer::SubscribeOk(answer_subscribe)) => answer_subscribe,

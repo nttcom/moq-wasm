@@ -1,9 +1,10 @@
 use std::{future, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
+use app_registry::{Location, LocationVariables, RegistryStore};
 use tokio::net::TcpListener;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
-use vts::{VtsServer, load_apps};
+use vts::{Registry, VtsServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,16 +19,30 @@ async fn main() -> anyhow::Result<()> {
     let port: u16 = env_or("VTS_PORT", "8081")
         .parse()
         .context("VTS_PORT must be a port number")?;
-    let apps_file = PathBuf::from(env_or("VTS_APPS_FILE", "/etc/vts/apps.json"));
 
-    let apps = Arc::new(load_apps(&apps_file).await?);
+    let registry = Registry::load(RegistryStore::new(registry_location()?)?).await?;
+
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    let _server = VtsServer::run(listener, apps.clone());
-    tracing::info!(port, apps = apps.len(), "vts listening");
+    let _server = VtsServer::run(listener, Arc::new(registry));
+    tracing::info!(port, "vts listening");
 
     future::pending().await
 }
 
+fn registry_location() -> anyhow::Result<Location> {
+    let variables = LocationVariables {
+        file: "VTS_APPS_FILE",
+        bucket: "VTS_REGISTRY_BUCKET",
+        object: "VTS_REGISTRY_OBJECT",
+    };
+    Ok(Location::from_env(&variables)?
+        .unwrap_or_else(|| Location::File(PathBuf::from("/etc/vts/apps.json"))))
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
 fn env_or(name: &str, default: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| default.to_owned())
+    non_empty_env(name).unwrap_or_else(|| default.to_owned())
 }

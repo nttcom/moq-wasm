@@ -15,6 +15,11 @@ dependencies = [
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
+[tool.uv]
+# pipecat-ai caps Pillow below 13, and only Pillow 13 fixes CVE-2026-112403. Drop this once
+# pipecat-ai allows Pillow 13.
+override-dependencies = ["pillow>=13"]
+
 [tool.uv.sources]
 moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
 moq-d3-flash-bot = { path = "../moq-d3-flash-bot", editable = true }

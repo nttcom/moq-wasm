@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.12.21@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b AS uv
 
 # The moqt bindings (crates/python) build into an abi3 wheel for Python 3.11+, so the Debian
 # python3 that runs maturin here need not be 3.11.

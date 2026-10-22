@@ -767,18 +767,6 @@ impl MOQTClient {
         self.shared.subscriptions.borrow().contains_key(&request_id)
     }
 
-    #[wasm_bindgen(js_name = getTrackSubscribers)]
-    pub fn get_track_subscribers(
-        &self,
-        track_namespace: Vec<String>,
-        track_name: String,
-    ) -> Vec<u64> {
-        self.shared
-            .state
-            .borrow()
-            .get_track_subscribers(track_namespace, track_name)
-    }
-
     #[wasm_bindgen(js_name = getSubgroupState)]
     pub fn get_subgroup_state(&self, track_alias: u64) -> SubgroupState {
         self.shared
@@ -801,14 +789,6 @@ impl MOQTClient {
             .state
             .borrow_mut()
             .increment_subgroup_object(track_alias);
-    }
-
-    #[wasm_bindgen(js_name = resetSubgroupState)]
-    pub fn reset_subgroup_state(&self, track_alias: u64) {
-        self.shared
-            .state
-            .borrow_mut()
-            .reset_subgroup_state(track_alias);
     }
 
     #[wasm_bindgen(js_name = sendSubscribeOk)]

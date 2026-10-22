@@ -131,7 +131,7 @@ jobs:
   prettier:
     runs-on: ubuntu-latest
     container:
-      image: cimg/node:21.6.2@sha256:c95ae0b7d9bc23abf5dd8a7794c79ba480660f71f07ba9d5a95309d18644ac5d
+      image: cimg/node:22.23.4@sha256:097391155ab978930031757a857cf57278b907da8a994f278bbd27443c5018bf
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -144,7 +144,7 @@ jobs:
   browser-unit-test:
     runs-on: ubuntu-latest
     container:
-      image: cimg/node:21.6.2@sha256:c95ae0b7d9bc23abf5dd8a7794c79ba480660f71f07ba9d5a95309d18644ac5d
+      image: cimg/node:22.23.4@sha256:097391155ab978930031757a857cf57278b907da8a994f278bbd27443c5018bf
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -155,3 +155,22 @@ jobs:
       - name: Run browser unit tests
         run: npm test
         working-directory: examples/browser
+  console-web:
+    runs-on: ubuntu-latest
+    container:
+      image: cimg/node:22.23.4@sha256:097391155ab978930031757a857cf57278b907da8a994f278bbd27443c5018bf
+    defaults:
+      run:
+        working-directory: crates/console/web
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: npm ci
+      - name: Check code formatting
+        run: npm run format:check
+      - name: Type check
+        run: npm run lint
+      - name: Build
+        run: npm run build

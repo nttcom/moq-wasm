@@ -33,14 +33,25 @@ any algorithm other than HS256).
 
 ## Configuration
 
-| Variable        | Default              | Meaning                     |
-| --------------- | -------------------- | --------------------------- |
-| `VTS_APPS_FILE` | `/etc/vts/apps.json` | Registered apps (see below) |
-| `VTS_PORT`      | `8081`               | Listen port                 |
-| `RUST_LOG`      | `info`               | `tracing` filter            |
+| Variable                | Default              | Meaning                                                         |
+| ----------------------- | -------------------- | --------------------------------------------------------------- |
+| `VTS_APPS_FILE`         | `/etc/vts/apps.json` | Registered apps in a local file (see below)                     |
+| `VTS_REGISTRY_BUCKET`   | unset                | Read the registered apps from this Cloud Storage bucket instead |
+| `VTS_REGISTRY_OBJECT`   | `registry.json`      | Object in `VTS_REGISTRY_BUCKET`                                 |
+| `STORAGE_EMULATOR_HOST` | unset                | Cloud Storage emulator URL, e.g. `http://localhost:4443`        |
+| `VTS_PORT`              | `8081`               | Listen port                                                     |
+| `RUST_LOG`              | `info`               | `tracing` filter                                                |
 
-`apps.json` is a JSON array; `apps.example.json` holds local development
-values. Never commit a real file: `crates/vts/apps.json` is ignored.
+Set `VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET`, not both. Either way the VTS
+reads the registered apps at startup and again on every `/verify`, so a new
+app, a rotated secret or a deleted app takes effect on the next verification
+without a restart. If the registry cannot be read during a verification, the
+VTS logs a warning and verifies with the apps it last read; if it cannot be
+read at startup, the VTS stops.
+
+The registered apps are a JSON array, the format `app-registry` reads;
+`apps.example.json` holds local development values. Never commit a real file:
+`crates/vts/apps.json` is ignored.
 
 ```json
 [

@@ -8,9 +8,8 @@ use crate::modules::{
 use anyhow::Context;
 use bytes::{Bytes, BytesMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum SetupParameterType {
     Path = 0x01,

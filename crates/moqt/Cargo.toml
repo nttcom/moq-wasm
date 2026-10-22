@@ -10,7 +10,6 @@ anyhow = { version = "1.0.102", features = ["backtrace"] }
 tracing = "0.1.44"
 bytes = "1"
 async-trait = "0.1.89"
-serde = { version = "1.0.228", features = ["derive"] }
 num_enum = "0.7.6"
 thiserror = "2.0.18"
 url = "2"

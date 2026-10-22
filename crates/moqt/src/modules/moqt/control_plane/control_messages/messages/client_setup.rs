@@ -7,7 +7,6 @@ use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
-    pub number_of_supported_versions: u64,
     pub supported_versions: Vec<u32>,
     pub setup_parameters: SetupParameter,
 }
@@ -15,7 +14,6 @@ pub struct ClientSetup {
 impl ClientSetup {
     pub fn new(supported_versions: Vec<u32>, setup_parameters: SetupParameter) -> ClientSetup {
         ClientSetup {
-            number_of_supported_versions: supported_versions.len() as u64,
             supported_versions,
             setup_parameters,
         }
@@ -36,7 +34,6 @@ impl ClientSetup {
         let setup_parameters = SetupParameter::decode(buf)?;
 
         let client_setup_message = ClientSetup {
-            number_of_supported_versions,
             supported_versions,
             setup_parameters,
         };
@@ -46,7 +43,7 @@ impl ClientSetup {
 
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.number_of_supported_versions);
+        payload.put_varint(self.supported_versions.len() as u64);
         for supported_version in &self.supported_versions {
             payload.put_varint(*supported_version as u64);
         }
@@ -111,7 +108,6 @@ mod test {
             let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_client_setup = ClientSetup::decode(&mut buf).unwrap();
 
-            assert_eq!(depacketized_client_setup.number_of_supported_versions, 1);
             assert_eq!(
                 depacketized_client_setup.supported_versions,
                 vec![0xff00000e]

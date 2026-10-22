@@ -35,10 +35,12 @@ Application and integration components (draft reference is normally not required
 | `crates/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
 | `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
 | `crates/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
-| `crates/auth-token` | Claims of the client JWT, shared by `relay` (reads them from the VTS) and `vts` (signs them) |
+| `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, and their HS256 signing and verification, used by `vts` |
+| `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
 | `crates/observability` | Subscribes to every relay's stats track, stores the snapshots in ClickHouse and serves them over HTTP |
 | `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
+| `crates/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
@@ -68,6 +70,7 @@ Application and integration components (draft reference is normally not required
 - Lint (JavaScript): `npx prettier --check`
 - Test (browser unit): `npm --prefix examples/browser test`
 - Wasm: `wasm-pack build crates/wasm --out-name moqt`
+- Console web: `npm --prefix crates/console/web run lint && npm --prefix crates/console/web run build`
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`

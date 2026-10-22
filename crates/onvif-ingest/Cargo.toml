@@ -25,4 +25,3 @@ time = { version = "0.3.47", features = ["formatting", "macros"] }
 # `log` forwards the events of `broadcast` and `moqt` to env_logger.
 tracing = { version = "0.1", features = ["log"] }
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "sync", "io-util"] }
-url = "2.5.8"

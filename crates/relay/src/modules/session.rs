@@ -80,7 +80,7 @@ impl Session for moqt::Session {
                 MoqtSessionEvent::Subscribe(Box::new(subscribe_handler))
             }
             moqt::SessionEvent::Unsubscribe(unsubscribe_handler) => {
-                MoqtSessionEvent::Unsubscribe(Box::new(unsubscribe_handler))
+                MoqtSessionEvent::Unsubscribe(unsubscribe_handler)
             }
             moqt::SessionEvent::Disconnected() => MoqtSessionEvent::Disconnected(),
             moqt::SessionEvent::ProtocolViolation() => MoqtSessionEvent::ProtocolViolation(),

@@ -9,7 +9,6 @@ use bytes::BytesMut;
 pub struct PublishNamespace {
     pub request_id: u64,
     pub track_namespace: Vec<String>,
-    pub number_of_parameters: u64,
     pub authorization_token: Vec<AuthorizationToken>,
 }
 
@@ -19,11 +18,9 @@ impl PublishNamespace {
         track_namespace: Vec<String>,
         authorization_token: Vec<AuthorizationToken>,
     ) -> Self {
-        let number_of_parameters = authorization_token.len() as u64;
         PublishNamespace {
             request_id,
             track_namespace,
-            number_of_parameters,
             authorization_token,
         }
     }
@@ -48,7 +45,6 @@ impl PublishNamespace {
         let announce_message = PublishNamespace {
             request_id,
             track_namespace: track_namespace_tuple,
-            number_of_parameters,
             authorization_token,
         };
 
@@ -63,7 +59,7 @@ impl PublishNamespace {
         self.track_namespace
             .iter()
             .for_each(|track_namespace| payload.put_string(track_namespace));
-        payload.put_varint(self.number_of_parameters);
+        payload.put_varint(self.authorization_token.len() as u64);
         // Parameters
         for param in &self.authorization_token {
             let param = param.encode();

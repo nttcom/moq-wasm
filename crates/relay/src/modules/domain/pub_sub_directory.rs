@@ -268,13 +268,10 @@ impl InMemoryLocalPubSubDirectory {
         track_namespace: String,
         peer: SessionPeer,
     ) {
-        if let Some(sessions) = self.publisher_namespaces.get_mut(&track_namespace) {
-            sessions.insert(session_id, peer);
-        } else {
-            let sessions = DashMap::new();
-            sessions.insert(session_id, peer);
-            self.publisher_namespaces.insert(track_namespace, sessions);
-        }
+        self.publisher_namespaces
+            .entry(track_namespace)
+            .or_default()
+            .insert(session_id, peer);
     }
 
     /// Returns true when no client publisher remains for the namespace,
@@ -360,22 +357,20 @@ impl InMemoryLocalPubSubDirectory {
         track_namespace_prefix: String,
         peer: SessionPeer,
     ) -> bool {
-        if let Some(sessions) = self.subscriber_namespaces.get_mut(&track_namespace_prefix) {
-            let had_client = has_client(&sessions);
-            sessions.insert(session_id, peer);
-            peer == SessionPeer::Client && !had_client
-        } else {
-            tracing::info!(
-                session_id = %session_id,
-                track_namespace_prefix = %track_namespace_prefix,
-                "New namespace prefix is subscribed."
-            );
-            let sessions = DashMap::new();
-            sessions.insert(session_id, peer);
-            self.subscriber_namespaces
-                .insert(track_namespace_prefix, sessions);
-            peer == SessionPeer::Client
-        }
+        let sessions = self
+            .subscriber_namespaces
+            .entry(track_namespace_prefix.clone())
+            .or_insert_with(|| {
+                tracing::info!(
+                    session_id = %session_id,
+                    track_namespace_prefix = %track_namespace_prefix,
+                    "New namespace prefix is subscribed."
+                );
+                DashMap::new()
+            });
+        let had_client = has_client(&sessions);
+        sessions.insert(session_id, peer);
+        peer == SessionPeer::Client && !had_client
     }
 
     /// Returns true when no client subscriber remains for the prefix,

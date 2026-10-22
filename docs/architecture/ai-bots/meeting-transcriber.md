@@ -153,7 +153,10 @@ The bot publishes a `status` track next to `transcript`: one object per group
 holding `{"asr": <name>, "state": "starting" | "ready"}`. A GPU service that
 scaled to zero takes minutes to answer, so the state stays `starting` until
 its `/health` answers. Every page in the room shows the name and the state in
-the `CC` badge.
+the `CC` badge. Until then the bot subscribes to no audio, so the service does
+not receive the startup minutes' utterances all at once, and if the
+recognizer has not answered within 2 s, the transcript gets a record from the
+speaker `transcriber` saying it is starting and may take about 5 minutes.
 
 ### The transcript track
 The bot publishes under `{root}/{room}/bots/transcriber`. The namespace has
@@ -194,7 +197,9 @@ collide with it. The track is `transcript`, an MSF event timeline
 - The newest record of a speaker appears at the bottom of that speaker's
   tile for 5 s after it arrives. Records from the joining FETCH are history
   and are not shown there, however late a live record arrives. The sidebar gains a Transcript tab next
-  to the chat that lists every record with speaker and time.
+  to the chat that lists every record with speaker and time. The tab shows on
+  every page while the transcriber is in the room; the tile captions only on
+  the pages that turned captions on.
 
 ## Consequences
 
