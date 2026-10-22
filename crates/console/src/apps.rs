@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::anyhow;
 use app_registry::{App, RegistryStore};
 use auth_token::{Claims, sign_token};
@@ -65,14 +67,14 @@ pub(crate) async fn issue_token(
     let Some(app) = apps.get(app_id).filter(|app| owned_by(app, sub)) else {
         return Ok(None);
     };
+    let claims = Claims::issued(
+        app.app_id.clone(),
+        scope.publish,
+        scope.subscribe,
+        now,
+        Duration::from_secs(scope.ttl_seconds),
+    );
     let expires_at = now + scope.ttl_seconds;
-    let claims = Claims {
-        app_id: app.app_id.clone(),
-        publish: scope.publish,
-        subscribe: scope.subscribe,
-        iat: Some(now),
-        exp: Some(expires_at),
-    };
     Ok(Some(IssuedToken {
         token: sign_token(&claims, &app.secret)?,
         expires_at,

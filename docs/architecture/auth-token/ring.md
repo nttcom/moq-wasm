@@ -16,7 +16,7 @@ verifies HS256 JWTs with `ring::hmac` (`HMAC_SHA256`, constant-time
 
 ## Context
 
-Client tokens are HS256 JWTs. The VTS verifies them, and both `vts-mint` and
+Client tokens are HS256 JWTs. The VTS verifies them, and both the `auth-token` CLI and
 the console sign them, so signing and verification live next to the claims
 they carry instead of inside the VTS. The crate needs one HMAC-SHA256
 primitive plus base64url; the relay decides everything else about the claims.

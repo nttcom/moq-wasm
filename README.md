@@ -139,5 +139,6 @@ Contributor rules: [`AGENTS.md`](AGENTS.md).
 
 Relays always authenticate. A session without a token is limited to
 `anon/**`, which every demo uses by default. Tokens are HS256 JWTs verified
-by the VTS; mint one with `vts-mint`. See
+by the VTS; sign one with the `auth-token` CLI
+([`crates/auth-token/README.md`](crates/auth-token/README.md)). See
 [`crates/vts/README.md`](crates/vts/README.md).

@@ -8,7 +8,6 @@ description = "Verify Token Service: verifies MoQT client JWTs on behalf of the 
 anyhow = "1.0.102"
 app-registry = { path = "../app-registry" }
 auth-token = { path = "../auth-token" }
-clap = { version = "4.6.1", features = ["derive"] }
 http-body-util = "0.1.4"
 hyper = { version = "1.10.1", features = ["http1", "server"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }

@@ -11,3 +11,12 @@ ring = "0.17.14"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+clap = { version = "4.6.1", features = ["derive"], optional = true }
+
+[features]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "auth-token"
+path = "src/bin/auth-token.rs"
+required-features = ["cli"]

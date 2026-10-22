@@ -44,9 +44,10 @@ relay: export AUTH_VTS_URL ?= http://127.0.0.1:8081/verify
 relay:
 	set -a; [ ! -f .env ] || . ./.env; set +a; \
 	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p vts; \
+	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p auth-token --features cli; \
 	VTS_APPS_FILE="$(VTS_APPS_FILE)" ./target/debug/vts & VTS_PID=$$!; \
 	trap 'kill $$VTS_PID' EXIT; \
-	export AUTH_RELAY_TOKEN="$${AUTH_RELAY_TOKEN:-$$(./target/debug/vts-mint --apps "$(VTS_APPS_FILE)" --app-id $(DEV_RELAY_APP_ID) --publish "" --subscribe "" --ttl 8760h)}"; \
+	export AUTH_RELAY_TOKEN="$${AUTH_RELAY_TOKEN:-$$(AUTH_TOKEN_SECRET="$$(python3 -c 'import json, sys; print(next(app["secret"] for app in json.load(open(sys.argv[1])) if app["appId"] == sys.argv[2]))' "$(VTS_APPS_FILE)" $(DEV_RELAY_APP_ID))" ./target/debug/auth-token --app-id $(DEV_RELAY_APP_ID) --publish "" --subscribe "" --ttl 8760h)}"; \
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
 browser:

@@ -63,17 +63,11 @@ The registered apps are a JSON array, the format `app-registry` reads;
 Tokens are HS256 JWTs signed with the app's `secret` (UTF-8 bytes). Generate
 secrets with e.g. `openssl rand -base64 32`.
 
-## Minting tokens
+## Signing tokens
 
-`vts-mint` signs a token for any registered app. It is an operator tool and is
-not exposed over HTTP.
-
-```
-cargo run -p vts --bin vts-mint -- --apps ./apps.json --app-id ac8adbc8-... --publish site1/cam1 --subscribe site1 --ttl 12h
-cargo run -p vts --bin vts-mint -- --apps ./apps.json --app-id 11111111-... --publish "" --subscribe "" --ttl 8760h
-```
-
-The Docker image ships the same binary at `/usr/local/bin/vts-mint`.
+The VTS only verifies. Tokens are signed with the `auth-token` CLI from the
+app's secret, given in `AUTH_TOKEN_SECRET`; see
+[`crates/auth-token/README.md`](../auth-token/README.md).
 
 ## Running
 
@@ -93,8 +87,8 @@ relay token that is the compose default for `AUTH_RELAY_TOKEN`; it was minted
 from the relay row of `apps.example.json` and is valid for ten years:
 
 ```
-cargo run -p vts --bin vts-mint -- --apps ./crates/vts/apps.example.json \
-  --app-id 11111111-2222-3333-4444-555555555555 --publish "" --subscribe "" --ttl 3650d
+AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "11111111-2222-3333-4444-555555555555") | .secret' crates/vts/apps.example.json)" \
+  cargo run -p auth-token --features cli -- --app-id 11111111-2222-3333-4444-555555555555 --publish "" --subscribe "" --ttl 3650d
 ```
 
 Re-run that command and replace the default in `docker-compose.yml` if the
@@ -111,7 +105,8 @@ network and do not publish its port. The relay is pointed at it with
 inter-relay connections with a token minted for the relay row:
 
 ```
-vts-mint --apps apps.json --app-id <relay-app-id> --publish "" --subscribe "" --ttl 8760h
+AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "<relay-app-id>") | .secret' apps.json)" \
+  cargo run -p auth-token --features cli -- --app-id <relay-app-id> --publish "" --subscribe "" --ttl 8760h
 ```
 
 ### Where `apps.json` lives

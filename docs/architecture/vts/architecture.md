@@ -7,8 +7,8 @@ module boundaries, runtime flow, or invariants described here change.
 ## Scope
 The `vts` crate is the Verify Token Service: an HTTP service the relay calls
 once per session to check that a client's JWT was signed with the secret of a
-registered app, and whether that app is a relay. It also ships `vts-mint`, the
-operator CLI that signs tokens from an apps file.
+registered app, and whether that app is a relay. Signing tokens is
+`auth-token`'s CLI, not the VTS's.
 
 The service deliberately answers only the signature question. Token lifetime
 (`iat`, `exp`, the maximum TTL, clock leeway) and the meaning of `publish` /
@@ -22,9 +22,7 @@ clock and one rule set govern both accepting a session and expiring it later.
 | `registry.rs` | `Registry`: reads the apps through `app-registry` on every `current` call and keeps the last apps it read. A read that fails logs a warning and returns those last apps. `Registry::load` fails when the first read fails. |
 | `verify.rs` | `verify_token`: `auth_token::decode_unverified_payload` → require string `appId` → look up the app → `auth_token::verify_signature` with that app's secret. Returns `VerifiedToken { app_id, is_relay, claims }` or a `RejectReason`; a `SignatureError` maps onto `malformed_token` or `invalid_signature`. |
 | `server.rs` | `VtsServer`: owns the accept-loop `JoinHandle`; one `tokio::spawn` per connection running hyper HTTP/1. Routes `GET /healthz` and `POST /verify`; everything else is 404. |
-| `mint.rs` | `MintRequest` (also the clap argument group of `vts-mint`) and `mint_token`: fills `auth_token::Claims` with `iat` / `exp` and signs it with `auth_token::sign_token`; `parse_ttl` for `30m` / `12h` / `365d`. |
 | `main.rs` | Picks the registry location (`VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET`, not both), loads the `Registry`, binds `0.0.0.0:<port>` and serves until the process is terminated. A registry that cannot be loaded at startup stops the process. |
-| `bin/vts-mint.rs` | `vts-mint` CLI: `--apps` plus the `MintRequest` arguments, over `mint_token`. |
 
 The registered apps are `app_registry::Apps`; parsing, validation and storage live in `crates/app-registry`.
 
@@ -78,5 +76,4 @@ sequenceDiagram
 - Logging goes through `tracing`: `verify ok` / `verify rejected` at INFO,
   per-connection HTTP errors at DEBUG. `RUST_LOG` filters.
 - The Docker image (`crates/vts/Dockerfile`) is a `cargo-chef` build onto
-  `distroless/cc`, the same base as the relay, and ships both `vts` and
-  `vts-mint`.
+  `distroless/cc`, the same base as the relay, and ships `vts`.

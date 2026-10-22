@@ -17,7 +17,7 @@ RUN cargo build --release -p vts
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:83b9b50586253821cf63ffcec87d3d94265a093ad30da232039af962dd8f4edf
 
 WORKDIR /app
-COPY --from=builder /workspace/target/release/vts /workspace/target/release/vts-mint /usr/local/bin/
+COPY --from=builder /workspace/target/release/vts /usr/local/bin/
 
 EXPOSE 8081
 USER nonroot:nonroot

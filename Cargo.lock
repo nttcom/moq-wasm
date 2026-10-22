@@ -219,6 +219,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "clap",
  "ring",
  "serde",
  "serde_json",
@@ -4073,7 +4074,6 @@ dependencies = [
  "anyhow",
  "app-registry",
  "auth-token",
- "clap",
  "http-body-util",
  "hyper",
  "hyper-util",

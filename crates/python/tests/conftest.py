@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import subprocess
@@ -49,6 +50,7 @@ def vts_answers(port: int) -> bool:
 def relay_url(tmp_path_factory) -> str:
     """A relay and the VTS it verifies clients against, both built from this workspace."""
     subprocess.run(["cargo", "build", "-q", "-p", "relay", "-p", "vts"], cwd=REPO_ROOT, check=True)
+    subprocess.run(["cargo", "build", "-q", "-p", "auth-token", "--features", "cli"], cwd=REPO_ROOT, check=True)
     logs = tmp_path_factory.mktemp("relay")
     vts_port = free_port(socket.SOCK_STREAM)
     vts = subprocess.Popen(
@@ -61,9 +63,12 @@ def relay_url(tmp_path_factory) -> str:
     relay = None
     try:
         wait_until(lambda: vts_answers(vts_port), "VTS")
+        apps = json.loads((REPO_ROOT / APPS_FILE).read_text())
+        relay_secret = next(app["secret"] for app in apps if app["appId"] == RELAY_APP_ID)
         token = subprocess.run(
-            [TARGET / "vts-mint", "--apps", APPS_FILE, "--app-id", RELAY_APP_ID, "--publish", "", "--subscribe", "", "--ttl", "1h"],
+            [TARGET / "auth-token", "--app-id", RELAY_APP_ID, "--publish", "", "--subscribe", "", "--ttl", "1h"],
             cwd=REPO_ROOT,
+            env={**os.environ, "AUTH_TOKEN_SECRET": relay_secret},
             check=True,
             capture_output=True,
             text=True,

@@ -30,8 +30,8 @@ Relays always authenticate. A session without a token is limited to
 `anon/**`, so every example connects tokenless and defaults to namespaces
 such as `anon/live/test`; keep that prefix when typing your own.
 
-The meeting example also accepts an app-scoped JWT via `?jwt=<token>` (minted
-with `vts-mint`). Its namespace root then becomes the token's
+The meeting example also accepts an app-scoped JWT via `?jwt=<token>` (signed
+with the `auth-token` CLI). Its namespace root then becomes the token's
 appId, and a rejected token is reported with the relay's close code and reason.
 
 ## E2E
