@@ -21,7 +21,7 @@ import {
   AUTO_TRACK_SELECTION,
   isSwitchableRole
 } from '../types/catalog'
-import { catalogTracksForRole, pickHighestBitrateTrack } from '../media/meetingCatalog'
+import { catalogTracksForRole, pickHighestBitrateTrack, pickLowestBitrateTrack } from '../media/meetingCatalog'
 import { checkCodecSupport } from '../utils/codecSupport'
 import type { VideoAdaptation } from '../media/mediaSubscriber'
 import type { LocalStatsSample, RemoteStatsSample, VideoSendTiming } from '../types/stats'
@@ -820,7 +820,7 @@ function ensureSelectedTrackName(
   if (selectedTrackName && roleTracks.some((track) => track.name === selectedTrackName)) {
     return selectedTrackName
   }
-  return pickHighestBitrateTrack(roleTracks)?.name
+  return (role === 'audio' ? pickLowestBitrateTrack(roleTracks) : pickHighestBitrateTrack(roleTracks))?.name
 }
 
 async function checkVideoDecoderSupport({ codec, width, height }: MeetingCatalogTrack): Promise<string | null> {

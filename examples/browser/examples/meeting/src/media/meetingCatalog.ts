@@ -314,10 +314,15 @@ export function catalogTracksForRole<T extends MeetingCatalogTrack>(tracks: T[],
 }
 
 export function pickHighestBitrateTrack<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
-  const tracksWithBitrate = tracks
-    .filter((track) => typeof track.bitrate === 'number')
-    .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
-  return tracksWithBitrate[0] ?? tracks[0]
+  return tracksByBitrate(tracks).at(-1) ?? tracks[0]
+}
+
+export function pickLowestBitrateTrack<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
+  return tracksByBitrate(tracks)[0] ?? tracks[0]
+}
+
+function tracksByBitrate<T extends MeetingCatalogTrack>(tracks: T[]): T[] {
+  return tracks.filter((track) => typeof track.bitrate === 'number').sort((a, b) => (a.bitrate ?? 0) - (b.bitrate ?? 0))
 }
 
 export function toEditableCatalogTracks(tracks: MeetingCatalogTrack[]): EditableMeetingCatalogTrack[] {
