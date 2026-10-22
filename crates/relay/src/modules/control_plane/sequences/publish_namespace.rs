@@ -200,18 +200,9 @@ impl PublishNamespace {
         let combined = table.get_namespace_subscribers(track_namespace);
         tracing::debug!("The namespace are subscribed by: {:?}", combined);
         for session_id in combined {
-            if forwarder
+            forwarder
                 .publish_namespace(session_id, track_namespace.to_string())
-                .await
-            {
-                tracing::info!(
-                    "Sent publish namespace '{}' to {}",
-                    track_namespace,
-                    session_id
-                )
-            } else {
-                tracing::warn!("Failed to send publish namespace: {}", session_id);
-            }
+                .await;
         }
     }
 
@@ -281,24 +272,9 @@ impl PublishNamespace {
                 continue;
             };
 
-            if forwarder
+            forwarder
                 .publish_namespace(session_id, track_namespace.to_string())
-                .await
-            {
-                tracing::info!(
-                    relay_id = %relay.relay_id,
-                    session_id = session_id,
-                    track_namespace = %track_namespace,
-                    "forwarded PUBLISH_NAMESPACE to remote relay"
-                );
-            } else {
-                tracing::warn!(
-                    relay_id = %relay.relay_id,
-                    session_id = session_id,
-                    track_namespace = %track_namespace,
-                    "failed to forward PUBLISH_NAMESPACE to remote relay"
-                );
-            }
+                .await;
         }
     }
 }

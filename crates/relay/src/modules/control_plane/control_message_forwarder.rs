@@ -25,12 +25,12 @@ pub(crate) struct ControlMessageForwarder {
 }
 
 impl ControlMessageForwarder {
-    async fn publisher(&self, session_id: SessionId) -> Option<Box<dyn Publisher>> {
+    async fn publisher(&self, session_id: SessionId) -> anyhow::Result<Box<dyn Publisher>> {
         let publisher = self.repository.lock().await.publisher(session_id);
-        if publisher.is_none() {
+        publisher.ok_or_else(|| {
             tracing::error!("No publisher");
-        }
-        publisher
+            anyhow::anyhow!("No publisher")
+        })
     }
 
     async fn subscriber(&self, session_id: SessionId) -> anyhow::Result<Box<dyn Subscriber>> {
@@ -47,23 +47,16 @@ impl ControlMessageForwarder {
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
-    pub(crate) async fn publish_namespace(
-        &self,
-        session_id: SessionId,
-        track_namespace: String,
-    ) -> bool {
-        let Some(publisher) = self.publisher(session_id).await else {
-            return false;
+    pub(crate) async fn publish_namespace(&self, session_id: SessionId, track_namespace: String) {
+        let Ok(publisher) = self.publisher(session_id).await else {
+            return;
         };
         match publisher.send_publish_namespace(track_namespace).await {
             Ok(response) => {
                 let _response_task = PublishNamespaceResponseTask::run(response);
-                true
+                tracing::info!("Sent publish namespace");
             }
-            Err(error) => {
-                tracing::error!(?error, "Failed to send publish namespace");
-                false
-            }
+            Err(error) => tracing::error!(?error, "Failed to send publish namespace"),
         }
     }
 
@@ -77,15 +70,14 @@ impl ControlMessageForwarder {
         &self,
         session_id: SessionId,
         track_namespace: String,
-    ) -> bool {
-        let Some(publisher) = self.publisher(session_id).await else {
-            return false;
+    ) {
+        let Ok(publisher) = self.publisher(session_id).await else {
+            return;
         };
-        publisher
-            .send_publish_namespace_done(track_namespace)
-            .await
-            .inspect_err(|_| tracing::error!("Failed to send publish namespace done"))
-            .is_ok()
+        match publisher.send_publish_namespace_done(track_namespace).await {
+            Ok(()) => tracing::info!("Sent publish namespace done"),
+            Err(error) => tracing::error!(?error, "Failed to send publish namespace done"),
+        }
     }
 
     #[tracing::instrument(
@@ -102,10 +94,7 @@ impl ControlMessageForwarder {
         content_exists: ContentExists,
         max_cache_duration: Option<u64>,
     ) -> anyhow::Result<DownstreamSubscription> {
-        let publisher = self
-            .publisher(session_id)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No publisher"))?;
+        let publisher = self.publisher(session_id).await?;
         publisher
             .send_publish(
                 track_namespace,
@@ -128,10 +117,7 @@ impl ControlMessageForwarder {
         subscription: &DownstreamSubscription,
         reason: PublishDoneReason,
     ) -> anyhow::Result<()> {
-        let publisher = self
-            .publisher(session_id)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No publisher"))?;
+        let publisher = self.publisher(session_id).await?;
         publisher
             .send_publish_done(subscription, reason.status_code, 0, reason.error_reason)
             .await

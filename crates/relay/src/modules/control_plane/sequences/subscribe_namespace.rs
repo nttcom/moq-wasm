@@ -140,18 +140,9 @@ impl SubscribeNameSpace {
                     );
                 }
                 MatchingPublication::Namespace(track_namespace) => {
-                    if forwarder
+                    forwarder
                         .publish_namespace(session_id, track_namespace.clone())
-                        .await
-                    {
-                        tracing::info!(
-                            "Forwarded PUBLISH_NAMESPACE '{}' to {}",
-                            track_namespace,
-                            session_id
-                        );
-                    } else {
-                        tracing::error!("Failed to forward PUBLISH_NAMESPACE");
-                    }
+                        .await;
                 }
             }
         }
@@ -187,22 +178,9 @@ impl SubscribeNameSpace {
         };
 
         for route in routes {
-            if forwarder
+            forwarder
                 .publish_namespace(session_id, route.track_namespace.clone())
-                .await
-            {
-                tracing::info!(
-                    session_id = session_id,
-                    track_namespace = %route.track_namespace,
-                    "forwarded remote PUBLISH_NAMESPACE"
-                );
-            } else {
-                tracing::warn!(
-                    session_id = session_id,
-                    track_namespace = %route.track_namespace,
-                    "failed to forward remote PUBLISH_NAMESPACE"
-                );
-            }
+                .await;
         }
     }
 }

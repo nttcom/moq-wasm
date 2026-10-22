@@ -77,22 +77,9 @@ impl PublishNamespaceDone {
             if subscriber_session_id == publisher_session_id {
                 continue;
             }
-            if forwarder
+            forwarder
                 .publish_namespace_done(subscriber_session_id, track_namespace.to_string())
-                .await
-            {
-                tracing::info!(
-                    session_id = subscriber_session_id,
-                    track_namespace = %track_namespace,
-                    "forwarded PUBLISH_NAMESPACE_DONE"
-                );
-            } else {
-                tracing::warn!(
-                    session_id = subscriber_session_id,
-                    track_namespace = %track_namespace,
-                    "failed to forward PUBLISH_NAMESPACE_DONE"
-                );
-            }
+                .await;
         }
     }
 
@@ -148,17 +135,9 @@ impl PublishNamespaceDone {
                 continue;
             };
 
-            if !forwarder
+            forwarder
                 .publish_namespace_done(session_id, track_namespace.to_string())
-                .await
-            {
-                tracing::warn!(
-                    relay_id = %relay.relay_id,
-                    session_id = session_id,
-                    track_namespace = %track_namespace,
-                    "failed to forward PUBLISH_NAMESPACE_DONE to subscriber relay"
-                );
-            }
+                .await;
         }
     }
 }
