@@ -3,9 +3,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
 use moqt::fetch::{FetchParams, resolve_fetch_range};
-use moqt::wire::{
-    ContentExists, Fetch, GroupOrder, Location, Subscribe, TrackStatus, TrackStatusOk,
-};
+use moqt::wire::{ContentExists, Fetch, GroupOrder, Location, Subscribe, TrackStatus};
 
 use crate::messages::SubgroupState;
 
@@ -45,12 +43,6 @@ pub(crate) struct IncomingFetchRequest {
     pub(crate) end: Location,
 }
 
-#[derive(Debug, Clone)]
-struct IncomingTrackStatusRequest {
-    track_key: TrackKey,
-    group_order: GroupOrder,
-}
-
 /// Publisher-side bookkeeping the session layer does not know about: which
 /// namespaces this client announced, which tracks it is sending on and how far
 /// each has progressed. SUBSCRIBE_OK, TRACK_STATUS_OK and FETCH_OK are answered
@@ -65,7 +57,7 @@ pub(crate) struct ClientState {
     publishing_track_aliases: HashMap<TrackKey, BTreeSet<u64>>,
     subgroup_states: HashMap<u64, SubgroupState>,
     largest_published_locations: HashMap<TrackKey, Location>,
-    incoming_track_statuses: HashMap<u64, IncomingTrackStatusRequest>,
+    incoming_track_statuses: HashMap<u64, TrackKey>,
     incoming_fetches: HashMap<u64, IncomingFetchRequest>,
 }
 
@@ -182,11 +174,13 @@ impl ClientState {
         Ok(content_exists)
     }
 
-    pub(crate) fn remove_incoming_subscribe(&mut self, request_id: u64) -> Option<u64> {
-        let removed = self.incoming_subscriptions.remove(&request_id)?;
-        let track_alias = removed.track_alias?;
-        self.remove_publishing_alias(&removed.track_key, track_alias);
-        Some(track_alias)
+    pub(crate) fn remove_incoming_subscribe(&mut self, request_id: u64) {
+        let Some(removed) = self.incoming_subscriptions.remove(&request_id) else {
+            return;
+        };
+        if let Some(track_alias) = removed.track_alias {
+            self.remove_publishing_alias(&removed.track_key, track_alias);
+        }
     }
 
     pub(crate) fn record_published_object(&mut self, track_alias: u64, location: Location) {
@@ -223,13 +217,7 @@ impl ClientState {
         }
         self.incoming_track_statuses.insert(
             message.request_id,
-            IncomingTrackStatusRequest {
-                track_key: TrackKey::new(
-                    message.track_namespace.clone(),
-                    message.track_name.clone(),
-                ),
-                group_order: message.group_order,
-            },
+            TrackKey::new(message.track_namespace.clone(), message.track_name.clone()),
         );
         Ok(())
     }
@@ -237,20 +225,12 @@ impl ClientState {
     pub(crate) fn answer_incoming_track_status(
         &mut self,
         request_id: u64,
-    ) -> Result<TrackStatusOk> {
-        let request = self
+    ) -> Result<ContentExists> {
+        let track_key = self
             .incoming_track_statuses
             .remove(&request_id)
             .ok_or_else(|| anyhow!("unknown track status request: {request_id}"))?;
-        Ok(TrackStatusOk {
-            request_id,
-            track_alias: 0,
-            expires: 0,
-            group_order: request.group_order.delivered(),
-            content_exists: self.published_content(&request.track_key),
-            delivery_timeout: None,
-            max_duration: None,
-        })
+        Ok(self.published_content(&track_key))
     }
 
     pub(crate) fn reject_incoming_track_status(&mut self, request_id: u64) -> Result<()> {
@@ -464,7 +444,7 @@ mod tests {
         state
     }
 
-    fn answer_track_status(state: &mut ClientState, request: &TrackStatus) -> TrackStatusOk {
+    fn answer_track_status(state: &mut ClientState, request: &TrackStatus) -> ContentExists {
         state.accept_incoming_track_status(request).unwrap();
         state
             .answer_incoming_track_status(request.request_id)
@@ -502,12 +482,11 @@ mod tests {
         state.record_published_object(track_alias, location(2, 9));
 
         // Act
-        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
+        let content_exists = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
 
         // Assert
-        assert_eq!(track_status_ok.track_alias, 0);
         assert_eq!(
-            track_status_ok.content_exists,
+            content_exists,
             ContentExists::True {
                 location: location(3, 1)
             }
@@ -521,10 +500,10 @@ mod tests {
         answered_subscription(&mut state, 2);
 
         // Act
-        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
+        let content_exists = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
 
         // Assert
-        assert_eq!(track_status_ok.content_exists, ContentExists::False);
+        assert_eq!(content_exists, ContentExists::False);
     }
 
     #[test]
@@ -536,27 +515,15 @@ mod tests {
         state.remove_incoming_subscribe(2);
 
         // Act
-        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
+        let content_exists = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
 
         // Assert
         assert_eq!(
-            track_status_ok.content_exists,
+            content_exists,
             ContentExists::True {
                 location: location(7, 0)
             }
         );
-    }
-
-    #[test]
-    fn track_status_ok_states_ascending_when_the_order_is_left_to_the_publisher() {
-        // Arrange
-        let mut state = publishing_state();
-
-        // Act
-        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Publisher));
-
-        // Assert
-        assert_eq!(track_status_ok.group_order, GroupOrder::Ascending);
     }
 
     #[test]

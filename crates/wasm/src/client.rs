@@ -1072,16 +1072,13 @@ impl MOQTClient {
             .track_statuses
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown track status request: {request_id}")))?;
-        let track_status_ok = self
+        let content_exists = self
             .shared
             .state
             .borrow_mut()
             .answer_incoming_track_status(request_id)
             .map_err(anyhow_error)?;
-        handler
-            .ok(track_status_ok.expires, track_status_ok.content_exists)
-            .await
-            .map_err(send_error)
+        handler.ok(0, content_exists).await.map_err(send_error)
     }
 
     #[wasm_bindgen(js_name = sendTrackStatusError)]
