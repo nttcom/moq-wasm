@@ -82,7 +82,8 @@ function estimateBitrate(track: MediaCatalogTrack, reference: MediaCatalogTrack 
 ///   fit; the throughput measured then is what the path carries. With a
 ///   `targetLagMs`, the largest lag of the last `SPREAD_WINDOW_MS` standing
 ///   above it also counts as not fitting, since the jitter buffer holds the
-///   playout back by the spread keyframes add to the least lag.
+///   playout back by the spread keyframes add to the least lag. The target is
+///   read at every decision.
 /// - A step down goes to the highest rendition that fits that throughput.
 /// - A step up tries the next rendition after a calm spell; a failed trial
 ///   doubles the spell before the next one.
@@ -96,7 +97,7 @@ export class AdaptiveBitrate {
   private lastUpAtMs: number | undefined
   private lastCongestedAtMs: number | undefined
 
-  constructor(private readonly targetLagMs?: number) {}
+  constructor(private readonly targetLagMs?: () => number) {}
 
   /// A rendition started playing.
   restart(nowMs: number): void {
@@ -169,8 +170,9 @@ export class AdaptiveBitrate {
     if (recentLags.length > 0 && Math.min(...recentLags) - this.baselineLagMs > CONGESTED_EXCESS_LAG_MS) {
       return true
     }
+    const targetLagMs = this.targetLagMs?.()
     const spreadLags = this.lagsSince(nowMs - SPREAD_WINDOW_MS)
-    return this.targetLagMs !== undefined && spreadLags.length > 0 && Math.max(...spreadLags) > this.targetLagMs
+    return targetLagMs !== undefined && spreadLags.length > 0 && Math.max(...spreadLags) > targetLagMs
   }
 
   private lagsSince(fromMs: number): number[] {

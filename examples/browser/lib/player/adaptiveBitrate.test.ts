@@ -87,7 +87,7 @@ test('a stall steps down even while the lag holds', () => {
 
 test('a lag above the target steps down even while it holds', () => {
   // Arrange: 1.7 Mbps arrives 300 ms behind its capture throughout
-  const abr = new AdaptiveBitrate(250)
+  const abr = new AdaptiveBitrate(() => 250)
   abr.restart(0)
   deliver(abr, SETTLE_MS, 6_000, 7_000, () => 300)
 
@@ -100,7 +100,7 @@ test('a lag above the target steps down even while it holds', () => {
 
 test('a lag within the target does not step down', () => {
   // Arrange
-  const abr = new AdaptiveBitrate(250)
+  const abr = new AdaptiveBitrate(() => 250)
   abr.restart(0)
   deliver(abr, SETTLE_MS, 6_000, 7_000, () => 200)
 
@@ -108,9 +108,24 @@ test('a lag within the target does not step down', () => {
   expect(abr.decide(6_000, LADDER, 'video', false)).toBeUndefined()
 })
 
+test('a target lowered after construction applies at the next decision', () => {
+  // Arrange: 1.7 Mbps arrives 200 ms behind its capture
+  let targetLagMs = 250
+  const abr = new AdaptiveBitrate(() => targetLagMs)
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 6_000, 7_000, () => 200)
+  targetLagMs = 150
+
+  // Act
+  const choice = abr.decide(6_000, LADDER, 'video', false)
+
+  // Assert: 0.8 × 1.7 Mbps fits 480p but not 720p
+  expect(choice).toBe('video_480p')
+})
+
 test('keyframes arriving later than the target step down while the least lag holds', () => {
   // Arrange: 1.7 Mbps arrives 100 ms behind its capture, every keyframe of a 2 s interval 300 ms
-  const abr = new AdaptiveBitrate(250)
+  const abr = new AdaptiveBitrate(() => 250)
   abr.restart(0)
   deliver(abr, SETTLE_MS, 6_000, 7_000, (atMs) => (atMs % 2_000 < FRAME_MS ? 300 : 100))
 
@@ -123,7 +138,7 @@ test('keyframes arriving later than the target step down while the least lag hol
 
 test('a late keyframe older than the spread window does not step down', () => {
   // Arrange: the only late object arrives 4 s before the decision
-  const abr = new AdaptiveBitrate(250)
+  const abr = new AdaptiveBitrate(() => 250)
   abr.restart(0)
   deliver(abr, SETTLE_MS, 8_000, 7_000, (atMs) => (atMs > 4_000 && atMs < 4_000 + FRAME_MS ? 300 : 100))
 

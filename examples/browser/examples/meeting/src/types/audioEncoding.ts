@@ -44,6 +44,6 @@ export const AUDIO_CHANNEL_OPTIONS: AudioChannelOption[] = [
 
 export const DEFAULT_AUDIO_ENCODING_SETTINGS: AudioEncodingSettings = {
   codec: AUDIO_CODEC_OPTIONS[0].codec,
-  bitrate: AUDIO_BITRATE_OPTIONS.find((b) => b.id === '64kbps')?.bitrate ?? AUDIO_BITRATE_OPTIONS[1].bitrate,
+  bitrate: AUDIO_BITRATE_OPTIONS[0].bitrate,
   channels: 1
 }

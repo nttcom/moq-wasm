@@ -2,7 +2,7 @@ import json
 
 
 def audio_track_name(catalog: bytes) -> str | None:
-    """The Opus LOC audio track the Meeting's viewers subscribe to: the one with the highest bitrate.
+    """The Opus LOC audio track the Meeting's viewers subscribe to: the one with the lowest bitrate.
 
     The publisher encodes a profile only while someone subscribes to it, so picking the same one
     starts no extra encoder in the participant's browser.
@@ -15,4 +15,4 @@ def audio_track_name(catalog: bytes) -> str | None:
     ]
     if not audio:
         return None
-    return max(audio, key=lambda track: track.get("bitrate", 0))["name"]
+    return min(audio, key=lambda track: track.get("bitrate", float("inf")))["name"]

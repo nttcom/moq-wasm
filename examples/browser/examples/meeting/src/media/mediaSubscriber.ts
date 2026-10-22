@@ -18,7 +18,8 @@ export type RemotePictures = Partial<Record<RemoteVideoSource, HTMLElement>>
 const ADAPT_INTERVAL_MS = 500
 /// After asking for another track, the next choice waits for the switch.
 const SWITCH_WAIT_MS = 3_000
-const TARGET_LAG_MS = 250
+/// The capture-to-display delay a picture is kept within.
+const TARGET_DELAY_MS = 250
 
 export type VideoAdaptation = { ladder: Rung[]; onPreferred: (trackName: string) => void }
 
@@ -75,8 +76,9 @@ export class MediaSubscriber {
   /// without a gap; call `canReplaceVideo` first and unsubscribe the playing
   /// track when it returns false. With `adaptation`, the picture asks for the
   /// ladder track that fits its shown height and the delivery: no taller than
-  /// the picture, lower when the capture-to-arrival lag rises or, keyframes
-  /// included, exceeds `TARGET_LAG_MS` (see `AdaptiveBitrate`).
+  /// the picture, lower when the capture-to-arrival lag rises, or when the
+  /// largest lag, keyframes included, plus the output latency exceeds
+  /// `TARGET_DELAY_MS` (see `AdaptiveBitrate`).
   registerVideoTrack(
     userId: string,
     trackName: string,
@@ -297,8 +299,10 @@ export class MediaSubscriber {
   }
 
   /// The shown height is in device pixels, the unit a rendition's height compares to.
-  private observePicture(key: string, element: HTMLElement): void {
-    const bitrate = new AdaptiveBitrate(TARGET_LAG_MS)
+  /// The shown delay is the largest arrival lag plus the output latency.
+  private observePicture(key: string, pipeline: LocLive): void {
+    const element = pipeline.picture.element
+    const bitrate = new AdaptiveBitrate(() => TARGET_DELAY_MS - pipeline.playout.outputLatencyMs())
     bitrate.restart(nowMs())
     const picture: PictureAdaptation = {
       bitrate,
@@ -333,7 +337,7 @@ export class MediaSubscriber {
       { onPresented: () => {}, onFrameShown: () => {} }
     )
     pipeline.picture.element.hidden = false
-    this.observePicture(pictureKey(userId, source), pipeline.picture.element)
+    this.observePicture(pictureKey(userId, source), pipeline)
     applyPlayoutSettings(pipeline, this.playoutSettingsByUserId.get(userId) ?? DEFAULT_PLAYOUT_SETTINGS)
     this.pipelines.set(userId, { ...pipelines, [source]: pipeline })
     this.handlers.onRemotePicture?.(userId, source, pipeline.picture.element)
