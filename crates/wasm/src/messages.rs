@@ -352,7 +352,6 @@ impl ObjectDatagramMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -398,7 +397,6 @@ impl ObjectDatagramStatusMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -443,7 +441,6 @@ impl SubgroupObjectMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -535,7 +532,6 @@ impl FetchObjectMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
