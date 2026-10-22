@@ -3,6 +3,7 @@
 // from docker-compose.yml.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { spawnProcess } from "./process.mjs";
@@ -15,43 +16,45 @@ export const experimentAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
 const vtsPort = Number(process.env.VTS_PORT ?? 8081);
 export const vtsVerifyUrl = `http://127.0.0.1:${vtsPort}/verify`;
 const vtsBinary = resolve(repoRoot, "target/debug/vts");
-const mintBinary = resolve(repoRoot, "target/debug/vts-mint");
+const authTokenBinary = resolve(repoRoot, "target/debug/auth-token");
 
-let vtsBuilt = false;
+let binariesBuilt = false;
 
-function ensureVtsBuilt() {
-  if (!vtsBuilt) {
+function ensureBinariesBuilt() {
+  if (!binariesBuilt) {
     execFileSync("cargo", ["build", "-p", "vts"], {
       cwd: repoRoot,
       stdio: "inherit",
     });
-    vtsBuilt = true;
+    execFileSync("cargo", ["build", "-p", "auth-token", "--features", "cli"], {
+      cwd: repoRoot,
+      stdio: "inherit",
+    });
+    binariesBuilt = true;
   }
+}
+
+function secretOf(appId) {
+  const apps = JSON.parse(readFileSync(resolve(repoRoot, vtsAppsFile), "utf8"));
+  return apps.find((app) => app.appId === appId).secret;
 }
 
 // Client tokens must stay within the relay's 24h ttl cap; relay tokens are exempt.
 export function mintToken(appId, ttl) {
-  ensureVtsBuilt();
+  ensureBinariesBuilt();
   return execFileSync(
-    mintBinary,
-    [
-      "--apps",
-      vtsAppsFile,
-      "--app-id",
-      appId,
-      "--publish",
-      "",
-      "--subscribe",
-      "",
-      "--ttl",
-      ttl,
-    ],
-    { cwd: repoRoot, encoding: "utf8" },
+    authTokenBinary,
+    ["--app-id", appId, "--publish", "", "--subscribe", "", "--ttl", ttl],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, AUTH_TOKEN_SECRET: secretOf(appId) },
+    },
   ).trim();
 }
 
 export async function startVts(appsFile = vtsAppsFile) {
-  ensureVtsBuilt();
+  ensureBinariesBuilt();
   const child = spawnProcess("vts", vtsBinary, [], {
     cwd: repoRoot,
     env: {

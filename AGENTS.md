@@ -35,7 +35,7 @@ Application and integration components (draft reference is normally not required
 | `crates/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
 | `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
 | `crates/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
-| `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, and their HS256 signing and verification, used by `vts` |
+| `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
 | `crates/observability` | Subscribes to every relay's stats track, stores the snapshots in ClickHouse and serves them over HTTP |
