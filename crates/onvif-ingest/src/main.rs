@@ -11,7 +11,7 @@ use onvif_ingest::{
     onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_source, soap_client,
 };
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
@@ -245,9 +245,7 @@ async fn play_rtsp(
 }
 
 fn wall_clock_micros() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_micros() as i64)
+    moqt::executor::system_time().as_micros() as i64
 }
 
 fn profile_tracks(args: &MoqtArgs, profile_index: usize, label: &str) -> SourceTracks {

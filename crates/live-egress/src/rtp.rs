@@ -1,7 +1,7 @@
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -81,8 +81,5 @@ pub async fn run_rtp_output(reader: &mut BroadcastReader, output: &RtpOutput) ->
 }
 
 fn wall_clock() -> Timestamp {
-    let since_epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    Timestamp::from_micros(since_epoch.as_micros() as u64)
+    Timestamp::from_micros(moqt::executor::system_time().as_micros() as u64)
 }
