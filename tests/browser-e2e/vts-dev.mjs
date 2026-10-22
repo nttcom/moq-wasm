@@ -13,6 +13,7 @@ export const vtsAppsFile = "crates/vts/apps.example.json";
 export const relayAppId = "11111111-2222-3333-4444-555555555555";
 export const experimentAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
 const vtsPort = Number(process.env.VTS_PORT ?? 8081);
+export const vtsVerifyUrl = `http://127.0.0.1:${vtsPort}/verify`;
 const vtsBinary = resolve(repoRoot, "target/debug/vts");
 const mintBinary = resolve(repoRoot, "target/debug/vts-mint");
 
@@ -49,14 +50,14 @@ export function mintToken(appId, ttl) {
   ).trim();
 }
 
-export async function startVts() {
+export async function startVts(appsFile = vtsAppsFile) {
   ensureVtsBuilt();
   const child = spawnProcess("vts", vtsBinary, [], {
     cwd: repoRoot,
     env: {
       ...process.env,
       VTS_PORT: String(vtsPort),
-      VTS_APPS_FILE: vtsAppsFile,
+      VTS_APPS_FILE: appsFile,
     },
   });
   await waitForHttpOk(`http://127.0.0.1:${vtsPort}/healthz`, 30_000);
@@ -65,7 +66,7 @@ export async function startVts() {
 
 export function nativeRelayAuthEnv() {
   return {
-    AUTH_VTS_URL: `http://127.0.0.1:${vtsPort}/verify`,
+    AUTH_VTS_URL: vtsVerifyUrl,
     AUTH_RELAY_TOKEN: mintToken(relayAppId, "8760h"),
   };
 }

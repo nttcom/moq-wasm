@@ -23,7 +23,8 @@
     "e2e:meeting-transcription": "playwright test tests/meeting-transcription-e2e.spec.ts",
     "e2e:camera-detection": "playwright test tests/camera-detection-e2e.spec.ts",
     "e2e:goaway": "playwright test tests/goaway-e2e.spec.ts",
-    "e2e:recorder-goaway": "playwright test tests/recorder-goaway-e2e.spec.ts"
+    "e2e:recorder-goaway": "playwright test tests/recorder-goaway-e2e.spec.ts",
+    "e2e:console": "playwright test --config playwright.console.config.ts"
   },
   "keywords": [],
   "author": "",

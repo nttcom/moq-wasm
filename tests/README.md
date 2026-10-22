@@ -17,3 +17,8 @@ down.
 Browser E2E: the Playwright specs live in `examples/browser/tests`, and the
 runners in `browser-e2e/` start the relay, VTS and Vite around them. Run them
 through `make browser-e2e-*` or `node tests/browser-e2e/run-*-e2e.mjs`.
+
+`node tests/browser-e2e/run-console-e2e.mjs` starts the VTS and the console on
+one temporary registry file, then drives the console's pages: a token it
+issues and one signed with the secret it shows pass the VTS until the secret
+is rotated or the app is deleted.
