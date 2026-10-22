@@ -1,6 +1,9 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
-    moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
+    moqt::control_plane::control_messages::{
+        key_value_pair::{KeyValuePair, odd_values},
+        messages::parameters::authorization_token::AuthorizationToken,
+    },
 };
 use anyhow::Context;
 use bytes::BytesMut;
@@ -27,45 +30,29 @@ impl PublishNamespace {
 
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
-        let track_namespace_tuple_length = buf
-            .try_get_varint()
-            .context("track namespace tuple length")?;
-        let mut track_namespace_tuple: Vec<String> = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().context("track namespace")?;
-            track_namespace_tuple.push(track_namespace);
-        }
-        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
-        let mut authorization_token = vec![];
-        for _ in 0..number_of_parameters {
-            let token = AuthorizationToken::decode(buf)?;
-            authorization_token.push(token);
-        }
+        let track_namespace = buf.try_get_tuple().context("track namespace")?;
+        let parameters = KeyValuePair::decode_list(buf)?;
+        let authorization_token = odd_values(&parameters, 0x03)
+            .filter_map(|value| AuthorizationToken::decode_parameter(value))
+            .collect();
 
-        let announce_message = PublishNamespace {
+        Ok(Self {
             request_id,
-            track_namespace: track_namespace_tuple,
+            track_namespace,
             authorization_token,
-        };
-
-        Ok(announce_message)
+        })
     }
 
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        let track_namespace_tuple_length = self.track_namespace.len();
-        payload.put_varint(track_namespace_tuple_length as u64);
-        self.track_namespace
+        payload.put_tuple(&self.track_namespace);
+        let parameters: Vec<KeyValuePair> = self
+            .authorization_token
             .iter()
-            .for_each(|track_namespace| payload.put_string(track_namespace));
-        payload.put_varint(self.authorization_token.len() as u64);
-        // Parameters
-        for param in &self.authorization_token {
-            let param = param.encode();
-            payload.unsplit(param);
-        }
-
+            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .collect();
+        payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
     }
 }
@@ -77,7 +64,6 @@ mod tests {
         mod packetize {
             use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace::PublishNamespace;
 
-            // TODO: Add parameter of AuthorizationToken type
             #[test]
             fn with_parameter() {
                 let request_id = 0;
@@ -120,6 +106,40 @@ mod tests {
 
                 assert_eq!(buf.as_ref(), expected_bytes_array);
             }
+        }
+
+        #[test]
+        fn frames_an_authorization_token_as_a_key_value_pair() {
+            use crate::modules::moqt::control_plane::control_messages::messages::{
+                parameters::authorization_token::AuthorizationToken,
+                publish_namespace::PublishNamespace,
+            };
+
+            // Arrange
+            let message = PublishNamespace::new(
+                1,
+                vec!["room".to_string()],
+                vec![AuthorizationToken::use_value_utf8("jwt")],
+            );
+            let expected_bytes = [
+                1, // Request ID (i)
+                1, // Track Namespace(tuple): Number of elements
+                4, 114, 111, 111, 109, // "room"
+                1,   // Number of Parameters (i)
+                3,   // Parameter Type: AUTHORIZATION TOKEN
+                5,   // Parameter Length
+                3,   // Alias Type: USE_VALUE
+                0,   // Token Type
+                106, 119, 116, // "jwt"
+            ];
+
+            // Act
+            let bytes = message.encode();
+            let decoded = PublishNamespace::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+            // Assert
+            assert_eq!(bytes.as_ref(), expected_bytes.as_slice());
+            assert_eq!(decoded, message);
         }
 
         mod depacketize {
