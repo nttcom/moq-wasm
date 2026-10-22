@@ -1,6 +1,6 @@
 use crate::{
     app_config::Target,
-    onvif_profiles,
+    onvif_profile_list,
     onvif_requests::{self, OnvifRequest},
     onvif_services, ptz_config, soap_client,
 };
@@ -46,15 +46,6 @@ impl OnvifClient {
         Ok(onvif)
     }
 
-    pub fn set_endpoints(&mut self, endpoints: onvif_services::ServiceEndpoints) {
-        self.media_endpoint = endpoints.media_endpoint;
-        self.ptz_endpoint = endpoints.ptz_endpoint;
-    }
-
-    pub fn set_profile_token(&mut self, token: String) {
-        self.profile_token = token;
-    }
-
     pub fn device_endpoint(&self) -> &str {
         &self.device_endpoint
     }
@@ -76,17 +67,16 @@ impl OnvifClient {
     }
 
     async fn init_endpoints(&mut self) {
-        let endpoints = self.fetch_endpoints().await;
-        self.set_endpoints(endpoints);
+        let endpoints = onvif_services::discover_endpoints(self).await;
+        self.media_endpoint = endpoints.media_endpoint;
+        self.ptz_endpoint = endpoints.ptz_endpoint;
     }
 
     async fn init_profiles(&mut self) -> Result<Option<String>> {
-        let onvif_profiles::ProfileTokens {
-            profile_token,
-            config_token,
-        } = self.fetch_profile_tokens().await?;
-        self.set_profile_token(profile_token);
-        Ok(config_token)
+        // Never empty: onvif_profile_list::fetch returns Err instead of an empty list.
+        let profile = onvif_profile_list::fetch(self).await?.swap_remove(0);
+        self.profile_token = profile.token;
+        Ok(profile.ptz_config)
     }
 
     async fn init_ptz(&mut self, token_hint: Option<&str>) {
@@ -94,14 +84,6 @@ impl OnvifClient {
             Ok(range) => self.ptz_range = range,
             Err(err) => log::warn!("PTZ error: ptz init error: {err}"),
         }
-    }
-
-    async fn fetch_endpoints(&self) -> onvif_services::ServiceEndpoints {
-        onvif_services::discover_endpoints(self).await
-    }
-
-    async fn fetch_profile_tokens(&self) -> Result<onvif_profiles::ProfileTokens> {
-        onvif_profiles::fetch(self).await
     }
 
     async fn fetch_ptz_range(&self, token_hint: Option<&str>) -> Result<ptz_config::PtzRange> {
@@ -167,15 +149,7 @@ impl OnvifClient {
         command: &OnvifRequest,
     ) -> Result<soap_client::SoapResponse> {
         let action = format!("{}/{}", command.namespace, command.operation);
-        soap_client::send(
-            &self.client,
-            &self.target,
-            endpoint,
-            &action,
-            &command.body,
-            "",
-        )
-        .await
+        soap_client::send(&self.client, &self.target, endpoint, &action, &command.body).await
     }
 }
 

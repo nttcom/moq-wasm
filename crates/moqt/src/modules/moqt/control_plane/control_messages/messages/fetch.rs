@@ -5,7 +5,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        key_value_pair::{KeyValuePair, odd_values},
         messages::parameters::{
             authorization_token::AuthorizationToken, group_order::GroupOrder, location::Location,
         },
@@ -62,12 +62,7 @@ impl FetchParams {
         let wire_type = FetchTypeValue::try_from(fetch_type_value).context("fetch type value")?;
         match wire_type {
             FetchTypeValue::Standalone => {
-                let namespace_length = buf.try_get_varint().context("namespace length")?;
-                let mut track_namespace = Vec::new();
-                for _ in 0..namespace_length {
-                    let ns = buf.try_get_string().context("namespace")?;
-                    track_namespace.push(ns);
-                }
+                let track_namespace = buf.try_get_tuple().context("namespace")?;
                 let track_name = buf.try_get_string().context("track name")?;
                 let start_location = Location::decode(buf)?;
                 let end_location = Location::decode(buf)?;
@@ -107,10 +102,7 @@ impl FetchParams {
                 end_location,
             } => {
                 payload.put_varint(FetchTypeValue::Standalone as u64);
-                payload.put_varint(track_namespace.len() as u64);
-                for ns in track_namespace {
-                    payload.put_string(ns);
-                }
+                payload.put_tuple(track_namespace);
                 payload.put_string(track_name);
                 payload.unsplit(start_location.encode());
                 payload.unsplit(end_location.encode());
@@ -167,19 +159,9 @@ impl Fetch {
         let group_order_u8 = buf.try_get_u8().context("group order u8")?;
         let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;
         let fetch_params = FetchParams::decode(buf)?;
-        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let kv = KeyValuePair::decode(buf)?;
-            parameters.push(kv);
-        }
-        let authorization_tokens = parameters
-            .iter()
-            .filter(|kv| kv.key == 0x03)
-            .filter_map(|kv| match &kv.value {
-                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
-                VariantType::Even(_) => unreachable!(),
-            })
+        let parameters = KeyValuePair::decode_list(buf)?;
+        let authorization_tokens = odd_values(&parameters, 0x03)
+            .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
         Ok(Fetch {
             request_id,
@@ -196,19 +178,12 @@ impl Fetch {
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.fetch_params.encode());
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        for token in &self.authorization_tokens {
-            let token_payload = KeyValuePair {
-                key: 0x03,
-                value: VariantType::Odd(token.encode().freeze()),
-            }
-            .encode();
-            parameters_payload.unsplit(token_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+        let parameters: Vec<KeyValuePair> = self
+            .authorization_tokens
+            .iter()
+            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .collect();
+        payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
     }
 }

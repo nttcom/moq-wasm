@@ -4,7 +4,6 @@ pub mod cli;
 pub mod command_subscriber;
 pub mod onvif_client;
 pub mod onvif_profile_list;
-pub mod onvif_profiles;
 pub mod onvif_requests;
 pub mod onvif_services;
 pub mod onvif_stream_uri;

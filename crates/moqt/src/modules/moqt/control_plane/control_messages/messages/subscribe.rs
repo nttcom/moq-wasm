@@ -1,7 +1,7 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        key_value_pair::{KeyValuePair, find_even, odd_values},
         messages::parameters::{
             authorization_token::AuthorizationToken, filter_type::FilterType,
             group_order::GroupOrder,
@@ -28,13 +28,7 @@ pub struct Subscribe {
 impl Subscribe {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
-        let track_namespace_tuple_length =
-            buf.try_get_varint().context("track namespace length")?;
-        let mut track_namespace_tuple: Vec<String> = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().context("track namespace")?;
-            track_namespace_tuple.push(track_namespace);
-        }
+        let track_namespace_tuple = buf.try_get_tuple().context("track namespace")?;
         let track_name = buf.try_get_string().context("track name")?;
         let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
         let group_order_u8 = buf.try_get_u8().context("group order u8")?;
@@ -42,28 +36,11 @@ impl Subscribe {
         let forward_u8 = buf.try_get_u8().context("forward u8")?;
         let forward = util::u8_to_bool(forward_u8).context("forward")?;
         let filter_type = FilterType::decode(buf)?;
-        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let params = KeyValuePair::decode(buf)?;
-            parameters.push(params);
-        }
-        let authorization_tokens = parameters
-            .iter()
-            .filter(|kv_pair| kv_pair.key == 0x03)
-            .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
-                VariantType::Even(_) => unreachable!(),
-            })
+        let parameters = KeyValuePair::decode_list(buf)?;
+        let authorization_tokens = odd_values(&parameters, 0x03)
+            .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
-        let delivery_timeout =
-            parameters
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x02)
-                .map(|kv_pair| match kv_pair.value {
-                    VariantType::Odd(_) => unreachable!(),
-                    VariantType::Even(value) => value,
-                });
+        let delivery_timeout = find_even(&parameters, 0x02);
 
         Ok(Subscribe {
             request_id,
@@ -81,39 +58,22 @@ impl Subscribe {
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        // Track Namespace Number of elements
-        let track_namespace_tuple_length = self.track_namespace.len();
-        payload.put_varint(track_namespace_tuple_length as u64);
-        self.track_namespace.iter().for_each(|track_namespace| {
-            payload.put_string(track_namespace);
-        });
+        payload.put_tuple(&self.track_namespace);
         payload.put_string(&self.track_name);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.forward as u8);
         payload.unsplit(self.filter_type.encode());
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        for token in &self.authorization_tokens {
-            let token_payload = KeyValuePair {
-                key: 0x03,
-                value: VariantType::Odd(token.encode().freeze()),
-            }
-            .encode();
-            parameters_payload.unsplit(token_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(delivery_timeout) = self.delivery_timeout {
-            let delivery_timeout_payload = KeyValuePair {
-                key: 0x02,
-                value: VariantType::Even(delivery_timeout),
-            }
-            .encode();
-            parameters_payload.unsplit(delivery_timeout_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+        let parameters: Vec<KeyValuePair> = self
+            .authorization_tokens
+            .iter()
+            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .chain(
+                self.delivery_timeout
+                    .map(|value| KeyValuePair::even(0x02, value)),
+            )
+            .collect();
+        payload.unsplit(KeyValuePair::encode_list(&parameters));
 
         payload
     }

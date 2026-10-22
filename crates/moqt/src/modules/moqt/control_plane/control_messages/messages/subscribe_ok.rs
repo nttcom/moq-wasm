@@ -1,7 +1,7 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        key_value_pair::{KeyValuePair, find_even},
         messages::parameters::{content_exists::ContentExists, group_order::GroupOrder},
     },
 };
@@ -31,27 +31,9 @@ impl SubscribeOk {
 
         let content_exists = ContentExists::decode(buf)?;
 
-        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let params = KeyValuePair::decode(buf)?;
-            parameters.push(params);
-        }
-        let delivery_timeout =
-            parameters
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x02)
-                .map(|kv_pair| match kv_pair.value {
-                    VariantType::Odd(_) => unreachable!(),
-                    VariantType::Even(value) => value,
-                });
-        let max_duration = parameters
-            .iter()
-            .find(|kv_pair| kv_pair.key == 0x04)
-            .map(|kv_pair| match kv_pair.value {
-                VariantType::Odd(_) => unreachable!(),
-                VariantType::Even(value) => value,
-            });
+        let parameters = KeyValuePair::decode_list(buf)?;
+        let delivery_timeout = find_even(&parameters, 0x02);
+        let max_duration = find_even(&parameters, 0x04);
 
         Ok(SubscribeOk {
             request_id,
@@ -71,28 +53,16 @@ impl SubscribeOk {
         payload.put_varint(self.expires);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.content_exists.encode());
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        if let Some(delivery_timeout) = self.delivery_timeout {
-            let delivery_timeout_payload = KeyValuePair {
-                key: 0x02,
-                value: VariantType::Even(delivery_timeout),
-            }
-            .encode();
-            parameters_payload.unsplit(delivery_timeout_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(max_duration) = self.max_duration {
-            let max_duration_payload = KeyValuePair {
-                key: 0x04,
-                value: VariantType::Even(max_duration),
-            }
-            .encode();
-            parameters_payload.unsplit(max_duration_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+        let parameters: Vec<KeyValuePair> = [
+            self.delivery_timeout
+                .map(|value| KeyValuePair::even(0x02, value)),
+            self.max_duration
+                .map(|value| KeyValuePair::even(0x04, value)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
     }
 }

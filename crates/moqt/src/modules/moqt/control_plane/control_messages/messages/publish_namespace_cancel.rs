@@ -19,13 +19,7 @@ impl PublishNamespaceCancel {
     }
 
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
-        let track_namespace_tuple_length =
-            buf.try_get_varint().context("track namespace length")?;
-        let mut track_namespace = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let namespace_element = buf.try_get_string().context("track namespace")?;
-            track_namespace.push(namespace_element);
-        }
+        let track_namespace = buf.try_get_tuple().context("track namespace")?;
         let error_code = buf.try_get_varint().context("error code")?;
         let error_reason = buf.try_get_string().context("error reason")?;
 
@@ -38,10 +32,7 @@ impl PublishNamespaceCancel {
 
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.track_namespace.len() as u64);
-        for namespace_element in &self.track_namespace {
-            payload.put_string(namespace_element);
-        }
+        payload.put_tuple(&self.track_namespace);
         payload.put_varint(self.error_code);
         payload.put_string(&self.error_reason);
         payload

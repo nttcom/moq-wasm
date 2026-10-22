@@ -4,6 +4,7 @@ use bytes::{Buf, TryGetError};
 pub trait BufGetExt {
     fn try_get_varint(&mut self) -> Result<u64, TryGetError>;
     fn try_get_string(&mut self) -> anyhow::Result<String>;
+    fn try_get_tuple(&mut self) -> anyhow::Result<Vec<String>>;
 }
 impl<T: Buf> BufGetExt for T {
     fn try_get_varint(&mut self) -> Result<u64, TryGetError> {
@@ -40,6 +41,13 @@ impl<T: Buf> BufGetExt for T {
         let bytes_str = self.copy_to_bytes(length as usize);
         let s = str::from_utf8(&bytes_str)?;
         Ok(s.to_string())
+    }
+
+    fn try_get_tuple(&mut self) -> anyhow::Result<Vec<String>> {
+        let length = self
+            .try_get_varint()
+            .map_err(|e| anyhow!("Failed to get tuple length: {:?}", e))?;
+        (0..length).map(|_| self.try_get_string()).collect()
     }
 }
 
