@@ -6,6 +6,7 @@ use crate::modules::{
         route_registry::{RelayInfo, RelayRouteRegistry},
         watched_namespace_routes::WatchedNamespaceRoutes,
     },
+    control_plane::sequences::connect_relay,
     domain::{
         pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
         session_peer::SessionPeer,
@@ -79,14 +80,9 @@ impl UpstreamPublisherResolver {
     pub(crate) async fn session_of(&self, publisher: &UpstreamPublisher) -> Option<SessionId> {
         match publisher {
             UpstreamPublisher::Session(publisher_session_id) => Some(*publisher_session_id),
-            UpstreamPublisher::Relay(relay) => self
-                .inter_relay_connection_manager
-                .get_or_connect(relay)
-                .await
-                .inspect_err(|err| {
-                    tracing::warn!(?err, relay_id = %relay.relay_id, "failed to connect a publisher relay")
-                })
-                .ok(),
+            UpstreamPublisher::Relay(relay) => {
+                connect_relay(&self.inter_relay_connection_manager, relay).await
+            }
         }
     }
 }
