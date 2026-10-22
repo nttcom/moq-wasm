@@ -4,9 +4,8 @@ use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::{
     object::{ForwardingPreference, Object},
     wire::{
-        ContentExists, FetchOk, FilterType, NamespaceOk, ObjectStatus, Publish, PublishNamespace,
-        PublishNamespaceDone, PublishOk, RequestError, ServerSetup, Subscribe, SubscribeNamespace,
-        SubscribeOk,
+        ContentExists, FilterType, ObjectStatus, Publish, PublishOk, ServerSetup, Subscribe,
+        SubscribeNamespace, SubscribeOk,
     },
 };
 pub use subgroup_state::SubgroupState;
@@ -69,28 +68,11 @@ pub struct PublishNamespaceMessage {
     pub track_namespace: Vec<String>,
 }
 
-impl From<&PublishNamespace> for PublishNamespaceMessage {
-    fn from(message: &PublishNamespace) -> Self {
-        Self {
-            request_id: message.request_id,
-            track_namespace: message.track_namespace.clone(),
-        }
-    }
-}
-
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct PublishNamespaceDoneMessage {
     #[wasm_bindgen(getter_with_clone, readonly, js_name = trackNamespace)]
     pub track_namespace: Vec<String>,
-}
-
-impl From<&PublishNamespaceDone> for PublishNamespaceDoneMessage {
-    fn from(message: &PublishNamespaceDone) -> Self {
-        Self {
-            track_namespace: message.track_namespace.clone(),
-        }
-    }
 }
 
 /// PUBLISH_DONE for an outgoing subscription. `request_id` is the id
@@ -140,14 +122,6 @@ pub struct NamespaceOkMessage {
     pub request_id: u64,
 }
 
-impl From<&NamespaceOk> for NamespaceOkMessage {
-    fn from(message: &NamespaceOk) -> Self {
-        Self {
-            request_id: message.request_id,
-        }
-    }
-}
-
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct RequestErrorMessage {
@@ -157,16 +131,6 @@ pub struct RequestErrorMessage {
     pub error_code: u64,
     #[wasm_bindgen(getter_with_clone, readonly, js_name = reasonPhrase)]
     pub reason_phrase: String,
-}
-
-impl From<&RequestError> for RequestErrorMessage {
-    fn from(message: &RequestError) -> Self {
-        Self {
-            request_id: message.request_id,
-            error_code: message.error_code,
-            reason_phrase: message.reason_phrase.clone(),
-        }
-    }
 }
 
 #[wasm_bindgen]
@@ -553,17 +517,6 @@ pub struct FetchOkMessage {
     pub end_object_id: u64,
     #[wasm_bindgen(readonly, js_name = endOfTrack)]
     pub end_of_track: bool,
-}
-
-impl From<&FetchOk> for FetchOkMessage {
-    fn from(message: &FetchOk) -> Self {
-        Self {
-            request_id: message.request_id,
-            end_group_id: message.end_location.group_id,
-            end_object_id: message.end_location.object_id,
-            end_of_track: message.end_of_track,
-        }
-    }
 }
 
 #[wasm_bindgen]

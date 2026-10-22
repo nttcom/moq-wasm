@@ -24,8 +24,8 @@ use moqt::{
         FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
     },
     wire::{
-        FetchOk, NamespaceOk, PublishOk, RequestError, RequestKind, SubscribeOk, TrackStatusOk,
-        publish_done_code_from_wire, request_error_code_from_wire, request_error_code_to_wire,
+        PublishOk, RequestKind, SubscribeOk, TrackStatusOk, publish_done_code_from_wire,
+        request_error_code_from_wire, request_error_code_to_wire,
     },
 };
 use tokio::sync::Mutex;
@@ -1371,7 +1371,7 @@ impl MOQTClient {
         result: Result<(), RequestFailure>,
     ) {
         let message: JsValue = match result {
-            Ok(()) => NamespaceOkMessage::from(&NamespaceOk { request_id }).into(),
+            Ok(()) => NamespaceOkMessage { request_id }.into(),
             Err(error) => request_error_message(kind, request_id, &error).into(),
         };
         emit(&self.shared.callbacks, select, &[message]);
@@ -1385,18 +1385,16 @@ impl MOQTClient {
     ) {
         match result {
             Ok(fetch_handle) => {
-                let fetch_ok = FetchOk {
+                let message = FetchOkMessage {
                     request_id,
-                    group_order: fetch_handle.group_order,
+                    end_group_id: fetch_handle.end_location.group_id,
+                    end_object_id: fetch_handle.end_location.object_id,
                     end_of_track: fetch_handle.end_of_track,
-                    end_location: fetch_handle.end_location,
-                    max_cache_duration: None,
                 };
                 self.shared
                     .fetch_requests
                     .borrow_mut()
                     .insert(request_id, fetch_handle.clone());
-                let message = FetchOkMessage::from(&fetch_ok);
                 emit(
                     &self.shared.callbacks,
                     |c| &c.fetch_response,
@@ -1513,11 +1511,11 @@ fn request_error_message(
         _ => (RequestErrorCode::InternalError, error.to_string()),
     };
     let error_code = request_error_code_to_wire(code, kind);
-    RequestErrorMessage::from(&RequestError {
+    RequestErrorMessage {
         request_id,
         error_code,
         reason_phrase,
-    })
+    }
 }
 
 fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
