@@ -126,6 +126,13 @@ recognizers:
   grow with the number of speakers, and transcribe one segment at a time.
   pipecat's `WhisperSTTService` loads a model per instance, so the bot holds
   the model itself.
+- A call takes about as long for a short segment as for a long one, since
+  Whisper's encoder always reads a 30 s window: on Cloud Run's 4 vCPU,
+  `medium` took about 6 s per segment, and a speaker who paused more often
+  than that fell further behind with every segment. A participant's segments
+  that close while the recognizer is busy are therefore transcribed together
+  in the next call, as one record dated from the first, so the delay after
+  the last segment stays within about two calls.
 - `qwen3-asr` and `moss-transcribe-diarize`: the bot posts each segment as a
   WAV file to the service's OpenAI-compatible `/v1/audio/transcriptions`,
   with an identity token from the metadata server, as the other bots call
@@ -208,10 +215,10 @@ collide with it. The track is `transcript`, an MSF event timeline
 - Audio stays inside the deployment: the model runs in the bot.
 
 ### Negative
-- Captions arrive about 1–2 s after the speaker stops. Whisper transcribes
-  whole utterances, so there are no partial results.
-- CPU cost grows with the speech in the room. The measured speed is from an
-  Apple Silicon Mac; Cloud Run CPUs are not measured yet.
+- Captions arrive after the speaker stops: about 0.7–1.4 s with
+  `qwen3-asr`, and a few seconds with `whisper` on Cloud Run's CPUs. Every
+  model transcribes whole utterances, so there are no partial results.
+- CPU cost grows with the speech in the room.
 - A participant cannot opt out of being transcribed; the header badge only
   tells them.
 
