@@ -57,6 +57,27 @@ async def test_page_that_returns_within_the_grace_period_keeps_the_bot():
     again.leave()
 
 
+async def test_room_its_bot_finds_empty_ends_at_once_and_starts_anew_for_the_next_page():
+    # Arrange: the page's request is still held, as Cloud Run holds it after the page is gone
+    bots = FakeBots()
+    rooms = make_rooms(bots)
+    page = rooms.join("abc")
+    await settle()
+
+    # Act
+    bots.empty("abc")
+    ended = await asyncio.wait_for(page.ended(), 1)
+    later = rooms.join("abc")
+    await settle()
+
+    # Assert
+    assert ended is None
+    assert bots.started == ["abc", "abc"]
+    assert bots.running == {"abc"}
+    page.leave()
+    later.leave()
+
+
 async def test_expired_room_refuses_pages_until_they_are_gone_then_starts_anew():
     # Arrange
     bots = FakeBots()

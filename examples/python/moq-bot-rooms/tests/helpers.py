@@ -16,20 +16,26 @@ CLOSED_MOMENT = datetime.fromisoformat("2026-10-19T18:00:00+09:00")
 
 
 class FakeBots:
-    """Bots that run until they are cancelled, or fail at once for a room in `failing`."""
+    """Bots that run until they are cancelled or `empty` is called for their room, or fail at once
+    for a room in `failing`."""
 
     def __init__(self, failing: set[str] | None = None):
         self.started: list[str] = []
         self.running: set[str] = set()
         self._failing = failing or set()
+        self._emptied: dict[str, asyncio.Event] = {}
+
+    def empty(self, room_id: str) -> None:
+        self._emptied[room_id].set()
 
     async def run(self, room_id: str) -> None:
         self.started.append(room_id)
         if room_id in self._failing:
             raise RuntimeError("bot failed")
         self.running.add(room_id)
+        self._emptied[room_id] = asyncio.Event()
         try:
-            await asyncio.Event().wait()
+            await self._emptied[room_id].wait()
         finally:
             self.running.discard(room_id)
 

@@ -38,6 +38,13 @@ class FakeNamespaceSession:
     def __init__(self):
         self.prefixes: list[list[str]] = []
         self._events: asyncio.Queue[SimpleNamespace] = asyncio.Queue()
+        self._closed = asyncio.get_running_loop().create_future()
+
+    def close(self) -> None:
+        self._closed.set_result(None)
+
+    def closed(self) -> asyncio.Future:
+        return self._closed
 
     def publish(self, namespace: list[str], *, active: bool = True) -> None:
         self._events.put_nowait(SimpleNamespace(namespace=namespace, active=active))

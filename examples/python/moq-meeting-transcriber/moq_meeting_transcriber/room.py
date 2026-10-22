@@ -3,6 +3,7 @@ import time
 
 import moqt
 from loguru import logger
+from moq_bot_rooms.rooms import GRACE_SECONDS
 
 from moq_meeting_transcriber.participant import Participant
 from moq_meeting_transcriber import status
@@ -38,7 +39,8 @@ class Room:
         self._room_id = room_id
 
     async def run(self) -> None:
-        """Transcribes the room until it is cancelled, reconnecting when the relay session ends."""
+        """Transcribes the room until it is cancelled or nobody is in it, reconnecting when the relay
+        session ends."""
         while True:
             try:
                 session = await moqt.connect(self._relay_url, verify_certificate=self._verify_certificate)
@@ -48,13 +50,15 @@ class Room:
                 continue
             logger.info(f"room {self._room_id}: connected to {self._relay_url}")
             try:
-                await self._transcribe(session)
+                if await self._transcribe(session):
+                    return
             finally:
                 await session.close()
             logger.warning(f"room {self._room_id}: relay session closed")
             await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
-    async def _transcribe(self, session: moqt.Session) -> None:
+    async def _transcribe(self, session: moqt.Session) -> bool:
+        """True once the room has had no participant for the grace period; False when the relay session closed."""
         bot_namespace = [*room_namespace(self._room_id), *BOT_NAMESPACE]
         # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
         publication = await session.track(bot_namespace, TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
@@ -70,9 +74,11 @@ class Room:
         closed = asyncio.ensure_future(session.closed())
         try:
             await asyncio.wait([following, closed], return_when=asyncio.FIRST_COMPLETED)
-            if following.done():
-                # Raises what stopped following the participants, so the room fails instead of going quiet.
-                following.result()
+            if not following.done():
+                return False
+            # Raises what stopped following the participants, so the room fails instead of going quiet.
+            following.result()
+            return True
         finally:
             for task in (following, closed):
                 task.cancel()
@@ -94,8 +100,18 @@ class Room:
         logger.info(f"room {self._room_id}: {self._recognizer.name} is ready")
         await status.write_status(status_publication, self._recognizer.name, status.READY)
         participants: dict[str, asyncio.Task] = {}
+        loop = asyncio.get_running_loop()
+        empty_until = loop.time() + GRACE_SECONDS
+        events = aiter(await session.subscribe_namespace(room_namespace(self._room_id)))
         try:
-            async for event in await session.subscribe_namespace(room_namespace(self._room_id)):
+            while True:
+                try:
+                    async with asyncio.timeout_at(None if participants else empty_until):
+                        event = await anext(events)
+                except (TimeoutError, StopAsyncIteration):
+                    # Safe to return: a page still open sees its request end and asks for the room again,
+                    # which starts a new bot.
+                    return
                 name = participant_name(event.namespace, self._room_id)
                 if name is None:
                     continue
@@ -106,6 +122,8 @@ class Room:
                     participants[name] = asyncio.create_task(self._run_participant(name, participant))
                 else:
                     logger.info(f"room {self._room_id}: {name} left")
+                    if not participants:
+                        empty_until = loop.time() + GRACE_SECONDS
         finally:
             for task in participants.values():
                 task.cancel()

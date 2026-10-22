@@ -6,10 +6,11 @@ import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
 from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_d3_flash_bot.namespace import while_published
+from moq_d3_flash_bot.namespace import until_room_empty, while_published
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
@@ -73,7 +74,8 @@ async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker:
 
 async def moderate_session(
     session: moqt.Session, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
-) -> None:
+) -> bool:
+    """True once no page has published the room's chat for the grace period; False when the relay session closed."""
     moderator_namespace = [*room_namespace(room_id), "moderator"]
     # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
     for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
@@ -83,10 +85,15 @@ async def moderate_session(
     await session.publish_namespace(moderator_namespace)
     chat_namespace = [*room_namespace(room_id), "chat"]
     following = asyncio.create_task(
-        while_published(session, chat_namespace, partial(forward_chat, session, chat_namespace, worker))
+        while_published(
+            session,
+            chat_namespace,
+            partial(forward_chat, session, chat_namespace, worker),
+            unpublished_seconds=GRACE_SECONDS,
+        )
     )
     try:
-        await session.closed()
+        return await until_room_empty(session, following)
     finally:
         following.cancel()
 
@@ -103,7 +110,8 @@ async def stay_connected(
             continue
         logger.info(f"room {room_id}: connected to {args.relay_url}")
         try:
-            await moderate_session(session, room_id, timeline, status, worker)
+            if await moderate_session(session, room_id, timeline, status, worker):
+                return
             logger.warning(f"room {room_id}: relay session closed")
         except RuntimeError as error:
             logger.warning(f"room {room_id}: relay session failed: {error}")
@@ -127,9 +135,9 @@ async def moderate_room(
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
-        connecting = tasks.create_task(stay_connected(args, room_id, timeline, status, worker))
-        await runner.run()
-        connecting.cancel()
+        tasks.create_task(runner.run())
+        await stay_connected(args, room_id, timeline, status, worker)
+        await runner.cancel()
 
 
 async def main():

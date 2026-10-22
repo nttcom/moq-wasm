@@ -4,9 +4,10 @@ import pytest
 
 from moq_meeting_transcriber import room as room_module
 from moq_meeting_transcriber.room import BOT_NAMESPACE, Room, participant_name
-from tests.helpers import NamedRecognizer, SessionRefusingNamespaces
+from tests.helpers import NamedRecognizer, SessionRefusingNamespaces, SessionWithParticipants
 
 ROOM = "team a"
+SHORT_GRACE_SECONDS = 0.1
 
 
 def test_one_element_under_the_room_is_a_participant():
@@ -64,3 +65,36 @@ async def test_a_recognizer_that_answers_at_once_gets_no_notice():
 
     # Assert
     assert session.publications["transcript"].writes == [(True, [])]
+
+
+async def test_a_room_nobody_is_in_ends_after_the_grace_period(monkeypatch):
+    # Arrange
+    monkeypatch.setattr(room_module, "GRACE_SECONDS", SHORT_GRACE_SECONDS)
+    session = SessionWithParticipants()
+
+    # Act
+    room = Room("https://relay.invalid", True, NamedRecognizer("whisper"), ROOM)
+    empty = await asyncio.wait_for(room._transcribe(session), 1)
+
+    # Assert
+    assert empty
+
+
+async def test_a_room_ends_once_its_last_participant_has_been_gone_for_the_grace_period(monkeypatch):
+    # Arrange
+    monkeypatch.setattr(room_module, "GRACE_SECONDS", SHORT_GRACE_SECONDS)
+    session = SessionWithParticipants()
+    session.publish(["anon", ROOM, "alice"])
+    transcribing = asyncio.create_task(
+        Room("https://relay.invalid", True, NamedRecognizer("whisper"), ROOM)._transcribe(session)
+    )
+    await asyncio.sleep(SHORT_GRACE_SECONDS * 3)
+    held = not transcribing.done()
+
+    # Act
+    session.publish(["anon", ROOM, "alice"], active=False)
+    empty = await asyncio.wait_for(transcribing, 1)
+
+    # Assert
+    assert held
+    assert empty
