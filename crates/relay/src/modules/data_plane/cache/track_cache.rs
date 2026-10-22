@@ -228,8 +228,12 @@ impl TrackCache {
         self.read().groups_in_range(group_id, u64::MAX)
     }
 
-    pub(crate) fn subgroup_runs_in_group(&self, group_id: u64) -> Vec<SubgroupRun> {
-        self.read().subgroup_runs_in_group(group_id)
+    pub(crate) fn subgroup_runs_in_group(
+        &self,
+        group_id: u64,
+        from_object_id: u64,
+    ) -> Vec<SubgroupRun> {
+        self.read().subgroup_runs_in_group(group_id, from_object_id)
     }
 
     pub(crate) fn largest_location(&self) -> Option<moqt::object::Location> {
@@ -491,7 +495,7 @@ mod tests {
 
     fn subgroup_keys_in_group(cache: &TrackCache, group_id: u64) -> Vec<SubgroupKey> {
         cache
-            .subgroup_runs_in_group(group_id)
+            .subgroup_runs_in_group(group_id, 0)
             .iter()
             .map(|run| run.key)
             .collect()
@@ -678,7 +682,7 @@ mod tests {
                 SubgroupKey::Datagram { group_id: 0 }
             ]
         );
-        assert!(cache.subgroup_runs_in_group(1).is_empty());
+        assert!(cache.subgroup_runs_in_group(1, 0).is_empty());
     }
 
     #[test]

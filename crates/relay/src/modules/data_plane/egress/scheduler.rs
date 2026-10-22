@@ -235,7 +235,10 @@ impl EgressScheduler {
             } else {
                 0
             };
-            for run in self.cache.subgroup_runs_in_group(group_id) {
+            // Skip a closed subgroup with nothing at or after the start, such as one
+            // only a FETCH filled. Its task would end at once, and its live stream's
+            // open event would then be dropped as a duplicate.
+            for run in self.cache.subgroup_runs_in_group(group_id, object_id) {
                 let _ = self.schedule(run, object_id, scheduled).await;
             }
         }
@@ -271,7 +274,9 @@ mod tests {
 
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::{
-        cached_object::{insert_aborted_group, insert_closed_group, stream_key},
+        cached_object::{
+            insert_aborted_group, insert_closed_group, open_group, stream_key, stream_object,
+        },
         location,
     };
 
@@ -350,10 +355,14 @@ mod tests {
     async fn largest_object_filter_starts_after_largest_for_stream() {
         // Arrange: object 0 of group 0 is the Largest Object at subscribe time
         let cache = Arc::new(TrackCache::new());
-        insert_closed_group(&cache, 0, &[0]);
+        let _open = open_group(&cache, 0, &[0]);
         // Act
-        let mut scheduler =
-            start_scheduler(cache, FilterType::LargestObject, Some(location(0, 0))).await;
+        let mut scheduler = start_scheduler(
+            cache.clone(),
+            FilterType::LargestObject,
+            Some(location(0, 0)),
+        )
+        .await;
         // Assert
         let task = scheduler
             .task_receiver
@@ -367,6 +376,33 @@ mod tests {
                 key: stream_key(0),
                 object_id: 1
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subgroup_only_a_fetch_filled_is_scheduled_when_its_live_stream_opens() {
+        // Arrange: a joining FETCH cached the Largest Object before the upstream stream opened
+        let cache = Arc::new(TrackCache::new());
+        let _ = cache.insert(stream_object(0, 0));
+        let mut scheduler = start_scheduler(
+            cache.clone(),
+            FilterType::LargestObject,
+            Some(location(0, 0)),
+        )
+        .await;
+        // Act
+        let before_open = scheduler.task_receiver.try_recv();
+        let _live = cache.open_subgroup(stream_key(0));
+        let after_open = tokio::time::timeout(EXIT_TIMEOUT, scheduler.task_receiver.recv()).await;
+        // Assert: no task before the open; the open then schedules the rest of the group
+        assert!(before_open.is_err());
+        assert_eq!(
+            after_open.ok().flatten(),
+            Some(GroupSendTask {
+                generation: 0,
+                key: stream_key(0),
+                object_id: 1
+            })
         );
     }
 
@@ -396,14 +432,14 @@ mod tests {
     // subscribe-time Largest Object instead of replaying the cache.
     #[tokio::test]
     async fn absolute_start_in_the_past_does_not_replay_cache() {
-        // Arrange: groups 0..=2 are cached and group 2 holds the Largest Object
+        // Arrange: groups 0..=2 are cached and group 2, still open, holds the Largest Object
         let cache = Arc::new(TrackCache::new());
-        for group_id in 0..3 {
-            insert_closed_group(&cache, group_id, &[0]);
-        }
+        insert_closed_group(&cache, 0, &[0]);
+        insert_closed_group(&cache, 1, &[0]);
+        let _open = open_group(&cache, 2, &[0]);
         // Act
         let mut scheduler = start_scheduler(
-            cache,
+            cache.clone(),
             FilterType::AbsoluteStart {
                 location: moqt::object::Location {
                     group_id: 0,
@@ -613,14 +649,14 @@ mod tests {
     // subscribe-time Largest Object lies in an old group.
     #[tokio::test]
     async fn descending_order_schedules_every_cached_group_after_the_largest_newest_first() {
-        // Arrange: group 3 holds the Largest Object; groups 7 and 9 arrived before egress started
+        // Arrange: open group 3 holds the Largest Object; groups 7 and 9 arrived before egress started
         let cache = Arc::new(TrackCache::new());
-        insert_closed_group(&cache, 3, &[0]);
+        let _open = open_group(&cache, 3, &[0]);
         insert_closed_group(&cache, 7, &[0]);
         insert_closed_group(&cache, 9, &[0]);
         // Act
         let mut scheduler = start_scheduler_with(
-            cache,
+            cache.clone(),
             FilterType::AbsoluteStart {
                 location: location(0, 0),
             },
@@ -752,24 +788,18 @@ mod tests {
             Some(location(0, 2)),
         )
         .await;
-        let aborted_run_task = scheduler.task_receiver.recv().await;
         // Act
         let _reopened = cache.open_subgroup(stream_key(0));
         let _duplicate = cache.open_subgroup(stream_key(0));
         let _next_group = cache.open_subgroup(stream_key(1));
         // Assert: the duplicate open of the same run is skipped
         let tasks = [
-            aborted_run_task,
             scheduler.task_receiver.recv().await,
             scheduler.task_receiver.recv().await,
         ];
         assert_eq!(
             tasks.map(|task| task.map(|task| (task.key, task.generation, task.object_id))),
-            [
-                Some((stream_key(0), 0, 3)),
-                Some((stream_key(0), 1, 3)),
-                Some((stream_key(1), 0, 0)),
-            ]
+            [Some((stream_key(0), 1, 3)), Some((stream_key(1), 0, 0))]
         );
     }
 }
