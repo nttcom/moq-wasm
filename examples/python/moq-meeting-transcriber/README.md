@@ -21,7 +21,7 @@ sequenceDiagram
     P->>B: GET /rooms/{room}（開いている間だけ bot がいる）
     B->>R: SUBSCRIBE_NAMESPACE anon/{room}
     R->>B: PUBLISH_NAMESPACE anon/{room}/alice
-    B->>R: catalog（joining FETCH 付き）、audio_128kbps
+    B->>R: catalog（joining FETCH 付き）、audio_32kbps
     Note over B: Silero VAD と Whisper（参加者ごと）
     B->>R: transcript（anon/{room}/bots/transcriber）
 ```
