@@ -32,13 +32,19 @@ export function pageRoomId(): string {
 /// Keeps the room's bot running while the request is open (docs/architecture/ai-bots/on-demand-rooms.md).
 export class BotRoomRequest {
   private source: EventSource | undefined
+  /// Where to say the page leaves, once the server has named the hold.
+  private leaveUrl: string | undefined
 
   constructor(private readonly onEnd: (reason: BotRoomEnd) => void) {}
 
   /// `query` reaches the bot of a room this request starts, such as the Meeting transcriber's `asr`.
   open(serviceUrl: string, roomId: string, query: Record<string, string> = {}): void {
     this.close()
-    const source = new EventSource(`${serviceUrl}/rooms/${encodeURIComponent(roomId)}?${new URLSearchParams(query)}`)
+    const roomUrl = `${serviceUrl}/rooms/${encodeURIComponent(roomId)}`
+    const source = new EventSource(`${roomUrl}?${new URLSearchParams(query)}`)
+    source.addEventListener('member', (event) => {
+      this.leaveUrl = `${roomUrl}/leave?${new URLSearchParams({ member: (event as MessageEvent<string>).data })}`
+    })
     for (const reason of Object.keys(BOT_ROOM_END_TEXT) as BotRoomEnd[]) {
       source.addEventListener(reason, () => {
         // EventSource reopens any stream the server ends.
@@ -57,8 +63,15 @@ export class BotRoomRequest {
     this.source = source
   }
 
+  /// Tells the server the page leaves, since a service behind a proxy such as Cloud Run's does not
+  /// learn that the stream closed; the bot then leaves at once if no other page holds the room.
   close(): void {
     this.source?.close()
     this.source = undefined
+    if (this.leaveUrl) {
+      // Without a body or headers the POST needs no CORS preflight; keepalive outlives a closing tab.
+      void fetch(this.leaveUrl, { method: 'POST', mode: 'no-cors', keepalive: true }).catch(() => undefined)
+      this.leaveUrl = undefined
+    }
   }
 }

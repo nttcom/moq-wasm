@@ -1,4 +1,5 @@
 import asyncio
+import secrets
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -40,8 +41,11 @@ class _Room:
 class Membership:
     """A page's hold on a room, from `Rooms.join` until `leave`."""
 
-    def __init__(self, ended: asyncio.Future, on_leave: Callable[[], None] = lambda: None):
+    def __init__(self, ended: asyncio.Future, on_leave: Callable[[bool], None] = lambda at_once: None):
+        # Sent to the page, which passes it to `Rooms.leave` to end this hold.
+        self.id = secrets.token_urlsafe(12)
         self._ended = ended
+        self._left = asyncio.get_running_loop().create_future()
         self._on_leave = on_leave
 
     @classmethod
@@ -51,11 +55,17 @@ class Membership:
         return cls(ended)
 
     async def ended(self) -> RoomEnd | None:
-        return await asyncio.shield(self._ended)
+        """Why the room ended; None if it ended without a reason or the page left."""
+        await asyncio.wait([self._ended, self._left], return_when=asyncio.FIRST_COMPLETED)
+        return self._ended.result() if self._ended.done() else None
 
-    def leave(self) -> None:
-        on_leave, self._on_leave = self._on_leave, lambda: None
-        on_leave()
+    def leave(self, *, at_once: bool = False) -> None:
+        """`at_once` skips the grace period, for a page that said it is leaving rather than one
+        whose request dropped and may come back."""
+        on_leave, self._on_leave = self._on_leave, lambda at_once: None
+        if not self._left.done():
+            self._left.set_result(None)
+        on_leave(at_once)
 
 
 class Rooms:
@@ -79,6 +89,7 @@ class Rooms:
         self._grace_seconds = grace_seconds
         self._now = now
         self._rooms: dict[str, _Room] = {}
+        self._members: dict[str, tuple[Membership, _Room]] = {}
         self._shutting_down = False
 
     def join(self, room_id: str, run_bot: RunBot | None = None) -> Membership:
@@ -101,7 +112,21 @@ class Rooms:
         if room.removal is not None:
             room.removal.cancel()
             room.removal = None
-        return Membership(room.ended, lambda: self._leave(room))
+        membership = Membership(room.ended, lambda at_once: self._leave(room, membership.id, at_once))
+        self._members[membership.id] = (membership, room)
+        return membership
+
+    async def leave(self, member_id: str) -> bool:
+        """Ends the hold a page names, and the room at once if it was the last; False for an ID
+        no page holds. Returns once the room's bot has left, so the teardown runs inside the
+        page's request: Cloud Run gives the instance CPU only while a request is in flight."""
+        if member_id not in self._members:
+            return False
+        membership, room = self._members[member_id]
+        membership.leave(at_once=True)
+        if room.ended.done():
+            await asyncio.wait([room.task])
+        return True
 
     def close_outside_hours(self) -> None:
         if self._is_open():
@@ -149,9 +174,14 @@ class Rooms:
             room.task.cancel()
         logger.info(f"room {room.room_id}: bot stopped" + (f" ({reason})" if reason else ""))
 
-    def _leave(self, room: _Room) -> None:
+    def _leave(self, room: _Room, member_id: str, at_once: bool) -> None:
+        del self._members[member_id]
         room.members -= 1
-        if room.members == 0:
+        if room.members > 0:
+            return
+        if at_once:
+            self._remove(room)
+        else:
             room.removal = asyncio.get_running_loop().call_later(self._grace_seconds, self._remove, room)
 
     def _remove(self, room: _Room) -> None:

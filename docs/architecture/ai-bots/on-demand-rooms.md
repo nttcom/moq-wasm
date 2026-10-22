@@ -74,6 +74,14 @@ it connects to the relay, so the bot's start overlaps with the page's own
 connect. The page closes it on Leave. A closed tab or a `pagehide` closes it
 as well.
 
+The stream starts with a `member` event that names the hold. When the page
+closes the stream, it also sends `POST /rooms/{room}/leave?member={id}`,
+without a body or headers so that no CORS preflight is needed, and with
+`keepalive` so that it outlives a closing tab. The server ends that hold at
+once, and the room at once if no other page holds it, without the grace
+period, and answers after the bot has left so that the teardown runs while
+Cloud Run gives the instance CPU.
+
 The server sends a comment line every 15 s. A write to a page that is gone
 fails, so a server the page reaches directly notices a closed tab within one
 interval even when no TCP FIN arrives. Cloud Run does not pass that on: its

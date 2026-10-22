@@ -65,6 +65,14 @@ test('captions bring the transcriber, show what a participant says and reach a l
   const carolRecords = await openTranscript(carol.page)
   await expect.poll(() => carolRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(saidBefore)
 
+  // Act: everyone who asked for captions turns them off
+  for (const client of [carol, bob]) {
+    await client.page.page.getByTestId('captions-button').click()
+  }
+
+  // Assert: the transcriber leaves at once rather than after the grace period
+  await expect(alice.page.page.getByTestId('transcriber-badge')).toBeHidden({ timeout: 10_000 })
+
   for (const client of [carol, bob, alice]) {
     await client.page.leaveButton.click()
     await client.context.close()

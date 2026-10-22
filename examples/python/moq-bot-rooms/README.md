@@ -5,6 +5,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 設計は [AI demo bots started per room, on demand](../../../docs/architecture/ai-bots/on-demand-rooms.md) にあります。
 
 - 同じルームを開いたページは 1 つの bot を共有します。最後のページが離れてから 30 秒たつと bot を止めます。
+- イベントストリームは最初に `member` イベントで保持の ID を送ります。ページが `POST /rooms/{room}/leave?member={ID}` を送ると、その保持をすぐ外し、最後のページならすぐ bot を止めます。
 - Cloud Run はページが離れてもリクエストを開いたままにするので、bot はルームのページが publish する namespace も見ています。それが 30 秒 publish されないと bot は戻り、サーバーはすぐルームを終えます。開いたままのリクエストは理由なしで終わるので、まだいるページは接続し直して新しい bot を始めます。
 - ルームの bot が止まった理由は、イベント名でページに届きます。
 

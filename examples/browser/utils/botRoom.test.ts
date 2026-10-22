@@ -31,13 +31,31 @@ class FakeEventSource extends EventTarget {
   }
 }
 
-test('a request the server refuses ends as failed, while a dropped stream keeps reconnecting', () => {
-  // Arrange
-  const original = globalThis.EventSource
-  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource
-  const ends: BotRoomEnd[] = []
-  const request = new BotRoomRequest((reason) => ends.push(reason))
+type FakeBrowser = { window: EventTarget; posts: { url: string; init: RequestInit | undefined }[] }
+
+/// Runs `act` with a fake EventSource, window and fetch, the browser APIs BotRoomRequest uses.
+async function withFakeBrowser(act: (browser: FakeBrowser) => void | Promise<void>): Promise<void> {
+  const globals = globalThis as unknown as Record<string, unknown>
+  const originals = { EventSource: globals.EventSource, window: globals.window, fetch: globals.fetch }
+  const browser: FakeBrowser = { window: new EventTarget(), posts: [] }
+  globals.EventSource = FakeEventSource
+  globals.window = browser.window
+  globals.fetch = async (url: string, init?: RequestInit) => {
+    browser.posts.push({ url, init })
+    return new Response(null, { status: 204 })
+  }
   try {
+    await act(browser)
+  } finally {
+    Object.assign(globals, originals)
+  }
+}
+
+test('a request the server refuses ends as failed, while a dropped stream keeps reconnecting', async () => {
+  await withFakeBrowser(() => {
+    // Arrange
+    const ends: BotRoomEnd[] = []
+    const request = new BotRoomRequest((reason) => ends.push(reason))
     request.open('http://bots.example', 'team 1', { asr: 'qwen3-asr' })
     const source = FakeEventSource.last!
 
@@ -50,7 +68,25 @@ test('a request the server refuses ends as failed, while a dropped stream keeps 
     expect(source.url).toBe('http://bots.example/rooms/team%201?asr=qwen3-asr')
     expect(afterDrop).toEqual([])
     expect(ends).toEqual(['failed'])
-  } finally {
-    globalThis.EventSource = original
-  }
+  })
+})
+
+test('closing tells the server once that the page leaves the hold it named', async () => {
+  await withFakeBrowser((browser) => {
+    // Arrange
+    const request = new BotRoomRequest(() => undefined)
+    request.open('http://bots.example', 'team 1')
+    const source = FakeEventSource.last!
+    source.dispatchEvent(new MessageEvent('member', { data: 'm-1' }))
+
+    // Act
+    request.close()
+    request.close()
+
+    // Assert
+    expect(source.readyState).toBe(FakeEventSource.CLOSED)
+    expect(browser.posts.map(({ url, init }) => [url, init?.method, init?.keepalive])).toEqual([
+      ['http://bots.example/rooms/team%201/leave?member=m-1', 'POST', true]
+    ])
+  })
 })
