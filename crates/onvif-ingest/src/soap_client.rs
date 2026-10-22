@@ -33,9 +33,9 @@ pub fn log_response_with_prefix(
     );
     let line = format!("{prefix}{message}");
     if ok {
-        log::info!("{line}");
+        tracing::info!("{line}");
     } else {
-        log::warn!("{line}");
+        tracing::warn!("{line}");
     }
 }
 

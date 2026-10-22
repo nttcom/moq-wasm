@@ -10,13 +10,13 @@ use onvif_ingest::{
     command_subscriber::{CommandSubscriber, CommandTrack},
     onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_source, soap_client,
 };
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
+use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
 const RTSP_EVENT_CAPACITY: usize = 64;
 const RTSP_RETRY_MIN_DELAY: Duration = Duration::from_secs(1);
@@ -151,7 +151,7 @@ async fn publish_profiles(
         .flat_map(|source| [source.tracks.video.clone(), source.tracks.audio.clone()])
         .collect();
     broadcast.declare_tracks(&track_names).await?;
-    log::info!(
+    tracing::info!(
         "Waiting for the first subscriber of {}",
         broadcast.namespace().join("/")
     );
@@ -167,7 +167,7 @@ async fn publish_profiles(
     }
     while let Some(result) = profiles.join_next().await {
         if let Err(err) = result.context("profile task").and_then(|ended| ended) {
-            log::warn!("Profile ended: {err:#}");
+            tracing::warn!("Profile ended: {err:#}");
         }
     }
     bail!("every profile has ended")
@@ -182,20 +182,20 @@ async fn publish_profile(
 ) -> Result<()> {
     let mut retry_delay = RTSP_RETRY_MIN_DELAY;
     loop {
-        log::info!(
+        tracing::info!(
             "Starting RTSP for {}: {}",
             source.tracks.video,
             redact_rtsp_url(&source.rtsp_url)
         );
         let started = Instant::now();
         match play_rtsp(&broadcast, &source, &mut dump_keyframe).await? {
-            Ok(()) => log::warn!("RTSP for {} ended", source.tracks.video),
-            Err(err) => log::warn!("RTSP for {} failed: {err:#}", source.tracks.video),
+            Ok(()) => tracing::warn!("RTSP for {} ended", source.tracks.video),
+            Err(err) => tracing::warn!("RTSP for {} failed: {err:#}", source.tracks.video),
         }
         if started.elapsed() >= RTSP_RETRY_MAX_DELAY {
             retry_delay = RTSP_RETRY_MIN_DELAY;
         }
-        log::info!(
+        tracing::info!(
             "Reconnecting RTSP for {} in {:?}",
             source.tracks.video,
             retry_delay
@@ -230,7 +230,7 @@ async fn play_rtsp(
             if sample.is_keyframe {
                 std::fs::write(path, &sample.data)
                     .with_context(|| format!("write keyframe payload to {}", path.display()))?;
-                log::info!(
+                tracing::info!(
                     "RTSP keyframe payload dumped for ffprobe: {}",
                     path.display()
                 );
@@ -271,7 +271,7 @@ async fn fetch_profile_sources(
         let uri = match onvif_stream_uri::fetch(&onvif, &profile.token).await {
             Ok(uri) => uri,
             Err(err) => {
-                log::warn!(
+                tracing::warn!(
                     "GetStreamUri failed for profile_token={}: {err}",
                     profile.token
                 );
@@ -284,7 +284,7 @@ async fn fetch_profile_sources(
             .clone()
             .unwrap_or_else(|| profile.token.clone());
         let tracks = profile_tracks(args, index + 1, &label);
-        log::info!(
+        tracing::info!(
             "MoQ media tracks mapped: video_track={} audio_track={} profile_token={} name={} rtsp={}",
             tracks.video,
             tracks.audio,
@@ -337,17 +337,8 @@ fn parse_namespace(value: &str) -> Vec<String> {
 }
 
 fn init_logger() {
-    // `tracing::span` carries a line per span the moqt session opens.
-    let env = env_logger::Env::default().filter_or("RUST_LOG", "info,tracing::span=warn");
-    env_logger::Builder::from_env(env)
-        .format(|buf, record| {
-            writeln!(
-                buf,
-                "{} {:<5} {}",
-                buf.timestamp_millis(),
-                record.level(),
-                record.args()
-            )
-        })
-        .init();
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 }

@@ -82,7 +82,7 @@ impl OnvifClient {
     async fn init_ptz(&mut self, token_hint: Option<&str>) {
         match self.fetch_ptz_range(token_hint).await {
             Ok(range) => self.ptz_range = range,
-            Err(err) => log::warn!("PTZ error: ptz init error: {err}"),
+            Err(err) => tracing::warn!("PTZ error: ptz init error: {err}"),
         }
     }
 
@@ -94,8 +94,8 @@ impl OnvifClient {
     }
 
     async fn fetch_ptz_config_token(&self, token_hint: Option<&str>) -> Result<(String, String)> {
-        log::info!("[GetToken]");
-        log::info!("  [GetConfigurations]");
+        tracing::info!("[GetToken]");
+        tracing::info!("  [GetConfigurations]");
         let cmd = onvif_requests::get_configurations();
         let response = self.send_ptz(&cmd).await?;
         soap_client::log_response_with_prefix(
@@ -118,7 +118,7 @@ impl OnvifClient {
     }
 
     async fn fetch_ptz_config_options(&self, token: &str) -> Result<String> {
-        log::info!("[GetConfigurationOptions]");
+        tracing::info!("[GetConfigurationOptions]");
         let cmd = onvif_requests::get_configuration_options(token);
         let response = self.send_ptz(&cmd).await?;
         soap_client::log_response("GetConfigurationOptions", self.ptz_endpoint(), &response);

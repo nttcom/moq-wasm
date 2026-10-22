@@ -34,7 +34,7 @@ fn extract_profiles(body: &str) -> Result<Vec<ProfileSummary>> {
         let token = match profile.attribute("token") {
             Some(token) => token.to_string(),
             None => {
-                log::warn!("GetProfiles profile token missing");
+                tracing::warn!("GetProfiles profile token missing");
                 continue;
             }
         };
@@ -96,7 +96,7 @@ fn extract_profiles(body: &str) -> Result<Vec<ProfileSummary>> {
 }
 
 fn log_profiles(profiles: &[ProfileSummary]) {
-    log::info!("[GetProfiles] profiles={}", profiles.len());
+    tracing::info!("[GetProfiles] profiles={}", profiles.len());
     for (index, profile) in profiles.iter().enumerate() {
         let name = profile.name.as_deref().unwrap_or("-");
         let video_source = profile.video_source.as_deref().unwrap_or("-");
@@ -110,7 +110,7 @@ fn log_profiles(profiles: &[ProfileSummary]) {
             .video_framerate
             .map(|value| format!("{value:.2}"))
             .unwrap_or_else(|| "-".to_string());
-        log::info!(
+        tracing::info!(
             "  [{}] token={} name={} video_source={} video_encoder={} ptz_config={} resolution={} framerate={}",
             index,
             profile.token,

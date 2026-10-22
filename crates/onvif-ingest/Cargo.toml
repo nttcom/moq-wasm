@@ -9,10 +9,8 @@ base64 = "0.23.1"
 broadcast = { path = "../broadcast" }
 bytes = "1.11.1"
 clap = { version = "4.6.1", features = ["derive", "env"] }
-env_logger = "0.11.10"
 gstreamer = "0.25"
 gstreamer-app = "0.25"
-log = "0.4.32"
 moqt = { path = "../moqt" }
 mediapack = { path = "../mediapack" }
 rand = "0.10.1"
@@ -22,6 +20,6 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha1 = "0.11.0"
 time = { version = "0.3.47", features = ["formatting", "macros"] }
-# `log` forwards the events of `broadcast` and `moqt` to env_logger.
-tracing = { version = "0.1", features = ["log"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "sync", "io-util"] }

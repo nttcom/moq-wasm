@@ -39,7 +39,7 @@ pub fn run(url: &str, event_sender: TokioSender<MediaEvent>) -> Result<()> {
             return;
         };
         if let Err(err) = attach_branch(&pipeline, pad, &event_sender) {
-            log::warn!("RTSP stream not attached: {err:#}");
+            tracing::warn!("RTSP stream not attached: {err:#}");
         }
     });
     pipeline
@@ -71,7 +71,7 @@ fn attach_branch(
             ))
         }
         UNSUPPORTED_BRANCH => {
-            log::warn!("RTSP stream with encoding {encoding:?} is not bridged");
+            tracing::warn!("RTSP stream with encoding {encoding:?} is not bridged");
             None
         }
         _ => {
@@ -98,7 +98,7 @@ fn attach_branch(
             .static_pad("sink")
             .context("RTSP branch has no sink pad")?,
     )?;
-    log::info!("RTSP stream bridged: encoding={encoding}");
+    tracing::info!("RTSP stream bridged: encoding={encoding}");
     Ok(())
 }
 
@@ -131,7 +131,7 @@ fn appsink_callbacks(
                             .map_err(|_| gst::FlowError::Eos)?;
                     }
                 }
-                Err(err) => log::warn!("RTSP sample dropped: {err:#}"),
+                Err(err) => tracing::warn!("RTSP sample dropped: {err:#}"),
             }
             Ok(gst::FlowSuccess::Ok)
         })

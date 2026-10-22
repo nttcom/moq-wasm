@@ -42,15 +42,15 @@ pub fn spawn(target: Target) -> Sender<Command> {
 fn run_worker(target: Target, rx: Receiver<Command>) {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
-        Err(err) => return log::warn!("PTZ error: tokio runtime init failed: {err}"),
+        Err(err) => return tracing::warn!("PTZ error: tokio runtime init failed: {err}"),
     };
     let client = match soap_client::build(&target) {
         Ok(client) => client,
-        Err(err) => return log::warn!("PTZ error: {err}"),
+        Err(err) => return tracing::warn!("PTZ error: {err}"),
     };
     let onvif = match runtime.block_on(OnvifClient::initialize(client, target)) {
         Ok(onvif) => onvif,
-        Err(err) => return log::warn!("PTZ error: ptz init error: {err}"),
+        Err(err) => return tracing::warn!("PTZ error: ptz init error: {err}"),
     };
     let range = onvif.ptz_range();
     let mut position = Position::new(&range);
@@ -142,7 +142,7 @@ fn run_worker(target: Target, rx: Receiver<Command>) {
             }
         };
         if let Err(err) = result {
-            log::warn!("PTZ error: {err}");
+            tracing::warn!("PTZ error: {err}");
         }
     }
 }
