@@ -382,9 +382,11 @@ nothing about the headroom. `AdaptiveBitrate` therefore steps down on what
 shows a rendition does not fit: the least capture-to-arrival lag of the last
 second standing more than 400 ms above the least lag since the rendition
 started, the largest lag of the last 3 s above the caller's target when it
-gives one (the meeting example's 250 ms), or a stall. The largest lag is the
-least one plus the spread keyframes add to it, by which the jitter buffer holds
-the playout back. It then picks the highest rendition at or below 80 % of the
+gives one, or a stall. The largest lag is the least one plus the spread
+keyframes add to it, by which the jitter buffer holds the playout back. The
+meeting example's target is its 250 ms capture-to-display delay less the output
+latency, with no minimum buffer, so the largest lag plus the output latency is
+the delay shown. It then picks the highest rendition at or below 80 % of the
 throughput of the last 2 s, which while the path is the bottleneck is what the
 path carries. A step up is a trial of the next rendition after a calm spell of
 10 s; a trial that has to step down within 20 s doubles the spell, up to 120 s,
