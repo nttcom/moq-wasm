@@ -17,9 +17,7 @@ use msf::CATALOG_TRACK_NAME;
 use tokio::sync::{Mutex, watch};
 
 use crate::{
-    broadcast::{
-        AudioTrackInfo, CatalogMetadata, VideoTrackInfo, awaits_subscribe, build_catalog, is_cmaf,
-    },
+    broadcast::{CatalogMetadata, awaits_subscribe, build_catalog, is_cmaf},
     stream_ledger::{StreamLedger, StreamRecord},
 };
 
@@ -411,31 +409,7 @@ impl ConnectedRelay {
         Ok(())
     }
 
-    pub(crate) async fn update_video_catalog(
-        &self,
-        namespace: &[String],
-        track_name: &str,
-        info: VideoTrackInfo,
-    ) -> Result<()> {
-        self.update_catalog(namespace, track_name, info, |metadata| {
-            &mut metadata.video_tracks
-        })
-        .await
-    }
-
-    pub(crate) async fn update_audio_catalog(
-        &self,
-        namespace: &[String],
-        track_name: &str,
-        info: AudioTrackInfo,
-    ) -> Result<()> {
-        self.update_catalog(namespace, track_name, info, |metadata| {
-            &mut metadata.audio_tracks
-        })
-        .await
-    }
-
-    async fn update_catalog<T: PartialEq>(
+    pub(crate) async fn update_catalog<T: PartialEq>(
         &self,
         namespace: &[String],
         track_name: &str,

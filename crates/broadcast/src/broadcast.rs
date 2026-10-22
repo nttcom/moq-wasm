@@ -81,7 +81,9 @@ impl Broadcast {
             return Ok(());
         };
         relay
-            .update_video_catalog(&self.namespace, track_name, info)
+            .update_catalog(&self.namespace, track_name, info, |metadata| {
+                &mut metadata.video_tracks
+            })
             .await
     }
 
@@ -90,7 +92,9 @@ impl Broadcast {
             return Ok(());
         };
         relay
-            .update_audio_catalog(&self.namespace, track_name, info)
+            .update_catalog(&self.namespace, track_name, info, |metadata| {
+                &mut metadata.audio_tracks
+            })
             .await
     }
 }
