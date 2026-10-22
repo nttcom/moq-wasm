@@ -39,18 +39,15 @@ impl LatestSnapshots {
 
 #[cfg(test)]
 mod tests {
-    use relay_stats::{ProcessStats, RelaySnapshot};
+    use relay_stats::RelaySnapshot;
 
     use super::{LatestSnapshots, RELAY_SILENCE};
+    use crate::test_support;
 
     fn snapshot(relay_id: &str) -> RelaySnapshot {
         RelaySnapshot {
             relay_id: relay_id.to_string(),
-            timestamp_ms: 1,
-            process: ProcessStats::default(),
-            sessions: vec![],
-            tracks: vec![],
-            subscriptions: vec![],
+            ..test_support::snapshot(1)
         }
     }
 

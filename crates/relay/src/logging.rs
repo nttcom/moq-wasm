@@ -109,30 +109,25 @@ fn append_directive_if_missing(filter: &mut String, directive: &str) {
     }
 }
 
-fn tracing_filter(filter_env: &str, default_directives: &[&str]) -> EnvFilter {
+const DEFAULT_DIRECTIVES: &[&str] = &["relay=info", "moqt=info"];
+
+fn tracing_filter(filter_env: &str) -> EnvFilter {
     let mut filter = non_empty_env(filter_env)
         .or_else(|| non_empty_env("RUST_LOG"))
         .unwrap_or_default();
 
-    for directive in default_directives {
+    for directive in DEFAULT_DIRECTIVES {
         append_directive_if_missing(&mut filter, directive);
     }
 
     if filter.is_empty() {
-        EnvFilter::new(default_directives.join(","))
+        EnvFilter::new(DEFAULT_DIRECTIVES.join(","))
     } else {
         EnvFilter::new(filter)
     }
 }
 
-fn build_tracer_provider(
-    service_name: &str,
-    protocol: OtlpProtocol,
-) -> Result<Option<SdkTracerProvider>> {
-    if !otel_is_enabled() {
-        return Ok(None);
-    }
-
+fn build_tracer_provider(service_name: &str, protocol: OtlpProtocol) -> Result<SdkTracerProvider> {
     let exporter = match protocol {
         OtlpProtocol::Grpc => opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -143,22 +138,13 @@ fn build_tracer_provider(
     }
     .context("failed to build OTLP span exporter")?;
 
-    let provider = SdkTracerProvider::builder()
+    Ok(SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
         .with_resource(otel_resource(service_name))
-        .build();
-
-    Ok(Some(provider))
+        .build())
 }
 
-fn build_logger_provider(
-    service_name: &str,
-    protocol: OtlpProtocol,
-) -> Result<Option<SdkLoggerProvider>> {
-    if !otel_is_enabled() {
-        return Ok(None);
-    }
-
+fn build_logger_provider(service_name: &str, protocol: OtlpProtocol) -> Result<SdkLoggerProvider> {
     let exporter = match protocol {
         OtlpProtocol::Grpc => opentelemetry_otlp::LogExporter::builder()
             .with_tonic()
@@ -169,12 +155,10 @@ fn build_logger_provider(
     }
     .context("failed to build OTLP log exporter")?;
 
-    let provider = SdkLoggerProvider::builder()
+    Ok(SdkLoggerProvider::builder()
         .with_log_processor(BatchLogProcessor::builder(exporter).build())
         .with_resource(otel_resource(service_name))
-        .build();
-
-    Ok(Some(provider))
+        .build())
 }
 
 pub fn init_logging(default_service_name: &str) -> Result<LoggingGuards> {
@@ -182,15 +166,18 @@ pub fn init_logging(default_service_name: &str) -> Result<LoggingGuards> {
         .with_writer(std::io::stdout)
         .with_ansi(true)
         .with_line_number(true)
-        .with_filter(tracing_filter(
-            "RELAY_STDOUT_FILTER",
-            &["relay=info", "moqt=info"],
-        ));
+        .with_filter(tracing_filter("RELAY_STDOUT_FILTER"));
 
     let service_name = otel_service_name(default_service_name);
     let protocol = otel_protocol()?;
-    let tracer_provider = build_tracer_provider(&service_name, protocol)?;
-    let logger_provider = build_logger_provider(&service_name, protocol)?;
+    let (tracer_provider, logger_provider) = if otel_is_enabled() {
+        (
+            Some(build_tracer_provider(&service_name, protocol)?),
+            Some(build_logger_provider(&service_name, protocol)?),
+        )
+    } else {
+        (None, None)
+    };
 
     let otel_trace_layer = tracer_provider.as_ref().map(|provider| {
         tracing_opentelemetry::layer()
@@ -200,17 +187,11 @@ pub fn init_logging(default_service_name: &str) -> Result<LoggingGuards> {
             .with_tracked_inactivity(false)
             .with_target(false)
             .with_filter(filter_fn(|metadata| metadata.is_span()))
-            .with_filter(tracing_filter(
-                "RELAY_OTEL_FILTER",
-                &["relay=info", "moqt=info"],
-            ))
+            .with_filter(tracing_filter("RELAY_OTEL_FILTER"))
     });
 
     let otel_log_layer = logger_provider.as_ref().map(|provider| {
-        OpenTelemetryTracingBridge::new(provider).with_filter(tracing_filter(
-            "RELAY_LOG_FILTER",
-            &["relay=info", "moqt=info"],
-        ))
+        OpenTelemetryTracingBridge::new(provider).with_filter(tracing_filter("RELAY_LOG_FILTER"))
     });
 
     if let Some(provider) = tracer_provider.as_ref() {

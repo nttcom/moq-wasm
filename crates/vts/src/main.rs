@@ -16,7 +16,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let port: u16 = env_or("VTS_PORT", "8081")
+    let port: u16 = std::env::var("VTS_PORT")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "8081".to_owned())
         .parse()
         .context("VTS_PORT must be a port number")?;
 
@@ -37,12 +40,4 @@ fn registry_location() -> anyhow::Result<Location> {
     };
     Ok(Location::from_env(&variables)?
         .unwrap_or_else(|| Location::File(PathBuf::from("/etc/vts/apps.json"))))
-}
-
-fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty())
-}
-
-fn env_or(name: &str, default: &str) -> String {
-    non_empty_env(name).unwrap_or_else(|| default.to_owned())
 }

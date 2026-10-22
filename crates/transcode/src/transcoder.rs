@@ -126,14 +126,6 @@ impl Transcoder {
         self.input.clone()
     }
 
-    pub fn push(&self, sample: &VideoSample) -> Result<()> {
-        self.input.push(sample)
-    }
-
-    pub fn finish(&self) -> Result<()> {
-        self.input.finish()
-    }
-
     pub async fn next(&mut self) -> Option<Result<TranscodedEvent>> {
         while self.open_renditions > 0 {
             match self.message_receiver.recv().await? {
@@ -330,10 +322,11 @@ mod tests {
         let mut transcoder = Transcoder::new(&[rendition]).unwrap();
 
         // Act
+        let input = transcoder.input();
         for sample in &samples {
-            transcoder.push(sample).unwrap();
+            input.push(sample).unwrap();
         }
-        transcoder.finish().unwrap();
+        input.finish().unwrap();
         let outputs = tokio::time::timeout(Duration::from_secs(30), drain(&mut transcoder))
             .await
             .expect("transcoder finished");
@@ -393,10 +386,11 @@ mod tests {
         let mut transcoder = Transcoder::new(&[rendition]).unwrap();
 
         // Act
+        let input = transcoder.input();
         for sample in &repeated {
-            transcoder.push(sample).unwrap();
+            input.push(sample).unwrap();
         }
-        transcoder.finish().unwrap();
+        input.finish().unwrap();
         let outputs = tokio::time::timeout(Duration::from_secs(30), drain(&mut transcoder))
             .await
             .expect("transcoder finished");

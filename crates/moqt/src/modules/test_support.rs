@@ -339,3 +339,10 @@ pub(crate) fn rejection<T, E: Into<anyhow::Error>>(result: Result<T, E>) -> Reje
         _ => panic!("expected a rejection, got {error:#}"),
     }
 }
+
+pub(crate) fn location(group_id: u64, object_id: u64) -> crate::object::Location {
+    crate::object::Location {
+        group_id,
+        object_id,
+    }
+}

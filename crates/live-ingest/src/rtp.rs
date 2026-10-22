@@ -74,16 +74,7 @@ pub async fn run_rtp_listener(
         )
         .await
         {
-            Ok(summary) => {
-                tracing::info!(
-                    namespace = %label,
-                    packets = summary.packets,
-                    discontinuities = summary.discontinuities,
-                    sender_restarted = summary.restarted_sender.is_some(),
-                    "RTP stream ended"
-                );
-                carried = summary.restarted_sender;
-            }
+            Ok(restarted_sender) => carried = restarted_sender,
             Err(err) => tracing::warn!(namespace = %label, ?err, "RTP stream failed"),
         }
     }
@@ -96,26 +87,21 @@ pub fn parse_namespace(text: &str) -> Result<Vec<String>> {
     Ok(parts)
 }
 
-struct StreamSummary {
-    packets: u64,
-    discontinuities: u64,
-    /// Set when a restarted sender ended this stream: its first datagram and
-    /// the demuxer that starts the next stream with it.
-    restarted_sender: Option<(Bytes, rtp::Demuxer)>,
-}
-
+/// Returns the first datagram of a restarted sender that ended this stream,
+/// with the demuxer that starts the next stream with it.
 async fn publish(
     first: Bytes,
     mut demuxer: rtp::Demuxer,
     packet_receiver: &mut mpsc::Receiver<Bytes>,
     options: &IngestOptions,
     namespace: Vec<String>,
-) -> Result<StreamSummary> {
+) -> Result<Option<(Bytes, rtp::Demuxer)>> {
+    let label = namespace.join("/");
     let connection = RelayConnection::new(options.moqt.clone());
     let _registration = options
         .stats
         .as_ref()
-        .map(|registry| registry.register(format!("rtp {}", namespace.join("/")), &connection));
+        .map(|registry| registry.register(format!("rtp {label}"), &connection));
     let mut publisher =
         IngestPublisher::new(Broadcast::new(connection, namespace), options.transcode);
     let mut packets = 0_u64;
@@ -139,19 +125,22 @@ async fn publish(
                 "RTP packets lost; frames are dropped until the next keyframe"
             );
         }
-        next = match timeout(IDLE_TIMEOUT, packet_receiver.recv()).await {
-            Ok(Some(datagram)) => Some(datagram),
-            Ok(None) | Err(_) => None,
-        };
+        next = timeout(IDLE_TIMEOUT, packet_receiver.recv())
+            .await
+            .ok()
+            .flatten();
     }
     for event in demuxer.finish()? {
         publisher.push(event)?;
     }
-    Ok(StreamSummary {
+    tracing::info!(
+        namespace = %label,
         packets,
         discontinuities,
-        restarted_sender,
-    })
+        sender_restarted = restarted_sender.is_some(),
+        "RTP stream ended"
+    );
+    Ok(restarted_sender)
 }
 
 /// Binds the port on every interface and joins `destination` when it is a
