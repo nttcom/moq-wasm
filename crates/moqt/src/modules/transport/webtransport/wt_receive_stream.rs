@@ -1,6 +1,5 @@
 use std::{pin::Pin, task::Poll};
 
-use async_trait::async_trait;
 use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::modules::transport::{
@@ -12,7 +11,6 @@ pub struct WtReceiveStream {
     pub(crate) recv_stream: web_transport_quinn::RecvStream,
 }
 
-#[async_trait]
 impl TransportReceiveStream for WtReceiveStream {
     fn poll_read(
         &mut self,

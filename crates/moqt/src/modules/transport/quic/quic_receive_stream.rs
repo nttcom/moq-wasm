@@ -1,6 +1,5 @@
 use std::task::Poll;
 
-use async_trait::async_trait;
 use quinn::{self, RecvStream};
 use tokio::io::ReadBuf;
 
@@ -13,7 +12,6 @@ pub struct QUICReceiveStream {
     pub(crate) recv_stream: RecvStream,
 }
 
-#[async_trait]
 impl TransportReceiveStream for QUICReceiveStream {
     fn poll_read(
         &mut self,
