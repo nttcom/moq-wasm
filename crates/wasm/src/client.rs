@@ -1121,16 +1121,13 @@ impl MOQTClient {
             .fetches
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown fetch request: {request_id}")))?;
-        let fetch_ok = self
+        let end_location = self
             .shared
             .state
             .borrow()
-            .answer_incoming_fetch(request_id)
+            .incoming_fetch_end(request_id)
             .map_err(anyhow_error)?;
-        handler
-            .ok(fetch_ok.end_of_track, fetch_ok.end_location)
-            .await
-            .map_err(send_error)
+        handler.ok(false, end_location).await.map_err(send_error)
     }
 
     #[wasm_bindgen(js_name = sendFetchError)]

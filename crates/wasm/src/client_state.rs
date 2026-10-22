@@ -2,15 +2,12 @@ use moqt::RequestErrorCode;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
-use moqt::fetch::FetchParams;
+use moqt::fetch::{FetchParams, resolve_fetch_range};
 use moqt::wire::{
-    ContentExists, Fetch, FetchOk, GroupOrder, Location, Subscribe, TrackStatus, TrackStatusOk,
+    ContentExists, Fetch, GroupOrder, Location, Subscribe, TrackStatus, TrackStatusOk,
 };
 
-use crate::{
-    incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest},
-    messages::SubgroupState,
-};
+use crate::messages::SubgroupState;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TrackKey {
@@ -29,6 +26,23 @@ struct IncomingSubscribeRequest {
     track_key: TrackKey,
     track_alias: Option<u64>,
     largest_location: Option<Location>,
+}
+
+#[derive(Debug, Clone)]
+struct FetchTarget {
+    track_key: TrackKey,
+    start: Location,
+    requested_end: Location,
+}
+
+/// Both ends use the FETCH End Location encoding (draft-14 §9.16.1): the
+/// Location after the last Object, where Object 0 stands for the whole Group.
+#[derive(Debug, Clone)]
+pub(crate) struct IncomingFetchRequest {
+    pub(crate) track_key: TrackKey,
+    pub(crate) group_order: GroupOrder,
+    pub(crate) start: Location,
+    pub(crate) end: Location,
 }
 
 #[derive(Debug, Clone)]
@@ -254,17 +268,17 @@ impl ClientState {
         if !self.contains_published_namespace(&target.track_key.namespace) {
             return Err(RequestErrorCode::TrackDoesNotExist);
         }
-        let range = FetchRange::resolve(
-            target.start,
-            target.requested_end,
-            self.largest_published_locations
-                .get(&target.track_key)
-                .copied(),
-        )?;
+        let largest = self
+            .largest_published_locations
+            .get(&target.track_key)
+            .copied();
+        let end = resolve_fetch_range(target.start, target.requested_end, largest)
+            .map_err(|_| RequestErrorCode::InvalidRange)?;
         let request = IncomingFetchRequest {
             track_key: target.track_key,
             group_order: fetch.group_order.delivered(),
-            range,
+            start: target.start,
+            end,
         };
         self.incoming_fetches
             .insert(fetch.request_id, request.clone());
@@ -321,18 +335,11 @@ impl ClientState {
         })
     }
 
-    pub(crate) fn answer_incoming_fetch(&self, request_id: u64) -> Result<FetchOk> {
-        let request = self
-            .incoming_fetches
+    pub(crate) fn incoming_fetch_end(&self, request_id: u64) -> Result<Location> {
+        self.incoming_fetches
             .get(&request_id)
-            .ok_or_else(|| anyhow!("unknown fetch request: {request_id}"))?;
-        Ok(FetchOk {
-            request_id,
-            group_order: request.group_order,
-            end_of_track: false,
-            end_location: request.range.end,
-            max_cache_duration: None,
-        })
+            .map(|request| request.end)
+            .ok_or_else(|| anyhow!("unknown fetch request: {request_id}"))
     }
 
     pub(crate) fn contains_incoming_fetch(&self, request_id: u64) -> bool {
@@ -370,10 +377,17 @@ impl ClientState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::incoming_fetch::location;
     use moqt::wire::FilterType;
 
     const NAMESPACE: &str = "live";
+
+    fn location(group_id: u64, object_id: u64) -> Location {
+        Location {
+            group_id,
+            object_id,
+        }
+    }
+
     const TRACK: &str = "video";
 
     fn subscribe(request_id: u64, group_order: GroupOrder) -> Subscribe {
@@ -595,11 +609,10 @@ mod tests {
             .unwrap();
 
         // Act
-        let fetch_ok = state.answer_incoming_fetch(6).unwrap();
+        let end = state.incoming_fetch_end(6).unwrap();
 
         // Assert
-        assert_eq!(fetch_ok.end_location, location(5, 4));
-        assert_eq!(fetch_ok.group_order, GroupOrder::Ascending);
+        assert_eq!(end, location(5, 4));
     }
 
     #[test]
@@ -629,8 +642,8 @@ mod tests {
 
         // Assert
         assert_eq!(request.track_key.name, TRACK);
-        assert_eq!(request.range.start, location(5, 0));
-        assert_eq!(request.range.end, location(7, 4));
+        assert_eq!(request.start, location(5, 0));
+        assert_eq!(request.end, location(7, 4));
     }
 
     #[test]

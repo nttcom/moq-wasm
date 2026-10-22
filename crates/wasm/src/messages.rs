@@ -11,7 +11,7 @@ use moqt::{
 };
 pub use subgroup_state::SubgroupState;
 
-use crate::incoming_fetch::IncomingFetchRequest;
+use crate::client_state::IncomingFetchRequest;
 use wasm_bindgen::prelude::*;
 
 fn filter_fields(filter_type: FilterType) -> (u8, Option<u64>, Option<u64>, Option<u64>) {
@@ -535,10 +535,10 @@ impl FetchMessage {
             track_namespace: request.track_key.namespace.clone(),
             track_name: request.track_key.name.clone(),
             group_order: request.group_order as u8,
-            start_group_id: request.range.start.group_id,
-            start_object_id: request.range.start.object_id,
-            end_group_id: request.range.end.group_id,
-            end_object_id: request.range.end.object_id,
+            start_group_id: request.start.group_id,
+            start_object_id: request.start.object_id,
+            end_group_id: request.end.group_id,
+            end_object_id: request.end.object_id,
         }
     }
 }

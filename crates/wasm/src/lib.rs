@@ -3,8 +3,6 @@ mod client;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod client_state;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-mod incoming_fetch;
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod loc;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod messages;
