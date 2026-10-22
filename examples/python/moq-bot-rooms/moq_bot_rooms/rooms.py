@@ -19,7 +19,9 @@ class RoomEnd(StrEnum):
     FAILED = "failed"
 
 
-# Runs the bot for a room ID until it is cancelled.
+# Runs the bot for a room ID until it is cancelled, or returns once nobody is in the room. The
+# server cannot rely on a page's request to tell it the page left: Cloud Run keeps the request to
+# the container open after the browser goes away.
 RunBot = Callable[[str], Awaitable[None]]
 
 
@@ -132,7 +134,11 @@ class Rooms:
             raise
         except Exception:
             logger.exception(f"room {room.room_id}: bot failed")
-        self._end(room, RoomEnd.FAILED)
+            self._end(room, RoomEnd.FAILED)
+            return
+        logger.info(f"room {room.room_id}: nobody is in the room")
+        # The requests still held get no reason, so a page that is still there reconnects and starts a new bot.
+        self._remove(room)
 
     def _end(self, room: _Room, reason: RoomEnd | None) -> None:
         if room.ended.done():
