@@ -73,7 +73,10 @@ The Meeting page gains a captions button in the bottom bar. Turning it on
 opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and keeps it
 open; turning it off, Leave, or closing the tab closes it. The bot runs while
 at least one page in the room holds the request and stops 30 s after the last
-one closes, with the limits of `moq-bot-rooms` (`--max-rooms`,
+one closes, or 30 s after the room's last participant withdraws their
+namespace, since Cloud Run does not tell the server that a page went away
+(see [on-demand-rooms.md](on-demand-rooms.md)). The limits of `moq-bot-rooms`
+apply (`--max-rooms`,
 `--max-room-seconds`, `--open-hours`, `--allowed-origin`). A page shows the
 `full`, `closed`, `expired` and `failed` events next to the button and turns
 it off.

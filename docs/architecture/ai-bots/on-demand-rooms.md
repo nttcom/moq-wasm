@@ -75,8 +75,12 @@ connect. The page closes it on Leave. A closed tab or a `pagehide` closes it
 as well.
 
 The server sends a comment line every 15 s. A write to a page that is gone
-fails, so the server notices a closed tab within one interval even when no
-TCP FIN arrives.
+fails, so a server the page reaches directly notices a closed tab within one
+interval even when no TCP FIN arrives. Cloud Run does not pass that on: its
+frontend keeps the request to the container open after the browser goes away,
+and the writes keep succeeding until the request times out (measured
+2026-10-22 on the deployed services). The bot therefore also tells the server
+when the room is empty (below).
 
 The page needs no new state for the bot itself. It already sends
 SUBSCRIBE_NAMESPACE for the bot's namespace and starts the event timeline and
@@ -137,6 +141,14 @@ requests for it.
   task. The task closes its relay session before it ends. A request that
   arrives within the 30 s keeps the bot running, so a page reload or an
   `EventSource` retry does not restart it.
+- The bot follows the namespace its room's pages publish (`.../chat`,
+  `.../camera`, the PTZ `viewer`, a Meeting participant's
+  `{root}/{room}/{user}`). When it has gone unpublished for the grace period,
+  from the start or since the last page withdrew it, the bot closes its relay
+  session and returns. The server then ends the room at once and forgets it.
+  Requests still held for it end without an event, so a page that is in fact
+  still there reconnects and starts a new bot, and one that is gone frees the
+  slot instead of holding it until `--max-room-seconds`.
 - A room stops by itself `--max-room-seconds` (1 h) after its bot started,
   counted from the first request, so a tab left open does not keep a bot, and
   through it d3-flash, running for the rest of the day. Every open request gets `expired`.

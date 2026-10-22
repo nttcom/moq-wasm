@@ -1,5 +1,6 @@
 import asyncio
 import json
+from types import SimpleNamespace
 
 import av
 
@@ -70,3 +71,25 @@ class SessionRefusingNamespaces:
 
     def closed(self) -> asyncio.Future:
         return asyncio.get_running_loop().create_future()
+
+
+class SessionWithParticipants(SessionRefusingNamespaces):
+    """A relay session whose namespace subscription yields what `publish` announces; subscribing to a
+    participant's track fails."""
+
+    def __init__(self):
+        super().__init__()
+        self._events: asyncio.Queue[SimpleNamespace] = asyncio.Queue()
+
+    def publish(self, namespace: list[str], *, active: bool = True) -> None:
+        self._events.put_nowait(SimpleNamespace(namespace=namespace, active=active))
+
+    async def subscribe_namespace(self, prefix: list[str]):
+        return self._iterate()
+
+    async def _iterate(self):
+        while True:
+            yield await self._events.get()
+
+    async def subscribe(self, namespace: list[str], name: str, *, current_group: bool = False):
+        raise RuntimeError("no such track")

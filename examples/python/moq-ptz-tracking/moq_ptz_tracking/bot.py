@@ -7,10 +7,11 @@ import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
 from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_d3_flash_bot.namespace import while_published
+from moq_d3_flash_bot.namespace import until_room_empty, while_published
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
@@ -157,7 +158,9 @@ async def track_in_session(
     commands: PtzCommands,
     latest_target: LatestTarget,
     worker: PipelineWorker,
-) -> None:
+) -> bool:
+    """True once no viewer has published `VIEWER_NAMESPACE` for the grace period; False when the relay
+    session closed."""
     # Registered before the namespaces are published, since the relay may forward a SUBSCRIBE at once.
     for namespace, track_name, publisher in (
         (TRACKER_NAMESPACE, EVENT_TIMELINE_TRACK, timeline),
@@ -168,13 +171,18 @@ async def track_in_session(
     await session.publish_namespace(TRACKER_NAMESPACE)
     await session.publish_namespace(COMMAND_NAMESPACE)
     following = asyncio.create_task(
-        while_published(session, VIEWER_NAMESPACE, partial(follow_prompts, session, latest_target))
+        while_published(
+            session,
+            VIEWER_NAMESPACE,
+            partial(follow_prompts, session, latest_target),
+            unpublished_seconds=GRACE_SECONDS,
+        )
     )
     forwarding = asyncio.create_task(
         while_published(session, CAMERA_NAMESPACE, partial(forward_camera, session, latest_target, worker))
     )
     try:
-        await session.closed()
+        return await until_room_empty(session, following)
     finally:
         following.cancel()
         forwarding.cancel()
@@ -197,7 +205,8 @@ async def stay_connected(
             continue
         logger.info(f"connected to {args.relay_url}")
         try:
-            await track_in_session(session, timeline, status, commands, latest_target, worker)
+            if await track_in_session(session, timeline, status, commands, latest_target, worker):
+                return
             logger.warning("relay session closed")
         except RuntimeError as error:
             logger.warning(f"relay session failed: {error}")
@@ -221,9 +230,9 @@ async def track_in_room(
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
-        connecting = tasks.create_task(stay_connected(args, timeline, status, commands, latest_target, worker))
-        await runner.run()
-        connecting.cancel()
+        tasks.create_task(runner.run())
+        await stay_connected(args, timeline, status, commands, latest_target, worker)
+        await runner.cancel()
 
 
 async def main():
