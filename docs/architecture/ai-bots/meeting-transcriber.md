@@ -118,7 +118,7 @@ recognizers:
 
 | Name | Model | Where it runs |
 | --- | --- | --- |
-| `whisper` (default) | faster-whisper `medium` (`--model`) | in the bot, on the CPU |
+| `whisper` (default) | faster-whisper `small` (`--model`) | in the bot, on the CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | its own Cloud Run service with an L4 GPU, served by vLLM |
 | `moss-transcribe-diarize` | MOSS-Transcribe-Diarize 0.9B | its own Cloud Run service with an L4 GPU, served by vLLM |
 
@@ -126,6 +126,14 @@ recognizers:
   grow with the number of speakers, and transcribe one segment at a time.
   pipecat's `WhisperSTTService` loads a model per instance, so the bot holds
   the model itself.
+- A call takes about as long for a short segment as for a long one, since
+  Whisper's encoder always reads a 30 s window: on Cloud Run's 4 vCPU,
+  `medium` took about 6 s per segment, and a speaker who paused more often
+  than that fell further behind with every segment. A participant's segments
+  that close while the recognizer is busy are therefore transcribed together
+  in the next call, as one record dated from the first. The default is
+  `small`, about 2.7 times faster than `medium`, so the delay after the last
+  segment stays within about two calls.
 - `qwen3-asr` and `moss-transcribe-diarize`: the bot posts each segment as a
   WAV file to the service's OpenAI-compatible `/v1/audio/transcriptions`,
   with an identity token from the metadata server, as the other bots call
@@ -208,10 +216,10 @@ collide with it. The track is `transcript`, an MSF event timeline
 - Audio stays inside the deployment: the model runs in the bot.
 
 ### Negative
-- Captions arrive about 1–2 s after the speaker stops. Whisper transcribes
-  whole utterances, so there are no partial results.
-- CPU cost grows with the speech in the room. The measured speed is from an
-  Apple Silicon Mac; Cloud Run CPUs are not measured yet.
+- Captions arrive after the speaker stops: about 0.7–1.4 s with
+  `qwen3-asr`, and a few seconds with `whisper` on Cloud Run's CPUs. Every
+  model transcribes whole utterances, so there are no partial results.
+- CPU cost grows with the speech in the room.
 - A participant cannot opt out of being transcribed; the header badge only
   tells them.
 
@@ -232,7 +240,7 @@ Whisper large-v3 is too slow on the CPU, so it would need a GPU service of
 its own: vLLM serves one model per process, and Qwen3-ASR needs a nightly
 vLLM that Whisper does not. One service running both behind a path router
 saves an instance only when two rooms use different models at once, and ties
-both to one vLLM build. Whisper `medium` on the CPU covers the case of a
+both to one vLLM build. Whisper `small` on the CPU covers the case of a
 transcriber that needs no GPU.
 
 ### Qwen3-ASR and the d3-flash models in one service

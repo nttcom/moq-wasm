@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
-from pipecat.frames.frames import VADUserStoppedSpeakingFrame
+from pipecat.frames.frames import UserAudioRawFrame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame
 from pipecat.processors.frame_processor import FrameDirection
 
 from moq_meeting_transcriber import stt
@@ -25,9 +25,11 @@ class StubModel:
     def __init__(self, *segments: Segment):
         self.segments = segments
         self.languages: list[str] = []
+        self.sample_counts: list[int] = []
 
     def transcribe(self, samples: np.ndarray, language: str):
         self.languages.append(language)
+        self.sample_counts.append(len(samples))
         return iter(self.segments), None
 
 
@@ -35,11 +37,25 @@ def segment_of(seconds: float) -> bytes:
     return bytes(int((seconds + TRAILING_SILENCE_SECONDS) * SAMPLE_RATE) * 2)
 
 
-async def transcribe(model: StubModel, audio: bytes, stopped_at: float, monkeypatch) -> list:
-    service = UtteranceSTTService(SharedWhisper(model), "alice")
+async def close_utterance(service: UtteranceSTTService, audio: bytes, stopped_at: float, monkeypatch) -> None:
+    """Speaks `audio` and closes the utterance as the VAD does, so the service queues it as a segment."""
+    await service.process_frame(VADUserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+    await service.process_audio_frame(
+        UserAudioRawFrame(user_id="alice", audio=audio, sample_rate=SAMPLE_RATE, num_channels=1),
+        FrameDirection.DOWNSTREAM,
+    )
     monkeypatch.setattr(stt.time, "time", lambda: stopped_at)
     await service.process_frame(VADUserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
-    return [frame async for frame in service.run_stt(audio)]
+
+
+async def transcribe_next(service: UtteranceSTTService) -> list:
+    return [frame async for frame in service.run_stt(service._segment_queue.get_nowait())]
+
+
+async def transcribe(model: StubModel, audio: bytes, stopped_at: float, monkeypatch) -> list:
+    service = UtteranceSTTService(SharedWhisper(model), "alice")
+    await close_utterance(service, audio, stopped_at, monkeypatch)
+    return await transcribe_next(service)
 
 
 async def test_dates_the_utterance_from_when_its_speech_began(monkeypatch):
@@ -65,3 +81,19 @@ async def test_a_segment_whisper_rates_as_silence_yields_nothing(monkeypatch):
     # Act / Assert
     assert await transcribe(model, segment_of(1.0), stopped_at=1_000.0, monkeypatch=monkeypatch) == []
 
+
+async def test_segments_queued_while_busy_are_transcribed_in_the_same_call(monkeypatch):
+    # Arrange: three utterances closed while the recognizer was busy
+    model = StubModel(Segment(" こんにちは", 0.0))
+    service = UtteranceSTTService(SharedWhisper(model), "alice")
+    segments = [segment_of(2.0), segment_of(1.0), segment_of(2.0)]
+    for segment, stopped_at in zip(segments, (1_000.0, 1_003.0, 1_006.0)):
+        await close_utterance(service, segment, stopped_at, monkeypatch)
+
+    # Act
+    frames = await transcribe_next(service)
+
+    # Assert: one call heard all three, dated from the first utterance
+    assert model.sample_counts == [len(b"".join(segments)) // 2]
+    assert [frame.started_at_ms for frame in frames] == [998_000]
+    assert service._segment_queue.empty()

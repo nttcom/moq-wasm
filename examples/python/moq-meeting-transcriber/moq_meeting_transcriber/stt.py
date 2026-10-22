@@ -87,7 +87,7 @@ class UtteranceSTTService(SegmentedSTTService):
     async def run_stt(self, audio: bytes):
         stopped_at = self._stopped_at.popleft()
         speech_seconds = len(audio) / (2 * SAMPLE_RATE) - TRAILING_SILENCE_SECONDS
-        text = (await self._recognizer.recognize(audio)).strip()
+        text = (await self._recognizer.recognize(audio + self._take_queued_segments())).strip()
         if text:
             yield UtteranceTranscriptionFrame(
                 text,
@@ -96,3 +96,17 @@ class UtteranceSTTService(SegmentedSTTService):
                 LANGUAGE,
                 started_at_ms=int((stopped_at - speech_seconds) * 1000),
             )
+
+    def _take_queued_segments(self) -> bytes:
+        """The segments that closed while the recognizer was busy. Whisper takes about as long for
+        one segment as for several, so transcribing them in one call keeps the queue from growing."""
+        queued = []
+        while not self._segment_queue.empty():
+            segment = self._segment_queue.get_nowait()
+            if segment is None:
+                # None is always last in the queue and stops SegmentedSTTService's task, so put it back for that task.
+                self._segment_queue.put_nowait(None)
+                break
+            queued.append(segment)
+            self._stopped_at.popleft()
+        return b"".join(queued)
