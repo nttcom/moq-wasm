@@ -145,10 +145,6 @@ impl MOQTClient {
         }
     }
 
-    pub fn url(&self) -> JsValue {
-        JsValue::from_str(&self.url)
-    }
-
     #[wasm_bindgen(js_name = onServerSetup)]
     pub fn set_server_setup_callback(&mut self, callback: js_sys::Function) {
         self.shared.callbacks.borrow_mut().server_setup = Some(callback);
@@ -1389,7 +1385,6 @@ impl MOQTClient {
                     request_id,
                     end_group_id: fetch_handle.end_location.group_id,
                     end_object_id: fetch_handle.end_location.object_id,
-                    end_of_track: fetch_handle.end_of_track,
                 };
                 self.shared
                     .fetch_requests

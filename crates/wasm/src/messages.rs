@@ -515,8 +515,6 @@ pub struct FetchOkMessage {
     pub end_group_id: u64,
     #[wasm_bindgen(readonly, js_name = endObjectId)]
     pub end_object_id: u64,
-    #[wasm_bindgen(readonly, js_name = endOfTrack)]
-    pub end_of_track: bool,
 }
 
 #[wasm_bindgen]
