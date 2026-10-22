@@ -627,7 +627,7 @@ mod tests {
                                 handler.accept_data_receiver().await;
                             }
                             let subscription =
-                                handler.ok(0, FilterType::LargestObject, 0).await.unwrap();
+                                handler.ok(0, FilterType::LargestObject).await.unwrap();
                             if let Some(sender) = object_sender {
                                 let session = session.clone();
                                 let subscription = subscription.clone();

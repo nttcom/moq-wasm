@@ -12,8 +12,6 @@ use tokio::task::JoinHandle;
 
 use crate::ptz_worker::Command;
 
-const NO_EXPIRY: u64 = 0;
-
 pub struct CommandTrack {
     pub namespace: String,
     pub track: String,
@@ -255,7 +253,6 @@ async fn accept_command_publish(
         .ok(
             command_track.subscriber_priority,
             FilterType::NextGroupStart,
-            NO_EXPIRY,
         )
         .await
         .context("accept command publish")?;

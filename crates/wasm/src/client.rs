@@ -539,7 +539,7 @@ impl MOQTClient {
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown publish request: {request_id}")))?;
         let subscription = handler
-            .ok(subscriber_priority, filter_type, 0)
+            .ok(subscriber_priority, filter_type)
             .await
             .map_err(send_error)?;
         handler.accept_data_receiver().await;
