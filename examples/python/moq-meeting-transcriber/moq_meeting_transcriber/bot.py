@@ -85,10 +85,16 @@ async def transcribe_room(args: argparse.Namespace, recognizer: Recognizer, room
     await Room(args.relay_url, not args.insecure, recognizer, room_id).run()
 
 
+async def load_whisper(name: str) -> WhisperModel:
+    logger.info(f"loading Whisper {name}")
+    model = await asyncio.to_thread(WhisperModel, name, device="cpu", compute_type="int8")
+    logger.info(f"Whisper {name} loaded")
+    return model
+
+
 async def main():
     args = parse_args()
-    logger.info(f"loading Whisper {args.model}")
-    model = await asyncio.to_thread(WhisperModel, args.model, device="cpu", compute_type="int8")
+    model = asyncio.ensure_future(load_whisper(args.model))
     async with aiohttp.ClientSession() as session:
         recognizers = {DEFAULT_ASR: SharedWhisper(model), **http_recognizers(args, session)}
         await serve_rooms(

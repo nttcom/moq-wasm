@@ -36,21 +36,22 @@ class Recognizer(Protocol):
 class SharedWhisper:
     """The process's one faster-whisper model on the CPU, which the participants' pipelines take turns on."""
 
-    model: WhisperModel
+    model: asyncio.Future[WhisperModel]
     name: str = "whisper"
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def ready(self) -> None:
-        pass
+        await asyncio.shield(self.model)
 
     async def recognize(self, pcm: bytes) -> str:
+        model = await asyncio.shield(self.model)
         samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         async with self.lock:
-            return await asyncio.to_thread(self._transcribe, samples)
+            return await asyncio.to_thread(self._transcribe, model, samples)
 
-    def _transcribe(self, samples: np.ndarray) -> str:
+    def _transcribe(self, model: WhisperModel, samples: np.ndarray) -> str:
         # faster-whisper decodes lazily while the segments are iterated, so they are read here, off the loop.
-        segments, _ = self.model.transcribe(samples, language=LANGUAGE.value)
+        segments, _ = model.transcribe(samples, language=LANGUAGE.value)
         return "".join(segment.text for segment in segments if segment.no_speech_prob < NO_SPEECH_PROB).strip()
 
 

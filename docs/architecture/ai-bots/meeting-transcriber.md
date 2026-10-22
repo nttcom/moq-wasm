@@ -129,7 +129,9 @@ recognizers:
 - `whisper`: all pipelines share one faster-whisper model, so memory does not
   grow with the number of speakers, and transcribe one segment at a time.
   pipecat's `WhisperSTTService` loads a model per instance, so the bot holds
-  the model itself.
+  the model itself. It loads after the server starts listening, so a cold
+  start answers a room request at once and a room of a GPU recognizer does not
+  wait for it; a `whisper` room is `starting` until it has loaded.
 - A call takes about as long for a short segment as for a long one, since
   Whisper's encoder always reads a 30 s window: on Cloud Run's 4 vCPU,
   `medium` took about 6 s per segment, and a speaker who paused more often
@@ -164,11 +166,12 @@ ask for.
 The bot publishes a `status` track next to `transcript`: one object per group
 holding `{"asr": <name>, "state": "starting" | "ready"}`. A GPU service that
 scaled to zero takes minutes to answer, so the state stays `starting` until
-its `/health` answers. Every page in the room shows the name and the state in
+its `/health` answers, and `whisper` stays `starting` until its model has
+loaded. Every page in the room shows the name and the state in
 the `CC` badge. Until then the bot subscribes to no audio, so the service does
 not receive the startup minutes' utterances all at once, and if the
 recognizer has not answered within 2 s, the transcript gets a record from the
-speaker `transcriber` saying it is starting and may take about 5 minutes.
+speaker `transcriber` saying it is starting and may take a while.
 
 ### The transcript track
 The bot publishes under `{root}/{room}/bots/transcriber`. The namespace has
