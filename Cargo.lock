@@ -1953,7 +1953,6 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls-native-certs",
- "serde",
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
@@ -2228,7 +2227,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -4133,7 +4131,6 @@ dependencies = [
  "mediapack",
  "moqt",
  "msf",
- "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "tokio",

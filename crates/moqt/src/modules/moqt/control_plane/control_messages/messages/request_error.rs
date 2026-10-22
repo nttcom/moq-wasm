@@ -1,10 +1,9 @@
 use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
 use anyhow::Context;
 use bytes::BytesMut;
-use serde::Serialize;
 use std::fmt;
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RequestError {
     pub request_id: u64,
     pub error_code: u64,

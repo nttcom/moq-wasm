@@ -45,21 +45,10 @@ fn content_exists_fields(content_exists: ContentExists) -> (bool, Option<u64>, O
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct ServerSetupMessage {
-    version: u32,
-    max_request_id: u64,
-}
-
-#[wasm_bindgen]
-impl ServerSetupMessage {
-    #[wasm_bindgen(getter)]
-    pub fn version(&self) -> u32 {
-        self.version
-    }
-
-    #[wasm_bindgen(getter, js_name = maxRequestId)]
-    pub fn max_request_id(&self) -> u64 {
-        self.max_request_id
-    }
+    #[wasm_bindgen(readonly)]
+    pub version: u32,
+    #[wasm_bindgen(readonly, js_name = maxRequestId)]
+    pub max_request_id: u64,
 }
 
 impl From<&ServerSetup> for ServerSetupMessage {
@@ -74,21 +63,10 @@ impl From<&ServerSetup> for ServerSetupMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct PublishNamespaceMessage {
-    request_id: u64,
-    track_namespace: Vec<String>,
-}
-
-#[wasm_bindgen]
-impl PublishNamespaceMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = trackNamespace)]
-    pub fn track_namespace(&self) -> Vec<String> {
-        self.track_namespace.clone()
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = trackNamespace)]
+    pub track_namespace: Vec<String>,
 }
 
 impl From<&PublishNamespace> for PublishNamespaceMessage {
@@ -103,15 +81,8 @@ impl From<&PublishNamespace> for PublishNamespaceMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct PublishNamespaceDoneMessage {
-    track_namespace: Vec<String>,
-}
-
-#[wasm_bindgen]
-impl PublishNamespaceDoneMessage {
-    #[wasm_bindgen(getter, js_name = trackNamespace)]
-    pub fn track_namespace(&self) -> Vec<String> {
-        self.track_namespace.clone()
-    }
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = trackNamespace)]
+    pub track_namespace: Vec<String>,
 }
 
 impl From<&PublishNamespaceDone> for PublishNamespaceDoneMessage {
@@ -126,9 +97,12 @@ impl From<&PublishNamespaceDone> for PublishNamespaceDoneMessage {
 /// JavaScript chose for the SUBSCRIBE, not the one on the wire.
 #[wasm_bindgen]
 pub struct PublishDoneMessage {
-    request_id: u64,
-    status_code: u64,
-    error_reason: String,
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(readonly, js_name = statusCode)]
+    pub status_code: u64,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = errorReason)]
+    pub error_reason: String,
 }
 
 impl PublishDoneMessage {
@@ -142,41 +116,12 @@ impl PublishDoneMessage {
 }
 
 #[wasm_bindgen]
-impl PublishDoneMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = statusCode)]
-    pub fn status_code(&self) -> u64 {
-        self.status_code
-    }
-
-    #[wasm_bindgen(getter, js_name = errorReason)]
-    pub fn error_reason(&self) -> String {
-        self.error_reason.clone()
-    }
-}
-
-#[wasm_bindgen]
 #[derive(Clone)]
 pub struct SubscribeNamespaceMessage {
-    request_id: u64,
-    track_namespace_prefix: Vec<String>,
-}
-
-#[wasm_bindgen]
-impl SubscribeNamespaceMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = trackNamespacePrefix)]
-    pub fn track_namespace_prefix(&self) -> Vec<String> {
-        self.track_namespace_prefix.clone()
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = trackNamespacePrefix)]
+    pub track_namespace_prefix: Vec<String>,
 }
 
 impl From<&SubscribeNamespace> for SubscribeNamespaceMessage {
@@ -191,15 +136,8 @@ impl From<&SubscribeNamespace> for SubscribeNamespaceMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct NamespaceOkMessage {
-    request_id: u64,
-}
-
-#[wasm_bindgen]
-impl NamespaceOkMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
 }
 
 impl From<&NamespaceOk> for NamespaceOkMessage {
@@ -213,27 +151,12 @@ impl From<&NamespaceOk> for NamespaceOkMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct RequestErrorMessage {
-    request_id: u64,
-    error_code: u64,
-    reason_phrase: String,
-}
-
-#[wasm_bindgen]
-impl RequestErrorMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = errorCode)]
-    pub fn error_code(&self) -> u64 {
-        self.error_code
-    }
-
-    #[wasm_bindgen(getter, js_name = reasonPhrase)]
-    pub fn reason_phrase(&self) -> String {
-        self.reason_phrase.clone()
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(readonly, js_name = errorCode)]
+    pub error_code: u64,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = reasonPhrase)]
+    pub reason_phrase: String,
 }
 
 impl From<&RequestError> for RequestErrorMessage {
@@ -249,63 +172,24 @@ impl From<&RequestError> for RequestErrorMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct PublishMessage {
-    request_id: u64,
-    track_namespace: Vec<String>,
-    track_name: String,
-    track_alias: u64,
-    group_order: u8,
-    content_exists: bool,
-    largest_group_id: Option<u64>,
-    largest_object_id: Option<u64>,
-    forward: bool,
-}
-
-#[wasm_bindgen]
-impl PublishMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = trackNamespace)]
-    pub fn track_namespace(&self) -> Vec<String> {
-        self.track_namespace.clone()
-    }
-
-    #[wasm_bindgen(getter, js_name = trackName)]
-    pub fn track_name(&self) -> String {
-        self.track_name.clone()
-    }
-
-    #[wasm_bindgen(getter, js_name = trackAlias)]
-    pub fn track_alias(&self) -> u64 {
-        self.track_alias
-    }
-
-    #[wasm_bindgen(getter, js_name = groupOrder)]
-    pub fn group_order(&self) -> u8 {
-        self.group_order
-    }
-
-    #[wasm_bindgen(getter, js_name = contentExists)]
-    pub fn content_exists(&self) -> bool {
-        self.content_exists
-    }
-
-    #[wasm_bindgen(getter, js_name = largestGroupId)]
-    pub fn largest_group_id(&self) -> Option<u64> {
-        self.largest_group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = largestObjectId)]
-    pub fn largest_object_id(&self) -> Option<u64> {
-        self.largest_object_id
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn forward(&self) -> bool {
-        self.forward
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = trackNamespace)]
+    pub track_namespace: Vec<String>,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = trackName)]
+    pub track_name: String,
+    #[wasm_bindgen(readonly, js_name = trackAlias)]
+    pub track_alias: u64,
+    #[wasm_bindgen(readonly, js_name = groupOrder)]
+    pub group_order: u8,
+    #[wasm_bindgen(readonly, js_name = contentExists)]
+    pub content_exists: bool,
+    #[wasm_bindgen(readonly, js_name = largestGroupId)]
+    pub largest_group_id: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = largestObjectId)]
+    pub largest_object_id: Option<u64>,
+    #[wasm_bindgen(readonly)]
+    pub forward: bool,
 }
 
 impl From<&Publish> for PublishMessage {
@@ -329,63 +213,24 @@ impl From<&Publish> for PublishMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct PublishOkMessage {
-    request_id: u64,
-    forward: bool,
-    subscriber_priority: u8,
-    group_order: u8,
-    filter_type: u8,
-    start_group: Option<u64>,
-    start_object: Option<u64>,
-    end_group: Option<u64>,
-    delivery_timeout: Option<u64>,
-}
-
-#[wasm_bindgen]
-impl PublishOkMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn forward(&self) -> bool {
-        self.forward
-    }
-
-    #[wasm_bindgen(getter, js_name = subscriberPriority)]
-    pub fn subscriber_priority(&self) -> u8 {
-        self.subscriber_priority
-    }
-
-    #[wasm_bindgen(getter, js_name = groupOrder)]
-    pub fn group_order(&self) -> u8 {
-        self.group_order
-    }
-
-    #[wasm_bindgen(getter, js_name = filterType)]
-    pub fn filter_type(&self) -> u8 {
-        self.filter_type
-    }
-
-    #[wasm_bindgen(getter, js_name = startGroup)]
-    pub fn start_group(&self) -> Option<u64> {
-        self.start_group
-    }
-
-    #[wasm_bindgen(getter, js_name = startObject)]
-    pub fn start_object(&self) -> Option<u64> {
-        self.start_object
-    }
-
-    #[wasm_bindgen(getter, js_name = endGroup)]
-    pub fn end_group(&self) -> Option<u64> {
-        self.end_group
-    }
-
-    #[wasm_bindgen(getter, js_name = deliveryTimeout)]
-    pub fn delivery_timeout(&self) -> Option<u64> {
-        self.delivery_timeout
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(readonly)]
+    pub forward: bool,
+    #[wasm_bindgen(readonly, js_name = subscriberPriority)]
+    pub subscriber_priority: u8,
+    #[wasm_bindgen(readonly, js_name = groupOrder)]
+    pub group_order: u8,
+    #[wasm_bindgen(readonly, js_name = filterType)]
+    pub filter_type: u8,
+    #[wasm_bindgen(readonly, js_name = startGroup)]
+    pub start_group: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = startObject)]
+    pub start_object: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = endGroup)]
+    pub end_group: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = deliveryTimeout)]
+    pub delivery_timeout: Option<u64>,
 }
 
 impl From<&PublishOk> for PublishOkMessage {
@@ -409,69 +254,26 @@ impl From<&PublishOk> for PublishOkMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct SubscribeMessage {
-    request_id: u64,
-    track_namespace: Vec<String>,
-    track_name: String,
-    subscriber_priority: u8,
-    group_order: u8,
-    forward: bool,
-    filter_type: u8,
-    start_group: Option<u64>,
-    start_object: Option<u64>,
-    end_group: Option<u64>,
-}
-
-#[wasm_bindgen]
-impl SubscribeMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = trackNamespace)]
-    pub fn track_namespace(&self) -> Vec<String> {
-        self.track_namespace.clone()
-    }
-
-    #[wasm_bindgen(getter, js_name = trackName)]
-    pub fn track_name(&self) -> String {
-        self.track_name.clone()
-    }
-
-    #[wasm_bindgen(getter, js_name = subscriberPriority)]
-    pub fn subscriber_priority(&self) -> u8 {
-        self.subscriber_priority
-    }
-
-    #[wasm_bindgen(getter, js_name = groupOrder)]
-    pub fn group_order(&self) -> u8 {
-        self.group_order
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn forward(&self) -> bool {
-        self.forward
-    }
-
-    #[wasm_bindgen(getter, js_name = filterType)]
-    pub fn filter_type(&self) -> u8 {
-        self.filter_type
-    }
-
-    #[wasm_bindgen(getter, js_name = startGroup)]
-    pub fn start_group(&self) -> Option<u64> {
-        self.start_group
-    }
-
-    #[wasm_bindgen(getter, js_name = startObject)]
-    pub fn start_object(&self) -> Option<u64> {
-        self.start_object
-    }
-
-    #[wasm_bindgen(getter, js_name = endGroup)]
-    pub fn end_group(&self) -> Option<u64> {
-        self.end_group
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = trackNamespace)]
+    pub track_namespace: Vec<String>,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = trackName)]
+    pub track_name: String,
+    #[wasm_bindgen(readonly, js_name = subscriberPriority)]
+    pub subscriber_priority: u8,
+    #[wasm_bindgen(readonly, js_name = groupOrder)]
+    pub group_order: u8,
+    #[wasm_bindgen(readonly)]
+    pub forward: bool,
+    #[wasm_bindgen(readonly, js_name = filterType)]
+    pub filter_type: u8,
+    #[wasm_bindgen(readonly, js_name = startGroup)]
+    pub start_group: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = startObject)]
+    pub start_object: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = endGroup)]
+    pub end_group: Option<u64>,
 }
 
 impl From<&Subscribe> for SubscribeMessage {
@@ -496,63 +298,24 @@ impl From<&Subscribe> for SubscribeMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct SubscribeOkMessage {
-    request_id: u64,
-    track_alias: u64,
-    expires: u64,
-    group_order: u8,
-    content_exists: bool,
-    largest_group_id: Option<u64>,
-    largest_object_id: Option<u64>,
-    delivery_timeout: Option<u64>,
-    max_duration: Option<u64>,
-}
-
-#[wasm_bindgen]
-impl SubscribeOkMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = trackAlias)]
-    pub fn track_alias(&self) -> u64 {
-        self.track_alias
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn expires(&self) -> u64 {
-        self.expires
-    }
-
-    #[wasm_bindgen(getter, js_name = groupOrder)]
-    pub fn group_order(&self) -> u8 {
-        self.group_order
-    }
-
-    #[wasm_bindgen(getter, js_name = contentExists)]
-    pub fn content_exists(&self) -> bool {
-        self.content_exists
-    }
-
-    #[wasm_bindgen(getter, js_name = largestGroupId)]
-    pub fn largest_group_id(&self) -> Option<u64> {
-        self.largest_group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = largestObjectId)]
-    pub fn largest_object_id(&self) -> Option<u64> {
-        self.largest_object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = deliveryTimeout)]
-    pub fn delivery_timeout(&self) -> Option<u64> {
-        self.delivery_timeout
-    }
-
-    #[wasm_bindgen(getter, js_name = maxDuration)]
-    pub fn max_duration(&self) -> Option<u64> {
-        self.max_duration
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(readonly, js_name = trackAlias)]
+    pub track_alias: u64,
+    #[wasm_bindgen(readonly)]
+    pub expires: u64,
+    #[wasm_bindgen(readonly, js_name = groupOrder)]
+    pub group_order: u8,
+    #[wasm_bindgen(readonly, js_name = contentExists)]
+    pub content_exists: bool,
+    #[wasm_bindgen(readonly, js_name = largestGroupId)]
+    pub largest_group_id: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = largestObjectId)]
+    pub largest_object_id: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = deliveryTimeout)]
+    pub delivery_timeout: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = maxDuration)]
+    pub max_duration: Option<u64>,
 }
 
 impl From<&SubscribeOk> for SubscribeOkMessage {
@@ -576,33 +339,14 @@ impl From<&SubscribeOk> for SubscribeOkMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct SubgroupHeaderMessage {
-    track_alias: u64,
-    group_id: u64,
-    subgroup_id: u64,
-    publisher_priority: u8,
-}
-
-#[wasm_bindgen]
-impl SubgroupHeaderMessage {
-    #[wasm_bindgen(getter, js_name = trackAlias)]
-    pub fn track_alias(&self) -> u64 {
-        self.track_alias
-    }
-
-    #[wasm_bindgen(getter, js_name = groupId)]
-    pub fn group_id(&self) -> u64 {
-        self.group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = subgroupId)]
-    pub fn subgroup_id(&self) -> u64 {
-        self.subgroup_id
-    }
-
-    #[wasm_bindgen(getter, js_name = publisherPriority)]
-    pub fn publisher_priority(&self) -> u8 {
-        self.publisher_priority
-    }
+    #[wasm_bindgen(readonly, js_name = trackAlias)]
+    pub track_alias: u64,
+    #[wasm_bindgen(readonly, js_name = groupId)]
+    pub group_id: u64,
+    #[wasm_bindgen(readonly, js_name = subgroupId)]
+    pub subgroup_id: u64,
+    #[wasm_bindgen(readonly, js_name = publisherPriority)]
+    pub publisher_priority: u8,
 }
 
 impl SubgroupHeaderMessage {
@@ -624,47 +368,23 @@ impl SubgroupHeaderMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct ObjectDatagramMessage {
-    track_alias: u64,
-    group_id: u64,
-    object_id: Option<u64>,
-    publisher_priority: u8,
-    object_payload_length: u32,
-    object_payload: Vec<u8>,
+    #[wasm_bindgen(readonly, js_name = trackAlias)]
+    pub track_alias: u64,
+    #[wasm_bindgen(readonly, js_name = groupId)]
+    pub group_id: u64,
+    #[wasm_bindgen(readonly, js_name = objectId)]
+    pub object_id: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = publisherPriority)]
+    pub publisher_priority: u8,
+    #[wasm_bindgen(readonly, js_name = objectPayloadLength)]
+    pub object_payload_length: u32,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = objectPayload)]
+    pub object_payload: Vec<u8>,
     loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
 impl ObjectDatagramMessage {
-    #[wasm_bindgen(getter, js_name = trackAlias)]
-    pub fn track_alias(&self) -> u64 {
-        self.track_alias
-    }
-
-    #[wasm_bindgen(getter, js_name = groupId)]
-    pub fn group_id(&self) -> u64 {
-        self.group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectId)]
-    pub fn object_id(&self) -> Option<u64> {
-        self.object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = publisherPriority)]
-    pub fn publisher_priority(&self) -> u8 {
-        self.publisher_priority
-    }
-
-    #[wasm_bindgen(getter, js_name = objectPayloadLength)]
-    pub fn object_payload_length(&self) -> u32 {
-        self.object_payload_length
-    }
-
-    #[wasm_bindgen(getter, js_name = objectPayload)]
-    pub fn object_payload(&self) -> Vec<u8> {
-        self.object_payload.clone()
-    }
-
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
@@ -696,41 +416,21 @@ impl ObjectDatagramMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct ObjectDatagramStatusMessage {
-    track_alias: u64,
-    group_id: u64,
-    object_id: Option<u64>,
-    publisher_priority: u8,
-    object_status: u8,
+    #[wasm_bindgen(readonly, js_name = trackAlias)]
+    pub track_alias: u64,
+    #[wasm_bindgen(readonly, js_name = groupId)]
+    pub group_id: u64,
+    #[wasm_bindgen(readonly, js_name = objectId)]
+    pub object_id: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = publisherPriority)]
+    pub publisher_priority: u8,
+    #[wasm_bindgen(readonly, js_name = objectStatus)]
+    pub object_status: u8,
     loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
 impl ObjectDatagramStatusMessage {
-    #[wasm_bindgen(getter, js_name = trackAlias)]
-    pub fn track_alias(&self) -> u64 {
-        self.track_alias
-    }
-
-    #[wasm_bindgen(getter, js_name = groupId)]
-    pub fn group_id(&self) -> u64 {
-        self.group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectId)]
-    pub fn object_id(&self) -> Option<u64> {
-        self.object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = publisherPriority)]
-    pub fn publisher_priority(&self) -> u8 {
-        self.publisher_priority
-    }
-
-    #[wasm_bindgen(getter, js_name = objectStatus)]
-    pub fn object_status(&self) -> u8 {
-        self.object_status
-    }
-
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
@@ -761,41 +461,21 @@ impl ObjectDatagramStatusMessage {
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct SubgroupObjectMessage {
-    subgroup_id: u64,
-    object_id: u64,
-    object_status: Option<u8>,
-    object_payload_length: u32,
-    object_payload: Vec<u8>,
+    #[wasm_bindgen(readonly, js_name = subgroupId)]
+    pub subgroup_id: u64,
+    #[wasm_bindgen(readonly, js_name = objectId)]
+    pub object_id: u64,
+    #[wasm_bindgen(readonly, js_name = objectStatus)]
+    pub object_status: Option<u8>,
+    #[wasm_bindgen(readonly, js_name = objectPayloadLength)]
+    pub object_payload_length: u32,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = objectPayload)]
+    pub object_payload: Vec<u8>,
     loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
 impl SubgroupObjectMessage {
-    #[wasm_bindgen(getter, js_name = subgroupId)]
-    pub fn subgroup_id(&self) -> u64 {
-        self.subgroup_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectId)]
-    pub fn object_id(&self) -> u64 {
-        self.object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectStatus)]
-    pub fn object_status(&self) -> Option<u8> {
-        self.object_status
-    }
-
-    #[wasm_bindgen(getter, js_name = objectPayloadLength)]
-    pub fn object_payload_length(&self) -> u32 {
-        self.object_payload_length
-    }
-
-    #[wasm_bindgen(getter, js_name = objectPayload)]
-    pub fn object_payload(&self) -> Vec<u8> {
-        self.object_payload.clone()
-    }
-
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
@@ -865,33 +545,14 @@ impl FetchMessage {
 
 #[wasm_bindgen]
 pub struct FetchOkMessage {
-    request_id: u64,
-    end_group_id: u64,
-    end_object_id: u64,
-    end_of_track: bool,
-}
-
-#[wasm_bindgen]
-impl FetchOkMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = endGroupId)]
-    pub fn end_group_id(&self) -> u64 {
-        self.end_group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = endObjectId)]
-    pub fn end_object_id(&self) -> u64 {
-        self.end_object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = endOfTrack)]
-    pub fn end_of_track(&self) -> bool {
-        self.end_of_track
-    }
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(readonly, js_name = endGroupId)]
+    pub end_group_id: u64,
+    #[wasm_bindgen(readonly, js_name = endObjectId)]
+    pub end_object_id: u64,
+    #[wasm_bindgen(readonly, js_name = endOfTrack)]
+    pub end_of_track: bool,
 }
 
 impl From<&FetchOk> for FetchOkMessage {
@@ -907,35 +568,19 @@ impl From<&FetchOk> for FetchOkMessage {
 
 #[wasm_bindgen]
 pub struct FetchObjectMessage {
-    request_id: u64,
-    group_id: u64,
-    object_id: u64,
-    object_payload: Vec<u8>,
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(readonly, js_name = groupId)]
+    pub group_id: u64,
+    #[wasm_bindgen(readonly, js_name = objectId)]
+    pub object_id: u64,
+    #[wasm_bindgen(getter_with_clone, readonly, js_name = objectPayload)]
+    pub object_payload: Vec<u8>,
     loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
 impl FetchObjectMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = groupId)]
-    pub fn group_id(&self) -> u64 {
-        self.group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectId)]
-    pub fn object_id(&self) -> u64 {
-        self.object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectPayload)]
-    pub fn object_payload(&self) -> Vec<u8> {
-        self.object_payload.clone()
-    }
-
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
@@ -960,25 +605,17 @@ impl FetchObjectMessage {
 /// be missing.
 #[wasm_bindgen]
 pub struct FetchStreamEndMessage {
-    request_id: u64,
-    reset_error_code: Option<u64>,
+    #[wasm_bindgen(readonly, js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(readonly, js_name = resetErrorCode)]
+    pub reset_error_code: Option<u64>,
 }
 
 #[wasm_bindgen]
 impl FetchStreamEndMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
     #[wasm_bindgen(getter, js_name = isReset)]
     pub fn is_reset(&self) -> bool {
         self.reset_error_code.is_some()
-    }
-
-    #[wasm_bindgen(getter, js_name = resetErrorCode)]
-    pub fn reset_error_code(&self) -> Option<u64> {
-        self.reset_error_code
     }
 }
 
@@ -1028,10 +665,10 @@ mod tests {
         let message = SubgroupObjectMessage::new(object, Vec::new());
 
         // Assert
-        assert_eq!(message.object_id(), 7);
-        assert_eq!(message.object_status(), None);
-        assert_eq!(message.object_payload(), b"ab".to_vec());
-        assert_eq!(message.object_payload_length(), 2);
+        assert_eq!(message.object_id, 7);
+        assert_eq!(message.object_status, None);
+        assert_eq!(message.object_payload, b"ab".to_vec());
+        assert_eq!(message.object_payload_length, 2);
     }
 
     #[test]
@@ -1043,10 +680,7 @@ mod tests {
         let message = SubgroupObjectMessage::new(object, Vec::new());
 
         // Assert
-        assert_eq!(
-            message.object_status(),
-            Some(ObjectStatus::EndOfGroup as u8)
-        );
-        assert_eq!(message.object_payload_length(), 0);
+        assert_eq!(message.object_status, Some(ObjectStatus::EndOfGroup as u8));
+        assert_eq!(message.object_payload_length, 0);
     }
 }

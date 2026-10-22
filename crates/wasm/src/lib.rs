@@ -14,7 +14,6 @@ mod mp4_broadcast;
 mod msf_catalog;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod request_rejection;
-mod utils;
 
 #[cfg(target_arch = "wasm32")]
 pub use client::MOQTClient;
@@ -27,7 +26,8 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
 fn main() {
-    utils::set_panic_hook();
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
 }
 
 #[cfg(not(target_arch = "wasm32"))]

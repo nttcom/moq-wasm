@@ -9,13 +9,6 @@ use moqt::{
 
 use crate::modules::session::subscription::UpstreamSubscription;
 
-pub(crate) struct SubscribeOption {
-    pub(crate) subscriber_priority: u8,
-    pub(crate) group_order: GroupOrder,
-    pub(crate) forward: bool,
-    pub(crate) filter_type: FilterType,
-}
-
 #[async_trait]
 pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn track_namespace(&self) -> &str;

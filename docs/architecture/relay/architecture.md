@@ -778,7 +778,7 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   priority, the subscription's group order with a per-subscription
   `GroupSequence` (incremented for every newer group id the sender sees,
   shared by the subgroups of one group), and the subgroup id.
-  `ConcreteStreamSenderFactory::next(priority)` applies it before the header
+  `StreamSenderFactory::next(priority)` applies it before the header
   is written. The sequence, not the group id, feeds the rank because group
   ids may be wall-clock timestamps; assigning it at open time means a still
   buffered tail of group N keeps outranking group N+1's keyframe without
