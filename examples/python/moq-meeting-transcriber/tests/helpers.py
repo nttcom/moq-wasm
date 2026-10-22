@@ -56,8 +56,11 @@ class NamedRecognizer:
 class SessionRefusingNamespaces:
     """A relay session that stays open but fails SUBSCRIBE_NAMESPACE."""
 
+    def __init__(self):
+        self.publications: dict[str, RecordingPublication] = {}
+
     async def track(self, namespace: list[str], name: str, *, retention_seconds: float) -> RecordingPublication:
-        return RecordingPublication()
+        return self.publications.setdefault(name, RecordingPublication())
 
     async def publish_namespace(self, namespace: list[str]) -> None:
         pass
