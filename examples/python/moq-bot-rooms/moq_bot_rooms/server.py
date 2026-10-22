@@ -47,7 +47,8 @@ def room_app(
     room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
     bot_from_query: Callable[[Mapping[str, str]], RunBot] | None = None,
 ) -> web.Application:
-    """`GET /rooms/{room}` holds the room while the page keeps the event stream open.
+    """`GET /rooms/{room}` holds the room while the page keeps the event stream open, which starts
+    with a `member` event naming the hold. `POST /rooms/{room}/leave?member=` ends that hold at once.
 
     With `bot_from_query`, the query of the request that starts a room picks the room's bot; it
     raises `ValueError` for a query it refuses, which the page gets as 400.
@@ -75,6 +76,7 @@ def room_app(
         await response.prepare(request)
         membership = rooms.join(room_id, run_bot)
         try:
+            await response.write(f"event: member\ndata: {membership.id}\n\n".encode())
             reason = await hold(response, membership, heartbeat_seconds)
             if reason is not None:
                 # EventSource drops an event whose data is empty.
@@ -85,8 +87,17 @@ def room_app(
             membership.leave()
         return response
 
+    async def leave_room(request: web.Request) -> web.Response:
+        if allowed_origins and request.headers.get("Origin") not in allowed_origins:
+            raise web.HTTPForbidden()
+        if not await rooms.leave(request.query.get("member", "")):
+            raise web.HTTPNotFound()
+        return web.Response(status=204)
+
     app = web.Application()
     app.router.add_get("/rooms/{room}", room_events)
+    # The page sends it without a body or headers, so the browser needs no CORS preflight.
+    app.router.add_post("/rooms/{room}/leave", leave_room)
     return app
 
 

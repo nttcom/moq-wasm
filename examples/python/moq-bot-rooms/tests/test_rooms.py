@@ -197,3 +197,48 @@ async def test_the_join_that_starts_a_room_picks_its_bot():
     assert default_bots.started == []
     first.leave()
     second.leave()
+
+
+async def test_page_that_says_it_leaves_ends_the_room_without_the_grace_period():
+    # Arrange
+    bots = FakeBots()
+    rooms = make_rooms(bots)
+    page = rooms.join("abc")
+    await settle()
+
+    # Act
+    left = await rooms.leave(page.id)
+
+    # Assert: the bot is gone when leave returns
+    assert left
+    assert bots.running == set()
+    assert await page.ended() is None
+
+
+async def test_page_that_leaves_by_name_keeps_the_bot_for_the_other_pages():
+    # Arrange
+    bots = FakeBots()
+    rooms = make_rooms(bots)
+    leaving = rooms.join("abc")
+    staying = rooms.join("abc")
+    await settle()
+
+    # Act
+    await rooms.leave(leaving.id)
+    await settle()
+
+    # Assert
+    assert await asyncio.wait_for(leaving.ended(), 1) is None
+    assert bots.running == {"abc"}
+    staying.leave()
+
+
+async def test_leave_names_no_hold_after_the_page_left():
+    # Arrange
+    rooms = make_rooms(FakeBots())
+    page = rooms.join("abc")
+    page.leave()
+
+    # Act / Assert
+    assert not await rooms.leave(page.id)
+    assert not await rooms.leave("unknown")

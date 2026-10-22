@@ -141,3 +141,32 @@ async def test_the_query_picks_the_bot_and_a_refused_query_is_a_bad_request(open
     assert accepted.status == 200
     assert picked.started == ["abc"]
     accepted.close()
+
+
+async def test_page_that_posts_leave_ends_its_hold_and_the_room_at_once(open_client):
+    # Arrange
+    bots = FakeBots()
+    client = await open_client(bots, allowed_origins=[PAGE_ORIGIN])
+    response = await client.get("/rooms/abc", headers={"Origin": PAGE_ORIGIN})
+    first_event = (await response.content.readuntil(b"\n\n")).decode()
+    member = re.fullmatch(r"event: member\ndata: (\S+)\n\n", first_event).group(1)
+
+    # Act
+    left = await client.post(f"/rooms/abc/leave?member={member}", headers={"Origin": PAGE_ORIGIN})
+    rest = await asyncio.wait_for(response.content.read(), 2)
+
+    # Assert: the hold's stream ends without a reason
+    assert left.status == 204
+    assert bots.running == set()
+    assert b"event:" not in rest
+
+
+async def test_leave_from_another_origin_is_refused(open_client):
+    # Arrange
+    client = await open_client(FakeBots(), allowed_origins=[PAGE_ORIGIN])
+
+    # Act
+    left = await client.post("/rooms/abc/leave?member=x", headers={"Origin": "https://elsewhere.example"})
+
+    # Assert
+    assert left.status == 403
