@@ -98,12 +98,7 @@ impl OnvifClient {
         tracing::info!("  [GetConfigurations]");
         let cmd = onvif_requests::get_configurations();
         let response = self.send_ptz(&cmd).await?;
-        soap_client::log_response_with_prefix(
-            "  ",
-            "GetConfigurations",
-            self.ptz_endpoint(),
-            &response,
-        );
+        soap_client::log_response("GetConfigurations", self.ptz_endpoint(), &response);
         if response.status >= 400 {
             return Err(anyhow!(
                 "get configurations failed with HTTP {}",

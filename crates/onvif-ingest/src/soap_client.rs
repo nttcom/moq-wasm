@@ -16,26 +16,11 @@ pub fn build(target: &Target) -> Result<Client> {
 }
 
 pub fn log_response(action: &str, endpoint: &str, response: &SoapResponse) {
-    log_response_with_prefix("", action, endpoint, response);
-}
-
-pub fn log_response_with_prefix(
-    prefix: &str,
-    action: &str,
-    endpoint: &str,
-    response: &SoapResponse,
-) {
-    let ok = response.status == 200;
-    let status = if ok { "OK" } else { "NG" };
-    let message = format_args!(
-        "SOAP response ({}): {} -> HTTP {} ({})",
-        action, endpoint, response.status, status
-    );
-    let line = format!("{prefix}{message}");
-    if ok {
-        tracing::info!("{line}");
+    let status = response.status;
+    if status == 200 {
+        tracing::info!("SOAP response ({action}): {endpoint} -> HTTP {status} (OK)");
     } else {
-        tracing::warn!("{line}");
+        tracing::warn!("SOAP response ({action}): {endpoint} -> HTTP {status} (NG)");
     }
 }
 
