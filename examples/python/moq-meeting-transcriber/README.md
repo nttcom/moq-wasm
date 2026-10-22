@@ -5,7 +5,7 @@ Meeting（`examples/browser/examples/meeting`）のルームに HTTP で呼ば�
 
 | `asr` | モデル | 動く場所 |
 | --- | --- | --- |
-| `whisper`（既定） | faster-whisper `medium`（`--model` で変更） | bot の中の CPU |
+| `whisper`（既定） | faster-whisper `small`（`--model` で変更） | bot の中の CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | GPU の Cloud Run（[音声認識を Cloud Run の GPU にデプロイする](../asr-on-cloud-run.md)） |
 | `moss-transcribe-diarize` | MOSS-Transcribe-Diarize 0.9B | GPU の Cloud Run（同上） |
 
@@ -44,7 +44,7 @@ sequenceDiagram
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。bot は `http://127.0.0.1:8100` で待ち受け、
-   最初に Whisper のモデル（既定は `medium`）を読み込みます。初回はモデルをダウンロードします。
+   最初に Whisper のモデル（既定は `small`）を読み込みます。初回はモデルをダウンロードします。
    `moqt` を maturin でビルドするので、初回の `uv run` には Rust のツールチェーンが要ります。
 
 3. ルームに bot を呼ぶ
@@ -63,7 +63,7 @@ sequenceDiagram
 | --- | --- | --- |
 | `--relay-url` | `https://127.0.0.1:4433` | 接続する relay |
 | `--insecure` | なし | relay の証明書を検証しない |
-| `--model` | `medium` | `whisper` で使う faster-whisper のモデル |
+| `--model` | `small` | `whisper` で使う faster-whisper のモデル |
 | `--asr NAME=URL` | なし | OpenAI 互換の書き起こし API を持つ音声認識サービス。ページは `?asr=NAME` で選ぶ。複数指定できる |
 | `--gcloud-auth` / `--metadata-auth` | なし | `--asr` のサービスに ID トークンを付ける。手元では `gcloud`、Cloud Run ではメタデータサーバーから取る |
 | `--max-rooms` | `2` | 同時に動かすルームの数。Whisper は全ルームで 1 つを順番に使う |

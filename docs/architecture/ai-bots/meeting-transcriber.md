@@ -118,7 +118,7 @@ recognizers:
 
 | Name | Model | Where it runs |
 | --- | --- | --- |
-| `whisper` (default) | faster-whisper `medium` (`--model`) | in the bot, on the CPU |
+| `whisper` (default) | faster-whisper `small` (`--model`) | in the bot, on the CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | its own Cloud Run service with an L4 GPU, served by vLLM |
 | `moss-transcribe-diarize` | MOSS-Transcribe-Diarize 0.9B | its own Cloud Run service with an L4 GPU, served by vLLM |
 
@@ -131,8 +131,9 @@ recognizers:
   `medium` took about 6 s per segment, and a speaker who paused more often
   than that fell further behind with every segment. A participant's segments
   that close while the recognizer is busy are therefore transcribed together
-  in the next call, as one record dated from the first, so the delay after
-  the last segment stays within about two calls.
+  in the next call, as one record dated from the first. The default is
+  `small`, about 2.7 times faster than `medium`, so the delay after the last
+  segment stays within about two calls.
 - `qwen3-asr` and `moss-transcribe-diarize`: the bot posts each segment as a
   WAV file to the service's OpenAI-compatible `/v1/audio/transcriptions`,
   with an identity token from the metadata server, as the other bots call
@@ -239,7 +240,7 @@ Whisper large-v3 is too slow on the CPU, so it would need a GPU service of
 its own: vLLM serves one model per process, and Qwen3-ASR needs a nightly
 vLLM that Whisper does not. One service running both behind a path router
 saves an instance only when two rooms use different models at once, and ties
-both to one vLLM build. Whisper `medium` on the CPU covers the case of a
+both to one vLLM build. Whisper `small` on the CPU covers the case of a
 transcriber that needs no GPU.
 
 ### Qwen3-ASR and the d3-flash models in one service

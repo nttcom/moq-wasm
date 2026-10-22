@@ -18,7 +18,7 @@ DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8100
 # Whisper runs on the CPU and every room shares it.
 DEFAULT_MAX_ROOMS = 2
-DEFAULT_MODEL = "medium"
+DEFAULT_MODEL = "small"
 DEFAULT_ASR = "whisper"
 # A Meeting room name is any single namespace element.
 ROOM_ID_PATTERN = re.compile(r"[^/]{1,64}")
