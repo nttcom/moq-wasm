@@ -34,7 +34,7 @@ use crate::{
                 enums::{RequestId, ResponseMessage},
                 error_codes::DataStreamResetCode,
             },
-            domains::session_context::SessionContext,
+            domains::{connection::Connection, session_context::SessionContext},
             version::{self, Notification, OutgoingRequest, OutgoingResponse},
         },
         transport::transport_send_stream::TransportSendError,
@@ -44,6 +44,39 @@ use crate::{
 use message_stream::{MessageReceiver, MessageSender};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What the request tasks need beyond the connection, known once the
+/// control receiver starts.
+struct Binding {
+    session: Weak<SessionContext>,
+    publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
+}
+
+/// A request task's connection and the session it belongs to.
+pub(crate) struct Scope {
+    pub(crate) session: Arc<SessionContext>,
+    pub(crate) connection: Arc<Connection>,
+}
+
+impl Scope {
+    /// `None` once the connection or its session is gone.
+    pub(crate) fn of(connection: &Weak<Connection>) -> Option<Self> {
+        let connection = connection.upgrade()?;
+        let session = ControlChannel::of(&connection)
+            .binding
+            .get()?
+            .session
+            .upgrade()?;
+        Some(Self {
+            session,
+            connection,
+        })
+    }
+
+    fn channel(&self) -> &ControlChannel {
+        ControlChannel::of(&self.connection)
+    }
+}
 
 /// What a request stream was opened for; decides which message a
 /// notification becomes and which event the end of the stream raises.
@@ -106,6 +139,7 @@ pub(crate) struct ControlChannel {
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
     requests: std::sync::Mutex<Requests>,
+    binding: std::sync::OnceLock<Binding>,
 }
 
 fn cancelled() -> u64 {
@@ -120,14 +154,32 @@ impl ControlChannel {
             synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
             requests: std::sync::Mutex::new(Requests::default()),
+            binding: std::sync::OnceLock::new(),
         }
     }
 
-    fn of(session: &SessionContext) -> &Self {
-        let version::ControlChannel::Draft18(channel) = &session.control else {
-            unreachable!("draft-18 tasks run only on draft-18 sessions")
+    fn of(connection: &Connection) -> &Self {
+        let version::ControlChannel::Draft18(channel) = &connection.control else {
+            unreachable!("draft-18 tasks run only on draft-18 connections")
         };
         channel
+    }
+
+    fn bind(
+        &self,
+        session: Weak<SessionContext>,
+        publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
+    ) {
+        let _ = self.binding.set(Binding {
+            session,
+            publish_done_sender,
+        });
+    }
+
+    fn publish_done_sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RequestId>> {
+        self.binding
+            .get()
+            .map(|binding| &binding.publish_done_sender)
     }
 
     fn requests(&self) -> std::sync::MutexGuard<'_, Requests> {
@@ -236,7 +288,7 @@ impl ControlChannel {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(super) async fn send_request(
         &self,
-        session: &Arc<SessionContext>,
+        connection: &Arc<Connection>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         let encoding_failed = |error: anyhow::Error| {
@@ -294,8 +346,8 @@ impl ControlChannel {
                 None,
             ),
         };
-        let (send_stream, receive_stream) = session
-            .transport_connection
+        let (send_stream, receive_stream) = connection
+            .transport
             .open_bi()
             .await
             .map_err(|_| RequestFailure::SessionClosed)?;
@@ -310,7 +362,7 @@ impl ControlChannel {
         );
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
         request_streams::OutgoingRequestTask::run(
-            Arc::downgrade(session),
+            Arc::downgrade(connection),
             request_id,
             kind,
             MessageReceiver::new(receive_stream),
@@ -320,7 +372,7 @@ impl ControlChannel {
         Ok(PendingResponse {
             receiver,
             cancel: CancelOnDrop {
-                session: Arc::downgrade(session),
+                connection: Arc::downgrade(connection),
                 request_id,
                 armed: true,
             },
@@ -538,7 +590,7 @@ impl ControlChannel {
 /// success response: cancelling the stream is how draft-18 withdraws a
 /// request (§3.3.2), so a late response needs no special handling.
 struct CancelOnDrop {
-    session: Weak<SessionContext>,
+    connection: Weak<Connection>,
     request_id: RequestId,
     armed: bool,
 }
@@ -548,10 +600,10 @@ impl Drop for CancelOnDrop {
         if !self.armed {
             return;
         }
-        let Some(session) = self.session.upgrade() else {
+        let Some(connection) = self.connection.upgrade() else {
             return;
         };
-        let Some(stream) = ControlChannel::of(&session).take_outgoing(self.request_id) else {
+        let Some(stream) = ControlChannel::of(&connection).take_outgoing(self.request_id) else {
             return;
         };
         executor::spawn("cancel draft-18 request", async move {
@@ -575,7 +627,7 @@ impl PendingResponse {
         Self {
             receiver,
             cancel: CancelOnDrop {
-                session: Weak::new(),
+                connection: Weak::new(),
                 request_id: 0,
                 armed: false,
             },
@@ -655,12 +707,12 @@ mod tests {
 
             // Assert
             assert_eq!(
-                client.publisher().session.control.version(),
+                client.publisher().session.connection().control.version(),
                 Version::Draft18,
                 "{scheme}"
             );
             assert_eq!(
-                server.publisher().session.control.version(),
+                server.publisher().session.connection().control.version(),
                 Version::Draft18,
                 "{scheme}"
             );
@@ -958,12 +1010,12 @@ mod tests {
     async fn subscribe_tracks_reaches_the_publisher_as_subscribe_namespace() {
         // Arrange
         let (client, server) = spawn_connected_draft18_sessions("draft18-tracks", "moqt").await;
-        let session = client.publisher().session;
-        let (send_stream, receive_stream) = session.transport_connection.open_bi().await.unwrap();
+        let connection = client.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let sender = MessageSender::new(send_stream);
         let mut receiver = MessageReceiver::new(receive_stream);
         let mut payload = BytesMut::new();
-        codec::put_vi64(&mut payload, session.control.next_request_id());
+        codec::put_vi64(&mut payload, connection.control.next_request_id());
         codec::put_track_namespace(&mut payload, &["live".to_string()]);
         codec::put_vi64(&mut payload, 0);
 
@@ -999,8 +1051,8 @@ mod tests {
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-request-goaway", "moqt").await;
         let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
-        let server_session = server.publisher().session;
-        let stream = ControlChannel::of(&server_session)
+        let server_connection = server.publisher().session.connection();
+        let stream = ControlChannel::of(&server_connection)
             .requests()
             .incoming
             .get(&subscription.request_id())
@@ -1040,15 +1092,15 @@ mod tests {
             ..SubscribeOption::default()
         };
         let subscription = subscribed(&client, &server, option).await;
-        let client_session = client.publisher().session;
-        let stream = ControlChannel::of(&client_session)
+        let client_connection = client.publisher().session.connection();
+        let stream = ControlChannel::of(&client_connection)
             .requests()
             .outgoing
             .get(&subscription.request_id())
             .cloned()
             .unwrap();
         let mut payload = BytesMut::new();
-        codec::put_vi64(&mut payload, client_session.control.next_request_id());
+        codec::put_vi64(&mut payload, client_connection.control.next_request_id());
         parameters::put_parameters(&mut payload, &[parameters::Parameter::Forward(false)]).unwrap();
 
         // Act: an update that changes only FORWARD

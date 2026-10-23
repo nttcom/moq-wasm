@@ -8,7 +8,6 @@ use bytes::Bytes;
 use tracing_subscriber::EnvFilter;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
-use crate::modules::moqt::version::APPLICATION_PROTOCOLS;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 use crate::{

@@ -336,7 +336,6 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
             Message::PublishNamespace(PublishNamespace {
                 request_id,
                 track_namespace,
-                number_of_parameters: tokens.len() as u64,
                 authorization_token: tokens,
             })
         }
@@ -347,7 +346,6 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
             Message::SubscribeNamespace(SubscribeNamespace {
                 request_id,
                 track_namespace_prefix,
-                number_of_parameters: tokens.len() as u64,
                 authorization_token: tokens,
             })
         }
@@ -1240,13 +1238,11 @@ mod tests {
         let publish_namespace = PublishNamespace {
             request_id: 8,
             track_namespace: vec!["live".to_string()],
-            number_of_parameters: 1,
             authorization_token: vec![AuthorizationToken::use_value_utf8("jwt")],
         };
         let subscribe_namespace = SubscribeNamespace {
             request_id: 10,
             track_namespace_prefix: vec![],
-            number_of_parameters: 0,
             authorization_token: vec![],
         };
 

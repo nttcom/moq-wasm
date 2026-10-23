@@ -187,6 +187,7 @@ impl SubgroupReader {
     pub(crate) fn group_id(&self) -> u64 {
         match self {
             Self::Draft14(reader) => reader.group_id(),
+            Self::Draft18(reader) => reader.group_id(),
         }
     }
 
@@ -359,11 +360,11 @@ impl ControlChannel {
 
     /// Fails with `RequestFailure::Send` when the request cannot be written.
     /// Dropping the returned `PendingResponse` abandons the request.
-    /// `session` owns this channel; draft-18 opens a stream on its
-    /// connection per request.
+    /// `connection` owns this channel; draft-18 opens a stream on it per
+    /// request.
     pub(crate) async fn send_request(
         &self,
-        session: &Arc<SessionContext>,
+        connection: &Arc<Connection>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         match self {
@@ -371,7 +372,7 @@ impl ControlChannel {
                 channel.send_request(request).await?,
             )),
             Self::Draft18(channel) => Ok(PendingResponse::Draft18(
-                channel.send_request(session, request).await?,
+                channel.send_request(connection, request).await?,
             )),
         }
     }
@@ -422,9 +423,13 @@ impl ControlReceiver {
                 publish_done_sender,
                 span,
             ),
-            Self::Draft18(control_stream) => {
-                draft18::request_streams::run_control_receiver(control_stream, connection, span)
-            }
+            Self::Draft18(control_stream) => draft18::request_streams::run_control_receiver(
+                control_stream,
+                session,
+                connection,
+                publish_done_sender,
+                span,
+            ),
         }
     }
 }

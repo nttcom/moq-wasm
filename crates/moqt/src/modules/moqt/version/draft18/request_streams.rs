@@ -9,11 +9,11 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use futures::future::{Either, select};
+use futures::future::select;
 use tracing::{Instrument, Span};
 
 use super::{
-    ControlChannel, RequestStreamKind,
+    ControlChannel, RequestStreamKind, Scope,
     message_stream::{MessageReceiveError, MessageReceiver, MessageSender},
     messages::{self, Message, RequestErrorMessage, has_mandatory_track_property},
     parameters::Parameter,
@@ -55,40 +55,53 @@ use crate::{
                     unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
                 },
             },
-            domains::session_context::SessionContext,
+            domains::{connection::Connection, session_context::SessionContext},
         },
     },
 };
 
-fn emit(session: &SessionContext, event: SessionEvent) {
-    if let Err(error) = session.event_sender.send(event) {
+fn emit(scope: &Scope, event: SessionEvent) {
+    if let SessionEvent::PublishDone(handler) = &event
+        && let Some(publish_done_sender) = scope.channel().publish_done_sender()
+    {
+        let _ = publish_done_sender.send(handler.request_id());
+    }
+    if let Err(error) = scope.connection.event_sender.send(event) {
         tracing::debug!(?error, "session event dropped: the session is gone");
     }
 }
 
-fn close_on_violation(session: &SessionContext, reason: &str) {
+fn close_on_violation(scope: &Scope, reason: &str) {
     tracing::error!(
         reason,
         "Protocol violation on a draft-18 stream; closing session"
     );
-    session.close_with_error(TerminationErrorCode::ProtocolViolation, reason);
+    scope.session.close_connection(
+        &scope.connection,
+        TerminationErrorCode::ProtocolViolation,
+        reason,
+    );
 }
 
 /// Reads the peer's control stream and accepts the request streams the
-/// peer opens, until the session ends.
+/// peer opens, until the connection ends. The Request ID of every
+/// PUBLISH_DONE also goes to `publish_done_sender`.
 pub(crate) fn run_control_receiver(
     control_stream: MessageReceiver,
     session: Weak<SessionContext>,
+    connection: Weak<Connection>,
+    publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
     span: Span,
 ) -> JoinHandle {
+    if let Some(connection) = connection.upgrade() {
+        ControlChannel::of(&connection).bind(session, publish_done_sender);
+    }
     executor::spawn(
         "draft-18 control receiver",
         async move {
-            let control = Box::pin(read_control_stream(control_stream, session.clone()));
-            let requests = Box::pin(accept_request_streams(session));
-            match select(control, requests).await {
-                Either::Left(_) | Either::Right(_) => {}
-            }
+            let control = Box::pin(read_control_stream(control_stream, connection.clone()));
+            let requests = Box::pin(accept_request_streams(connection));
+            select(control, requests).await;
         }
         .instrument(span),
     )
@@ -96,27 +109,36 @@ pub(crate) fn run_control_receiver(
 
 /// §3.3: after SETUP the control stream carries only GOAWAY, and it must
 /// stay open for the whole session.
-async fn read_control_stream(mut control_stream: MessageReceiver, session: Weak<SessionContext>) {
+async fn read_control_stream(mut control_stream: MessageReceiver, connection: Weak<Connection>) {
     loop {
         let received = control_stream.receive().await;
-        let Some(session) = session.upgrade() else {
+        let Some(scope) = Scope::of(&connection) else {
             return;
         };
         match received {
-            Ok(Some(Message::GoAway(go_away))) => emit(
-                &session,
-                SessionEvent::GoAway(GoAwayHandler::new(GoAway::new(go_away.new_session_uri))),
-            ),
+            Ok(Some(Message::GoAway(go_away))) => {
+                if let Err(reason) = scope
+                    .connection
+                    .note_go_away_received(&go_away.new_session_uri)
+                {
+                    close_on_violation(&scope, reason);
+                    return;
+                }
+                emit(
+                    &scope,
+                    SessionEvent::GoAway(GoAwayHandler::new(GoAway::new(go_away.new_session_uri))),
+                );
+            }
             Ok(Some(_)) => {
-                close_on_violation(&session, "unexpected message on the control stream");
+                close_on_violation(&scope, "unexpected message on the control stream");
                 return;
             }
             Ok(None) | Err(MessageReceiveError::Reset) => {
-                close_on_violation(&session, "the control stream closed");
+                close_on_violation(&scope, "the control stream closed");
                 return;
             }
             Err(MessageReceiveError::Malformed(reason)) => {
-                close_on_violation(&session, &reason);
+                close_on_violation(&scope, &reason);
                 return;
             }
             Err(MessageReceiveError::SessionEnded) => {
@@ -130,16 +152,16 @@ async fn read_control_stream(mut control_stream: MessageReceiver, session: Weak<
 // On wasm32 the browser transport is !Send, but the context is shared with
 // the native build, where the tasks run on a multi-threaded executor.
 #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-async fn accept_request_streams(session: Weak<SessionContext>) {
+async fn accept_request_streams(connection: Weak<Connection>) {
     loop {
-        let accepted = match session.upgrade() {
-            Some(session) => session.transport_connection.accept_bi().await,
+        let accepted = match connection.upgrade() {
+            Some(connection) => connection.transport.accept_bi().await,
             None => return,
         };
         match accepted {
             Ok((send_stream, receive_stream)) => {
                 IncomingRequestTask::run(
-                    session.clone(),
+                    connection.clone(),
                     Arc::new(MessageSender::new(send_stream)),
                     MessageReceiver::new(receive_stream),
                 );
@@ -155,20 +177,20 @@ async fn accept_request_streams(session: Weak<SessionContext>) {
 struct IncomingRequestTask;
 
 impl IncomingRequestTask {
-    fn run(session: Weak<SessionContext>, sender: Arc<MessageSender>, receiver: MessageReceiver) {
+    fn run(connection: Weak<Connection>, sender: Arc<MessageSender>, receiver: MessageReceiver) {
         executor::spawn(
             "draft-18 incoming request",
-            Self::serve(session, sender, receiver).in_current_span(),
+            Self::serve(connection, sender, receiver).in_current_span(),
         );
     }
 
     async fn serve(
-        session: Weak<SessionContext>,
+        connection: Weak<Connection>,
         sender: Arc<MessageSender>,
         mut receiver: MessageReceiver,
     ) {
         let first = receiver.receive().await;
-        let Some(context) = session.upgrade() else {
+        let Some(context) = Scope::of(&connection) else {
             return;
         };
         let message = match first {
@@ -189,7 +211,7 @@ impl IncomingRequestTask {
         drop(context);
         loop {
             let received = receiver.receive().await;
-            let Some(context) = session.upgrade() else {
+            let Some(context) = Scope::of(&connection) else {
                 return;
             };
             match received {
@@ -223,11 +245,11 @@ impl IncomingRequestTask {
     /// Registers the peer's request and hands it to the application as the
     /// event draft-14 would raise. `None` when the stream is done.
     async fn accept_request(
-        session: &Arc<SessionContext>,
+        scope: &Scope,
         sender: &Arc<MessageSender>,
         message: Message,
     ) -> Option<(RequestId, RequestStreamKind, Option<SubscribeUpdate>)> {
-        let channel = ControlChannel::of(session);
+        let channel = scope.channel();
         let request_id = match &message {
             Message::Subscribe(m) | Message::TrackStatus(m) => m.request_id,
             Message::Fetch(m) => m.request_id,
@@ -236,7 +258,7 @@ impl IncomingRequestTask {
             Message::SubscribeNamespace(m) => m.request_id,
             Message::SubscribeTracks(m) => m.request_id,
             _ => {
-                close_on_violation(session, "a request stream does not begin with a request");
+                close_on_violation(scope, "a request stream does not begin with a request");
                 return None;
             }
         };
@@ -245,7 +267,11 @@ impl IncomingRequestTask {
                 request_id,
                 "invalid or repeated Request ID; closing session"
             );
-            session.close_with_error(TerminationErrorCode::InvalidRequestId, "invalid request id");
+            scope.session.close_connection(
+                &scope.connection,
+                TerminationErrorCode::InvalidRequestId,
+                "invalid request id",
+            );
             return None;
         }
         let mut baseline = None;
@@ -260,16 +286,27 @@ impl IncomingRequestTask {
                 ));
                 (
                     RequestStreamKind::Subscribe,
-                    SessionEvent::Subscribe(SubscribeHandler::new(session.clone(), subscribe)),
+                    SessionEvent::Subscribe(SubscribeHandler::new(
+                        scope.session.clone(),
+                        scope.connection.clone(),
+                        subscribe,
+                    )),
                 )
             }
             Message::TrackStatus(track_status) => (
                 RequestStreamKind::TrackStatus,
-                SessionEvent::TrackStatus(TrackStatusHandler::new(session.clone(), track_status)),
+                SessionEvent::TrackStatus(TrackStatusHandler::new(
+                    scope.connection.clone(),
+                    track_status,
+                )),
             ),
             Message::Fetch(fetch) => (
                 RequestStreamKind::Fetch,
-                SessionEvent::Fetch(FetchHandler::new(session.clone(), fetch)),
+                SessionEvent::Fetch(FetchHandler::new(
+                    scope.session.clone(),
+                    scope.connection.clone(),
+                    fetch,
+                )),
             ),
             Message::Publish {
                 publish,
@@ -281,13 +318,17 @@ impl IncomingRequestTask {
                 }
                 (
                     RequestStreamKind::Publish,
-                    SessionEvent::Publish(PublishHandler::new(session.clone(), publish)),
+                    SessionEvent::Publish(PublishHandler::new(
+                        scope.session.clone(),
+                        scope.connection.clone(),
+                        publish,
+                    )),
                 )
             }
             Message::PublishNamespace(publish_namespace) => (
                 RequestStreamKind::PublishNamespace(publish_namespace.track_namespace.clone()),
                 SessionEvent::PublishNamespace(PublishNamespaceHandler::new(
-                    session.clone(),
+                    scope.connection.clone(),
                     publish_namespace,
                 )),
             ),
@@ -296,7 +337,7 @@ impl IncomingRequestTask {
                     subscribe_namespace.track_namespace_prefix.clone(),
                 ),
                 SessionEvent::SubscribeNameSpace(SubscribeNamespaceHandler::new(
-                    session.clone(),
+                    scope.connection.clone(),
                     subscribe_namespace,
                 )),
             ),
@@ -314,11 +355,10 @@ impl IncomingRequestTask {
                         subscribe_tracks.track_namespace_prefix.clone(),
                     ),
                     SessionEvent::SubscribeNameSpace(SubscribeNamespaceHandler::new(
-                        session.clone(),
+                        scope.connection.clone(),
                         SubscribeNamespace {
                             request_id: subscribe_tracks.request_id,
                             track_namespace_prefix: subscribe_tracks.track_namespace_prefix,
-                            number_of_parameters: tokens.len() as u64,
                             authorization_token: tokens,
                         },
                     )),
@@ -328,7 +368,7 @@ impl IncomingRequestTask {
         };
         // Registered before the event, so a handler can answer at once.
         channel.register_incoming(request_id, kind.clone(), sender.clone());
-        emit(session, event);
+        emit(scope, event);
         Some((request_id, kind, baseline))
     }
 
@@ -343,7 +383,7 @@ impl IncomingRequestTask {
 
     /// `false` when the stream is done.
     async fn follow_up(
-        session: &Arc<SessionContext>,
+        scope: &Scope,
         sender: &MessageSender,
         request_id: RequestId,
         kind: &RequestStreamKind,
@@ -357,8 +397,11 @@ impl IncomingRequestTask {
                 };
                 let update = apply_update(baseline, update.request_id, update.parameters);
                 emit(
-                    session,
-                    SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(update)),
+                    scope,
+                    SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(
+                        &scope.connection,
+                        update,
+                    )),
                 );
                 acknowledge_update(sender).await;
                 true
@@ -369,7 +412,7 @@ impl IncomingRequestTask {
             }
             (RequestStreamKind::Publish, Message::PublishDone(done)) => {
                 emit(
-                    session,
+                    scope,
                     SessionEvent::PublishDone(PublishDoneHandler::new(
                         request_id,
                         done.code,
@@ -377,7 +420,7 @@ impl IncomingRequestTask {
                         done.reason,
                     )),
                 );
-                ControlChannel::of(session).take_incoming(request_id);
+                scope.channel().take_incoming(request_id);
                 false
             }
             (_, Message::GoAway(_)) => {
@@ -385,7 +428,7 @@ impl IncomingRequestTask {
                 true
             }
             _ => {
-                close_on_violation(session, "unexpected message on a request stream");
+                close_on_violation(scope, "unexpected message on a request stream");
                 false
             }
         }
@@ -394,27 +437,27 @@ impl IncomingRequestTask {
     /// The peer closed or reset its half: for an open request, that
     /// withdraws it (§3.3.2), as draft-14's UNSUBSCRIBE / FETCH_CANCEL /
     /// PUBLISH_NAMESPACE_DONE / UNSUBSCRIBE_NAMESPACE would.
-    fn peer_ended(session: &Arc<SessionContext>, request_id: RequestId, kind: RequestStreamKind) {
-        if ControlChannel::of(session)
-            .take_incoming(request_id)
-            .is_none()
-        {
+    fn peer_ended(scope: &Scope, request_id: RequestId, kind: RequestStreamKind) {
+        if scope.channel().take_incoming(request_id).is_none() {
             return;
         }
         let event = match kind {
             RequestStreamKind::Subscribe => SessionEvent::Unsubscribe(UnsubscribeHandler::new(
-                session.clone(),
+                scope.session.clone(),
+                &scope.connection,
                 Unsubscribe { request_id },
             )),
-            RequestStreamKind::Fetch => {
-                SessionEvent::FetchCancel(FetchCancelHandler::new(FetchCancel::new(request_id)))
-            }
+            RequestStreamKind::Fetch => SessionEvent::FetchCancel(FetchCancelHandler::new(
+                scope.session.clone(),
+                &scope.connection,
+                FetchCancel::new(request_id),
+            )),
             RequestStreamKind::PublishNamespace(namespace) => SessionEvent::PublishNamespaceDone(
                 PublishNamespaceDoneHandler::new(PublishNamespaceDone::new(namespace)),
             ),
             RequestStreamKind::SubscribeNamespace(prefix)
             | RequestStreamKind::SubscribeTracks(prefix) => {
-                ControlChannel::of(session).forget_advertised(request_id);
+                scope.channel().forget_advertised(request_id);
                 SessionEvent::UnsubscribeNamespace(UnsubscribeNamespaceHandler::new(
                     UnsubscribeNamespace::new(prefix),
                 ))
@@ -427,7 +470,7 @@ impl IncomingRequestTask {
             )),
             RequestStreamKind::TrackStatus => return,
         };
-        emit(session, event);
+        emit(scope, event);
     }
 }
 
@@ -508,7 +551,7 @@ pub(crate) struct OutgoingRequestTask;
 
 impl OutgoingRequestTask {
     pub(crate) fn run(
-        session: Weak<SessionContext>,
+        connection: Weak<Connection>,
         request_id: RequestId,
         kind: RequestStreamKind,
         receiver: MessageReceiver,
@@ -517,13 +560,20 @@ impl OutgoingRequestTask {
     ) {
         executor::spawn(
             "draft-18 outgoing request",
-            Self::read(session, request_id, kind, receiver, response, group_order)
-                .in_current_span(),
+            Self::read(
+                connection,
+                request_id,
+                kind,
+                receiver,
+                response,
+                group_order,
+            )
+            .in_current_span(),
         );
     }
 
     async fn read(
-        session: Weak<SessionContext>,
+        connection: Weak<Connection>,
         request_id: RequestId,
         kind: RequestStreamKind,
         mut receiver: MessageReceiver,
@@ -531,13 +581,13 @@ impl OutgoingRequestTask {
         group_order: GroupOrder,
     ) {
         let first = receiver.receive().await;
-        let Some(context) = session.upgrade() else {
+        let Some(context) = Scope::of(&connection) else {
             return;
         };
         let message = match first {
             Ok(Some(message)) => message,
             Ok(None) | Err(_) => {
-                ControlChannel::of(&context).take_outgoing(request_id);
+                context.channel().take_outgoing(request_id);
                 return;
             }
         };
@@ -575,7 +625,7 @@ impl OutgoingRequestTask {
         let mut namespaces: HashSet<Vec<String>> = HashSet::new();
         loop {
             let received = receiver.receive().await;
-            let Some(context) = session.upgrade() else {
+            let Some(context) = Scope::of(&connection) else {
                 return;
             };
             match received {
@@ -598,7 +648,10 @@ impl OutgoingRequestTask {
                     let update = apply_update(baseline, update.request_id, update.parameters);
                     emit(
                         &context,
-                        SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(update)),
+                        SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(
+                            &context.connection,
+                            update,
+                        )),
                     );
                     if let Some(stream) = outgoing_sender(&context, request_id) {
                         acknowledge_update(&stream).await;
@@ -662,25 +715,24 @@ impl OutgoingRequestTask {
     /// A NAMESPACE reaches the application as draft-14's PUBLISH_NAMESPACE,
     /// under a Request ID made up for it: NAMESPACE takes no response, so
     /// the handler's answer goes nowhere.
-    fn namespace_announced(session: &Arc<SessionContext>, namespace: Vec<String>) {
-        let request_id = ControlChannel::of(session).synthetic_request_id();
+    fn namespace_announced(scope: &Scope, namespace: Vec<String>) {
+        let request_id = scope.channel().synthetic_request_id();
         emit(
-            session,
+            scope,
             SessionEvent::PublishNamespace(PublishNamespaceHandler::new(
-                session.clone(),
+                scope.connection.clone(),
                 PublishNamespace {
                     request_id,
                     track_namespace: namespace,
-                    number_of_parameters: 0,
                     authorization_token: vec![],
                 },
             )),
         );
     }
 
-    fn namespace_withdrawn(session: &SessionContext, namespace: Vec<String>) {
+    fn namespace_withdrawn(scope: &Scope, namespace: Vec<String>) {
         emit(
-            session,
+            scope,
             SessionEvent::PublishNamespaceDone(PublishNamespaceDoneHandler::new(
                 PublishNamespaceDone::new(namespace),
             )),
@@ -691,12 +743,12 @@ impl OutgoingRequestTask {
     /// draft-14 events have no per-request migration, so the request ends
     /// as if the peer had ended it with GOING_AWAY, and its stream is reset.
     async fn moved_away(
-        session: &Arc<SessionContext>,
+        scope: &Scope,
         request_id: RequestId,
         kind: RequestStreamKind,
         publish_done: bool,
     ) {
-        let Some(stream) = ControlChannel::of(session).take_outgoing(request_id) else {
+        let Some(stream) = scope.channel().take_outgoing(request_id) else {
             return;
         };
         let event = match kind {
@@ -709,7 +761,8 @@ impl OutgoingRequestTask {
                 )))
             }
             RequestStreamKind::Publish => Some(SessionEvent::Unsubscribe(UnsubscribeHandler::new(
-                session.clone(),
+                scope.session.clone(),
+                &scope.connection,
                 Unsubscribe { request_id },
             ))),
             RequestStreamKind::PublishNamespace(namespace) => Some(
@@ -722,7 +775,7 @@ impl OutgoingRequestTask {
             _ => None,
         };
         if let Some(event) = event {
-            emit(session, event);
+            emit(scope, event);
         }
         let going_away = super::error_codes::stream_reset_code_to_wire(
             crate::modules::moqt::control_plane::error_codes::DataStreamResetCode::GoingAway,
@@ -807,15 +860,12 @@ impl OutgoingRequestTask {
     /// subscription without PUBLISH_DONE, a publication or a namespace, that
     /// is the withdrawal draft-14 would have sent as a message.
     fn peer_ended(
-        session: &Arc<SessionContext>,
+        scope: &Scope,
         request_id: RequestId,
         kind: RequestStreamKind,
         publish_done: bool,
     ) {
-        if ControlChannel::of(session)
-            .take_outgoing(request_id)
-            .is_none()
-        {
+        if scope.channel().take_outgoing(request_id).is_none() {
             return;
         }
         let event = match kind {
@@ -828,7 +878,8 @@ impl OutgoingRequestTask {
                 ))
             }
             RequestStreamKind::Publish => SessionEvent::Unsubscribe(UnsubscribeHandler::new(
-                session.clone(),
+                scope.session.clone(),
+                &scope.connection,
                 Unsubscribe { request_id },
             )),
             RequestStreamKind::PublishNamespace(namespace) => {
@@ -840,12 +891,13 @@ impl OutgoingRequestTask {
             }
             _ => return,
         };
-        emit(session, event);
+        emit(scope, event);
     }
 }
 
-fn outgoing_sender(session: &SessionContext, request_id: RequestId) -> Option<Arc<MessageSender>> {
-    ControlChannel::of(session)
+fn outgoing_sender(scope: &Scope, request_id: RequestId) -> Option<Arc<MessageSender>> {
+    scope
+        .channel()
         .requests()
         .outgoing
         .get(&request_id)

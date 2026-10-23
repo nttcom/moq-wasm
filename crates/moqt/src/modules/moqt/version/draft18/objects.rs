@@ -647,6 +647,10 @@ pub(crate) struct SubgroupReader {
 }
 
 impl SubgroupReader {
+    pub(crate) fn group_id(&self) -> u64 {
+        self.state.header.group_id
+    }
+
     pub(crate) fn start(&self) -> Option<SubgroupStart> {
         self.state.start()
     }
