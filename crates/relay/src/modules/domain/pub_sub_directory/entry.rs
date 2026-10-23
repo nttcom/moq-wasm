@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 
-use moqt::{object::ContentExists, publish::PublishDoneCode};
+use moqt::{
+    object::{ContentExists, Location},
+    publish::PublishDoneCode,
+    subscribe::FilterType,
+};
 
 use crate::modules::{
     domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
@@ -110,8 +114,24 @@ pub(crate) enum MatchingPublication {
 #[derive(Clone, Debug)]
 pub(crate) struct DownstreamSubscription {
     pub(crate) track_key: TrackKey,
-    /// The subscription's start location: the Largest Object Location at subscribe time.
-    pub(crate) start_location: Option<moqt::object::Location>,
+    pub(crate) join_point: JoinPoint,
+}
+
+/// What a Joining FETCH of the subscription resolves against (draft-14 §9.16.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JoinPoint {
+    /// The Largest Location at subscribe time; `None` when the track had no objects.
+    Largest(Option<Location>),
+    NotLargestObject,
+}
+
+impl JoinPoint {
+    pub(crate) fn new(filter_type: &FilterType, largest: Option<Location>) -> Self {
+        match filter_type {
+            FilterType::LargestObject => Self::Largest(largest),
+            _ => Self::NotLargestObject,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

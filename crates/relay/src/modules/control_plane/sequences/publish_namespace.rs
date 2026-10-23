@@ -281,6 +281,7 @@ impl PublishNamespace {
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use std::time::Duration;
 
@@ -346,7 +347,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap();

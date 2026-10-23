@@ -13,7 +13,7 @@ use crate::modules::{
         delivery_control::{DeliveryControl, UpdateOutcome},
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
-            ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
+            ActiveUpstreamSubscription, DownstreamSubscription, JoinPoint, MatchingPublication,
             PublishDoneReason, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
             RemovedSessionSubscriptions, UpstreamSubscriptionOrigin, UpstreamTrack,
         },
@@ -723,7 +723,7 @@ impl InMemoryLocalPubSubDirectory {
         downstream_subscribe_id: u64,
         subscriber_peer: SessionPeer,
         track_key: TrackKey,
-        start_location: Option<moqt::object::Location>,
+        join_point: JoinPoint,
         delivery_control: DeliveryControl,
     ) -> Option<DownstreamRunnerSignals> {
         // The track entry stays locked until the registration is inserted: a concurrent removal
@@ -742,7 +742,7 @@ impl InMemoryLocalPubSubDirectory {
             RegisteredDownstreamSubscription {
                 subscription: DownstreamSubscription {
                     track_key,
-                    start_location,
+                    join_point,
                 },
                 subscriber_peer,
                 runner_stop_sender,
@@ -1172,7 +1172,7 @@ mod tests {
     }
 
     #[test]
-    fn register_downstream_subscription_stores_start_location() {
+    fn register_downstream_subscription_stores_join_point() {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let largest = moqt::object::Location {
@@ -1186,7 +1186,7 @@ mod tests {
             100,
             SessionPeer::Client,
             track_key.clone(),
-            Some(largest),
+            JoinPoint::Largest(Some(largest)),
             delivery_control(true),
         );
 
@@ -1194,35 +1194,7 @@ mod tests {
         assert!(runner_signals.is_some());
         let sub = table.get_downstream_subscription(2, 100).unwrap();
         assert_eq!(sub.track_key, track_key);
-        assert_eq!(
-            sub.start_location,
-            Some(moqt::object::Location {
-                group_id: 5,
-                object_id: 3
-            })
-        );
-    }
-
-    #[test]
-    fn register_downstream_subscription_none_start_location() {
-        // Arrange
-        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-
-        // Act
-        let runner_signals = table.register_downstream_subscription(
-            2,
-            100,
-            SessionPeer::Client,
-            track_key.clone(),
-            None,
-            delivery_control(true),
-        );
-
-        // Assert
-        assert!(runner_signals.is_some());
-        let sub = table.get_downstream_subscription(2, 100).unwrap();
-        assert_eq!(sub.track_key, track_key);
-        assert!(sub.start_location.is_none());
+        assert_eq!(sub.join_point, JoinPoint::Largest(Some(largest)));
     }
 
     #[test]
@@ -1237,7 +1209,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key,
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1256,7 +1228,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key,
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1279,7 +1251,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1318,7 +1290,7 @@ mod tests {
             100,
             SessionPeer::Client,
             track_key,
-            None,
+            JoinPoint::Largest(None),
             delivery_control(true),
         );
 
@@ -1339,7 +1311,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key,
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1394,7 +1366,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1421,7 +1393,7 @@ mod tests {
             100,
             SessionPeer::Client,
             track_key,
-            None,
+            JoinPoint::Largest(None),
             delivery_control(true),
         );
 
@@ -1450,7 +1422,7 @@ mod tests {
                             100,
                             SessionPeer::Client,
                             track_key,
-                            None,
+                            JoinPoint::Largest(None),
                             delivery_control(true),
                         )
                         .is_some()
@@ -1484,7 +1456,7 @@ mod tests {
                     100,
                     SessionPeer::Client,
                     track_key.clone(),
-                    None,
+                    JoinPoint::Largest(None),
                     delivery_control(true),
                 )
                 .unwrap();
@@ -1504,7 +1476,7 @@ mod tests {
                             200,
                             SessionPeer::Client,
                             track_key,
-                            None,
+                            JoinPoint::Largest(None),
                             delivery_control(true),
                         )
                         .is_some()
@@ -1576,7 +1548,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1608,7 +1580,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1645,7 +1617,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1695,7 +1667,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1705,7 +1677,7 @@ mod tests {
                 200,
                 SessionPeer::Relay,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1740,7 +1712,7 @@ mod tests {
                 100,
                 SessionPeer::Client,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1750,7 +1722,7 @@ mod tests {
                 200,
                 SessionPeer::Relay,
                 track_key.clone(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1788,7 +1760,7 @@ mod tests {
                     100 + track_name.len() as u64,
                     subscriber_peer,
                     track_key,
-                    None,
+                    JoinPoint::Largest(None),
                     delivery_control(true),
                 )
                 .unwrap();
