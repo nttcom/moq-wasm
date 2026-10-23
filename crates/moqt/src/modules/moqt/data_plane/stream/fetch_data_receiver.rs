@@ -297,6 +297,9 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(result.is_err(), "RESET must not be reported as a clean FIN");
+        assert!(
+            matches!(&result, Err(error) if error.to_string().contains("stream closed: stream reset by peer")),
+            "{result:?}"
+        );
     }
 }
