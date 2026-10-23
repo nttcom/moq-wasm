@@ -79,6 +79,19 @@ test('video arriving later than the audio raises the buffer target', () => {
   expect(withVideo.targetBufferMs()).toBeCloseTo(VIDEO_DELAY_MS - AUDIO_DELAY_MS + OUTPUT_LATENCY_MS)
 })
 
+test('without a picture the presented position follows the sound', () => {
+  // Arrange
+  const playout = new LivePlayout((frame) => frame.close())
+
+  // Act
+  streamLive(playout, SETTLE_MS)
+
+  // Assert
+  expect(environment.nowMs - playout.positionMicros()! / MICROS_PER_MILLI).toBeCloseTo(
+    AUDIO_DELAY_MS + playout.bufferMs()!
+  )
+})
+
 test('a buffer below its target grows by stretching the audio without a break', () => {
   // Arrange: the picture arrives so much later than the sound that the opening buffer cannot cover it
   const playout = new LivePlayout((frame) => frame.close())

@@ -215,6 +215,13 @@ export class LivePlayout {
     return syncOffsetMs(this.video, this.audio)
   }
 
+  /// The capture timestamp presented now: the picture's, or the sound's while
+  /// no picture is shown.
+  positionMicros(): number | undefined {
+    const nowMs = performance.now()
+    return this.video.positionMicrosAt(nowMs) ?? this.audio.positionMicrosAt(nowMs)
+  }
+
   /// The relay sends the groups of a fresh subscription on separate streams,
   /// so a chunk of an older group can land after a newer one has been
   /// scheduled. The write head has moved past it, and as master it would

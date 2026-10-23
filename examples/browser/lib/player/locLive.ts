@@ -1,4 +1,4 @@
-import { monotonicUnixMicros } from '../../utils/media/clock'
+import { latencyMsFromCaptureMicros } from '../../utils/media/clock'
 import { parseAudioChannelCount } from '../../utils/media/audioChannelConfig'
 import type { SubgroupWorkerMessage } from '../../utils/media/jitterBufferTypes'
 import type { BufferPolicy } from './jitterBuffer'
@@ -19,6 +19,8 @@ export type LocLiveCallbacks = {
 
 export type LiveStats = {
   frameSize: { width: number; height: number } | undefined
+  /// How long ago, on the shared wall clock, the publisher captured what is
+  /// presented now. Live LOC samples carry that capture timestamp.
   viewerDelayMs: number | undefined
   bufferMs: number | undefined
   targetBufferMs: number
@@ -46,9 +48,6 @@ export class LocLive {
   private readonly decodedFrameIds = new Map<number, DecodedFrameIds>()
   receivedKbps = 0
   receivedAudioKbps = 0
-  /// Live LOC frames carry their capture timestamp, so the moment one is shown
-  /// says how far the viewer runs behind the publisher on the same wall clock.
-  viewerDelayMs: number | undefined
   shownCaptureMicros: number | undefined
   frameSize: { width: number; height: number } | undefined
 
@@ -132,7 +131,6 @@ export class LocLive {
   }
 
   reset(): void {
-    this.viewerDelayMs = undefined
     this.shownCaptureMicros = undefined
     this.picture.detach()
     this.decodedFrameIds.clear()
@@ -147,9 +145,10 @@ export class LocLive {
   }
 
   stats(): LiveStats {
+    const positionMicros = this.playout.positionMicros()
     return {
       frameSize: this.frameSize,
-      viewerDelayMs: this.viewerDelayMs,
+      viewerDelayMs: positionMicros === undefined ? undefined : latencyMsFromCaptureMicros(positionMicros),
       bufferMs: this.playout.bufferMs(),
       targetBufferMs: this.playout.targetBufferMs(),
       fixedBuffer: this.playout.fixedBuffer(),
@@ -166,7 +165,6 @@ export class LocLive {
   }
 
   private show(frame: VideoFrame): void {
-    this.viewerDelayMs = frame.timestamp ? (monotonicUnixMicros() - frame.timestamp) / 1_000 : undefined
     this.shownCaptureMicros = frame.timestamp || undefined
     this.frameSize = { width: frame.displayWidth, height: frame.displayHeight }
     const ids = this.decodedFrameIds.get(frame.timestamp)
