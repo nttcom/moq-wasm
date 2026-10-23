@@ -28,6 +28,14 @@ import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const rtmpAddress = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? "127.0.0.1:1935";
 const srtAddress = process.env.LIVE_VIEWER_E2E_SRT_ADDR ?? "127.0.0.1:9000";
+const specs =
+  process.argv.length > 2
+    ? process.argv.slice(2)
+    : [
+        "tests/live-viewer-e2e.spec.ts",
+        "tests/live-viewer-mp4-e2e.spec.ts",
+        "tests/recorder-serve-e2e.spec.ts",
+      ];
 const childProcesses = [];
 
 async function main() {
@@ -108,13 +116,7 @@ async function main() {
 
     await runCommand(
       resolveCommandName("npm"),
-      [
-        "run",
-        "e2e:live-viewer",
-        "--",
-        "tests/live-viewer-mp4-e2e.spec.ts",
-        "tests/recorder-serve-e2e.spec.ts",
-      ],
+      ["exec", "--", "playwright", "test", ...specs],
       {
         cwd: jsDir,
         env: {

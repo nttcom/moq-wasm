@@ -387,6 +387,17 @@ jobs:
   live_viewer_e2e:
     needs: changes
     if: ${{ needs.changes.outputs.live_viewer == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: live
+            specs: tests/live-viewer-e2e.spec.ts
+            goaway: true
+          - name: mp4-recorder
+            specs: tests/live-viewer-mp4-e2e.spec.ts tests/recorder-serve-e2e.spec.ts
+            goaway: false
+    name: live_viewer_e2e (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -442,9 +453,10 @@ jobs:
       - name: Run live viewer E2E
         env:
           CI: "true"
-        run: node tests/browser-e2e/run-live-viewer-e2e.mjs
+        run: node tests/browser-e2e/run-live-viewer-e2e.mjs ${{ matrix.specs }}
 
       - name: Run GOAWAY E2E
+        if: ${{ matrix.goaway }}
         env:
           CI: "true"
         run: node tests/browser-e2e/run-goaway-e2e.mjs
@@ -454,7 +466,7 @@ jobs:
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: live-viewer-e2e-artifacts
+          name: live-viewer-e2e-${{ matrix.name }}-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report
