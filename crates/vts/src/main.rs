@@ -1,8 +1,11 @@
-use std::{future, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    signal::unix::{SignalKind, signal},
+};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use vts::{Registry, VtsServer};
 
@@ -29,7 +32,15 @@ async fn main() -> anyhow::Result<()> {
     let _server = VtsServer::run(listener, Arc::new(registry));
     tracing::info!(port, "vts listening");
 
-    future::pending().await
+    // As PID 1 in a container the process has no default SIGTERM action, so
+    // `docker stop` and Cloud Run would otherwise wait for their SIGKILL.
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result?,
+        _ = terminate.recv() => {}
+    }
+    tracing::info!("vts shutting down");
+    Ok(())
 }
 
 fn registry_location() -> anyhow::Result<Location> {
