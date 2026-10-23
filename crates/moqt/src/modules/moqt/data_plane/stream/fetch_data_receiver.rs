@@ -163,7 +163,10 @@ mod tests {
     use crate::{
         modules::{
             moqt::control_plane::error_codes::DataStreamResetCode,
-            test_support::{HANDSHAKE_TIMEOUT, fetched_stream, location, object_with_extensions},
+            test_support::{
+                HANDSHAKE_TIMEOUT, fetched_stream, location, object_with_extensions,
+                read_fetch_objects,
+            },
         },
         object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
     };
@@ -211,23 +214,12 @@ mod tests {
         .unwrap();
 
         // Assert
-        for object in expected {
-            let Fetch::Object(received) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+        assert_eq!(
+            timeout(HANDSHAKE_TIMEOUT, read_fetch_objects(&mut stream.receiver))
                 .await
-                .unwrap()
-                .unwrap()
-            else {
-                panic!("expected an object before FIN");
-            };
-            assert_eq!(received, object);
-        }
-        assert!(matches!(
-            timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
-                .await
-                .unwrap()
                 .unwrap(),
-            Fetch::End
-        ));
+            expected
+        );
     }
 
     #[tokio::test]
