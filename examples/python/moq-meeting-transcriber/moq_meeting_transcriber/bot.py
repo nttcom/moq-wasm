@@ -10,7 +10,7 @@ from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 
-from moq_meeting_transcriber.asr import HttpRecognizer
+from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
 from moq_meeting_transcriber.room import Room
 from moq_meeting_transcriber.stt import Recognizer, SharedWhisper
 
@@ -20,6 +20,8 @@ DEFAULT_PORT = 8100
 DEFAULT_MAX_ROOMS = 2
 DEFAULT_MODEL = "small"
 DEFAULT_ASR = "whisper"
+# The --asr services that a recognizer other than HttpRecognizer calls.
+HTTP_RECOGNIZERS = {GRANITE_SPEECH: GraniteSpeechRecognizer}
 # A Meeting room name is any single namespace element.
 ROOM_ID_PATTERN = re.compile(r"[^/]{1,64}")
 
@@ -39,8 +41,9 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         metavar="NAME=URL",
-        help="a speech recognition service with the OpenAI-compatible transcription API that serves the model NAME, "
-        "which a page picks with ?asr=NAME; repeatable",
+        help="a speech recognition service with the OpenAI-compatible API that serves the model NAME, "
+        f"which a page picks with ?asr=NAME; {GRANITE_SPEECH} is called through the chat API, any other through the "
+        "transcription API; repeatable",
     )
     auth = parser.add_mutually_exclusive_group()
     auth.add_argument(
@@ -69,7 +72,7 @@ def http_recognizers(args: argparse.Namespace, session: aiohttp.ClientSession) -
             if args.metadata_auth
             else None
         )
-        recognizers[name] = HttpRecognizer(name, url, session, token)
+        recognizers[name] = HTTP_RECOGNIZERS.get(name, HttpRecognizer)(name, url, session, token)
     return recognizers
 
 

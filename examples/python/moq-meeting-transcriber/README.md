@@ -7,7 +7,7 @@ Meeting（`examples/browser/examples/meeting`）のルームに HTTP で呼ば�
 | --- | --- | --- |
 | `whisper`（既定） | faster-whisper `small`（`--model` で変更） | bot の中の CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | GPU の Cloud Run（[音声認識を Cloud Run の GPU にデプロイする](../asr-on-cloud-run.md)） |
-| `moss-transcribe-diarize` | MOSS-Transcribe-Diarize 0.9B | GPU の Cloud Run（同上） |
+| `granite-speech-5-2b` | Granite Speech 5.0 2b | GPU の Cloud Run（同上） |
 
 書き起こしは MSF の event timeline として publish します。設計は [Live transcription for the Meeting example](../../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
@@ -22,7 +22,7 @@ sequenceDiagram
     B->>R: SUBSCRIBE_NAMESPACE anon/{room}
     R->>B: PUBLISH_NAMESPACE anon/{room}/alice
     B->>R: catalog（joining FETCH 付き）、audio_32kbps
-    Note over B: Silero VAD と Whisper（参加者ごと）
+    Note over B: Silero VAD と音声認識（参加者ごと）
     B->>R: transcript（anon/{room}/bots/transcriber）
 ```
 
@@ -64,7 +64,7 @@ sequenceDiagram
 | `--relay-url` | `https://127.0.0.1:4433` | 接続する relay |
 | `--insecure` | なし | relay の証明書を検証しない |
 | `--model` | `small` | `whisper` で使う faster-whisper のモデル |
-| `--asr NAME=URL` | なし | OpenAI 互換の書き起こし API を持つ音声認識サービス。ページは `?asr=NAME` で選ぶ。複数指定できる |
+| `--asr NAME=URL` | なし | OpenAI 互換の API を持つ音声認識サービス。ページは `?asr=NAME` で選ぶ。`granite-speech-5-2b` はチャット API、それ以外は書き起こし API で呼ぶ。複数指定できる |
 | `--gcloud-auth` / `--metadata-auth` | なし | `--asr` のサービスに ID トークンを付ける。手元では `gcloud`、Cloud Run ではメタデータサーバーから取る |
 | `--max-rooms` | `2` | 同時に動かすルームの数。Whisper は全ルームで 1 つを順番に使う |
 

@@ -124,7 +124,7 @@ recognizers:
 | --- | --- | --- |
 | `whisper` (default) | faster-whisper `small` (`--model`) | in the bot, on the CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | its own Cloud Run service with an L4 GPU, served by vLLM |
-| `moss-transcribe-diarize` | MOSS-Transcribe-Diarize 0.9B | its own Cloud Run service with an L4 GPU, served by vLLM |
+| `granite-speech-5-2b` | Granite Speech 5.0 2b | its own Cloud Run service with an L4 GPU, served by vLLM |
 
 - `whisper`: all pipelines share one faster-whisper model, so memory does not
   grow with the number of speakers, and transcribe one segment at a time.
@@ -140,17 +140,17 @@ recognizers:
   in the next call, as one record dated from the first. The default is
   `small`, about 2.7 times faster than `medium`, so the delay after the last
   segment stays within about two calls.
-- `qwen3-asr` and `moss-transcribe-diarize`: the bot posts each segment as a
-  WAV file to the service's OpenAI-compatible `/v1/audio/transcriptions`,
-  with an identity token from the metadata server, as the other bots call
-  d3-flash. Each model has a service of its own, since each needs a vLLM
-  nightly pinned for it and a service then runs the official vLLM image with
-  arguments only. Neither is d3-flash: d3-flash already fills most of an L4's
-  24 GB with its own weights, and it runs its own server rather than vLLM.
-- MOSS-Transcribe-Diarize writes each segment as `[start][S01]text[end]`. A
-  participant's track carries one speaker, so the bot drops the times and
-  speaker tags; the diarization helps only audio in which several people
-  share a microphone, which the Meeting does not send.
+- `qwen3-asr` and `granite-speech-5-2b`: the bot posts each segment as a
+  WAV file to the service, with an identity token from the metadata server,
+  as the other bots call d3-flash. Qwen3-ASR takes it on the OpenAI-compatible
+  `/v1/audio/transcriptions` with `language=ja`. vLLM's transcription API
+  gives Granite Speech a fixed prompt that names no language and drops the
+  request's, so the bot sends Granite Speech the WAV on `/v1/chat/completions`
+  with the model card's prompt for Japanese speech. Each model has a service
+  of its own, since Qwen3-ASR needs a vLLM nightly pinned for it and a
+  service then runs the official vLLM image with arguments only. Neither is
+  d3-flash: d3-flash already fills most of an L4's 24 GB with its own
+  weights, and it runs its own server rather than vLLM.
 - None of the models transcribes while a participant speaks: each takes a
   whole utterance, so a caption follows the end of the utterance.
 
@@ -254,6 +254,14 @@ transcriber that needs no GPU.
 The weights would not fit one L4 together, so the service would have to swap
 models by request path, reloading d3-flash's 17 GB whenever chat moderation and
 captions run at once.
+
+### MOSS-Transcribe-Diarize
+vLLM checks the request's `language` against a list and leaves it out of the
+model's prompt, and the model card names no other way to set the language,
+so the model guessed the language of every utterance and wrote many in
+languages no one spoke. Its diarization adds nothing either, since a
+participant's track carries one speaker. Granite Speech 2b takes the
+language in its prompt.
 
 ### Ming-3.0-asr-tiny
 inclusionAI's ASR model of October 2026 lists Chinese, English and Chinese

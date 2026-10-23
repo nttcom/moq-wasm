@@ -23,7 +23,7 @@ const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
 export const ASR_CHOICES = [
   { asr: 'whisper', label: 'Whisper (CPU)' },
   { asr: 'qwen3-asr', label: 'Qwen3-ASR (GPU)' },
-  { asr: 'moss-transcribe-diarize', label: 'MOSS (GPU)' }
+  { asr: 'granite-speech-5-2b', label: 'Granite 2b (GPU)' }
 ] as const
 
 export function asrLabel(asr: string): string {
