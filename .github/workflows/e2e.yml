@@ -344,7 +344,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
@@ -402,7 +402,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
@@ -478,7 +478,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
@@ -538,7 +538,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
 
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
@@ -591,7 +591,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
@@ -670,7 +670,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
@@ -747,7 +747,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
@@ -820,7 +820,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
@@ -910,7 +910,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
 
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
