@@ -270,7 +270,10 @@ mod tests {
 
         // Act
         let mut subgroup_1 = open_subgroup(&factory, 5, SubgroupId::Value(1)).await;
-        send_payload(&mut subgroup_1, b"s1-o0").await;
+        subgroup_1
+            .send_raw(2, SubgroupObject::new_payload(Bytes::from_static(b"s1-o2")))
+            .await
+            .unwrap();
         send_payload(&mut subgroup_0, b"s0-o1").await;
         let objects = collect_objects(&mut reader, 3).await;
 
@@ -280,7 +283,7 @@ mod tests {
             BTreeSet::from([
                 (5, Some(0), 0, Bytes::from_static(b"s0-o0")),
                 (5, Some(0), 1, Bytes::from_static(b"s0-o1")),
-                (5, Some(1), 0, Bytes::from_static(b"s1-o0")),
+                (5, Some(1), 2, Bytes::from_static(b"s1-o2")),
             ])
         );
     }

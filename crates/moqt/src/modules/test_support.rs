@@ -224,6 +224,12 @@ pub(crate) async fn published_track(name: &str) -> PublishedTrack {
     published_track_between(client, server).await
 }
 
+/// `published_track` on a draft-18 session.
+pub(crate) async fn published_draft18_track(name: &str) -> PublishedTrack {
+    let (client, server) = spawn_connected_draft18_sessions(name, "moqt").await;
+    published_track_between(client, server).await
+}
+
 /// The client publishes `ns/track` and the server accepts it.
 pub(crate) async fn published_track_between(client: Session, server: Session) -> PublishedTrack {
     let publisher = client.publisher();

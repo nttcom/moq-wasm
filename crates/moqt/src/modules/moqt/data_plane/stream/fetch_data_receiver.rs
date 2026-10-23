@@ -5,7 +5,8 @@ use crate::{
     fetch::FetchOption,
     modules::moqt::{
         data_plane::{
-            object::canonical_object::Object, stream::stream_receiver::StreamReceiveError,
+            object::canonical_object::Object, object_ledger::ObjectLedger,
+            stream::stream_receiver::StreamReceiveError,
         },
         domains::{
             connection::generation_of, fetch_handle::FetchRemainder,
@@ -39,6 +40,9 @@ pub struct FetchDataReceiver {
     carry: Option<FetchCarry>,
     /// `None` on draft-14, whose FETCH has no request stream.
     request_end: Option<FetchRequestEnd>,
+    /// The fetched track's ledger once the stream is handed to the
+    /// application.
+    ledger: Option<Arc<ObjectLedger>>,
 }
 
 /// Lets a FETCH whose stream a migration cut off continue on the session's
@@ -106,7 +110,13 @@ impl FetchDataReceiver {
             reader,
             carry: None,
             request_end: None,
+            ledger: None,
         }
+    }
+
+    /// Checks every object read from here on against the track's `ledger`.
+    pub(crate) fn check_with(&mut self, ledger: Arc<ObjectLedger>) {
+        self.ledger = Some(ledger);
     }
 
     pub(crate) fn end_request_with(&mut self, request_end: Option<FetchRequestEnd>) {
@@ -132,10 +142,16 @@ impl FetchDataReceiver {
         self.reader.set_group_order(group_order);
     }
 
+    /// The next object or range of the response. An object that repeats one
+    /// the session received before with other properties fails with a
+    /// `MalformedTrackError` and is not returned.
     pub async fn receive(&mut self) -> anyhow::Result<Fetch> {
         loop {
             let error = match self.reader.next().await {
                 Ok(fetched) => {
+                    if let (Fetch::Object(object), Some(ledger)) = (&fetched, &self.ledger) {
+                        ledger.check(object)?;
+                    }
                     match (&fetched, &mut self.carry) {
                         (Fetch::Object(object), Some(carry)) => carry.delivered(object.location),
                         (Fetch::End, _) => self.response_ended(),

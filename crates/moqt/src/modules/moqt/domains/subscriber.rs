@@ -15,7 +15,10 @@ use crate::{
             enums::ResponseMessage,
             namespace_interest::NamespaceInterest,
         },
-        data_plane::{data_receiver::DataReceiver, stream::fetch_data_receiver::FetchDataReceiver},
+        data_plane::{
+            data_receiver::DataReceiver, object_ledger::ObjectLedger,
+            stream::fetch_data_receiver::FetchDataReceiver,
+        },
         domains::{
             connection::{Connection, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
@@ -200,6 +203,7 @@ impl Subscriber {
             start: start_location,
             subscriber_priority: option.subscriber_priority,
         };
+        let ledger = self.session.object_ledger(&track_namespace, &track_name);
         let fetch_params = FetchParams::Standalone {
             track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
             track_name,
@@ -211,6 +215,7 @@ impl Subscriber {
             fetch_params,
             option,
             Some(remainder),
+            ledger,
         )
         .await
     }
@@ -267,7 +272,10 @@ impl Subscriber {
             joining_request_id,
             joining_start,
         };
-        self.send_fetch(connection, fetch_params, option, remainder)
+        let ledger = self
+            .session
+            .object_ledger(subscription.track_namespace(), subscription.track_name());
+        self.send_fetch(connection, fetch_params, option, remainder, ledger)
             .await
     }
 
@@ -280,13 +288,16 @@ impl Subscriber {
         fetch_params: FetchParams,
         option: FetchOption,
         remainder: Option<FetchRemainder>,
+        ledger: Arc<ObjectLedger>,
     ) -> Result<FetchHandle, RequestFailure> {
         let remainder = remainder.filter(|_| {
             self.session.follows_go_away() && option.group_order != GroupOrder::Descending
         });
         let request_id = connection.control.next_request_id();
 
-        let pending_fetch = self.session.register_pending_fetch(&connection, request_id);
+        let pending_fetch = self
+            .session
+            .register_pending_fetch(&connection, request_id, ledger);
 
         let fetch = Fetch {
             request_id,
@@ -507,7 +518,7 @@ impl Subscriber {
         fetch_handle: &FetchHandle,
     ) -> anyhow::Result<FetchDataReceiver> {
         let request_id = fetch_handle.request_id;
-        let mut fetch_stream_rx = self
+        let mut channel = self
             .session
             .fetch_receiver_map
             .lock()
@@ -519,11 +530,13 @@ impl Subscriber {
                     request_id
                 )
             })?;
-        let mut receiver = fetch_stream_rx
+        let mut receiver = channel
+            .receiver
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
         receiver.set_group_order(fetch_handle.group_order);
+        receiver.check_with(channel.ledger);
         if let Some(remainder) = fetch_handle.remainder.clone() {
             receiver.carry_with(
                 self.session.clone(),
@@ -559,6 +572,8 @@ impl Subscriber {
             track_alias,
             channel.receiver,
             channel.version.mixes_forwarding_preferences(),
+            self.session
+                .object_ledger(subscription.track_namespace(), subscription.track_name()),
         ))
     }
 }
@@ -839,8 +854,13 @@ mod tests {
 
     /// A FETCH answered with FETCH_OK whose stream carries `first` and stays
     /// open.
-    async fn open_fetch(client: &Session, server: &Session, first: &Object) -> OpenFetch {
-        let (request, handler) = start_fetch(client, server, TRACK).await;
+    async fn open_fetch(
+        client: &Session,
+        server: &Session,
+        track_name: &str,
+        first: &Object,
+    ) -> OpenFetch {
+        let (request, handler) = start_fetch(client, server, track_name).await;
         handler.ok(false, END).await.unwrap();
         let sender = server
             .publisher()
@@ -1105,9 +1125,9 @@ mod tests {
         let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-cancel-one").await;
         let firsts = [b"a0", b"b0", b"c0"].map(|payload| fetch_object(location(0, 0), payload));
         let seconds = [b"a1", b"c1"].map(|payload| fetch_object(location(0, 1), payload));
-        let mut kept_a = open_fetch(&client, &server, &firsts[0]).await;
-        let cancelled = open_fetch(&client, &server, &firsts[1]).await;
-        let mut kept_c = open_fetch(&client, &server, &firsts[2]).await;
+        let mut kept_a = open_fetch(&client, &server, "track-a", &firsts[0]).await;
+        let cancelled = open_fetch(&client, &server, "track-b", &firsts[1]).await;
+        let mut kept_c = open_fetch(&client, &server, "track-c", &firsts[2]).await;
 
         // Act
         client
@@ -1161,7 +1181,7 @@ mod tests {
         // Arrange
         let (client, server) =
             spawn_connected_dual_sessions("subscriber-fetch-disconnect-mid-stream").await;
-        let mut open = open_fetch(&client, &server, &fetch_object(START, b"first")).await;
+        let mut open = open_fetch(&client, &server, TRACK, &fetch_object(START, b"first")).await;
         let Fetch::Object(_) = within(open.receiver.receive()).await.unwrap() else {
             panic!("expected the first object of the FETCH");
         };

@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::modules::moqt::{
     data_plane::{
         malformed_track_error::MalformedTrackError, object::canonical_object::Object,
-        stream::stream_data_receiver::StreamDataReceiver,
+        object_ledger::ObjectLedger, stream::stream_data_receiver::StreamDataReceiver,
     },
     runtime::dispatch::incoming_object::IncomingObject,
 };
@@ -23,6 +25,7 @@ pub struct DataReceiver {
     receiver: UnboundedReceiver<IncomingObject>,
     mixing_allowed: bool,
     first_is_datagram: Option<bool>,
+    ledger: Arc<ObjectLedger>,
 }
 
 impl DataReceiver {
@@ -30,19 +33,22 @@ impl DataReceiver {
         track_alias: u64,
         receiver: UnboundedReceiver<IncomingObject>,
         mixing_allowed: bool,
+        ledger: Arc<ObjectLedger>,
     ) -> Self {
         Self {
             track_alias,
             receiver,
             mixing_allowed,
             first_is_datagram: None,
+            ledger,
         }
     }
 
-    /// Waits for the next subgroup stream or datagram of the track. Fails
-    /// with a `MalformedTrackError` when a draft-14 track mixes the two
-    /// (draft-14 §2.5; draft-18 §11 allows it), and with another error once
-    /// the subscription has ended.
+    /// Waits for the next subgroup stream or datagram. Fails with a
+    /// `MalformedTrackError` when a draft-14 track mixes the two (§2.5) or a
+    /// datagram conflicts with an earlier copy of its object, and with another
+    /// error once the subscription has ended. A subgroup stream's objects are
+    /// checked as they are read from it.
     pub async fn next(&mut self) -> anyhow::Result<TrackData> {
         let Some(incoming) = self.receiver.recv().await else {
             anyhow::bail!("the subscription ended");
@@ -53,8 +59,14 @@ impl DataReceiver {
             return Err(MalformedTrackError::MixedForwardingPreference.into());
         }
         Ok(match incoming {
-            IncomingObject::Subgroup(receiver) => TrackData::Subgroup(receiver),
-            IncomingObject::Datagram(datagram) => TrackData::Datagram(datagram.object),
+            IncomingObject::Subgroup(mut receiver) => {
+                receiver.check_with(self.ledger.clone());
+                TrackData::Subgroup(receiver)
+            }
+            IncomingObject::Datagram(datagram) => {
+                self.ledger.check(&datagram.object)?;
+                TrackData::Datagram(datagram.object)
+            }
         })
     }
 }
@@ -64,8 +76,8 @@ mod tests {
     use crate::{
         modules::test_support::{
             HANDSHAKE_TIMEOUT, PublishedTrack, data_receiver, datagram_object, next_datagram,
-            next_subgroup, object_with_extensions, open_subgroup, published_track,
-            published_track_between, spawn_connected_draft18_sessions,
+            next_subgroup, object_with_extensions, open_subgroup, published_draft18_track,
+            published_track,
         },
         object::{
             DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus,
@@ -73,11 +85,6 @@ mod tests {
         },
         wire::SubgroupId,
     };
-
-    async fn draft18_track(name: &str) -> PublishedTrack {
-        let (client, server) = spawn_connected_draft18_sessions(name, "moqt").await;
-        published_track_between(client, server).await
-    }
 
     async fn send_datagram(track: &PublishedTrack, group_id: u64) {
         let mut object = datagram_object();
@@ -260,7 +267,7 @@ mod tests {
     #[tokio::test]
     async fn a_draft18_track_delivers_a_subgroup_stream_after_a_datagram() {
         // Arrange
-        let track = draft18_track("data-receiver-draft18-datagram-then-stream").await;
+        let track = published_draft18_track("data-receiver-draft18-datagram-then-stream").await;
         let mut receiver = data_receiver(&track.server, &track.accepted).await;
         send_datagram(&track, 0).await;
         let first = next_group(&mut receiver).await;
@@ -278,7 +285,7 @@ mod tests {
     #[tokio::test]
     async fn a_draft18_track_delivers_a_datagram_after_a_subgroup_stream() {
         // Arrange
-        let track = draft18_track("data-receiver-draft18-stream-then-datagram").await;
+        let track = published_draft18_track("data-receiver-draft18-stream-then-datagram").await;
         let mut receiver = data_receiver(&track.server, &track.accepted).await;
         let _first_stream = open_stream(&track, 0).await;
         let first = next_group(&mut receiver).await;
