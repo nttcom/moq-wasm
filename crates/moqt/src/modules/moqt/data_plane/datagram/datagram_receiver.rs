@@ -46,11 +46,100 @@ impl DatagramReceiver {
 mod tests {
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track,
+            HANDSHAKE_TIMEOUT, datagram_object, object_with_extensions, open_subgroup,
+            published_track,
         },
-        object::{DataReceiver, MalformedTrackError},
+        object::{DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus},
         wire::SubgroupId,
     };
+
+    #[tokio::test]
+    async fn payload_datagrams_preserve_object_properties_and_the_end_of_group_marker() {
+        // Arrange
+        let track = published_track("datagram-object-properties").await;
+        let publisher = track.client.publisher();
+        let mut sender = publisher.create_datagram(&track.published);
+        let mut object = object_with_extensions();
+        object.forwarding = ForwardingPreference::Datagram;
+
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            // Act
+            sender.send_object(&object).await.unwrap();
+            let DataReceiver::Datagram(mut receiver) = track
+                .server
+                .subscriber()
+                .accept_data_receiver(&track.accepted)
+                .await
+                .unwrap()
+            else {
+                panic!("expected a datagram receiver");
+            };
+
+            // Assert
+            assert_eq!(receiver.receive().await.unwrap(), object);
+
+            // Act
+            object.location.object_id += 1;
+            object.ends_group = true;
+            sender.send_object(&object).await.unwrap();
+
+            // Assert
+            assert_eq!(receiver.receive().await.unwrap(), object);
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_datagrams_preserve_normal_and_non_normal_object_statuses() {
+        // Arrange
+        let track = published_track("datagram-empty-object-statuses").await;
+        let publisher = track.client.publisher();
+        let mut sender = publisher.create_datagram(&track.published);
+        let mut object = object_with_extensions();
+        object.forwarding = ForwardingPreference::Datagram;
+        object.payload = Default::default();
+        let mut absent = object.clone();
+        absent.location.object_id += 1;
+        absent.status = ObjectStatus::DoesNotExist;
+        absent.extension_headers = Default::default();
+        let mut next_normal = object.clone();
+        next_normal.location.object_id += 2;
+        let mut end_of_group = next_normal.clone();
+        end_of_group.location.object_id += 1;
+        end_of_group.status = ObjectStatus::EndOfGroup;
+        let mut end_of_track = object.clone();
+        end_of_track.location.group_id += 1;
+        end_of_track.location.object_id = 0;
+        end_of_track.status = ObjectStatus::EndOfTrack;
+
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            // Act
+            sender.send_object(&object).await.unwrap();
+            let DataReceiver::Datagram(mut receiver) = track
+                .server
+                .subscriber()
+                .accept_data_receiver(&track.accepted)
+                .await
+                .unwrap()
+            else {
+                panic!("expected a datagram receiver");
+            };
+
+            // Assert
+            assert_eq!(receiver.receive().await.unwrap(), object);
+
+            for object in [absent, next_normal, end_of_group, end_of_track] {
+                // Act
+                sender.send_object(&object).await.unwrap();
+
+                // Assert
+                assert_eq!(receiver.receive().await.unwrap(), object);
+            }
+        })
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn a_subgroup_stream_on_a_datagram_track_is_a_malformed_track() {
