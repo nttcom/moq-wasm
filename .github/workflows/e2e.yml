@@ -414,7 +414,7 @@ jobs:
       matrix:
         include:
           - name: live
-            specs: tests/live-viewer-e2e.spec.ts
+            specs: tests/live-viewer-e2e.spec.ts tests/live-viewer-delivery-e2e.spec.ts
             goaway: true
           - name: mp4-recorder
             specs: tests/live-viewer-mp4-e2e.spec.ts tests/recorder-serve-e2e.spec.ts

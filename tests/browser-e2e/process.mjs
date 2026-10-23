@@ -21,8 +21,8 @@ export function spawnProcess(label, command, args, options) {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  pipeOutput(child.stdout, process.stdout, label);
-  pipeOutput(child.stderr, process.stderr, label);
+  pipeOutput(child.stdout, process.stdout, label, options.hiddenLines);
+  pipeOutput(child.stderr, process.stderr, label, options.hiddenLines);
 
   child.on("error", (error) => {
     process.stderr.write(
@@ -51,7 +51,7 @@ export function spawnViteServer(webPort) {
   );
 }
 
-function pipeOutput(stream, destination, label) {
+function pipeOutput(stream, destination, label, hiddenLines) {
   if (!stream) {
     return;
   }
@@ -63,6 +63,7 @@ function pipeOutput(stream, destination, label) {
       .filter(
         (line, index, lines) => line.length > 0 || index < lines.length - 1,
       )
+      .filter((line) => !hiddenLines?.test(line))
       .map((line) => `[${label}] ${line}`)
       .join("\n");
     if (prefixed.length > 0) {
