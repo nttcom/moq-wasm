@@ -288,9 +288,13 @@ mod tests {
 
     use crate::{
         RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription,
-        modules::test_support::{
-            first_subgroup_stream, object_with_extensions, read_subgroup_objects,
-            send_subgroup_object, spawn_connected_dual_sessions, subgroup_receiver, within,
+        modules::{
+            moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
+            test_support::{
+                HANDSHAKE_TIMEOUT, first_subgroup_stream, object_with_extensions,
+                read_subgroup_objects, send_subgroup_object, spawn_connected_dual_sessions,
+                subgroup_receiver, within,
+            },
         },
         object::{Location, Object},
         publish::{PublishDoneCode, PublishHandler, PublishOption},
@@ -449,6 +453,7 @@ mod tests {
         let (client, server) = spawn_connected_dual_sessions("publish-done-isolation").await;
         let (ended, ended_peer) = within(active_publish(&client, &server, "ended")).await;
         let (kept, kept_peer) = within(active_publish(&client, &server, "kept")).await;
+        let mut ended_reader = server.subscriber().track_reader(&ended_peer);
         let before = object_with_extensions();
         let after = Object {
             location: Location {
@@ -464,7 +469,7 @@ mod tests {
         let received_before = within(read_subgroup_objects(&mut first_receiver)).await;
 
         // Act
-        let (done, received_after) = within(async {
+        let done = within(async {
             client
                 .publisher()
                 .publish_done(
@@ -478,10 +483,22 @@ mod tests {
             let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
                 panic!("expected PUBLISH_DONE for the ended publication");
             };
+            done
+        })
+        .await;
+        tokio::time::pause();
+        let ended_object = tokio::time::timeout(
+            PUBLISH_DONE_GRACE_PERIOD + HANDSHAKE_TIMEOUT,
+            ended_reader.next_object(),
+        )
+        .await
+        .expect("the ended track closes after the grace period")
+        .unwrap();
+        tokio::time::resume();
+        let received_after = within(async {
             send_subgroup_object(&client, &kept, &after).await;
             let mut receiver = streams.next().await.unwrap();
-            let received = read_subgroup_objects(&mut receiver).await;
-            (done, received)
+            read_subgroup_objects(&mut receiver).await
         })
         .await;
 
@@ -491,6 +508,7 @@ mod tests {
         assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
         assert_eq!(done.stream_count(), 0);
         assert_eq!(done.error_reason(), "finished");
+        assert!(ended_object.is_none(), "{ended_object:?}");
         assert_eq!(received_before, vec![before]);
         assert_eq!(received_after, vec![after]);
     }
