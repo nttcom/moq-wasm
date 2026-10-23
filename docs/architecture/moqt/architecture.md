@@ -127,6 +127,11 @@ decides how a draft carries it. Only draft-14 is implemented: the adapter
 exists ahead of draft-18 support, as a deliberate exception to the
 coding-style rule that an abstraction waits for its second concrete use.
 
+A draft is added under `modules/moqt/version/<draft>` and the wire layer.
+`modules/moqt/runtime/tasks` and `modules/transport` change only to route a
+call through the adapter; a draft never gets a task of its own (see
+*Performance invariants*).
+
 - `Version` names the draft a session speaks.
 - `ControlChannel` is an enum with one variant per draft, matched in place
   instead of a trait object: the set of drafts is closed, the match is
@@ -647,6 +652,23 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `MaybeSend` / `MaybeSync` / `BoxFuture`, which are `Send` / `Sync` bounds
   natively and empty on wasm32 because JavaScript values cannot cross
   threads. The transport traits and `async_trait` attributes use them.
+
+## Performance invariants
+
+Two latency fixes live in version-independent layers and must hold for every
+draft:
+
+- **A stream whose header has not arrived does not hold back later streams**
+  (`UniStreamReceiveTask`). Headers are read concurrently; a draft only
+  parses them, in `Version::accept_uni_stream`. Guarded by
+  `uni_stream_receive_task::tests::a_stream_without_its_header_does_not_hold_back_later_streams`,
+  which writes draft-14 header bytes through `open_subgroup`, so it covers
+  draft-14 only.
+- **Closing a send stream does not wait for the peer to acknowledge the FIN**
+  (`TransportSendStream::close`). quinn and WebTransport call `finish()`; the
+  browser transport does not await `writer.close()`. Awaiting the ACK stalls
+  every send queued behind a stream close. No test checks it directly:
+  the meeting E2E covers it only through playback.
 
 ## Testing conventions
 Unit tests live in `#[cfg(test)] mod tests` inside the module under test
