@@ -51,21 +51,16 @@ def vts_answers(port: int) -> bool:
 
 
 def logged(log: Path, text: str) -> bool:
-    return log.exists() and text in log.read_text(errors="replace")
+    return text in log.read_text(errors="replace")
 
 
-def stop(*processes: subprocess.Popen | None) -> None:
-    running = [process for process in processes if process is not None]
-    for process in running:
-        process.terminate()
-    for process in running:
-        process.wait(timeout=30)
+def stop(process: subprocess.Popen) -> None:
+    process.terminate()
+    process.wait(timeout=30)
 
 
 @dataclass
 class RelayAuth:
-    """What a relay needs to verify clients against the VTS."""
-
     env: dict[str, str]
     logs: Path
 
@@ -144,7 +139,6 @@ def relay_url(relay_auth) -> str:
 
 
 def redis_image() -> str:
-    """The digest-pinned Redis image of docker-compose.yml."""
     compose = (REPO_ROOT / "docker-compose.yml").read_text()
     return re.search(r"^ {2}redis:\n {4}image: (\S+)$", compose, re.MULTILINE).group(1)
 

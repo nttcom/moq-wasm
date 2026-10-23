@@ -118,14 +118,14 @@ async def test_the_subscription_ends_when_the_publisher_closes_inside_an_open_gr
     # Act
     await publisher.close()
 
-    # Assert: the reset of the open group does not surface; PUBLISH_DONE ends the track
+    # Assert: the reset of the open group does not raise; PUBLISH_DONE ends the track
     with pytest.raises(StopAsyncIteration):
         await asyncio.wait_for(objects.__anext__(), PUBLISH_DONE_GRACE_SECONDS + TIMEOUT_SECONDS)
     await subscriber.close()
 
 
 async def test_a_subscriber_after_an_unsubscribe_inside_an_open_group_gets_its_later_objects(relay_url):
-    # Arrange: the relay's UNSUBSCRIBE makes the publisher leave the open group mid-way
+    # Arrange: the relay's UNSUBSCRIBE makes the publisher leave the open group
     namespace = [*room(), "alice"]
     publisher, track = await publisher_with_track(relay_url, namespace)
     first = await connect(relay_url)
@@ -166,7 +166,7 @@ async def test_current_group_brings_the_rest_of_the_group_being_appended(relay_u
 
 
 async def test_a_subscription_continues_on_the_relay_a_draining_relay_names(relays_sharing_redis):
-    # Arrange: the publisher stays on relay B, which relay A's GOAWAY names
+    # Arrange: the publisher stays on relay B
     relay_a, relay_b = relays_sharing_redis
     namespace = [*room(), "alice"]
     publisher, track = await publisher_with_track(relay_b.url, namespace)
