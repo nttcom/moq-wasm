@@ -17,8 +17,8 @@ MODEL = "ibm-granite/granite-speech-5.0-470m-turboctc"
 
 
 def load_granite() -> Pipeline:
-    # Importing torch and transformers takes over 10 s and about 300 MB, which a bot whose rooms use
-    # only Whisper would spend on every start before it listens.
+    # Imported here: torch and transformers take over 10 s and about 300 MB, which a bot whose rooms
+    # use only Whisper would otherwise spend on every start, before it listens.
     import torch
     from transformers import pipeline
 
@@ -33,7 +33,7 @@ def load_granite() -> Pipeline:
 class SharedGranite:
     """The process's one Granite Speech 5.0 470m on the CPU, which the participants' pipelines take
     turns on. It loads when a room first picks it, so a bot whose rooms use Whisper does not hold it.
-    The model takes no language: its CTC head writes what it hears."""
+    The model takes no language setting; its CTC head transcribes what it hears."""
 
     load: Callable[[], Pipeline] = load_granite
     name: str = "granite-speech-5-470m"
