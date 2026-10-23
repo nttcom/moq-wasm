@@ -2,7 +2,10 @@ use anyhow::{Context, Result, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
-    mp4::isobmff::{self, TrackInit, VIDEO_TIMESCALE},
+    mp4::{
+        held_video::HeldVideo,
+        isobmff::{self, TrackInit},
+    },
     sample::{AudioConfig, MediaEvent, StreamSet, VideoConfig, VideoSample},
 };
 
@@ -17,8 +20,7 @@ pub struct Fmp4Muxer {
     init_written: bool,
     sequence_number: u32,
     buffered: Vec<MediaEvent>,
-    pending_video: Option<VideoSample>,
-    last_video_duration: u32,
+    held_video: HeldVideo,
 }
 
 impl Fmp4Muxer {
@@ -71,10 +73,9 @@ impl Fmp4Muxer {
     }
 
     pub fn finish(&mut self) -> Result<Bytes> {
-        let Some(sample) = self.pending_video.take() else {
+        let Some((sample, duration)) = self.held_video.finish() else {
             return Ok(Bytes::new());
         };
-        let duration = self.last_video_duration;
         self.video_fragment(&sample, duration)
     }
 
@@ -86,14 +87,9 @@ impl Fmp4Muxer {
     fn fragment(&mut self, event: &MediaEvent) -> Result<Bytes> {
         match event {
             MediaEvent::Video(sample) => {
-                let Some(previous) = self.pending_video.replace(sample.clone()) else {
+                let Some((previous, duration)) = self.held_video.push(sample) else {
                     return Ok(Bytes::new());
                 };
-                let duration = sample
-                    .dts
-                    .saturating_sub(previous.dts)
-                    .ticks(VIDEO_TIMESCALE) as u32;
-                self.last_video_duration = duration;
                 self.video_fragment(&previous, duration)
             }
             MediaEvent::Audio(sample) => {
