@@ -54,8 +54,8 @@ pub(crate) struct Track {
     pub(crate) reader: TrackReader,
 }
 
-/// `NextGroupStart` begins a live recording on a keyframe; `LargestObject`
-/// continues right after what `fetch_cached` returns.
+/// `NextGroupStart` begins a live video recording on a keyframe;
+/// `LargestObject` continues right after what `fetch_cached` returns.
 pub(crate) async fn subscribe(
     session: &Session,
     namespace: &str,
@@ -77,6 +77,18 @@ pub(crate) async fn subscribe(
         reader: subscriber.track_reader(&subscription),
         subscription,
     })
+}
+
+/// An audio object decodes alone, and a meeting participant who sends the
+/// audio as a single stream never starts a new group, so `NextGroupStart`
+/// (draft-ietf-moq-transport-14 §9.7) would deliver none of it. Live or after
+/// `fetch_cached`.
+pub(crate) async fn subscribe_audio(
+    session: &Session,
+    namespace: &str,
+    name: &str,
+) -> Result<Track> {
+    subscribe(session, namespace, name, FilterType::LargestObject).await
 }
 
 /// The last object of the group `track` joined at: the joining FETCH
@@ -145,4 +157,55 @@ pub(crate) fn fetched_track_object(object: Object) -> Option<TrackObject> {
         extension_headers: object.extension_headers,
         payload: object.payload,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use moqt::publish::{GroupBoundary, OutgoingObject, Retention};
+
+    use super::*;
+    use crate::test_support::FakePublisher;
+
+    const NAMESPACE: &str = "anon/room/alice";
+    const AUDIO: &str = "audio_64kbps";
+
+    #[tokio::test]
+    async fn an_audio_subscription_continues_the_group_the_publisher_keeps_open() {
+        // Arrange: like a single-stream audio track, the publisher never starts a second group
+        let mut publisher = FakePublisher::spawn();
+        let origin = publisher.origin.clone();
+        origin
+            .ensure_track(NAMESPACE, AUDIO, 0, Retention::NewestOnly)
+            .await;
+        let write = |group, payload| {
+            origin.write(
+                NAMESPACE,
+                AUDIO,
+                OutgoingObject::plain(group, Bytes::from_static(payload)),
+            )
+        };
+        write(GroupBoundary::Next, b"o0").await.unwrap();
+        let connection = RelayConnection::connect(&publisher.url, false, None)
+            .await
+            .unwrap();
+
+        // Act
+        let mut track = subscribe_audio(&connection.session, NAMESPACE, AUDIO)
+            .await
+            .unwrap();
+        assert_eq!(publisher.served.recv().await.as_deref(), Some(AUDIO));
+        write(GroupBoundary::Within, b"o1").await.unwrap();
+        let object = tokio::time::timeout(Duration::from_secs(5), track.reader.next_object())
+            .await
+            .expect("no audio object arrived")
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert_eq!((object.group_id, object.object_id), (0, 1));
+        assert_eq!(object.payload, &b"o1"[..]);
+        connection.close().await;
+    }
 }
