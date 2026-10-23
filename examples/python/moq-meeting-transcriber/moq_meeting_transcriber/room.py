@@ -92,7 +92,7 @@ class Room:
         try:
             done, _ = await asyncio.wait([ready], timeout=STARTING_NOTICE_AFTER_SECONDS)
             if not done:
-                notice = f"{self._recognizer.name} を起動しています。書き起こしが始まるまで時間がかかることがあります（目安: 約 5 分）"
+                notice = f"{self._recognizer.name} を起動しています。書き起こしが始まるまで時間がかかることがあります"
                 await timeline.append(TranscriptRecord(int(time.time() * 1000), "transcriber", notice))
             await ready
         finally:

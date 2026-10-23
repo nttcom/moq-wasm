@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 
 import numpy as np
@@ -33,6 +34,12 @@ class StubModel:
         return iter(self.segments), None
 
 
+def loaded(model: StubModel) -> asyncio.Future:
+    future = asyncio.get_running_loop().create_future()
+    future.set_result(model)
+    return future
+
+
 def segment_of(seconds: float) -> bytes:
     return bytes(int((seconds + TRAILING_SILENCE_SECONDS) * SAMPLE_RATE) * 2)
 
@@ -53,7 +60,7 @@ async def transcribe_next(service: UtteranceSTTService) -> list:
 
 
 async def transcribe(model: StubModel, audio: bytes, stopped_at: float, monkeypatch) -> list:
-    service = UtteranceSTTService(SharedWhisper(model), "alice")
+    service = UtteranceSTTService(SharedWhisper(loaded(model)), "alice")
     await close_utterance(service, audio, stopped_at, monkeypatch)
     return await transcribe_next(service)
 
@@ -85,7 +92,7 @@ async def test_a_segment_whisper_rates_as_silence_yields_nothing(monkeypatch):
 async def test_segments_queued_while_busy_are_transcribed_in_the_same_call(monkeypatch):
     # Arrange: three utterances closed while the recognizer was busy
     model = StubModel(Segment(" こんにちは", 0.0))
-    service = UtteranceSTTService(SharedWhisper(model), "alice")
+    service = UtteranceSTTService(SharedWhisper(loaded(model)), "alice")
     segments = [segment_of(2.0), segment_of(1.0), segment_of(2.0)]
     for segment, stopped_at in zip(segments, (1_000.0, 1_003.0, 1_006.0)):
         await close_utterance(service, segment, stopped_at, monkeypatch)
@@ -97,3 +104,18 @@ async def test_segments_queued_while_busy_are_transcribed_in_the_same_call(monke
     assert model.sample_counts == [len(b"".join(segments)) // 2]
     assert [frame.started_at_ms for frame in frames] == [998_000]
     assert service._segment_queue.empty()
+
+
+async def test_whisper_is_ready_once_its_model_has_loaded():
+    # Arrange
+    model = asyncio.get_running_loop().create_future()
+    ready = asyncio.ensure_future(SharedWhisper(model).ready())
+    await asyncio.sleep(0)
+    waiting = not ready.done()
+
+    # Act
+    model.set_result(StubModel())
+    await asyncio.wait_for(ready, 1)
+
+    # Assert
+    assert waiting

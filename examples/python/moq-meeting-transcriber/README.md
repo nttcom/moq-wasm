@@ -44,7 +44,7 @@ sequenceDiagram
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。bot は `http://127.0.0.1:8100` で待ち受け、
-   最初に Whisper のモデル（既定は `small`）を読み込みます。初回はモデルをダウンロードします。
+   Whisper のモデル（既定は `small`）は待ち受けを始めてから読み込み、Whisper のルームは読み込みが終わるまで `starting` です。初回はモデルをダウンロードします。
    `moqt` を maturin でビルドするので、初回の `uv run` には Rust のツールチェーンが要ります。
 
 3. ルームに bot を呼ぶ
