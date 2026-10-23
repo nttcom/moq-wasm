@@ -242,3 +242,37 @@ async def test_leave_names_no_hold_after_the_page_left():
     # Act / Assert
     assert not await rooms.leave(page.id)
     assert not await rooms.leave("unknown")
+
+
+async def test_stop_ends_the_room_for_every_page_and_the_next_page_starts_it_anew():
+    # Arrange
+    bots = FakeBots()
+    rooms = make_rooms(bots)
+    stopping = rooms.join("abc")
+    other = rooms.join("abc")
+    await settle()
+
+    # Act
+    stopped = await rooms.stop(stopping.id)
+    later = rooms.join("abc")
+    await settle()
+
+    # Assert
+    assert stopped
+    assert await stopping.ended() == RoomEnd.STOPPED
+    assert await other.ended() == RoomEnd.STOPPED
+    assert bots.started == ["abc", "abc"]
+    assert bots.running == {"abc"}
+    stopping.leave()
+    other.leave()
+    later.leave()
+
+
+async def test_stop_names_no_hold_after_the_page_left():
+    # Arrange
+    rooms = make_rooms(FakeBots())
+    page = rooms.join("abc")
+    page.leave()
+
+    # Act / Assert
+    assert not await rooms.stop(page.id)
