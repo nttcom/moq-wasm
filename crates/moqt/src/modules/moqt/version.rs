@@ -120,10 +120,14 @@ impl Version {
         }
     }
 
-    /// Returns `(track alias, object)`.
-    pub(crate) fn decode_datagram(self, data: &mut BytesMut) -> anyhow::Result<(u64, Object)> {
+    /// Returns `(track alias, object)`, or `None` for a datagram that carries
+    /// no object.
+    pub(crate) fn decode_datagram(
+        self,
+        data: &mut BytesMut,
+    ) -> anyhow::Result<Option<(u64, Object)>> {
         match self {
-            Self::Draft14 => draft14::objects::decode_datagram(data),
+            Self::Draft14 => draft14::objects::decode_datagram(data).map(Some),
         }
     }
 
