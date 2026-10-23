@@ -33,7 +33,7 @@ class FakeEventSource extends EventTarget {
 
 type FakeBrowser = { window: EventTarget; posts: { url: string; init: RequestInit | undefined }[] }
 
-function withFakeBrowser(act: (browser: FakeBrowser) => void): void {
+async function withFakeBrowser(act: (browser: FakeBrowser) => void | Promise<void>): Promise<void> {
   const globals = globalThis as unknown as Record<string, unknown>
   const originals = { EventSource: globals.EventSource, window: globals.window, fetch: globals.fetch }
   const browser: FakeBrowser = { window: new EventTarget(), posts: [] }
@@ -44,14 +44,14 @@ function withFakeBrowser(act: (browser: FakeBrowser) => void): void {
     return new Response(null, { status: 204 })
   }
   try {
-    act(browser)
+    await act(browser)
   } finally {
     Object.assign(globals, originals)
   }
 }
 
-test('a request the server refuses ends as failed, while a dropped stream keeps reconnecting', () => {
-  withFakeBrowser(() => {
+test('a request the server refuses ends as failed, while a dropped stream keeps reconnecting', async () => {
+  await withFakeBrowser(() => {
     // Arrange
     const ends: BotRoomEnd[] = []
     const request = new BotRoomRequest((reason) => ends.push(reason))
@@ -70,8 +70,8 @@ test('a request the server refuses ends as failed, while a dropped stream keeps 
   })
 })
 
-test('closing tells the server once that the page leaves the hold it named', () => {
-  withFakeBrowser((browser) => {
+test('closing tells the server once that the page leaves the hold it named', async () => {
+  await withFakeBrowser((browser) => {
     // Arrange
     const request = new BotRoomRequest(() => undefined)
     request.open('http://bots.example', 'team 1')
@@ -90,8 +90,8 @@ test('closing tells the server once that the page leaves the hold it named', () 
   })
 })
 
-test('a page that is hidden for good closes its request', () => {
-  withFakeBrowser((browser) => {
+test('a page that is hidden for good closes its request', async () => {
+  await withFakeBrowser((browser) => {
     // Arrange
     const request = new BotRoomRequest(() => undefined)
     request.open('http://bots.example', 'team-1')
@@ -103,5 +103,27 @@ test('a page that is hidden for good closes its request', () => {
     // Assert
     expect(FakeEventSource.last!.readyState).toBe(FakeEventSource.CLOSED)
     expect(browser.posts).toHaveLength(1)
+  })
+})
+
+test('stopping asks the server to stop the room while the page still holds it', async () => {
+  await withFakeBrowser(async (browser) => {
+    // Arrange
+    const request = new BotRoomRequest(() => undefined)
+    request.open('http://bots.example', 'team-1')
+    const source = FakeEventSource.last!
+    source.dispatchEvent(new MessageEvent('member', { data: 'm-1' }))
+
+    // Act
+    const stopped = request.stop()
+    const openWhileStopping = source.readyState === FakeEventSource.CONNECTING
+    await stopped
+
+    // Assert
+    expect(openWhileStopping).toBe(true)
+    expect(browser.posts.map(({ url }) => url)).toEqual([
+      'http://bots.example/rooms/team-1/stop?member=m-1',
+      'http://bots.example/rooms/team-1/leave?member=m-1'
+    ])
   })
 })

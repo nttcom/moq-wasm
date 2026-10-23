@@ -170,3 +170,22 @@ async def test_leave_from_another_origin_is_refused(open_client):
 
     # Assert
     assert left.status == 403
+
+
+async def test_page_that_posts_stop_ends_the_room_for_every_page(open_client):
+    # Arrange
+    bots = FakeBots()
+    client = await open_client(bots, allowed_origins=[PAGE_ORIGIN])
+    stopping = await client.get("/rooms/abc", headers={"Origin": PAGE_ORIGIN})
+    other = await client.get("/rooms/abc", headers={"Origin": PAGE_ORIGIN})
+    first_event = (await stopping.content.readuntil(b"\n\n")).decode()
+    member = re.fullmatch(r"event: member\ndata: (\S+)\n\n", first_event).group(1)
+
+    # Act
+    stopped = await client.post(f"/rooms/abc/stop?member={member}", headers={"Origin": PAGE_ORIGIN})
+    other_body = await asyncio.wait_for(other.content.read(), 2)
+
+    # Assert
+    assert stopped.status == 204
+    assert bots.running == set()
+    assert other_body.endswith(b"event: stopped\ndata: stopped\n\n")

@@ -14,7 +14,8 @@ const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
   full: 'no transcriber free',
   closed: 'transcriber closed',
   expired: 'transcriber left after an hour',
-  failed: 'transcriber stopped'
+  failed: 'transcriber stopped',
+  stopped: 'stopped by a participant'
 }
 
 /// The recognizers the deployed transcriber offers (docs/architecture/ai-bots/meeting-transcriber.md).
@@ -34,17 +35,15 @@ export type CaptionsControls = {
   active: boolean
   /// Whether this page shows captions on the tiles: while `active`, unless hidden with `show(false)`.
   on: boolean
-  /// Whether this page has asked the transcriber in.
-  requested: boolean
   /// Asks the transcriber in with `asr`; a transcriber already in the room keeps its own.
   start: (asr: string) => void
-  /// Lets the transcriber go; it stays while another page keeps it.
+  /// Stops the transcriber for everyone in the room.
   stop: () => void
   /// Affects this page's tile captions only.
   show: (shown: boolean) => void
   /// `undefined` until the transcriber's status arrives and after it leaves.
   status: TranscriberStatus | undefined
-  /// Why the transcriber left while this page asked for it.
+  /// Why the transcriber left while this page held it.
   error: string | undefined
   /// The room's transcript while the transcriber is in the room, whether or not `on`.
   records: TranscriptRecord[]
@@ -55,6 +54,8 @@ export type CaptionsControls = {
 /// `null` in a room the transcriber does not serve.
 export function useCaptions(session: LocalSession, transcriberPresent: boolean): CaptionsControls | null {
   const [asr, setAsr] = useState<string>()
+  // Set when this page's hold ends, so that the page does not hold the transcriber again before the transcriber has left the room.
+  const [ended, setEnded] = useState(false)
   const [hidden, setHidden] = useState(false)
   const active = transcriberPresent || asr !== undefined
   const on = active && !hidden
@@ -63,22 +64,34 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   const [records, setRecords] = useState<TranscriptRecord[]>([])
   const arrivals = useRef(new Map<string, number>())
   const [now, setNow] = useState(() => Date.now())
+  // Every page holds the transcriber while it is in the room, so one page leaving does not stop it for the others.
+  const heldAsr = asr ?? (transcriberPresent && !ended ? status?.asr : undefined)
+  const holding = useRef<BotRoomRequest>(undefined)
 
   useEffect(() => {
-    if (asr === undefined) {
+    if (heldAsr === undefined) {
       return
     }
     const request = new BotRoomRequest((reason) => {
       setAsr(undefined)
+      setEnded(true)
       setError(TRANSCRIBER_END_TEXT[reason])
     })
     request.open(resolveServiceUrl(window.location.search, session.relayUrl, TRANSCRIBER_SERVICE), session.roomName, {
-      asr
+      asr: heldAsr
     })
-    return () => request.close()
-  }, [asr, session])
+    holding.current = request
+    return () => {
+      // `stop` takes the request over and closes it once the server has stopped the room.
+      if (holding.current === request) {
+        holding.current = undefined
+        request.close()
+      }
+    }
+  }, [heldAsr, session])
 
   useEffect(() => {
+    setEnded(false)
     if (!transcriberPresent) {
       setStatus(undefined)
       return
@@ -127,13 +140,19 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   return {
     active,
     on,
-    requested: asr !== undefined,
     start: (choice) => {
       setError(undefined)
+      setEnded(false)
       setHidden(false)
       setAsr(choice)
     },
-    stop: () => setAsr(undefined),
+    stop: () => {
+      const request = holding.current
+      holding.current = undefined
+      setAsr(undefined)
+      setEnded(true)
+      void request?.stop()
+    },
     show: (shown) => setHidden(!shown),
     status,
     error,

@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import re
 import signal
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 
 from aiohttp import web
 from loguru import logger
@@ -49,6 +49,7 @@ def room_app(
 ) -> web.Application:
     """`GET /rooms/{room}` holds the room while the page keeps the event stream open, which starts
     with a `member` event naming the hold. `POST /rooms/{room}/leave?member=` ends that hold at once.
+    `POST /rooms/{room}/stop?member=` ends the room for every page that holds it.
 
     With `bot_from_query`, the query of the request that starts a room picks the room's bot; it
     raises `ValueError` for a query it refuses, which the page gets as 400.
@@ -87,17 +88,21 @@ def room_app(
             membership.leave()
         return response
 
-    async def leave_room(request: web.Request) -> web.Response:
-        if allowed_origins and request.headers.get("Origin") not in allowed_origins:
-            raise web.HTTPForbidden()
-        if not await rooms.leave(request.query.get("member", "")):
-            raise web.HTTPNotFound()
-        return web.Response(status=204)
+    def member_action(action: Callable[[str], Awaitable[bool]]):
+        async def handle(request: web.Request) -> web.Response:
+            if allowed_origins and request.headers.get("Origin") not in allowed_origins:
+                raise web.HTTPForbidden()
+            if not await action(request.query.get("member", "")):
+                raise web.HTTPNotFound()
+            return web.Response(status=204)
+
+        return handle
 
     app = web.Application()
     app.router.add_get("/rooms/{room}", room_events)
-    # The page sends it without a body or headers, so the browser needs no CORS preflight.
-    app.router.add_post("/rooms/{room}/leave", leave_room)
+    # The page sends these without a body or headers, so the browser needs no CORS preflight.
+    app.router.add_post("/rooms/{room}/leave", member_action(rooms.leave))
+    app.router.add_post("/rooms/{room}/stop", member_action(rooms.stop))
     return app
 
 

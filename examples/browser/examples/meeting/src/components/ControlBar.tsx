@@ -149,7 +149,15 @@ function CaptionsButton({ captions }: { captions: CaptionsControls }) {
     ? [
         { id: 'show', label: 'Show captions', checked: captions.on, onClick: () => captions.show(true) },
         { id: 'hide', label: 'Hide captions', checked: !captions.on, onClick: () => captions.show(false) },
-        ...(captions.requested ? [{ id: 'stop', label: 'Stop transcription', onClick: captions.stop }] : [])
+        {
+          id: 'stop',
+          label: 'Stop transcription',
+          onClick: () => {
+            if (window.confirm('Stopping transcription stops it for everyone in the room.')) {
+              captions.stop()
+            }
+          }
+        }
       ]
     : ASR_CHOICES.map(({ asr, label }) => ({ id: asr, label, onClick: () => captions.start(asr) }))
   const label = captions.active

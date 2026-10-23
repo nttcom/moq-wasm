@@ -71,16 +71,22 @@ does not have.
 ### Starting and stopping
 The Meeting page gains a captions button in the bottom bar. Choosing a model
 from it opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and
-keeps it open; Stop transcription in its menu, Leave, or closing the tab
-closes it and tells the service the page left. The bot runs while at least
-one page in the room holds the request, and leaves at once when the last one leaves this way. It stops
+keeps it open. While the transcriber is in the room, every other page in the
+room opens the same request with the model the transcriber's status names, so
+one page leaving does not take the captions from the others. Leave or closing
+the tab closes the page's request and tells the service the page left. The bot
+runs while at least one page in the room holds the request, and leaves at once
+when the last one leaves this way. Stop transcription in the button's menu
+asks for confirmation, then sends `POST /rooms/{room}/stop`, which ends the
+room for every page. It stops
 30 s after the last request closes without word, or 30 s after the room's last participant withdraws their
 namespace, since Cloud Run does not tell the server that a page went away
 (see [on-demand-rooms.md](on-demand-rooms.md)). The limits of `moq-bot-rooms`
 apply (`--max-rooms`,
 `--max-room-seconds`, `--open-hours`, `--allowed-origin`). A page shows the
-`full`, `closed`, `expired` and `failed` events next to the button and turns
-it off.
+`full`, `closed`, `expired`, `failed` and `stopped` events next to the button
+and does not hold the transcriber again until the transcriber has left the
+room or the user picks a model.
 
 The page finds the service with `resolveServiceUrl`
 (`examples/browser/utils/serviceUrl.ts`), as the other bot pages do: a local
