@@ -1376,6 +1376,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_max_cache_duration_inside_immutable_properties_reaches_the_subscription() {
+        let max_cache_duration = KeyValuePair {
+            key: 0x04,
+            value: VariantType::Even(50),
+        };
+        let mut contents = BytesMut::new();
+        codec::put_key_value_pairs(&mut contents, std::slice::from_ref(&max_cache_duration))
+            .unwrap();
+        let immutable = KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(contents.freeze()),
+        };
+        for properties in [vec![immutable], vec![max_cache_duration]] {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions("draft18-immutable-max-cache-duration", "moqt")
+                    .await;
+
+            // Act
+            let (subscription, _handler) =
+                subscribed_with_track_properties(&client, &server, 4, &properties).await;
+
+            // Assert
+            assert_eq!(
+                subscription.max_cache_duration(),
+                Some(50),
+                "{properties:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_goaway_on_a_namespace_subscription_withdraws_its_namespaces_once() {
         // Arrange
         let (client, server) =

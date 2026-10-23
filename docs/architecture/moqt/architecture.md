@@ -191,6 +191,8 @@ call through the adapter; a draft never gets a task of its own (see
   - `messages` / `parameters` encode the draft-14 structs: Message Parameters
     and Track Properties carry the former fields, absent ones take their
     draft-18 defaults, and responses take their Request ID from the stream.
+    A Track Property is looked up in the mutable list and inside Immutable
+    Properties (§12.7).
   - `objects` is the draft-18 data plane. FETCH objects are delta encoded
     against the previous one, so `FetchDataSender` keeps a `FetchEncoder` and
     `accept_fetch_receiver` passes the FETCH's group order to the reader.
