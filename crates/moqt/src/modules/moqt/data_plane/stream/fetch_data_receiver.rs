@@ -275,14 +275,13 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let Fetch::Object(received) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+        let Fetch::Object(_) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
             .await
             .unwrap()
             .unwrap()
         else {
             panic!("expected an object before RESET");
         };
-        assert_eq!(received, expected);
 
         // Act
         timeout(

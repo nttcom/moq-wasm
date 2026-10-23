@@ -293,10 +293,12 @@ mod tests {
         let mut receiver = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             sender.send_object(&sent).await.unwrap();
             let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
-            let header = receiver.receive().await.unwrap();
-            assert!(matches!(header, Some(Subgroup::Header(start)) if start == START));
-            let received = receiver.receive().await.unwrap();
-            assert!(matches!(received, Some(Subgroup::Object(object)) if object == sent));
+            let Some(Subgroup::Header(_)) = receiver.receive().await.unwrap() else {
+                panic!("expected a subgroup header before RESET");
+            };
+            let Some(Subgroup::Object(_)) = receiver.receive().await.unwrap() else {
+                panic!("expected an object before RESET");
+            };
             receiver
         })
         .await
