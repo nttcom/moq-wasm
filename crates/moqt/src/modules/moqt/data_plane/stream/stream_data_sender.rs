@@ -220,18 +220,18 @@ mod tests {
 
     #[tokio::test]
     async fn the_peer_receives_the_subgroup_and_objects_as_sent() {
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            // Arrange
-            let track = published_track("sender-round-trip").await;
-            let factory = track.client.publisher().create_stream(&track.published);
-            let mut sender = factory.next().await.unwrap().start(START).await.unwrap();
-            let sent = [
-                object(63, ObjectStatus::Normal, b"\x00a\xff"),
-                object(64, ObjectStatus::Normal, b""),
-                object(16_384, ObjectStatus::Normal, b"\x80b\x00"),
-                object(16_385, ObjectStatus::EndOfGroup, b""),
-            ];
+        // Arrange
+        let track = published_track("sender-round-trip").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut sender = factory.next().await.unwrap().start(START).await.unwrap();
+        let sent = [
+            object(63, ObjectStatus::Normal, b"\x00a\xff"),
+            object(64, ObjectStatus::Normal, b""),
+            object(16_384, ObjectStatus::Normal, b"\x80b\x00"),
+            object(16_385, ObjectStatus::EndOfGroup, b""),
+        ];
 
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             // Act
             for object in &sent {
                 sender.send_object(object).await.unwrap();
@@ -257,17 +257,17 @@ mod tests {
     #[tokio::test]
     async fn an_empty_subgroup_returns_its_header_then_fin() {
         for subgroup_id in [0, START.subgroup_id] {
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-                // Arrange
-                let track = published_track("sender-empty-fin").await;
-                let factory = track.client.publisher().create_stream(&track.published);
-                let start = SubgroupStart {
-                    subgroup_id,
-                    ends_group: false,
-                    ..START
-                };
-                let mut sender = factory.next().await.unwrap().start(start).await.unwrap();
+            // Arrange
+            let track = published_track("sender-empty-fin").await;
+            let factory = track.client.publisher().create_stream(&track.published);
+            let start = SubgroupStart {
+                subgroup_id,
+                ends_group: false,
+                ..START
+            };
+            let mut sender = factory.next().await.unwrap().start(start).await.unwrap();
 
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
                 // Act
                 sender.close().await.unwrap();
                 let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
@@ -285,19 +285,24 @@ mod tests {
 
     #[tokio::test]
     async fn a_reset_after_an_object_is_not_a_clean_fin() {
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            // Arrange
-            let track = published_track("sender-reset").await;
-            let factory = track.client.publisher().create_stream(&track.published);
-            let mut sender = factory.next().await.unwrap().start(START).await.unwrap();
-            let sent = object(63, ObjectStatus::Normal, b"\x00before-reset\xff");
+        // Arrange
+        let track = published_track("sender-reset").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut sender = factory.next().await.unwrap().start(START).await.unwrap();
+        let sent = object(63, ObjectStatus::Normal, b"\x00before-reset\xff");
+        let mut receiver = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             sender.send_object(&sent).await.unwrap();
             let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
             let header = receiver.receive().await.unwrap();
             assert!(matches!(header, Some(Subgroup::Header(start)) if start == START));
             let received = receiver.receive().await.unwrap();
             assert!(matches!(received, Some(Subgroup::Object(object)) if object == sent));
+            receiver
+        })
+        .await
+        .expect("subgroup object arrives before reset within timeout");
 
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             // Act
             sender
                 .reset(DataStreamResetCode::InternalError)
