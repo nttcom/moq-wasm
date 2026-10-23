@@ -431,6 +431,11 @@ impl IncomingRequestTask {
                 send_update_answer(sender, None).await;
                 FollowUp::Continue
             }
+            // Answers to our REQUEST_UPDATE of the subscription the PUBLISH
+            // started (§10.9); a failed one is followed by PUBLISH_DONE.
+            (RequestStreamKind::Publish, Message::RequestOk(_) | Message::RequestError(_)) => {
+                FollowUp::Continue
+            }
             (RequestStreamKind::Publish, Message::PublishDone(done)) => {
                 emit(
                     scope,

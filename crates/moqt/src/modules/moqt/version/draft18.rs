@@ -1379,6 +1379,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_answer_to_a_request_update_on_a_publish_keeps_the_subscription_open() {
+        // Arrange: two updates; the publisher reads the second only after answering the first
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-update", "moqt").await;
+        let track = published_track_between(client, server).await;
+        let subscriber = track.server.subscriber();
+        subscriber
+            .update_forward(&track.accepted, false)
+            .await
+            .unwrap();
+        subscriber
+            .update_forward(&track.accepted, true)
+            .await
+            .unwrap();
+        let SessionEvent::SubscribeUpdate(first) = next_event(&track.client).await else {
+            panic!("expected SUBSCRIBE_UPDATE");
+        };
+        first.ok(Some(Location {
+            group_id: 3,
+            object_id: 1,
+        }));
+        let SessionEvent::SubscribeUpdate(_second) = next_event(&track.client).await else {
+            panic!("expected SUBSCRIBE_UPDATE");
+        };
+
+        // Act
+        track
+            .client
+            .publisher()
+            .publish_done(
+                &track.published,
+                PublishDoneCode::TrackEnded,
+                0,
+                String::new(),
+            )
+            .await
+            .unwrap();
+        let event = next_event(&track.server).await;
+
+        // Assert: the subscriber read the REQUEST_OK before the PUBLISH_DONE
+        assert!(matches!(event, SessionEvent::PublishDone(_)), "{event:?}");
+    }
+
+    #[tokio::test]
     async fn a_request_update_reusing_a_request_id_closes_the_session() {
         // Arrange
         let (client, server) =
