@@ -32,11 +32,18 @@ export function asrLabel(asr: string): string {
 }
 
 export type CaptionsControls = {
-  /// Whether this page shows captions on the tiles: while the transcriber is in the room or this page has asked it in.
+  /// Whether the transcriber is in the room or this page has asked it in.
+  active: boolean
+  /// Whether this page shows captions on the tiles: while `active`, unless hidden with `show(false)`.
   on: boolean
+  /// Whether this page has asked the transcriber in.
+  requested: boolean
   /// Asks the transcriber in with `asr`; a transcriber already in the room keeps its own.
   start: (asr: string) => void
+  /// Lets the transcriber go; it stays while another page keeps it.
   stop: () => void
+  /// Affects this page's tile captions only.
+  show: (shown: boolean) => void
   /// `undefined` until the transcriber's status arrives and after it leaves.
   status: TranscriberStatus | undefined
   /// Why the transcriber left while this page asked for it.
@@ -50,7 +57,9 @@ export type CaptionsControls = {
 /// `null` in a room the transcriber does not serve.
 export function useCaptions(session: LocalSession, transcriberPresent: boolean): CaptionsControls | null {
   const [asr, setAsr] = useState<string>()
-  const on = transcriberPresent || asr !== undefined
+  const [hidden, setHidden] = useState(false)
+  const active = transcriberPresent || asr !== undefined
+  const on = active && !hidden
   const [status, setStatus] = useState<TranscriberStatus>()
   const [error, setError] = useState<string>()
   const [records, setRecords] = useState<TranscriptRecord[]>([])
@@ -127,12 +136,16 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
     return null
   }
   return {
+    active,
     on,
+    requested: asr !== undefined,
     start: (choice) => {
       setError(undefined)
+      setHidden(false)
       setAsr(choice)
     },
     stop: () => setAsr(undefined),
+    show: (shown) => setHidden(!shown),
     status,
     error,
     records,

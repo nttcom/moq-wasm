@@ -2,6 +2,7 @@ import { type ReactNode, useState } from 'react'
 import {
   BarChart3,
   Captions,
+  Check,
   CircleDot,
   CircleStop,
   LayoutGrid,
@@ -144,35 +145,45 @@ const RECORDING_CHOICES: { id: string; layout: RecordingLayout; composite: boole
 
 function CaptionsButton({ captions }: { captions: CaptionsControls }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  if (captions.on) {
-    return (
-      <BarButton label="Turn captions off" testId="captions-button" active onClick={captions.stop}>
-        <Captions className="h-5 w-5" />
-      </BarButton>
-    )
-  }
+  const items: { id: string; label: string; checked?: boolean; onClick: () => void }[] = captions.active
+    ? [
+        { id: 'show', label: 'Show captions', checked: captions.on, onClick: () => captions.show(true) },
+        { id: 'hide', label: 'Hide captions', checked: !captions.on, onClick: () => captions.show(false) },
+        ...(captions.requested ? [{ id: 'stop', label: 'Stop transcription', onClick: captions.stop }] : [])
+      ]
+    : ASR_CHOICES.map(({ asr, label }) => ({ id: asr, label, onClick: () => captions.start(asr) }))
+  const label = captions.active
+    ? captions.on
+      ? 'Captions on'
+      : 'Captions off'
+    : captions.error
+      ? `Captions (${captions.error})`
+      : 'Turn captions on'
   return (
     <div className="relative">
       <BarButton
-        label={captions.error ? `Captions (${captions.error})` : 'Turn captions on'}
+        label={label}
         testId="captions-button"
+        active={captions.on}
         onClick={() => setMenuOpen((open) => !open)}
       >
         <Captions className="h-5 w-5" />
       </BarButton>
       {menuOpen && (
         <div className="absolute bottom-14 left-0 z-20 w-56 rounded-lg border border-white/10 bg-slate-900 p-1 shadow-lg">
-          {ASR_CHOICES.map(({ asr, label }) => (
+          {items.map(({ id, label, checked, onClick }) => (
             <button
-              key={asr}
+              key={id}
               type="button"
-              data-testid={`captions-${asr}`}
+              data-testid={`captions-${id}`}
+              aria-pressed={checked}
               onClick={() => {
                 setMenuOpen(false)
-                captions.start(asr)
+                onClick()
               }}
-              className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-700"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-700"
             >
+              {checked !== undefined && <Check className={`h-4 w-4 ${checked ? '' : 'invisible'}`} />}
               {label}
             </button>
           ))}

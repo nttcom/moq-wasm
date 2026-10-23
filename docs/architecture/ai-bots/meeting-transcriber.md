@@ -69,11 +69,11 @@ under another app's root would need a token for the bot, which the service
 does not have.
 
 ### Starting and stopping
-The Meeting page gains a captions button in the bottom bar. Turning it on
-opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and keeps it
-open; turning it off, Leave, or closing the tab closes it and tells the
-service the page left. The bot runs while at least one page in the room holds
-the request, and leaves at once when the last one leaves this way. It stops
+The Meeting page gains a captions button in the bottom bar. Choosing a model
+from it opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and
+keeps it open; Stop transcription in its menu, Leave, or closing the tab
+closes it and tells the service the page left. The bot runs while at least
+one page in the room holds the request, and leaves at once when the last one leaves this way. It stops
 30 s after the last request closes without word, or 30 s after the room's last participant withdraws their
 namespace, since Cloud Run does not tell the server that a page went away
 (see [on-demand-rooms.md](on-demand-rooms.md)). The limits of `moq-bot-rooms`
@@ -224,14 +224,14 @@ collide with it. The track is `transcript`, an MSF event timeline
 - The newest record of a speaker appears at the bottom of that speaker's
   tile for 5 s after it arrives. Records from the joining FETCH are history
   and are not shown there, however late a live record arrives. The sidebar gains a Transcript tab next
-  to the chat that lists every record with speaker and time. The tab shows on
-  every page while the transcriber is in the room, and so do the tile
-  captions, whoever asked the transcriber in.
+  to the chat that lists every record with speaker and time. The tab and the
+  tile captions show on every page while the transcriber is in the room; the
+  captions button hides or shows the tile captions on its own page only.
 
 ## Consequences
 
 ### Positive
-- Transcription runs only while someone in the room wants captions.
+- Transcription runs only while a page in the room holds the request.
 - Audio stays inside the deployment: the model runs in the bot.
 
 ### Negative
