@@ -50,7 +50,7 @@ impl DataReceiver {
         let is_datagram = matches!(incoming, IncomingObject::Datagram(_));
         if !self.mixing_allowed && *self.first_is_datagram.get_or_insert(is_datagram) != is_datagram
         {
-            return Err(MalformedTrackError.into());
+            return Err(MalformedTrackError::MixedForwardingPreference.into());
         }
         Ok(match incoming {
             IncomingObject::Subgroup(receiver) => TrackData::Subgroup(receiver),
@@ -220,7 +220,10 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(result.unwrap_err().is::<MalformedTrackError>());
+        assert_eq!(
+            result.unwrap_err().downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::MixedForwardingPreference)
+        );
     }
 
     #[tokio::test]
@@ -248,7 +251,10 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(result.unwrap_err().is::<MalformedTrackError>());
+        assert_eq!(
+            result.unwrap_err().downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::MixedForwardingPreference)
+        );
     }
 
     #[tokio::test]

@@ -111,6 +111,17 @@ impl UpstreamSubgroupStream {
         )));
     }
 
+    pub(crate) fn malformed_track(&self) {
+        self.push(Err(moqt::object::StreamReceiveError::MalformedTrack(
+            moqt::object::MalformedTrackError::ConflictingDuplicate {
+                location: moqt::object::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+            },
+        )));
+    }
+
     pub(crate) fn fin(&self) {
         self.push(Ok(None));
     }

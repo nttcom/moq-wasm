@@ -123,6 +123,17 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 tracing::error!(%track_key, %error, "failed to decode stream data");
                 return;
             }
+            Err(moqt::object::StreamReceiveError::MalformedTrack(error)) => {
+                tracing::warn!(%track_key, %error, "malformed track on the stream");
+                cache.mark_malformed();
+                report_malformed_track(
+                    &span,
+                    &session_event_sender,
+                    publisher_session_id,
+                    &track_key,
+                );
+                return;
+            }
             Err(moqt::object::StreamReceiveError::ProtocolViolation(error)) => {
                 span.record("end_reason", "protocol_violation");
                 tracing::error!(%track_key, %error, "protocol violation on the stream");
@@ -353,6 +364,21 @@ mod tests {
         );
         second_stream.fin();
         second_stream.wait_reader_end().await;
+        // Assert
+        harness.wait_track_malformed().await;
+        let event = harness.expect_session_event().await;
+        assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_track_on_the_stream_marks_the_track_malformed() {
+        // Arrange
+        let mut harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
+        send_all(&upstream_stream, vec![make_header(0), payload(0)]);
+        // Act
+        upstream_stream.malformed_track();
+        upstream_stream.wait_reader_end().await;
         // Assert
         harness.wait_track_malformed().await;
         let event = harness.expect_session_event().await;

@@ -226,6 +226,9 @@ async fn read_control_stream(mut control_stream: MessageReceiver, connection: We
                 close_on_violation(&scope, &reason);
                 return;
             }
+            Err(StreamReceiveError::MalformedTrack(_)) => {
+                unreachable!("only object streams report a malformed track")
+            }
         }
     }
 }
@@ -281,6 +284,9 @@ impl IncomingRequestTask {
             ) => {
                 close_on_violation(&context, &reason);
                 return;
+            }
+            Err(StreamReceiveError::MalformedTrack(_)) => {
+                unreachable!("only object streams report a malformed track")
             }
             Ok(None) | Err(StreamReceiveError::Closed(_)) => return,
         };
@@ -401,6 +407,9 @@ impl IncomingRequestTask {
                 ) => {
                     close_on_violation(&context, &reason);
                     return;
+                }
+                Err(StreamReceiveError::MalformedTrack(_)) => {
+                    unreachable!("only object streams report a malformed track")
                 }
             }
         }
@@ -974,6 +983,9 @@ impl OutgoingRequestTask {
                 ) => {
                     close_on_violation(&context, &reason);
                     return;
+                }
+                Err(StreamReceiveError::MalformedTrack(_)) => {
+                    unreachable!("only object streams report a malformed track")
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {

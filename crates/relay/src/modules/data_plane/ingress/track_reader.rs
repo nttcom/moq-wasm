@@ -91,7 +91,9 @@ mod tests {
         let mut harness = RelayHarness::new();
         // Act
         harness
-            .run_ingest(FailingUpstream(|| moqt::object::MalformedTrackError.into()))
+            .run_ingest(FailingUpstream(|| {
+                moqt::object::MalformedTrackError::MixedForwardingPreference.into()
+            }))
             .await;
         // Assert
         harness.wait_track_malformed().await;

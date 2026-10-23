@@ -150,6 +150,9 @@ impl FetchDataReceiver {
                 StreamReceiveError::Decode(_) | StreamReceiveError::ProtocolViolation(_) => {
                     tracing::error!(%error, "Failed to decode the fetch stream")
                 }
+                StreamReceiveError::MalformedTrack(_) => {
+                    tracing::warn!(%error, "the fetch stream made its track malformed")
+                }
                 StreamReceiveError::Closed(_) => tracing::debug!(%error, "Fetch stream ended"),
             }
             if let Some(carry) = &mut self.carry

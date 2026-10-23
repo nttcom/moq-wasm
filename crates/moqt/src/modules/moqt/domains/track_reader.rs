@@ -381,6 +381,9 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(result.unwrap_err().is::<MalformedTrackError>());
+        assert_eq!(
+            result.unwrap_err().downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::MixedForwardingPreference)
+        );
     }
 }
