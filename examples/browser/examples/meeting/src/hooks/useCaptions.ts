@@ -32,7 +32,7 @@ export function asrLabel(asr: string): string {
 }
 
 export type CaptionsControls = {
-  /// Whether this page keeps the transcriber in the room and shows captions on the tiles.
+  /// Whether this page shows captions on the tiles: while the transcriber is in the room or this page has asked it in.
   on: boolean
   /// Asks the transcriber in with `asr`; a transcriber already in the room keeps its own.
   start: (asr: string) => void
@@ -50,7 +50,7 @@ export type CaptionsControls = {
 /// `null` in a room the transcriber does not serve.
 export function useCaptions(session: LocalSession, transcriberPresent: boolean): CaptionsControls | null {
   const [asr, setAsr] = useState<string>()
-  const on = asr !== undefined
+  const on = transcriberPresent || asr !== undefined
   const [status, setStatus] = useState<TranscriberStatus>()
   const [error, setError] = useState<string>()
   const [records, setRecords] = useState<TranscriptRecord[]>([])
@@ -102,12 +102,12 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   }, [session, transcriberPresent])
 
   useEffect(() => {
-    if (!on) {
+    if (!transcriberPresent) {
       return
     }
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
-  }, [on])
+  }, [transcriberPresent])
 
   const captions = useMemo(() => {
     const fresh = new Map<string, string>()
@@ -129,8 +129,6 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   return {
     on,
     start: (choice) => {
-      // The clock stops while captions are off, so records that arrived meanwhile would read as fresh.
-      setNow(Date.now())
       setError(undefined)
       setAsr(choice)
     },

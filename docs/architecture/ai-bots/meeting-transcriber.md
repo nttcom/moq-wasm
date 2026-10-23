@@ -45,7 +45,7 @@ in the room read.
 
 ```mermaid
 sequenceDiagram
-    participant A as Page (alice, captions on)
+    participant A as Page (alice, asked for captions)
     participant S as Transcriber service
     participant R as Relay
     participant B as Page (bob)
@@ -59,7 +59,7 @@ sequenceDiagram
     Note over S: VAD + Whisper per participant
     S->>R: transcript record {t, speaker: bob, text}
     R->>A: transcript record
-    R->>B: transcript record (when bob has captions on)
+    R->>B: transcript record
 ```
 
 ### Rooms it serves
@@ -216,7 +216,7 @@ collide with it. The track is `transcript`, an MSF event timeline
 - While the bot's namespace is announced, every page in the room shows `CC`
   in the header, as it shows `REC` for a recording, since everyone's speech
   is being transcribed.
-- A page with captions on subscribes to `transcript` with the LargestObject
+- Every page subscribes to `transcript` with the LargestObject
   filter and sends a joining FETCH for the current group: the FETCH ends at
   the largest object and the subscription starts after it, so together they
   carry the whole group. A group's first object replaces the records and
@@ -225,8 +225,8 @@ collide with it. The track is `transcript`, an MSF event timeline
   tile for 5 s after it arrives. Records from the joining FETCH are history
   and are not shown there, however late a live record arrives. The sidebar gains a Transcript tab next
   to the chat that lists every record with speaker and time. The tab shows on
-  every page while the transcriber is in the room; the tile captions only on
-  the pages that turned captions on.
+  every page while the transcriber is in the room, and so do the tile
+  captions, whoever asked the transcriber in.
 
 ## Consequences
 
