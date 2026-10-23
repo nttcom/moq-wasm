@@ -14,7 +14,7 @@ use crate::modules::transport::transport_connection_creator::TransportConnection
 use crate::{
     ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
     TransportProtocol,
-    fetch::{Fetch, FetchDataReceiver},
+    fetch::{Fetch, FetchDataReceiver, FetchDataSender, FetchOption},
     modules::moqt::{
         data_plane::object::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
@@ -23,7 +23,10 @@ use crate::{
         domains::{connection::IncomingObjectNotification, session_context::SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
-    object::{DataReceiver, StreamDataSenderFactory, SubgroupObjectSender},
+    object::{
+        DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
+        ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender, VariantType,
+    },
     publish::PublishOption,
     server::Handshake,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
@@ -190,6 +193,38 @@ pub(crate) async fn published_track(name: &str) -> PublishedTrack {
     }
 }
 
+pub(crate) fn object_with_extensions() -> Object {
+    Object {
+        location: Location {
+            group_id: 16_384,
+            object_id: 16_385,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 3 },
+        publisher_priority: 7,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::new(vec![
+            KeyValuePair {
+                key: 0x10,
+                value: VariantType::Even(16_384),
+            },
+            KeyValuePair {
+                key: 0x0b,
+                value: VariantType::Odd(Bytes::from_static(b"\x01\x00\x80")),
+            },
+            KeyValuePair {
+                key: 0x0d,
+                value: VariantType::Odd(Bytes::from_static(b"\x00\xff\x7f")),
+            },
+            KeyValuePair {
+                key: 0x0b,
+                value: VariantType::Odd(Bytes::from_static(b"\x02\xff")),
+            },
+        ]),
+        payload: Bytes::from_static(b"\x00object\xff"),
+        ends_group: false,
+    }
+}
+
 pub(crate) async fn open_subgroup(
     factory: &StreamDataSenderFactory,
     group_id: u64,
@@ -344,5 +379,54 @@ pub(crate) fn location(group_id: u64, object_id: u64) -> crate::object::Location
     crate::object::Location {
         group_id,
         object_id,
+    }
+}
+
+pub(crate) struct FetchedStream {
+    _client: Session,
+    _server: Session,
+    pub(crate) sender: FetchDataSender,
+    pub(crate) receiver: FetchDataReceiver,
+}
+
+pub(crate) async fn fetched_stream(name: &str, end_of_track: bool, end: Location) -> FetchedStream {
+    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let mut subscriber = client.subscriber();
+    let (handle, sender) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        tokio::join!(
+            subscriber.fetch(
+                "ns".into(),
+                "track".into(),
+                location(0, 0),
+                end,
+                FetchOption::default(),
+            ),
+            async {
+                let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+                    panic!("expected FETCH from the client");
+                };
+                handler.ok(end_of_track, end).await.unwrap();
+                server
+                    .publisher()
+                    .create_fetch_stream(handler.request_id)
+                    .await
+                    .unwrap()
+            }
+        )
+    })
+    .await
+    .unwrap();
+    let receiver = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        subscriber.accept_fetch_receiver(&handle.unwrap()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    FetchedStream {
+        _client: client,
+        _server: server,
+        sender,
+        receiver,
     }
 }
