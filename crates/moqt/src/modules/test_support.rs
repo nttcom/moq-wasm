@@ -407,6 +407,7 @@ pub(crate) struct FetchedStream {
 pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
     let (client, server) = spawn_connected_dual_sessions(name).await;
     let mut subscriber = client.subscriber();
+    // Matches the EndOfTrack location in the FETCH round-trip test.
     let end = location(16_385, 0);
     let (handle, sender) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         tokio::join!(
