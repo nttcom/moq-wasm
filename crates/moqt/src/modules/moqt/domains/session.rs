@@ -214,9 +214,8 @@ mod tests {
     use crate::{
         SessionEvent, TerminationErrorCode,
         modules::test_support::{
-            DISCONNECT_TIMEOUT, connect_sessions, published_track, published_track_between,
-            receive_disconnected, spawn_connected_draft18_sessions, spawn_connected_dual_sessions,
-            spawn_dual_server,
+            DISCONNECT_TIMEOUT, DRAFTS, connect_sessions, connected_sessions, published_track_over,
+            receive_disconnected, spawn_connected_dual_sessions, spawn_dual_server,
         },
         wire::MOQ_TRANSPORT_VERSION,
     };
@@ -303,25 +302,23 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_the_client_session_disconnects_the_server_session() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-drop").await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("session-drop", version).await;
 
-        // Act
-        drop(client);
+            // Act
+            drop(client);
 
-        // Assert
-        receive_disconnected(&server).await.unwrap();
+            // Assert
+            receive_disconnected(&server).await.unwrap();
+        }
     }
 
     #[tokio::test]
     async fn dropping_a_session_closes_it_while_one_of_its_streams_is_held() {
-        let (client, server) =
-            spawn_connected_draft18_sessions("session-drop-held-stream-draft18", "moqt").await;
-        for track in [
-            published_track("session-drop-held-stream").await,
-            published_track_between(client, server).await,
-        ] {
+        for version in DRAFTS {
             // Arrange: a data stream outlives the session and keeps the connection referenced
+            let track = published_track_over("session-drop-held-stream", version).await;
             let factory = track.client.publisher().create_stream(&track.published);
             let _stream = factory.next().await.unwrap();
 
@@ -332,137 +329,151 @@ mod tests {
                 .unwrap();
 
             // Assert
-            assert_eq!(close.code, Some(0x0), "{close:?}");
+            assert_eq!(close.code, Some(0x0), "{version:?}: {close:?}");
         }
     }
 
     #[tokio::test]
     async fn closed_reports_the_peers_termination_code_and_leaves_the_events_unread() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-closed").await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("session-closed", version).await;
 
-        // Act
-        server.close_with_error(TerminationErrorCode::GoawayTimeout, "bye");
-        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
-            .await
-            .unwrap();
+            // Act
+            server.close_with_error(TerminationErrorCode::GoawayTimeout, "bye");
+            let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+                .await
+                .unwrap();
 
-        // Assert: draft-14 numbers GOAWAY_TIMEOUT 0x10
-        assert_eq!(close.code, Some(0x10));
-        assert_eq!(close.reason, "bye");
-        receive_disconnected(&client).await.unwrap();
+            // Assert: both drafts number GOAWAY_TIMEOUT 0x10
+            assert_eq!(close.code, Some(0x10));
+            assert_eq!(close.reason, "bye");
+            receive_disconnected(&client).await.unwrap();
+        }
     }
 
     #[tokio::test]
     async fn server_go_away_names_the_new_session_uri_to_the_client() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-uri").await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("session-go-away-uri", version).await;
 
-        // Act
-        server
-            .go_away("moqt://relay-b.example:4433".to_string())
-            .await
-            .unwrap();
+            // Act
+            server
+                .go_away("moqt://relay-b.example:4433".to_string())
+                .await
+                .unwrap();
 
-        // Assert
-        let SessionEvent::GoAway(go_away) = client.receive_event().await.unwrap() else {
-            panic!("expected GOAWAY from the server");
-        };
-        assert_eq!(go_away.new_session_uri(), "moqt://relay-b.example:4433");
+            // Assert
+            let SessionEvent::GoAway(go_away) = client.receive_event().await.unwrap() else {
+                panic!("expected GOAWAY from the server");
+            };
+            assert_eq!(go_away.new_session_uri(), "moqt://relay-b.example:4433");
+        }
     }
 
     #[tokio::test]
     async fn second_go_away_is_a_protocol_violation() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-twice").await;
-        server.go_away(String::new()).await.unwrap();
-        assert!(matches!(
-            client.receive_event().await.unwrap(),
-            SessionEvent::GoAway(_)
-        ));
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("session-go-away-twice", version).await;
+            server.go_away(String::new()).await.unwrap();
+            assert!(matches!(
+                client.receive_event().await.unwrap(),
+                SessionEvent::GoAway(_)
+            ));
 
-        // Act
-        server.go_away(String::new()).await.unwrap();
+            // Act
+            server.go_away(String::new()).await.unwrap();
 
-        // Assert: the client closes the session
-        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server.closed())
-            .await
-            .unwrap();
-        assert_eq!(close.code, Some(0x3));
-        assert_eq!(close.reason, "received a second GOAWAY");
+            // Assert: the client closes the session
+            let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server.closed())
+                .await
+                .unwrap();
+            assert_eq!(close.code, Some(0x3));
+            assert_eq!(close.reason, "received a second GOAWAY");
+        }
     }
 
     #[tokio::test]
     async fn go_away_with_a_uri_sent_to_a_server_is_a_protocol_violation() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-to-server").await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("session-go-away-to-server", version).await;
 
-        // Act
-        client
-            .go_away("moqt://relay-b.example:4433".to_string())
-            .await
-            .unwrap();
+            // Act
+            client
+                .go_away("moqt://relay-b.example:4433".to_string())
+                .await
+                .unwrap();
 
-        // Assert: the server closes the session
-        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
-            .await
-            .unwrap();
-        assert_eq!(close.code, Some(0x3));
-        assert_eq!(
-            close.reason,
-            "GOAWAY sent to a server carries a New Session URI"
-        );
-        drop(server);
+            // Assert: the server closes the session
+            let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+                .await
+                .unwrap();
+            assert_eq!(close.code, Some(0x3));
+            assert_eq!(
+                close.reason,
+                "GOAWAY sent to a server carries a New Session URI"
+            );
+            drop(server);
+        }
     }
 
     #[tokio::test]
     async fn closing_with_a_non_violation_code_reports_disconnected_locally() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("session-local-close").await;
+        for version in DRAFTS {
+            // Arrange
+            let (_client, server) = connected_sessions("session-local-close", version).await;
 
-        // Act
-        server.close_with_error(TerminationErrorCode::GoawayTimeout, "drain timed out");
+            // Act
+            server.close_with_error(TerminationErrorCode::GoawayTimeout, "drain timed out");
 
-        // Assert
-        let event = tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(matches!(event, SessionEvent::Disconnected()), "{event:?}");
+            // Assert
+            let event = tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(event, SessionEvent::Disconnected()), "{event:?}");
+        }
     }
 
     #[tokio::test]
     async fn closing_for_a_protocol_violation_reports_it_locally() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("session-local-violation").await;
+        for version in DRAFTS {
+            // Arrange
+            let (_client, server) = connected_sessions("session-local-violation", version).await;
 
-        // Act
-        server.close_with_error(TerminationErrorCode::ProtocolViolation, "bad peer");
+            // Act
+            server.close_with_error(TerminationErrorCode::ProtocolViolation, "bad peer");
 
-        // Assert
-        let event = tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(
-            matches!(event, SessionEvent::ProtocolViolation()),
-            "{event:?}"
-        );
+            // Assert
+            let event = tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                matches!(event, SessionEvent::ProtocolViolation()),
+                "{event:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn go_away_reaches_the_peer_with_its_uri() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away").await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("session-go-away", version).await;
 
-        // Act
-        client.go_away(String::new()).await.unwrap();
+            // Act
+            client.go_away(String::new()).await.unwrap();
 
-        // Assert
-        let SessionEvent::GoAway(go_away) = server.receive_event().await.unwrap() else {
-            panic!("expected GOAWAY from the client");
-        };
-        assert_eq!(go_away.new_session_uri(), "");
+            // Assert
+            let SessionEvent::GoAway(go_away) = server.receive_event().await.unwrap() else {
+                panic!("expected GOAWAY from the client");
+            };
+            assert_eq!(go_away.new_session_uri(), "");
+        }
     }
 
     #[tokio::test]

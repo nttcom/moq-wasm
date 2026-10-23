@@ -256,8 +256,8 @@ mod tests {
     use crate::{
         TrackWriter,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, data_receiver, next_subgroup,
-            spawn_dual_server, subscribed_track_reader,
+            DRAFTS, HANDSHAKE_TIMEOUT, accept_publish, connected_sessions, data_receiver,
+            next_subgroup, subscribed_track_reader,
         },
         object::{ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
         publish::PublishOption,
@@ -265,177 +265,174 @@ mod tests {
 
     #[tokio::test]
     async fn objects_arrive_with_their_immutable_extensions_and_ids() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("track-writer");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("track-writer", version).await;
+            let publisher = client.publisher();
+            let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                tokio::join!(
+                    publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                    accept_publish(&server)
+                )
+            })
             .await
             .unwrap();
-        let publisher = client.publisher();
-        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            tokio::join!(
-                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
-                accept_publish(&server)
-            )
-        })
-        .await
-        .unwrap();
-        let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
+            let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
 
-        // Act
-        writer.start_group().await.unwrap();
-        writer
-            .write(
-                Bytes::from_static(b"with"),
-                vec![Bytes::from_static(b"ext")],
-            )
-            .await
-            .unwrap();
-        writer
-            .write(Bytes::from_static(b"without"), vec![])
-            .await
-            .unwrap();
-        writer
-            .write_with_extension_headers(
-                Bytes::from_static(b"keyed"),
-                ExtensionHeaders::new(vec![KeyValuePair {
+            // Act
+            writer.start_group().await.unwrap();
+            writer
+                .write(
+                    Bytes::from_static(b"with"),
+                    vec![Bytes::from_static(b"ext")],
+                )
+                .await
+                .unwrap();
+            writer
+                .write(Bytes::from_static(b"without"), vec![])
+                .await
+                .unwrap();
+            writer
+                .write_with_extension_headers(
+                    Bytes::from_static(b"keyed"),
+                    ExtensionHeaders::new(vec![KeyValuePair {
+                        key: 2,
+                        value: VariantType::Even(42),
+                    }]),
+                )
+                .await
+                .unwrap();
+            let current_group_id = writer.current_group_id();
+            writer.finish().await.unwrap();
+            let mut reader = subscribed_track_reader(&server, &accepted).await;
+            let first = reader.next_object().await.unwrap().unwrap();
+            let second = reader.next_object().await.unwrap().unwrap();
+            let third = reader.next_object().await.unwrap().unwrap();
+
+            // Assert
+            assert_eq!(current_group_id, Some(7));
+            assert_eq!((first.group_id, first.object_id), (7, 0));
+            assert_eq!(first.payload, Bytes::from_static(b"with"));
+            assert_eq!(
+                first.extension_headers.immutable_extensions(),
+                vec![Bytes::from_static(b"ext")]
+            );
+            assert_eq!((second.group_id, second.object_id), (7, 1));
+            assert_eq!(second.payload, Bytes::from_static(b"without"));
+            assert!(second.extension_headers.immutable_extensions().is_empty());
+            assert_eq!((third.group_id, third.object_id), (7, 2));
+            assert_eq!(
+                third.extension_headers.key_value_pairs,
+                vec![KeyValuePair {
                     key: 2,
                     value: VariantType::Even(42),
-                }]),
-            )
-            .await
-            .unwrap();
-        let current_group_id = writer.current_group_id();
-        writer.finish().await.unwrap();
-        let mut reader = subscribed_track_reader(&server, &accepted).await;
-        let first = reader.next_object().await.unwrap().unwrap();
-        let second = reader.next_object().await.unwrap().unwrap();
-        let third = reader.next_object().await.unwrap().unwrap();
-
-        // Assert
-        assert_eq!(current_group_id, Some(7));
-        assert_eq!((first.group_id, first.object_id), (7, 0));
-        assert_eq!(first.payload, Bytes::from_static(b"with"));
-        assert_eq!(
-            first.extension_headers.immutable_extensions(),
-            vec![Bytes::from_static(b"ext")]
-        );
-        assert_eq!((second.group_id, second.object_id), (7, 1));
-        assert_eq!(second.payload, Bytes::from_static(b"without"));
-        assert!(second.extension_headers.immutable_extensions().is_empty());
-        assert_eq!((third.group_id, third.object_id), (7, 2));
-        assert_eq!(
-            third.extension_headers.key_value_pairs,
-            vec![KeyValuePair {
-                key: 2,
-                value: VariantType::Even(42),
-            }]
-        );
+                }]
+            );
+        }
     }
 
     #[tokio::test]
     async fn chosen_group_ids_announce_the_ids_they_skip() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("track-writer-groups");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("track-writer-groups", version).await;
+            let publisher = client.publisher();
+            let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                tokio::join!(
+                    publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                    accept_publish(&server)
+                )
+            })
             .await
             .unwrap();
-        let publisher = client.publisher();
-        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            tokio::join!(
-                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
-                accept_publish(&server)
-            )
-        })
-        .await
-        .unwrap();
-        let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
+            let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
 
-        // Act: the first group may start anywhere, the next one skips 4 and 5
-        writer.start_group_at(3).await.unwrap();
-        writer
-            .write(Bytes::from_static(b"a"), vec![])
-            .await
-            .unwrap();
-        writer.start_group_at(6).await.unwrap();
-        writer
-            .write(Bytes::from_static(b"b"), vec![])
-            .await
-            .unwrap();
-        writer
-            .write(Bytes::from_static(b"c"), vec![])
-            .await
-            .unwrap();
-        let next_group_id = writer.next_group_id();
-        writer.finish().await.unwrap();
-        let mut reader = subscribed_track_reader(&server, &accepted).await;
-        let first = reader.next_object().await.unwrap().unwrap();
-        let second = reader.next_object().await.unwrap().unwrap();
-        let third = reader.next_object().await.unwrap().unwrap();
+            // Act: the first group may start anywhere, the next one skips 4 and 5
+            writer.start_group_at(3).await.unwrap();
+            writer
+                .write(Bytes::from_static(b"a"), vec![])
+                .await
+                .unwrap();
+            writer.start_group_at(6).await.unwrap();
+            writer
+                .write(Bytes::from_static(b"b"), vec![])
+                .await
+                .unwrap();
+            writer
+                .write(Bytes::from_static(b"c"), vec![])
+                .await
+                .unwrap();
+            let next_group_id = writer.next_group_id();
+            writer.finish().await.unwrap();
+            let mut reader = subscribed_track_reader(&server, &accepted).await;
+            let first = reader.next_object().await.unwrap().unwrap();
+            let second = reader.next_object().await.unwrap().unwrap();
+            let third = reader.next_object().await.unwrap().unwrap();
 
-        // Assert
-        assert_eq!(next_group_id, 7);
-        assert_eq!((first.group_id, first.object_id), (3, 0));
-        assert!(first.extension_headers.prior_group_id_gap().is_empty());
-        assert_eq!((second.group_id, second.object_id), (6, 0));
-        assert_eq!(second.extension_headers.prior_group_id_gap(), vec![2]);
-        assert_eq!((third.group_id, third.object_id), (6, 1));
-        assert!(third.extension_headers.prior_group_id_gap().is_empty());
+            // Assert
+            assert_eq!(next_group_id, 7);
+            assert_eq!((first.group_id, first.object_id), (3, 0));
+            assert!(first.extension_headers.prior_group_id_gap().is_empty());
+            assert_eq!((second.group_id, second.object_id), (6, 0));
+            assert_eq!(second.extension_headers.prior_group_id_gap(), vec![2]);
+            assert_eq!((third.group_id, third.object_id), (6, 1));
+            assert!(third.extension_headers.prior_group_id_gap().is_empty());
+        }
     }
 
     #[tokio::test]
     async fn a_group_the_subscriber_stopped_does_not_keep_the_next_group_from_opening() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("track-writer-stopped-group");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("track-writer-stopped-group", version).await;
+            let publisher = client.publisher();
+            let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                tokio::join!(
+                    publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                    accept_publish(&server)
+                )
+            })
             .await
             .unwrap();
-        let publisher = client.publisher();
-        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            tokio::join!(
-                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
-                accept_publish(&server)
-            )
-        })
-        .await
-        .unwrap();
-        let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
-        writer.start_group().await.unwrap();
-        writer
-            .write(Bytes::from_static(b"a"), vec![])
-            .await
-            .unwrap();
-        let mut streams = data_receiver(&server, &accepted).await;
-        drop(next_subgroup(&mut streams).await);
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            while writer
-                .write(Bytes::from_static(b"after stop"), vec![])
+            let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
+            writer.start_group().await.unwrap();
+            writer
+                .write(Bytes::from_static(b"a"), vec![])
                 .await
-                .is_ok()
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-
-        // Act
-        writer.start_group().await.unwrap();
-        writer
-            .write(Bytes::from_static(b"b"), vec![])
+                .unwrap();
+            let mut streams = data_receiver(&server, &accepted).await;
+            drop(next_subgroup(&mut streams).await);
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                while writer
+                    .write(Bytes::from_static(b"after stop"), vec![])
+                    .await
+                    .is_ok()
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
             .await
             .unwrap();
-        let mut next_stream = next_subgroup(&mut streams).await;
-        let header = next_stream.receive().await.unwrap();
-        let object = next_stream.receive().await.unwrap();
 
-        // Assert
-        let Some(Subgroup::Header(header)) = header else {
-            panic!("expected the next group's subgroup header");
-        };
-        assert_eq!(header.group_id, 8);
-        let Some(Subgroup::Object(object)) = object else {
-            panic!("expected the next group's first object");
-        };
-        assert_eq!(object.payload, Bytes::from_static(b"b"));
+            // Act
+            writer.start_group().await.unwrap();
+            writer
+                .write(Bytes::from_static(b"b"), vec![])
+                .await
+                .unwrap();
+            let mut next_stream = next_subgroup(&mut streams).await;
+            let header = next_stream.receive().await.unwrap();
+            let object = next_stream.receive().await.unwrap();
+
+            // Assert
+            let Some(Subgroup::Header(header)) = header else {
+                panic!("expected the next group's subgroup header");
+            };
+            assert_eq!(header.group_id, 8);
+            let Some(Subgroup::Object(object)) = object else {
+                panic!("expected the next group's first object");
+            };
+            assert_eq!(object.payload, Bytes::from_static(b"b"));
+        }
     }
 }

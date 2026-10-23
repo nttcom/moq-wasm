@@ -534,6 +534,13 @@ pub(crate) async fn register_and_take_data_receiver(
         .register_data_receiver(&context.connection(), request_id, track_alias)
         .await
         .unwrap();
+    take_data_receiver(context, track_alias).await
+}
+
+pub(crate) async fn take_data_receiver(
+    context: &SessionContext,
+    track_alias: u64,
+) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject> {
     context
         .receiver_map
         .lock()

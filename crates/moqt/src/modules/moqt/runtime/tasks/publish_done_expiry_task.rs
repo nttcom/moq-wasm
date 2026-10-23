@@ -70,20 +70,17 @@ mod tests {
 
     use super::PUBLISH_DONE_GRACE_PERIOD;
     use crate::{
-        Session, SessionEvent,
+        Session, SessionEvent, Version,
         modules::{
             moqt::{
                 control_plane::error_codes::PublishDoneCode,
                 runtime::dispatch::incoming_object::IncomingObject,
             },
-            test_support::{
-                register_and_take_data_receiver, spawn_connected_dual_sessions, subscription,
-            },
+            test_support::{DRAFTS, connected_sessions, take_data_receiver, within},
         },
+        object::ContentExists,
+        subscribe::SubscribeOption,
     };
-
-    const REQUEST_ID: u64 = 1;
-    const TRACK_ALIAS: u64 = 5;
 
     struct EndedSubscription {
         _client: Session,
@@ -94,22 +91,32 @@ mod tests {
         publish_done_sent_at: Instant,
     }
 
-    /// Returns with tokio time paused, so the test's sleeps advance the clock
-    /// without waiting.
-    async fn subscription_ended_by_publish_done(name: &str) -> EndedSubscription {
-        let (client, server) = spawn_connected_dual_sessions(name).await;
+    /// The server subscribes to the client, which ends the subscription with
+    /// PUBLISH_DONE. Returns with tokio time paused, so the test's sleeps
+    /// advance the clock without waiting.
+    async fn subscription_ended_by_publish_done(name: &str, version: Version) -> EndedSubscription {
+        let (client, server) = connected_sessions(name, version).await;
+        let mut subscriber = server.subscriber();
+        let (subscribed, served) = within(async {
+            tokio::join!(
+                subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+                async {
+                    let SessionEvent::Subscribe(handler) = client.receive_event().await.unwrap()
+                    else {
+                        panic!("expected SUBSCRIBE from the server");
+                    };
+                    let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+                    handler.into_subscription(track_alias)
+                }
+            )
+        })
+        .await;
         let object_receiver =
-            register_and_take_data_receiver(&server.subscriber().session, REQUEST_ID, TRACK_ALIAS)
-                .await;
+            take_data_receiver(&subscriber.session, subscribed.unwrap().track_alias()).await;
         let publish_done_sent_at = Instant::now();
         client
             .publisher()
-            .publish_done(
-                &subscription(REQUEST_ID, TRACK_ALIAS),
-                PublishDoneCode::TrackEnded,
-                0,
-                String::new(),
-            )
+            .publish_done(&served, PublishDoneCode::TrackEnded, 0, String::new())
             .await
             .unwrap();
         let SessionEvent::PublishDone(_) = server.receive_event().await.unwrap() else {
@@ -126,34 +133,43 @@ mod tests {
 
     #[tokio::test]
     async fn subscription_stays_open_during_the_grace_period() {
-        // Arrange
-        let mut subscription = subscription_ended_by_publish_done("publish-done-grace").await;
+        for version in DRAFTS {
+            // Arrange
+            let mut subscription =
+                subscription_ended_by_publish_done("publish-done-grace", version).await;
 
-        // Act
-        tokio::time::sleep_until(
-            subscription.publish_done_sent_at + PUBLISH_DONE_GRACE_PERIOD
-                - Duration::from_millis(1),
-        )
-        .await;
+            // Act
+            tokio::time::sleep_until(
+                subscription.publish_done_sent_at + PUBLISH_DONE_GRACE_PERIOD
+                    - Duration::from_millis(1),
+            )
+            .await;
 
-        // Assert
-        assert!(matches!(
-            subscription.object_receiver.try_recv(),
-            Err(TryRecvError::Empty)
-        ));
+            // Assert
+            assert!(matches!(
+                subscription.object_receiver.try_recv(),
+                Err(TryRecvError::Empty)
+            ));
+            tokio::time::resume();
+        }
     }
 
     #[tokio::test]
     async fn subscription_ends_after_the_grace_period() {
-        // Arrange
-        let mut subscription = subscription_ended_by_publish_done("publish-done-expiry").await;
+        for version in DRAFTS {
+            // Arrange
+            let mut subscription =
+                subscription_ended_by_publish_done("publish-done-expiry", version).await;
 
-        // Act
-        tokio::time::sleep(PUBLISH_DONE_GRACE_PERIOD).await;
+            // Act
+            tokio::time::sleep(PUBLISH_DONE_GRACE_PERIOD).await;
 
-        // Assert
-        let received =
-            tokio::time::timeout(Duration::from_secs(1), subscription.object_receiver.recv()).await;
-        assert!(matches!(received, Ok(None)));
+            // Assert
+            let received =
+                tokio::time::timeout(Duration::from_secs(1), subscription.object_receiver.recv())
+                    .await;
+            assert!(matches!(received, Ok(None)));
+            tokio::time::resume();
+        }
     }
 }
