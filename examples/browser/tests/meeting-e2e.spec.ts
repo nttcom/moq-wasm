@@ -423,6 +423,28 @@ test('closing the filmstrip unsubscribes the video of the members it hid', async
   }
 })
 
+test('a viewer shows the pub to sub delay of a member who only has the microphone on', async ({ browser }) => {
+  // Arrange
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-audio-only-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page, { camera: false })
+
+    // Act
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+
+    // Assert: without video, the delay comes from the audio track
+    await expectTrackStatus(bob.page.page, 'audio', 'alice', 'Subscribed', 60_000)
+    await expect(getMemberStats(bob.page.page, 'alice')).toHaveText(/pub to sub delay \d+ ms/, { timeout: 30_000 })
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
 test('multiple clients on a single relay all connect and receive video+audio', async ({ browser }) => {
   // Arrange: 全員 relay-a に接続する 3 クライアントを用意する（単一リレーで複数接続を検証）。
   const alice = await arrangeMeetingClient(browser)
