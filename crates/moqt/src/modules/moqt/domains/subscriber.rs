@@ -685,8 +685,17 @@ mod tests {
 
     use crate::{
         RequestErrorCode, RequestFailure, Session, SessionEvent, TerminationErrorCode,
-        fetch::{Fetch, FetchHandle, FetchHandler, FetchOption},
-        modules::test_support::{DISCONNECT_TIMEOUT, spawn_connected_dual_sessions, subscription},
+        fetch::{
+            Fetch, FetchCancelHandler, FetchDataReceiver, FetchDataSender, FetchHandle,
+            FetchHandler, FetchOption,
+        },
+        modules::{
+            test_support::{
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, location, read_fetch_objects,
+                spawn_connected_dual_sessions, subscription, within,
+            },
+            transport::transport_send_stream::TransportSendError,
+        },
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         },
@@ -701,15 +710,21 @@ mod tests {
         group_id: 1,
         object_id: 0,
     };
+    const TRACK: &str = "track";
+    /// Exceeds quinn's default limit of 100 open streams per type, so a FETCH
+    /// stream that is never finished or stopped stalls a later round. Client
+    /// request ids step by 2, so 150 FETCHes stay below the MAX_REQUEST_ID of
+    /// 1000 both sessions are set up with.
+    const REPEATED_FETCHES: usize = 150;
 
-    fn fetch_object() -> Object {
+    fn fetch_object(location: Location, payload: &'static [u8]) -> Object {
         Object {
-            location: START,
+            location,
             forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
             publisher_priority: 128,
             status: ObjectStatus::Normal,
             extension_headers: ExtensionHeaders::default(),
-            payload: Bytes::from_static(b"object"),
+            payload: Bytes::from_static(payload),
             ends_group: false,
         }
     }
@@ -717,16 +732,18 @@ mod tests {
     async fn start_fetch(
         client: &Session,
         server: &Session,
+        track_name: &str,
     ) -> (
         JoinHandle<Result<FetchHandle, RequestFailure>>,
         FetchHandler,
     ) {
         let mut subscriber = client.subscriber();
+        let track_name = track_name.to_string();
         let request = tokio::spawn(async move {
             subscriber
                 .fetch(
                     "ns".to_string(),
-                    "track".to_string(),
+                    track_name,
                     START,
                     END,
                     FetchOption::default(),
@@ -754,11 +771,101 @@ mod tests {
                 .contains_key(&request_id)
     }
 
+    async fn serve_fetch(
+        server: &Session,
+        handler: &FetchHandler,
+        end: Location,
+        objects: &[Object],
+    ) {
+        handler.ok(false, end).await.unwrap();
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        for object in objects {
+            sender.send_object(object).await.unwrap();
+        }
+        sender.close().await.unwrap();
+    }
+
+    async fn receive_fetch(
+        client: &Session,
+        request: JoinHandle<Result<FetchHandle, RequestFailure>>,
+    ) -> (FetchHandle, Vec<Object>) {
+        let handle = request.await.unwrap().unwrap();
+        let mut receiver = client
+            .subscriber()
+            .accept_fetch_receiver(&handle)
+            .await
+            .unwrap();
+        let objects = read_fetch_objects(&mut receiver).await;
+        (handle, objects)
+    }
+
+    async fn complete_fetch(
+        client: &Session,
+        server: &Session,
+        objects: &[Object],
+    ) -> (FetchHandle, Vec<Object>) {
+        let (request, handler) = start_fetch(client, server, TRACK).await;
+        serve_fetch(server, &handler, END, objects).await;
+        receive_fetch(client, request).await
+    }
+
+    struct OpenFetch {
+        handle: FetchHandle,
+        handler: FetchHandler,
+        sender: FetchDataSender,
+        receiver: FetchDataReceiver,
+    }
+
+    /// A FETCH answered with FETCH_OK whose stream carries `first` and stays
+    /// open.
+    async fn open_fetch(client: &Session, server: &Session, first: &Object) -> OpenFetch {
+        let (request, handler) = start_fetch(client, server, TRACK).await;
+        handler.ok(false, END).await.unwrap();
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        sender.send_object(first).await.unwrap();
+        let handle = request.await.unwrap().unwrap();
+        let receiver = client
+            .subscriber()
+            .accept_fetch_receiver(&handle)
+            .await
+            .unwrap();
+        OpenFetch {
+            handle,
+            handler,
+            sender,
+            receiver,
+        }
+    }
+
+    async fn receive_fetch_cancel(server: &Session) -> FetchCancelHandler {
+        let SessionEvent::FetchCancel(cancel) = server.receive_event().await.unwrap() else {
+            panic!("expected FETCH_CANCEL from the client");
+        };
+        cancel
+    }
+
+    async fn send_until_stopped(sender: &FetchDataSender) -> anyhow::Error {
+        loop {
+            if let Err(error) = sender.send_object(&fetch_object(START, b"unwanted")).await {
+                return error;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+
     #[tokio::test]
     async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
         // Arrange
         let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-sender").await;
-        let (request, handler) = start_fetch(&client, &server).await;
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
         handler.ok(false, END).await.unwrap();
         let fetch_sender = server
             .publisher()
@@ -773,7 +880,10 @@ mod tests {
             .accept_fetch_receiver(&fetch_handle)
             .await
             .unwrap();
-        fetch_sender.send_object(&fetch_object()).await.unwrap();
+        fetch_sender
+            .send_object(&fetch_object(START, b"object"))
+            .await
+            .unwrap();
         let object = fetch_receiver.receive().await.unwrap();
 
         // Assert
@@ -788,7 +898,7 @@ mod tests {
                 .contains_key(&fetch_handle.request_id)
         );
         assert!(
-            matches!(&object, Fetch::Object(received) if *received == fetch_object()),
+            matches!(&object, Fetch::Object(received) if *received == fetch_object(START, b"object")),
             "{object:?}"
         );
     }
@@ -798,7 +908,7 @@ mod tests {
         // Arrange
         let (client, server) =
             spawn_connected_dual_sessions("subscriber-fetch-disconnect-before-stream").await;
-        let (request, handler) = start_fetch(&client, &server).await;
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
         handler.ok(false, END).await.unwrap();
         let fetch_handle = request.await.unwrap().unwrap();
         let mut subscriber = client.subscriber();
@@ -821,7 +931,7 @@ mod tests {
         // Arrange
         let (client, server) =
             spawn_connected_dual_sessions("subscriber-fetch-max-cache-duration").await;
-        let (request, mut handler) = start_fetch(&client, &server).await;
+        let (request, mut handler) = start_fetch(&client, &server, TRACK).await;
         handler.max_cache_duration = Some(2_000);
 
         // Act
@@ -836,7 +946,7 @@ mod tests {
     async fn rejected_fetch_releases_its_pending_state() {
         // Arrange
         let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-rejected").await;
-        let (request, handler) = start_fetch(&client, &server).await;
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
 
         // Act
         handler
@@ -854,7 +964,7 @@ mod tests {
     async fn abandoned_fetch_releases_its_pending_state() {
         // Arrange
         let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-abandoned").await;
-        let (request, handler) = start_fetch(&client, &server).await;
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
 
         // Act
         request.abort();
@@ -862,6 +972,190 @@ mod tests {
 
         // Assert
         assert!(!has_pending_fetch(&client, handler.request_id));
+    }
+
+    #[tokio::test]
+    async fn repeated_fetches_on_one_session_each_end_and_release_their_state() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-repeated").await;
+        let with_objects = [
+            fetch_object(location(0, 0), b"first"),
+            fetch_object(location(0, 1), b"second"),
+        ];
+        let rounds: Vec<&[Object]> = (0..REPEATED_FETCHES)
+            .map(|round| {
+                if round % 2 == 0 {
+                    &with_objects[..]
+                } else {
+                    &[]
+                }
+            })
+            .collect();
+
+        // Act
+        let mut fetched = Vec::new();
+        for (round, objects) in rounds.iter().enumerate() {
+            let completed =
+                tokio::time::timeout(HANDSHAKE_TIMEOUT, complete_fetch(&client, &server, objects))
+                    .await
+                    .unwrap_or_else(|_| panic!("FETCH round {round} did not complete"));
+            fetched.push(completed);
+        }
+
+        // Assert
+        for (round, ((_, received), sent)) in fetched.iter().zip(&rounds).enumerate() {
+            assert_eq!(received.as_slice(), *sent, "round {round}");
+        }
+        for (handle, _) in &fetched {
+            assert!(!has_pending_fetch(&client, handle.request_id));
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_ok_after_the_caller_stopped_waiting_cancels_the_fetch_and_later_fetches_succeed()
+    {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-late-ok").await;
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
+        request.abort();
+        let _ = request.await;
+        let later_objects = [fetch_object(START, b"later")];
+
+        // Act
+        handler.ok(false, END).await.unwrap();
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        let cancel = within(receive_fetch_cancel(&server)).await;
+        let stopped = within(send_until_stopped(&sender)).await;
+        let (_, later) = within(complete_fetch(&client, &server, &later_objects)).await;
+
+        // Assert
+        assert_eq!(cancel.request_id(), handler.request_id);
+        assert!(
+            TransportSendError::is_stopped_by_peer(&stopped),
+            "{stopped:#}"
+        );
+        assert!(!has_pending_fetch(&client, handler.request_id));
+        assert_eq!(later, later_objects);
+    }
+
+    #[tokio::test]
+    async fn fetches_answered_in_reverse_order_each_get_their_own_response_and_objects() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-reverse-order").await;
+        let tracks = ["track-0", "track-1", "track-2"];
+        let mut requests = Vec::new();
+        for track in tracks {
+            requests.push(start_fetch(&client, &server, track).await);
+        }
+        let end_of = |index: usize| location(index as u64 + 1, 0);
+        let object_of =
+            |index: usize| fetch_object(location(index as u64, 0), tracks[index].as_bytes());
+
+        // Act
+        for (index, (_, handler)) in requests.iter().enumerate().rev() {
+            within(serve_fetch(
+                &server,
+                handler,
+                end_of(index),
+                &[object_of(index)],
+            ))
+            .await;
+        }
+        let mut fetched = Vec::new();
+        for (request, handler) in requests {
+            fetched.push((
+                handler.request_id,
+                within(receive_fetch(&client, request)).await,
+            ));
+        }
+
+        // Assert
+        for (index, (request_id, (handle, objects))) in fetched.into_iter().enumerate() {
+            assert_eq!(handle.request_id, request_id, "{}", tracks[index]);
+            assert_eq!(handle.end_location, end_of(index), "{}", tracks[index]);
+            assert_eq!(objects, [object_of(index)], "{}", tracks[index]);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_fetch_leaves_the_other_fetches_on_the_session_running() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-cancel-one").await;
+        let firsts = [b"a0", b"b0", b"c0"].map(|payload| fetch_object(location(0, 0), payload));
+        let seconds = [b"a1", b"c1"].map(|payload| fetch_object(location(0, 1), payload));
+        let mut kept_a = open_fetch(&client, &server, &firsts[0]).await;
+        let cancelled = open_fetch(&client, &server, &firsts[1]).await;
+        let mut kept_c = open_fetch(&client, &server, &firsts[2]).await;
+
+        // Act
+        client
+            .subscriber()
+            .fetch_cancel(&cancelled.handle)
+            .await
+            .unwrap();
+        drop(cancelled.receiver);
+        let cancel = within(receive_fetch_cancel(&server)).await;
+        let stopped = within(send_until_stopped(&cancelled.sender)).await;
+        for (kept, second) in [(&kept_a, &seconds[0]), (&kept_c, &seconds[1])] {
+            kept.sender.send_object(second).await.unwrap();
+            kept.sender.close().await.unwrap();
+        }
+        let received_a = within(read_fetch_objects(&mut kept_a.receiver)).await;
+        let received_c = within(read_fetch_objects(&mut kept_c.receiver)).await;
+
+        // Assert
+        assert_eq!(cancel.request_id(), cancelled.handler.request_id);
+        assert!(
+            TransportSendError::is_stopped_by_peer(&stopped),
+            "{stopped:#}"
+        );
+        assert_eq!(received_a, [firsts[0].clone(), seconds[0].clone()]);
+        assert_eq!(received_c, [firsts[2].clone(), seconds[1].clone()]);
+    }
+
+    #[tokio::test]
+    async fn fetch_fails_as_soon_as_the_peer_disconnects_without_answering() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-disconnect-response").await;
+        let (request, _handler) = start_fetch(&client, &server, TRACK).await;
+
+        // Act
+        server.close_with_error(TerminationErrorCode::NoError, "closing");
+        let fetched = tokio::time::timeout(DISCONNECT_TIMEOUT, request).await;
+
+        // Assert
+        let fetched = fetched
+            .expect("the FETCH wait ends once the peer disconnects")
+            .unwrap();
+        assert!(
+            matches!(fetched, Err(RequestFailure::SessionClosed)),
+            "{fetched:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_stream_fails_instead_of_ending_when_the_peer_disconnects_mid_stream() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-disconnect-mid-stream").await;
+        let mut open = open_fetch(&client, &server, &fetch_object(START, b"first")).await;
+        let Fetch::Object(_) = within(open.receiver.receive()).await.unwrap() else {
+            panic!("expected the first object of the FETCH");
+        };
+
+        // Act
+        server.close_with_error(TerminationErrorCode::NoError, "closing");
+        let received = tokio::time::timeout(DISCONNECT_TIMEOUT, open.receiver.receive()).await;
+
+        // Assert
+        let received = received.expect("the receive wait ends once the peer disconnects");
+        assert!(received.is_err(), "{received:?}");
     }
 
     #[tokio::test]

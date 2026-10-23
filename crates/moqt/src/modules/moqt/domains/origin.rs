@@ -640,7 +640,7 @@ async fn send_placed(
 
 #[cfg(test)]
 mod tests {
-    use std::{future::Future, time::Duration};
+    use std::time::Duration;
 
     use bytes::Bytes;
 
@@ -650,8 +650,8 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, accept_publish, read_fetch_objects, rejection,
-            spawn_connected_dual_sessions, subscribed_track_reader,
+            accept_publish, read_fetch_objects, rejection, spawn_connected_dual_sessions,
+            subscribed_track_reader, within,
         },
         object::{DataReceiver, GroupOrder, Object, Subgroup},
         subscribe::{FilterType, SubscribeOption},
@@ -680,12 +680,6 @@ mod tests {
             client,
             server,
         }
-    }
-
-    async fn within<F: Future>(future: F) -> F::Output {
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, future)
-            .await
-            .expect("the exchange timed out")
     }
 
     fn plain(group: GroupBoundary, payload: &'static [u8]) -> OutgoingObject {
