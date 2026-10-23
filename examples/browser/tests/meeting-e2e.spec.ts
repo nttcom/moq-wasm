@@ -672,3 +672,54 @@ test('an invalid token is rejected by the relay with a surfaced reason', async (
     await client.context.close()
   }
 })
+
+// Tentative bounds from one local run with two native relays on one machine; tighten once CI runs show the spread.
+// Closing a browser send stream does not await the FIN's ACK. Through a remote relay the audio EndOfGroup and
+// close took p50 57 / max 261 ms before the fix, p50 0.2 / max 2.1 ms after. Over loopback a regression adds
+// only the relay's round trip (0.4-8 ms, measured with the fix reverted), so this bound catches it only at a real RTT.
+const MAX_AUDIO_END_OF_GROUP_MS = 50
+// A stream whose header has not arrived does not hold back later streams. So the audio group that opens every
+// second and the video frames keep their pace: 20 ms audio chunks, 15 fps video.
+const MAX_AUDIO_ARRIVAL_GAP_MS = 250
+const MAX_VIDEO_ARRIVAL_GAP_MS = 500
+// Longer than `ARRIVAL_GAP_WINDOW_MS`, so the subscription start has dropped out of the window.
+const TALK_MS = 12_000
+
+test('rotating the audio group neither stalls the sender nor gaps the receiver', async ({ browser }) => {
+  // Arrange: alice publishes on relay-a; bob plays her on relay-b.
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-audio-group-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'b')
+    await enableMedia(bob.page)
+    await expectCatalogSubscribed(bob.page.page, 'alice')
+    await subscribeAndExpectMedia(bob.page.page, 'alice')
+
+    // Act: talk long enough for a dozen audio groups to close.
+    await bob.page.page.waitForTimeout(TALK_MS)
+
+    // Assert: sending the EndOfGroup and closing its stream never waited on the relay.
+    const endOfGroupMs = await alice.page.page.evaluate(
+      () =>
+        (globalThis as unknown as { audioEndOfGroupTiming: { durationsMs: number[] } }).audioEndOfGroupTiming
+          .durationsMs
+    )
+    const stats = await getMemberStats(bob.page.page, 'alice').textContent()
+    console.log(JSON.stringify({ endOfGroupMs: endOfGroupMs.map((ms) => Math.round(ms * 10) / 10), stats }))
+    expect(endOfGroupMs.length).toBeGreaterThanOrEqual(8)
+    expect(Math.max(...endOfGroupMs)).toBeLessThan(MAX_AUDIO_END_OF_GROUP_MS)
+
+    // Assert: bob's audio and video arrivals never paused across the group boundaries.
+    const gaps = /arrival gap A (\d+) \/ V (\d+) ms/.exec(stats ?? '')
+    expect(gaps).not.toBeNull()
+    expect(Number(gaps![1])).toBeLessThan(MAX_AUDIO_ARRIVAL_GAP_MS)
+    expect(Number(gaps![2])).toBeLessThan(MAX_VIDEO_ARRIVAL_GAP_MS)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})

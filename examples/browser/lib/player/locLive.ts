@@ -9,6 +9,8 @@ import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManage
 import type { MediaCatalogTrack } from '../msf/catalog'
 
 const PRESENTATION_MARGIN_MS = 200
+/// An arrival more than this behind the newest one no longer counts towards the longest gap.
+const ARRIVAL_GAP_WINDOW_MS = 10_000
 
 export type DecodedFrameIds = { groupId: bigint; objectId: bigint }
 
@@ -34,6 +36,9 @@ export type LiveStats = {
   audioBreaks: number
   videoDrops: string
   shedMs: number
+  /// Longest wait between two objects of that kind within the last
+  /// `ARRIVAL_GAP_WINDOW_MS`; undefined until two have arrived.
+  maxArrivalGapMs: Record<MediaKind, number | undefined>
 }
 
 export class LocLive {
@@ -46,6 +51,7 @@ export class LocLive {
     type: 'module'
   })
   private readonly decodedFrameIds = new Map<number, DecodedFrameIds>()
+  private readonly arrivalsMs: Record<MediaKind, number[]> = { video: [], audio: [] }
   receivedKbps = 0
   receivedAudioKbps = 0
   shownCaptureMicros: number | undefined
@@ -108,6 +114,11 @@ export class LocLive {
   }
 
   push(kind: MediaKind, groupId: bigint, object: SubgroupObjectMessageWithLoc): void {
+    const arrivals = this.arrivalsMs[kind]
+    arrivals.push(performance.now())
+    while (arrivals[0] < arrivals[arrivals.length - 1] - ARRIVAL_GAP_WINDOW_MS) {
+      arrivals.shift()
+    }
     const objectPayload = new Uint8Array(object.objectPayload)
     const message: SubgroupWorkerMessage = {
       type: 'object',
@@ -134,6 +145,8 @@ export class LocLive {
     this.shownCaptureMicros = undefined
     this.picture.detach()
     this.decodedFrameIds.clear()
+    this.arrivalsMs.video.length = 0
+    this.arrivalsMs.audio.length = 0
     this.playout.reset()
   }
 
@@ -160,7 +173,8 @@ export class LocLive {
       syncOffsetMs: this.playout.syncOffsetMs(),
       audioBreaks: this.playout.audioBreaks(),
       videoDrops: this.playout.videoDrops(),
-      shedMs: this.playout.shedMs()
+      shedMs: this.playout.shedMs(),
+      maxArrivalGapMs: { video: longestGapMs(this.arrivalsMs.video), audio: longestGapMs(this.arrivalsMs.audio) }
     }
   }
 
@@ -202,6 +216,15 @@ export function formatLiveStats(stats: LiveStats): string {
   return (
     `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps)} kbps · audio ${Math.round(stats.receivedAudioKbps)} kbps` +
     ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops}` +
-    ` · shed ${Math.round(stats.shedMs)} ms`
+    ` · shed ${Math.round(stats.shedMs)} ms` +
+    ` · arrival gap A ${formatGap(stats.maxArrivalGapMs.audio)} / V ${formatGap(stats.maxArrivalGapMs.video)} ms`
   )
+}
+
+function longestGapMs(arrivalsMs: number[]): number | undefined {
+  return arrivalsMs.length < 2 ? undefined : Math.max(...arrivalsMs.slice(1).map((ms, i) => ms - arrivalsMs[i]))
+}
+
+function formatGap(gapMs: number | undefined): string {
+  return gapMs === undefined ? '--' : String(Math.round(gapMs))
 }

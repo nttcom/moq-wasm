@@ -4,6 +4,11 @@ import { type AudioLevel, buildLocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
 import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
 
+/// How long each EndOfGroup object took to send, including the close of its
+/// stream. Only the meeting E2E reads it, through `globalThis`; no UI shows it.
+export const audioEndOfGroupTiming: { durationsMs: number[] } = { durationsMs: [] }
+;(globalThis as { audioEndOfGroupTiming?: typeof audioEndOfGroupTiming }).audioEndOfGroupTiming = audioEndOfGroupTiming
+
 export interface AudioChunkSendOptions {
   chunk: EncodedAudioChunk
   captureTimestampMicros?: number
@@ -64,6 +69,7 @@ export async function sendAudioEndOfGroupViaMoqt(
     if (!audio.hasHeaderSent(alias, 0)) {
       continue
     }
+    const startedAtMs = performance.now()
     await client.sendSubgroupObject(
       alias,
       audio.groupId,
@@ -73,5 +79,6 @@ export async function sendAudioEndOfGroupViaMoqt(
       new Uint8Array(0),
       undefined
     )
+    audioEndOfGroupTiming.durationsMs.push(performance.now() - startedAtMs)
   }
 }
