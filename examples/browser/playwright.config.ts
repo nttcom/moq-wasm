@@ -36,7 +36,8 @@ export default defineConfig({
         `--ignore-certificate-errors-spki-list=${certificateSpki}`,
         // Fallback for environments where SPKI pinning alone is insufficient.
         '--ignore-certificate-errors',
-        '--use-fake-device-for-media-stream',
+        // getDisplayMedia captures the calling tab, at its viewport size, instead of a fake monitor.
+        '--use-fake-device-for-media-stream=display-media-type=browser',
         '--use-file-for-fake-video-capture=' + fakeVideoPath,
         '--use-fake-ui-for-media-stream',
         '--autoplay-policy=no-user-gesture-required',
