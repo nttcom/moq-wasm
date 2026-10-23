@@ -12,11 +12,14 @@ use tokio::{
     time::Instant,
 };
 
-use moqt::object::ForwardingPreference;
+use moqt::{TrackProperties, object::ForwardingPreference};
 
-use crate::modules::data_plane::cache::{
-    cached_object::CachedObject,
-    disk_cache::{DiskSink, StoredPayload},
+use crate::modules::{
+    data_plane::cache::{
+        cached_object::CachedObject,
+        disk_cache::{DiskSink, StoredPayload},
+    },
+    domain::session_id::SessionId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +60,11 @@ pub(crate) struct TrackCache {
     ingress_stats: IngressStats,
     payload_bytes: AtomicU64,
     disk: Option<DiskSink>,
+    /// The track properties of the latest SUBSCRIBE_OK, PUBLISH or FETCH_OK
+    /// of the newest publisher an ingest started from, by the rule of
+    /// `UpstreamTrack::track_properties`; a FETCH served from the cache once
+    /// no publisher is left answers with them (draft-18 §2.5).
+    track_properties: std::sync::Mutex<Option<(SessionId, TrackProperties)>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -83,7 +91,36 @@ impl TrackCache {
             ingress_stats: IngressStats::default(),
             payload_bytes: AtomicU64::new(0),
             disk,
+            track_properties: std::sync::Mutex::default(),
         }
+    }
+
+    /// Replaces the cached set whole, unless an older publisher sent it:
+    /// draft-18 §2.5 forbids merging it with the previous one.
+    pub(crate) fn record_track_properties(
+        &self,
+        publisher_session_id: SessionId,
+        track_properties: TrackProperties,
+    ) {
+        let mut recorded = self
+            .track_properties
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if recorded
+            .as_ref()
+            .is_none_or(|(newest, _)| publisher_session_id >= *newest)
+        {
+            *recorded = Some((publisher_session_id, track_properties));
+        }
+    }
+
+    pub(crate) fn track_properties(&self) -> TrackProperties {
+        self.track_properties
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|(_, track_properties)| track_properties.clone())
+            .unwrap_or_default()
     }
 
     pub(crate) fn ingress_stats(&self) -> &IngressStats {

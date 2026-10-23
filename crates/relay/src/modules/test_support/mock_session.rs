@@ -687,10 +687,13 @@ impl SubscribeHandler for MockSubscribeHandler {
 }
 
 /// `joining_rule` stands in for the session draft's Joining FETCH rule.
+#[derive(Clone)]
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
+    /// The track properties of each FETCH_OK sent.
+    pub(crate) fetch_oks: Arc<Mutex<Vec<TrackProperties>>>,
 }
 
 impl MockFetchHandler {
@@ -699,6 +702,7 @@ impl MockFetchHandler {
         Self {
             fetch_params,
             joining_rule: |_| Ok(()),
+            fetch_oks: Arc::default(),
         }
     }
 }
@@ -745,8 +749,9 @@ impl FetchHandler for MockFetchHandler {
         &self,
         _end_of_track: bool,
         _end_location: moqt::object::Location,
-        _track_properties: TrackProperties,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
+        self.fetch_oks.lock().unwrap().push(track_properties);
         Ok(())
     }
 

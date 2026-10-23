@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use moqt::TrackProperties;
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinHandle, JoinSet},
@@ -21,6 +22,8 @@ pub(crate) struct IngestStart {
     pub(crate) receiver: Box<dyn DataReceiver>,
     pub(crate) track_span: Span,
     pub(crate) stamp: CacheStamp,
+    /// What the SUBSCRIBE_OK or PUBLISH said about the track.
+    pub(crate) track_properties: TrackProperties,
 }
 
 pub(crate) enum IngestCommand {
@@ -70,8 +73,13 @@ impl TrackIngestTask {
                             let ingest_id = next_ingest_id;
                             let (stop_sender, stop_receiver) = watch::channel(false);
                             stop_senders.insert(ingest_key.clone(), (ingest_id, stop_sender));
+                            let cache = cache_store.get_or_create(&start.track_key);
+                            cache.record_track_properties(
+                                start.publisher_session_id,
+                                start.track_properties,
+                            );
                             let ingest = TrackIngest {
-                                cache: cache_store.get_or_create(&start.track_key),
+                                cache,
                                 track_key: start.track_key,
                                 publisher_session_id: start.publisher_session_id,
                                 session_event_sender: session_event_sender.clone(),
@@ -134,7 +142,9 @@ impl Drop for TrackIngestTask {
 mod tests {
     use super::*;
     use crate::modules::test_support::relay_harness::{
-        UpstreamTrack, fixtures::location, wait_largest_location,
+        UpstreamTrack,
+        fixtures::{location, subscription::unknown_track_properties},
+        wait_largest_location,
     };
 
     const FIRST_PUBLISHER: SessionId = 1;
@@ -165,6 +175,17 @@ mod tests {
         }
 
         async fn start(&self, publisher_session_id: SessionId) -> UpstreamTrack {
+            self.start_carrying(publisher_session_id, moqt::TrackProperties::default())
+                .await
+        }
+
+        /// Starts an ingest whose SUBSCRIBE_OK or PUBLISH said
+        /// `track_properties`.
+        async fn start_carrying(
+            &self,
+            publisher_session_id: SessionId,
+            track_properties: moqt::TrackProperties,
+        ) -> UpstreamTrack {
             let (upstream, receiver) = UpstreamTrack::channel();
             self.command_sender
                 .send(IngestCommand::Start(IngestStart {
@@ -173,6 +194,7 @@ mod tests {
                     receiver,
                     track_span: Span::none(),
                     stamp: CacheStamp::default(),
+                    track_properties,
                 }))
                 .await
                 .unwrap();
@@ -210,6 +232,60 @@ mod tests {
         stream.object(0);
         // Assert
         context.wait_largest_location(location(0, 0)).await;
+    }
+
+    #[tokio::test]
+    async fn the_track_properties_of_the_latest_ingest_replace_the_cached_ones() {
+        // Arrange
+        let context = IngestContext::new();
+        let _first = context
+            .start_carrying(FIRST_PUBLISHER, unknown_track_properties(1))
+            .await;
+
+        // Act
+        let second = context
+            .start_carrying(SECOND_PUBLISHER, unknown_track_properties(2))
+            .await;
+        let stream = second.open_stream();
+        stream.header(0);
+        stream.object(0);
+        context.wait_largest_location(location(0, 0)).await;
+
+        // Assert: draft-18 §2.5, the most recent set replaces the cached one
+        assert_eq!(
+            context
+                .cache_store
+                .get_or_create(&track_key())
+                .track_properties(),
+            unknown_track_properties(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_older_publishers_later_ingest_keeps_the_newest_publishers_track_properties() {
+        // Arrange
+        let context = IngestContext::new();
+        let _second = context
+            .start_carrying(SECOND_PUBLISHER, unknown_track_properties(2))
+            .await;
+
+        // Act
+        let first = context
+            .start_carrying(FIRST_PUBLISHER, unknown_track_properties(1))
+            .await;
+        let stream = first.open_stream();
+        stream.header(0);
+        stream.object(0);
+        context.wait_largest_location(location(0, 0)).await;
+
+        // Assert: the newest publisher's set, which SUBSCRIBE_OK carries too
+        assert_eq!(
+            context
+                .cache_store
+                .get_or_create(&track_key())
+                .track_properties(),
+            unknown_track_properties(2)
+        );
     }
 
     #[tokio::test]
