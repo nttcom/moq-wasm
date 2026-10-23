@@ -48,12 +48,14 @@ async fn watch(args: &SubscribeArgs) -> Result<Watching> {
     let session = &connection.session;
 
     // Subscribe to both tracks before reading either so NextGroupStart
-    // catches the first media group of a burst publisher.
+    // catches the first media group of a burst publisher. The catalog's
+    // joining FETCH may only join a Largest Object subscription (draft-14
+    // §9.16.2).
     let catalog_subscription = subscribe(
         session,
         &track.namespace,
         msf::CATALOG_TRACK_NAME,
-        FilterType::NextGroupStart,
+        FilterType::LargestObject,
     )
     .await?;
     info!(

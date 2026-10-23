@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
-use moqt::Session;
+use moqt::{Session, subscribe::FilterType};
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use tokio::sync::mpsc;
 
@@ -35,7 +35,15 @@ pub struct SelectedTracks {
 
 impl BroadcastReader {
     pub async fn run(session: &Session, namespace: &str) -> Result<Self> {
-        let catalog_subscription = subscribe(session, namespace, msf::CATALOG_TRACK_NAME).await?;
+        // A joining FETCH may only join a Largest Object subscription
+        // (draft-ietf-moq-transport-14 §9.16.2).
+        let catalog_subscription = subscribe(
+            session,
+            namespace,
+            msf::CATALOG_TRACK_NAME,
+            FilterType::LargestObject,
+        )
+        .await?;
         let catalog = read_catalog(session, &catalog_subscription).await?;
         let catalog: Catalog = serde_json::from_slice(&catalog).context("parse catalog json")?;
         let tracks = select_tracks(&catalog)?;
@@ -67,7 +75,9 @@ impl BroadcastReader {
         // NextGroupStart begin the next track one group later.
         let mut subscriptions = Vec::new();
         for (name, kind) in kinds {
-            let subscription = subscribe(session, namespace, &name).await?;
+            // NextGroupStart begins a media track at a keyframe.
+            let subscription =
+                subscribe(session, namespace, &name, FilterType::NextGroupStart).await?;
             subscriptions.push((name, kind, subscription));
         }
         let mut tasks = Vec::new();

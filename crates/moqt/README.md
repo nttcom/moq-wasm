@@ -92,7 +92,7 @@ while let Some(object) = reader.next_object().await? {
 `FilterType::NextGroupStart` starts at the next group, so a video track begins
 at a key frame when the publisher starts each group with one.
 `FilterType::LargestObject` (the default) starts at the object after the
-latest one (draft-14 §5.1.2), so a track that only changes occasionally shows
+latest one (draft-14 §9.7), so a track that only changes occasionally shows
 nothing until its next object.
 
 ## Modules
