@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto'
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 const verifyUrl = process.env.CONSOLE_E2E_VERIFY_URL ?? 'http://127.0.0.1:8081/verify'
 
@@ -39,15 +39,34 @@ async function keepShownSecret(page: Page): Promise<string> {
 
 const sidebar = (page: Page) => page.locator('aside')
 
+export const appPages = ['概要', '認証（secret）', 'トークン発行'] as const
+
+type AppPage = (typeof appPages)[number]
+
+export async function openAppPage(page: Page, label: AppPage): Promise<void> {
+  await sidebar(page).getByRole('navigation', { name: 'メニュー' }).getByRole('button', { name: label }).click()
+}
+
+export async function openAppSwitcher(page: Page): Promise<Locator> {
+  await sidebar(page).locator('button[aria-haspopup="menu"]').click()
+  return page.getByRole('menu')
+}
+
+export async function selectApp(page: Page, appId: string): Promise<void> {
+  const menu = await openAppSwitcher(page)
+  await menu.getByRole('menuitem', { name: appId }).click()
+}
+
 export async function createApp(page: Page, name: string): Promise<string> {
-  await page.getByRole('button', { name: 'app を作成' }).first().click()
+  const menu = await openAppSwitcher(page)
+  await menu.getByRole('menuitem', { name: 'app を作成' }).click()
   await page.getByLabel('app 名').fill(name)
   await page.getByRole('button', { name: '作成して secret を表示' }).click()
   return keepShownSecret(page)
 }
 
 export async function issueToken(page: Page, path: string): Promise<string> {
-  await sidebar(page).getByRole('button', { name: 'トークン発行' }).click()
+  await openAppPage(page, 'トークン発行')
   await page.getByPlaceholder('live/room-1').fill(path)
   await page.getByRole('button', { name: 'トークンを発行' }).click()
   const dialog = page.getByRole('dialog', { name: 'トークンを発行しました' })
@@ -57,7 +76,7 @@ export async function issueToken(page: Page, path: string): Promise<string> {
 }
 
 export async function rotateSecret(page: Page): Promise<string> {
-  await sidebar(page).getByRole('button', { name: '認証（secret）' }).click()
+  await openAppPage(page, '認証（secret）')
   await page.getByRole('button', { name: '作り直す' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '作り直す' }).click()
   await expect(page.getByRole('dialog', { name: '新しい secret' })).toBeVisible()
@@ -65,7 +84,7 @@ export async function rotateSecret(page: Page): Promise<string> {
 }
 
 export async function deleteApp(page: Page): Promise<void> {
-  await sidebar(page).getByRole('button', { name: '概要' }).click()
+  await openAppPage(page, '概要')
   await page.getByRole('button', { name: 'app を削除' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '削除する' }).click()
 }
