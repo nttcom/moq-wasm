@@ -25,7 +25,8 @@ use crate::{
     },
     object::{
         DataReceiver, DatagramReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
-        Location, Object, ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender, VariantType,
+        Location, Object, ObjectStatus, StreamDataReceiver, StreamDataReceiverFactory,
+        StreamDataSenderFactory, Subgroup, SubgroupObjectSender, SubgroupStart, VariantType,
     },
     publish::PublishOption,
     server::Handshake,
@@ -252,13 +253,61 @@ pub(crate) async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'s
         .unwrap();
 }
 
+pub(crate) async fn send_subgroup_object(
+    session: &Session,
+    subscription: &Subscription,
+    object: &Object,
+) {
+    let ForwardingPreference::Subgroup { subgroup_id } = object.forwarding else {
+        panic!("expected an object forwarded on a subgroup stream");
+    };
+    let mut sender = session
+        .publisher()
+        .create_stream(subscription)
+        .next()
+        .await
+        .unwrap()
+        .start(SubgroupStart {
+            group_id: object.location.group_id,
+            subgroup_id,
+            publisher_priority: object.publisher_priority,
+            ends_group: false,
+        })
+        .await
+        .unwrap();
+    sender.send_object(object).await.unwrap();
+    sender.close().await.unwrap();
+}
+
+pub(crate) async fn read_subgroup_objects(receiver: &mut StreamDataReceiver) -> Vec<Object> {
+    let mut objects = Vec::new();
+    while let Some(received) = receiver.receive().await.unwrap() {
+        if let Subgroup::Object(object) = received {
+            objects.push(object);
+        }
+    }
+    objects
+}
+
 /// The first subgroup stream of `subscription`; resolves once a header has
 /// arrived.
 pub(crate) async fn first_subgroup_stream(
     server: &Session,
     subscription: &Subscription,
 ) -> crate::object::StreamDataReceiver {
-    let DataReceiver::Stream(mut factory) = server
+    subgroup_receiver(server, subscription)
+        .await
+        .next()
+        .await
+        .unwrap()
+}
+
+/// Resolves once the first subgroup header has arrived; call after sending it.
+pub(crate) async fn subgroup_receiver(
+    server: &Session,
+    subscription: &Subscription,
+) -> StreamDataReceiverFactory {
+    let DataReceiver::Stream(factory) = server
         .subscriber()
         .accept_data_receiver(subscription)
         .await
@@ -266,7 +315,7 @@ pub(crate) async fn first_subgroup_stream(
     else {
         panic!("expected a subgroup stream receiver");
     };
-    factory.next().await.unwrap()
+    factory
 }
 
 /// The data receiver resolves only once the first object has arrived, so
@@ -292,15 +341,7 @@ pub(crate) async fn subscribed_track_reader(
     server: &Session,
     subscription: &Subscription,
 ) -> TrackReader {
-    let DataReceiver::Stream(factory) = server
-        .subscriber()
-        .accept_data_receiver(subscription)
-        .await
-        .unwrap()
-    else {
-        panic!("expected a subgroup stream receiver");
-    };
-    TrackReader::new(factory)
+    TrackReader::new(subgroup_receiver(server, subscription).await)
 }
 
 pub(crate) async fn read_fetch_objects(
