@@ -583,9 +583,8 @@ mod tests {
             Self::spawn_gated(name, None, None)
         }
 
-        /// PUBLISH_NAMESPACE is answered only once `namespace_gate` fires,
-        /// which holds a publisher moving here in the middle of the move. The
-        /// catalog track is read only once `catalog_gate` fires.
+        /// PUBLISH_NAMESPACE is answered only once `namespace_gate` fires;
+        /// the catalog track is read only once `catalog_gate` fires.
         fn spawn_gated(
             name: &str,
             namespace_gate: Option<oneshot::Receiver<()>>,
@@ -609,10 +608,14 @@ mod tests {
                         SessionEvent::PublishNamespace(handler) => {
                             let _ = request_sender
                                 .send(format!("PUBLISH_NAMESPACE {}", handler.track_namespace));
-                            if let Some(gate) = namespace_gate.take() {
-                                let _ = gate.await;
-                            }
-                            handler.ok().await.unwrap();
+                            // Answered aside, so requests sent meanwhile are still recorded
+                            let gate = namespace_gate.take();
+                            tokio::spawn(async move {
+                                if let Some(gate) = gate {
+                                    let _ = gate.await;
+                                }
+                                handler.ok().await.unwrap();
+                            });
                         }
                         SessionEvent::Publish(handler) => {
                             let _ = request_sender.send(format!(
@@ -758,16 +761,21 @@ mod tests {
         OutgoingObject::plain(GroupBoundary::Within, Bytes::from_static(b"delta"))
     }
 
-    async fn connected_broadcast(relay: &FakeRelay) -> (RelayConnection, Broadcast) {
-        let connection = RelayConnection::new(Some(MoqtTarget {
+    fn connection_to(relay: &FakeRelay) -> RelayConnection {
+        RelayConnection::new(Some(MoqtTarget {
             url: relay.url.clone(),
             auth_token: None,
             verify_certificate: false,
-        }));
-        let broadcast = Broadcast::new(
-            connection.clone(),
-            vec!["live".to_string(), "cam".to_string()],
-        );
+        }))
+    }
+
+    fn live_cam(connection: RelayConnection) -> Broadcast {
+        Broadcast::new(connection, vec!["live".to_string(), "cam".to_string()])
+    }
+
+    async fn connected_broadcast(relay: &FakeRelay) -> (RelayConnection, Broadcast) {
+        let connection = connection_to(relay);
+        let broadcast = live_cam(connection.clone());
         broadcast
             .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
             .await
@@ -788,12 +796,7 @@ mod tests {
         // Arrange: the broadcast announces and publishes its catalog on relay A
         let mut relay_a = FakeRelay::spawn("goaway-a");
         let mut relay_b = FakeRelay::spawn("goaway-b");
-        let connection = RelayConnection::new(Some(MoqtTarget {
-            url: relay_a.url.clone(),
-            auth_token: None,
-            verify_certificate: false,
-        }));
-        let broadcast = Broadcast::new(connection, vec!["live".to_string(), "cam".to_string()]);
+        let broadcast = live_cam(connection_to(&relay_a));
         broadcast
             .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
             .await
@@ -851,15 +854,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_track_is_published_only_after_the_relay_accepts_its_namespace() {
+        // Arrange: the relay holds its PUBLISH_NAMESPACE_OK
+        let (accept_namespace, namespace_gate) = oneshot::channel();
+        let mut relay =
+            FakeRelay::spawn_gated("namespace-before-publish", Some(namespace_gate), None);
+        let broadcast = live_cam(connection_to(&relay));
+        let catalog_update = tokio::spawn(async move {
+            broadcast
+                .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+                .await
+        });
+        relay.wait_for_request("PUBLISH_NAMESPACE live/cam").await;
+
+        // Act
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let before_ok = relay.received_requests();
+        let _ = accept_namespace.send(());
+        relay
+            .wait_for_request(&format!("PUBLISH live/cam/{CATALOG_TRACK_NAME}"))
+            .await;
+
+        // Assert
+        assert_eq!(before_ok, Vec::<String>::new());
+        tokio::time::timeout(TEST_TIMEOUT, catalog_update)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn go_away_with_an_unreachable_relay_keeps_the_current_session() {
         // Arrange
         let mut relay_a = FakeRelay::spawn("goaway-unreachable");
-        let connection = RelayConnection::new(Some(MoqtTarget {
-            url: relay_a.url.clone(),
-            auth_token: None,
-            verify_certificate: false,
-        }));
-        let broadcast = Broadcast::new(connection, vec!["live".to_string()]);
+        let broadcast = Broadcast::new(connection_to(&relay_a), vec!["live".to_string()]);
         broadcast.announce().await.unwrap();
         let session_a = relay_a.session().await;
 
@@ -964,14 +993,7 @@ mod tests {
         // waits until the relay reads the catalog track
         let (release_catalog, catalog_gate) = oneshot::channel();
         let mut relay = FakeRelay::spawn_gated("catalog-concurrent", None, Some(catalog_gate));
-        let broadcast = Broadcast::new(
-            RelayConnection::new(Some(MoqtTarget {
-                url: relay.url.clone(),
-                auth_token: None,
-                verify_certificate: false,
-            })),
-            vec!["live".to_string(), "cam".to_string()],
-        );
+        let broadcast = live_cam(connection_to(&relay));
         let large_video = VideoTrackInfo {
             init_segment: "A".repeat(2 * 1024 * 1024),
             ..video_track_info()
