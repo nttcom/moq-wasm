@@ -23,10 +23,12 @@ import {
   waitForHttpOk,
 } from "./helpers.mjs";
 import { resolveLocalRelayUrl } from "../../scripts/resolve-local-relay-url.mjs";
-import { experimentAppId, mintToken } from "./vts-dev.mjs";
+import { experimentAppId, mintToken, startVts, vtsPort } from "./vts-dev.mjs";
 
 const meetingIndexPath = "/moq-wasm/examples/meeting/index.html";
-const composeServices = ["redis", "vts", "relay-a", "relay-b"];
+const composeServices = ["redis", "relay-a", "relay-b"];
+// Reuses the vts binary that token minting already builds, instead of the compose vts service.
+const containerVtsUrl = `http://host.docker.internal:${vtsPort}/verify`;
 
 const childProcesses = [];
 const playwrightArgs = process.argv.slice(2);
@@ -66,12 +68,22 @@ async function main() {
         await dockerCompose("build", "relay-common");
       }
 
-      console.error("[setup] Building vts docker image...");
-      await dockerCompose("build", "vts");
+      const vts = await startVts();
+      childProcesses.push(vts);
       console.error(
         `[setup] Starting ${composeServices.join(", ")} via docker compose...`,
       );
-      await dockerCompose("up", "-d", "--wait", ...composeServices);
+      // --no-deps keeps compose from starting its own vts but also skips redis;
+      // relays connect to redis only at startup, so redis comes up first.
+      await dockerCompose("up", "-d", "--wait", "redis");
+      await dockerCompose(
+        "up",
+        "-d",
+        "--wait",
+        "--no-deps",
+        "relay-a",
+        "relay-b",
+      );
       ownedDockerServices = true;
     }
 
@@ -115,6 +127,7 @@ async function main() {
 function dockerCompose(...args) {
   return runCommand(resolveCommandName("docker"), ["compose", ...args], {
     cwd: repoRoot,
+    env: { ...process.env, AUTH_VTS_URL: containerVtsUrl },
   });
 }
 
