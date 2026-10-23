@@ -36,24 +36,31 @@ timeline are ignored.
 ## Joining
 The catalog is read with the joining FETCH beside its SUBSCRIBE, as MSF §5
 asks of a late joiner, so the reader does not wait for the next catalog.
-Media tracks are subscribed from the next group start rather than fetched:
-FETCH would deliver past groups as a burst, which a real-time output like RTP
-would send on as a burst. Every media track is subscribed before any is read,
-which keeps their starts within one group of each other, but each still
-starts at its own next group: when a SUBSCRIBE lands after a video keyframe
-and before the first audio object of that group, the audio track starts one
-group earlier. `broadcast` gives the audio groups the ids of the video groups
-they start with, so the reader holds the audio to the group id the video
-starts at and drops audio that arrives before the first video object, as
-`broadcast` drops the audio before its first keyframe.
+Media tracks are subscribed rather than fetched: FETCH would deliver past
+groups as a burst, which a real-time output like RTP would send on as a
+burst. The video is subscribed from the next group start, so it begins at a
+keyframe. The audio is subscribed from the largest object
+(draft-ietf-moq-transport-14 §9.7) and continues the group in flight: an
+audio object decodes alone, and a publisher that sends its audio as one
+endless group, as a meeting member does, never starts the next group that
+NextGroupStart waits for. Every media track is subscribed before any is
+read, so the audio usually starts before the video.
+
+Group ids cannot line the audio up with the video: `broadcast` gives the
+audio groups the ids of the video groups they start with, but a meeting
+member numbers its one audio group apart from the video's. The reader instead
+holds the audio to the capture time of the first
+video object: it drops audio that arrives before that object or was captured
+before it, as `broadcast` drops the audio before its first keyframe. Audio
+without a capture timestamp passes once the video has started.
 
 ## Timing
 Each track is demuxed by its own `loc::Demuxer`, measuring presentation time
 from a capture origin the tracks share: the capture timestamp of the first
-object any track delivers. LOC capture timestamps are on one wall clock across
-the tracks of a broadcast, so the shared origin keeps video and audio aligned
-in the media events, which an output that muxes both into one container
-needs.
+video object, or of the first audio object when the broadcast has no video.
+LOC capture timestamps are on one wall clock across the tracks of a
+broadcast, so the shared origin keeps video and audio aligned in the media
+events, which an output that muxes both into one container needs.
 
 The RTP output hands this alignment to the receiver through RTCP sender
 reports. Each stream keeps its own timestamp offset, as RTP requires. A

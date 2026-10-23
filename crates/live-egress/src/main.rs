@@ -1,6 +1,8 @@
 mod broadcast_reader;
 mod relay_session;
 mod rtp;
+#[cfg(test)]
+mod test_support;
 
 use std::{net::IpAddr, path::PathBuf};
 
