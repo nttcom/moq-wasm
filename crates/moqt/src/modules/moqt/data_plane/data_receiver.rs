@@ -64,7 +64,7 @@ impl DataReceiver {
                 TrackData::Subgroup(receiver)
             }
             IncomingObject::Datagram(datagram) => {
-                self.ledger.check(&datagram.object)?;
+                self.ledger.check(&datagram.object, false)?;
                 TrackData::Datagram(datagram.object)
             }
         })

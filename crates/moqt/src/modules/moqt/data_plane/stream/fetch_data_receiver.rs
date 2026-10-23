@@ -142,6 +142,13 @@ impl FetchDataReceiver {
         self.reader.set_group_order(group_order);
     }
 
+    /// Whether the objects carry their forwarding preference: draft-18 marks
+    /// a datagram object (§11.4.4), while draft-14 sends it in the subgroup
+    /// of its Object ID (§10.4.4).
+    pub fn carries_forwarding_preference(&self) -> bool {
+        self.reader.version().fetch_carries_forwarding_preference()
+    }
+
     /// The next object or range of the response. An object that repeats one
     /// the session received before with other properties fails with a
     /// `MalformedTrackError` and is not returned.
@@ -150,7 +157,7 @@ impl FetchDataReceiver {
             let error = match self.reader.next().await {
                 Ok(fetched) => {
                     if let (Fetch::Object(object), Some(ledger)) = (&fetched, &self.ledger) {
-                        ledger.check(object)?;
+                        ledger.check(object, !self.carries_forwarding_preference())?;
                     }
                     match (&fetched, &mut self.carry) {
                         (Fetch::Object(object), Some(carry)) => carry.delivered(object.location),

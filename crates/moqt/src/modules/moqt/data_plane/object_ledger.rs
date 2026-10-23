@@ -31,6 +31,8 @@ pub(crate) struct ObjectLedger {
 /// ledger stays small.
 struct Recorded {
     forwarding: ForwardingPreference,
+    /// From a draft-14 FETCH, which carries no forwarding preference.
+    forwarding_inferred: bool,
     publisher_priority: u8,
     status: ObjectStatus,
     payload_hash: u64,
@@ -51,9 +53,17 @@ impl ObjectLedger {
     }
 
     /// Records `object`; fails when an earlier copy of it differs.
-    pub(crate) fn check(&self, object: &Object) -> Result<(), MalformedTrackError> {
+    /// `forwarding_inferred`: the object comes from a draft-14 FETCH, which
+    /// carries no forwarding preference, so a datagram object arrives as a
+    /// subgroup object whose Subgroup ID is its Object ID (§10.4.4).
+    pub(crate) fn check(
+        &self,
+        object: &Object,
+        forwarding_inferred: bool,
+    ) -> Result<(), MalformedTrackError> {
         let received = Recorded {
             forwarding: object.forwarding,
+            forwarding_inferred,
             publisher_priority: object.publisher_priority,
             status: object.status,
             payload_hash: self.hasher.hash_one(&object.payload),
@@ -67,13 +77,17 @@ impl ObjectLedger {
                 slot.insert(received);
             }
             Entry::Occupied(mut recorded) => {
-                if recorded.get().conflicts_with(&received) {
+                let recorded = recorded.get_mut();
+                if recorded.conflicts_with(&received, object.location.object_id) {
                     return Err(MalformedTrackError::ConflictingDuplicate {
                         location: object.location,
                     });
                 }
-                if recorded.get().status == ObjectStatus::DoesNotExist {
-                    recorded.insert(received);
+                if recorded.status == ObjectStatus::DoesNotExist {
+                    *recorded = received;
+                } else if recorded.forwarding_inferred && !received.forwarding_inferred {
+                    recorded.forwarding = received.forwarding;
+                    recorded.forwarding_inferred = false;
                 }
             }
         }
@@ -82,8 +96,8 @@ impl ObjectLedger {
 }
 
 impl Recorded {
-    fn conflicts_with(&self, other: &Self) -> bool {
-        if self.forwarding != other.forwarding
+    fn conflicts_with(&self, other: &Self, object_id: u64) -> bool {
+        if self.forwarding_conflicts_with(other, object_id)
             || self.publisher_priority != other.publisher_priority
         {
             return true;
@@ -92,6 +106,24 @@ impl Recorded {
             return false;
         }
         self.status != other.status || self.payload_hash != other.payload_hash
+    }
+
+    /// A draft-14 FETCH copy in the subgroup of its Object ID is the same
+    /// object as a datagram.
+    fn forwarding_conflicts_with(&self, other: &Self, object_id: u64) -> bool {
+        match (self.forwarding, other.forwarding) {
+            (ForwardingPreference::Subgroup { subgroup_id }, ForwardingPreference::Datagram)
+                if self.forwarding_inferred =>
+            {
+                subgroup_id != object_id
+            }
+            (ForwardingPreference::Datagram, ForwardingPreference::Subgroup { subgroup_id })
+                if other.forwarding_inferred =>
+            {
+                subgroup_id != object_id
+            }
+            (forwarding, other_forwarding) => forwarding != other_forwarding,
+        }
     }
 }
 
@@ -131,8 +163,8 @@ mod tests {
 
     fn check_both(first: &Object, second: &Object) -> Result<(), MalformedTrackError> {
         let ledger = ObjectLedger::new();
-        ledger.check(first).unwrap();
-        ledger.check(second)
+        ledger.check(first, false).unwrap();
+        ledger.check(second, false)
     }
 
     #[test]
@@ -260,16 +292,82 @@ mod tests {
         // Arrange
         let ledger = ObjectLedger::new();
         let normal = object_with_extensions();
-        ledger.check(&normal).unwrap();
+        ledger.check(&normal, false).unwrap();
         ledger
-            .check(&status_object(ObjectStatus::DoesNotExist))
+            .check(&status_object(ObjectStatus::DoesNotExist), false)
             .unwrap();
         let other = Object {
             payload: Bytes::from_static(b"other"),
             ..normal.clone()
         };
         // Act / Assert
-        assert_eq!(ledger.check(&other), conflict(&normal));
+        assert_eq!(ledger.check(&other, false), conflict(&normal));
+    }
+
+    fn datagram() -> Object {
+        Object {
+            forwarding: ForwardingPreference::Datagram,
+            ..object_with_extensions()
+        }
+    }
+
+    /// A draft-14 FETCH copy of `object` in subgroup `subgroup_id`.
+    fn fetched_in(object: &Object, subgroup_id: u64) -> Object {
+        Object {
+            forwarding: ForwardingPreference::Subgroup { subgroup_id },
+            ..object.clone()
+        }
+    }
+
+    #[test]
+    fn a_draft14_fetched_copy_of_a_datagram_in_the_subgroup_of_its_object_id_passes() {
+        // Arrange
+        let live = datagram();
+        let fetched = fetched_in(&live, live.location.object_id);
+        let (live_first, fetched_first) = (ObjectLedger::new(), ObjectLedger::new());
+        live_first.check(&live, false).unwrap();
+        fetched_first.check(&fetched, true).unwrap();
+        // Act / Assert: both orders
+        assert_eq!(live_first.check(&fetched, true), Ok(()));
+        assert_eq!(fetched_first.check(&live, false), Ok(()));
+    }
+
+    #[test]
+    fn a_draft14_fetched_copy_of_a_datagram_in_another_subgroup_is_a_conflict() {
+        // Arrange
+        let live = datagram();
+        let ledger = ObjectLedger::new();
+        ledger.check(&live, false).unwrap();
+        // Act / Assert
+        assert_eq!(
+            ledger.check(&fetched_in(&live, live.location.object_id + 1), true),
+            conflict(&live)
+        );
+    }
+
+    #[test]
+    fn a_draft14_fetched_copy_is_compared_exactly_once_the_live_object_arrives() {
+        // Arrange: the live datagram tells the preference the FETCH copy lacked
+        let live = datagram();
+        let fetched = fetched_in(&live, live.location.object_id);
+        let ledger = ObjectLedger::new();
+        ledger.check(&fetched, true).unwrap();
+        ledger.check(&live, false).unwrap();
+        // Act / Assert: a subgroup copy with a known preference
+        assert_eq!(ledger.check(&fetched, false), conflict(&live));
+    }
+
+    #[test]
+    fn a_subgroup_copy_of_a_datagram_with_a_known_preference_is_a_conflict() {
+        // Arrange: draft-18 FETCH carries the preference
+        let live = datagram();
+        let ledger = ObjectLedger::new();
+        ledger.check(&live, false).unwrap();
+        // Act / Assert
+        assert_eq!(
+            ledger.check(&fetched_in(&live, live.location.object_id), false),
+            conflict(&live)
+        );
     }
 
     #[test]
@@ -420,9 +518,13 @@ mod tests {
                     FetchOption::default(),
                 ),
                 async {
-                    let SessionEvent::Fetch(handler) = track.client.receive_event().await.unwrap()
-                    else {
-                        panic!("expected FETCH from the server");
+                    // An earlier FETCH whose receiver is gone may be cancelled first.
+                    let handler = loop {
+                        match track.client.receive_event().await.unwrap() {
+                            SessionEvent::Fetch(handler) => break handler,
+                            SessionEvent::FetchCancel(_) => continue,
+                            _ => panic!("expected FETCH from the server"),
+                        }
                     };
                     handler.ok(false, end).await.unwrap();
                     track
@@ -487,5 +589,67 @@ mod tests {
             published_draft18_track("ledger-fetch-copy-draft18").await,
         )
         .await;
+    }
+
+    /// The server side of `track` receives `live` in a datagram.
+    async fn receive_datagram(track: &PublishedTrack, live: &Object) -> DataReceiver {
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        track
+            .client
+            .publisher()
+            .create_datagram(&track.published)
+            .send_object(live)
+            .await
+            .unwrap();
+        within(receiver.next()).await.unwrap();
+        receiver
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetched_copy_of_a_datagram_matches_it() {
+        // Arrange: draft-14 FETCH sends it in the subgroup of its Object ID
+        let track = published_track("ledger-fetched-datagram").await;
+        let live = datagram();
+        let _receiver = receive_datagram(&track, &live).await;
+
+        // Act
+        let fetched = fetch_answered_with(&track, &live).await;
+
+        // Assert
+        assert!(
+            matches!(&fetched, Ok(Fetch::Object(object))
+            if object.forwarding == ForwardingPreference::Subgroup {
+                subgroup_id: live.location.object_id
+            }),
+            "{fetched:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetched_copy_of_a_datagram_is_compared_with_its_preference() {
+        // Arrange
+        let track = published_draft18_track("ledger-fetched-datagram-draft18").await;
+        let live = datagram();
+        let _receiver = receive_datagram(&track, &live).await;
+
+        // Act
+        let as_datagram = fetch_answered_with(&track, &live).await;
+        let in_subgroup =
+            fetch_answered_with(&track, &fetched_in(&live, live.location.object_id)).await;
+
+        // Assert
+        assert!(
+            matches!(&as_datagram, Ok(Fetch::Object(object))
+                if object.forwarding == ForwardingPreference::Datagram),
+            "{as_datagram:?}"
+        );
+        assert_eq!(
+            in_subgroup
+                .unwrap_err()
+                .downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::ConflictingDuplicate {
+                location: live.location
+            })
+        );
     }
 }

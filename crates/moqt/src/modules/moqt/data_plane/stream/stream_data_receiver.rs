@@ -79,7 +79,7 @@ impl StreamDataReceiver {
     fn check(&self, received: Option<Subgroup>) -> Result<Option<Subgroup>, StreamReceiveError> {
         if let (Some(Subgroup::Object(object)), Some(ledger)) = (&received, &self.ledger) {
             ledger
-                .check(object)
+                .check(object, false)
                 .map_err(StreamReceiveError::MalformedTrack)?;
         }
         Ok(received)
