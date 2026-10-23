@@ -404,9 +404,10 @@ pub(crate) struct FetchedStream {
     pub(crate) receiver: FetchDataReceiver,
 }
 
-pub(crate) async fn fetched_stream(name: &str, end_of_track: bool, end: Location) -> FetchedStream {
+pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
     let (client, server) = spawn_connected_dual_sessions(name).await;
     let mut subscriber = client.subscriber();
+    let end = location(16_385, 0);
     let (handle, sender) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         tokio::join!(
             subscriber.fetch(
@@ -420,7 +421,7 @@ pub(crate) async fn fetched_stream(name: &str, end_of_track: bool, end: Location
                 let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
                     panic!("expected FETCH from the client");
                 };
-                handler.ok(end_of_track, end).await.unwrap();
+                handler.ok(true, end).await.unwrap();
                 server
                     .publisher()
                     .create_fetch_stream(handler.request_id)

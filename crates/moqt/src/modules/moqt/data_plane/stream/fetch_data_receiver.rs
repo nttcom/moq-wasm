@@ -174,7 +174,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_preserves_objects_and_reports_fin_after_the_last_object() {
         // Arrange
-        let mut stream = fetched_stream("fetch-object-roundtrip", true, location(16_385, 0)).await;
+        let mut stream = fetched_stream("fetch-object-roundtrip").await;
         let expected = [
             object_with_extensions(),
             Object {
@@ -225,8 +225,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_reports_reset_as_an_error_after_a_delivered_object() {
         // Arrange
-        let mut stream =
-            fetched_stream("fetch-object-reset", false, location(16_384, 16_386)).await;
+        let mut stream = fetched_stream("fetch-object-reset").await;
         let expected = object_with_extensions();
         timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&expected))
             .await
