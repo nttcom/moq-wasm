@@ -37,9 +37,6 @@ expect_passed() {
   fi
 }
 
-docker compose build vts
-
-cargo build -p vts
 cargo build -p auth-token --features cli
 cargo build -p auth-e2e
 cargo build -p moq-cli
@@ -48,9 +45,8 @@ APP_TOKEN="$(mint "$APP_ID" --publish site1 --subscribe site1 --ttl 1h)"
 OTHER_APP_TOKEN="$(mint "$OTHER_APP_ID" --publish "" --subscribe "" --ttl 1h)"
 export AUTH_RELAY_TOKEN
 AUTH_RELAY_TOKEN="$(mint "$RELAY_APP_ID" --publish "" --subscribe "" --ttl 8760h)"
-export AUTH_VTS_URL="http://vts:8081/verify"
 
-start_compose_relays relay-a relay-b vts
+start_compose_relays relay-a relay-b
 
 RELAY_A_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
 RELAY_B_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4434)"
@@ -126,7 +122,7 @@ pkill -P "$REFRESHED_PID" 2>/dev/null || true
 wait "$REFRESHED_PID" 2>/dev/null || true
 rm -rf "$MOQ_CLI_DIR"
 
-docker compose stop vts
+stop_vts
 if ! AUTH_E2E_APP_TOKEN="$APP_TOKEN" \
   cargo run -p auth-e2e -- \
     --relay-a-url "$RELAY_A_URL" \
