@@ -1,4 +1,5 @@
 import asyncio
+import signal
 import uuid
 
 import pytest
@@ -8,6 +9,8 @@ import moqt
 TIMEOUT_SECONDS = 10
 # moqt ends a subscription this long after its PUBLISH_DONE (PUBLISH_DONE_GRACE_PERIOD).
 PUBLISH_DONE_GRACE_SECONDS = 10
+# The relay's default drain timeout bounds how long a client keeps the connection a GOAWAY retired.
+DRAIN_SECONDS = 30
 TRACK = "timeline"
 
 
@@ -159,4 +162,26 @@ async def test_current_group_brings_the_rest_of_the_group_being_appended(relay_u
     # Assert
     assert [(await within(late_objects.__anext__())).payload for _ in range(3)] == [b"v1", b"v2", b"v3"]
     for session in (late, publisher):
+        await session.close()
+
+
+async def test_a_subscription_continues_on_the_relay_a_draining_relay_names(relays_sharing_redis):
+    # Arrange: the publisher stays on relay B, which relay A's GOAWAY names
+    relay_a, relay_b = relays_sharing_redis
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_b.url, namespace)
+    subscriber = await connect(relay_a.url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    await track.write(b"v1", new_group=True)
+    assert (await within(objects.__anext__())).payload == b"v1"
+
+    # Act: v3 is written once relay A is gone, so only relay B can bring it
+    relay_a.process.send_signal(signal.SIGINT)
+    await track.write(b"v2", new_group=True)
+    await asyncio.wait_for(asyncio.to_thread(relay_a.process.wait), DRAIN_SECONDS)
+    await track.write(b"v3", new_group=True)
+
+    # Assert
+    assert [(await within(objects.__anext__())).payload for _ in range(2)] == [b"v2", b"v3"]
+    for session in (subscriber, publisher):
         await session.close()

@@ -38,3 +38,5 @@ uv run pytest
 ```
 
 The tests build and start a relay and a VTS from this workspace on free ports.
+The GOAWAY test also starts two relays sharing a Redis, which it runs with
+Docker.

@@ -1,9 +1,13 @@
 import json
 import os
+import re
 import socket
 import subprocess
 import time
 import urllib.request
+import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -46,9 +50,35 @@ def vts_answers(port: int) -> bool:
         return False
 
 
+def logged(log: Path, text: str) -> bool:
+    return log.exists() and text in log.read_text(errors="replace")
+
+
+def stop(*processes: subprocess.Popen | None) -> None:
+    running = [process for process in processes if process is not None]
+    for process in running:
+        process.terminate()
+    for process in running:
+        process.wait(timeout=30)
+
+
+@dataclass
+class RelayAuth:
+    """What a relay needs to verify clients against the VTS."""
+
+    env: dict[str, str]
+    logs: Path
+
+
+@dataclass
+class Relay:
+    url: str
+    process: subprocess.Popen
+
+
 @pytest.fixture(scope="session")
-def relay_url(tmp_path_factory) -> str:
-    """A relay and the VTS it verifies clients against, both built from this workspace."""
+def relay_auth(tmp_path_factory):
+    """A VTS built from this workspace and the relay token it accepts."""
     subprocess.run(["cargo", "build", "-q", "-p", "relay", "-p", "vts"], cwd=REPO_ROOT, check=True)
     subprocess.run(["cargo", "build", "-q", "-p", "auth-token", "--features", "cli"], cwd=REPO_ROOT, check=True)
     logs = tmp_path_factory.mktemp("relay")
@@ -60,7 +90,6 @@ def relay_url(tmp_path_factory) -> str:
         stdout=open(logs / "vts.log", "w"),
         stderr=subprocess.STDOUT,
     )
-    relay = None
     try:
         wait_until(lambda: vts_answers(vts_port), "VTS")
         apps = json.loads((REPO_ROOT / APPS_FILE).read_text())
@@ -73,25 +102,76 @@ def relay_url(tmp_path_factory) -> str:
             capture_output=True,
             text=True,
         ).stdout.strip()
-        relay_port = free_port(socket.SOCK_DGRAM, count=2)
-        relay_log = logs / "relay.log"
-        relay = subprocess.Popen(
-            [TARGET / "relay"],
-            cwd=REPO_ROOT,
-            env={
-                **os.environ,
-                "RELAY_PORT": str(relay_port),
-                "AUTH_VTS_URL": f"http://127.0.0.1:{vts_port}/verify",
-                "AUTH_RELAY_TOKEN": token,
-                "OTEL_SDK_DISABLED": "true",
-            },
-            stdout=open(relay_log, "w"),
-            stderr=subprocess.STDOUT,
+        yield RelayAuth(
+            env={"AUTH_VTS_URL": f"http://127.0.0.1:{vts_port}/verify", "AUTH_RELAY_TOKEN": token},
+            logs=logs,
         )
-        wait_until(lambda: "Relay server started" in relay_log.read_text(errors="replace"), "relay")
-        yield f"moqt://127.0.0.1:{relay_port}"
     finally:
-        for process in (relay, vts):
-            if process is not None:
-                process.terminate()
-                process.wait(timeout=30)
+        stop(vts)
+
+
+@contextmanager
+def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = None):
+    port = free_port(socket.SOCK_DGRAM, count=2)
+    log = auth.logs / f"{relay_id}.log"
+    process = subprocess.Popen(
+        [TARGET / "relay"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            **auth.env,
+            "RELAY_ID": relay_id,
+            "RELAY_PORT": str(port),
+            "RELAY_ADVERTISE_HOST": "127.0.0.1",
+            "RELAY_PUBLIC_HOST": f"127.0.0.1:{port}",
+            "OTEL_SDK_DISABLED": "true",
+            **(env or {}),
+        },
+        stdout=open(log, "w"),
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        wait_until(lambda: logged(log, "Relay server started"), relay_id)
+        yield Relay(f"moqt://127.0.0.1:{port}", process)
+    finally:
+        stop(process)
+
+
+@pytest.fixture(scope="session")
+def relay_url(relay_auth) -> str:
+    with started_relay(relay_auth, "relay") as relay:
+        yield relay.url
+
+
+def redis_image() -> str:
+    """The digest-pinned Redis image of docker-compose.yml."""
+    compose = (REPO_ROOT / "docker-compose.yml").read_text()
+    return re.search(r"^ {2}redis:\n {4}image: (\S+)$", compose, re.MULTILINE).group(1)
+
+
+@contextmanager
+def started_redis(logs: Path):
+    port = free_port(socket.SOCK_STREAM)
+    name = f"python-binding-redis-{uuid.uuid4().hex[:8]}"
+    log = logs / "redis.log"
+    process = subprocess.Popen(
+        ["docker", "run", "--rm", "--name", name, "-p", f"127.0.0.1:{port}:6379", redis_image()],
+        stdout=open(log, "w"),
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        wait_until(lambda: logged(log, "Ready to accept connections"), "redis")
+        yield f"redis://127.0.0.1:{port}"
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        process.wait(timeout=30)
+
+
+@pytest.fixture
+def relays_sharing_redis(relay_auth):
+    """Relay A and relay B registered in one Redis, so draining A sends its clients a GOAWAY naming B."""
+    with started_redis(relay_auth.logs) as redis_url:
+        env = {"REDIS_URL": redis_url}
+        with started_relay(relay_auth, "relay-b", env) as relay_b:
+            with started_relay(relay_auth, "relay-a", env) as relay_a:
+                yield relay_a, relay_b
