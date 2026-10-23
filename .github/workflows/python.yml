@@ -30,6 +30,12 @@ on:
       - "Cargo.lock"
       - "rust-toolchain"
 
+concurrency:
+  # Without the run_id fallback, master pushes would share one group and
+  # each new push would cancel the previous master run.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

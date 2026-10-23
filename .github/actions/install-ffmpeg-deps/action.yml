@@ -1,5 +1,5 @@
 name: Install media build dependencies
-description: Install FFmpeg and GStreamer build and runtime dependencies on Debian/Ubuntu
+description: Install the FFmpeg CLI and the GStreamer build and runtime dependencies on Debian/Ubuntu
 
 runs:
   using: composite
@@ -12,13 +12,6 @@ runs:
         packages=(
           ffmpeg
           pkg-config
-          libavutil-dev
-          libavfilter-dev
-          libavcodec-dev
-          libavformat-dev
-          libavdevice-dev
-          libswscale-dev
-          libswresample-dev
           libgstreamer1.0-dev
           libgstreamer-plugins-base1.0-dev
           gstreamer1.0-tools
@@ -27,9 +20,6 @@ runs:
           gstreamer1.0-plugins-bad
           gstreamer1.0-plugins-ugly
           gstreamer1.0-libav
-          clang
-          libclang-dev
-          llvm-dev
         )
         archives="${HOME}/.cache/apt-media-archives"
         mkdir -p "${archives}/partial"
@@ -71,7 +61,6 @@ runs:
           -o APT::Sandbox::User=root \
           ${APT_PACKAGES}
         echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-        echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
     - name: Save apt package cache
       if: ${{ steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/master' }}

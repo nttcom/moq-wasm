@@ -55,8 +55,8 @@ RTSP over TCP, authentication and the RTP jitter buffer. The bridge still runs
 
 - `onvif-ingest` needs GStreamer at run time with the good (`rtspsrc`, RTP
   depayloaders) and bad (`h264parse`) plugins, instead of the FFmpeg libraries.
-- `ffmpeg-next` is no longer used anywhere in the workspace; CI can stop
-  installing the FFmpeg development packages and libclang in a follow-up.
+- `ffmpeg-next` is no longer used anywhere in the workspace, so CI installs
+  neither the FFmpeg development packages nor libclang.
 - When a camera also sends SPS/PPS in band, keyframes carry them twice
   (h264parse's copy, then the camera's). H.264 allows repeated parameter sets,
   so decoders are unaffected.
