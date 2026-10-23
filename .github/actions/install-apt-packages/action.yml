@@ -1,5 +1,5 @@
 name: Install apt packages
-description: Install apt packages on Debian/Ubuntu, reusing the downloaded .deb files from the Actions cache
+description: Install apt packages on Debian/Ubuntu from the package lists and .deb files in the Actions cache, contacting the mirror only when the cache cannot satisfy them
 
 inputs:
   packages:
@@ -18,29 +18,32 @@ runs:
         set -euo pipefail
         # shellcheck disable=SC2206
         packages=(${APT_PACKAGES})
-        archives="${HOME}/.cache/apt-archives"
-        mkdir -p "${archives}/partial"
+        cache="${HOME}/.cache/apt"
+        mkdir -p "${cache}/archives/partial" "${cache}/lists/partial"
         . /etc/os-release
         # The month rotates the key so the cached packages follow distribution updates.
         packages_hash="$(printf '%s\n' "${packages[@]}" | sha256sum | cut -c1-16)"
         {
           echo "packages=${packages[*]}"
-          echo "archives=${archives}"
-          echo "key=apt-${ID}-${VERSION_ID}-$(uname -m)-$(date -u +%Y-%m)-${packages_hash}"
+          echo "cache=${cache}"
+          echo "key-prefix=apt-${ID}-${VERSION_ID}-$(uname -m)-$(date -u +%Y-%m)-${packages_hash}-"
         } >> "$GITHUB_OUTPUT"
 
     - name: Restore apt package cache
-      id: restore
       # actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
-        path: ${{ steps.apt.outputs.archives }}/*.deb
-        key: ${{ steps.apt.outputs.key }}
+        path: |
+          ${{ steps.apt.outputs.cache }}/archives/*.deb
+          ${{ steps.apt.outputs.cache }}/lists/*_*
+        key: ${{ steps.apt.outputs.key-prefix }}${{ github.run_id }}
+        restore-keys: ${{ steps.apt.outputs.key-prefix }}
 
     - name: Install apt packages
+      id: install
       shell: bash
       env:
-        APT_ARCHIVES: ${{ steps.apt.outputs.archives }}
+        APT_CACHE: ${{ steps.apt.outputs.cache }}
         APT_PACKAGES: ${{ steps.apt.outputs.packages }}
       run: |
         set -euo pipefail
@@ -49,19 +52,34 @@ runs:
         if [ "$(id -u)" -ne 0 ]; then
           privileged="sudo"
         fi
-        $privileged apt-get update
-        # The archive directory belongs to the runner user, which the _apt
-        # download sandbox user cannot write to.
-        # shellcheck disable=SC2086
-        $privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          -o Dir::Cache::Archives="${APT_ARCHIVES}" \
-          -o APT::Sandbox::User=root \
-          ${APT_PACKAGES}
+        # APT::Sandbox::User=root: the _apt download sandbox user cannot write to
+        # the runner-owned cache directories.
+        apt_options=(
+          -o Dir::State::Lists="${APT_CACHE}/lists"
+          -o Dir::Cache::Archives="${APT_CACHE}/archives"
+          -o APT::Sandbox::User=root
+        )
+        install() {
+          # shellcheck disable=SC2086
+          $privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            "${apt_options[@]}" "$@" ${APT_PACKAGES}
+        }
+        # Mirror downloads on the runner sometimes stall for minutes, so install
+        # from the cached lists and .deb files first.
+        if install --no-download; then
+          echo "downloaded=false" >> "$GITHUB_OUTPUT"
+        else
+          $privileged apt-get update "${apt_options[@]}"
+          install
+          echo "downloaded=true" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Save apt package cache
-      if: ${{ steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/master' }}
+      if: ${{ steps.install.outputs.downloaded == 'true' && github.ref == 'refs/heads/master' }}
       # actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
-        path: ${{ steps.apt.outputs.archives }}/*.deb
-        key: ${{ steps.apt.outputs.key }}
+        path: |
+          ${{ steps.apt.outputs.cache }}/archives/*.deb
+          ${{ steps.apt.outputs.cache }}/lists/*_*
+        key: ${{ steps.apt.outputs.key-prefix }}${{ github.run_id }}

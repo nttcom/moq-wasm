@@ -191,7 +191,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-transcription-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|.cargo/config.toml|examples/browser/*|examples/python/moq-meeting-transcriber/*|examples/python/moq-bot-rooms/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-transcription-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|.cargo/config.toml|examples/browser/*|examples/python/moq-meeting-transcriber/*|examples/python/moq-bot-rooms/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   meeting_transcription=true
                   ;;
               esac
@@ -712,7 +712,9 @@ jobs:
 
       - name: Install espeak-ng
         # The E2E runner synthesizes the fake microphone's speech with it.
-        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+        uses: ./.github/actions/install-apt-packages
+        with:
+          packages: espeak-ng
 
       - name: Cache Whisper model
         # actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
