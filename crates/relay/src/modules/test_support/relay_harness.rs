@@ -353,7 +353,27 @@ impl RelayHarness {
         filter_type: moqt::subscribe::FilterType,
         largest_location: Option<moqt::object::Location>,
     ) -> EgressRunnerHandle {
-        let (publisher, observers) = MockPublisher::channel();
+        self.start_egress_to(MockPublisher::channel(), filter_type, largest_location)
+            .await
+    }
+
+    /// Egress to a downstream that keeps every track to one forwarding
+    /// preference, as a draft-14 session does.
+    pub(crate) async fn start_single_preference_egress(&self) -> EgressRunnerHandle {
+        self.start_egress_to(
+            MockPublisher::channel_mixing(false),
+            moqt::subscribe::FilterType::LargestObject,
+            None,
+        )
+        .await
+    }
+
+    async fn start_egress_to(
+        &self,
+        (publisher, observers): (MockPublisher, MockPublisherObservers),
+        filter_type: moqt::subscribe::FilterType,
+        largest_location: Option<moqt::object::Location>,
+    ) -> EgressRunnerHandle {
         let (ready_sender, ready_receiver) = oneshot::channel();
         let (delivery_control_sender, delivery_control_receiver) =
             watch::channel(DeliveryControl::new(true, &filter_type, largest_location));

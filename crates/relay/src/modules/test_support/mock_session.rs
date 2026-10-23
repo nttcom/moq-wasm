@@ -414,6 +414,10 @@ impl Publisher for MockUpstreamPublisher {
         Ok(())
     }
 
+    fn mixes_forwarding_preferences(&self) -> bool {
+        true
+    }
+
     fn new_stream_factory(
         &self,
         _downstream_subscription: &DownstreamSubscription,

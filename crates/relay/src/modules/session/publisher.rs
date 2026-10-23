@@ -35,6 +35,10 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()>;
+    /// Whether one track may reach this session on subgroup streams and in
+    /// datagrams alike; when not, egress keeps each subscription to one
+    /// forwarding preference.
+    fn mixes_forwarding_preferences(&self) -> bool;
     fn new_stream_factory(
         &self,
         downstream_subscription: &DownstreamSubscription,
@@ -90,6 +94,10 @@ impl Publisher for moqt::Publisher {
             error_reason,
         )
         .await
+    }
+
+    fn mixes_forwarding_preferences(&self) -> bool {
+        moqt::Publisher::mixes_forwarding_preferences(self)
     }
 
     fn new_stream_factory(
