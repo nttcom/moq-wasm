@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source tests/compose-relays.sh
 
 export RELAY_STDOUT_FILTER="${RELAY_STDOUT_FILTER:-relay=info,moqt=info}"
 export RELAY_LOG_FILTER="${RELAY_LOG_FILTER:-relay=info,moqt=info}"
@@ -14,22 +15,11 @@ RELAY_APP_ID="11111111-2222-3333-4444-555555555555"
 # Short enough to keep the expiry scenarios brief, long enough for moq-cli's
 # 10 s token-file poll to pick up a rewrite before the token expires.
 SHORT_TOKEN_TTL="15s"
-LOGS_PID=""
 RESULT_LOG="$(mktemp)"
 
 cleanup() {
   rm -f "$RESULT_LOG"
-  if [[ -n "$LOGS_PID" ]]; then
-    kill "$LOGS_PID" 2>/dev/null || true
-    for _ in {1..10}; do
-      if ! kill -0 "$LOGS_PID" 2>/dev/null; then
-        break
-      fi
-      sleep 0.1
-    done
-    kill -9 "$LOGS_PID" 2>/dev/null || true
-  fi
-  docker compose down -v --remove-orphans
+  stop_compose_relays
 }
 trap cleanup EXIT
 
@@ -47,15 +37,6 @@ expect_passed() {
   fi
 }
 
-node scripts/ensure-relay-certs.mjs
-
-# Reuse a prebuilt relay image when present (pulled from the registry in CI);
-# otherwise build it locally.
-if docker image inspect moqt-relay:local >/dev/null 2>&1; then
-  echo "Reusing existing moqt-relay:local image (skipping build)."
-else
-  docker compose build relay-common
-fi
 docker compose build vts
 
 cargo build -p vts
@@ -69,9 +50,7 @@ export AUTH_RELAY_TOKEN
 AUTH_RELAY_TOKEN="$(mint "$RELAY_APP_ID" --publish "" --subscribe "" --ttl 8760h)"
 export AUTH_VTS_URL="http://vts:8081/verify"
 
-docker compose up -d --wait redis vts relay-a relay-b
-docker compose logs -f --no-color relay-a relay-b vts &
-LOGS_PID=$!
+start_compose_relays relay-a relay-b vts
 
 RELAY_A_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
 RELAY_B_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4434)"
