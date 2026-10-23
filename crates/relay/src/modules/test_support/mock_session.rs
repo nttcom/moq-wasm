@@ -105,6 +105,9 @@ pub(crate) enum FetchAnswer {
     FetchOk,
     /// FETCH_OK, then a response stream yielding these, then nothing.
     Respond(Vec<moqt::fetch::Fetch>),
+    /// FETCH_OK, then a response stream whose first object conflicts with
+    /// one the session received before.
+    Malformed,
 }
 
 type PublishAnswer = Arc<dyn Fn() -> anyhow::Result<bool> + Send + Sync>;
@@ -497,14 +500,16 @@ impl Subscriber for MockUpstreamSubscriber {
                 code: RequestErrorCode::TrackDoesNotExist,
                 reason: "no objects".to_string(),
             })),
-            FetchAnswer::FetchOk | FetchAnswer::Respond(_) => Ok(moqt::fetch::FetchHandle {
-                request_id: 0,
-                group_order: GroupOrder::Ascending,
-                end_of_track: false,
-                end_location,
-                max_cache_duration: None,
-                remainder: None,
-            }),
+            FetchAnswer::FetchOk | FetchAnswer::Respond(_) | FetchAnswer::Malformed => {
+                Ok(moqt::fetch::FetchHandle {
+                    request_id: 0,
+                    group_order: GroupOrder::Ascending,
+                    end_of_track: false,
+                    end_location,
+                    max_cache_duration: None,
+                    remainder: None,
+                })
+            }
         }
     }
 
@@ -516,6 +521,7 @@ impl Subscriber for MockUpstreamSubscriber {
             FetchAnswer::Respond(response) => {
                 Ok(Box::new(ScriptedFetchReceiver(response.clone().into())))
             }
+            FetchAnswer::Malformed => Ok(Box::new(MalformedFetchReceiver)),
             _ => Ok(Box::new(PendingFetchReceiver)),
         }
     }
@@ -531,6 +537,21 @@ impl Subscriber for MockUpstreamSubscriber {
 }
 
 struct PendingFetchReceiver;
+
+struct MalformedFetchReceiver;
+
+#[async_trait::async_trait]
+impl UpstreamFetchReceiver for MalformedFetchReceiver {
+    async fn receive(&mut self) -> anyhow::Result<moqt::fetch::Fetch> {
+        Err(moqt::object::MalformedTrackError::ConflictingDuplicate {
+            location: moqt::object::Location {
+                group_id: 0,
+                object_id: 0,
+            },
+        }
+        .into())
+    }
+}
 
 struct ScriptedFetchReceiver(std::collections::VecDeque<moqt::fetch::Fetch>);
 

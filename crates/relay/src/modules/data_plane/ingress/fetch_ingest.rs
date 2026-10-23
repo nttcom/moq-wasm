@@ -136,7 +136,11 @@ impl FetchIngest {
         let mut unknown_objects = false;
         loop {
             let received = tokio::select! {
-                received = receiver.receive() => received?,
+                received = receiver.receive() => received.inspect_err(|error| {
+                    if error.is::<moqt::object::MalformedTrackError>() {
+                        cache.mark_malformed();
+                    }
+                })?,
                 _ = cache.malformed_track_detected() => {
                     return Err(anyhow::anyhow!("malformed track detected while awaiting fetch data").into());
                 }
@@ -393,9 +397,19 @@ mod tests {
         mpsc::Receiver<EgressCommand>,
         Result<(), FillFailure>,
     ) {
+        ingest_answered(FetchAnswer::Respond(response)).await
+    }
+
+    async fn ingest_answered(
+        answer: FetchAnswer,
+    ) -> (
+        Arc<TrackCache>,
+        mpsc::Receiver<EgressCommand>,
+        Result<(), FillFailure>,
+    ) {
         let session_repo = session_repository_with_session(
             UPSTREAM_SESSION,
-            mock_session_answering_fetch(FetchAnswer::Respond(response)),
+            mock_session_answering_fetch(answer),
             VerifiedToken::full_access(),
         )
         .await;
@@ -473,6 +487,17 @@ mod tests {
             matches!(result, Err(FillFailure::UnknownObjects)),
             "{result:?}"
         );
+        assert!(egress_receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_upstream_response_latches_the_track() {
+        // Act
+        let (cache, mut egress_receiver, result) = ingest_answered(FetchAnswer::Malformed).await;
+
+        // Assert: the fill fails as for a malformed track, so the upstream FETCH is cancelled
+        assert!(result.is_err());
+        assert!(cache.is_malformed());
         assert!(egress_receiver.try_recv().is_err());
     }
 
