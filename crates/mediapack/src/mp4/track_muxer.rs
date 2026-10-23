@@ -3,7 +3,10 @@ use bytes::Bytes;
 
 use crate::{
     h264::AvcDecoderConfigurationRecord,
-    mp4::isobmff::{self, TrackInit, VIDEO_TIMESCALE},
+    mp4::{
+        held_video::HeldVideo,
+        isobmff::{self, TrackInit},
+    },
     sample::{AudioConfig, MediaEvent, Timestamp, VideoConfig, VideoSample},
 };
 
@@ -23,8 +26,7 @@ pub struct Fragment {
 pub struct Fmp4TrackMuxer {
     track: Track,
     sequence_number: u32,
-    pending_video: Option<VideoSample>,
-    last_video_duration: u32,
+    held_video: HeldVideo,
 }
 
 enum Track {
@@ -45,8 +47,7 @@ impl Fmp4TrackMuxer {
         Self {
             track,
             sequence_number: 0,
-            pending_video: None,
-            last_video_duration: 0,
+            held_video: HeldVideo::default(),
         }
     }
 
@@ -69,14 +70,9 @@ impl Fmp4TrackMuxer {
                 if !matches!(self.track, Track::Video(_)) {
                     bail!("video sample pushed into an audio track");
                 }
-                let Some(previous) = self.pending_video.replace(sample.clone()) else {
+                let Some((previous, duration)) = self.held_video.push(sample) else {
                     return Ok(None);
                 };
-                let duration = sample
-                    .dts
-                    .saturating_sub(previous.dts)
-                    .ticks(VIDEO_TIMESCALE) as u32;
-                self.last_video_duration = duration;
                 self.video_fragment(&previous, duration).map(Some)
             }
             MediaEvent::Audio(sample) => {
@@ -115,10 +111,9 @@ impl Fmp4TrackMuxer {
     }
 
     pub fn finish(&mut self) -> Result<Option<Fragment>> {
-        let Some(sample) = self.pending_video.take() else {
+        let Some((sample, duration)) = self.held_video.finish() else {
             return Ok(None);
         };
-        let duration = self.last_video_duration;
         self.video_fragment(&sample, duration).map(Some)
     }
 
