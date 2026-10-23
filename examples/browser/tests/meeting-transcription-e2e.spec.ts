@@ -6,9 +6,12 @@ import {
   openChat,
   type MeetingClientPageModel
 } from './meeting-e2e-arrange'
+import { FAKE_ASR_TEXT, startFakeAsr } from './fake-asr'
 
 // Set by tests/browser-e2e/run-meeting-transcription-e2e.mjs, with speech on every page's fake microphone.
 const BOT_URL = process.env.MEETING_TRANSCRIPTION_E2E_BOT_URL!
+// The bot's `--asr granite-speech-5-2b=http://127.0.0.1:<port>` points here; the test serves it.
+const ASR_PORT = Number(process.env.MEETING_TRANSCRIPTION_E2E_ASR_PORT)
 // The bot connects and loads Whisper when a page asks for it.
 const BOT_JOIN_TIMEOUT_MS = 90_000
 // Speech is transcribed once the VAD closes an utterance.
@@ -120,4 +123,53 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
     await client.page.leaveButton.click()
     await client.context.close()
   }
+})
+
+test('a GPU recognizer that is starting is announced, then its text reaches the captions and the transcript', async ({
+  browser
+}) => {
+  // Arrange: /health fails for 8 s, past the bot's 2 s notice; of its polls at 0, 5 and 10 s, the third passes
+  const asr = await startFakeAsr(ASR_PORT)
+  asr.unhealthyFor(8_000)
+  const room = `granite room ${Date.now() % 100_000}`
+  const alice = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
+  await joinRoom(alice.page, room, 'alice', 'a')
+  const badge = alice.page.page.getByTestId('transcriber-badge')
+
+  // Act
+  await alice.page.page.getByTestId('captions-button').click()
+  await alice.page.page.getByTestId('captions-granite-speech-5-2b').click()
+
+  // Assert: the badge and one transcript record say the recognizer is starting
+  await expect(badge).toHaveText('CC · Granite 2b (GPU) · starting', { timeout: BOT_JOIN_TIMEOUT_MS })
+  const aliceRecords = await openTranscript(alice.page)
+  await expect(aliceRecords).toHaveCount(1)
+  await expect(aliceRecords.first()).toContainText('transcriber')
+  await expect(aliceRecords.first()).toContainText('granite-speech-5-2b を起動しています')
+  await expect(badge).toHaveText('CC · Granite 2b (GPU)', { timeout: 30_000 })
+  await expect(aliceRecords).toHaveCount(1)
+
+  // Act
+  const bob = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
+  await joinRoom(bob.page, room, 'bob', 'a')
+  await bob.page.toggleMicrophoneButton.click()
+  await expect(bob.page.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
+
+  // Assert
+  await expect(getMemberCard(alice.page.page, 'bob').getByTestId('tile-caption')).toContainText(FAKE_ASR_TEXT, {
+    timeout: TRANSCRIPT_TIMEOUT_MS
+  })
+  await expect(aliceRecords.nth(1)).toContainText('bob')
+  await expect(aliceRecords.nth(1)).toContainText(FAKE_ASR_TEXT)
+  expect(asr.requests.length).toBeGreaterThan(0)
+  for (const request of asr.requests) {
+    expect(request.model).toBe('granite-speech-5-2b')
+    expect(request.prompt).toContain('The speech is in Japanese')
+  }
+
+  for (const client of [bob, alice]) {
+    await client.page.leaveButton.click()
+    await client.context.close()
+  }
+  asr.close()
 })
