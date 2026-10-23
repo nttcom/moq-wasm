@@ -289,13 +289,38 @@ impl IncomingRequestTask {
         let kind = stream.kind;
         drop(context);
         let mut go_away_received = false;
+        // A FIN on a FETCH ends only the reading (§3.3.2).
+        let mut reading = true;
+        // §5.2: a FETCH requester cancels with STOP_SENDING on this side's half.
+        let mut watching_stop = kind == RequestStreamKind::Fetch;
         loop {
-            let Some(received) = receive_unless_cancelled(&mut receiver, &stream.reader_stop).await
-            else {
-                return;
+            let next = tokio::select! {
+                received = receiver.receive(), if reading => Next::Received(received),
+                stopped = sender.stopped(), if watching_stop => Next::Stopped(stopped),
+                () = stream.reader_stop.notified() => Next::Cancelled,
             };
             let Some(context) = Scope::of(&connection) else {
                 return;
+            };
+            let received = match next {
+                Next::Received(received) => received,
+                Next::Stopped(stopped) => {
+                    watching_stop = false;
+                    if stopped.is_some() {
+                        // Cancelling notifies `reader_stop`, which ends this task.
+                        fetch_cancelled(&context, request_id).await;
+                    }
+                    if !reading {
+                        return;
+                    }
+                    continue;
+                }
+                Next::Cancelled => {
+                    if reading {
+                        receiver.stop(super::cancelled());
+                    }
+                    return;
+                }
             };
             match received {
                 Ok(Some(Message::GoAway(go_away))) => {
@@ -328,9 +353,14 @@ impl IncomingRequestTask {
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
                 // §3.3.2: a FIN does not cancel a FETCH; its stream ends once
                 // the response is done (§5.2).
-                Ok(None) if kind == RequestStreamKind::Fetch => return,
+                Ok(None) if kind == RequestStreamKind::Fetch => {
+                    reading = false;
+                    if !watching_stop {
+                        return;
+                    }
+                }
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
-                    Self::peer_ended(&context, request_id, kind);
+                    Self::peer_ended(&context, request_id, kind).await;
                     return;
                 }
                 Err(
@@ -537,7 +567,11 @@ impl IncomingRequestTask {
     /// The peer closed or reset its half: for an open request, that
     /// withdraws it (§3.3.2), as draft-14's UNSUBSCRIBE / FETCH_CANCEL /
     /// PUBLISH_NAMESPACE_DONE / UNSUBSCRIBE_NAMESPACE would.
-    fn peer_ended(scope: &Scope, request_id: RequestId, kind: RequestStreamKind) {
+    async fn peer_ended(scope: &Scope, request_id: RequestId, kind: RequestStreamKind) {
+        if kind == RequestStreamKind::Fetch {
+            fetch_cancelled(scope, request_id).await;
+            return;
+        }
         if scope.channel().take_incoming(request_id).is_none() {
             return;
         }
@@ -547,11 +581,7 @@ impl IncomingRequestTask {
                 &scope.connection,
                 Unsubscribe { request_id },
             )),
-            RequestStreamKind::Fetch => SessionEvent::FetchCancel(FetchCancelHandler::new(
-                scope.session.clone(),
-                &scope.connection,
-                FetchCancel::new(request_id),
-            )),
+            RequestStreamKind::Fetch => unreachable!("a FETCH returned above"),
             RequestStreamKind::PublishNamespace(namespace) => SessionEvent::PublishNamespaceDone(
                 PublishNamespaceDoneHandler::new(PublishNamespaceDone::new(namespace)),
             ),
@@ -578,6 +608,34 @@ impl IncomingRequestTask {
         };
         emit(scope, event);
     }
+}
+
+/// §5.2: the peer cancelled the FETCH it sent as `request_id`, by
+/// STOP_SENDING or by resetting its half. Its request and response streams
+/// are reset and the application hears `FetchCancel`, unless the FETCH had
+/// ended already.
+async fn fetch_cancelled(scope: &Scope, request_id: RequestId) {
+    if !scope.channel().reset_cancelled_fetch(request_id).await {
+        return;
+    }
+    emit(
+        scope,
+        SessionEvent::FetchCancel(FetchCancelHandler::new(
+            scope.session.clone(),
+            &scope.connection,
+            FetchCancel::new(request_id),
+        )),
+    );
+}
+
+/// What a peer's request stream yields next.
+enum Next {
+    Received(Result<Option<Message>, StreamReceiveError>),
+    /// The peer's STOP_SENDING code on this side's half, `None` once it can
+    /// no longer send one.
+    Stopped(Option<u64>),
+    /// This side cancelled the request.
+    Cancelled,
 }
 
 /// What reading the next message of a peer's request stream leads to.

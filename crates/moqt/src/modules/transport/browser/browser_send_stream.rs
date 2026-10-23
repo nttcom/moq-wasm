@@ -1,3 +1,9 @@
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 use async_trait::async_trait;
 use bytes::BytesMut;
 use js_sys::Uint8Array;
@@ -12,12 +18,19 @@ use crate::modules::transport::transport_send_stream::{TransportSendError, Trans
 pub struct BrowserSendStream {
     stream: WebTransportSendStream,
     writer: WritableStreamDefaultWriter,
+    /// `writer.closed` while `poll_stopped` waits on it; a STOP_SENDING
+    /// rejects it with its code.
+    closed: Option<JsFuture>,
 }
 
 impl BrowserSendStream {
     pub(crate) fn new(stream: WebTransportSendStream) -> anyhow::Result<Self> {
         let writer = stream.get_writer().map_err(js_error)?;
-        Ok(Self { stream, writer })
+        Ok(Self {
+            stream,
+            writer,
+            closed: None,
+        })
     }
 }
 
@@ -61,6 +74,18 @@ impl TransportSendStream for BrowserSendStream {
         )
         .map(|_| ())
         .map_err(send_error)
+    }
+
+    fn poll_stopped(&mut self, cx: &mut Context<'_>) -> Poll<Option<u64>> {
+        let closed = self
+            .closed
+            .get_or_insert_with(|| JsFuture::from(self.writer.closed()));
+        let polled = Pin::new(closed).poll(cx);
+        if polled.is_ready() {
+            // A settled future cannot be polled again; `writer.closed` stays settled.
+            self.closed = None;
+        }
+        polled.map(|closed| closed.err().and_then(|error| stream_error_code(&error)))
     }
 }
 

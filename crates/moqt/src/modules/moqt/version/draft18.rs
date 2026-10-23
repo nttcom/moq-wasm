@@ -111,6 +111,9 @@ struct RequestStream {
     default_publisher_priority: u8,
     /// For a FETCH the peer sent: how far its response has come.
     fetch_end: FetchEnd,
+    /// For a FETCH the peer sent: its response stream once opened, reset
+    /// with the request stream when the FETCH is cancelled (§5.2).
+    fetch_response: Option<Arc<StreamSender>>,
     /// Notified when this side cancels the request: the task reading the
     /// stream then stops the peer's half with STOP_SENDING (§3.3.2).
     reader_stop: Arc<tokio::sync::Notify>,
@@ -123,6 +126,7 @@ impl RequestStream {
             sender,
             default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
             fetch_end: FetchEnd::default(),
+            fetch_response: None,
             reader_stop: Arc::default(),
         }
     }
@@ -351,6 +355,39 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         self.advance_fetch(request_id, |end| end.response_ended = true)
             .await
+    }
+
+    pub(super) fn attach_fetch_response(
+        &self,
+        request_id: RequestId,
+        response: &Arc<StreamSender>,
+    ) -> bool {
+        match self.requests().incoming.get_mut(&request_id) {
+            Some(stream) if stream.kind == RequestStreamKind::Fetch => {
+                stream.fetch_response = Some(response.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// §5.2: the publisher of a cancelled FETCH resets its request stream
+    /// and its response stream. `false` when the FETCH the peer sent as
+    /// `request_id` had ended already.
+    async fn reset_cancelled_fetch(&self, request_id: RequestId) -> bool {
+        let Some(stream) = self.take_incoming(request_id) else {
+            return false;
+        };
+        let response = stream.fetch_response.clone();
+        if let Err(error) = cancel(Some(stream)).await {
+            tracing::debug!(%error, "could not reset the request stream of a cancelled FETCH");
+        }
+        if let Some(response) = response
+            && let Err(error) = response.reset(cancelled()).await
+        {
+            tracing::debug!(%error, "could not reset the response stream of a cancelled FETCH");
+        }
+        true
     }
 
     fn take_incoming(&self, request_id: RequestId) -> Option<RequestStream> {
@@ -772,6 +809,8 @@ fn is_success(response: &ResponseMessage) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use bytes::{Bytes, BytesMut};
 
     use super::{
@@ -1363,50 +1402,6 @@ mod tests {
         assert!(matches!(event, SessionEvent::FetchCancel(_)), "{event:?}");
     }
 
-    /// A FETCH from `client` that `server` answers with FETCH_OK and its
-    /// response stream; returns the server's FETCH handler and data sender
-    /// and the client's receiver.
-    async fn fetch_with_response_stream(
-        client: &crate::Session,
-        server: &crate::Session,
-    ) -> (
-        crate::fetch::FetchHandler,
-        crate::fetch::FetchDataSender,
-        crate::fetch::FetchDataReceiver,
-    ) {
-        let end = Location {
-            group_id: 1,
-            object_id: 0,
-        };
-        let mut subscriber = client.subscriber();
-        let request = tokio::spawn(async move {
-            let handle = subscriber
-                .fetch(
-                    "ns".into(),
-                    "track".into(),
-                    Location {
-                        group_id: 0,
-                        object_id: 0,
-                    },
-                    end,
-                    FetchOption::default(),
-                )
-                .await
-                .unwrap();
-            subscriber.accept_fetch_receiver(&handle).await.unwrap()
-        });
-        let SessionEvent::Fetch(handler) = next_event(server).await else {
-            panic!("expected FETCH");
-        };
-        handler.ok(false, end).await.unwrap();
-        let sender = server
-            .publisher()
-            .create_fetch_stream(handler.request_id)
-            .await
-            .unwrap();
-        (handler, sender, request.await.unwrap())
-    }
-
     #[tokio::test]
     async fn cancelling_a_fetch_stops_its_request_stream() {
         for scheme in SCHEMES {
@@ -1414,12 +1409,13 @@ mod tests {
             let (client, server) =
                 spawn_connected_draft18_sessions(&format!("draft18-fetch-stop-{scheme}"), scheme)
                     .await;
-            let (handler, _sender, receiver) = fetch_with_response_stream(&client, &server).await;
+            let (_subscriber, receiver, handler, _sender) =
+                fetch_with_open_response(&client, &server).await;
+            // Arrange: taken out of the registry, so the publisher leaves the stream to the test
             let request_stream = ControlChannel::of(&server.publisher().session.connection())
                 .requests()
                 .incoming
-                .get(&handler.request_id)
-                .cloned()
+                .remove(&handler.request_id)
                 .unwrap();
             let request_ok = messages::encode_empty_request_ok().unwrap();
 
@@ -1513,6 +1509,83 @@ mod tests {
                 .outgoing
                 .contains_key(&handler.request_id())
         );
+    }
+
+    #[tokio::test]
+    async fn a_stop_sending_after_the_requester_fin_on_an_ended_fetch_ends_its_reading() {
+        // Arrange: taken out of the registry, as a FETCH that has ended is
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-ended-stop", "moqt").await;
+        let (_subscriber, receiver, handler, _sender) =
+            fetch_with_open_response(&client, &server).await;
+        let request_stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .remove(&handler.request_id)
+            .unwrap();
+        let client_request_stream = outgoing_stream(&client, receiver.request_id);
+
+        // Act: FIN, then STOP_SENDING on the publisher's half
+        client_request_stream.sender.close().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        client_request_stream.reader_stop.notify_one();
+        let released = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while Arc::strong_count(&request_stream.sender) > 1 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+
+        // Assert: the task reading the request stream ends
+        assert!(released.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_stop_sending_on_a_fetch_request_stream_resets_both_its_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-stopped-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (_subscriber, mut receiver, handler, _sender) =
+                fetch_with_open_response(&client, &server).await;
+            let request_stream = ControlChannel::of(&server.publisher().session.connection())
+                .requests()
+                .incoming
+                .get(&handler.request_id)
+                .cloned()
+                .unwrap();
+
+            // Act: STOP_SENDING alone, the requester's half left open
+            outgoing_stream(&client, receiver.request_id)
+                .reader_stop
+                .notify_one();
+            let event = next_event(&server).await;
+            let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive()).await;
+            let request_reply = request_stream
+                .sender
+                .send(&messages::encode_empty_request_ok().unwrap())
+                .await;
+
+            // Assert: §5.2 the publisher resets the request and response streams
+            assert!(
+                matches!(event, SessionEvent::FetchCancel(_)),
+                "{scheme}: {event:?}"
+            );
+            assert!(
+                matches!(&response, Ok(Err(error)) if error.to_string().contains("reset")),
+                "{scheme}: {response:?}"
+            );
+            assert!(
+                matches!(
+                    request_reply,
+                    Err(crate::modules::transport::transport_send_stream::TransportSendError::ClosedStream)
+                ),
+                "{scheme}: {request_reply:?}"
+            );
+        }
     }
 
     #[tokio::test]

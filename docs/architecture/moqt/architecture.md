@@ -77,7 +77,11 @@ The creator yields `Box<dyn TransportConnection>`, whose streams are
 connection exists. `TransportReceiveStream::stop` sends STOP_SENDING with a
 code (quinn `RecvStream::stop`, web-transport-quinn `RecvStream::stop`,
 `ReadableStreamDefaultReader.cancel` with a `WebTransportError` in the
-browser).
+browser); `TransportSendStream::poll_stopped` yields the peer's STOP_SENDING
+code (quinn `SendStream::stopped`, web-transport-quinn `poll_closed`, the
+rejection of `writer.closed` in the browser), keeping its wait inside the
+stream between polls so that `StreamSender::stopped` can wait without
+holding the stream.
 
 Four zero-sized markers implement it; the first three are native-only:
 
@@ -196,8 +200,13 @@ call through the adapter; a draft never gets a task of its own (see
     `reset`, or its drop, which resets an unfinished response) are sent. The requester ends its half with FIN when the
     `FetchDataReceiver` reads the response stream's end or reset
     (`FetchRequestEnd`), and cancels the FETCH when the receiver is dropped
-    before. A FIN from the requester does not cancel a FETCH; only a reset
-    does.
+    before. A FIN from the requester does not cancel a FETCH; a reset of
+    its half does, and so does STOP_SENDING on the publisher's half, which
+    the task reading the stream watches (`StreamSender::stopped`). The
+    publisher then resets both the request stream and the response stream
+    and raises `FetchCancel`: `FetchDataSender` attaches its stream to the
+    request (`attach_fetch_response`), and a response stream opened for a
+    FETCH no longer open is reset at once.
   - `request_streams` reads the streams. A request the peer opens becomes the
     draft-14 event once its Request ID passes the parity and reuse checks
     (§10.1). The peer ending an open request raises the event its draft-14

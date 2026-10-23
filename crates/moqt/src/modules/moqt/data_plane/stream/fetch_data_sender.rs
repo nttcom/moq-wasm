@@ -16,6 +16,8 @@ use crate::modules::transport::transport_connection::BoxedSendStream;
 /// reset with INTERNAL_ERROR.
 pub struct FetchDataSender {
     version: Version,
+    /// Shared with the request registry, which resets it when the FETCH is
+    /// cancelled (draft-18 §5.2).
     stream_sender: Arc<StreamSender>,
     /// Held across the send, so objects reach the stream in the order they
     /// were encoded.
@@ -28,6 +30,8 @@ pub struct FetchDataSender {
 }
 
 impl FetchDataSender {
+    /// Fails when the FETCH `request_id` is no longer open, having reset the
+    /// stream: a cancelled FETCH gets no response (draft-18 §5.2).
     // On wasm32 the browser transport is !Send, but the sender is shared with
     // the native build, where the tasks run on a multi-threaded executor.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
@@ -38,6 +42,15 @@ impl FetchDataSender {
     ) -> anyhow::Result<Self> {
         let version = connection.control.version();
         let stream_sender = Arc::new(StreamSender::new(send_stream));
+        if !connection
+            .control
+            .attach_fetch_response(request_id, &stream_sender)
+        {
+            stream_sender
+                .reset(version.data_stream_reset_code(DataStreamResetCode::Cancelled))
+                .await?;
+            anyhow::bail!("FETCH {request_id} is no longer open");
+        }
         stream_sender
             .send(&version.encode_fetch_header(request_id))
             .await?;
