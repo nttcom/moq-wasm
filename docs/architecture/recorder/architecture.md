@@ -62,11 +62,14 @@ both tracks into one init segment and one fragment stream.
    "Tracks that come and go"). With
    `--list-tracks` it prints the first catalog object's LOC tracks
    (`track_list::track_table`) to stdout and exits instead.
-3. Both media tracks are subscribed with `NextGroupStart`, so the recording
-   begins on a keyframe, and read with one `relay::Track` each, a
-   subscription and the `TrackReader` `Subscriber::track_reader` makes for
-   it. With
-   `--from-cache` they are subscribed with `LargestObject` instead, and a
+3. The video track is subscribed with `NextGroupStart`, so the recording
+   begins on a keyframe, and the audio track with `LargestObject`
+   (`relay::subscribe_audio`): an audio object decodes alone, and a meeting
+   participant who sends the audio as a single stream never starts a new
+   group, so `NextGroupStart` would deliver none of it. Each is read with
+   one `relay::Track`, a subscription and the `TrackReader`
+   `Subscriber::track_reader` makes for it. With
+   `--from-cache` the video is subscribed with `LargestObject` too, and a
    standalone FETCH per track from `{0, 0}` through the Largest Location in
    SUBSCRIBE_OK is written first, in arrival order across the two tracks. The
    FETCH ends at that object and the subscription starts after it, so the
@@ -104,7 +107,7 @@ before recording was not chosen, because a video-only `broadcast` lists the
 
 So the video starts alone, and while the recording has no audio,
 `record_live` runs every catalog object through `track_selection::select_audio`.
-The first track it returns is subscribed with `NextGroupStart` and added
+The first track it returns is subscribed with `LargestObject` and added
 with `Recording::add_audio`. In the combined layout the pipeline adds the
 track to the muxer at once when nothing has been written yet; otherwise the
 file goes on with video only, the audio meanwhile is dropped, and the next
@@ -172,9 +175,10 @@ the first video track.
   capture timestamp of the first video object, and each pipeline creates its
   track's demuxer at its first object with `with_capture_origin` set to it.
   The files therefore keep the publisher's audio/video offset, whether the
-  tracks share a file or not. Each subscription starts at its own next group,
-  so the audio can start a group before the video. Audio captured before the
-  origin is dropped, since the demuxer would clamp it to presentation time 0.
+  tracks share a file or not. The video subscription starts at its next
+  group and the audio one at its next object, so the audio can start before
+  the video. Audio captured before the origin is dropped, since the demuxer
+  would clamp it to presentation time 0.
   Audio that overtakes the first video object waits for it, up to
   `MAX_PENDING_AUDIO` objects (about 10 s); beyond that the oldest is dropped.
   While no video track is read, the first audio object sets the origin,

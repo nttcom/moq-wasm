@@ -22,3 +22,6 @@ tracing = "0.1"
 transcode = { path = "../transcode" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.5.8"
+
+[dev-dependencies]
+moqt = { path = "../moqt", features = ["self-signed-cert"] }
