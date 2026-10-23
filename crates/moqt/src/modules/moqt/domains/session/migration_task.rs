@@ -462,7 +462,7 @@ enum Carried {
 
 async fn carry_subscription(
     moved_from: &Connection,
-    connection: &Connection,
+    connection: &Arc<Connection>,
     request_id: u64,
     subscription: &CarriedSubscription,
     deadline: Duration,

@@ -10,7 +10,7 @@
 
 pub(crate) mod draft14;
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use bytes::BytesMut;
 
@@ -286,6 +286,7 @@ impl ControlChannel {
     /// Dropping the returned `PendingResponse` abandons the request.
     pub(crate) async fn send_request(
         &self,
+        _connection: &Arc<Connection>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         match self {

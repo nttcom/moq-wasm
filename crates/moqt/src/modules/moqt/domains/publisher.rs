@@ -208,13 +208,12 @@ impl Publisher {
 }
 
 pub(crate) async fn send_publish_namespace(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     namespace: String,
 ) -> Result<PendingPublishNamespace, RequestFailure> {
     let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
     let request_id = connection.control.next_request_id();
     let pending = connection
-        .control
         .send_request(OutgoingRequest::PublishNamespace(PublishNamespace::new(
             request_id,
             vec_namespace,
@@ -230,7 +229,7 @@ pub(crate) async fn send_publish_namespace(
 /// The PUBLISH_OK and the track alias this side chose, with `connection`'s
 /// wire ids.
 pub(crate) async fn send_publish(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     track_namespace: &str,
     track_name: &str,
     option: &PublishOption,
@@ -252,7 +251,6 @@ pub(crate) async fn send_publish(
     // A late PUBLISH_OK is discarded: the peer keeps subscription state
     // but receives no objects.
     let response = connection
-        .control
         .send_request(OutgoingRequest::Publish(publish))
         .await?
         .response()
