@@ -1,5 +1,5 @@
 name: Install Playwright Chromium
-description: Install Playwright's Chromium for examples/browser and its Linux dependencies, reusing downloaded browsers from the Actions cache
+description: Install Playwright's Chromium for examples/browser on a GitHub-hosted Ubuntu runner, reusing downloaded browsers from the Actions cache
 
 runs:
   using: composite
@@ -18,17 +18,13 @@ runs:
         path: ~/.cache/ms-playwright
         key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
-    - name: Install Chromium with Linux dependencies
+    - name: Install Chromium
       if: ${{ steps.restore.outputs.cache-hit != 'true' }}
       shell: bash
       working-directory: examples/browser
-      run: npx playwright install --with-deps chromium
-
-    - name: Install Chromium Linux dependencies
-      if: ${{ steps.restore.outputs.cache-hit == 'true' }}
-      shell: bash
-      working-directory: examples/browser
-      run: npx playwright install-deps chromium
+      # No --with-deps: the runner image already has Chromium's shared
+      # libraries; apt would only add fonts the headless tests never render.
+      run: npx playwright install chromium
 
     - name: Save Playwright browsers
       if: ${{ steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/master' }}
