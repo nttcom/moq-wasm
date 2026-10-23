@@ -6,6 +6,7 @@ Meeting（`examples/browser/examples/meeting`）のルームに HTTP で呼ば�
 | `asr` | モデル | 動く場所 |
 | --- | --- | --- |
 | `whisper`（既定） | faster-whisper `small`（`--model` で変更） | bot の中の CPU |
+| `granite-speech-5-470m` | Granite Speech 5.0 470m | bot の中の CPU。最初に選ばれたときに読み込む |
 | `qwen3-asr` | Qwen3-ASR-1.7B | GPU の Cloud Run（[音声認識を Cloud Run の GPU にデプロイする](../asr-on-cloud-run.md)） |
 | `granite-speech-5-2b` | Granite Speech 5.0 2b | GPU の Cloud Run（同上） |
 
@@ -44,7 +45,8 @@ sequenceDiagram
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。bot は `http://127.0.0.1:8100` で待ち受け、
-   Whisper のモデル（既定は `small`）は待ち受けを始めてから読み込み、Whisper のルームは読み込みが終わるまで `starting` です。初回はモデルをダウンロードします。
+   Whisper のモデル（既定は `small`）は待ち受けを始めてから読み込み、Whisper のルームは読み込みが終わるまで `starting` です。
+   Granite Speech 470m は、最初にそのルームを頼まれたときに読み込みます。どちらも初回はモデルをダウンロードします。
    `moqt` を maturin でビルドするので、初回の `uv run` には Rust のツールチェーンが要ります。
 
 3. ルームに bot を呼ぶ
@@ -66,7 +68,7 @@ sequenceDiagram
 | `--model` | `small` | `whisper` で使う faster-whisper のモデル |
 | `--asr NAME=URL` | なし | OpenAI 互換の API を持つ音声認識サービス。ページは `?asr=NAME` で選ぶ。`granite-speech-5-2b` はチャット API、それ以外は書き起こし API で呼ぶ。複数指定できる |
 | `--gcloud-auth` / `--metadata-auth` | なし | `--asr` のサービスに ID トークンを付ける。手元では `gcloud`、Cloud Run ではメタデータサーバーから取る |
-| `--max-rooms` | `2` | 同時に動かすルームの数。Whisper は全ルームで 1 つを順番に使う |
+| `--max-rooms` | `2` | 同時に動かすルームの数。CPU のモデルは、それぞれ全ルームで 1 つを順番に使う |
 
 ルーム名は `/` を含まない 1〜64 文字です。対象は `anon` のルームだけで、`?jwt=` で入ったルームには入れません。
 

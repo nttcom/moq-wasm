@@ -117,12 +117,13 @@ short utterance guesses wrong more often than a demo of a Japanese meeting
 gains from it. The Opus packets of the participant's audio objects are
 decoded with PyAV and pushed as `UserAudioRawFrame`s whose `user_id` is the
 participant's user name. The STT service is a `SegmentedSTTService` subclass
-that dates each utterance (below) and hands the segment to one of three speech
+that dates each utterance (below) and hands the segment to one of four speech
 recognizers:
 
 | Name | Model | Where it runs |
 | --- | --- | --- |
 | `whisper` (default) | faster-whisper `small` (`--model`) | in the bot, on the CPU |
+| `granite-speech-5-470m` | Granite Speech 5.0 470m | in the bot, on the CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | its own Cloud Run service with an L4 GPU, served by vLLM |
 | `granite-speech-5-2b` | Granite Speech 5.0 2b | its own Cloud Run service with an L4 GPU, served by vLLM |
 
@@ -140,6 +141,15 @@ recognizers:
   in the next call, as one record dated from the first. The default is
   `small`, about 2.7 times faster than `medium`, so the delay after the last
   segment stays within about two calls.
+- `granite-speech-5-470m`: a CTC model, so one pass of its encoder writes
+  the whole segment, with no window to fill as Whisper's. It takes no
+  language and writes what it hears. All pipelines share one model, as with
+  `whisper`, but it loads when a room first picks it, so a bot whose rooms
+  use only Whisper does not hold its 3 GB in float32. Float32 rather than
+  its bfloat16 weights, since bfloat16 took about four times as long on the
+  CPU. On a 4-thread laptop CPU it took 0.8 s for an 8 s utterance, against
+  1.3 s for Whisper `small`. The image carries its weights, as it carries
+  Whisper's.
 - `qwen3-asr` and `granite-speech-5-2b`: the bot posts each segment as a
   WAV file to the service, with an identity token from the metadata server,
   as the other bots call d3-flash. Qwen3-ASR takes it on the OpenAI-compatible
@@ -157,7 +167,7 @@ recognizers:
 ### Choosing the speech recognizer
 The page sends its choice with the room request,
 `GET /rooms/{room}?asr=qwen3-asr`. `moq-bot-rooms` hands the query to the bot
-of a new room; the bot accepts `whisper` and the names it was started with
+of a new room; the bot accepts its CPU recognizers and the names it was started with
 (`--asr qwen3-asr=<service URL>`, once per GPU service), and refuses anything else, so a request
 cannot point the bot at another server. A room runs with the choice of the
 request that started it; later requests join the running room whatever they
@@ -167,7 +177,7 @@ The bot publishes a `status` track next to `transcript`: one object per group
 holding `{"asr": <name>, "state": "starting" | "ready"}`. A GPU service that
 scaled to zero takes minutes to answer, so the state stays `starting` until
 its `/health` answers, and `whisper` stays `starting` until its model has
-loaded. Every page in the room shows the name and the state in
+loaded, as does `granite-speech-5-470m`. Every page in the room shows the name and the state in
 the `CC` badge. Until then the bot subscribes to no audio, so the service does
 not receive the startup minutes' utterances all at once, and if the
 recognizer has not answered within 2 s, the transcript gets a record from the

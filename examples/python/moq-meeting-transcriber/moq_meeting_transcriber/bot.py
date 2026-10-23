@@ -11,6 +11,7 @@ from moq_bot_rooms.identity_token import IdentityToken, gcloud_identity_token, m
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
+from moq_meeting_transcriber.granite import SharedGranite
 from moq_meeting_transcriber.room import Room
 from moq_meeting_transcriber.stt import Recognizer, SharedWhisper
 
@@ -99,7 +100,8 @@ async def main():
     args = parse_args()
     model = asyncio.ensure_future(load_whisper(args.model))
     async with aiohttp.ClientSession() as session:
-        recognizers = {DEFAULT_ASR: SharedWhisper(model), **http_recognizers(args, session)}
+        granite = SharedGranite()
+        recognizers = {DEFAULT_ASR: SharedWhisper(model), granite.name: granite, **http_recognizers(args, session)}
         await serve_rooms(
             args,
             partial(transcribe_room, args, recognizers[DEFAULT_ASR]),
