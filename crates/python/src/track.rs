@@ -4,7 +4,7 @@ use bytes::Bytes;
 use moqt::{
     Session, Subscription, TrackObject, TrackReader,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
-    object::ObjectStatus,
+    object::{MalformedTrackError, ObjectStatus},
     subscribe::{FilterType, SubscribeOption},
 };
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*, types::PyBytes};
@@ -52,9 +52,9 @@ pub struct Track {
 }
 
 impl Track {
-    /// With `current_group`, the SUBSCRIBE starts at the next group and a joining
-    /// FETCH with offset 0 brings the group the relay holds, so the two meet
-    /// without a gap or a repeat (draft-ietf-moq-transport-14 §9.16.2).
+    /// The SUBSCRIBE starts after the largest object. With `current_group`, a
+    /// joining FETCH with offset 0 brings the group up to that object, so the
+    /// two meet without a gap or a repeat (draft-ietf-moq-transport-14 §9.16.2).
     pub(crate) async fn subscribe(
         session: Arc<Session>,
         namespace: String,
@@ -62,11 +62,7 @@ impl Track {
         current_group: bool,
     ) -> anyhow::Result<Self> {
         let option = SubscribeOption {
-            filter_type: if current_group {
-                FilterType::NextGroupStart
-            } else {
-                FilterType::LargestObject
-            },
+            filter_type: FilterType::LargestObject,
             ..SubscribeOption::default()
         };
         let mut subscriber = session.subscriber();
@@ -133,9 +129,16 @@ impl Track {
                     Ok(Fetch::End) | Err(_) => reading.current_group = None,
                 }
             }
-            match reading.reader.next_object().await? {
-                Some(object) => Ok(Object::from(object)),
-                None => Err(PyStopAsyncIteration::new_err("the track ended")),
+            // A failed subgroup stream does not end the track: a publisher that
+            // leaves resets its open group before the track ends, and a GOAWAY's
+            // cutover cuts the group still open on the retired connection.
+            loop {
+                match reading.reader.next_object().await {
+                    Ok(Some(object)) => return Ok(Object::from(object)),
+                    Ok(None) => return Err(PyStopAsyncIteration::new_err("the track ended")),
+                    Err(err) if err.is::<MalformedTrackError>() => return Err(err.into()),
+                    Err(err) => tracing::debug!(%err, "skipping a failed subgroup stream"),
+                }
             }
         })
     }
