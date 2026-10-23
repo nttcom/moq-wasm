@@ -13,13 +13,12 @@ pub(super) enum TrackKind {
 }
 
 /// Where the tracks of one broadcast start, shared by their receive tasks.
-/// Each track subscribes from its own next group, so the audio can start one
-/// group before the video. `broadcast` writes each audio object into the group
-/// of the video keyframe before it, so the tracks share group ids and audio
-/// is held to the groups at or after the video's first.
+/// The audio usually starts before the video, so it is held to the capture
+/// time the video starts at: group ids cannot line the tracks up, since a
+/// publisher that sends its audio as one endless group numbers it apart from
+/// the video.
 pub(super) struct StartPoint {
     has_video: bool,
-    video_group: OnceLock<u64>,
     capture_origin: OnceLock<Timestamp>,
 }
 
@@ -27,7 +26,6 @@ impl StartPoint {
     pub(super) fn new(has_video: bool) -> Self {
         Self {
             has_video,
-            video_group: OnceLock::new(),
             capture_origin: OnceLock::new(),
         }
     }
@@ -36,22 +34,17 @@ impl StartPoint {
         self.capture_origin.get().copied()
     }
 
-    /// Audio that arrives before the first video object is dropped too: its
-    /// group is not known to be the video's.
-    fn admits(&self, kind: &TrackKind, group_id: u64) -> bool {
-        match kind {
-            TrackKind::Video => {
-                self.video_group.get_or_init(|| group_id);
-                true
-            }
-            TrackKind::Audio(_) => {
-                !self.has_video
-                    || self
-                        .video_group
-                        .get()
-                        .is_some_and(|start| group_id >= *start)
-            }
+    /// The first admitted object sets the capture origin.
+    fn admits(&self, kind: &TrackKind, object: &LocObject) -> bool {
+        let capture = object.capture_timestamp();
+        if matches!(kind, TrackKind::Video) || !self.has_video {
+            self.capture_origin
+                .get_or_init(|| capture.unwrap_or(Timestamp::ZERO));
+            return true;
         }
+        self.capture_origin
+            .get()
+            .is_some_and(|origin| capture.is_none_or(|capture| capture >= *origin))
     }
 }
 
@@ -83,14 +76,14 @@ impl TrackReceiveTask {
                         continue;
                     }
                 };
-                if !start.admits(&kind, object.group_id) {
+                let object = loc_object(object);
+                if !start.admits(&kind, &object) {
                     continue;
                 }
-                let object = loc_object(object);
                 let demuxer = demuxer.get_or_insert_with(|| {
-                    let origin = *start
-                        .capture_origin
-                        .get_or_init(|| object.capture_timestamp().unwrap_or(Timestamp::ZERO));
+                    let origin = start
+                        .capture_origin()
+                        .expect("an admitted object sets the capture origin");
                     match &kind {
                         TrackKind::Video => loc::Demuxer::video(loc::VideoCodec::H264),
                         TrackKind::Audio(config) => loc::Demuxer::audio(config.clone()),
@@ -135,6 +128,8 @@ fn loc_object(object: TrackObject) -> LocObject {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
+
     use super::*;
 
     fn audio() -> TrackKind {
@@ -144,22 +139,40 @@ mod tests {
         })
     }
 
+    fn object(capture_micros: Option<u64>) -> LocObject {
+        LocObject {
+            extensions: capture_micros
+                .map(|micros| loc::LocExtension::varint(loc::TIMESTAMP_ID, micros))
+                .into_iter()
+                .collect(),
+            payload: Bytes::new(),
+        }
+    }
+
     #[test]
-    fn holds_audio_to_the_group_the_video_starts_at() {
+    fn holds_audio_to_the_capture_time_the_video_starts_at() {
         // Arrange
         let start = StartPoint::new(true);
 
         // Act
-        let before_video = start.admits(&audio(), 9);
-        let video = start.admits(&TrackKind::Video, 10);
-        let earlier_group = start.admits(&audio(), 9);
-        let same_group = start.admits(&audio(), 10);
+        let before_video = start.admits(&audio(), &object(Some(900)));
+        let video = start.admits(&TrackKind::Video, &object(Some(1_000)));
+        let captured_earlier = start.admits(&audio(), &object(Some(999)));
+        let captured_with_video = start.admits(&audio(), &object(Some(1_000)));
+        let unstamped = start.admits(&audio(), &object(None));
 
         // Assert
         assert_eq!(
-            [before_video, video, earlier_group, same_group],
-            [false, true, false, true]
+            [
+                before_video,
+                video,
+                captured_earlier,
+                captured_with_video,
+                unstamped
+            ],
+            [false, true, false, true, true]
         );
+        assert_eq!(start.capture_origin(), Some(Timestamp::from_micros(1_000)));
     }
 
     #[test]
@@ -167,7 +180,12 @@ mod tests {
         // Arrange
         let start = StartPoint::new(false);
 
-        // Act / Assert
-        assert!(start.admits(&audio(), 3));
+        // Act
+        let first = start.admits(&audio(), &object(Some(3_000)));
+        let earlier = start.admits(&audio(), &object(Some(2_000)));
+
+        // Assert
+        assert!(first && earlier);
+        assert_eq!(start.capture_origin(), Some(Timestamp::from_micros(3_000)));
     }
 }
