@@ -506,6 +506,7 @@ function MetricChart({
             viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}
             preserveAspectRatio="none"
             className="block h-full w-full overflow-visible"
+            data-testid="stats-chart"
           >
             {tickValues.map((tick) => {
               const y = toChartY(tick)

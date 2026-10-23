@@ -115,10 +115,12 @@ export async function joinRoom(
 }
 
 // Enable camera and mic so the client publishes video+audio.
-export async function enableMedia(model: MeetingClientPageModel): Promise<void> {
-  await expect(model.toggleCameraButton).toBeEnabled({ timeout: 30_000 })
-  await model.toggleCameraButton.click()
-  await expect(model.toggleCameraButton).toHaveAccessibleName('Turn camera off', { timeout: 15_000 })
+export async function enableMedia(model: MeetingClientPageModel, { camera = true } = {}): Promise<void> {
+  if (camera) {
+    await expect(model.toggleCameraButton).toBeEnabled({ timeout: 30_000 })
+    await model.toggleCameraButton.click()
+    await expect(model.toggleCameraButton).toHaveAccessibleName('Turn camera off', { timeout: 15_000 })
+  }
 
   await expect(model.toggleMicrophoneButton).toBeEnabled({ timeout: 30_000 })
   await model.toggleMicrophoneButton.click()

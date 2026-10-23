@@ -56,6 +56,19 @@ async function expectAudioPlaying(stats: import('@playwright/test').Locator): Pr
   await expect(stats).toHaveText(/A\/V [+-]\d+ ms/, { timeout: 30_000 })
 }
 
+// Widest polyline across all stats charts, as a fraction of its chart's width; 1 means a line spans the whole chart.
+function widestPlotRatio(page: Page): Promise<number> {
+  return page.getByTestId('stats-chart').evaluateAll((charts) =>
+    Math.max(
+      0,
+      ...charts.map((chart) => {
+        const lineWidths = [...chart.querySelectorAll('polyline')].map((line) => line.getBoundingClientRect().width)
+        return Math.max(0, ...lineWidths) / chart.getBoundingClientRect().width
+      })
+    )
+  )
+}
+
 function videoWidth(video: import('@playwright/test').Locator): Promise<number> {
   return video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
 }
@@ -458,6 +471,51 @@ test('a viewer decodes a shared tab at the aspect ratio it was captured at', asy
     const captured = getLocalScreenShareVideo(alice.page.page)
     await expect.poll(async () => videoAspectRatio(captured)).toBeCloseTo(4 / 3, 2)
     expect(await videoAspectRatio(shared)).toBeCloseTo(await videoAspectRatio(captured), 2)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
+test('a viewer shows the pub to sub delay of a member who only has the microphone on', async ({ browser }) => {
+  // Arrange
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-audio-only-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page, { camera: false })
+
+    // Act
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+
+    // Assert: without video, the delay comes from the audio track
+    await expectTrackStatus(bob.page.page, 'audio', 'alice', 'Subscribed', 60_000)
+    await expect(getMemberStats(bob.page.page, 'alice')).toHaveText(/pub to sub delay \d+ ms/, { timeout: 30_000 })
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
+test('the stats charts of a member are drawn across the full panel width', async ({ browser }) => {
+  // Arrange: the default 1280 px page makes the details panel wider than a 108:48 chart at its fixed 256 px height (576 px)
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-stats-charts-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await subscribeMedia(bob.page.page, 'alice')
+
+    // Act
+    await openMemberDetails(bob.page.page, 'alice')
+
+    // Assert
+    await expect.poll(async () => widestPlotRatio(bob.page.page), { timeout: 30_000 }).toBeGreaterThan(0.9)
   } finally {
     await alice.context.close()
     await bob.context.close()

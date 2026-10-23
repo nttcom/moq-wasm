@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+import { createWriteStream, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   registerSignalHandlers,
   runCommand,
@@ -35,6 +39,7 @@ const specs =
         "tests/live-viewer-e2e.spec.ts",
         "tests/live-viewer-mp4-e2e.spec.ts",
         "tests/recorder-serve-e2e.spec.ts",
+        "tests/live-viewer-delivery-e2e.spec.ts",
       ];
 const childProcesses = [];
 
@@ -71,6 +76,12 @@ async function main() {
       waitForHttpOk(`${baseUrl}${liveViewerPath}`, 120_000),
     ]);
 
+    // live-viewer-delivery-e2e.spec.ts compares what the viewer received
+    // against the samples this log says the bridge published.
+    const bridgeLog = join(
+      mkdtempSync(join(tmpdir(), "live-viewer-e2e-")),
+      "live-ingest.log",
+    );
     const bridge = spawnProcess(
       "live-ingest",
       "cargo",
@@ -88,8 +99,16 @@ async function main() {
         "--insecure-skip-tls-verify",
         "--transcode",
       ],
-      { cwd: repoRoot },
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          RUST_LOG: `${process.env.RUST_LOG ?? "info"},broadcast::delivery=debug`,
+        },
+        hiddenLines: /broadcast::delivery/,
+      },
     );
+    bridge.stdout.pipe(createWriteStream(bridgeLog));
     childProcesses.push(bridge);
     await waitForOutput(
       bridge,
@@ -124,6 +143,7 @@ async function main() {
           MEDIA_E2E_BASE_URL: baseUrl,
           MEDIA_E2E_MOQT_URL: moqtUrl,
           LIVE_VIEWER_E2E_NAMESPACE: namespace,
+          DELIVERY_BRIDGE_LOG: bridgeLog,
         },
       },
     );

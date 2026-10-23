@@ -9,7 +9,7 @@ down.
 | `./tests/auth-e2e/run.sh` | JWT acceptance, expiry and token refresh against two relays and the VTS |
 | `./tests/fetch-e2e/run.sh` | FETCH range resolution against the relay cache |
 | `./tests/cache-eviction-e2e/run.sh` | Objects leave the cache after the TTL and idle tracks are reclaimed |
-| `./tests/cascading-relay-e2e/run.sh` | Publish on `relay-a`, subscribe and fetch through `relay-b` |
+| `./tests/cascading-relay-e2e/run.sh` | Publish on `relay-a`, subscribe and fetch through `relay-b`; a second subscriber's joining FETCH returns an object relay-b never cached |
 | `./tests/multiple-publishers-e2e/run.sh` | A second publisher of the same track is ignored |
 | `./tests/object-dedup-e2e/run.sh` | Republishing a group does not duplicate objects for FETCH |
 | `./tests/moqtsink-e2e/run.sh` | The GStreamer `moqtsink` publishes the expected tracks |
@@ -21,4 +21,7 @@ through `make browser-e2e-*` or `node tests/browser-e2e/run-*-e2e.mjs`.
 `node tests/browser-e2e/run-console-e2e.mjs` starts the VTS and the console on
 one temporary registry file, then drives the console's pages: a token it
 issues and one signed with the secret it shows pass the VTS until the secret
-is rotated or the app is deleted.
+is rotated or the app is deleted. With two apps, the sidebar switcher lists
+both, each app's pages show only its own appId, a token passes only as the
+app whose secret signed it, and rotating or deleting one app leaves the
+other's tokens valid. Set `VTS_PORT` when 8081 is taken.
