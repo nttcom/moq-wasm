@@ -163,15 +163,18 @@ mod tests {
     use crate::{
         modules::{
             moqt::control_plane::error_codes::DataStreamResetCode,
-            test_support::{HANDSHAKE_TIMEOUT, fetched_stream, location, object_with_extensions},
+            test_support::{
+                HANDSHAKE_TIMEOUT, fetched_stream, location, object_with_extensions,
+                read_fetch_objects,
+            },
         },
-        object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
+        object::{ExtensionHeaders, Object, ObjectStatus, ReadError, StreamReceiveError},
     };
 
     #[tokio::test]
     async fn fetch_preserves_objects_and_reports_fin_after_the_last_object() {
         // Arrange
-        let mut stream = fetched_stream("fetch-object-roundtrip", true, location(16_385, 0)).await;
+        let mut stream = fetched_stream("fetch-object-roundtrip").await;
         let expected = [
             object_with_extensions(),
             Object {
@@ -211,78 +214,31 @@ mod tests {
         .unwrap();
 
         // Assert
-        for object in expected {
-            let Fetch::Object(received) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+        assert_eq!(
+            timeout(HANDSHAKE_TIMEOUT, read_fetch_objects(&mut stream.receiver))
                 .await
-                .unwrap()
-                .unwrap()
-            else {
-                panic!("expected an object before FIN");
-            };
-            assert_eq!(received, object);
-        }
-        assert!(matches!(
-            timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
-                .await
-                .unwrap()
                 .unwrap(),
-            Fetch::End
-        ));
-    }
-
-    #[tokio::test]
-    async fn fetch_converts_datagram_forwarding_and_drops_the_end_of_group_flag() {
-        // Arrange
-        let mut stream =
-            fetched_stream("fetch-datagram-conversion", false, location(16_384, 16_386)).await;
-        let object = Object {
-            forwarding: ForwardingPreference::Datagram,
-            ends_group: true,
-            ..object_with_extensions()
-        };
-        let expected = Object {
-            forwarding: ForwardingPreference::Subgroup {
-                subgroup_id: object.location.object_id,
-            },
-            ends_group: false,
-            ..object.clone()
-        };
-
-        // Act
-        timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&object))
-            .await
-            .unwrap()
-            .unwrap();
-        let received = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
-            .await
-            .unwrap()
-            .unwrap();
-
-        // Assert
-        let Fetch::Object(received) = received else {
-            panic!("expected the fetched datagram object");
-        };
-        assert_eq!(received, expected);
+            expected
+        );
     }
 
     #[tokio::test]
     async fn fetch_reports_reset_as_an_error_after_a_delivered_object() {
         // Arrange
-        let mut stream =
-            fetched_stream("fetch-object-reset", false, location(16_384, 16_386)).await;
+        let mut stream = fetched_stream("fetch-object-reset").await;
         let expected = object_with_extensions();
+        let reset_error = StreamReceiveError::Closed(ReadError::Reset).to_string();
         timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&expected))
             .await
             .unwrap()
             .unwrap();
-        let Fetch::Object(received) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+        let Fetch::Object(_) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
             .await
             .unwrap()
             .unwrap()
         else {
             panic!("expected an object before RESET");
         };
-        assert_eq!(received, expected);
 
         // Act
         timeout(
@@ -297,6 +253,9 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(result.is_err(), "RESET must not be reported as a clean FIN");
+        assert!(
+            matches!(&result, Err(error) if error.to_string().contains(&reset_error)),
+            "{result:?}"
+        );
     }
 }

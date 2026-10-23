@@ -352,12 +352,25 @@ mod conversion_tests {
     }
 
     #[test]
-    fn a_datagram_object_takes_its_object_id_as_subgroup_id() {
+    fn a_datagram_object_is_converted_to_a_fetch_object() {
+        // Arrange
+        let mut sent = object(ForwardingPreference::Datagram, b"p");
+        sent.ends_group = true;
+
         // Act
-        let field = FetchObjectField::from_object(&object(ForwardingPreference::Datagram, b"p"));
+        let received = FetchObjectField::from_object(&sent).into_object();
 
         // Assert: §10.4.4
-        assert_eq!(field.subgroup_id, 7);
+        assert_eq!(
+            received,
+            Object {
+                forwarding: ForwardingPreference::Subgroup {
+                    subgroup_id: sent.location.object_id,
+                },
+                ends_group: false,
+                ..sent
+            }
+        );
     }
 
     #[test]

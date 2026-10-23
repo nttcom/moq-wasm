@@ -24,8 +24,8 @@ use crate::{
         runtime::dispatch::incoming_object::IncomingObject,
     },
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
-        ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender, VariantType,
+        DataReceiver, DatagramReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
+        Location, Object, ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender, VariantType,
     },
     publish::PublishOption,
     server::Handshake,
@@ -214,7 +214,7 @@ pub(crate) fn object_with_extensions() -> Object {
                 value: VariantType::Even(16_384),
             },
             KeyValuePair {
-                key: 0x0b,
+                key: 0x21,
                 value: VariantType::Odd(Bytes::from_static(b"\x01\x00\x80")),
             },
             KeyValuePair {
@@ -222,7 +222,7 @@ pub(crate) fn object_with_extensions() -> Object {
                 value: VariantType::Odd(Bytes::from_static(b"\x00\xff\x7f")),
             },
             KeyValuePair {
-                key: 0x0b,
+                key: 0x21,
                 value: VariantType::Odd(Bytes::from_static(b"\x02\xff")),
             },
         ]),
@@ -267,6 +267,23 @@ pub(crate) async fn first_subgroup_stream(
         panic!("expected a subgroup stream receiver");
     };
     factory.next().await.unwrap()
+}
+
+/// The data receiver resolves only once the first object has arrived, so
+/// this must run after the publisher has sent something.
+pub(crate) async fn datagram_receiver(
+    server: &Session,
+    subscription: &Subscription,
+) -> DatagramReceiver {
+    let DataReceiver::Datagram(receiver) = server
+        .subscriber()
+        .accept_data_receiver(subscription)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a datagram receiver");
+    };
+    receiver
 }
 
 /// The data receiver resolves only once the first object has arrived, so
@@ -395,9 +412,11 @@ pub(crate) struct FetchedStream {
     pub(crate) receiver: FetchDataReceiver,
 }
 
-pub(crate) async fn fetched_stream(name: &str, end_of_track: bool, end: Location) -> FetchedStream {
+pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
     let (client, server) = spawn_connected_dual_sessions(name).await;
     let mut subscriber = client.subscriber();
+    // Matches the EndOfTrack location in the FETCH round-trip test.
+    let end = location(16_385, 0);
     let (handle, sender) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         tokio::join!(
             subscriber.fetch(
@@ -411,7 +430,7 @@ pub(crate) async fn fetched_stream(name: &str, end_of_track: bool, end: Location
                 let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
                     panic!("expected FETCH from the client");
                 };
-                handler.ok(end_of_track, end).await.unwrap();
+                handler.ok(true, end).await.unwrap();
                 server
                     .publisher()
                     .create_fetch_stream(handler.request_id)

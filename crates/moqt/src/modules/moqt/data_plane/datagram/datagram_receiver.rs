@@ -46,48 +46,44 @@ impl DatagramReceiver {
 mod tests {
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, datagram_object, object_with_extensions, open_subgroup,
-            published_track,
+            HANDSHAKE_TIMEOUT, datagram_object, datagram_receiver, object_with_extensions,
+            open_subgroup, published_track,
         },
-        object::{DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus},
+        object::{ForwardingPreference, MalformedTrackError, ObjectStatus},
         wire::SubgroupId,
     };
 
-    #[tokio::test]
-    async fn payload_datagrams_preserve_object_properties_and_the_end_of_group_marker() {
+    async fn assert_payload_datagram_round_trip(name: &str, ends_group: bool) {
         // Arrange
-        let track = published_track("datagram-object-properties").await;
+        let track = published_track(name).await;
         let publisher = track.client.publisher();
         let mut sender = publisher.create_datagram(&track.published);
         let mut object = object_with_extensions();
         object.forwarding = ForwardingPreference::Datagram;
+        object.ends_group = ends_group;
 
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            // Act
+        // Act
+        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             sender.send_object(&object).await.unwrap();
-            let DataReceiver::Datagram(mut receiver) = track
-                .server
-                .subscriber()
-                .accept_data_receiver(&track.accepted)
-                .await
-                .unwrap()
-            else {
-                panic!("expected a datagram receiver");
-            };
+            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
 
-            // Assert
-            assert_eq!(receiver.receive().await.unwrap(), object);
-
-            // Act
-            object.location.object_id += 1;
-            object.ends_group = true;
-            sender.send_object(&object).await.unwrap();
-
-            // Assert
-            assert_eq!(receiver.receive().await.unwrap(), object);
+            receiver.receive().await.unwrap()
         })
         .await
         .unwrap();
+
+        // Assert
+        assert_eq!(received, object);
+    }
+
+    #[tokio::test]
+    async fn payload_datagrams_preserve_object_properties() {
+        assert_payload_datagram_round_trip("datagram-object-properties", false).await;
+    }
+
+    #[tokio::test]
+    async fn payload_datagrams_preserve_the_end_of_group_marker() {
+        assert_payload_datagram_round_trip("datagram-end-of-group", true).await;
     }
 
     #[tokio::test]
@@ -112,33 +108,26 @@ mod tests {
         end_of_track.location.group_id += 1;
         end_of_track.location.object_id = 0;
         end_of_track.status = ObjectStatus::EndOfTrack;
+        let expected = [object, absent, next_normal, end_of_group, end_of_track];
 
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            // Act
-            sender.send_object(&object).await.unwrap();
-            let DataReceiver::Datagram(mut receiver) = track
-                .server
-                .subscriber()
-                .accept_data_receiver(&track.accepted)
-                .await
-                .unwrap()
-            else {
-                panic!("expected a datagram receiver");
-            };
-
-            // Assert
-            assert_eq!(receiver.receive().await.unwrap(), object);
-
-            for object in [absent, next_normal, end_of_group, end_of_track] {
-                // Act
-                sender.send_object(&object).await.unwrap();
-
-                // Assert
-                assert_eq!(receiver.receive().await.unwrap(), object);
+        // Act
+        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            for object in &expected {
+                sender.send_object(object).await.unwrap();
             }
+            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
+
+            let mut received = Vec::new();
+            for _ in &expected {
+                received.push(receiver.receive().await.unwrap());
+            }
+            received
         })
         .await
         .unwrap();
+
+        // Assert
+        assert_eq!(received, expected);
     }
 
     #[tokio::test]
@@ -151,15 +140,7 @@ mod tests {
             .send_object(&datagram_object())
             .await
             .unwrap();
-        let DataReceiver::Datagram(mut receiver) = track
-            .server
-            .subscriber()
-            .accept_data_receiver(&track.accepted)
-            .await
-            .unwrap()
-        else {
-            panic!("expected a datagram receiver");
-        };
+        let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
         receiver.receive().await.unwrap();
         let _subgroup = open_subgroup(
             &publisher.create_stream(&track.published),
