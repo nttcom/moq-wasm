@@ -12,6 +12,7 @@ down.
 | `./tests/cascading-relay-e2e/run.sh` | Publish on `relay-a`, subscribe and fetch through `relay-b`; a second subscriber's joining FETCH returns an object relay-b never cached |
 | `./tests/multiple-publishers-e2e/run.sh` | A second publisher of the same track is ignored |
 | `./tests/object-dedup-e2e/run.sh` | Republishing a group does not duplicate objects for FETCH |
+| `./tests/cross-version-e2e/run.sh` | A relay accepting draft-14 and draft-18 relays tracks both ways, keeps a mixed draft-18 track to one forwarding preference for a draft-14 subscriber, and refuses a track with a Mandatory Track Property; starts a local VTS and relay (no Docker) on `CROSS_VERSION_E2E_VTS_PORT` (8081) and `CROSS_VERSION_E2E_RELAY_PORT` (4633, and the next port) |
 | `./tests/moqtsink-e2e/run.sh` | The GStreamer `moqtsink` publishes the expected tracks |
 
 Browser E2E: the Playwright specs live in `examples/browser/tests`, and the

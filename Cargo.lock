@@ -593,6 +593,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cross-version-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moqt",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
