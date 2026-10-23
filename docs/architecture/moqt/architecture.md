@@ -192,7 +192,8 @@ call through the adapter; a draft never gets a task of its own (see
     and Track Properties carry the former fields, absent ones take their
     draft-18 defaults, and responses take their Request ID from the stream.
     A Track Property is looked up in the mutable list and inside Immutable
-    Properties (§12.7).
+    Properties (§12.7). Immutable Properties that do not parse, or that hold
+    Immutable Properties, refuse the track with MALFORMED_TRACK.
   - `objects` is the draft-18 data plane. FETCH objects are delta encoded
     against the previous one, so `FetchDataSender` keeps a `FetchEncoder` and
     `accept_fetch_receiver` passes the FETCH's group order to the reader.

@@ -1243,12 +1243,15 @@ mod tests {
     /// A SUBSCRIBE from `client` that `server` answers itself with a
     /// SUBSCRIBE_OK for `track_alias` carrying `track_properties`. Hold the
     /// returned handler: dropping it unanswered sends REQUEST_ERROR.
-    async fn subscribed_with_track_properties(
+    async fn subscribe_answered_with_track_properties(
         client: &crate::Session,
         server: &crate::Session,
         track_alias: u64,
         track_properties: &[KeyValuePair],
-    ) -> (crate::Subscription, SubscribeHandler) {
+    ) -> (
+        Result<crate::Subscription, RequestFailure>,
+        SubscribeHandler,
+    ) {
         let (request, handler) =
             subscribe_requested(client, server, SubscribeOption::default()).await;
         let stream = ControlChannel::of(&server.publisher().session.connection())
@@ -1266,7 +1269,19 @@ mod tests {
             .send(&messages::frame(messages::SUBSCRIBE_OK, &payload).unwrap())
             .await
             .unwrap();
-        (request.await.unwrap().unwrap(), handler)
+        (request.await.unwrap(), handler)
+    }
+
+    async fn subscribed_with_track_properties(
+        client: &crate::Session,
+        server: &crate::Session,
+        track_alias: u64,
+        track_properties: &[KeyValuePair],
+    ) -> (crate::Subscription, SubscribeHandler) {
+        let (subscription, handler) =
+            subscribe_answered_with_track_properties(client, server, track_alias, track_properties)
+                .await;
+        (subscription.unwrap(), handler)
     }
 
     async fn send_raw_stream(session: &crate::Session, bytes: &[u8]) {
@@ -1403,6 +1418,40 @@ mod tests {
                 subscription.max_cache_duration(),
                 Some(50),
                 "{properties:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_with_malformed_immutable_properties_fails_the_subscribe() {
+        let immutable = |contents: Vec<u8>| KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(Bytes::from(contents)),
+        };
+        // Type 0x04 without its value; Immutable Properties (0x0B) of one
+        // empty Immutable Properties.
+        for properties in [
+            vec![immutable(vec![0x04])],
+            vec![immutable(vec![0x0B, 0x00])],
+        ] {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions("draft18-malformed-immutable", "moqt").await;
+
+            // Act
+            let (result, _handler) =
+                subscribe_answered_with_track_properties(&client, &server, 4, &properties).await;
+
+            // Assert: §12.7
+            assert!(
+                matches!(
+                    &result,
+                    Err(RequestFailure::Rejected {
+                        code: RequestErrorCode::MalformedTrack,
+                        ..
+                    })
+                ),
+                "{properties:?}: {result:?}"
             );
         }
     }

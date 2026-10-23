@@ -651,6 +651,22 @@ fn property_group_order(properties: &[KeyValuePair]) -> GroupOrder {
     }
 }
 
+/// §12.7: Immutable Properties that do not parse, or that hold Immutable
+/// Properties, make the track malformed.
+pub(crate) fn has_malformed_immutable_properties(properties: &[KeyValuePair]) -> bool {
+    properties.iter().any(|property| match property {
+        KeyValuePair {
+            key: IMMUTABLE_PROPERTIES,
+            value: VariantType::Odd(contents),
+        } => get_key_value_pairs(&mut contents.clone()).map_or(true, |immutable| {
+            immutable
+                .iter()
+                .any(|property| property.key == IMMUTABLE_PROPERTIES)
+        }),
+        _ => false,
+    })
+}
+
 /// §2.5.1: none is understood, so any Mandatory Track Property means the
 /// track must not be processed.
 pub(crate) fn has_mandatory_track_property(properties: &[KeyValuePair]) -> bool {

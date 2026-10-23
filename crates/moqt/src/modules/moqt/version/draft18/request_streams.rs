@@ -25,6 +25,7 @@ use crate::{
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
+                control_messages::key_value_pair::KeyValuePair,
                 control_messages::messages::{
                     fetch_cancel::FetchCancel,
                     go_away::GoAway,
@@ -105,6 +106,23 @@ fn accept_request_id(scope: &Scope, request_id: RequestId) -> bool {
         "invalid request id",
     );
     false
+}
+
+/// Why the track of a message carrying `properties` is not processed.
+fn refused_track(properties: &[KeyValuePair]) -> Option<(RequestErrorCode, &'static str)> {
+    if messages::has_malformed_immutable_properties(properties) {
+        Some((
+            RequestErrorCode::MalformedTrack,
+            "malformed Immutable Properties",
+        ))
+    } else if has_mandatory_track_property(properties) {
+        Some((
+            RequestErrorCode::UnsupportedExtension,
+            "mandatory track property not understood",
+        ))
+    } else {
+        None
+    }
 }
 
 /// Reads the peer's control stream and accepts the request streams the
@@ -338,8 +356,8 @@ impl IncomingRequestTask {
                 publish,
                 track_properties,
             } => {
-                if has_mandatory_track_property(&track_properties) {
-                    Self::reject(sender, RequestErrorCode::UnsupportedExtension).await;
+                if let Some((code, _)) = refused_track(&track_properties) {
+                    Self::reject(sender, code).await;
                     return None;
                 }
                 default_publisher_priority =
@@ -812,14 +830,11 @@ impl OutgoingRequestTask {
     ) -> Option<ResponseMessage> {
         Some(match (kind, message) {
             (RequestStreamKind::Subscribe, Message::SubscribeOk(ok)) => {
-                if has_mandatory_track_property(&ok.track_properties) {
-                    ResponseMessage::SubscribeError(
-                        request_id,
-                        RequestErrorCode::UnsupportedExtension,
-                        "mandatory track property not understood".to_string(),
-                    )
-                } else {
-                    ResponseMessage::SubscribeOk(ok.into_subscribe_ok(request_id))
+                match refused_track(&ok.track_properties) {
+                    Some((code, reason)) => {
+                        ResponseMessage::SubscribeError(request_id, code, reason.to_string())
+                    }
+                    None => ResponseMessage::SubscribeOk(ok.into_subscribe_ok(request_id)),
                 }
             }
             (RequestStreamKind::Subscribe, Message::RequestError(error)) => {
@@ -832,14 +847,11 @@ impl OutgoingRequestTask {
                 ResponseMessage::TrackStatusError(request_id, error.code, error.reason)
             }
             (RequestStreamKind::Fetch, Message::FetchOk(ok)) => {
-                if has_mandatory_track_property(&ok.track_properties) {
-                    ResponseMessage::FetchError(
-                        request_id,
-                        RequestErrorCode::UnsupportedExtension,
-                        "mandatory track property not understood".to_string(),
-                    )
-                } else {
-                    ResponseMessage::FetchOk(ok.into_fetch_ok(request_id, group_order))
+                match refused_track(&ok.track_properties) {
+                    Some((code, reason)) => {
+                        ResponseMessage::FetchError(request_id, code, reason.to_string())
+                    }
+                    None => ResponseMessage::FetchOk(ok.into_fetch_ok(request_id, group_order)),
                 }
             }
             (RequestStreamKind::Fetch, Message::RequestError(error)) => {
