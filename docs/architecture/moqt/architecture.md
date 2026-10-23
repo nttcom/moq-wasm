@@ -230,7 +230,7 @@ call through the adapter; a draft never gets a task of its own (see
     delivers, those buffered before the response included.
   - Messages draft-14 lacks map onto its events:
     - A `publish_namespace` matching the peer's SUBSCRIBE_NAMESPACE is sent as
-      NAMESPACE on that stream and accepted at once.
+      NAMESPACE on that stream, once per namespace, and accepted at once.
     - NAMESPACE / NAMESPACE_DONE on our SUBSCRIBE_NAMESPACE raise
       `PublishNamespace` / `PublishNamespaceDone`. `PublishNamespace` gets a
       synthetic Request ID counting down from `u64::MAX`; responses to it
@@ -263,6 +263,18 @@ call through the adapter; a draft never gets a task of its own (see
       or for the handler to be dropped, which sends none. The stream reads
       its next message only after that, so the answers keep the order of the
       updates.
+    - A REQUEST_UPDATE with TRACK_NAMESPACE_PREFIX on the peer's
+      SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS raises
+      `SubscribeNamespaceUpdate` (§10.9.2), which draft-14 never raises; the
+      application decides the PREFIX_OVERLAP rule (§10.2.14). Accepting moves
+      the stream's prefix and answers REQUEST_OK under the channel's
+      `namespace_writes` lock, which every NAMESPACE / NAMESPACE_DONE also
+      takes, so later suffixes are relative to the new prefix; namespaces
+      the new prefix leaves out are forgotten. Refusing, or dropping the
+      handler (NOT_SUPPORTED), answers REQUEST_ERROR, ends the stream with
+      FIN (§10.9.1) and raises `UnsubscribeNamespace` for the old prefix.
+      Without TRACK_NAMESPACE_PREFIX a namespace stream's REQUEST_UPDATE gets
+      an empty REQUEST_OK.
 - A rule that differs per draft but applies to state only the application
   holds is asked through the handler, so the version stays inside moqt:
   `FetchHandler::check_joining` tells whether a Joining FETCH may join a

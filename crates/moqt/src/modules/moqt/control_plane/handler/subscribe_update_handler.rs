@@ -1,10 +1,11 @@
-use std::sync::{Arc, Mutex};
-
 use tokio::sync::oneshot;
 
 use crate::{
     modules::moqt::{
-        control_plane::control_messages::messages::subscribe_update::SubscribeUpdate,
+        control_plane::{
+            control_messages::messages::subscribe_update::SubscribeUpdate,
+            handler::shared_answer::SharedAnswer,
+        },
         domains::connection::Connection,
     },
     object::Location,
@@ -14,13 +15,10 @@ use crate::{
 /// every handler clone was dropped unanswered.
 pub(crate) type UpdateAnswerReceiver = oneshot::Receiver<Option<Location>>;
 
-/// Shared by the handler's clones; the first answer takes the sender.
-type UpdateAnswerSender = Arc<Mutex<Option<oneshot::Sender<Option<Location>>>>>;
-
 #[derive(Clone, Debug)]
 pub struct SubscribeUpdateHandler {
     /// `None` for draft-14, whose SUBSCRIBE_UPDATE has no answer.
-    answer_sender: Option<UpdateAnswerSender>,
+    answer_sender: Option<SharedAnswer<Option<Location>>>,
     request_id: u64,
     subscription_request_id: u64,
     start_location: Location,
@@ -50,9 +48,9 @@ impl SubscribeUpdateHandler {
         connection: &Connection,
         subscribe_update: SubscribeUpdate,
     ) -> (Self, UpdateAnswerReceiver) {
-        let (answer_sender, answer_receiver) = oneshot::channel();
+        let (answer_sender, answer_receiver) = SharedAnswer::new();
         let handler = Self {
-            answer_sender: Some(Arc::new(Mutex::new(Some(answer_sender)))),
+            answer_sender: Some(answer_sender),
             ..Self::new(connection, subscribe_update)
         };
         (handler, answer_receiver)
@@ -97,13 +95,8 @@ impl SubscribeUpdateHandler {
     /// Joining Location (draft-18 §5.1); draft-14 joins at the SUBSCRIBE_OK's
     /// Largest Location (§9.16.2).
     pub fn ok(&self, largest: Option<Location>) -> bool {
-        let Some(answer_sender) = &self.answer_sender else {
-            return false;
-        };
-        let answer_sender = answer_sender
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        answer_sender.is_some_and(|answer_sender| answer_sender.send(largest).is_ok())
+        self.answer_sender
+            .as_ref()
+            .is_some_and(|answer_sender| answer_sender.send(largest))
     }
 }

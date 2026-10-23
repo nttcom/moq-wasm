@@ -165,6 +165,11 @@ pub(crate) struct ControlChannel {
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
     requests: std::sync::Mutex<Requests>,
+    /// Held while a NAMESPACE or NAMESPACE_DONE is built and sent, and while
+    /// a namespace subscription moves to a new prefix and is answered, so
+    /// each suffix is relative to the prefix the subscriber last heard of
+    /// (§10.9.2).
+    namespace_writes: tokio::sync::Mutex<()>,
     binding: std::sync::OnceLock<Binding>,
 }
 
@@ -199,6 +204,7 @@ impl ControlChannel {
             synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
             requests: std::sync::Mutex::new(Requests::default()),
+            namespace_writes: tokio::sync::Mutex::new(()),
             binding: std::sync::OnceLock::new(),
         }
     }
@@ -283,28 +289,69 @@ impl ControlChannel {
 
     /// draft-14 announces a namespace to a namespace subscriber with
     /// PUBLISH_NAMESPACE; draft-18 sends NAMESPACE on the subscription's
-    /// stream instead (§6.1). The announcement is accepted at once, as no
-    /// response follows. `None` when the peer has no SUBSCRIBE_NAMESPACE for
-    /// it, so it goes as PUBLISH_NAMESPACE.
+    /// stream instead (§6.1), once: a namespace the subscription already
+    /// heard of is not sent again. The announcement is accepted at once, as
+    /// no response follows. `None` when the peer has no SUBSCRIBE_NAMESPACE
+    /// for it, so it goes as PUBLISH_NAMESPACE.
     async fn advertise_namespace(
         &self,
         request_id: RequestId,
         namespace: &[String],
     ) -> Result<Option<PendingResponse>, RequestFailure> {
+        let _namespace_writes = self.namespace_writes.lock().await;
         let Some((subscription_request_id, stream, prefix_len)) =
             self.namespace_subscription(namespace)
         else {
             return Ok(None);
         };
+        let accepted = PendingResponse::resolved(ResponseMessage::PublishNamespaceOk(request_id));
+        if self.requests().advertised.get(namespace) == Some(&subscription_request_id) {
+            return Ok(Some(accepted));
+        }
         let message = messages::encode_namespace(messages::NAMESPACE, &namespace[prefix_len..])
             .map_err(|_| RequestFailure::ProtocolViolation("namespace could not be encoded"))?;
         stream.sender.send(&message).await?;
         self.requests()
             .advertised
             .insert(namespace.to_vec(), subscription_request_id);
-        Ok(Some(PendingResponse::resolved(
-            ResponseMessage::PublishNamespaceOk(request_id),
-        )))
+        Ok(Some(accepted))
+    }
+
+    /// §10.9.2: the peer's SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS
+    /// `request_id`, of `kind`, moves to `prefix` and is answered with
+    /// REQUEST_OK on `sender`. A namespace announced under the old prefix that
+    /// the new one leaves out is forgotten, as no NAMESPACE_DONE could name it.
+    /// Returns the subscription's new kind.
+    async fn move_namespace_subscription(
+        &self,
+        request_id: RequestId,
+        kind: &RequestStreamKind,
+        prefix: Vec<String>,
+        sender: &StreamSender,
+    ) -> RequestStreamKind {
+        let moved = match kind {
+            RequestStreamKind::SubscribeNamespace(_) => {
+                RequestStreamKind::SubscribeNamespace(prefix)
+            }
+            RequestStreamKind::SubscribeTracks(_) => RequestStreamKind::SubscribeTracks(prefix),
+            _ => unreachable!("only namespace subscriptions take a TRACK_NAMESPACE_PREFIX"),
+        };
+        let _namespace_writes = self.namespace_writes.lock().await;
+        {
+            let mut requests = self.requests();
+            if let Some(stream) = requests.incoming.get_mut(&request_id) {
+                stream.kind = moved.clone();
+            }
+            requests.advertised.retain(|namespace, subscription| {
+                *subscription != request_id || moved.namespace_prefix_of(namespace).is_some()
+            });
+        }
+        if let Ok(message) = messages::encode_empty_request_ok()
+            && let Err(error) = sender.send(&message).await
+        {
+            tracing::debug!(%error, "could not answer REQUEST_UPDATE");
+        }
+        moved
     }
 
     pub(super) fn default_publisher_priority(&self, request_id: RequestId) -> u8 {
@@ -636,6 +683,7 @@ impl ControlChannel {
                 cancel(self.take_outgoing(fetch_cancel.request_id)).await
             }
             Notification::PublishNamespaceDone(done) => {
+                let _namespace_writes = self.namespace_writes.lock().await;
                 let advertised = self.requests().advertised.remove(&done.track_namespace);
                 if let Some(subscription_request_id) = advertised {
                     let stream = self
@@ -2729,6 +2777,140 @@ mod tests {
             matches!(event, Ok(Ok(SessionEvent::Disconnected()))),
             "{event:?}"
         );
+    }
+
+    /// A SUBSCRIBE_NAMESPACE for "live" that `client` sends on a stream it
+    /// reads itself, or a SUBSCRIBE_TRACKS with `tracks`; returns the stream
+    /// after `server` accepted it.
+    async fn raw_namespace_subscription(
+        client: &crate::Session,
+        server: &crate::Session,
+        tracks: bool,
+    ) -> (StreamSender, MessageReceiver) {
+        let connection = client.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
+        let sender = StreamSender::new(send_stream);
+        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let request_id = connection.control.next_request_id();
+        let prefix = vec!["live".to_string()];
+        let request = if tracks {
+            messages::encode_subscribe_tracks(&messages::SubscribeTracksMessage {
+                request_id,
+                track_namespace_prefix: prefix,
+                authorization_tokens: vec![],
+                forward: true,
+            })
+        } else {
+            messages::encode_subscribe_namespace(&crate::modules::moqt::control_plane::control_messages::messages::subscribe_namespace::SubscribeNamespace {
+                request_id,
+                track_namespace_prefix: prefix,
+                authorization_token: vec![],
+            })
+        };
+        sender.send(&request.unwrap()).await.unwrap();
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        let response = receiver.receive().await.unwrap();
+        assert!(
+            matches!(response, Some(messages::Message::RequestOk(_))),
+            "{response:?}"
+        );
+        (sender, receiver)
+    }
+
+    /// Sends a REQUEST_UPDATE moving the subscription on `stream` to
+    /// `prefix` and returns the handler `server` receives for it.
+    async fn requested_namespace_update(
+        client: &crate::Session,
+        server: &crate::Session,
+        stream: &StreamSender,
+        prefix: &[&str],
+    ) -> crate::namespace::SubscribeNamespaceUpdateHandler {
+        let request_id = client
+            .publisher()
+            .session
+            .connection()
+            .control
+            .next_request_id();
+        let prefix = prefix.iter().map(|field| field.to_string()).collect();
+        stream
+            .send(&request_update(
+                request_id,
+                &[parameters::Parameter::TrackNamespacePrefix(prefix)],
+            ))
+            .await
+            .unwrap();
+        let event = next_event(server).await;
+        let SessionEvent::SubscribeNamespaceUpdate(handler) = event else {
+            panic!("expected SubscribeNamespaceUpdate, got {event:?}");
+        };
+        handler
+    }
+
+    #[tokio::test]
+    async fn an_accepted_namespace_prefix_update_announces_namespaces_under_the_new_prefix() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+
+        // Act
+        handler.ok().await;
+        let answer = receiver.receive().await.unwrap();
+        server
+            .publisher()
+            .publish_namespace("live/room/alice".into())
+            .await
+            .unwrap();
+        let announced = receiver.receive().await.unwrap();
+
+        // Assert: §10.9.2 suffixes follow the updated prefix after the REQUEST_OK
+        assert_eq!(handler.track_namespace_prefix(), "live");
+        assert_eq!(handler.new_track_namespace_prefix(), "live/room");
+        assert_eq!(handler.new_track_namespace_prefix_tuple(), ["live", "room"]);
+        assert_eq!(handler.interest(), NamespaceInterest::Namespaces);
+        assert!(
+            matches!(answer, Some(messages::Message::RequestOk(_))),
+            "{answer:?}"
+        );
+        assert_eq!(
+            announced,
+            Some(messages::Message::Namespace(vec!["alice".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_namespace_prefix_update_ends_the_subscription() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-refused", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let handler = requested_namespace_update(&client, &server, &sender, &["other"]).await;
+
+        // Act
+        handler
+            .error(RequestErrorCode::NamespacePrefixOverlap, String::new())
+            .await;
+        let answer = receiver.receive().await.unwrap();
+        let end = receiver.receive().await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert: §10.2.14 PREFIX_OVERLAP, and §10.9.1 closes the stream
+        assert_eq!(handler.interest(), NamespaceInterest::Tracks);
+        let Some(messages::Message::RequestError(error)) = answer else {
+            panic!("expected REQUEST_ERROR, got {answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::NamespacePrefixOverlap);
+        assert!(end.is_none(), "{end:?}");
+        let SessionEvent::UnsubscribeNamespace(unsubscribed) = event else {
+            panic!("expected UnsubscribeNamespace, got {event:?}");
+        };
+        assert_eq!(unsubscribed.track_namespace_prefix(), "live");
+        assert_eq!(unsubscribed.interest, NamespaceInterest::Tracks);
     }
 
     #[tokio::test]

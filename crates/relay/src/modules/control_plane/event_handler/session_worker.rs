@@ -391,7 +391,8 @@ impl SessionWorker {
             MoqtSessionEvent::MaxRequestId(..)
             | MoqtSessionEvent::RequestsBlocked(..)
             | MoqtSessionEvent::PublishNamespaceCancel(..)
-            | MoqtSessionEvent::FetchCancel(..) => {
+            | MoqtSessionEvent::FetchCancel(..)
+            | MoqtSessionEvent::SubscribeNamespaceUpdate(..) => {
                 event_span.in_scope(|| {
                     tracing::warn!("Relay handling for this event is not implemented");
                 });

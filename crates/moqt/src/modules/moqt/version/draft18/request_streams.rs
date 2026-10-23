@@ -52,6 +52,9 @@ use crate::{
                     publish_namespace_handler::PublishNamespaceHandler,
                     subscribe_handler::SubscribeHandler,
                     subscribe_namespace_handler::SubscribeNamespaceHandler,
+                    subscribe_namespace_update_handler::{
+                        NamespaceUpdateAnswerReceiver, SubscribeNamespaceUpdateHandler,
+                    },
                     subscribe_update_handler::{SubscribeUpdateHandler, UpdateAnswerReceiver},
                     track_status_handler::TrackStatusHandler,
                     unsubscribe_handler::UnsubscribeHandler,
@@ -286,7 +289,7 @@ impl IncomingRequestTask {
         else {
             return;
         };
-        let kind = stream.kind;
+        let mut kind = stream.kind;
         drop(context);
         let mut go_away_received = false;
         // A FIN on a FETCH ends only the reading (§3.3.2).
@@ -346,6 +349,35 @@ impl IncomingRequestTask {
                         FollowUp::AnswerUpdate(answer_receiver) => {
                             drop(context);
                             answer_update(&sender, answer_receiver).await;
+                        }
+                        FollowUp::AnswerNamespaceUpdate(answer_receiver, prefix) => {
+                            drop(context);
+                            // `_sent` is dropped once the answer is on the stream.
+                            let (answer, _sent) = match answer_receiver.await {
+                                Ok((answer, sent)) => (answer, Some(sent)),
+                                Err(_) => (
+                                    Err((
+                                        RequestErrorCode::NotSupported,
+                                        "namespace prefix update not handled".to_string(),
+                                    )),
+                                    None,
+                                ),
+                            };
+                            let Some(context) = Scope::of(&connection) else {
+                                return;
+                            };
+                            let Err((code, reason)) = answer else {
+                                kind = context
+                                    .channel()
+                                    .move_namespace_subscription(request_id, &kind, prefix, &sender)
+                                    .await;
+                                continue;
+                            };
+                            // §10.9.1: a failed update closes the stream, which
+                            // ends the subscription as the peer's withdrawal would.
+                            Self::reject(&sender, code, &reason).await;
+                            Self::peer_ended(&context, request_id, kind).await;
+                            return;
                         }
                         FollowUp::Done => return,
                     }
@@ -436,8 +468,8 @@ impl IncomingRequestTask {
                 publish,
                 track_properties,
             } => {
-                if let Some((code, _)) = refused_track(&track_properties) {
-                    Self::reject(sender, code).await;
+                if let Some((code, reason)) = refused_track(&track_properties) {
+                    Self::reject(sender, code, reason).await;
                     return None;
                 }
                 default_publisher_priority =
@@ -499,8 +531,8 @@ impl IncomingRequestTask {
         Some((request_id, stream, baseline))
     }
 
-    async fn reject(sender: &StreamSender, code: RequestErrorCode) {
-        let Ok(message) = messages::encode_request_error(code, "") else {
+    async fn reject(sender: &StreamSender, code: RequestErrorCode, reason: &str) {
+        let Ok(message) = messages::encode_request_error(code, reason) else {
             return;
         };
         if sender.send(&message).await.is_ok() {
@@ -528,6 +560,32 @@ impl IncomingRequestTask {
                 };
                 let update = apply_update(baseline, update.request_id, update.parameters);
                 FollowUp::AnswerUpdate(emit_update(scope, update))
+            }
+            (
+                RequestStreamKind::SubscribeNamespace(prefix)
+                | RequestStreamKind::SubscribeTracks(prefix),
+                Message::RequestUpdate(update),
+            ) => {
+                let new_prefix = update
+                    .parameters
+                    .into_iter()
+                    .filter_map(|parameter| match parameter {
+                        Parameter::TrackNamespacePrefix(prefix) => Some(prefix),
+                        _ => None,
+                    })
+                    .last();
+                let Some(new_prefix) = new_prefix else {
+                    send_update_answer(sender, None).await;
+                    return FollowUp::Continue;
+                };
+                let interest = match kind {
+                    RequestStreamKind::SubscribeNamespace(_) => NamespaceInterest::Namespaces,
+                    _ => NamespaceInterest::Tracks,
+                };
+                let (handler, answer_receiver) =
+                    SubscribeNamespaceUpdateHandler::new(prefix, &new_prefix, interest);
+                emit(scope, SessionEvent::SubscribeNamespaceUpdate(handler));
+                FollowUp::AnswerNamespaceUpdate(answer_receiver, new_prefix)
             }
             // §10.14: the subscriber cannot update a TRACK_STATUS.
             (RequestStreamKind::TrackStatus, Message::RequestUpdate(_)) => {
@@ -644,6 +702,9 @@ enum FollowUp {
     /// Answer the REQUEST_UPDATE once its handler is answered or dropped,
     /// then continue.
     AnswerUpdate(UpdateAnswerReceiver),
+    /// Move the namespace subscription to the prefix once the handler
+    /// accepts, or end it when the handler refuses or is dropped (§10.9).
+    AnswerNamespaceUpdate(NamespaceUpdateAnswerReceiver, Vec<String>),
     Done,
 }
 
