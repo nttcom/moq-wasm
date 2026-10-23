@@ -385,6 +385,7 @@ pub(crate) async fn read_fetch_objects(
     loop {
         match receiver.receive().await.unwrap() {
             Fetch::Object(object) => objects.push(object),
+            Fetch::UnknownRange { last } => panic!("unexpected unknown range through {last:?}"),
             Fetch::End => return objects,
         }
     }

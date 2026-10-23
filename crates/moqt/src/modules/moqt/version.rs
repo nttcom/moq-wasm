@@ -48,7 +48,7 @@ use crate::{
             data_plane::{
                 object::canonical_object::{Object, SubgroupStart},
                 stream::{
-                    fetch_data_receiver::FetchDataReceiver,
+                    fetch_data_receiver::{self, FetchDataReceiver},
                     stream_data_receiver::StreamDataReceiver,
                     stream_receiver::{BiStreamReceiver, StreamReceiveError},
                 },
@@ -229,11 +229,13 @@ impl FetchReader {
         }
     }
 
-    /// `Ok(None)` means the peer finished the stream (FIN).
-    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+    pub(crate) async fn next(&mut self) -> Result<fetch_data_receiver::Fetch, StreamReceiveError> {
         match self {
-            Self::Draft14(reader) => reader.next_object().await,
-            Self::Draft18(reader) => reader.next_object().await,
+            Self::Draft14(reader) => Ok(reader.next_object().await?.map_or(
+                fetch_data_receiver::Fetch::End,
+                fetch_data_receiver::Fetch::Object,
+            )),
+            Self::Draft18(reader) => reader.next().await,
         }
     }
 }

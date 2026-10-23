@@ -598,11 +598,14 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     the status, and only a datagram with a payload sends it back. FETCH cannot
     carry it, so a fetched copy of that object has `ends_group` false.
   - `FetchDataSender::send_object(&Object)` / `FetchDataReceiver::receive()
-    -> Fetch::{Object(Object), End}` do the same for FETCH responses
-    (`FetchObjectField::from_object` / `into_object`): a datagram object is
-    sent with its Object ID as the Subgroup ID (§10.4.4) and a zero-length
-    object as its status. The FETCH_HEADER is consumed by moqt and not
-    returned.
+    -> Fetch::{Object(Object), UnknownRange { last }, End}` do the same for
+    FETCH responses (`FetchObjectField::from_object` / `into_object`): a
+    datagram object is sent with its Object ID as the Subgroup ID (§10.4.4)
+    and a zero-length object as its status. The FETCH_HEADER is consumed by
+    moqt and not returned. `UnknownRange` is draft-18's End of Unknown Range
+    (§11.4.4.2): the objects through `last` were not sent and may exist, so
+    `End` after it does not mean the range is complete. draft-14 never
+    yields it; draft-18's End of Non-Existent Range yields nothing.
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

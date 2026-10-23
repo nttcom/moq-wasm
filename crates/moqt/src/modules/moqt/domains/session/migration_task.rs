@@ -1140,6 +1140,7 @@ mod tests {
             loop {
                 match receiver.receive().await {
                     Ok(Fetch::Object(object)) => rest.push(object.payload),
+                    Ok(Fetch::UnknownRange { .. }) => {}
                     Ok(Fetch::End) => return Ok(rest),
                     Err(error) => return Err(error),
                 }

@@ -179,6 +179,9 @@ async fn fetch_group(namespace: &str, group_id: u64) -> anyhow::Result<Vec<(u64,
             Ok(Fetch::Object(obj)) => {
                 received.push((obj.location.group_id, obj.location.object_id))
             }
+            Ok(Fetch::UnknownRange { last }) => {
+                return Err(anyhow::anyhow!("unknown range through {last:?}"));
+            }
             Ok(Fetch::End) => break,
             Err(e) => return Err(anyhow::anyhow!("fetch receive failed: {}", e)),
         }

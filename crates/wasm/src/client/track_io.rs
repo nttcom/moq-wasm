@@ -80,6 +80,9 @@ pub(crate) async fn read_fetch(
                 Ok(FetchData::Object(object)) => {
                     emit_fetch_object(&shared.callbacks, request_id, &object);
                 }
+                // Only draft-18 has unknown ranges, and the browser offers
+                // draft-14 alone.
+                Ok(FetchData::UnknownRange { .. }) => {}
                 Ok(FetchData::End) => break FetchStreamEndMessage::finished(request_id),
                 Err(_) => break FetchStreamEndMessage::reset(request_id, 0),
             }

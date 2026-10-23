@@ -16,11 +16,18 @@ use crate::{
     object::{GroupOrder, Location},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Fetch {
     Object(Object),
+    /// draft-18 §11.4.4.2 End of Unknown Range: the objects after the
+    /// previous one (or the range start) through `last` have unknown status
+    /// and may exist. draft-14 never yields it.
+    UnknownRange {
+        last: Location,
+    },
     /// The publisher finished the stream (FIN): every object of the range
-    /// was delivered.
+    /// the publisher knows was delivered; an object missing outside the
+    /// unknown ranges does not exist.
     End,
 }
 
@@ -120,14 +127,13 @@ impl FetchDataReceiver {
 
     pub async fn receive(&mut self) -> anyhow::Result<Fetch> {
         loop {
-            let error = match self.reader.next_object().await {
-                Ok(Some(object)) => {
-                    if let Some(carry) = &mut self.carry {
+            let error = match self.reader.next().await {
+                Ok(fetched) => {
+                    if let (Fetch::Object(object), Some(carry)) = (&fetched, &mut self.carry) {
                         carry.delivered(object.location);
                     }
-                    return Ok(Fetch::Object(object));
+                    return Ok(fetched);
                 }
-                Ok(None) => return Ok(Fetch::End),
                 Err(error) => error,
             };
             match &error {

@@ -166,6 +166,7 @@ async fn fetch_catalog_track_names(
                         .collect());
                 }
             }
+            Fetch::UnknownRange { last } => bail!("catalog FETCH: unknown range through {last:?}"),
             Fetch::End => bail!("catalog FETCH returned no object"),
         }
     }

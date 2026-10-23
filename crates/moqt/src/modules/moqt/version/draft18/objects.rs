@@ -23,7 +23,7 @@ use crate::modules::moqt::{
             object_status::ObjectStatus,
         },
         stream::{
-            fetch_data_receiver::FetchDataReceiver,
+            fetch_data_receiver::{Fetch, FetchDataReceiver},
             stream_data_receiver::StreamDataReceiver,
             stream_receiver::{StreamReceiveError, StreamReceiver},
         },
@@ -180,8 +180,10 @@ pub(crate) enum FetchField {
         properties: ExtensionHeaders,
         payload: Bytes,
     },
-    /// End of Non-Existent Range or End of Unknown Range (§11.4.4.2).
+    /// §11.4.4.2: the objects up to this location do not exist, or with
+    /// `unknown`, have unknown status.
     EndOfRange {
+        unknown: bool,
         group_id_delta: u64,
         object_id_delta: u64,
     },
@@ -192,6 +194,7 @@ fn get_fetch_field(buf: &mut impl Buf) -> Result<FetchField, DecodeError> {
     match flags {
         END_OF_NON_EXISTENT_RANGE | END_OF_UNKNOWN_RANGE => {
             return Ok(FetchField::EndOfRange {
+                unknown: flags == END_OF_UNKNOWN_RANGE,
                 group_id_delta: get_vi64(buf)?,
                 object_id_delta: get_vi64(buf)?,
             });
@@ -445,16 +448,18 @@ impl FetchState {
         })
     }
 
-    /// `Ok(None)` for an End of Range marker, which carries no object.
-    pub(crate) fn object(&mut self, field: FetchField) -> Result<Option<Object>, DecodeError> {
+    /// `Ok(None)` for an End of Non-Existent Range, whose objects do not
+    /// exist; an End of Unknown Range is reported (§11.4.4.2).
+    pub(crate) fn object(&mut self, field: FetchField) -> Result<Option<Fetch>, DecodeError> {
         match field {
             FetchField::EndOfRange {
+                unknown,
                 group_id_delta,
                 object_id_delta,
             } => {
-                self.location =
-                    Some(self.resolve_location(Some(group_id_delta), Some(object_id_delta))?);
-                Ok(None)
+                let last = self.resolve_location(Some(group_id_delta), Some(object_id_delta))?;
+                self.location = Some(last);
+                Ok(unknown.then_some(Fetch::UnknownRange { last }))
             }
             FetchField::Object {
                 flags,
@@ -500,7 +505,7 @@ impl FetchState {
                     },
                     publisher_priority,
                 });
-                Ok(Some(Object {
+                Ok(Some(Fetch::Object(Object {
                     location,
                     forwarding,
                     publisher_priority,
@@ -508,7 +513,7 @@ impl FetchState {
                     extension_headers: properties,
                     payload,
                     ends_group: false,
-                }))
+                })))
             }
         }
     }
@@ -594,17 +599,17 @@ impl FetchReader {
         self.state.group_order = group_order;
     }
 
-    /// Skips End of Range markers.
-    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+    /// Skips End of Non-Existent Range markers; `Fetch::End` at FIN.
+    pub(crate) async fn next(&mut self) -> Result<Fetch, StreamReceiveError> {
         loop {
             match self.stream.receive().await? {
                 Some(StreamFrame::FetchField(field)) => {
-                    if let Some(object) = self.state.object(field).map_err(violation)? {
-                        return Ok(Some(object));
+                    if let Some(fetched) = self.state.object(field).map_err(violation)? {
+                        return Ok(fetched);
                     }
                 }
                 Some(_) => unreachable!("a FETCH stream has one header"),
-                None => return Ok(None),
+                None => return Ok(Fetch::End),
             }
         }
     }
@@ -881,8 +886,8 @@ mod tests {
     use tokio_util::codec::Decoder;
 
     use super::{
-        FetchEncoder, FetchState, PADDING_STREAM, StreamDecoder, StreamFrame, SubgroupEncoder,
-        SubgroupState, decode_datagram, encode_datagram, encode_fetch_header,
+        Fetch, FetchEncoder, FetchState, PADDING_STREAM, StreamDecoder, StreamFrame,
+        SubgroupEncoder, SubgroupState, decode_datagram, encode_datagram, encode_fetch_header,
     };
     use crate::modules::moqt::{
         control_plane::control_messages::{
@@ -1081,8 +1086,11 @@ mod tests {
         let mut state = FetchState::new();
         state.group_order = group_order;
         frames
-            .filter_map(|frame| match frame {
-                StreamFrame::FetchField(field) => state.object(field).unwrap(),
+            .map(|frame| match frame {
+                StreamFrame::FetchField(field) => match state.object(field).unwrap() {
+                    Some(Fetch::Object(object)) => object,
+                    other => panic!("unexpected {other:?}"),
+                },
                 other => panic!("unexpected {other:?}"),
             })
             .collect()
@@ -1129,9 +1137,9 @@ mod tests {
     }
 
     #[test]
-    fn an_end_of_range_marker_moves_the_prior_location() {
-        // Arrange: object {1,0}, End of Unknown Range up to {3,4}, then the
-        // next object as "prior + 1"
+    fn end_of_range_markers_move_the_prior_location_and_only_an_unknown_one_is_reported() {
+        // Arrange: object {1,0}, End of Non-Existent Range up to {2,1}, End of
+        // Unknown Range up to {3,4}, then the next object as "prior + 1"
         let mut stream = encode_fetch_header(6);
         stream.extend_from_slice(
             &FetchEncoder::default()
@@ -1139,16 +1147,18 @@ mod tests {
                 .unwrap()
                 .unwrap(),
         );
-        put_vi64(&mut stream, 0x10C);
-        put_vi64(&mut stream, 1);
-        put_vi64(&mut stream, 4);
+        for (flags, group_id_delta, object_id) in [(0x8C, 0, 1), (0x10C, 0, 4)] {
+            put_vi64(&mut stream, flags);
+            put_vi64(&mut stream, group_id_delta);
+            put_vi64(&mut stream, object_id);
+        }
         put_vi64(&mut stream, 0x00);
         put_vi64(&mut stream, 1);
         stream.extend_from_slice(b"b");
         let mut state = FetchState::new();
 
         // Act
-        let objects: Vec<Object> = frames(stream)
+        let fetched: Vec<Fetch> = frames(stream)
             .into_iter()
             .skip(1)
             .filter_map(|frame| match frame {
@@ -1157,12 +1167,18 @@ mod tests {
             })
             .collect();
 
-        // Assert
+        // Assert: §11.4.4.2
         assert_eq!(
-            objects,
+            fetched,
             vec![
-                object(1, 0, subgroup(0), b"a"),
-                object(3, 5, subgroup(0), b"b")
+                Fetch::Object(object(1, 0, subgroup(0), b"a")),
+                Fetch::UnknownRange {
+                    last: Location {
+                        group_id: 3,
+                        object_id: 4,
+                    },
+                },
+                Fetch::Object(object(3, 5, subgroup(0), b"b")),
             ]
         );
     }

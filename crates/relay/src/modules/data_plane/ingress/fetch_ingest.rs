@@ -130,6 +130,7 @@ impl FetchIngest {
                 moqt::fetch::Fetch::Object(object) => {
                     Self::append_fetch_object(&cache, object, stamp)?;
                 }
+                moqt::fetch::Fetch::UnknownRange { .. } => {}
                 moqt::fetch::Fetch::End => {
                     if cache.eviction_generation() != start_eviction_generation {
                         tracing::warn!(

@@ -184,6 +184,13 @@ async fn run_fetch_ns(
                 );
                 received.push((obj.location.group_id, obj.location.object_id));
             }
+            Ok(Fetch::UnknownRange { last }) => {
+                return Err(anyhow::anyhow!(
+                    "[{}] fetch: unknown range through {:?}",
+                    label,
+                    last
+                ));
+            }
             Ok(Fetch::End) => {
                 tracing::info!(
                     "[{}] fetch done g{}:o{}..g{}:o{}",
@@ -257,6 +264,13 @@ async fn run_joining_fetch_with_label(
                     payload
                 );
                 received.push((obj.location.group_id, obj.location.object_id));
+            }
+            Ok(Fetch::UnknownRange { last }) => {
+                return Err(anyhow::anyhow!(
+                    "[{}] joining fetch: unknown range through {:?}",
+                    label,
+                    last
+                ));
             }
             Ok(Fetch::End) => {
                 tracing::info!("[{}] joining fetch done", label);
