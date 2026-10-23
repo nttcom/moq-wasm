@@ -20,6 +20,7 @@ use crate::{
             Connection, ObjectSink, SinkReceiver, generation_of, logical_id, wire_part,
         },
         runtime::dispatch::incoming_object::IncomingObject,
+        version::Version,
     },
     publish::PublishOption,
     subscribe::SubscribeOption,
@@ -32,8 +33,7 @@ use crate::{
 pub(crate) struct SessionContext {
     connections: std::sync::Mutex<Connections>,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    pub(crate) receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
+    pub(crate) receiver_map: tokio::sync::Mutex<HashMap<u64, DataChannel>>,
     pub(crate) fetch_receiver_map:
         std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
     /// `None` for a session that does not follow GOAWAY. Held while a
@@ -46,6 +46,13 @@ pub(crate) struct SessionContext {
     publications: std::sync::Mutex<HashMap<u64, Publication>>,
     /// Wakes `unserved` whenever a connection stops serving a track.
     served_changed: watch::Sender<()>,
+}
+
+/// The objects of a subscription, until the application takes them.
+pub(crate) struct DataChannel {
+    pub(crate) receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
+    /// The version of the connection the subscription was accepted on.
+    pub(crate) version: Version,
 }
 
 pub(crate) struct Publication {
@@ -334,10 +341,13 @@ impl SessionContext {
                 },
             )
             .await?;
-        self.receiver_map
-            .lock()
-            .await
-            .insert(logical_alias, receiver);
+        self.receiver_map.lock().await.insert(
+            logical_alias,
+            DataChannel {
+                receiver,
+                version: connection.control.version(),
+            },
+        );
         Ok(logical_alias)
     }
 

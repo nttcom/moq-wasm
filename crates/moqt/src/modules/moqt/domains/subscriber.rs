@@ -548,14 +548,18 @@ impl Subscriber {
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver> {
         let track_alias = subscription.track_alias();
-        let receiver = self
+        let channel = self
             .session
             .receiver_map
             .lock()
             .await
             .remove(&track_alias)
             .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?;
-        Ok(DataReceiver::new(track_alias, receiver))
+        Ok(DataReceiver::new(
+            track_alias,
+            channel.receiver,
+            channel.version.mixes_forwarding_preferences(),
+        ))
     }
 }
 

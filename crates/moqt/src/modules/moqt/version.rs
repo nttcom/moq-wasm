@@ -107,6 +107,15 @@ impl Version {
         }
     }
 
+    /// Whether a track may carry objects on subgroup streams and in
+    /// datagrams alike: draft-18 §11 allows it, draft-14 §10 forbids it.
+    pub(crate) fn mixes_forwarding_preferences(self) -> bool {
+        match self {
+            Self::Draft14 => false,
+            Self::Draft18 => true,
+        }
+    }
+
     pub(crate) fn data_stream_reset_code(self, code: DataStreamResetCode) -> u64 {
         match self {
             Self::Draft14 => draft14::error_codes::data_stream_reset_code_to_wire(code),

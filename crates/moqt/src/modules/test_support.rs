@@ -430,6 +430,7 @@ pub(crate) async fn register_and_take_data_receiver(
         .await
         .remove(&track_alias)
         .unwrap()
+        .receiver
 }
 
 /// A subscriber-initiated subscription with the given ids, for operations

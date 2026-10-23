@@ -21,27 +21,35 @@ pub enum TrackData {
 pub struct DataReceiver {
     pub track_alias: u64,
     receiver: UnboundedReceiver<IncomingObject>,
+    mixing_allowed: bool,
     first_is_datagram: Option<bool>,
 }
 
 impl DataReceiver {
-    pub(crate) fn new(track_alias: u64, receiver: UnboundedReceiver<IncomingObject>) -> Self {
+    pub(crate) fn new(
+        track_alias: u64,
+        receiver: UnboundedReceiver<IncomingObject>,
+        mixing_allowed: bool,
+    ) -> Self {
         Self {
             track_alias,
             receiver,
+            mixing_allowed,
             first_is_datagram: None,
         }
     }
 
     /// Waits for the next subgroup stream or datagram of the track. Fails
-    /// with a `MalformedTrackError` when the track mixes the two (draft-14
-    /// §2.5), and with another error once the subscription has ended.
+    /// with a `MalformedTrackError` when a draft-14 track mixes the two
+    /// (draft-14 §2.5; draft-18 §11 allows it), and with another error once
+    /// the subscription has ended.
     pub async fn next(&mut self) -> anyhow::Result<TrackData> {
         let Some(incoming) = self.receiver.recv().await else {
             anyhow::bail!("the subscription ended");
         };
         let is_datagram = matches!(incoming, IncomingObject::Datagram(_));
-        if *self.first_is_datagram.get_or_insert(is_datagram) != is_datagram {
+        if !self.mixing_allowed && *self.first_is_datagram.get_or_insert(is_datagram) != is_datagram
+        {
             return Err(MalformedTrackError.into());
         }
         Ok(match incoming {
@@ -55,12 +63,62 @@ impl DataReceiver {
 mod tests {
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, data_receiver, datagram_object, next_datagram, next_subgroup,
-            object_with_extensions, open_subgroup, published_track,
+            HANDSHAKE_TIMEOUT, PublishedTrack, data_receiver, datagram_object, next_datagram,
+            next_subgroup, object_with_extensions, open_subgroup, published_track,
+            published_track_between, spawn_connected_draft18_sessions,
         },
-        object::{ForwardingPreference, MalformedTrackError, ObjectStatus},
+        object::{
+            DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus,
+            SubgroupObjectSender, SubgroupStart,
+        },
         wire::SubgroupId,
     };
+
+    async fn draft18_track(name: &str) -> PublishedTrack {
+        let (client, server) = spawn_connected_draft18_sessions(name, "moqt").await;
+        published_track_between(client, server).await
+    }
+
+    async fn send_datagram(track: &PublishedTrack, group_id: u64) {
+        let mut object = datagram_object();
+        object.location.group_id = group_id;
+        track
+            .client
+            .publisher()
+            .create_datagram(&track.published)
+            .send_object(&object)
+            .await
+            .unwrap();
+    }
+
+    async fn open_stream(track: &PublishedTrack, group_id: u64) -> SubgroupObjectSender {
+        track
+            .client
+            .publisher()
+            .create_stream(&track.published)
+            .next()
+            .await
+            .unwrap()
+            .start(SubgroupStart {
+                group_id,
+                subgroup_id: 0,
+                publisher_priority: 128,
+                ends_group: false,
+            })
+            .await
+            .unwrap()
+    }
+
+    async fn next_group(receiver: &mut DataReceiver) -> (bool, u64) {
+        match tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            super::TrackData::Subgroup(stream) => (false, stream.group_id()),
+            super::TrackData::Datagram(object) => (true, object.location.group_id),
+        }
+    }
 
     async fn assert_payload_datagram_round_trip(name: &str, ends_group: bool) {
         // Arrange
@@ -191,5 +249,41 @@ mod tests {
 
         // Assert
         assert!(result.unwrap_err().is::<MalformedTrackError>());
+    }
+
+    #[tokio::test]
+    async fn a_draft18_track_delivers_a_subgroup_stream_after_a_datagram() {
+        // Arrange
+        let track = draft18_track("data-receiver-draft18-datagram-then-stream").await;
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        send_datagram(&track, 0).await;
+        let first = next_group(&mut receiver).await;
+
+        // Act
+        let _stream = open_stream(&track, 1).await;
+        let second = next_group(&mut receiver).await;
+        send_datagram(&track, 2).await;
+        let third = next_group(&mut receiver).await;
+
+        // Assert: true marks a datagram; the subscription goes on after the mix
+        assert_eq!([first, second, third], [(true, 0), (false, 1), (true, 2)]);
+    }
+
+    #[tokio::test]
+    async fn a_draft18_track_delivers_a_datagram_after_a_subgroup_stream() {
+        // Arrange
+        let track = draft18_track("data-receiver-draft18-stream-then-datagram").await;
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        let _first_stream = open_stream(&track, 0).await;
+        let first = next_group(&mut receiver).await;
+
+        // Act
+        send_datagram(&track, 1).await;
+        let second = next_group(&mut receiver).await;
+        let _third_stream = open_stream(&track, 2).await;
+        let third = next_group(&mut receiver).await;
+
+        // Assert: true marks a datagram; the subscription goes on after the mix
+        assert_eq!([first, second, third], [(false, 0), (true, 1), (false, 2)]);
     }
 }
