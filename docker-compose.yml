@@ -53,7 +53,7 @@ services:
       RELAY_CACHE_EVICT_INTERVAL_SECS: ${RELAY_CACHE_EVICT_INTERVAL_SECS:-}
     ports:
       - "4433:443/udp"
-    # Lets AUTH_VTS_URL name a VTS running on the host, as the meeting E2E does.
+    # Lets AUTH_VTS_URL name a VTS running on the host, as the E2E runners do.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # Playwright pins the host certificate SPKI; relay must serve the same keypair.

@@ -1,6 +1,6 @@
 // Development VTS backed by crates/vts/apps.example.json, run natively by
-// the e2e runners. Runners that use the compose vts service get the same
-// defaults from docker-compose.yml.
+// the browser e2e runners. tests/compose-relays.sh starts the same binary,
+// port and apps file for the relay suites.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
