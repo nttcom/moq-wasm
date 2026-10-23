@@ -6,8 +6,8 @@ use crate::{
     Subscriber, Subscription,
     modules::executor::{self, JoinHandle, MaybeSend},
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, ObjectStatus,
-        StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
+        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, Object,
+        ObjectStatus, StreamDataReceiver, Subgroup, TrackData,
     },
 };
 
@@ -18,84 +18,98 @@ const OBJECT_CHANNEL_CAPACITY: usize = 64;
 #[derive(Debug, Clone)]
 pub struct TrackObject {
     pub group_id: u64,
-    pub subgroup_id: u64,
+    /// The subgroup the object arrived in, or `Datagram`.
+    pub forwarding: ForwardingPreference,
     pub object_id: u64,
     pub extension_headers: ExtensionHeaders,
     pub payload: Bytes,
 }
 
-/// Reads every subgroup stream of one track concurrently, inside one task, and
-/// yields objects in arrival order. Ordering is only guaranteed within a
-/// subgroup (draft-14 §10.4); consumers that need cross-subgroup order use
-/// `group_id`, `subgroup_id` and `object_id`.
+impl TrackObject {
+    /// `None` for an object without media: a status or an empty payload.
+    fn of(object: Object) -> Option<Self> {
+        if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+            return None;
+        }
+        Some(Self {
+            group_id: object.location.group_id,
+            forwarding: object.forwarding,
+            object_id: object.location.object_id,
+            extension_headers: object.extension_headers,
+            payload: object.payload,
+        })
+    }
+}
+
+/// Reads every subgroup stream and datagram of one track concurrently,
+/// inside one task, and yields objects in arrival order. Ordering is only
+/// guaranteed within a subgroup (draft-14 §10.4); consumers that need
+/// cross-subgroup order use `group_id`, `forwarding` and `object_id`.
 pub struct TrackReader {
     object_receiver: mpsc::Receiver<anyhow::Result<TrackObject>>,
-    _stream_accept_task: SubgroupStreamAcceptTask,
+    _track_read_task: TrackReadTask,
 }
 
 impl TrackReader {
-    pub fn new(factory: StreamDataReceiverFactory) -> Self {
+    pub fn new(receiver: DataReceiver) -> Self {
         let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
         Self {
             object_receiver,
-            _stream_accept_task: SubgroupStreamAcceptTask::run(
-                async move { Ok(factory) },
-                object_sender,
-            ),
+            _track_read_task: TrackReadTask::run(async move { Ok(receiver) }, object_sender),
         }
     }
 
     pub(crate) fn of(subscriber: Subscriber, subscription: Subscription) -> Self {
         let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
-        let factory = async move {
+        let receiver = async move {
             let mut subscriber = subscriber;
-            match subscriber.accept_data_receiver(&subscription).await? {
-                DataReceiver::Stream(factory) => Ok(factory),
-                DataReceiver::Datagram(_) => Err(MalformedTrackError.into()),
-            }
+            subscriber.accept_data_receiver(&subscription).await
         };
         Self {
             object_receiver,
-            _stream_accept_task: SubgroupStreamAcceptTask::run(factory, object_sender),
+            _track_read_task: TrackReadTask::run(receiver, object_sender),
         }
     }
 
-    /// Returns `Ok(None)` once the track has no more subgroup streams. A
-    /// failure inside one subgroup stream is returned as `Err`; the other
-    /// streams keep being read. A `MalformedTrackError` ends the track after
-    /// the streams already accepted are drained.
+    /// Returns `Ok(None)` once the track has no more data. A failure inside
+    /// one subgroup stream is returned as `Err`; the other streams keep being
+    /// read. A `MalformedTrackError` ends the track after the streams already
+    /// accepted are drained.
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
         self.object_receiver.recv().await.transpose()
     }
 }
 
-struct SubgroupStreamAcceptTask {
+struct TrackReadTask {
     join_handle: JoinHandle,
 }
 
-impl SubgroupStreamAcceptTask {
+impl TrackReadTask {
     fn run(
-        factory: impl Future<Output = anyhow::Result<StreamDataReceiverFactory>> + MaybeSend + 'static,
+        receiver: impl Future<Output = anyhow::Result<DataReceiver>> + MaybeSend + 'static,
         object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
     ) -> Self {
         let join_handle = executor::spawn("Track Reader", async move {
-            let mut factory = match factory.await {
-                Ok(factory) => factory,
+            let mut receiver = match receiver.await {
+                Ok(receiver) => receiver,
                 Err(error) => {
-                    if error.is::<MalformedTrackError>() {
-                        let _ = object_sender.send(Err(error)).await;
-                    } else {
-                        tracing::debug!(%error, "track delivered no data stream");
-                    }
+                    tracing::debug!(%error, "track has no data receiver");
                     return;
                 }
             };
             let mut subgroup_readers = FuturesUnordered::new();
             loop {
                 tokio::select! {
-                    accepted = factory.next() => match accepted {
-                        Ok(receiver) => {
-                            subgroup_readers.push(read_subgroup(receiver, object_sender.clone()));
+                    data = receiver.next() => match data {
+                        Ok(TrackData::Subgroup(stream)) => {
+                            subgroup_readers.push(read_subgroup(stream, object_sender.clone()));
+                        }
+                        Ok(TrackData::Datagram(object)) => {
+                            if let Some(object) = TrackObject::of(object)
+                                && object_sender.send(Ok(object)).await.is_err()
+                            {
+                                return;
+                            }
                         }
                         Err(error) if error.is::<MalformedTrackError>() => {
                             let _ = object_sender.send(Err(error)).await;
@@ -116,7 +130,7 @@ impl SubgroupStreamAcceptTask {
     }
 }
 
-impl Drop for SubgroupStreamAcceptTask {
+impl Drop for TrackReadTask {
     fn drop(&mut self) {
         self.join_handle.abort();
     }
@@ -138,18 +152,8 @@ async fn read_subgroup_objects(
     loop {
         match receiver.receive().await? {
             Some(Subgroup::Object(object)) => {
-                if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+                let Some(object) = TrackObject::of(object) else {
                     continue;
-                }
-                let ForwardingPreference::Subgroup { subgroup_id } = object.forwarding else {
-                    unreachable!("a subgroup stream carries subgroup objects")
-                };
-                let object = TrackObject {
-                    group_id: object.location.group_id,
-                    subgroup_id,
-                    object_id: object.location.object_id,
-                    extension_headers: object.extension_headers,
-                    payload: object.payload,
                 };
                 if object_sender.send(Ok(object)).await.is_err() {
                     return Ok(());
@@ -173,7 +177,7 @@ mod tests {
             HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
-        object::MalformedTrackError,
+        object::{ForwardingPreference, MalformedTrackError},
         wire::{SubgroupId, SubgroupObject},
     };
 
@@ -192,13 +196,18 @@ mod tests {
         objects
     }
 
-    fn locations(objects: &[TrackObject]) -> BTreeSet<(u64, u64, u64, Bytes)> {
+    /// Group, subgroup (`None` for a datagram), object and payload.
+    fn locations(objects: &[TrackObject]) -> BTreeSet<(u64, Option<u64>, u64, Bytes)> {
         objects
             .iter()
             .map(|object| {
+                let subgroup_id = match object.forwarding {
+                    ForwardingPreference::Subgroup { subgroup_id } => Some(subgroup_id),
+                    ForwardingPreference::Datagram => None,
+                };
                 (
                     object.group_id,
-                    object.subgroup_id,
+                    subgroup_id,
                     object.object_id,
                     object.payload.clone(),
                 )
@@ -225,9 +234,9 @@ mod tests {
         assert_eq!(
             locations(&objects),
             BTreeSet::from([
-                (0, 0, 0, Bytes::from_static(b"g0-o0")),
-                (0, 0, 1, Bytes::from_static(b"g0-o1")),
-                (1, 0, 0, Bytes::from_static(b"g1-o0")),
+                (0, Some(0), 0, Bytes::from_static(b"g0-o0")),
+                (0, Some(0), 1, Bytes::from_static(b"g0-o1")),
+                (1, Some(0), 0, Bytes::from_static(b"g1-o0")),
             ])
         );
     }
@@ -269,9 +278,9 @@ mod tests {
         assert_eq!(
             locations(&objects),
             BTreeSet::from([
-                (5, 0, 0, Bytes::from_static(b"s0-o0")),
-                (5, 0, 1, Bytes::from_static(b"s0-o1")),
-                (5, 1, 0, Bytes::from_static(b"s1-o0")),
+                (5, Some(0), 0, Bytes::from_static(b"s0-o0")),
+                (5, Some(0), 1, Bytes::from_static(b"s0-o1")),
+                (5, Some(1), 0, Bytes::from_static(b"s1-o0")),
             ])
         );
     }
@@ -296,8 +305,8 @@ mod tests {
         assert_eq!(
             locations(&objects),
             BTreeSet::from([
-                (2, 7, 7, Bytes::from_static(b"o7")),
-                (2, 7, 8, Bytes::from_static(b"o8")),
+                (2, Some(7), 7, Bytes::from_static(b"o7")),
+                (2, Some(7), 8, Bytes::from_static(b"o8")),
             ])
         );
     }
@@ -329,7 +338,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_datagram_on_the_track_is_returned_as_a_malformed_track_error() {
+    async fn objects_of_a_datagram_track_are_returned() {
+        // Arrange
+        let track = published_track("reader-datagrams").await;
+        let mut sender = track.client.publisher().create_datagram(&track.published);
+        let mut reader = track.server.subscriber().track_reader(&track.accepted);
+
+        // Act
+        sender.send_object(&datagram_object()).await.unwrap();
+        let objects = collect_objects(&mut reader, 1).await;
+
+        // Assert
+        assert_eq!(
+            locations(&objects),
+            BTreeSet::from([(0, None, 0, Bytes::from_static(b"object"))])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_datagram_on_a_subgroup_track_is_returned_as_a_malformed_track_error() {
         // Arrange
         let track = published_track("reader-malformed").await;
         let publisher = track.client.publisher();

@@ -1,44 +1,53 @@
-use anyhow::bail;
+use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::modules::moqt::data_plane::{
-    malformed_track_error::MalformedTrackError, object::canonical_object::Object,
+use crate::modules::moqt::{
+    data_plane::{
+        malformed_track_error::MalformedTrackError, object::canonical_object::Object,
+        stream::stream_data_receiver::StreamDataReceiver,
+    },
+    runtime::dispatch::incoming_object::IncomingObject,
 };
-use crate::modules::moqt::runtime::dispatch::incoming_object::IncomingObject;
 
+/// What a subscription delivers next.
 #[derive(Debug)]
-pub struct DatagramReceiver {
-    pub track_alias: u64,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
-    first_object: Option<Object>,
+pub enum TrackData {
+    /// A subgroup stream; its header and objects are read from the receiver.
+    Subgroup(StreamDataReceiver),
+    Datagram(Object),
 }
 
-impl DatagramReceiver {
-    pub(crate) fn new(
-        track_alias: u64,
-        first_object: Object,
-        receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
-    ) -> Self {
+/// The subgroup streams and datagrams of one subscription, in arrival order.
+#[derive(Debug)]
+pub struct DataReceiver {
+    pub track_alias: u64,
+    receiver: UnboundedReceiver<IncomingObject>,
+    first_is_datagram: Option<bool>,
+}
+
+impl DataReceiver {
+    pub(crate) fn new(track_alias: u64, receiver: UnboundedReceiver<IncomingObject>) -> Self {
         Self {
             track_alias,
-            first_object: Some(first_object),
             receiver,
+            first_is_datagram: None,
         }
     }
 
-    /// Returns the next object of the track. A subgroup stream on the track
-    /// is a `MalformedTrackError` (draft-14 §2.5).
-    pub async fn receive(&mut self) -> anyhow::Result<Object> {
-        if let Some(object) = self.first_object.take() {
-            return Ok(object);
-        }
-        let result = match self.receiver.recv().await {
-            Some(object) => object,
-            None => bail!("Sender dropped."),
+    /// Waits for the next subgroup stream or datagram of the track. Fails
+    /// with a `MalformedTrackError` when the track mixes the two (draft-14
+    /// §2.5), and with another error once the subscription has ended.
+    pub async fn next(&mut self) -> anyhow::Result<TrackData> {
+        let Some(incoming) = self.receiver.recv().await else {
+            anyhow::bail!("the subscription ended");
         };
-        match result {
-            IncomingObject::Datagram(datagram) => Ok(datagram.object),
-            IncomingObject::Subgroup(_) => Err(MalformedTrackError.into()),
+        let is_datagram = matches!(incoming, IncomingObject::Datagram(_));
+        if *self.first_is_datagram.get_or_insert(is_datagram) != is_datagram {
+            return Err(MalformedTrackError.into());
         }
+        Ok(match incoming {
+            IncomingObject::Subgroup(receiver) => TrackData::Subgroup(receiver),
+            IncomingObject::Datagram(datagram) => TrackData::Datagram(datagram.object),
+        })
     }
 }
 
@@ -46,8 +55,8 @@ impl DatagramReceiver {
 mod tests {
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, datagram_object, datagram_receiver, object_with_extensions,
-            open_subgroup, published_track,
+            HANDSHAKE_TIMEOUT, data_receiver, datagram_object, next_datagram, next_subgroup,
+            object_with_extensions, open_subgroup, published_track,
         },
         object::{ForwardingPreference, MalformedTrackError, ObjectStatus},
         wire::SubgroupId,
@@ -61,13 +70,12 @@ mod tests {
         let mut object = object_with_extensions();
         object.forwarding = ForwardingPreference::Datagram;
         object.ends_group = ends_group;
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
 
         // Act
         let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             sender.send_object(&object).await.unwrap();
-            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
-
-            receiver.receive().await.unwrap()
+            next_datagram(&mut receiver).await
         })
         .await
         .unwrap();
@@ -109,17 +117,16 @@ mod tests {
         end_of_track.location.object_id = 0;
         end_of_track.status = ObjectStatus::EndOfTrack;
         let expected = [object, absent, next_normal, end_of_group, end_of_track];
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
 
         // Act
         let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             for object in &expected {
                 sender.send_object(object).await.unwrap();
             }
-            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
-
             let mut received = Vec::new();
             for _ in &expected {
-                received.push(receiver.receive().await.unwrap());
+                received.push(next_datagram(&mut receiver).await);
             }
             received
         })
@@ -131,17 +138,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_subgroup_stream_on_a_datagram_track_is_a_malformed_track() {
+    async fn a_draft14_subgroup_stream_after_a_datagram_is_a_malformed_track() {
         // Arrange
-        let track = published_track("datagram-receiver-malformed").await;
+        let track = published_track("data-receiver-datagram-then-stream").await;
         let publisher = track.client.publisher();
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
         publisher
             .create_datagram(&track.published)
             .send_object(&datagram_object())
             .await
             .unwrap();
-        let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
-        receiver.receive().await.unwrap();
+        next_datagram(&mut receiver).await;
         let _subgroup = open_subgroup(
             &publisher.create_stream(&track.published),
             0,
@@ -150,7 +157,35 @@ mod tests {
         .await;
 
         // Act
-        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(result.unwrap_err().is::<MalformedTrackError>());
+    }
+
+    #[tokio::test]
+    async fn a_draft14_datagram_after_a_subgroup_stream_is_a_malformed_track() {
+        // Arrange
+        let track = published_track("data-receiver-stream-then-datagram").await;
+        let publisher = track.client.publisher();
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        let _subgroup = open_subgroup(
+            &publisher.create_stream(&track.published),
+            0,
+            SubgroupId::None,
+        )
+        .await;
+        next_subgroup(&mut receiver).await;
+        publisher
+            .create_datagram(&track.published)
+            .send_object(&datagram_object())
+            .await
+            .unwrap();
+
+        // Act
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
             .await
             .unwrap();
 

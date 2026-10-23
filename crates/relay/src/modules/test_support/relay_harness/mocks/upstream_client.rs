@@ -1,14 +1,13 @@
 use std::sync::Mutex;
 
-use moqt::object::Object;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
     session::{
         data_object::DataObject,
         data_receiver::{
-            datagram_receiver::DatagramReceiver,
-            stream_receiver::{StreamReceiver, StreamReceiverFactory},
+            receiver::{DataReceiver, UpstreamData},
+            stream_receiver::StreamReceiver,
         },
     },
     test_support::relay_harness::{
@@ -127,15 +126,8 @@ impl UpstreamSubgroupStream {
 pub(crate) struct FailingUpstream(pub(crate) fn() -> anyhow::Error);
 
 #[async_trait::async_trait]
-impl StreamReceiverFactory for FailingUpstream {
-    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
-        Err(self.0())
-    }
-}
-
-#[async_trait::async_trait]
-impl DatagramReceiver for FailingUpstream {
-    async fn receive_object(&mut self) -> anyhow::Result<Object> {
+impl DataReceiver for FailingUpstream {
+    async fn next(&mut self) -> anyhow::Result<UpstreamData> {
         Err(self.0())
     }
 }

@@ -14,7 +14,7 @@ use moqt::{
     namespace::NamespaceInterest,
     object::{
         ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectStatus, Subgroup, SubgroupStart,
+        ObjectStatus, Subgroup, SubgroupStart, TrackData,
     },
     subscribe::{FilterType, SubscribeOption},
 };
@@ -890,29 +890,24 @@ async fn subscribe_and_receive_ordered_objects(
         .subscribe(track_namespace, track_name, option)
         .await
         .context("subscriber failed to subscribe")?;
-    let receiver = session
+    let mut receiver = session
         .subscriber()
         .accept_data_receiver(&subscription)
         .await
         .context("subscriber failed to accept data receiver")?;
 
     let mut payloads = Vec::with_capacity(count);
-    match receiver {
-        moqt::object::DataReceiver::Stream(mut factory) => {
-            let mut stream = factory.next().await?;
-            while payloads.len() < count {
-                let Some(subgroup) = stream.receive().await? else {
-                    bail!("stream ended before receiving {count} objects");
-                };
-                if let Subgroup::Object(object) = subgroup
-                    && !object.payload.is_empty()
-                {
-                    payloads.push(object.payload.to_vec());
-                }
-            }
-        }
-        moqt::object::DataReceiver::Datagram(_) => {
-            bail!("expected stream data receiver for ordered objects");
+    let TrackData::Subgroup(mut stream) = receiver.next().await? else {
+        bail!("expected a subgroup stream for ordered objects");
+    };
+    while payloads.len() < count {
+        let Some(subgroup) = stream.receive().await? else {
+            bail!("stream ended before receiving {count} objects");
+        };
+        if let Subgroup::Object(object) = subgroup
+            && !object.payload.is_empty()
+        {
+            payloads.push(object.payload.to_vec());
         }
     }
     tracing::info!(
@@ -1104,17 +1099,16 @@ where
     );
     // Act: downstream subscription の準備ができてから publisher にテスト object を送らせる。
     after_subscribe().await?;
-    let receiver = session
+    let mut receiver = session
         .subscriber()
         .accept_data_receiver(&subscription)
         .await
         .context("subscriber failed to accept data receiver")?;
     tracing::info!("subscriber accepted data receiver; waiting for object payload");
 
-    match receiver {
-        moqt::object::DataReceiver::Stream(mut factory) => {
-            let mut stream = factory.next().await?;
-            loop {
+    loop {
+        match receiver.next().await? {
+            TrackData::Subgroup(mut stream) => loop {
                 let Some(subgroup) = stream.receive().await? else {
                     anyhow::bail!("stream ended before receiving an object");
                 };
@@ -1127,18 +1121,16 @@ where
                     );
                     return Ok(object.payload.to_vec());
                 }
-            }
-        }
-        moqt::object::DataReceiver::Datagram(mut datagram) => loop {
-            let object = datagram.receive().await?;
-            if !object.payload.is_empty() {
+            },
+            TrackData::Datagram(object) if !object.payload.is_empty() => {
                 tracing::info!(
                     payload_len = object.payload.len(),
                     "subscriber received datagram object"
                 );
                 return Ok(object.payload.to_vec());
             }
-        },
+            TrackData::Datagram(_) => {}
+        }
     }
 }
 

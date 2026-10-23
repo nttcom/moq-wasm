@@ -15,7 +15,7 @@ use crate::{connect, object_payload};
 use anyhow::{Context as _, bail};
 use moqt::{
     Session, SessionEvent, Subscription,
-    object::{ContentExists, DataReceiver, GroupOrder, Subgroup},
+    object::{ContentExists, GroupOrder, Subgroup, TrackData},
     subscribe::{FilterType, SubscribeOption},
 };
 use tokio::{
@@ -146,15 +146,13 @@ impl ClockSubscriber {
         )
         .await
         .context("SUBSCRIBE was not answered in time")??;
-        let DataReceiver::Stream(mut factory) =
-            subscriber.accept_data_receiver(&subscription).await?
-        else {
-            bail!("expected a stream data receiver");
-        };
+        let mut receiver = subscriber.accept_data_receiver(&subscription).await?;
         let (group_sender, group_receiver) = mpsc::unbounded_channel();
         let receiver_task = tokio::spawn(async move {
             loop {
-                let mut stream = factory.next().await?;
+                let TrackData::Subgroup(mut stream) = receiver.next().await? else {
+                    bail!("expected a subgroup stream, got a datagram");
+                };
                 let group_sender = group_sender.clone();
                 tokio::spawn(async move {
                     let mut objects = 0;

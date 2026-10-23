@@ -16,9 +16,7 @@ use crate::modules::{
             coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
         },
         ingress::{
-            datagram_reader::read_datagrams,
-            stream_reader::{accept_streams, read_stream},
-            track_ingest_task::TrackIngest,
+            stream_reader::read_stream, track_ingest_task::TrackIngest, track_reader::read_track,
         },
     },
     domain::{
@@ -250,26 +248,17 @@ impl RelayHarness {
         })
     }
 
-    pub(crate) async fn run_stream_ingest(&self, upstream: FailingUpstream) {
+    pub(crate) async fn run_ingest(&self, upstream: FailingUpstream) {
         tokio::time::timeout(
             RECV_TIMEOUT,
-            accept_streams(
+            read_track(
                 self.ingest.clone(),
                 Box::new(upstream),
                 tracing::Span::none(),
             ),
         )
         .await
-        .expect("stream ingest should end");
-    }
-
-    pub(crate) async fn run_datagram_ingest(&self, upstream: FailingUpstream) {
-        tokio::time::timeout(
-            RECV_TIMEOUT,
-            read_datagrams(self.ingest.clone(), Box::new(upstream)),
-        )
-        .await
-        .expect("datagram ingest should end");
+        .expect("ingest should end");
     }
 
     pub(crate) fn is_track_malformed(&self) -> bool {

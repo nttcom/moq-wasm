@@ -478,7 +478,7 @@ impl Subscriber for MockUpstreamSubscriber {
     async fn create_data_receiver(
         &mut self,
         _subscription: &UpstreamSubscription,
-    ) -> anyhow::Result<DataReceiver> {
+    ) -> anyhow::Result<Box<dyn DataReceiver>> {
         unimplemented!("not used by MockUpstreamSession tests")
     }
 

@@ -256,10 +256,10 @@ mod tests {
     use crate::{
         TrackWriter,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
-            subscribed_track_reader,
+            HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, data_receiver, next_subgroup,
+            spawn_dual_server, subscribed_track_reader,
         },
-        object::{DataReceiver, ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
+        object::{ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
         publish::PublishOption,
     };
 
@@ -404,15 +404,8 @@ mod tests {
             .write(Bytes::from_static(b"a"), vec![])
             .await
             .unwrap();
-        let DataReceiver::Stream(mut streams) = server
-            .subscriber()
-            .accept_data_receiver(&accepted)
-            .await
-            .unwrap()
-        else {
-            panic!("expected a subgroup stream receiver");
-        };
-        drop(streams.next().await.unwrap());
+        let mut streams = data_receiver(&server, &accepted).await;
+        drop(next_subgroup(&mut streams).await);
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             while writer
                 .write(Bytes::from_static(b"after stop"), vec![])
@@ -431,7 +424,7 @@ mod tests {
             .write(Bytes::from_static(b"b"), vec![])
             .await
             .unwrap();
-        let mut next_stream = streams.next().await.unwrap();
+        let mut next_stream = next_subgroup(&mut streams).await;
         let header = next_stream.receive().await.unwrap();
         let object = next_stream.receive().await.unwrap();
 

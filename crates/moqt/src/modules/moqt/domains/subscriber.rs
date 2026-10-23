@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tracing::Instrument;
-
 use crate::{
     RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
     fetch::FetchOption,
@@ -17,27 +15,18 @@ use crate::{
             enums::ResponseMessage,
             namespace_interest::NamespaceInterest,
         },
-        data_plane::stream::{
-            fetch_data_receiver::FetchDataReceiver,
-            stream_data_receiver_factory::StreamDataReceiverFactory,
-        },
+        data_plane::{data_receiver::DataReceiver, stream::fetch_data_receiver::FetchDataReceiver},
         domains::{
             connection::{Connection, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
             session_context::{CarriedSubscription, SessionContext},
         },
-        runtime::dispatch::incoming_object::IncomingObject,
         version::{Notification, OutgoingRequest},
     },
-    object::{DatagramReceiver, GroupOrder, Location},
+    object::{GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
     wire::TrackStatusOk,
 };
-
-pub enum DataReceiver {
-    Stream(StreamDataReceiverFactory),
-    Datagram(DatagramReceiver),
-}
 
 pub struct Subscriber {
     pub(crate) session: Arc<SessionContext>,
@@ -479,10 +468,8 @@ impl Subscriber {
         Ok(())
     }
 
-    /// The objects of `subscription`. The wait for the first data stream runs
-    /// in the reader's task, so unlike `accept_data_receiver`,
-    /// `TrackReader::next_object` may be polled in `select!` from the start.
-    /// A track delivered in datagrams yields a `MalformedTrackError`.
+    /// The objects of `subscription`, from its subgroup streams and its
+    /// datagrams alike.
     pub fn track_reader(&self, subscription: &Subscription) -> TrackReader {
         TrackReader::of(
             Subscriber {
@@ -548,6 +535,8 @@ impl Subscriber {
         Ok(receiver)
     }
 
+    /// Takes the receiver of `subscription`'s subgroup streams and datagrams.
+    /// Fails when it was already taken or the subscription is not known.
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscriber.accept_data_receiver",
@@ -559,45 +548,14 @@ impl Subscriber {
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver> {
         let track_alias = subscription.track_alias();
-        let mut receiver = self
+        let receiver = self
             .session
             .receiver_map
             .lock()
             .await
             .remove(&track_alias)
             .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?;
-        let stream_with_object = {
-            let span = tracing::info_span!(
-                "moqt.subscriber.wait_first_object",
-                track_alias = track_alias,
-                object_kind = tracing::field::Empty,
-            );
-            let stream_with_object = async {
-                receiver
-                    .recv()
-                    .await
-                    .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))
-            }
-            .instrument(span.clone())
-            .await?;
-            match stream_with_object {
-                IncomingObject::Subgroup(_) => {
-                    span.record("object_kind", "stream_header");
-                }
-                IncomingObject::Datagram(_) => {
-                    span.record("object_kind", "datagram");
-                }
-            }
-            stream_with_object
-        };
-        match stream_with_object {
-            IncomingObject::Subgroup(first) => Ok(DataReceiver::Stream(
-                StreamDataReceiverFactory::new(first, receiver),
-            )),
-            IncomingObject::Datagram(datagram) => Ok(DataReceiver::Datagram(
-                DatagramReceiver::new(track_alias, datagram.object, receiver),
-            )),
-        }
+        Ok(DataReceiver::new(track_alias, receiver))
     }
 }
 
@@ -744,9 +702,9 @@ mod tests {
         },
         modules::{
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, first_subgroup_stream, location,
-                object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                send_subgroup_object, spawn_connected_dual_sessions, subgroup_receiver,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
+                location, next_subgroup, object_with_extensions, read_fetch_objects,
+                read_subgroup_objects, send_subgroup_object, spawn_connected_dual_sessions,
                 subscription, within,
             },
             transport::transport_send_stream::TransportSendError,
@@ -1312,8 +1270,8 @@ mod tests {
             &before,
         ))
         .await;
-        let mut kept_receiver = within(subgroup_receiver(&client, &kept)).await;
-        let mut first = within(kept_receiver.next()).await.unwrap();
+        let mut kept_receiver = within(data_receiver(&client, &kept)).await;
+        let mut first = within(next_subgroup(&mut kept_receiver)).await;
         let kept_before = within(read_subgroup_objects(&mut first)).await;
         let mut after = object_with_extensions();
         after.location.group_id += 1;
@@ -1328,7 +1286,7 @@ mod tests {
             };
             send_subgroup_object(&server, &kept_handler.into_subscription(kept_alias), &after)
                 .await;
-            let mut next = kept_receiver.next().await.unwrap();
+            let mut next = next_subgroup(&mut kept_receiver).await;
             let received_alias = next.track_alias;
             let objects = read_subgroup_objects(&mut next).await;
             (unsubscribe, received_alias, objects)

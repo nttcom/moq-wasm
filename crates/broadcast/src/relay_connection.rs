@@ -539,7 +539,6 @@ mod tests {
 
     use moqt::{
         DUAL, Subscription, TrackObject, TrackReader,
-        object::DataReceiver,
         publish::GroupBoundary,
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
         subscribe::FilterType,
@@ -638,14 +637,14 @@ mod tests {
                                     if let Some(gate) = gate {
                                         let _ = gate.await;
                                     }
-                                    let Ok(DataReceiver::Stream(factory)) = session
+                                    let Ok(receiver) = session
                                         .subscriber()
                                         .accept_data_receiver(&subscription)
                                         .await
                                     else {
                                         return;
                                     };
-                                    let mut reader = TrackReader::new(factory);
+                                    let mut reader = TrackReader::new(receiver);
                                     while let Ok(Some(object)) = reader.next_object().await {
                                         let _ = sender.send(object);
                                     }
