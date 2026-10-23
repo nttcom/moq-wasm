@@ -7,7 +7,10 @@ use crate::modules::{
         },
     },
     domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::MatchingPublication},
+        pub_sub_directory::{
+            InMemoryLocalPubSubDirectory,
+            entry::{MatchingPublication, NamespaceSubscription},
+        },
         session_id::SessionId,
     },
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
@@ -37,12 +40,17 @@ impl SubscribeNameSpace {
         handler: &dyn SubscribeNamespaceHandler,
     ) {
         let track_namespace_prefix = handler.track_namespace_prefix();
+        let subscription = NamespaceSubscription {
+            interest: handler.interest(),
+            peer: super::session_peer(session_id, forwarder).await,
+            forward: handler.forward(),
+        };
         tracing::info!(
             session_id = %session_id,
             track_namespace_prefix = %track_namespace_prefix,
+            ?subscription,
             "SequenceHandler::SubscribeNamespace"
         );
-        let peer = super::session_peer(session_id, forwarder).await;
         if table.has_overlapping_namespace_subscription(session_id, track_namespace_prefix) {
             tracing::info!(
                 track_namespace_prefix = %track_namespace_prefix,
@@ -65,14 +73,18 @@ impl SubscribeNameSpace {
         let is_first_client = table.register_subscribe_namespace(
             session_id,
             track_namespace_prefix.to_string(),
-            peer,
+            subscription,
         );
         if is_first_client
             && !self
                 .register_route(route_registry, track_namespace_prefix, handler)
                 .await
         {
-            table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
+            table.unregister_subscribe_namespace(
+                session_id,
+                track_namespace_prefix,
+                subscription.interest,
+            );
             return;
         }
         if let Err(e) = handler.ok().await {
@@ -82,17 +94,20 @@ impl SubscribeNameSpace {
         self.forward_matching_publications(
             session_id,
             track_namespace_prefix,
+            subscription,
             forwarder,
             downstream_publish,
         )
         .await;
-        self.notify_remote_publish_namespaces(
-            session_id,
-            track_namespace_prefix,
-            forwarder,
-            route_registry,
-        )
-        .await;
+        if subscription.interest.includes_namespaces() {
+            self.notify_remote_publish_namespaces(
+                session_id,
+                track_namespace_prefix,
+                forwarder,
+                route_registry,
+            )
+            .await;
+        }
     }
 
     #[tracing::instrument(
@@ -143,6 +158,7 @@ impl SubscribeNameSpace {
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
+        subscription: NamespaceSubscription,
         forwarder: &ControlMessageForwarder,
         downstream_publish: &DownstreamPublish,
     ) {
@@ -151,18 +167,28 @@ impl SubscribeNameSpace {
             .matching_publications(track_namespace_prefix);
         for publication in publications {
             match publication {
-                MatchingPublication::Track(track_key) => {
+                MatchingPublication::Track(track_key)
+                    if downstream_publish.table.offers_track(
+                        session_id,
+                        &subscription,
+                        &track_key,
+                    ) =>
+                {
                     let _publish_task = DownstreamPublishTask::run(
                         downstream_publish.clone(),
                         session_id,
                         track_key,
+                        subscription.forward,
                     );
                 }
-                MatchingPublication::Namespace(track_namespace) => {
+                MatchingPublication::Namespace(track_namespace)
+                    if subscription.interest.includes_namespaces() =>
+                {
                     forwarder
                         .publish_namespace(session_id, track_namespace.clone())
                         .await;
                 }
+                MatchingPublication::Track(_) | MatchingPublication::Namespace(_) => {}
             }
         }
     }
@@ -206,10 +232,9 @@ impl SubscribeNameSpace {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
+    use std::{sync::Arc, time::Duration};
+
+    use moqt::namespace::NamespaceInterest;
 
     use super::*;
     use crate::modules::{
@@ -218,47 +243,16 @@ mod tests {
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                downstream_publish_context, table_with_upstream, track_key,
+                downstream_publish_context, namespaces_and_tracks, table_with_upstream, track_key,
             },
-            mock_session::{MockPublishHandler, PUBLISH_REQUEST_ID},
+            mock_session::{
+                MockPublishHandler, MockSubscribeNamespaceHandler, PUBLISH_REQUEST_ID, SentMessages,
+            },
         },
     };
 
-    type SentMessages = Arc<Mutex<Vec<&'static str>>>;
-
     /// How long a PUBLISH that should not come is waited for.
     const NO_PUBLISH_TIMEOUT: Duration = Duration::from_millis(200);
-
-    struct MockSubscribeNamespaceHandler {
-        sent: SentMessages,
-        error_codes: Arc<Mutex<Vec<RequestErrorCode>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl SubscribeNamespaceHandler for MockSubscribeNamespaceHandler {
-        fn track_namespace_prefix(&self) -> &str {
-            "ns"
-        }
-
-        fn track_namespace_prefix_tuple(&self) -> &[String] {
-            &[]
-        }
-
-        async fn ok(&self) -> Result<(), moqt::TransportSendError> {
-            self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_OK");
-            Ok(())
-        }
-
-        async fn error(
-            &self,
-            code: RequestErrorCode,
-            _reason_phrase: String,
-        ) -> Result<(), moqt::TransportSendError> {
-            self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_ERROR");
-            self.error_codes.lock().unwrap().push(code);
-            Ok(())
-        }
-    }
 
     async fn context_with_published_track(sent: SentMessages) -> DownstreamPublishContext {
         let table = Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Publish).0);
@@ -288,7 +282,7 @@ mod tests {
                 &NoopRelayRouteRegistry,
                 &MockSubscribeNamespaceHandler {
                     sent,
-                    error_codes: Arc::default(),
+                    ..MockSubscribeNamespaceHandler::new("ns")
                 },
             )
             .await;
@@ -331,21 +325,10 @@ mod tests {
         assert_eq!(registered.track_key, track_key());
     }
 
-    #[tokio::test]
-    async fn an_overlapping_namespace_subscription_is_refused_with_prefix_overlap() {
-        // Arrange
-        let mut ctx = context_with_published_track(SentMessages::default()).await;
-        ctx.table.register_subscribe_namespace(
-            NAMESPACE_SUBSCRIBER_SESSION,
-            "ns/track".to_string(),
-            SessionPeer::Client,
-        );
-        let handler = MockSubscribeNamespaceHandler {
-            sent: SentMessages::default(),
-            error_codes: Arc::default(),
-        };
-
-        // Act
+    async fn subscribe_namespace(
+        ctx: &DownstreamPublishContext,
+        handler: MockSubscribeNamespaceHandler,
+    ) {
         SubscribeNameSpace
             .handle(
                 NAMESPACE_SUBSCRIBER_SESSION,
@@ -357,6 +340,84 @@ mod tests {
                 &handler,
             )
             .await;
+    }
+
+    #[tokio::test]
+    async fn a_namespaces_subscription_is_sent_no_publish() {
+        // Arrange
+        let mut ctx = context_with_published_track(SentMessages::default()).await;
+        let handler = MockSubscribeNamespaceHandler {
+            interest: NamespaceInterest::Namespaces,
+            ..MockSubscribeNamespaceHandler::new("ns")
+        };
+
+        // Act
+        subscribe_namespace(&ctx, handler).await;
+        let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
+
+        // Assert: draft-18 §6.1 sends PUBLISH for SUBSCRIBE_TRACKS only
+        assert!(egress.is_err());
+        assert!(ctx.subscriber.publishes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_tracks_subscription_is_sent_the_publish_with_its_forward_state() {
+        // Arrange
+        let mut ctx = context_with_published_track(SentMessages::default()).await;
+        let handler = MockSubscribeNamespaceHandler {
+            interest: NamespaceInterest::Tracks,
+            forward: false,
+            ..MockSubscribeNamespaceHandler::new("ns")
+        };
+
+        // Act
+        subscribe_namespace(&ctx, handler).await;
+        tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
+            .await
+            .expect("the accepted PUBLISH should start an egress reader");
+
+        // Assert: draft-18 §10.19
+        let publishes = ctx.subscriber.publishes();
+        assert_eq!(publishes.len(), 1);
+        assert!(!publishes[0].forward);
+    }
+
+    #[tokio::test]
+    async fn a_tracks_subscription_is_not_sent_a_track_its_session_publishes() {
+        // Arrange
+        let mut ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_publish(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            SessionPeer::Client,
+            Arc::new(MockPublishHandler::new("ns", "track", 1)),
+        );
+        let handler = MockSubscribeNamespaceHandler {
+            interest: NamespaceInterest::Tracks,
+            ..MockSubscribeNamespaceHandler::new("ns")
+        };
+
+        // Act
+        subscribe_namespace(&ctx, handler).await;
+        let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
+
+        // Assert: draft-18 §6.1 leaves out the tracks published by the subscriber
+        assert!(egress.is_err());
+        assert!(ctx.subscriber.publishes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_overlapping_namespace_subscription_is_refused_with_prefix_overlap() {
+        // Arrange
+        let mut ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns/track".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        let handler = MockSubscribeNamespaceHandler::new("ns");
+
+        // Act
+        subscribe_namespace(&ctx, handler.clone()).await;
         let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
 
         // Assert: draft-14 §9.28

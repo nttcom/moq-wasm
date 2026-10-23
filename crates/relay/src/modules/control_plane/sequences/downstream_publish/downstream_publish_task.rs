@@ -15,11 +15,12 @@ impl DownstreamPublishTask {
         downstream_publish: DownstreamPublish,
         subscriber_session_id: SessionId,
         track_key: TrackKey,
+        forward: bool,
     ) -> Self {
         let join_handle = tokio::spawn(
             async move {
                 match downstream_publish
-                    .send(subscriber_session_id, &track_key)
+                    .send(subscriber_session_id, &track_key, forward)
                     .await
                 {
                     Ok(()) => tracing::info!(

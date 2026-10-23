@@ -37,7 +37,8 @@ pub(crate) struct DownstreamPublish {
 
 impl DownstreamPublish {
     /// A subscriber that already receives the track, e.g. from an earlier
-    /// publisher of it, gets no second PUBLISH.
+    /// publisher of it, gets no second PUBLISH. `forward` is the Forward State
+    /// the PUBLISH asks for (draft-18 §10.19: its SUBSCRIBE_TRACKS's FORWARD).
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.downstream_publish",
@@ -48,6 +49,7 @@ impl DownstreamPublish {
         &self,
         subscriber_session_id: SessionId,
         track_key: &TrackKey,
+        forward: bool,
     ) -> anyhow::Result<()> {
         if self
             .table
@@ -72,6 +74,7 @@ impl DownstreamPublish {
                 track_key.track_name.clone(),
                 content_exists,
                 upstream_track.max_cache_duration(),
+                forward,
             )
             .await?;
         let request_id = downstream_subscription.request_id();
@@ -158,7 +161,7 @@ mod tests {
 
     async fn send_publish(ctx: &DownstreamPublishContext) -> anyhow::Result<()> {
         ctx.downstream_publish()
-            .send(NAMESPACE_SUBSCRIBER_SESSION, &track_key())
+            .send(NAMESPACE_SUBSCRIBER_SESSION, &track_key(), true)
             .await
     }
 
@@ -241,6 +244,7 @@ mod tests {
                     location: location(4, 1)
                 },
                 max_cache_duration: None,
+                forward: true,
             }]
         );
         assert_eq!(

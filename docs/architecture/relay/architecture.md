@@ -281,13 +281,21 @@ Each sequence owns the relay-side protocol logic for one message
   keeps PUBLISH_NAMESPACE ordered before a later PUBLISH_NAMESPACE_DONE for
   the same subscriber. The fan-out includes the originating session when it
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
-  to its sender).
+  to its sender; draft-18 §6.1 echoes NAMESPACE too).
 - `InMemoryLocalPubSubDirectory` (`domain/pub_sub_directory.rs`) — the relay's in-memory
   registry of publish/subscribe namespaces, upstream tracks, and downstream
   subscriptions. Each namespace entry carries its sessions' `SessionPeer`:
   client-owned Redis routes are cleaned up when the last *client* leaves, while
   local namespace subscribers get PUBLISH_NAMESPACE_DONE only once no client or
-  relay session publishes the namespace. A prefix matches a namespace field
+  relay session publishes the namespace. Namespace subscriptions are keyed by
+  session and `NamespaceInterest` (`NamespaceSubscription`: the interest, the
+  peer, the Forward State of the PUBLISH messages it receives and whether it
+  receives the session's own tracks), and `get_namespace_subscribers(namespace,
+  wanted)` returns those that ask for `wanted`: a draft-18 session's
+  SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS for one prefix are two entries,
+  and a draft-14 SUBSCRIBE_NAMESPACE is one `NamespacesAndTracks` entry. Each
+  version's semantics come from the moqt handler, so a draft-14 and a draft-18
+  session are fanned out to by the same rules. A prefix matches a namespace field
   by field on their `/`-joined forms (`track_key::is_namespace_prefix`):
   `room` covers `room/alice` but not `room1/alice`. An `UpstreamTrack` holds one
   `ActiveUpstreamSubscription` per publisher session feeding the track
@@ -368,10 +376,15 @@ to the track the same way.
    `ActiveUpstreamSubscription` of origin `Publish` (it survives without
    downstream subscribers), register the PUBLISH for namespace lookups, and
    start ingress.
-2. Forward PUBLISH to every local session whose SUBSCRIBE_NAMESPACE prefix
-   matches (draft-14 §8.4) and, for a client-origin PUBLISH, to every remote
-   relay holding a namespace-subscriber route, dialled via
-   `InterRelayConnectionManager`.
+2. Forward PUBLISH to every local session whose namespace subscription for a
+   matching prefix asks for tracks (draft-14 §8.4, draft-18 §9.5: a
+   SUBSCRIBE_TRACKS, not a SUBSCRIBE_NAMESPACE), with that subscription's
+   Forward State (draft-18 §10.19), and, for a client-origin PUBLISH, to every
+   remote relay holding a namespace-subscriber route, dialled via
+   `InterRelayConnectionManager` (Forward State 1: the remote relay applies
+   its own subscribers'). A subscription that leaves out its session's own
+   tracks (draft-18 §6.1) gets no PUBLISH for a track that session
+   PUBLISHed; a draft-14 one is echoed it (draft-14 §6.1).
 3. PUBLISH_OK to the publisher.
 
 Each forward in step 2 is a `DownstreamPublish`
@@ -403,14 +416,19 @@ subscribers' forwards. A publisher that ends the track meanwhile is covered by
 the PUBLISH_DONE TRACK_ENDED answer above.
 
 ### SUBSCRIBE_NAMESPACE sequence
-Refuse with PREFIX_OVERLAP a subscription whose prefix is a prefix of, equal
-to or an extension of one the session already holds (draft-14 §9.28).
-Otherwise register the prefix (and, for the first client subscriber of the
-prefix, its Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward
-what already matches: PUBLISH_NAMESPACE for published namespaces (reply handled by a
-`PublishNamespaceResponseTask`), a `DownstreamPublish` for each published
-track (one per publisher session), then PUBLISH_NAMESPACE for remote
-namespace-publisher routes. The OK goes first because draft-14 §9.28 forwards
+Also handles draft-18 SUBSCRIBE_TRACKS, which moqt raises as the same event
+with `NamespaceInterest::Tracks`. Refuse with PREFIX_OVERLAP a subscription
+whose prefix is a prefix of, equal to or an extension of one the session
+already holds (draft-14 §9.28). Otherwise register the prefix under the
+session and interest (and, for the first client subscriber of the prefix,
+its Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward what
+already matches and the subscription asks for: for namespaces, PUBLISH_NAMESPACE for
+published namespaces (reply handled by a `PublishNamespaceResponseTask`) and
+then for remote namespace-publisher routes; for tracks, a `DownstreamPublish`
+with the subscription's Forward State for each published track (one per
+publisher session), except those its own session PUBLISHed when it leaves
+them out. PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go to the subscriptions
+that ask for namespaces only. The OK goes first because draft-14 §9.28 forwards
 the existing messages once the subscription succeeded; a subscriber that
 handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise never
 answer the PUBLISH before the request timeout.

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::object::ContentExists;
+use moqt::{namespace::NamespaceInterest, object::ContentExists};
 use tokio::sync::mpsc;
 
 use crate::modules::{
@@ -23,8 +23,8 @@ use crate::modules::{
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
             entry::{
-                ActiveUpstreamSubscription, DownstreamSubscription, UpstreamSubscriptionOrigin,
-                UpstreamTrack,
+                ActiveUpstreamSubscription, DownstreamSubscription, NamespaceSubscription,
+                UpstreamSubscriptionOrigin, UpstreamTrack,
             },
         },
         session_id::SessionId,
@@ -42,6 +42,26 @@ use crate::modules::{
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;
 pub(crate) const NAMESPACE_SUBSCRIBER_SESSION: SessionId = 2;
 pub(crate) const UPSTREAM_REQUEST_ID: u64 = 42;
+
+/// A namespace subscription as draft-14 makes it: namespaces and tracks,
+/// Forward State 1, the subscriber's own tracks echoed back.
+pub(crate) fn namespaces_and_tracks(peer: SessionPeer) -> NamespaceSubscription {
+    NamespaceSubscription {
+        interest: NamespaceInterest::NamespacesAndTracks,
+        peer,
+        forward: true,
+    }
+}
+
+/// A draft-18 SUBSCRIBE_NAMESPACE (`Namespaces`) or SUBSCRIBE_TRACKS
+/// (`Tracks`, Forward State 1) of a client.
+pub(crate) fn client_subscription(interest: NamespaceInterest) -> NamespaceSubscription {
+    NamespaceSubscription {
+        interest,
+        peer: SessionPeer::Client,
+        forward: true,
+    }
+}
 
 pub(crate) fn track_key() -> TrackKey {
     TrackKey::new("ns", "track")

@@ -93,6 +93,7 @@ impl ControlMessageForwarder {
         track_name: String,
         content_exists: ContentExists,
         max_cache_duration: Option<u64>,
+        forward: bool,
     ) -> anyhow::Result<DownstreamSubscription> {
         let publisher = self.publisher(session_id).await?;
         publisher
@@ -101,6 +102,7 @@ impl ControlMessageForwarder {
                 track_name,
                 content_exists,
                 max_cache_duration,
+                forward,
             )
             .await
     }

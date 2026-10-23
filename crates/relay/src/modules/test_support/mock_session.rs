@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use moqt::{
     TerminationErrorCode,
+    namespace::NamespaceInterest,
     object::{ContentExists, GroupOrder},
     subscribe::FilterType,
 };
@@ -24,6 +25,7 @@ use crate::modules::{
         handler::{
             fetch::FetchHandler, publish::PublishHandler,
             publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
+            subscribe_namespace::SubscribeNamespaceHandler,
         },
         moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
@@ -43,6 +45,7 @@ pub(crate) struct SentPublish {
     pub(crate) track_name: String,
     pub(crate) content_exists: ContentExists,
     pub(crate) max_cache_duration: Option<u64>,
+    pub(crate) forward: bool,
 }
 
 #[derive(Clone, Default)]
@@ -358,12 +361,14 @@ impl Publisher for MockUpstreamPublisher {
         track_name: String,
         content_exists: ContentExists,
         max_cache_duration: Option<u64>,
+        forward: bool,
     ) -> anyhow::Result<DownstreamSubscription> {
         self.recorded.publishes.lock().unwrap().push(SentPublish {
             track_namespace: track_namespace.clone(),
             track_name: track_name.clone(),
             content_exists,
             max_cache_duration,
+            forward,
         });
         let Some(answer_publish) = &self.answer_publish else {
             return std::future::pending().await;
@@ -834,6 +839,73 @@ impl PublishNamespaceHandler for MockPublishNamespaceHandler {
         _code: RequestErrorCode,
         _reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+}
+
+/// The responses a `MockSubscribeNamespaceHandler` sent, in order.
+pub(crate) type SentMessages = Arc<Mutex<Vec<&'static str>>>;
+
+/// A namespace subscription as draft-14 makes it, unless the fields say
+/// otherwise; its responses go to `sent`.
+#[derive(Clone)]
+pub(crate) struct MockSubscribeNamespaceHandler {
+    pub(crate) track_namespace_prefix: String,
+    pub(crate) track_namespace_prefix_tuple: Vec<String>,
+    pub(crate) interest: NamespaceInterest,
+    pub(crate) forward: bool,
+    pub(crate) sent: SentMessages,
+    pub(crate) error_codes: Arc<Mutex<Vec<RequestErrorCode>>>,
+}
+
+impl MockSubscribeNamespaceHandler {
+    /// The empty prefix stands for the empty tuple.
+    pub(crate) fn new(track_namespace_prefix: &str) -> Self {
+        Self {
+            track_namespace_prefix: track_namespace_prefix.to_string(),
+            track_namespace_prefix_tuple: track_namespace_prefix
+                .split('/')
+                .filter(|field| !field.is_empty())
+                .map(str::to_string)
+                .collect(),
+            interest: NamespaceInterest::NamespacesAndTracks,
+            forward: true,
+            sent: SentMessages::default(),
+            error_codes: Arc::default(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SubscribeNamespaceHandler for MockSubscribeNamespaceHandler {
+    fn track_namespace_prefix(&self) -> &str {
+        &self.track_namespace_prefix
+    }
+
+    fn track_namespace_prefix_tuple(&self) -> &[String] {
+        &self.track_namespace_prefix_tuple
+    }
+
+    fn interest(&self) -> NamespaceInterest {
+        self.interest
+    }
+
+    fn forward(&self) -> bool {
+        self.forward
+    }
+
+    async fn ok(&self) -> Result<(), moqt::TransportSendError> {
+        self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_OK");
+        Ok(())
+    }
+
+    async fn error(
+        &self,
+        code: RequestErrorCode,
+        _reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
+        self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_ERROR");
+        self.error_codes.lock().unwrap().push(code);
         Ok(())
     }
 }
