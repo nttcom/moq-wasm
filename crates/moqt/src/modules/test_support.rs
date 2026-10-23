@@ -208,7 +208,7 @@ pub(crate) fn object_with_extensions() -> Object {
                 value: VariantType::Even(16_384),
             },
             KeyValuePair {
-                key: 0x0b,
+                key: 0x21,
                 value: VariantType::Odd(Bytes::from_static(b"\x01\x00\x80")),
             },
             KeyValuePair {
@@ -216,7 +216,7 @@ pub(crate) fn object_with_extensions() -> Object {
                 value: VariantType::Odd(Bytes::from_static(b"\x00\xff\x7f")),
             },
             KeyValuePair {
-                key: 0x0b,
+                key: 0x21,
                 value: VariantType::Odd(Bytes::from_static(b"\x02\xff")),
             },
         ]),
