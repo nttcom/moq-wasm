@@ -53,14 +53,14 @@ mod tests {
         wire::SubgroupId,
     };
 
-    #[tokio::test]
-    async fn payload_datagrams_preserve_object_properties() {
+    async fn assert_payload_datagram_round_trip(name: &str, ends_group: bool) {
         // Arrange
-        let track = published_track("datagram-object-properties").await;
+        let track = published_track(name).await;
         let publisher = track.client.publisher();
         let mut sender = publisher.create_datagram(&track.published);
         let mut object = object_with_extensions();
         object.forwarding = ForwardingPreference::Datagram;
+        object.ends_group = ends_group;
 
         // Act
         let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
@@ -77,26 +77,13 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn payload_datagrams_preserve_object_properties() {
+        assert_payload_datagram_round_trip("datagram-object-properties", false).await;
+    }
+
+    #[tokio::test]
     async fn payload_datagrams_preserve_the_end_of_group_marker() {
-        // Arrange
-        let track = published_track("datagram-end-of-group").await;
-        let publisher = track.client.publisher();
-        let mut sender = publisher.create_datagram(&track.published);
-        let mut object = object_with_extensions();
-        object.forwarding = ForwardingPreference::Datagram;
-        object.ends_group = true;
-
-        // Act
-        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            sender.send_object(&object).await.unwrap();
-            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
-            receiver.receive().await.unwrap()
-        })
-        .await
-        .unwrap();
-
-        // Assert
-        assert_eq!(received, object);
+        assert_payload_datagram_round_trip("datagram-end-of-group", true).await;
     }
 
     #[tokio::test]
