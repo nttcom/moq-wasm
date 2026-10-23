@@ -10,6 +10,7 @@ export const MESSAGE_INDEX_PATH = '/moq-wasm/examples/message/index.html'
 export const LIVE_VIEWER_PATH = '/moq-wasm/examples/live-viewer/index.html'
 export const CHAT_MODERATION_PATH = '/moq-wasm/examples/moq-chat-moderation/index.html'
 export const CAMERA_DETECTION_PATH = '/moq-wasm/examples/moq-camera-detection/index.html'
+export const PTZ_TRACKING_PATH = '/moq-wasm/examples/moq-ptz-tracking/index.html'
 
 export function ensureLinuxEnvironment(): void {
   if (process.platform !== 'linux' && process.platform !== 'darwin') {

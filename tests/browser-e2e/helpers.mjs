@@ -18,6 +18,7 @@ export const chatModerationPath =
   "/moq-wasm/examples/moq-chat-moderation/index.html";
 export const cameraDetectionPath =
   "/moq-wasm/examples/moq-camera-detection/index.html";
+export const ptzTrackingPath = "/moq-wasm/examples/moq-ptz-tracking/index.html";
 const setupHelpText = "Run node tests/browser-e2e/setup-media-e2e.mjs first.";
 
 function assertPathExists(path, label, helpText) {
