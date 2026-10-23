@@ -220,6 +220,8 @@ pub(crate) struct SubscribeTracksMessage {
     pub(crate) request_id: u64,
     pub(crate) track_namespace_prefix: Vec<String>,
     pub(crate) authorization_tokens: Vec<AuthorizationToken>,
+    /// The Forward State of the PUBLISH messages it leads to (§10.19).
+    pub(crate) forward: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -331,11 +333,21 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
                 authorization_token: tokens,
             })
         }
-        SUBSCRIBE_TRACKS => Message::SubscribeTracks(SubscribeTracksMessage {
-            request_id: get_vi64(buf)?,
-            track_namespace_prefix: get_track_namespace(buf)?,
-            authorization_tokens: tokens(get_parameters(buf, SUBSCRIBE_TRACKS_PARAMETERS)?),
-        }),
+        SUBSCRIBE_TRACKS => {
+            let request_id = get_vi64(buf)?;
+            let track_namespace_prefix = get_track_namespace(buf)?;
+            let parameters = get_parameters(buf, SUBSCRIBE_TRACKS_PARAMETERS)?;
+            // §10.2.12: an omitted FORWARD means 1.
+            let forward = !parameters
+                .iter()
+                .any(|parameter| *parameter == Parameter::Forward(false));
+            Message::SubscribeTracks(SubscribeTracksMessage {
+                request_id,
+                track_namespace_prefix,
+                authorization_tokens: tokens(parameters),
+                forward,
+            })
+        }
         NAMESPACE => Message::Namespace(get_track_namespace(buf)?),
         NAMESPACE_DONE => Message::NamespaceDone(get_track_namespace(buf)?),
         PUBLISH_BLOCKED => {
@@ -863,6 +875,21 @@ pub(crate) fn encode_subscribe_namespace(message: &SubscribeNamespace) -> anyhow
     )
 }
 
+/// FORWARD is omitted when it is 1, its default (§10.2.12).
+pub(crate) fn encode_subscribe_tracks(
+    message: &SubscribeTracksMessage,
+) -> anyhow::Result<BytesMut> {
+    let mut payload = BytesMut::new();
+    put_vi64(&mut payload, message.request_id);
+    put_track_namespace(&mut payload, &message.track_namespace_prefix);
+    let mut parameters = token_parameters(&message.authorization_tokens);
+    if !message.forward {
+        parameters.push(Parameter::Forward(false));
+    }
+    put_parameters(&mut payload, &parameters)?;
+    frame(SUBSCRIBE_TRACKS, &payload)
+}
+
 /// NAMESPACE or NAMESPACE_DONE, which carry the namespace without the
 /// subscription's prefix (§10.16, §10.17).
 pub(crate) fn encode_namespace(message_type: u64, suffix: &[String]) -> anyhow::Result<BytesMut> {
@@ -1264,6 +1291,25 @@ mod tests {
             decode(encode_subscribe_namespace(&subscribe_namespace).unwrap()),
             Message::SubscribeNamespace(subscribe_namespace)
         );
+    }
+
+    #[test]
+    fn subscribe_tracks_round_trips_with_its_forward_state() {
+        for forward in [false, true] {
+            // Arrange
+            let subscribe_tracks = SubscribeTracksMessage {
+                request_id: 12,
+                track_namespace_prefix: vec!["live".to_string()],
+                authorization_tokens: vec![AuthorizationToken::use_value_utf8("jwt")],
+                forward,
+            };
+
+            // Act
+            let decoded = decode(encode_subscribe_tracks(&subscribe_tracks).unwrap());
+
+            // Assert
+            assert_eq!(decoded, Message::SubscribeTracks(subscribe_tracks));
+        }
     }
 
     #[test]

@@ -32,6 +32,7 @@ use crate::{
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::{PublishDoneCode, RequestKind},
+                namespace_interest::NamespaceInterest,
             },
             data_plane::stream::bi_stream_sender::BiStreamSender,
             domains::{connection::Connection, session_context::SessionContext},
@@ -144,7 +145,8 @@ impl ControlChannel {
                     namespace: publish_namespace.track_namespace,
                 },
             ),
-            OutgoingRequest::SubscribeNamespace(subscribe_namespace) => (
+            OutgoingRequest::SubscribeNamespace(subscribe_namespace)
+            | OutgoingRequest::SubscribeTracks(subscribe_namespace) => (
                 subscribe_namespace.request_id,
                 ControlMessageType::SubscribeNamespace,
                 subscribe_namespace.encode(),
@@ -232,9 +234,14 @@ impl ControlChannel {
                 );
                 (ControlMessageType::PublishNamespaceCancel, cancel.encode())
             }
-            Notification::UnsubscribeNamespace(m) => {
-                (ControlMessageType::UnSubscribeNamespace, m.encode())
-            }
+            // One SUBSCRIBE_NAMESPACE covers every interest (§6.1).
+            Notification::UnsubscribeNamespace {
+                track_namespace_prefix,
+                ..
+            } => (
+                ControlMessageType::UnSubscribeNamespace,
+                UnsubscribeNamespace::new(track_namespace_prefix).encode(),
+            ),
             Notification::GoAway(m) => (ControlMessageType::GoAway, m.encode()),
             Notification::MaxRequestId(m) => (ControlMessageType::MaxRequestId, m.encode()),
             Notification::RequestsBlocked(m) => (ControlMessageType::RequestsBlocked, m.encode()),
@@ -377,9 +384,10 @@ async fn handle_late_response(
                     "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
                 );
                 channel
-                    .notify(Notification::UnsubscribeNamespace(
-                        UnsubscribeNamespace::new(namespace.clone()),
-                    ))
+                    .notify(Notification::UnsubscribeNamespace {
+                        track_namespace_prefix: namespace.clone(),
+                        interest: NamespaceInterest::NamespacesAndTracks,
+                    })
                     .await
             }
             _ => close_on_mismatched_late_response(session, connection, request_id, &response),

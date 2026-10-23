@@ -9,7 +9,10 @@ use tokio::sync::watch;
 use crate::{
     SessionEvent,
     modules::moqt::{
-        control_plane::{constants::TerminationErrorCode, enums::RequestId},
+        control_plane::{
+            constants::TerminationErrorCode, enums::RequestId,
+            namespace_interest::NamespaceInterest,
+        },
         data_plane::stream::{
             fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
         },
@@ -79,7 +82,7 @@ struct Connections {
 
 #[derive(Default)]
 pub(crate) struct CarriedRequests {
-    pub(crate) namespaces: Vec<String>,
+    pub(crate) namespaces: Vec<(String, NamespaceInterest)>,
     pub(crate) published_namespaces: Vec<String>,
     /// Keyed by logical request id.
     pub(crate) subscriptions: HashMap<u64, CarriedSubscription>,

@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use moqt::{RequestErrorCode, Session, SessionEvent};
+use moqt::{RequestErrorCode, Session, SessionEvent, namespace::NamespaceInterest};
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use tokio::{sync::watch, task::JoinSet, time::Instant};
 
@@ -101,7 +101,7 @@ async fn follow_members(
 ) -> Result<Vec<MemberFiles>> {
     session
         .subscriber()
-        .subscribe_namespace(namespace_prefix.to_string())
+        .subscribe_namespace(namespace_prefix.to_string(), NamespaceInterest::Namespaces)
         .await?;
     tracing::info!(prefix = namespace_prefix, "room recording started");
     let (member_stop_sender, member_stop) = watch::channel(false);

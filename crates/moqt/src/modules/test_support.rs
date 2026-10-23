@@ -111,8 +111,20 @@ pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Ses
     (port, accept)
 }
 
+/// `spawn_dual_server`, offering only draft-18.
+pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
+    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    (port, accept)
+}
+
 pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
     Endpoint::<DUAL>::create_client(&config).unwrap()
+}
+
+/// `dual_client_with_config`, offering only draft-18.
+pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
+    Endpoint::<DUAL>::create_client_offering(&config, DRAFT18_PROTOCOLS).unwrap()
 }
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
@@ -177,11 +189,8 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     name: &str,
     scheme: &str,
 ) -> (Session, Session) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
-    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
-    let client =
-        Endpoint::<DUAL>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
-            .unwrap();
+    let (port, accept) = spawn_draft18_server(name);
+    let client = draft18_client_with_config(insecure_client_config());
     let path = if scheme == "https" { "/moq" } else { "" };
     connect_sessions_from(
         &client,
