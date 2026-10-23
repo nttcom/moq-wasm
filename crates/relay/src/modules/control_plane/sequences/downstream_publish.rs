@@ -134,19 +134,16 @@ impl DownstreamPublish {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{
-            pub_sub_directory::entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
-            session_peer::SessionPeer,
-        },
+        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                UPSTREAM_REQUEST_ID, downstream_publish_context, table_with_upstream, track_key,
+                downstream_publish_context, table_with_upstream, track_key, upstream_carrying,
             },
             mock_session::{PUBLISH_REQUEST_ID, SentPublish},
             relay_harness::fixtures::{
                 cached_object::insert_closed_group, location,
-                subscription::upstream_subscription_with_track_properties,
+                subscription::unknown_track_properties,
             },
         },
     };
@@ -174,25 +171,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwarded_publish_carries_the_upstream_max_cache_duration() {
+    async fn forwarded_publish_carries_the_upstream_track_properties() {
         // Arrange
+        let track_properties = TrackProperties {
+            max_cache_duration: Some(2_000),
+            ..unknown_track_properties(1)
+        };
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_upstream_subscription(
             track_key(),
             PUBLISHER_SESSION,
-            ActiveUpstreamSubscription {
-                subscription: upstream_subscription_with_track_properties(
-                    UPSTREAM_REQUEST_ID,
-                    TrackProperties {
-                        max_cache_duration: Some(2_000),
-                        ..Default::default()
-                    },
-                ),
-                expires: None,
-                content_exists: ContentExists::False,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-                publisher_peer: SessionPeer::Client,
-            },
+            upstream_carrying(track_properties.clone()),
         );
         let ctx = downstream_publish_context(Arc::new(table), || Ok(true)).await;
 
@@ -202,10 +191,7 @@ mod tests {
         // Assert
         let publishes = ctx.subscriber.publishes();
         assert_eq!(publishes.len(), 1);
-        assert_eq!(
-            publishes[0].track_properties.max_cache_duration,
-            Some(2_000)
-        );
+        assert_eq!(publishes[0].track_properties, track_properties);
     }
 
     #[tokio::test]

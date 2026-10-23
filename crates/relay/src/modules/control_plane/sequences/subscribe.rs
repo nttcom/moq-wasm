@@ -616,7 +616,8 @@ mod tests {
         session_peer::SessionPeer,
     };
     use crate::modules::test_support::directory_fixtures::{
-        PUBLISHER_SESSION, active_upstream, local_publisher_resolver, track_key, upstream_track,
+        PUBLISHER_SESSION, active_upstream, local_publisher_resolver, track_key, upstream_carrying,
+        upstream_track,
     };
     use crate::modules::test_support::directory_fixtures::{
         delivery_control, downstream_subscription,
@@ -627,6 +628,7 @@ mod tests {
         session_repository_with_sessions,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
+    use crate::modules::test_support::relay_harness::fixtures::subscription::unknown_track_properties;
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
         insert_closed_group(cache, group_id, &[0]);
@@ -977,12 +979,27 @@ mod tests {
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &MockSubscribeHandler,
     ) -> Acceptance {
+        accept_downstream_of(
+            upstream_track(UpstreamSubscriptionOrigin::Subscribe),
+            table,
+            egress_sender,
+            handler,
+        )
+        .await
+    }
+
+    async fn accept_downstream_of(
+        upstream_track: UpstreamTrack,
+        table: &InMemoryLocalPubSubDirectory,
+        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
+        handler: &MockSubscribeHandler,
+    ) -> Acceptance {
         Subscribe
             .accept_downstream_subscription(
                 2,
                 SessionPeer::Client,
                 track_key(),
-                upstream_track(UpstreamSubscriptionOrigin::Subscribe),
+                upstream_track,
                 None,
                 table,
                 egress_sender,
@@ -994,7 +1011,7 @@ mod tests {
 
     fn assert_unanswered(handler: &MockSubscribeHandler) {
         assert!(handler.subscribe_errors.lock().unwrap().is_empty());
-        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 0);
+        assert!(handler.subscribe_oks.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1046,6 +1063,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subscribe_ok_carries_the_upstream_track_properties() {
+        // Arrange
+        let track_properties = moqt::TrackProperties {
+            max_cache_duration: Some(2_000),
+            ..unknown_track_properties(1)
+        };
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            upstream_carrying(track_properties.clone()),
+        );
+        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
+        let egress = tokio::spawn(async move {
+            if let Some(EgressCommand::StartReader(request)) = egress_receiver.recv().await {
+                let _ = request.ready_sender.send(Ok(()));
+            }
+        });
+        let handler = MockSubscribeHandler::default();
+
+        // Act
+        accept_downstream_of(
+            table.get_upstream_track(&track_key()).unwrap(),
+            &table,
+            &egress_sender,
+            &handler,
+        )
+        .await;
+
+        // Assert
+        egress.await.unwrap();
+        assert_eq!(
+            *handler.subscribe_oks.lock().unwrap(),
+            vec![track_properties]
+        );
+    }
+
+    #[tokio::test]
     async fn a_subscribe_with_forward_off_starts_its_egress_with_forward_off() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
@@ -1077,7 +1132,7 @@ mod tests {
 
         // Assert
         assert!(!egress.await.unwrap());
-        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 1);
+        assert_eq!(handler.subscribe_oks.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1152,6 +1207,6 @@ mod tests {
         // Assert
         assert_eq!(egress.await.unwrap(), 2);
         assert!(handler.subscribe_errors.lock().unwrap().is_empty());
-        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 1);
+        assert_eq!(handler.subscribe_oks.lock().unwrap().len(), 1);
     }
 }

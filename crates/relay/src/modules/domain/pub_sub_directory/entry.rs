@@ -161,3 +161,45 @@ pub(crate) struct RemovedSessionSubscriptions {
     pub(crate) subscribe_namespace_prefixes: Vec<String>,
     pub(crate) publish_namespace_track_namespaces: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use moqt::object::{KeyValuePair, VariantType};
+
+    use super::*;
+    use crate::modules::test_support::{
+        directory_fixtures::upstream_carrying,
+        relay_harness::fixtures::subscription::unknown_track_properties,
+    };
+
+    #[test]
+    fn the_newest_publishers_track_properties_replace_the_others_unmerged() {
+        // Arrange: the older set holds a property the newer one lacks
+        let mut older = unknown_track_properties(1);
+        older.other.push(KeyValuePair {
+            key: 0x3A,
+            value: VariantType::Even(7),
+        });
+        older.max_cache_duration = Some(1_000);
+        let newer = moqt::TrackProperties {
+            max_cache_duration: None,
+            other: vec![KeyValuePair {
+                key: 0x38,
+                value: VariantType::Even(2),
+            }],
+        };
+        let mut upstream_track = UpstreamTrack::default();
+        upstream_track
+            .subscriptions
+            .insert(1, upstream_carrying(older));
+        upstream_track
+            .subscriptions
+            .insert(3, upstream_carrying(newer.clone()));
+
+        // Act
+        let track_properties = upstream_track.track_properties();
+
+        // Assert: draft-18 §2.5 forbids merging sets
+        assert_eq!(track_properties, newer);
+    }
+}

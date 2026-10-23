@@ -600,7 +600,8 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 #[derive(Clone)]
 pub(crate) struct MockSubscribeHandler {
     pub(crate) forward: bool,
-    pub(crate) subscribe_ok_count: Arc<Mutex<usize>>,
+    /// The track properties of each SUBSCRIBE_OK sent.
+    pub(crate) subscribe_oks: Arc<Mutex<Vec<TrackProperties>>>,
     pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
 }
 
@@ -608,7 +609,7 @@ impl Default for MockSubscribeHandler {
     fn default() -> Self {
         Self {
             forward: true,
-            subscribe_ok_count: Arc::default(),
+            subscribe_oks: Arc::default(),
             subscribe_errors: Arc::default(),
         }
     }
@@ -665,9 +666,9 @@ impl SubscribeHandler for MockSubscribeHandler {
         _track_alias: u64,
         _expires: u64,
         _content_exists: ContentExists,
-        _track_properties: TrackProperties,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
-        *self.subscribe_ok_count.lock().unwrap() += 1;
+        self.subscribe_oks.lock().unwrap().push(track_properties);
         Ok(())
     }
 

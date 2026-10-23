@@ -1,4 +1,26 @@
+use bytes::Bytes;
+use moqt::object::{KeyValuePair, VariantType};
+
 use crate::modules::session::subscription::{DownstreamSubscription, UpstreamSubscription};
+
+/// Track Properties the relay does not understand (draft-18 §2.5): Immutable
+/// Properties whose contents keep a two-byte encoding of 5 (§12.7), and an
+/// application property carrying `mark`.
+pub(crate) fn unknown_track_properties(mark: u64) -> moqt::TrackProperties {
+    moqt::TrackProperties {
+        max_cache_duration: None,
+        other: vec![
+            KeyValuePair {
+                key: 0x0B,
+                value: VariantType::Odd(Bytes::from_static(&[0x38, 0x80, 0x05])),
+            },
+            KeyValuePair {
+                key: 0x38,
+                value: VariantType::Even(mark),
+            },
+        ],
+    }
+}
 
 fn subscriber_initiated(
     request_id: u64,
