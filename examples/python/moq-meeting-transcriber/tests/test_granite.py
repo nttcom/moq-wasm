@@ -8,13 +8,12 @@ from moq_meeting_transcriber.granite import SharedGranite
 
 
 class StubPipeline:
-    def __init__(self, text: str = "こんにちは"):
-        self.text = text
+    def __init__(self):
         self.inputs: list[dict] = []
 
     def __call__(self, inputs: dict) -> dict:
         self.inputs.append(inputs)
-        return {"text": self.text}
+        return {"text": "こんにちは"}
 
 
 async def test_the_model_loads_once_when_a_room_first_asks_for_it():

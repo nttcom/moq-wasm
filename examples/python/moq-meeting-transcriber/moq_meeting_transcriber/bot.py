@@ -21,8 +21,6 @@ DEFAULT_PORT = 8100
 DEFAULT_MAX_ROOMS = 2
 DEFAULT_MODEL = "small"
 DEFAULT_ASR = "whisper"
-# The --asr services that a recognizer other than HttpRecognizer calls.
-HTTP_RECOGNIZERS = {GRANITE_SPEECH: GraniteSpeechRecognizer}
 # A Meeting room name is any single namespace element.
 ROOM_ID_PATTERN = re.compile(r"[^/]{1,64}")
 
@@ -73,7 +71,8 @@ def http_recognizers(args: argparse.Namespace, session: aiohttp.ClientSession) -
             if args.metadata_auth
             else None
         )
-        recognizers[name] = HTTP_RECOGNIZERS.get(name, HttpRecognizer)(name, url, session, token)
+        recognizer = GraniteSpeechRecognizer if name == GRANITE_SPEECH else HttpRecognizer
+        recognizers[name] = recognizer(name, url, session, token)
     return recognizers
 
 
