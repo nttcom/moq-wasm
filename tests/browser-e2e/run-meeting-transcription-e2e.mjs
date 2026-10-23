@@ -82,6 +82,8 @@ async function main() {
     ]);
 
     const botPort = await findFreePort();
+    // The spec serves the fake ASR service on this port (examples/browser/tests/fake-asr.ts).
+    const asrPort = await findFreePort();
     const bot = spawnProcess(
       "bot",
       "uv",
@@ -97,6 +99,8 @@ async function main() {
         "--insecure",
         "--model",
         whisperModel,
+        "--asr",
+        `granite-speech-5-2b=http://127.0.0.1:${asrPort}`,
       ],
       { cwd: botDir },
     );
@@ -115,6 +119,7 @@ async function main() {
           MEETING_E2E_RELAY_A_URL: moqtUrl,
           MEETING_E2E_RELAY_B_URL: moqtUrl,
           MEETING_TRANSCRIPTION_E2E_BOT_URL: `http://127.0.0.1:${botPort}`,
+          MEETING_TRANSCRIPTION_E2E_ASR_PORT: String(asrPort),
           E2E_FAKE_AUDIO_FILE: speech,
         },
       },
