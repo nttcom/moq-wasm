@@ -17,10 +17,12 @@ on:
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
+      - "examples/python/moq-ptz-tracking/**"
       - "examples/python/moq-bot-rooms/**"
       - "examples/python/moq-d3-flash-bot/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "crates/python/**"
+      - "examples/rust/moq-cli/**"
       - "crates/wasm/**"
       - "crates/live-ingest/**"
       - "crates/recorder/**"
@@ -69,10 +71,12 @@ on:
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
+      - "examples/python/moq-ptz-tracking/**"
       - "examples/python/moq-bot-rooms/**"
       - "examples/python/moq-d3-flash-bot/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "crates/python/**"
+      - "examples/rust/moq-cli/**"
       - "crates/wasm/**"
       - "crates/live-ingest/**"
       - "crates/recorder/**"
@@ -126,6 +130,7 @@ jobs:
       chat_moderation: ${{ steps.filter.outputs.chat_moderation }}
       meeting_transcription: ${{ steps.filter.outputs.meeting_transcription }}
       camera_detection: ${{ steps.filter.outputs.camera_detection }}
+      ptz_tracking: ${{ steps.filter.outputs.ptz_tracking }}
       live_viewer: ${{ steps.filter.outputs.live_viewer }}
       meeting: ${{ steps.filter.outputs.meeting }}
       console: ${{ steps.filter.outputs.console }}
@@ -152,6 +157,7 @@ jobs:
             chat_moderation=true
             meeting_transcription=true
             camera_detection=true
+            ptz_tracking=true
             live_viewer=true
             meeting=true
             console=true
@@ -170,6 +176,7 @@ jobs:
             chat_moderation=false
             meeting_transcription=false
             camera_detection=false
+            ptz_tracking=false
             live_viewer=false
             meeting=false
             console=false
@@ -187,6 +194,7 @@ jobs:
                   chat_moderation=true
                   meeting_transcription=true
                   camera_detection=true
+                  ptz_tracking=true
                   live_viewer=true
                   meeting=true
                   ;;
@@ -219,6 +227,12 @@ jobs:
               case "$path" in
                 .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-camera-detection/*|examples/browser/examples/media/*|examples/browser/tests/camera-detection-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-camera-detection/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   camera_detection=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-ptz-tracking-e2e.mjs|tests/browser-e2e/fake-onvif-ingest.py|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-ptz-tracking/*|examples/browser/examples/media/*|examples/browser/tests/ptz-tracking-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-ptz-tracking/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|examples/rust/moq-cli/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  ptz_tracking=true
                   ;;
               esac
 
@@ -292,6 +306,7 @@ jobs:
             echo "chat_moderation=$chat_moderation"
             echo "meeting_transcription=$meeting_transcription"
             echo "camera_detection=$camera_detection"
+            echo "ptz_tracking=$ptz_tracking"
             echo "live_viewer=$live_viewer"
             echo "meeting=$meeting"
             echo "console=$console"
@@ -835,6 +850,76 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: camera-detection-e2e-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  ptz_tracking_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.ptz_tracking == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.4
+          cache: npm
+          cache-dependency-path: examples/browser/package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.99.1
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      - name: Setup uv
+        # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: 0.13.4
+          checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
+          save-cache: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Run PTZ tracking unit tests
+        working-directory: examples/python/moq-ptz-tracking
+        run: uv run pytest
+
+      - name: Prepare browser E2E environment
+        run: node tests/browser-e2e/setup-media-e2e.mjs
+
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
+
+      - name: Run PTZ tracking E2E
+        env:
+          CI: "true"
+        run: node tests/browser-e2e/run-ptz-tracking-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ptz-tracking-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report
