@@ -47,8 +47,13 @@ fn request_error_table(kind: RequestKind) -> impl Iterator<Item = (RequestErrorC
 }
 
 /// Returns INTERNAL_ERROR (0x0) when `kind`'s `*_ERROR` message does not
-/// define `code`.
+/// define `code`. UNSUPPORTED_EXTENSION (draft-18 §2.5.1), which draft-14
+/// lacks, goes as NOT_SUPPORTED, the closest draft-14 code.
 pub fn request_error_code_to_wire(code: RequestErrorCode, kind: RequestKind) -> u64 {
+    let code = match code {
+        RequestErrorCode::UnsupportedExtension => RequestErrorCode::NotSupported,
+        code => code,
+    };
     request_error_table(kind)
         .find(|(defined, _)| *defined == code)
         .map(|(_, value)| value)
@@ -195,6 +200,18 @@ mod tests {
             request_error_code_to_wire(RequestErrorCode::MalformedAuthToken, RequestKind::Publish),
             0x0
         );
+    }
+
+    #[test]
+    fn unsupported_extension_is_sent_as_not_supported() {
+        for kind in [RequestKind::Subscribe, RequestKind::Fetch] {
+            // Act / Assert
+            assert_eq!(
+                request_error_code_to_wire(RequestErrorCode::UnsupportedExtension, kind),
+                0x3,
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
