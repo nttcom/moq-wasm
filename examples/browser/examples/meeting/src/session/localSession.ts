@@ -201,7 +201,7 @@ export class LocalSession {
     const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO, {
       subscriberPriority: role === 'video' || role === 'screenshare' ? VIDEO_SUBSCRIBER_PRIORITY : 0,
       // Audio objects decode independently, but a single-stream publisher never starts a new group, so
-      // NextGroupStart would never deliver its audio (draft-14 §5.1.2).
+      // NextGroupStart would never deliver its audio (draft-14 §9.7).
       filterType: role === 'audio' ? FilterType.LargestObject : FilterType.NextGroupStart,
       onPublishDone: ({ requestId }) => {
         this.forgetSubscription(requestId)
