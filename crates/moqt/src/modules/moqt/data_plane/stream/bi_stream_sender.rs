@@ -1,23 +1,27 @@
-use crate::modules::transport::transport_connection::BoxedSendStream;
 use bytes::BytesMut;
 
 use crate::{
     modules::{
-        moqt::control_plane::control_messages::control_message_type::ControlMessageType,
-        transport::transport_send_stream::TransportSendError,
+        moqt::{
+            control_plane::control_messages::control_message_type::ControlMessageType,
+            data_plane::stream::stream_sender::StreamSender,
+        },
+        transport::{
+            transport_connection::BoxedSendStream, transport_send_stream::TransportSendError,
+        },
     },
     wire::encode_control_message,
 };
 
 #[derive(Debug)]
 pub(crate) struct BiStreamSender {
-    stream_sender: tokio::sync::Mutex<BoxedSendStream>,
+    stream_sender: StreamSender,
 }
 
 impl BiStreamSender {
     pub(crate) fn new(stream_sender: BoxedSendStream) -> Self {
         Self {
-            stream_sender: tokio::sync::Mutex::new(stream_sender),
+            stream_sender: StreamSender::new(stream_sender),
         }
     }
 
@@ -26,8 +30,8 @@ impl BiStreamSender {
         message_type: ControlMessageType,
         bytes: BytesMut,
     ) -> Result<(), TransportSendError> {
-        let message_bytes = encode_control_message(message_type, bytes);
-        let mut stream_sender = self.stream_sender.lock().await;
-        stream_sender.send(&message_bytes).await
+        self.stream_sender
+            .send(&encode_control_message(message_type, bytes))
+            .await
     }
 }

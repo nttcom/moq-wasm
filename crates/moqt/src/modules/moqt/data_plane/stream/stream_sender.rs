@@ -1,4 +1,6 @@
-use crate::modules::transport::transport_connection::BoxedSendStream;
+use crate::modules::transport::{
+    transport_connection::BoxedSendStream, transport_send_stream::TransportSendError,
+};
 use bytes::BytesMut;
 
 #[derive(Debug)]
@@ -13,19 +15,19 @@ impl StreamSender {
         }
     }
 
-    pub async fn send(&self, bytes: &BytesMut) -> anyhow::Result<()> {
-        Ok(self.send_stream.lock().await.send(bytes).await?)
+    pub async fn send(&self, bytes: &BytesMut) -> Result<(), TransportSendError> {
+        self.send_stream.lock().await.send(bytes).await
     }
 
-    pub async fn set_priority(&self, priority: i32) -> anyhow::Result<()> {
-        Ok(self.send_stream.lock().await.set_priority(priority)?)
+    pub async fn set_priority(&self, priority: i32) -> Result<(), TransportSendError> {
+        self.send_stream.lock().await.set_priority(priority)
     }
 
-    pub async fn close(&self) -> anyhow::Result<()> {
-        Ok(self.send_stream.lock().await.close()?)
+    pub async fn close(&self) -> Result<(), TransportSendError> {
+        self.send_stream.lock().await.close()
     }
 
-    pub async fn reset(&self, error_code: u64) -> anyhow::Result<()> {
-        Ok(self.send_stream.lock().await.reset(error_code).await?)
+    pub async fn reset(&self, error_code: u64) -> Result<(), TransportSendError> {
+        self.send_stream.lock().await.reset(error_code).await
     }
 }

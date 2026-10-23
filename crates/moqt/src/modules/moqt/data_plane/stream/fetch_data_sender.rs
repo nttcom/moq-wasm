@@ -30,18 +30,20 @@ impl FetchDataSender {
     /// its Object ID as the Subgroup ID (draft-14 §10.4.4), and a zero-length
     /// object as its status.
     pub async fn send_object(&self, object: &Object) -> anyhow::Result<()> {
-        self.stream_sender
+        Ok(self
+            .stream_sender
             .send(&self.version.encode_fetch_object(object))
-            .await
+            .await?)
     }
 
     pub async fn close(&self) -> anyhow::Result<()> {
-        self.stream_sender.close().await
+        Ok(self.stream_sender.close().await?)
     }
 
     pub async fn reset(&self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        self.stream_sender
+        Ok(self
+            .stream_sender
             .reset(self.version.data_stream_reset_code(code))
-            .await
+            .await?)
     }
 }

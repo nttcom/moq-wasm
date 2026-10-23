@@ -73,7 +73,7 @@ impl<S> StreamDataSender<S> {
     pub async fn close(&mut self) -> anyhow::Result<()> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &self.streams {
-            results.push(stream.stream_sender.close().await);
+            results.push(stream.stream_sender.close().await.map_err(Into::into));
         }
         self.settle(results)
     }
@@ -82,7 +82,7 @@ impl<S> StreamDataSender<S> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &self.streams {
             let code = stream.encoder.version().data_stream_reset_code(code);
-            results.push(stream.stream_sender.reset(code).await);
+            results.push(stream.stream_sender.reset(code).await.map_err(Into::into));
         }
         self.settle(results)
     }
@@ -105,7 +105,13 @@ impl StreamDataSender<Uninitialized> {
         let priority = priority.transport_priority();
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &self.streams {
-            results.push(stream.stream_sender.set_priority(priority).await);
+            results.push(
+                stream
+                    .stream_sender
+                    .set_priority(priority)
+                    .await
+                    .map_err(Into::into),
+            );
         }
         any_sent(results)
     }
@@ -120,7 +126,7 @@ impl StreamDataSender<Uninitialized> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
             let header = stream.encoder.header(start);
-            results.push(stream.stream_sender.send(&header).await);
+            results.push(stream.stream_sender.send(&header).await.map_err(Into::into));
         }
         self.settle(results)?;
         Ok(self.into_header_sent())
@@ -138,7 +144,7 @@ impl StreamDataSender<Uninitialized> {
         for stream in &mut self.streams {
             let SubgroupEncoder::Draft14(encoder) = &mut stream.encoder;
             let bytes = encoder.raw_header(group_id, subgroup_id.clone(), publisher_priority);
-            results.push(stream.stream_sender.send(&bytes).await);
+            results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
         }
         self.settle(results)?;
         Ok(self.into_header_sent())
@@ -157,7 +163,7 @@ impl StreamDataSender<HeaderSent> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
             let result = match stream.encoder.object(object) {
-                Ok(bytes) => stream.stream_sender.send(&bytes).await,
+                Ok(bytes) => stream.stream_sender.send(&bytes).await.map_err(Into::into),
                 Err(error) => Err(error),
             };
             results.push(result);
@@ -175,7 +181,7 @@ impl StreamDataSender<HeaderSent> {
         for stream in &mut self.streams {
             let SubgroupEncoder::Draft14(encoder) = &stream.encoder;
             let bytes = encoder.raw_object_field(object_id_delta, subgroup_object.clone());
-            results.push(stream.stream_sender.send(&bytes).await);
+            results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
         }
         self.settle(results)
     }
