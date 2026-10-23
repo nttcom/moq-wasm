@@ -222,6 +222,22 @@ impl SubgroupEncoder {
     }
 }
 
+/// The Object ID Delta of a subgroup object after `prev_object_id`, or its id
+/// when it is the first.
+fn object_id_delta(prev_object_id: Option<u64>, object_id: u64) -> anyhow::Result<u64> {
+    match prev_object_id {
+        None => Some(object_id),
+        Some(prev) => prev
+            .checked_add(1)
+            .and_then(|next| object_id.checked_sub(next)),
+    }
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "object {object_id} does not follow object {prev_object_id:?} in its subgroup"
+        )
+    })
+}
+
 pub(crate) enum OutgoingRequest {
     Subscribe(Subscribe),
     TrackStatus(Subscribe),
