@@ -25,15 +25,27 @@ use crate::{
             control_plane::{
                 constants::TerminationErrorCode,
                 control_messages::messages::{
-                    fetch::Fetch, fetch_cancel::FetchCancel, fetch_ok::FetchOk, go_away::GoAway,
-                    max_request_id::MaxRequestId, namespace_ok::NamespaceOk,
-                    parameters::authorization_token::AuthorizationToken, publish::Publish,
+                    fetch::Fetch,
+                    fetch_cancel::FetchCancel,
+                    fetch_ok::FetchOk,
+                    go_away::GoAway,
+                    max_request_id::MaxRequestId,
+                    namespace_ok::NamespaceOk,
+                    parameters::{
+                        authorization_token::AuthorizationToken, group_order::GroupOrder,
+                    },
+                    publish::Publish,
                     publish_namespace::PublishNamespace,
-                    publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
-                    requests_blocked::RequestsBlocked, server_setup::ServerSetup,
-                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
-                    subscribe_ok::SubscribeOk, subscribe_update::SubscribeUpdate,
-                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
+                    publish_namespace_done::PublishNamespaceDone,
+                    publish_ok::PublishOk,
+                    requests_blocked::RequestsBlocked,
+                    server_setup::ServerSetup,
+                    subscribe::Subscribe,
+                    subscribe_namespace::SubscribeNamespace,
+                    subscribe_ok::SubscribeOk,
+                    subscribe_update::SubscribeUpdate,
+                    unsubscribe::Unsubscribe,
+                    unsubscribe_namespace::UnsubscribeNamespace,
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::{
@@ -101,12 +113,6 @@ impl Version {
     pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> BytesMut {
         match self {
             Self::Draft14 => draft14::objects::encode_fetch_header(request_id),
-        }
-    }
-
-    pub(crate) fn encode_fetch_object(self, object: &Object) -> BytesMut {
-        match self {
-            Self::Draft14 => draft14::objects::encode_fetch_object(object),
         }
     }
 
@@ -183,6 +189,8 @@ pub(crate) enum FetchReader {
 }
 
 impl FetchReader {
+    pub(crate) fn set_group_order(&mut self, _group_order: GroupOrder) {}
+
     /// `Ok(None)` means the peer finished the stream (FIN).
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self {
@@ -236,6 +244,26 @@ fn object_id_delta(prev_object_id: Option<u64>, object_id: u64) -> anyhow::Resul
             "object {object_id} does not follow object {prev_object_id:?} in its subgroup"
         )
     })
+}
+
+/// Encodes the objects of one FETCH response.
+pub(crate) enum FetchEncoder {
+    Draft14,
+}
+
+impl FetchEncoder {
+    pub(crate) fn new(version: Version) -> Self {
+        match version {
+            Version::Draft14 => Self::Draft14,
+        }
+    }
+
+    /// `Ok(None)` for an object the draft cannot carry in a FETCH response.
+    pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<Option<BytesMut>> {
+        match self {
+            Self::Draft14 => Ok(Some(draft14::objects::encode_fetch_object(object))),
+        }
+    }
 }
 
 pub(crate) enum OutgoingRequest {

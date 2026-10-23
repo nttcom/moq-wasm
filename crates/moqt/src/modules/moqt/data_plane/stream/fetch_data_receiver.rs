@@ -114,6 +114,10 @@ impl FetchDataReceiver {
         });
     }
 
+    pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
+        self.reader.set_group_order(group_order);
+    }
+
     pub async fn receive(&mut self) -> anyhow::Result<Fetch> {
         loop {
             let error = match self.reader.next_object().await {

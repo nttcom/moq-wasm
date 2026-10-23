@@ -1,13 +1,16 @@
 use crate::modules::moqt::control_plane::error_codes::DataStreamResetCode;
 use crate::modules::moqt::{
     data_plane::{object::canonical_object::Object, stream::stream_sender::StreamSender},
-    version::Version,
+    version::{FetchEncoder, Version},
 };
 use crate::modules::transport::transport_connection::BoxedSendStream;
 
 pub struct FetchDataSender {
-    stream_sender: StreamSender,
     version: Version,
+    stream_sender: StreamSender,
+    /// Held across the send, so objects reach the stream in the order they
+    /// were encoded.
+    encoder: tokio::sync::Mutex<FetchEncoder>,
 }
 
 impl FetchDataSender {
@@ -21,8 +24,9 @@ impl FetchDataSender {
             .send(&version.encode_fetch_header(request_id))
             .await?;
         Ok(Self {
-            stream_sender,
             version,
+            stream_sender,
+            encoder: tokio::sync::Mutex::new(FetchEncoder::new(version)),
         })
     }
 
@@ -30,10 +34,11 @@ impl FetchDataSender {
     /// its Object ID as the Subgroup ID (draft-14 §10.4.4), and a zero-length
     /// object as its status.
     pub async fn send_object(&self, object: &Object) -> anyhow::Result<()> {
-        Ok(self
-            .stream_sender
-            .send(&self.version.encode_fetch_object(object))
-            .await?)
+        let mut encoder = self.encoder.lock().await;
+        match encoder.object(object)? {
+            Some(bytes) => Ok(self.stream_sender.send(&bytes).await?),
+            None => Ok(()),
+        }
     }
 
     pub async fn close(&self) -> anyhow::Result<()> {

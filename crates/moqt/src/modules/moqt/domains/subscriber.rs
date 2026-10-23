@@ -523,6 +523,7 @@ impl Subscriber {
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
+        receiver.set_group_order(fetch_handle.group_order);
         if let Some(remainder) = fetch_handle.remainder.clone() {
             receiver.carry_with(
                 self.session.clone(),
