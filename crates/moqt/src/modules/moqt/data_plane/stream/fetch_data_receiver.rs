@@ -168,7 +168,7 @@ mod tests {
                 read_fetch_objects,
             },
         },
-        object::{ExtensionHeaders, Object, ObjectStatus},
+        object::{ExtensionHeaders, Object, ObjectStatus, ReadError, StreamReceiveError},
     };
 
     #[tokio::test]
@@ -227,6 +227,7 @@ mod tests {
         // Arrange
         let mut stream = fetched_stream("fetch-object-reset").await;
         let expected = object_with_extensions();
+        let reset_error = StreamReceiveError::Closed(ReadError::Reset).to_string();
         timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&expected))
             .await
             .unwrap()
@@ -253,7 +254,7 @@ mod tests {
 
         // Assert
         assert!(
-            matches!(&result, Err(error) if error.to_string().contains("stream closed: stream reset by peer")),
+            matches!(&result, Err(error) if error.to_string().contains(&reset_error)),
             "{result:?}"
         );
     }
