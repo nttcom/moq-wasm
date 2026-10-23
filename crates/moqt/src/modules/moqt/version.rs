@@ -53,6 +53,7 @@ use crate::{
         },
         transport::{
             application_protocol::{ApplicationProtocols, NegotiatedProtocol},
+            connect_target::ConnectTarget,
             transport_connection::{BoxedConnection, BoxedReceiveStream},
             transport_send_stream::TransportSendError,
         },
@@ -354,6 +355,7 @@ fn negotiated_version(transport_connection: &BoxedConnection) -> anyhow::Result<
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
     authorization_token: Option<&str>,
+    _target: &ConnectTarget,
 ) -> anyhow::Result<(ControlChannel, ControlReceiver, ServerSetup)> {
     match negotiated_version(transport_connection)? {
         Version::Draft14 => {
@@ -400,7 +402,10 @@ impl ServerHandshake {
     }
 
     /// Answers the client's setup and opens the session's control channel.
-    pub(crate) async fn accept(self) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
+    pub(crate) async fn accept(
+        self,
+        _transport_connection: &BoxedConnection,
+    ) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
         match self {
             Self::Draft14(handshake) => {
                 let (channel, receiver) = handshake.accept().await?;
