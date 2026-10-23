@@ -80,3 +80,22 @@ async def test_a_subscribe_to_a_track_the_publisher_does_not_have_fails(relay_ur
         await within(subscriber.subscribe(namespace, "unknown"))
     for session in (subscriber, publisher):
         await session.close()
+
+
+async def test_close_resolves_closed_and_fails_later_calls(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    session = await connect(relay_url)
+
+    # Act
+    await within(session.close())
+
+    # Assert
+    await within(session.closed())
+    for request in (
+        session.subscribe(namespace, TRACK),
+        session.subscribe_namespace(namespace),
+        session.publish_namespace(namespace),
+    ):
+        with pytest.raises(RuntimeError, match="connection lost"):
+            await within(request)
