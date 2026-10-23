@@ -2,10 +2,26 @@ name: Lint
 
 on:
   pull_request:
+    paths:
+      - "**"
+      - "!**.md"
+      - "!docs/**"
+      # rustdoc runs the code blocks in the moqt README as doctests
+      - "crates/moqt/README.md"
+      # prettier checks the Markdown under examples/browser
+      - "examples/browser/**.md"
   push:
     branches:
       - master
       - draft-*
+    paths:
+      - "**"
+      - "!**.md"
+      - "!docs/**"
+      # rustdoc runs the code blocks in the moqt README as doctests
+      - "crates/moqt/README.md"
+      # prettier checks the Markdown under examples/browser
+      - "examples/browser/**.md"
 
 concurrency:
   # Without the run_id fallback, master pushes would share one group and
