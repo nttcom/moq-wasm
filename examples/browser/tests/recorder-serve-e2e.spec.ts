@@ -1,4 +1,4 @@
-import { type BrowserContext, type Page, expect, test } from '@playwright/test'
+import { type BrowserContext, type Page, expect } from '@playwright/test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { type RecordingLayout } from '../examples/meeting/src/recording/recorderApi'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
@@ -9,7 +9,7 @@ import {
   joinRoom,
   startScreenShare
 } from './meeting-e2e-arrange'
-import { longestRecording, probeRecording, meanColor, splitAtGaps, startRecorderServe } from './recorder-e2e-arrange'
+import { longestRecording, probeRecording, meanColor, splitAtGaps, test } from './recorder-e2e-arrange'
 
 /// The first mute ends within moqt's 10 s PUBLISH_DONE grace, the second one past it.
 const MUTE_SECONDS = [4, 14]
@@ -29,10 +29,10 @@ const COMPOSITE_STRIP_LEFT = 4 / 5
 test.setTimeout(180_000)
 
 test('recorder serve keeps recording a meeting participant who mutes and unmutes the microphone', async ({
-  browser
+  browser,
+  recorderServe: recorder
 }) => {
   // Arrange
-  const recorder = await startRecorderServe()
   const contexts: BrowserContext[] = []
 
   try {
@@ -80,13 +80,14 @@ test('recorder serve keeps recording a meeting participant who mutes and unmutes
     }
   } finally {
     await Promise.all(contexts.map((context) => context.close()))
-    await recorder.close()
   }
 })
 
-test('recorder serve composites a screen share in focus beside the cameras of a room', async ({ browser }) => {
+test('recorder serve composites a screen share in focus beside the cameras of a room', async ({
+  browser,
+  recorderServe: recorder
+}) => {
   // Arrange
-  const recorder = await startRecorderServe()
   const contexts: BrowserContext[] = []
 
   try {
@@ -124,7 +125,6 @@ test('recorder serve composites a screen share in focus beside the cameras of a 
     expect(magentaness(strip), `strip color ${strip}`).toBeLessThan(50)
   } finally {
     await Promise.all(contexts.map((context) => context.close()))
-    await recorder.close()
   }
 })
 

@@ -36,7 +36,8 @@ class Object:
 class Track(AsyncIterator[Object]):
     def __aiter__(self) -> Track: ...
     async def __anext__(self) -> Object:
-        """Raises StopAsyncIteration once the publisher ends the track."""
+        """Raises StopAsyncIteration once the publisher ends the track. A group whose stream
+        fails (reset by a publisher that left, or cut by a GOAWAY's cutover) ends early."""
     async def unsubscribe(self) -> None: ...
 
 class TrackPublication:

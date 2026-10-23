@@ -20,6 +20,7 @@ impl DisconnectWatchTask {
             "Connection Close Watcher",
             async move {
                 connection.transport.closed().await;
+                connection.end_pending_fetches();
 
                 // Nobody reads the events of a connection a migration retired.
                 if event_sender.send(SessionEvent::Disconnected()).is_err() {

@@ -1,9 +1,9 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { processAlive, relayAPid } from './goaway-e2e-arrange'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 import { arrangeMeetingClient, enableMedia, joinRoom } from './meeting-e2e-arrange'
-import { longestRecording, probeRecording, startRecorderServe } from './recorder-e2e-arrange'
+import { longestRecording, probeRecording, test } from './recorder-e2e-arrange'
 
 const STEADY_SECONDS = 5
 const AFTER_EXIT_SECONDS = 5
@@ -21,10 +21,12 @@ const START_MARGIN_SECONDS = 1.5
 
 test.setTimeout(120_000)
 
-test('recorder serve keeps recording a meeting participant when the relay drains with GOAWAY', async ({ browser }) => {
+test('recorder serve keeps recording a meeting participant when the relay drains with GOAWAY', async ({
+  browser,
+  recorderServe: recorder
+}) => {
   // Arrange: recorder serve and the participant both use relay A
   expect(Number.isInteger(relayAPid)).toBe(true)
-  const recorder = await startRecorderServe()
   const client = await arrangeMeetingClient(browser, { params: { relayAUrl: liveViewerE2EConfig.moqtUrl } })
 
   try {
@@ -60,6 +62,5 @@ test('recorder serve keeps recording a meeting participant when the relay drains
     }
   } finally {
     await client.context.close()
-    await recorder.close()
   }
 })

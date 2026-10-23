@@ -153,3 +153,150 @@ impl FetchDataReceiver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use tokio::time::timeout;
+
+    use super::Fetch;
+    use crate::{
+        modules::{
+            moqt::control_plane::error_codes::DataStreamResetCode,
+            test_support::{HANDSHAKE_TIMEOUT, fetched_stream, location, object_with_extensions},
+        },
+        object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
+    };
+
+    #[tokio::test]
+    async fn fetch_preserves_objects_and_reports_fin_after_the_last_object() {
+        // Arrange
+        let mut stream = fetched_stream("fetch-object-roundtrip", true, location(16_385, 0)).await;
+        let expected = [
+            object_with_extensions(),
+            Object {
+                location: location(16_384, 16_386),
+                status: ObjectStatus::DoesNotExist,
+                extension_headers: ExtensionHeaders::default(),
+                payload: Bytes::new(),
+                ..object_with_extensions()
+            },
+            Object {
+                location: location(16_384, 16_387),
+                payload: Bytes::new(),
+                ..object_with_extensions()
+            },
+            Object {
+                location: location(16_384, 16_388),
+                status: ObjectStatus::EndOfGroup,
+                payload: Bytes::new(),
+                ..object_with_extensions()
+            },
+            Object {
+                location: location(16_385, 0),
+                status: ObjectStatus::EndOfTrack,
+                payload: Bytes::new(),
+                ..object_with_extensions()
+            },
+        ];
+
+        // Act
+        timeout(HANDSHAKE_TIMEOUT, async {
+            for object in &expected {
+                stream.sender.send_object(object).await.unwrap();
+            }
+            stream.sender.close().await.unwrap();
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        for object in expected {
+            let Fetch::Object(received) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+                .await
+                .unwrap()
+                .unwrap()
+            else {
+                panic!("expected an object before FIN");
+            };
+            assert_eq!(received, object);
+        }
+        assert!(matches!(
+            timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+                .await
+                .unwrap()
+                .unwrap(),
+            Fetch::End
+        ));
+    }
+
+    #[tokio::test]
+    async fn fetch_converts_datagram_forwarding_and_drops_the_end_of_group_flag() {
+        // Arrange
+        let mut stream =
+            fetched_stream("fetch-datagram-conversion", false, location(16_384, 16_386)).await;
+        let object = Object {
+            forwarding: ForwardingPreference::Datagram,
+            ends_group: true,
+            ..object_with_extensions()
+        };
+        let expected = Object {
+            forwarding: ForwardingPreference::Subgroup {
+                subgroup_id: object.location.object_id,
+            },
+            ends_group: false,
+            ..object.clone()
+        };
+
+        // Act
+        timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&object))
+            .await
+            .unwrap()
+            .unwrap();
+        let received = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        let Fetch::Object(received) = received else {
+            panic!("expected the fetched datagram object");
+        };
+        assert_eq!(received, expected);
+    }
+
+    #[tokio::test]
+    async fn fetch_reports_reset_as_an_error_after_a_delivered_object() {
+        // Arrange
+        let mut stream =
+            fetched_stream("fetch-object-reset", false, location(16_384, 16_386)).await;
+        let expected = object_with_extensions();
+        timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&expected))
+            .await
+            .unwrap()
+            .unwrap();
+        let Fetch::Object(received) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+            .await
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("expected an object before RESET");
+        };
+        assert_eq!(received, expected);
+
+        // Act
+        timeout(
+            HANDSHAKE_TIMEOUT,
+            stream.sender.reset(DataStreamResetCode::InternalError),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let result = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(result.is_err(), "RESET must not be reported as a clean FIN");
+    }
+}

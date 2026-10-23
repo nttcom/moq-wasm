@@ -1,6 +1,6 @@
-import { expect } from '@playwright/test'
+import { expect, test as base } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -76,8 +76,22 @@ export async function recordFromCache(namespace: string, liveSeconds: number): P
   return output
 }
 
+/// On failure, the store is copied into the test output directory, which CI uploads.
+export const test = base.extend<{ recorderServe: RecorderServe }>({
+  recorderServe: async ({}, use, testInfo) => {
+    const recorder = await startRecorderServe()
+    await use(recorder)
+    await recorder.close()
+    if (testInfo.status !== testInfo.expectedStatus) {
+      cpSync(recorder.storeDir, testInfo.outputPath('recorder-store'), { recursive: true })
+    }
+  }
+})
+
+type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
+
 /// `recorder serve` with a directory store; it runs every recording and composite as a child process.
-export async function startRecorderServe() {
+async function startRecorderServe() {
   const url = `http://127.0.0.1:${RECORDER_SERVE_PORT}`
   const dir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
   const storeDir = join(dir, 'store')
@@ -101,7 +115,12 @@ export async function startRecorderServe() {
       join(dir, 'work'),
       '--composite'
     ],
-    { cwd: REPO_ROOT, env: { ...process.env, RUST_LOG: 'info' }, stdio: 'inherit' }
+    {
+      cwd: REPO_ROOT,
+      // The jobs inherit the environment; GStreamer's ERROR lines name the element behind a failed composite.
+      env: { GST_DEBUG: '*:1', ...process.env, RUST_LOG: 'info' },
+      stdio: 'inherit'
+    }
   )
   const exited = new Promise<number | null>((resolveExit) => recorder.on('exit', resolveExit))
   const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
@@ -118,6 +137,7 @@ export async function startRecorderServe() {
   const current = async (recording: RoomRecording) =>
     (await listRecordings(url, recording.namespace_prefix)).find((candidate) => candidate.id === recording.id)
   return {
+    storeDir,
     /// Returns once the recording job has joined the room, so that the recording covers what follows.
     async start(namespacePrefix: string, layout: RecordingLayout, composite = false): Promise<RoomRecording> {
       const recording = await startRecording(url, namespacePrefix, layout, composite)

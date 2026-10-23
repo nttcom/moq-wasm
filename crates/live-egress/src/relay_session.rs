@@ -36,13 +36,17 @@ impl RelaySession {
     }
 }
 
-/// Subscribes from the next group start, so a media track begins at a keyframe.
-pub async fn subscribe(session: &Session, namespace: &str, name: &str) -> Result<Subscription> {
+pub async fn subscribe(
+    session: &Session,
+    namespace: &str,
+    name: &str,
+    filter_type: FilterType,
+) -> Result<Subscription> {
     let option = SubscribeOption {
         subscriber_priority: SUBSCRIBER_PRIORITY,
         group_order: GroupOrder::Ascending,
         forward: true,
-        filter_type: FilterType::NextGroupStart,
+        filter_type,
     };
     session
         .subscriber()
@@ -66,7 +70,7 @@ pub async fn track_reader(session: &Session, subscription: &Subscription) -> Res
 
 /// Reads the catalog's latest object with the joining FETCH (offset 0) that
 /// draft-ietf-moq-msf-01 §5 requires beside the SUBSCRIBE, falling back to the
-/// subscription's next group when the FETCH fails, e.g. before the first
+/// subscription's next object when the FETCH fails, e.g. before the first
 /// catalog was sent.
 pub async fn read_catalog(session: &Session, subscription: &Subscription) -> Result<Bytes> {
     match fetch_joining_group(session, subscription).await {

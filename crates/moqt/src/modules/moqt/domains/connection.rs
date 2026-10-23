@@ -365,6 +365,15 @@ impl Connection {
         Ok(())
     }
 
+    /// A closed connection delivers no more FETCH streams: dropping their
+    /// senders makes `accept_fetch_receiver` fail instead of waiting.
+    pub(crate) fn end_pending_fetches(&self) {
+        self.fetch_notification_map
+            .lock()
+            .expect("fetch_notification_map poisoned")
+            .clear();
+    }
+
     pub(crate) fn allocate_track_alias(&self) -> u64 {
         self.track_alias.fetch_add(1, Ordering::SeqCst)
     }

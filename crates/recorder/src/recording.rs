@@ -60,12 +60,11 @@ pub(crate) struct RecordedFile {
 
 /// The files of one recording. They share one capture origin, the capture
 /// timestamp of the first object of the leading track, so their timelines
-/// line up. Each
-/// track subscribes from its own next group, so the audio can start a group
-/// before the video, and an audio object can overtake the video's first: the
-/// audio waits for the origin while a video track is read, and audio
-/// captured before it is dropped. While no video track is read, the first
-/// audio object sets the origin.
+/// line up. The video subscribes from its next group and the audio from its
+/// next object, so the audio can start before the video, and an audio object
+/// can overtake the video's first: the audio waits for the origin while a
+/// video track is read, and audio captured before it is dropped. While no
+/// video track is read, the first audio object sets the origin.
 pub(crate) struct Recording {
     files: Vec<TrackFile>,
     /// The index of the file each track goes to, kept after the track ends.

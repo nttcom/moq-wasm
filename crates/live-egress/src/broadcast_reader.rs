@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
-use moqt::Session;
+use moqt::{Session, subscribe::FilterType};
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use tokio::sync::mpsc;
 
@@ -35,7 +35,15 @@ pub struct SelectedTracks {
 
 impl BroadcastReader {
     pub async fn run(session: &Session, namespace: &str) -> Result<Self> {
-        let catalog_subscription = subscribe(session, namespace, msf::CATALOG_TRACK_NAME).await?;
+        // A joining FETCH may only join a Largest Object subscription
+        // (draft-ietf-moq-transport-14 §9.16.2).
+        let catalog_subscription = subscribe(
+            session,
+            namespace,
+            msf::CATALOG_TRACK_NAME,
+            FilterType::LargestObject,
+        )
+        .await?;
         let catalog = read_catalog(session, &catalog_subscription).await?;
         let catalog: Catalog = serde_json::from_slice(&catalog).context("parse catalog json")?;
         let tracks = select_tracks(&catalog)?;
@@ -63,11 +71,19 @@ impl BroadcastReader {
             kinds.push((name, TrackKind::Audio(config)));
         }
         // Subscribe to every track before waiting on any: `track_reader` blocks
-        // until a group starts, and a SUBSCRIBE sent after that wait would make
-        // NextGroupStart begin the next track one group later.
+        // until the video's next group starts, and audio subscribed after that
+        // wait would start later than the video.
         let mut subscriptions = Vec::new();
         for (name, kind) in kinds {
-            let subscription = subscribe(session, namespace, &name).await?;
+            // NextGroupStart begins the video at a keyframe. An audio object decodes
+            // alone, and a publisher that sends its audio as one endless group never
+            // starts another, so the audio continues after the newest object
+            // (draft-ietf-moq-transport-14 §9.7).
+            let filter_type = match kind {
+                TrackKind::Video => FilterType::NextGroupStart,
+                TrackKind::Audio(_) => FilterType::LargestObject,
+            };
+            let subscription = subscribe(session, namespace, &name, filter_type).await?;
             subscriptions.push((name, kind, subscription));
         }
         let mut tasks = Vec::new();
@@ -204,7 +220,26 @@ fn aac_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use bytes::Bytes;
+    use mediapack::{
+        AudioSample,
+        loc::{self, LocObject},
+        mpegts,
+    };
+    use moqt::{
+        ClientConfig,
+        publish::{GroupBoundary, OutgoingObject, Retention},
+    };
+
     use super::*;
+    use crate::{relay_session::RelaySession, test_support::FakePublisher};
+
+    const NAMESPACE: &str = "anon/room/alice";
+    const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
+    /// TOC configuration 31, code 0: one 20 ms CELT frame.
+    const OPUS_20_MS_FRAME: [u8; 4] = [0xFC, 0x01, 0x02, 0x03];
 
     fn loc_track(name: &str, role: KnownTrackRole) -> Track {
         let mut track = Track::new(name, KnownPackaging::Loc, true);
@@ -304,5 +339,153 @@ mod tests {
         assert_eq!(tracks.video.as_deref(), Some("video"));
         assert!(tracks.audio.is_none());
         assert!(select_tracks(&cmaf_only).is_err());
+    }
+
+    fn first_keyframe() -> LocObject {
+        let mut demuxer = mpegts::Demuxer::new();
+        let events = demuxer.push(FIXTURE_TS).unwrap();
+        let muxer = loc::Muxer::new(Timestamp::from_micros(1_700_000_000_000_000));
+        events
+            .iter()
+            .find_map(|event| match event {
+                MediaEvent::Video(sample) if sample.is_keyframe => muxer.push(event),
+                _ => {
+                    muxer.push(event);
+                    None
+                }
+            })
+            .unwrap()
+    }
+
+    fn opus_object(capture_micros: u64) -> LocObject {
+        LocObject {
+            extensions: vec![loc::LocExtension::varint(loc::TIMESTAMP_ID, capture_micros)],
+            payload: Bytes::from_static(&OPUS_20_MS_FRAME),
+        }
+    }
+
+    fn meeting_catalog() -> Bytes {
+        let mut audio = loc_track("audio", KnownTrackRole::Audio);
+        audio.codec = Some(OPUS_CODEC.to_owned());
+        audio.sample_rate = Some(48_000);
+        audio.channel_config = Some("2".to_owned());
+        let catalog = catalog_with(vec![loc_track("video", KnownTrackRole::Video), audio]);
+        Bytes::from(serde_json::to_vec(&catalog).unwrap())
+    }
+
+    async fn next_matching<T>(
+        reader: &mut BroadcastReader,
+        mut matching: impl FnMut(MediaEvent) -> Option<T>,
+    ) -> T {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = reader.next_event().await.expect("the tracks ended");
+                if let Some(found) = matching(event) {
+                    return found;
+                }
+            }
+        })
+        .await
+        .expect("no matching media event arrived")
+    }
+
+    #[tokio::test]
+    async fn reads_audio_that_a_publisher_sends_as_one_endless_group() {
+        // Arrange: like a meeting member, the audio stays in one group numbered below the video's
+        let mut publisher = FakePublisher::spawn();
+        let origin = publisher.origin.clone();
+        let keyframe = first_keyframe();
+        let video_capture = keyframe.capture_timestamp().unwrap().micros();
+        for track in [msf::CATALOG_TRACK_NAME, "video", "audio"] {
+            origin
+                .ensure_track(NAMESPACE, track, 0, Retention::NewestOnly)
+                .await;
+        }
+        let write = |track, group, object: LocObject| {
+            origin.write(
+                NAMESPACE,
+                track,
+                OutgoingObject {
+                    group,
+                    extension_headers: loc::to_extension_headers(&object.extensions),
+                    payload: object.payload,
+                },
+            )
+        };
+        let write_catalog = |group| {
+            origin.write(
+                NAMESPACE,
+                msf::CATALOG_TRACK_NAME,
+                OutgoingObject::plain(group, meeting_catalog()),
+            )
+        };
+        write_catalog(GroupBoundary::Next).await.unwrap();
+        let audio_group = GroupBoundary::At(video_capture - 10_000_000);
+        write("audio", audio_group, opus_object(video_capture - 40_000))
+            .await
+            .unwrap();
+        let relay = RelaySession::connect(
+            &publisher.url,
+            &ClientConfig {
+                verify_certificate: false,
+                ..ClientConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        let session = relay.session.clone();
+        let reading = tokio::spawn(async move { BroadcastReader::run(&session, NAMESPACE).await });
+        assert_eq!(
+            publisher.served.recv().await.as_deref(),
+            Some(msf::CATALOG_TRACK_NAME)
+        );
+        write_catalog(GroupBoundary::Within).await.unwrap();
+        for track in ["video", "audio"] {
+            assert_eq!(publisher.served.recv().await.as_deref(), Some(track));
+        }
+
+        // Act: audio captured before the video's keyframe opens the audio stream and is held back
+        write("video", GroupBoundary::At(video_capture), keyframe)
+            .await
+            .unwrap();
+        write(
+            "audio",
+            GroupBoundary::Within,
+            opus_object(video_capture - 20_000),
+        )
+        .await
+        .unwrap();
+        let mut reader = tokio::time::timeout(Duration::from_secs(5), reading)
+            .await
+            .expect("no audio stream opened")
+            .unwrap()
+            .unwrap();
+        next_matching(&mut reader, |event| {
+            matches!(event, MediaEvent::Video(_)).then_some(())
+        })
+        .await;
+        write(
+            "audio",
+            GroupBoundary::Within,
+            opus_object(video_capture + 20_000),
+        )
+        .await
+        .unwrap();
+        let audio = next_matching(&mut reader, |event| match event {
+            MediaEvent::Audio(sample) => Some(sample),
+            _ => None,
+        })
+        .await;
+
+        // Assert: the audio is timed from the video's first capture timestamp
+        assert_eq!(
+            audio,
+            AudioSample {
+                data: Bytes::from_static(&OPUS_20_MS_FRAME),
+                pts: Timestamp::from_micros(20_000),
+            }
+        );
+        drop(reader);
+        relay.close().await;
     }
 }

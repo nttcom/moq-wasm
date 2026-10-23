@@ -209,7 +209,7 @@ pub(crate) async fn record_broadcast(
         None => None,
     };
     let audio = match &selection.audio {
-        Some(audio) => Some(relay::subscribe(session, namespace, &audio.name, filter_type).await?),
+        Some(audio) => Some(relay::subscribe_audio(session, namespace, &audio.name).await?),
         None => None,
     };
     let mut tracks = Subscriptions {
@@ -480,8 +480,7 @@ async fn add_listed_audio(
     let Some(audio) = select_audio(catalog, audio_choice(options))? else {
         return Ok(None);
     };
-    let track =
-        relay::subscribe(session, namespace, &audio.name, FilterType::NextGroupStart).await?;
+    let track = relay::subscribe_audio(session, namespace, &audio.name).await?;
     recording.add_audio(&audio).await?;
     tracing::info!(audio = %audio.name, "catalog lists the audio track now; recording it");
     Ok(Some(track))
