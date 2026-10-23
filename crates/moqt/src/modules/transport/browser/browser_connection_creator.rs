@@ -60,7 +60,7 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
                 target.url
             );
         }
-        let options = web_transport_options(self.protocols.web_transport)?;
+        let options = web_transport_options(&self.protocols.web_transport)?;
         let transport =
             WebTransport::new_with_options(target.url.as_str(), &options).map_err(js_error)?;
         JsFuture::from(transport.ready()).await.map_err(js_error)?;

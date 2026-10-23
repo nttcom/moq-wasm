@@ -30,6 +30,7 @@ pub fn connect(
             verify_certificate,
             authorization_token: None,
             follow_go_away: true,
+            ..Default::default()
         })?;
         let session = Arc::new(endpoint.connect(&url).await?.await?);
         let origin = Origin::default();

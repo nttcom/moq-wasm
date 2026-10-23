@@ -603,6 +603,7 @@ mod tests {
             verify_certificate: false,
             authorization_token: None,
             follow_go_away: true,
+            ..Default::default()
         }
     }
 

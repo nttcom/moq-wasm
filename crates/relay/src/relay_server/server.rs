@@ -127,6 +127,7 @@ impl RelayServer {
             cert_path: self.cert_path.clone(),
             key_path: self.key_path.clone(),
             keep_alive_interval_sec: 15,
+            versions: moqt::DEFAULT_VERSIONS.to_vec(),
         };
 
         SessionHandler::run::<T>(

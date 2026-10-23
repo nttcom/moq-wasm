@@ -187,6 +187,7 @@ mod tests {
                 verify_certificate: false,
                 authorization_token: Some("jwt".to_string()),
                 follow_go_away: false,
+                ..Default::default()
             })
             .connect(&url)
             .await?

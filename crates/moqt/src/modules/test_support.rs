@@ -21,9 +21,8 @@ use crate::{
         },
         domains::{connection::IncomingObjectNotification, session_context::SessionContext},
         runtime::dispatch::incoming_object::{IncomingDatagram, IncomingObject},
-        version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
+        version::{DEFAULT_VERSIONS, Version, server_application_protocols},
     },
-    modules::transport::application_protocol::ApplicationProtocols,
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
         ObjectStatus, StreamDataReceiver, StreamDataSenderFactory, Subgroup, SubgroupObjectSender,
@@ -70,6 +69,7 @@ pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
         cert_path,
         key_path,
         keep_alive_interval_sec: 5,
+        versions: DEFAULT_VERSIONS.to_vec(),
     }
 }
 
@@ -80,7 +80,7 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
         &config.key_path,
         0,
         config.keep_alive_interval_sec,
-        APPLICATION_PROTOCOLS,
+        server_application_protocols(&config.versions).unwrap(),
     )
     .unwrap()
 }
@@ -89,15 +89,18 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
 pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    spawn_dual_server_handshake_offering(name, APPLICATION_PROTOCOLS)
+    spawn_dual_server_handshake_offering(name, DEFAULT_VERSIONS)
 }
 
 fn spawn_dual_server_handshake_offering(
     name: &str,
-    protocols: ApplicationProtocols,
+    versions: &[Version],
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    let server_config = self_signed_server_config(name);
-    let server = Endpoint::<DUAL>::create_server_offering(&server_config, protocols).unwrap();
+    let server_config = ServerConfig {
+        versions: versions.to_vec(),
+        ..self_signed_server_config(name)
+    };
+    let server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)
@@ -113,7 +116,7 @@ pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Ses
 
 /// `spawn_dual_server`, offering only draft-18.
 pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, &[Version::Draft18]);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
 }
@@ -124,7 +127,11 @@ pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
 
 /// `dual_client_with_config`, offering only draft-18.
 pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
-    Endpoint::<DUAL>::create_client_offering(&config, DRAFT18_PROTOCOLS).unwrap()
+    Endpoint::<DUAL>::create_client(&ClientConfig {
+        versions: vec![Version::Draft18],
+        ..config
+    })
+    .unwrap()
 }
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
@@ -133,6 +140,7 @@ pub(crate) fn insecure_client_config() -> ClientConfig {
         verify_certificate: false,
         authorization_token: None,
         follow_go_away: false,
+        ..Default::default()
     }
 }
 

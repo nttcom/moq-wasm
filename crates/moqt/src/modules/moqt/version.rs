@@ -4,8 +4,8 @@
 //! hold control messages, how a response finds its request, how a request
 //! is cancelled.
 //!
-//! draft-14 and draft-18 are implemented. `APPLICATION_PROTOCOLS` offers
-//! only draft-14 because draft-18 has not been checked against other
+//! draft-14 and draft-18 are implemented. `DEFAULT_VERSIONS` offers only
+//! draft-14 because draft-18 has not been checked against other
 //! implementations.
 
 pub(crate) mod draft14;
@@ -76,30 +76,63 @@ const DRAFT18_PROTOCOL: &str = "moqt-18";
 
 const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Offers only draft-18, for tests.
-#[cfg(test)]
-pub(crate) const DRAFT18_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
-    quic_alpns: &[DRAFT18_PROTOCOL],
-    web_transport: &[DRAFT18_PROTOCOL],
-};
+/// The drafts `ClientConfig::default()` offers.
+pub const DEFAULT_VERSIONS: &[Version] = &[Version::Draft14];
 
-/// The ALPN and WebTransport subprotocol of every draft offered to peers.
-pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
-    quic_alpns: &[DRAFT14_ALPN],
-    // draft-14 defines no WebTransport subprotocol (§3.1.1).
-    web_transport: &[],
-};
-
-/// The MoQT draft a session speaks, chosen when it is established.
+/// A MoQT draft a session can speak; the one both ends offer is chosen when
+/// the session is established.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Version {
+#[non_exhaustive]
+pub enum Version {
     /// draft-ietf-moq-transport-14.
     Draft14,
     /// draft-ietf-moq-transport-18.
     Draft18,
 }
 
+/// The ALPNs and WebTransport subprotocols that offer `versions`, in their order.
+pub(crate) fn application_protocols(versions: &[Version]) -> anyhow::Result<ApplicationProtocols> {
+    anyhow::ensure!(!versions.is_empty(), "no MoQT version to offer");
+    Ok(ApplicationProtocols {
+        quic_alpns: versions.iter().map(|version| version.alpn()).collect(),
+        web_transport: versions
+            .iter()
+            .filter_map(|version| version.web_transport_protocol())
+            .collect(),
+    })
+}
+
+/// What a server accepting `versions` selects from. A WebTransport session
+/// without a subprotocol is draft-14, so the subprotocols listed after
+/// draft-14 are left out: the server's order decides there too.
+pub(crate) fn server_application_protocols(
+    versions: &[Version],
+) -> anyhow::Result<ApplicationProtocols> {
+    let mut protocols = application_protocols(versions)?;
+    protocols.web_transport = versions
+        .iter()
+        .take_while(|version| **version != Version::Draft14)
+        .filter_map(|version| version.web_transport_protocol())
+        .collect();
+    Ok(protocols)
+}
+
 impl Version {
+    fn alpn(self) -> &'static str {
+        match self {
+            Self::Draft14 => DRAFT14_ALPN,
+            Self::Draft18 => DRAFT18_PROTOCOL,
+        }
+    }
+
+    fn web_transport_protocol(self) -> Option<&'static str> {
+        match self {
+            // draft-14 defines no WebTransport subprotocol (§3.1.1).
+            Self::Draft14 => None,
+            Self::Draft18 => Some(DRAFT18_PROTOCOL),
+        }
+    }
+
     pub(crate) fn termination_code(self, code: TerminationErrorCode) -> u32 {
         match self {
             Self::Draft14 => draft14::error_codes::termination_code_to_wire(code),
@@ -683,8 +716,24 @@ impl PendingResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::Version;
+    use super::{Version, application_protocols};
     use crate::modules::transport::application_protocol::NegotiatedProtocol;
+
+    #[test]
+    fn both_drafts_are_offered_in_the_order_given() {
+        // Act
+        let protocols = application_protocols(&[Version::Draft18, Version::Draft14]).unwrap();
+
+        // Assert
+        assert_eq!(protocols.quic_alpns, ["moqt-18", "moq-00"]);
+        assert_eq!(protocols.web_transport, ["moqt-18"]);
+    }
+
+    #[test]
+    fn offering_no_version_fails() {
+        // Act / Assert
+        assert!(application_protocols(&[]).is_err());
+    }
 
     #[test]
     fn the_draft14_alpn_selects_draft14() {

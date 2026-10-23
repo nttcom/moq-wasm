@@ -927,6 +927,7 @@ async fn connect(url: &str) -> anyhow::Result<Session> {
         verify_certificate: false,
         authorization_token: None,
         follow_go_away: true,
+        ..Default::default()
     })?;
     tracing::info!(url, "connecting to relay");
     let connecting = endpoint.connect(url).await?;

@@ -131,9 +131,10 @@ subprotocol support reports none.
 
 Everything above the adapter states what to send and receive; the adapter
 decides how a draft carries it. draft-14 and draft-18 are implemented.
-`APPLICATION_PROTOCOLS` offers only draft-14 because draft-18 has not been
-checked against other implementations; only tests reach draft-18, through
-`version::DRAFT18_PROTOCOLS`.
+`ClientConfig::versions` and `ServerConfig::versions` (public `moqt::Version`,
+most preferred first) choose the drafts an endpoint offers; the default,
+`DEFAULT_VERSIONS`, is draft-14 only because draft-18 has not been checked
+against other implementations.
 
 A draft is added under `modules/moqt/version/<draft>` and the wire layer.
 `modules/moqt/runtime/tasks` and `modules/transport` change only to route a
@@ -173,8 +174,13 @@ call through the adapter; a draft never gets a task of its own (see
   `draft14::objects` holds the draft-14 side (Object ID Deltas, Subgroup ID
   forms, status codes) on top of the wire structs in `data_plane/object` and
   the decoders in `data_plane/codec`.
-- `version::APPLICATION_PROTOCOLS` lists the ALPN and WebTransport subprotocol
-  of every draft offered to peers; `Endpoint` hands it to its creator.
+- `version::application_protocols(versions)` lists the ALPN and WebTransport
+  subprotocol of every draft in the config, in its order; `Endpoint` hands
+  them to its creator. A server takes the first of its own ALPNs or
+  subprotocols the client also offered, so the server's order decides.
+  `server_application_protocols` leaves out the subprotocols listed after
+  draft-14: a WebTransport session without a subprotocol is draft-14, so a
+  server listing draft-14 first speaks draft-14 over WebTransport.
   `version::connect` / `accept` pick the `Version` from the connection's
   `negotiated_protocol()` before running that draft's SETUP exchange: ALPN
   `moq-00` (draft-14 §3.1.2) and a WebTransport session without a subprotocol
