@@ -1,5 +1,5 @@
 import { PublishNamespaceDoneMessage, PublishNamespaceMessage, SubscribeOkMessage } from '../../../../pkg/moqt'
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { FilterType, MoqtClientWrapper } from '@moqt/moqtClient'
 import { CATALOG_TRACK_NAME } from '../../../../lib/msf/catalog'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
@@ -200,6 +200,9 @@ export class LocalSession {
     this.assertReady('subscribe')
     const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO, {
       subscriberPriority: role === 'video' || role === 'screenshare' ? VIDEO_SUBSCRIBER_PRIORITY : 0,
+      // Audio objects decode independently, but a single-stream publisher never starts a new group, so
+      // NextGroupStart would never deliver its audio (draft-14 §5.1.2).
+      filterType: role === 'audio' ? FilterType.LargestObject : FilterType.NextGroupStart,
       onPublishDone: ({ requestId }) => {
         this.forgetSubscription(requestId)
         onEnded(requestId)
