@@ -4,14 +4,13 @@ use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::{
     object::{ForwardingPreference, Object},
     wire::{
-        ContentExists, FetchOk, FilterType, NamespaceOk, ObjectStatus, Publish, PublishNamespace,
-        PublishNamespaceDone, PublishOk, RequestError, ServerSetup, Subscribe, SubscribeNamespace,
-        SubscribeOk,
+        ContentExists, FilterType, ObjectStatus, Publish, PublishOk, ServerSetup, Subscribe,
+        SubscribeNamespace, SubscribeOk,
     },
 };
 pub use subgroup_state::SubgroupState;
 
-use crate::incoming_fetch::IncomingFetchRequest;
+use crate::client_state::IncomingFetchRequest;
 use wasm_bindgen::prelude::*;
 
 fn filter_fields(filter_type: FilterType) -> (u8, Option<u64>, Option<u64>, Option<u64>) {
@@ -69,28 +68,11 @@ pub struct PublishNamespaceMessage {
     pub track_namespace: Vec<String>,
 }
 
-impl From<&PublishNamespace> for PublishNamespaceMessage {
-    fn from(message: &PublishNamespace) -> Self {
-        Self {
-            request_id: message.request_id,
-            track_namespace: message.track_namespace.clone(),
-        }
-    }
-}
-
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct PublishNamespaceDoneMessage {
     #[wasm_bindgen(getter_with_clone, readonly, js_name = trackNamespace)]
     pub track_namespace: Vec<String>,
-}
-
-impl From<&PublishNamespaceDone> for PublishNamespaceDoneMessage {
-    fn from(message: &PublishNamespaceDone) -> Self {
-        Self {
-            track_namespace: message.track_namespace.clone(),
-        }
-    }
 }
 
 /// PUBLISH_DONE for an outgoing subscription. `request_id` is the id
@@ -140,14 +122,6 @@ pub struct NamespaceOkMessage {
     pub request_id: u64,
 }
 
-impl From<&NamespaceOk> for NamespaceOkMessage {
-    fn from(message: &NamespaceOk) -> Self {
-        Self {
-            request_id: message.request_id,
-        }
-    }
-}
-
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct RequestErrorMessage {
@@ -157,16 +131,6 @@ pub struct RequestErrorMessage {
     pub error_code: u64,
     #[wasm_bindgen(getter_with_clone, readonly, js_name = reasonPhrase)]
     pub reason_phrase: String,
-}
-
-impl From<&RequestError> for RequestErrorMessage {
-    fn from(message: &RequestError) -> Self {
-        Self {
-            request_id: message.request_id,
-            error_code: message.error_code,
-            reason_phrase: message.reason_phrase.clone(),
-        }
-    }
 }
 
 #[wasm_bindgen]
@@ -388,7 +352,6 @@ impl ObjectDatagramMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -434,7 +397,6 @@ impl ObjectDatagramStatusMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -479,7 +441,6 @@ impl SubgroupObjectMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 
@@ -535,10 +496,10 @@ impl FetchMessage {
             track_namespace: request.track_key.namespace.clone(),
             track_name: request.track_key.name.clone(),
             group_order: request.group_order as u8,
-            start_group_id: request.range.start.group_id,
-            start_object_id: request.range.start.object_id,
-            end_group_id: request.range.end.group_id,
-            end_object_id: request.range.end.object_id,
+            start_group_id: request.start.group_id,
+            start_object_id: request.start.object_id,
+            end_group_id: request.end.group_id,
+            end_object_id: request.end.object_id,
         }
     }
 }
@@ -551,19 +512,6 @@ pub struct FetchOkMessage {
     pub end_group_id: u64,
     #[wasm_bindgen(readonly, js_name = endObjectId)]
     pub end_object_id: u64,
-    #[wasm_bindgen(readonly, js_name = endOfTrack)]
-    pub end_of_track: bool,
-}
-
-impl From<&FetchOk> for FetchOkMessage {
-    fn from(message: &FetchOk) -> Self {
-        Self {
-            request_id: message.request_id,
-            end_group_id: message.end_location.group_id,
-            end_object_id: message.end_location.object_id,
-            end_of_track: message.end_of_track,
-        }
-    }
 }
 
 #[wasm_bindgen]
@@ -584,7 +532,6 @@ impl FetchObjectMessage {
     #[wasm_bindgen(getter, js_name = locHeader)]
     pub fn loc_header(&self) -> Result<JsValue, JsValue> {
         crate::loc::encode_loc_header(&self.loc_header)
-            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 

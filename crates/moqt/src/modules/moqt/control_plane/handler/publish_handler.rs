@@ -73,7 +73,6 @@ impl PublishHandler {
         &self,
         subscriber_priority: u8,
         filter_type: FilterType,
-        expires: u64,
     ) -> Result<Subscription, TransportSendError> {
         self.guard.mark_responded();
         let publish_ok = PublishOk {
@@ -90,7 +89,6 @@ impl PublishHandler {
             .respond(OutgoingResponse::PublishOk(publish_ok))
             .await?;
 
-        let _ = expires;
         Ok(Subscription::PublisherInitiated(
             PublisherInitiatedSubscription {
                 request_id: self.request_id,
@@ -191,7 +189,7 @@ mod tests {
         };
 
         // Act
-        let accepted = handler.ok(128, FilterType::LargestObject, 0).await.unwrap();
+        let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
 
         // Assert
         assert_eq!(handler.max_cache_duration, Some(2_000));

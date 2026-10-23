@@ -1,6 +1,6 @@
 use std::{
     sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -114,10 +114,7 @@ pub(crate) fn with_status(record: &RoomRecord, status: &RoomStatus) -> RoomRecor
 }
 
 pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    moqt::executor::system_time().as_millis() as u64
 }
 
 fn same_progress(a: &RoomRecord, b: &RoomRecord) -> bool {

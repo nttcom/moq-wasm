@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use mediapack::loc::{LocExtension, to_extension_headers};
 use moqt::wire::ExtensionHeaders;
 use wasm_bindgen::JsValue;
@@ -14,6 +13,7 @@ pub fn parse_loc_header(value: JsValue) -> Result<ExtensionHeaders, JsValue> {
     Ok(to_extension_headers(&extensions))
 }
 
-pub fn encode_loc_header(extensions: &[LocExtension]) -> Result<JsValue> {
-    serde_wasm_bindgen::to_value(extensions).map_err(|err| anyhow!("loc header: {err}"))
+pub fn encode_loc_header(extensions: &[LocExtension]) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(extensions)
+        .map_err(|err| JsValue::from_str(&format!("loc header: {err}")))
 }

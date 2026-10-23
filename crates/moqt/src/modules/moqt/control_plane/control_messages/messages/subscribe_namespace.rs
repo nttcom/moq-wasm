@@ -1,6 +1,9 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
-    moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
+    moqt::control_plane::control_messages::{
+        key_value_pair::{KeyValuePair, odd_values},
+        messages::parameters::authorization_token::AuthorizationToken,
+    },
 };
 use anyhow::Context;
 use bytes::BytesMut;
@@ -24,49 +27,32 @@ impl SubscribeNamespace {
             authorization_token,
         }
     }
-}
 
-impl SubscribeNamespace {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
-        let track_namespace_prefix_tuple_length = buf
-            .try_get_varint()
-            .context("track namespace prefix length")?;
-        let mut track_namespace_prefix_tuple: Vec<String> = Vec::new();
-        for _ in 0..track_namespace_prefix_tuple_length {
-            let track_namespace_prefix = buf.try_get_string().context("track namespace prefix")?;
-            track_namespace_prefix_tuple.push(track_namespace_prefix);
-        }
+        let track_namespace_prefix = buf.try_get_tuple().context("track namespace prefix")?;
+        let parameters = KeyValuePair::decode_list(buf)?;
+        let authorization_token = odd_values(&parameters, 0x03)
+            .filter_map(|value| AuthorizationToken::decode_parameter(value))
+            .collect();
 
-        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
-
-        let mut authorization_tokens = Vec::new();
-        for _ in 0..number_of_parameters {
-            let authorization_token = AuthorizationToken::decode(buf)?;
-            authorization_tokens.push(authorization_token);
-        }
-
-        Ok(SubscribeNamespace {
+        Ok(Self {
             request_id,
-            track_namespace_prefix: track_namespace_prefix_tuple,
-            authorization_token: authorization_tokens,
+            track_namespace_prefix,
+            authorization_token,
         })
     }
 
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        payload.put_varint(self.track_namespace_prefix.len() as u64);
-        self.track_namespace_prefix
+        payload.put_tuple(&self.track_namespace_prefix);
+        let parameters: Vec<KeyValuePair> = self
+            .authorization_token
             .iter()
-            .for_each(|track_namespace_prefix| {
-                payload.put_string(track_namespace_prefix);
-            });
-        payload.put_varint(self.authorization_token.len() as u64);
-        for authorization_token in &self.authorization_token {
-            let token_payload = authorization_token.encode();
-            payload.extend_from_slice(&token_payload);
-        }
+            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .collect();
+        payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
     }
 }

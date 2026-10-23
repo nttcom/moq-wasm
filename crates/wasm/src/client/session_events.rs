@@ -7,10 +7,7 @@ use moqt::{
     namespace::PublishNamespaceHandler,
     publish::{PublishDoneHandler, PublishHandler},
     subscribe::{SubscribeHandler, TrackStatusHandler},
-    wire::{
-        Publish, PublishNamespace, PublishNamespaceDone, Subscribe, TrackStatus,
-        publish_done_code_to_wire,
-    },
+    wire::{Publish, Subscribe, TrackStatus, publish_done_code_to_wire},
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
@@ -40,8 +37,9 @@ pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Ses
                     .split('/')
                     .map(str::to_string)
                     .collect();
-                let message =
-                    PublishNamespaceDoneMessage::from(&PublishNamespaceDone::new(namespace));
+                let message = PublishNamespaceDoneMessage {
+                    track_namespace: namespace,
+                };
                 emit(
                     &shared.callbacks,
                     |c| &c.publish_namespace_done,
@@ -74,17 +72,15 @@ pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Ses
 }
 
 fn on_publish_namespace(shared: &ClientShared, handler: PublishNamespaceHandler) {
-    let publish_namespace = PublishNamespace::new(
-        handler.request_id(),
-        handler.track_namespace_tuple.clone(),
-        vec![],
-    );
+    let message = PublishNamespaceMessage {
+        request_id: handler.request_id(),
+        track_namespace: handler.track_namespace_tuple.clone(),
+    };
     shared
         .incoming
         .borrow_mut()
         .publish_namespaces
-        .insert(publish_namespace.request_id, handler);
-    let message = PublishNamespaceMessage::from(&publish_namespace);
+        .insert(message.request_id, handler);
     emit(
         &shared.callbacks,
         |c| &c.publish_namespace,

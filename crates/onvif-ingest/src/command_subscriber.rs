@@ -12,8 +12,6 @@ use tokio::task::JoinHandle;
 
 use crate::ptz_worker::Command;
 
-const NO_EXPIRY: u64 = 0;
-
 pub struct CommandTrack {
     pub namespace: String,
     pub track: String,
@@ -47,7 +45,7 @@ impl CommandSubscriber {
             .subscribe_namespace(command_track.namespace.clone())
             .await
             .context("subscribe command namespace")?;
-        log::info!(
+        tracing::info!(
             "Subscribed command namespace for late join viewers: {}",
             command_track.namespace
         );
@@ -83,7 +81,7 @@ async fn follow_commands(
             SessionEvent::PublishNamespace(handler) => {
                 let announced_namespace = handler.track_namespace.clone();
                 handler.ok().await?;
-                log::info!("Command namespace announced: {announced_namespace}");
+                tracing::info!("Command namespace announced: {announced_namespace}");
                 let following = command_receiver
                     .as_ref()
                     .is_some_and(CommandReceiver::is_running);
@@ -110,7 +108,7 @@ async fn follow_commands(
                     .as_ref()
                     .is_some_and(|receiver| receiver.request_id == handler.request_id())
                 {
-                    log::info!(
+                    tracing::info!(
                         "command publisher finished; waiting for the next command publisher"
                     );
                     command_receiver = None;
@@ -131,7 +129,7 @@ async fn follow_commands(
             }
             SessionEvent::Disconnected() => bail!("command session disconnected"),
             SessionEvent::ProtocolViolation() => bail!("command session protocol violation"),
-            event => log::debug!("Unhandled command session message: {event:?}"),
+            event => tracing::debug!("Unhandled command session message: {event:?}"),
         }
     }
 }
@@ -182,7 +180,7 @@ async fn subscribe_command_track(
     let subscription = match result {
         Ok(subscription) => subscription,
         Err(err @ (RequestFailure::Rejected { .. } | RequestFailure::Timeout)) => {
-            log::warn!(
+            tracing::warn!(
                 "command track not subscribed: {}/{}: {err}",
                 command_track.namespace,
                 command_track.track
@@ -198,7 +196,7 @@ async fn subscribe_command_track(
             })
         }
     };
-    log::info!(
+    tracing::info!(
         "Command track subscribed after namespace announce: ns={} track={} alias={}",
         command_track.namespace,
         command_track.track,
@@ -221,7 +219,7 @@ async fn accept_command_publish(
     if handler.track_namespace != command_track.namespace
         || handler.track_name != command_track.track
     {
-        log::warn!(
+        tracing::warn!(
             "Ignoring unexpected command publish: ns={} track={}",
             handler.track_namespace,
             handler.track_name
@@ -238,7 +236,7 @@ async fn accept_command_publish(
         .as_ref()
         .is_some_and(CommandReceiver::is_running)
     {
-        log::info!(
+        tracing::info!(
             "Command publish received after subscription already active: ns={} track={}",
             handler.track_namespace,
             handler.track_name
@@ -255,11 +253,10 @@ async fn accept_command_publish(
         .ok(
             command_track.subscriber_priority,
             FilterType::NextGroupStart,
-            NO_EXPIRY,
         )
         .await
         .context("accept command publish")?;
-    log::info!(
+    tracing::info!(
         "Accepted command publish via SUBSCRIBE_NAMESPACE discovery: ns={} track={} alias={}",
         command_track.namespace,
         command_track.track,
@@ -288,12 +285,12 @@ impl CommandReceiver {
             let receiver = match subscriber.accept_data_receiver(&subscription).await {
                 Ok(receiver) => receiver,
                 Err(err) => {
-                    log::warn!("command accept_data_receiver failed: {err}");
+                    tracing::warn!("command accept_data_receiver failed: {err}");
                     return;
                 }
             };
             let DataReceiver::Stream(factory) = receiver else {
-                log::warn!("command track is not delivered on subgroup streams");
+                tracing::warn!("command track is not delivered on subgroup streams");
                 return;
             };
             let mut reader = TrackReader::new(factory);
@@ -301,14 +298,16 @@ impl CommandReceiver {
                 match reader.next_object().await {
                     Ok(Some(object)) => {
                         if let Err(err) = handle_command_payload(&object.payload, &command_sender) {
-                            log::warn!("command payload error: {err}");
+                            tracing::warn!("command payload error: {err}");
                         }
                     }
                     Ok(None) => {
-                        log::info!("command track ended; waiting for the next command publisher");
+                        tracing::info!(
+                            "command track ended; waiting for the next command publisher"
+                        );
                         return;
                     }
-                    Err(err) => log::warn!("command subgroup receive failed: {err}"),
+                    Err(err) => tracing::warn!("command subgroup receive failed: {err}"),
                 }
             }
         });
@@ -331,7 +330,7 @@ impl Drop for CommandReceiver {
 
 fn handle_command_payload(payload: &[u8], command_sender: &Sender<Command>) -> Result<()> {
     let command: Command = serde_json::from_slice(payload).context("parse command json")?;
-    log::info!("PTZ command received: {command:?}");
+    tracing::info!("PTZ command received: {command:?}");
     let _ = command_sender.send(command);
     Ok(())
 }

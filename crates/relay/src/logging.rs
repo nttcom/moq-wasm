@@ -119,12 +119,7 @@ fn tracing_filter(filter_env: &str) -> EnvFilter {
     for directive in DEFAULT_DIRECTIVES {
         append_directive_if_missing(&mut filter, directive);
     }
-
-    if filter.is_empty() {
-        EnvFilter::new(DEFAULT_DIRECTIVES.join(","))
-    } else {
-        EnvFilter::new(filter)
-    }
+    EnvFilter::new(filter)
 }
 
 fn build_tracer_provider(service_name: &str, protocol: OtlpProtocol) -> Result<SdkTracerProvider> {

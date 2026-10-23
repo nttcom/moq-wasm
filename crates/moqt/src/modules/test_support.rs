@@ -159,7 +159,7 @@ pub(crate) async fn accept_publish(server: &Session) -> Subscription {
     let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
         panic!("expected PUBLISH from the client");
     };
-    let subscription = handler.ok(128, FilterType::LargestObject, 0).await.unwrap();
+    let subscription = handler.ok(128, FilterType::LargestObject).await.unwrap();
     handler.accept_data_receiver().await;
     subscription
 }

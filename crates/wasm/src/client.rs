@@ -24,8 +24,8 @@ use moqt::{
         FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
     },
     wire::{
-        FetchOk, NamespaceOk, PublishOk, RequestError, RequestKind, SubscribeOk, TrackStatusOk,
-        publish_done_code_from_wire, request_error_code_from_wire, request_error_code_to_wire,
+        PublishOk, RequestKind, SubscribeOk, TrackStatusOk, publish_done_code_from_wire,
+        request_error_code_from_wire, request_error_code_to_wire,
     },
 };
 use tokio::sync::Mutex;
@@ -143,10 +143,6 @@ impl MOQTClient {
             url,
             shared: Rc::new(ClientShared::default()),
         }
-    }
-
-    pub fn url(&self) -> JsValue {
-        JsValue::from_str(&self.url)
     }
 
     #[wasm_bindgen(js_name = onServerSetup)]
@@ -543,7 +539,7 @@ impl MOQTClient {
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown publish request: {request_id}")))?;
         let subscription = handler
-            .ok(subscriber_priority, filter_type, 0)
+            .ok(subscriber_priority, filter_type)
             .await
             .map_err(send_error)?;
         handler.accept_data_receiver().await;
@@ -1072,16 +1068,13 @@ impl MOQTClient {
             .track_statuses
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown track status request: {request_id}")))?;
-        let track_status_ok = self
+        let content_exists = self
             .shared
             .state
             .borrow_mut()
             .answer_incoming_track_status(request_id)
             .map_err(anyhow_error)?;
-        handler
-            .ok(track_status_ok.expires, track_status_ok.content_exists)
-            .await
-            .map_err(send_error)
+        handler.ok(0, content_exists).await.map_err(send_error)
     }
 
     #[wasm_bindgen(js_name = sendTrackStatusError)]
@@ -1121,16 +1114,13 @@ impl MOQTClient {
             .fetches
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown fetch request: {request_id}")))?;
-        let fetch_ok = self
+        let end_location = self
             .shared
             .state
             .borrow()
-            .answer_incoming_fetch(request_id)
+            .incoming_fetch_end(request_id)
             .map_err(anyhow_error)?;
-        handler
-            .ok(fetch_ok.end_of_track, fetch_ok.end_location)
-            .await
-            .map_err(send_error)
+        handler.ok(false, end_location).await.map_err(send_error)
     }
 
     #[wasm_bindgen(js_name = sendFetchError)]
@@ -1377,7 +1367,7 @@ impl MOQTClient {
         result: Result<(), RequestFailure>,
     ) {
         let message: JsValue = match result {
-            Ok(()) => NamespaceOkMessage::from(&NamespaceOk { request_id }).into(),
+            Ok(()) => NamespaceOkMessage { request_id }.into(),
             Err(error) => request_error_message(kind, request_id, &error).into(),
         };
         emit(&self.shared.callbacks, select, &[message]);
@@ -1391,18 +1381,15 @@ impl MOQTClient {
     ) {
         match result {
             Ok(fetch_handle) => {
-                let fetch_ok = FetchOk {
+                let message = FetchOkMessage {
                     request_id,
-                    group_order: fetch_handle.group_order,
-                    end_of_track: fetch_handle.end_of_track,
-                    end_location: fetch_handle.end_location,
-                    max_cache_duration: None,
+                    end_group_id: fetch_handle.end_location.group_id,
+                    end_object_id: fetch_handle.end_location.object_id,
                 };
                 self.shared
                     .fetch_requests
                     .borrow_mut()
                     .insert(request_id, fetch_handle.clone());
-                let message = FetchOkMessage::from(&fetch_ok);
                 emit(
                     &self.shared.callbacks,
                     |c| &c.fetch_response,
@@ -1519,11 +1506,11 @@ fn request_error_message(
         _ => (RequestErrorCode::InternalError, error.to_string()),
     };
     let error_code = request_error_code_to_wire(code, kind);
-    RequestErrorMessage::from(&RequestError {
+    RequestErrorMessage {
         request_id,
         error_code,
         reason_phrase,
-    })
+    }
 }
 
 fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
