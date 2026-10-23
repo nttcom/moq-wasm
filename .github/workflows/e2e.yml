@@ -300,8 +300,9 @@ jobs:
         if: ${{ steps.filter.outputs.relay == 'true' }}
         shell: bash
         env:
-          # Tag = hash of every input that affects the relay binary.
-          RELAY_IMAGE_TAG: ${{ hashFiles('crates/relay/**', 'crates/moqt/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain', '.cargo/config.toml', '.dockerignore') }}
+          # Tag = hash of every input to the relay image. Keep the crate list in
+          # sync with the path deps in `cargo tree -p relay`.
+          RELAY_IMAGE_TAG: ${{ hashFiles('crates/relay/**', 'crates/moqt/**', 'crates/auth-token/**', 'crates/relay-stats/**', '.github/workflows/relay-image.yml', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain', '.cargo/config.toml', '.dockerignore') }}
         run: |
           set -euo pipefail
 
