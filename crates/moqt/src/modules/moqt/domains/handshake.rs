@@ -25,7 +25,9 @@ impl Handshake {
 
     #[cfg(test)]
     pub(crate) fn client_setup(&self) -> &ClientSetup {
-        let ServerHandshake::Draft14(handshake) = &self.setup;
+        let ServerHandshake::Draft14(handshake) = &self.setup else {
+            panic!("the CLIENT_SETUP of a draft-14 handshake");
+        };
         &handshake.client_setup
     }
 

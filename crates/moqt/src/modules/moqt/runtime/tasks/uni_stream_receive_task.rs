@@ -99,22 +99,28 @@ mod tests {
 
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, open_subgroup, published_track, send_payload,
-            subscribed_track_reader,
+            HANDSHAKE_TIMEOUT, PublishedTrack, location, published_track, published_track_between,
+            send_subgroup_object, spawn_connected_draft18_sessions, subscribed_track_reader,
         },
-        wire::SubgroupId,
+        object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
     };
 
-    #[tokio::test]
-    async fn a_stream_without_its_header_does_not_hold_back_later_streams() {
+    async fn a_later_stream_is_read_while_an_earlier_one_has_no_header(track: PublishedTrack) {
         // Arrange
-        let track = published_track("uni-header-pending").await;
         let factory = track.client.publisher().create_stream(&track.published);
         let _headerless = factory.next().await.unwrap();
-        let mut group_1 = open_subgroup(&factory, 1, SubgroupId::None).await;
+        let object = Object {
+            location: location(1, 0),
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: ExtensionHeaders::default(),
+            payload: Bytes::from_static(b"g1-o0"),
+            ends_group: false,
+        };
 
         // Act
-        send_payload(&mut group_1, b"g1-o0").await;
+        send_subgroup_object(&track.client, &track.published, &object).await;
         let object = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
             reader.next_object().await
@@ -127,5 +133,23 @@ mod tests {
             .unwrap()
             .expect("track still open");
         assert_eq!(object.payload, Bytes::from_static(b"g1-o0"));
+    }
+
+    #[tokio::test]
+    async fn a_stream_without_its_header_does_not_hold_back_later_streams() {
+        a_later_stream_is_read_while_an_earlier_one_has_no_header(
+            published_track("uni-header-pending").await,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_stream_without_its_header_does_not_hold_back_later_streams() {
+        let (client, server) =
+            spawn_connected_draft18_sessions("uni-header-pending-draft18", "moqt").await;
+        a_later_stream_is_read_while_an_earlier_one_has_no_header(
+            published_track_between(client, server).await,
+        )
+        .await;
     }
 }

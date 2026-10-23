@@ -142,7 +142,9 @@ impl StreamDataSender<Uninitialized> {
     ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
-            let SubgroupEncoder::Draft14(encoder) = &mut stream.encoder;
+            let SubgroupEncoder::Draft14(encoder) = &mut stream.encoder else {
+                panic!("raw draft-14 fields need a draft-14 session");
+            };
             let bytes = encoder.raw_header(group_id, subgroup_id.clone(), publisher_priority);
             results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
         }
@@ -179,7 +181,9 @@ impl StreamDataSender<HeaderSent> {
     ) -> anyhow::Result<()> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
-            let SubgroupEncoder::Draft14(encoder) = &stream.encoder;
+            let SubgroupEncoder::Draft14(encoder) = &stream.encoder else {
+                panic!("raw draft-14 fields need a draft-14 session");
+            };
             let bytes = encoder.raw_object_field(object_id_delta, subgroup_object.clone());
             results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
         }

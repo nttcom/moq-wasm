@@ -12,7 +12,6 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 
 use crate::{
@@ -41,8 +40,6 @@ use crate::{
         transport::transport_send_stream::TransportSendError,
     },
 };
-
-const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How to withdraw a request whose success response arrives after the caller
 /// stopped waiting (timeout or cancellation). Late error responses never need
@@ -100,7 +97,9 @@ impl ControlChannel {
     }
 
     fn of(connection: &Connection) -> &Self {
-        let version::ControlChannel::Draft14(channel) = &connection.control;
+        let version::ControlChannel::Draft14(channel) = &connection.control else {
+            unreachable!("draft-14 tasks run only on draft-14 connections")
+        };
         channel
     }
 
@@ -333,7 +332,7 @@ impl PendingResponse {
     /// (inter-relay) session survives one slow request; the entry stays
     /// `Abandoned` and a late response goes to `handle_late_response`.
     pub(super) async fn response(self) -> Result<ResponseMessage, RequestFailure> {
-        match executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.receiver).await {
+        match executor::timeout(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.receiver).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(RequestFailure::SessionClosed),
             Err(_) => Err(RequestFailure::Timeout),
