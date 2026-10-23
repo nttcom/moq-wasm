@@ -1,7 +1,7 @@
 [project]
 name = "moq-meeting-transcriber"
 version = "0.1.0"
-description = "pipecat bot that transcribes every participant of a MoQ Meeting room with Whisper and publishes the text as an MSF event timeline"
+description = "pipecat bot that transcribes every participant of a MoQ Meeting room with Whisper or Granite Speech and publishes the text as an MSF event timeline"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
@@ -10,6 +10,9 @@ dependencies = [
     "faster-whisper~=1.2.1",
     "moqt",
     "pipecat-ai[silero]>=1.12",
+    "torch>=2.11",
+    "torchaudio>=2.11",
+    "transformers>=5.16",
 ]
 
 [dependency-groups]
@@ -23,6 +26,14 @@ override-dependencies = ["pillow>=13"]
 [tool.uv.sources]
 moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
 moqt = { path = "../../../crates/python" }
+# PyPI's Linux torch carries the CUDA libraries, several GB that a bot on the CPU never loads.
+torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+torchaudio = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

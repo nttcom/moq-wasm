@@ -1,6 +1,6 @@
 import asyncio
+import base64
 import io
-import re
 import wave
 
 import aiohttp
@@ -15,14 +15,17 @@ HEALTH_INTERVAL_SECONDS = 5.0
 HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=30)
 # A cold start of the GPU service holds a request until the model is loaded.
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
-# MOSS-Transcribe-Diarize writes each segment as `[start][S01]text[end]`. A participant's track
-# carries one speaker, so the times and speaker tags carry nothing the transcript lacks.
-SEGMENT_TAG = re.compile(r"\[(?:\d+(?:\.\d+)?|S\d+)\]")
+GRANITE_SPEECH = "granite-speech-5-2b"
+# The model card's prompt for speech in a known language, followed by its punctuated transcription prompt.
+GRANITE_SPEECH_PROMPT = (
+    "The speech is in Japanese. Transcribe it exactly; do not translate. "
+    "transcribe the speech with proper punctuation and capitalization."
+)
 
 
 class HttpRecognizer:
     """A speech recognition service with the OpenAI-compatible transcription API, such as vLLM
-    serving Qwen3-ASR or MOSS-Transcribe-Diarize; `name` is also the model name the service serves."""
+    serving Qwen3-ASR; `name` is also the model name the service serves."""
 
     def __init__(
         self,
@@ -61,12 +64,30 @@ class HttpRecognizer:
             f"{self._url}/v1/audio/transcriptions", data=form, headers=await self._headers(), timeout=REQUEST_TIMEOUT
         ) as response:
             response.raise_for_status()
-            return SEGMENT_TAG.sub("", (await response.json())["text"])
+            return (await response.json())["text"]
 
     async def _headers(self) -> dict[str, str]:
         if self._identity_token is None:
             return {}
         return {"Authorization": f"Bearer {await self._identity_token.value()}"}
+
+
+class GraniteSpeechRecognizer(HttpRecognizer):
+    """Granite Speech 5.0 2b served by vLLM. vLLM's transcription API gives the model a prompt that
+    names no language, so the recognizer asks through the chat API with the model card's prompt."""
+
+    async def recognize(self, pcm: bytes) -> str:
+        audio = base64.b64encode(_wav(pcm)).decode()
+        content = [
+            {"type": "audio_url", "audio_url": {"url": f"data:audio/wav;base64,{audio}"}},
+            {"type": "text", "text": GRANITE_SPEECH_PROMPT},
+        ]
+        body = {"model": self.name, "temperature": 0, "messages": [{"role": "user", "content": content}]}
+        async with self._session.post(
+            f"{self._url}/v1/chat/completions", json=body, headers=await self._headers(), timeout=REQUEST_TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            return (await response.json())["choices"][0]["message"]["content"]
 
 
 def _wav(pcm: bytes) -> bytes:

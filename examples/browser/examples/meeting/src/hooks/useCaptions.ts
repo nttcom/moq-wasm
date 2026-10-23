@@ -22,8 +22,9 @@ const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
 /// The recognizers the deployed transcriber offers (docs/architecture/ai-bots/meeting-transcriber.md).
 export const ASR_CHOICES = [
   { asr: 'whisper', label: 'Whisper (CPU)' },
+  { asr: 'granite-speech-5-470m', label: 'Granite 470m (CPU)' },
   { asr: 'qwen3-asr', label: 'Qwen3-ASR (GPU)' },
-  { asr: 'moss-transcribe-diarize', label: 'MOSS (GPU)' }
+  { asr: 'granite-speech-5-2b', label: 'Granite 2b (GPU)' }
 ] as const
 
 export function asrLabel(asr: string): string {

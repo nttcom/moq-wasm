@@ -40,8 +40,10 @@ COPY examples/python/moq-chat-moderation/moq_chat_moderation moq-chat-moderation
 COPY examples/python/moq-camera-detection/moq_camera_detection moq-camera-detection/moq_camera_detection
 COPY examples/python/moq-ptz-tracking/moq_ptz_tracking moq-ptz-tracking/moq_ptz_tracking
 COPY examples/python/moq-meeting-transcriber/moq_meeting_transcriber moq-meeting-transcriber/moq_meeting_transcriber
-# Bake the transcriber's default Whisper model into the image so a new room does not wait for a
-# download.
+# Bake the transcriber's CPU models (the default Whisper and Granite Speech) into the image so a new
+# room does not wait for a download and Cloud Run does not hold the files in the instance's memory.
 ENV HF_HOME=/opt/huggingface
 RUN cd moq-meeting-transcriber && .venv/bin/python -c \
-    "from faster_whisper import download_model; from moq_meeting_transcriber.bot import DEFAULT_MODEL; download_model(DEFAULT_MODEL)"
+    "from faster_whisper import download_model; from moq_meeting_transcriber.bot import DEFAULT_MODEL; download_model(DEFAULT_MODEL)" \
+    && .venv/bin/python -c \
+    "from huggingface_hub import snapshot_download; from moq_meeting_transcriber.granite import MODEL; snapshot_download(MODEL)"

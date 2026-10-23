@@ -1,15 +1,16 @@
 # 音声認識を Cloud Run の GPU にデプロイする
 
 Meeting の書き起こし bot（`moq-meeting-transcriber`）が `?asr=` で呼ぶ、GPU の音声認識サーバです。
-どちらのモデルも vLLM で動かし、OpenAI 互換の `/v1/audio/transcriptions` で答えます。
-bot は発話の区間ごとに WAV を送ります。設計は [Live transcription for the Meeting example](../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
+どちらのモデルも vLLM で動かし、OpenAI 互換の API で答えます。
+bot は発話の区間ごとに WAV を送ります。Qwen3-ASR には `/v1/audio/transcriptions` で、Granite Speech には `/v1/chat/completions` で送ります。
+vLLM の書き起こし API は、Granite Speech に言語を書かない決まったプロンプトを渡すため、bot は日本語だと書いたプロンプトをチャット API で送ります。設計は [Live transcription for the Meeting example](../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
 | `asr`（サービス名は `moqt-<asr>`） | モデル | vLLM の起動引数 |
 | --- | --- | --- |
 | `qwen3-asr` | [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | なし |
-| `moss-transcribe-diarize` | [OpenMOSS-Team/MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize)（0.9B） | `--trust-remote-code` |
+| `granite-speech-5-2b` | [ibm-granite/granite-speech-5.0-2b](https://huggingface.co/ibm-granite/granite-speech-5.0-2b) | `--max-model-len 2048` |
 
-モデルごとに別のサービスにします。どちらのモデルカードも、そのモデルに合わせて固定した vLLM の nightly 版を求めているためです。
+モデルごとに別のサービスにします。Qwen3-ASR のモデルカードは、そのモデルに合わせて固定した vLLM の nightly 版を求めているためです。
 d3-flash（[d3-flash を Cloud Run にデプロイする](d3-flash-on-cloud-run.md)）とも別のサービスです。d3-flash の重みだけで L4 のメモリの大半を使うためです。
 
 | 構成 | 理由 |
@@ -19,8 +20,7 @@ d3-flash（[d3-flash を Cloud Run にデプロイする](d3-flash-on-cloud-run.
 | モデル名を `--served-model-name <asr>` にする | bot は `?asr=` の名前をモデル名として送るため |
 
 > この手順は、モデルカードと d3-flash の手順をもとに書いたもので、まだ GPU 上で通していません。初回のデプロイで確かめてください。
-> イメージは、モデルカードが求める nightly 版以降の `vllm/vllm-openai:nightly` を digest で固定します。MOSS-Transcribe-Diarize のモデルカードは vLLM のコミット `68b4a1d5` を指定しています。
-> bot は `language=ja` を送ります。MOSS-Transcribe-Diarize のモデルカードは言語の指定方法を書いていないため、vLLM が `language` を拒まないかも確かめてください。
+> イメージは digest で固定します。Qwen3-ASR はモデルカードが求める nightly 版以降の `vllm/vllm-openai:nightly`、Granite Speech はリリース版の `vllm/vllm-openai` です。
 
 ## 前提
 
@@ -33,13 +33,13 @@ d3-flash（[d3-flash を Cloud Run にデプロイする](d3-flash-on-cloud-run.
 export PROJECT=your-project
 export REGION=asia-southeast1
 # qwen3-asr: Qwen/Qwen3-ASR-1.7B, no extra arguments.
-# moss-transcribe-diarize: OpenMOSS-Team/MOSS-Transcribe-Diarize, --trust-remote-code.
+# granite-speech-5-2b: ibm-granite/granite-speech-5.0-2b, --max-model-len 2048.
 export ASR=qwen3-asr
 export HF_MODEL=Qwen/Qwen3-ASR-1.7B
 export VLLM_ARGS=
-# Pin the Hugging Face revision and the vLLM nightly image you tested.
+# Pin the Hugging Face revision and the vLLM image you tested.
 export HF_REVISION=<commit of the model repository>
-export VLLM_IMAGE=vllm/vllm-openai:nightly@sha256:<digest>
+export VLLM_IMAGE=vllm/vllm-openai:<tag>@sha256:<digest>
 export BUCKET=${PROJECT}-${ASR}-weights
 export SA=moqt-${ASR}@${PROJECT}.iam.gserviceaccount.com
 ```
@@ -111,4 +111,4 @@ uv run python -m moq_meeting_transcriber.bot --asr ${ASR}=${ASR_URL} --metadata-
 ## 費用と起動時間
 
 - インスタンスが起きている間だけ、サービスごとに課金されます。L4 1 台（8 vCPU・32 GiB）で、d3-flash と同じく約 $1.70/h です。
-- 0 台からの最初のリクエストは、重みのコピー（Qwen3-ASR は約 4 GB、MOSS-Transcribe-Diarize は約 2 GB）と vLLM の起動を待ちます。その間、bot は `status` トラックで `starting` を出し、ページのバッジに表示されます。
+- 0 台からの最初のリクエストは、重みのコピー（Qwen3-ASR は約 4 GB、Granite Speech 2b は約 5 GB）と vLLM の起動を待ちます。その間、bot は `status` トラックで `starting` を出し、ページのバッジに表示されます。

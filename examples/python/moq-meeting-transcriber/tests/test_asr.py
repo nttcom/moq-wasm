@@ -4,7 +4,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_meeting_transcriber.asr import HttpRecognizer
+from moq_meeting_transcriber.asr import GRANITE_SPEECH, GRANITE_SPEECH_PROMPT, GraniteSpeechRecognizer, HttpRecognizer
 
 
 class FakeAsrService:
@@ -32,6 +32,19 @@ class FakeAsrService:
         )
         return web.json_response({"text": self.text})
 
+    async def chat(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        audio, prompt = body["messages"][0]["content"]
+        self.requests.append(
+            {
+                "model": body["model"],
+                "temperature": body["temperature"],
+                "audio": audio["audio_url"]["url"][: len("data:audio/wav;base64,UklGR")],
+                "prompt": prompt["text"],
+            }
+        )
+        return web.json_response({"choices": [{"message": {"role": "assistant", "content": self.text}}]})
+
 
 @pytest.fixture
 async def asr_service():
@@ -39,6 +52,7 @@ async def asr_service():
     app = web.Application()
     app.router.add_get("/health", service.health)
     app.router.add_post("/v1/audio/transcriptions", service.transcribe)
+    app.router.add_post("/v1/chat/completions", service.chat)
     async with TestServer(app) as server:
         service.url = str(server.make_url(""))
         yield service
@@ -75,14 +89,21 @@ async def test_ready_waits_until_the_service_answers_its_health_check(asr_servic
     assert asr_service.health_checks == 3
 
 
-async def test_recognize_drops_the_times_and_speaker_tags_of_diarized_segments(asr_service):
+async def test_granite_speech_asks_the_chat_api_for_japanese_with_the_utterance_as_wav(asr_service):
     # Arrange
-    asr_service.text = "[0.48][S01]こんにちは[1.66][2.10][S01]今日は[3.02]"
     async with aiohttp.ClientSession() as session:
-        recognizer = HttpRecognizer("moss-transcribe-diarize", asr_service.url, session, None)
+        recognizer = GraniteSpeechRecognizer(GRANITE_SPEECH, asr_service.url, session, None)
 
         # Act
         text = await recognizer.recognize(bytes(3200))
 
     # Assert
-    assert text == "こんにちは今日は"
+    assert text == " こんにちは "
+    assert asr_service.requests == [
+        {
+            "model": GRANITE_SPEECH,
+            "temperature": 0,
+            "audio": "data:audio/wav;base64,UklGR",
+            "prompt": GRANITE_SPEECH_PROMPT,
+        }
+    ]

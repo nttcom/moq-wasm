@@ -10,7 +10,8 @@ from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 
-from moq_meeting_transcriber.asr import HttpRecognizer
+from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
+from moq_meeting_transcriber.granite import SharedGranite
 from moq_meeting_transcriber.room import Room
 from moq_meeting_transcriber.stt import Recognizer, SharedWhisper
 
@@ -39,8 +40,9 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         metavar="NAME=URL",
-        help="a speech recognition service with the OpenAI-compatible transcription API that serves the model NAME, "
-        "which a page picks with ?asr=NAME; repeatable",
+        help="a speech recognition service with the OpenAI-compatible API that serves the model NAME, "
+        f"which a page picks with ?asr=NAME; {GRANITE_SPEECH} is called through the chat API, any other through the "
+        "transcription API; repeatable",
     )
     auth = parser.add_mutually_exclusive_group()
     auth.add_argument(
@@ -69,7 +71,8 @@ def http_recognizers(args: argparse.Namespace, session: aiohttp.ClientSession) -
             if args.metadata_auth
             else None
         )
-        recognizers[name] = HttpRecognizer(name, url, session, token)
+        recognizer = GraniteSpeechRecognizer if name == GRANITE_SPEECH else HttpRecognizer
+        recognizers[name] = recognizer(name, url, session, token)
     return recognizers
 
 
@@ -96,7 +99,8 @@ async def main():
     args = parse_args()
     model = asyncio.ensure_future(load_whisper(args.model))
     async with aiohttp.ClientSession() as session:
-        recognizers = {DEFAULT_ASR: SharedWhisper(model), **http_recognizers(args, session)}
+        granite = SharedGranite()
+        recognizers = {DEFAULT_ASR: SharedWhisper(model), granite.name: granite, **http_recognizers(args, session)}
         await serve_rooms(
             args,
             partial(transcribe_room, args, recognizers[DEFAULT_ASR]),
