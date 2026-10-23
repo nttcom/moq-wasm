@@ -205,7 +205,11 @@ call through the adapter; a draft never gets a task of its own (see
     - A per-request GOAWAY ends the request as a peer cancellation with
       GOING_AWAY.
     - REQUEST_UPDATE is applied as a delta to the request's current state
-      (§10.9), then raised as `SubscribeUpdate`.
+      (§10.9), then raised as `SubscribeUpdate`. Its REQUEST_OK waits for
+      `SubscribeUpdateHandler::ok`, which gives the LARGEST_OBJECT (§10.2.11),
+      or for the handler to be dropped, which sends none. The stream reads
+      its next message only after that, so the answers keep the order of the
+      updates.
 - A rule that differs per draft but applies to state only the application
   holds is asked through the handler, so the version stays inside moqt:
   `FetchHandler::check_joining` tells whether a Joining FETCH may join a

@@ -657,7 +657,7 @@ mod tests {
             ContentExists, DataReceiver, ForwardingPreference, Location, Object, ObjectStatus,
         },
         publish::{PublishDoneCode, PublishOption},
-        subscribe::{FilterType, SubscribeHandler, SubscribeOption},
+        subscribe::{FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateHandler},
     };
 
     const SCHEMES: [&str; 2] = ["moqt", "https"];
@@ -1270,6 +1270,112 @@ mod tests {
                 object_id: 0,
             }
         );
+    }
+
+    /// A SUBSCRIBE `client` sends on a stream it reads itself, answered by
+    /// `server`; returns the stream after its SUBSCRIBE_OK.
+    async fn raw_subscription(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (StreamSender, MessageReceiver) {
+        let connection = client.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
+        let sender = StreamSender::new(send_stream);
+        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let subscribe = messages::encode_subscribe(&Subscribe {
+            request_id: connection.control.next_request_id(),
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            forward: true,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        })
+        .unwrap();
+        sender.send(&subscribe).await.unwrap();
+        let SessionEvent::Subscribe(handler) = next_event(server).await else {
+            panic!("expected SUBSCRIBE");
+        };
+        handler.ok(0, ContentExists::False).await.unwrap();
+        let response = receiver.receive().await.unwrap();
+        assert!(
+            matches!(response, Some(messages::Message::SubscribeOk(_))),
+            "{response:?}"
+        );
+        (sender, receiver)
+    }
+
+    async fn requested_update(
+        client: &crate::Session,
+        server: &crate::Session,
+        stream: &StreamSender,
+    ) -> SubscribeUpdateHandler {
+        let request_id = client
+            .publisher()
+            .session
+            .connection()
+            .control
+            .next_request_id();
+        stream
+            .send(&request_update(
+                request_id,
+                &[parameters::Parameter::Forward(true)],
+            ))
+            .await
+            .unwrap();
+        let event = next_event(server).await;
+        let SessionEvent::SubscribeUpdate(handler) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        handler
+    }
+
+    #[tokio::test]
+    async fn a_request_update_is_answered_with_the_largest_object_the_publisher_gives() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-largest", "moqt").await;
+        let (sender, mut receiver) = raw_subscription(&client, &server).await;
+        let handler = requested_update(&client, &server, &sender).await;
+        let largest = Location {
+            group_id: 3,
+            object_id: 1,
+        };
+
+        // Act
+        let told = handler.ok(Some(largest));
+        let response = receiver.receive().await.unwrap();
+
+        // Assert: §10.2.11 LARGEST_OBJECT
+        assert!(told);
+        let Some(messages::Message::RequestOk(ok)) = response else {
+            panic!("expected REQUEST_OK, got {response:?}");
+        };
+        assert_eq!(
+            ok.parameters,
+            vec![parameters::Parameter::LargestObject(largest)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_update_whose_handler_is_dropped_gets_a_request_ok_without_largest_object() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-dropped", "moqt").await;
+        let (sender, mut receiver) = raw_subscription(&client, &server).await;
+        let handler = requested_update(&client, &server, &sender).await;
+
+        // Act
+        drop(handler);
+        let response = receiver.receive().await.unwrap();
+
+        // Assert
+        let Some(messages::Message::RequestOk(ok)) = response else {
+            panic!("expected REQUEST_OK, got {response:?}");
+        };
+        assert!(ok.parameters.is_empty(), "{:?}", ok.parameters);
     }
 
     #[tokio::test]

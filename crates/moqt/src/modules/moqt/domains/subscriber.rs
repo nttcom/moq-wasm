@@ -1406,6 +1406,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accepting_a_draft14_update_tells_the_subscriber_nothing() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-update-largest").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        handler.ok(0, ContentExists::False).await.unwrap();
+        let subscription = request.await.unwrap().unwrap();
+        client
+            .subscriber()
+            .update_forward(&subscription, true)
+            .await
+            .unwrap();
+        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE_UPDATE from the client");
+        };
+
+        // Act
+        let told = update.ok(Some(location(3, 1)));
+
+        // Assert: draft-14 SUBSCRIBE_UPDATE has no answer
+        assert!(!told);
+    }
+
+    #[tokio::test]
     async fn end_before_group_sends_the_group_as_end_group_plus_one() {
         // Arrange
         let (client, server) = spawn_connected_dual_sessions("subscriber-end-before-group").await;

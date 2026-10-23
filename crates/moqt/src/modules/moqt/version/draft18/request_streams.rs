@@ -41,15 +41,17 @@ use crate::{
                 enums::{RequestId, ResponseMessage},
                 error_codes::{DataStreamResetCode, PublishDoneCode, RequestErrorCode},
                 handler::{
-                    fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
-                    go_away_handler::GoAwayHandler, publish_done_handler::PublishDoneHandler,
+                    fetch_cancel_handler::FetchCancelHandler,
+                    fetch_handler::FetchHandler,
+                    go_away_handler::GoAwayHandler,
+                    publish_done_handler::PublishDoneHandler,
                     publish_handler::PublishHandler,
                     publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
                     publish_namespace_done_handler::PublishNamespaceDoneHandler,
                     publish_namespace_handler::PublishNamespaceHandler,
                     subscribe_handler::SubscribeHandler,
                     subscribe_namespace_handler::SubscribeNamespaceHandler,
-                    subscribe_update_handler::SubscribeUpdateHandler,
+                    subscribe_update_handler::{SubscribeUpdateHandler, UpdateAnswerReceiver},
                     track_status_handler::TrackStatusHandler,
                     unsubscribe_handler::UnsubscribeHandler,
                     unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
@@ -240,7 +242,7 @@ impl IncomingRequestTask {
             };
             match received {
                 Ok(Some(message)) => {
-                    if !Self::follow_up(
+                    match Self::follow_up(
                         &context,
                         &sender,
                         request_id,
@@ -250,7 +252,12 @@ impl IncomingRequestTask {
                     )
                     .await
                     {
-                        return;
+                        FollowUp::Continue => {}
+                        FollowUp::AnswerUpdate(answer_receiver) => {
+                            drop(context);
+                            answer_update(&sender, answer_receiver).await;
+                        }
+                        FollowUp::Done => return,
                     }
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
@@ -393,7 +400,6 @@ impl IncomingRequestTask {
         }
     }
 
-    /// `false` when the stream is done.
     async fn follow_up(
         scope: &Scope,
         sender: &StreamSender,
@@ -401,11 +407,11 @@ impl IncomingRequestTask {
         kind: &RequestStreamKind,
         baseline: &mut Option<SubscribeUpdate>,
         message: Message,
-    ) -> bool {
+    ) -> FollowUp {
         if let Message::RequestUpdate(update) = &message
             && !accept_request_id(scope, update.request_id)
         {
-            return false;
+            return FollowUp::Done;
         }
         match (kind, message) {
             (RequestStreamKind::Subscribe, Message::RequestUpdate(update)) => {
@@ -413,24 +419,17 @@ impl IncomingRequestTask {
                     unreachable!("a SUBSCRIBE stream keeps its baseline")
                 };
                 let update = apply_update(baseline, update.request_id, update.parameters);
-                emit(
-                    scope,
-                    SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(
-                        &scope.connection,
-                        update,
-                    )),
-                );
-                acknowledge_update(sender).await;
-                true
+                FollowUp::AnswerUpdate(emit_update(scope, update))
             }
             // §10.14: the subscriber cannot update a TRACK_STATUS.
             (RequestStreamKind::TrackStatus, Message::RequestUpdate(_)) => {
                 close_on_violation(scope, "REQUEST_UPDATE on a TRACK_STATUS stream");
-                false
+                FollowUp::Done
             }
             (_, Message::RequestUpdate(_)) => {
-                acknowledge_update(sender).await;
-                true
+                // Only a subscription has a Largest Object.
+                send_update_answer(sender, None).await;
+                FollowUp::Continue
             }
             (RequestStreamKind::Publish, Message::PublishDone(done)) => {
                 emit(
@@ -443,15 +442,15 @@ impl IncomingRequestTask {
                     )),
                 );
                 scope.channel().take_incoming(request_id);
-                false
+                FollowUp::Done
             }
             (_, Message::GoAway(_)) => {
                 tracing::debug!(request_id, "per-request GOAWAY ignored");
-                true
+                FollowUp::Continue
             }
             _ => {
                 close_on_violation(scope, "unexpected message on a request stream");
-                false
+                FollowUp::Done
             }
         }
     }
@@ -496,11 +495,35 @@ impl IncomingRequestTask {
     }
 }
 
-async fn acknowledge_update(sender: &StreamSender) {
-    if let Ok(message) = messages::encode_empty_request_ok()
+/// What reading the next message of a peer's request stream leads to.
+enum FollowUp {
+    Continue,
+    /// Answer the REQUEST_UPDATE once its handler is answered or dropped,
+    /// then continue.
+    AnswerUpdate(UpdateAnswerReceiver),
+    Done,
+}
+
+fn emit_update(scope: &Scope, update: SubscribeUpdate) -> UpdateAnswerReceiver {
+    let (handler, answer_receiver) = SubscribeUpdateHandler::answered(&scope.connection, update);
+    emit(scope, SessionEvent::SubscribeUpdate(handler));
+    answer_receiver
+}
+
+/// §10.9: exactly one REQUEST_OK per REQUEST_UPDATE, written in the order the
+/// updates arrived. The caller holds no Scope while waiting: an unreceived
+/// handler sits in the session's event queue, so only dropping the session
+/// ends the wait.
+async fn answer_update(sender: &StreamSender, answer_receiver: UpdateAnswerReceiver) {
+    let largest = answer_receiver.await.unwrap_or(None);
+    send_update_answer(sender, largest).await;
+}
+
+async fn send_update_answer(sender: &StreamSender, largest: Option<Location>) {
+    if let Ok(message) = messages::encode_request_update_ok(largest)
         && let Err(error) = sender.send(&message).await
     {
-        tracing::debug!(%error, "could not acknowledge REQUEST_UPDATE");
+        tracing::debug!(%error, "could not answer REQUEST_UPDATE");
     }
 }
 
@@ -671,14 +694,9 @@ impl OutgoingRequestTask {
                         unreachable!("an accepted PUBLISH keeps its baseline")
                     };
                     let update = apply_update(baseline, update.request_id, update.parameters);
-                    emit(
-                        &context,
-                        SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(
-                            &context.connection,
-                            update,
-                        )),
-                    );
-                    acknowledge_update(&sender).await;
+                    let answer_receiver = emit_update(&context, update);
+                    drop(context);
+                    answer_update(&sender, answer_receiver).await;
                 }
                 // Answers to our REQUEST_UPDATE.
                 Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}

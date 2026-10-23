@@ -868,10 +868,15 @@ fn encode_request_ok(
     frame(REQUEST_OK, &payload)
 }
 
-/// PUBLISH_NAMESPACE_OK, SUBSCRIBE_NAMESPACE_OK and REQUEST_UPDATE_OK carry
-/// nothing the model sets.
+/// PUBLISH_NAMESPACE_OK and SUBSCRIBE_NAMESPACE_OK carry nothing the model
+/// sets.
 pub(crate) fn encode_empty_request_ok() -> anyhow::Result<BytesMut> {
     encode_request_ok(&[], &[])
+}
+
+/// REQUEST_UPDATE_OK carries the publisher's Largest Object (§10.2.11).
+pub(crate) fn encode_request_update_ok(largest: Option<Location>) -> anyhow::Result<BytesMut> {
+    encode_request_ok(largest.map(Parameter::LargestObject).as_slice(), &[])
 }
 
 pub(crate) fn encode_publish_ok(publish_ok: &PublishOk) -> anyhow::Result<BytesMut> {
