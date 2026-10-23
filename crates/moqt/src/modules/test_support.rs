@@ -138,6 +138,12 @@ pub(crate) async fn connect_sessions_from<T: TransportProtocol>(
     Ok((client, server))
 }
 
+pub(crate) async fn within<F: Future>(future: F) -> F::Output {
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, future)
+        .await
+        .expect("the exchange timed out")
+}
+
 pub(crate) async fn receive_disconnected(session: &Session) -> anyhow::Result<()> {
     tokio::time::timeout(DISCONNECT_TIMEOUT, async {
         while !matches!(session.receive_event().await?, SessionEvent::Disconnected()) {}
