@@ -392,21 +392,37 @@ impl InMemoryLocalPubSubDirectory {
     /// Whether `session_id` already holds a subscription overlapping this one:
     /// either prefix is a field-wise prefix of the other and both want
     /// namespaces or both want tracks (draft-14 §9.28, draft-18 §10.18 /
-    /// §10.19).
+    /// §10.19). `moving` is the prefix of the session's subscription of
+    /// `interest` that an update moves to `track_namespace_prefix`, which does
+    /// not count (draft-18 §10.9.2).
     pub(crate) fn has_overlapping_namespace_subscription(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
         interest: NamespaceInterest,
+        moving: Option<&str>,
     ) -> bool {
         self.subscriber_namespaces.iter().any(|entry| {
             (is_namespace_prefix(entry.key(), track_namespace_prefix)
                 || is_namespace_prefix(track_namespace_prefix, entry.key()))
                 && entry.value().iter().any(|subscription| {
                     let (subscriber, held) = *subscription.key();
-                    subscriber == session_id && covers(held, interest)
+                    let is_moving = moving == Some(entry.key().as_str()) && held == interest;
+                    subscriber == session_id && covers(held, interest) && !is_moving
                 })
         })
+    }
+
+    pub(crate) fn namespace_subscription(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+        interest: NamespaceInterest,
+    ) -> Option<NamespaceSubscription> {
+        let subscriptions = self.subscriber_namespaces.get(track_namespace_prefix)?;
+        subscriptions
+            .get(&(session_id, interest))
+            .map(|subscription| *subscription)
     }
 
     /// Returns true when no client subscriber remains for the prefix,
@@ -1180,6 +1196,7 @@ mod tests {
                 session_id,
                 prefix,
                 NamespaceInterest::NamespacesAndTracks,
+                None,
             )
         };
 
@@ -1202,8 +1219,9 @@ mod tests {
             "room".to_string(),
             client_subscription(NamespaceInterest::Namespaces),
         );
-        let overlaps =
-            |prefix, interest| table.has_overlapping_namespace_subscription(1, prefix, interest);
+        let overlaps = |prefix, interest| {
+            table.has_overlapping_namespace_subscription(1, prefix, interest, None)
+        };
 
         // Act / Assert: draft-18 §10.18 / §10.19
         assert!(!overlaps("room", NamespaceInterest::Tracks));
