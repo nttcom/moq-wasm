@@ -6,7 +6,9 @@ import {
   expectCatalogStatus,
   expectTrackStatus,
   getChatMessageByText,
+  getLocalScreenShareVideo,
   getMemberCard,
+  getMemberScreenShareVideo,
   getMemberStats,
   getMemberVideo,
   getTrackSelect,
@@ -14,8 +16,12 @@ import {
   openChat,
   openMemberDetails,
   removeCatalogTrack,
-  sendChatMessage
+  sendChatMessage,
+  startScreenShare
 } from './meeting-e2e-arrange'
+
+// 4:3, unlike the 16:9 screen share renditions, so a share stretched to a rendition changes the aspect ratio bob decodes.
+const SHARED_TAB_VIEWPORT = { width: 960, height: 720 }
 
 // Assert that a video element is actively playing (decoded frames, time advancing, not paused).
 async function expectVideoPlaying(video: import('@playwright/test').Locator): Promise<void> {
@@ -52,6 +58,13 @@ async function expectAudioPlaying(stats: import('@playwright/test').Locator): Pr
 
 function videoWidth(video: import('@playwright/test').Locator): Promise<number> {
   return video.evaluate((element) => (element as HTMLVideoElement).videoWidth)
+}
+
+function videoAspectRatio(video: import('@playwright/test').Locator): Promise<number> {
+  return video.evaluate((element) => {
+    const { videoWidth, videoHeight } = element as HTMLVideoElement
+    return videoWidth / videoHeight
+  })
 }
 
 // Wait until a remote member's catalog is fully subscribed on the viewer's screen.
@@ -420,6 +433,34 @@ test('closing the filmstrip unsubscribes the video of the members it hid', async
     await alice.context.close()
     await bob.context.close()
     await carol.context.close()
+  }
+})
+
+test('a viewer decodes a shared tab at the aspect ratio it was captured at', async ({ browser }) => {
+  // Arrange: alice's camera keeps the tab repainting, so the tab capture keeps sending frames
+  const alice = await arrangeMeetingClient(browser, { viewport: SHARED_TAB_VIEWPORT })
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-screen-share-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await expectCatalogSubscribed(bob.page.page, 'alice')
+
+    // Act
+    await startScreenShare(alice.page)
+
+    // Assert: bob subscribes to the share without a click and plays it
+    await expectTrackStatus(bob.page.page, 'screenshare', 'alice', 'Subscribed', 60_000)
+    const shared = getMemberScreenShareVideo(bob.page.page, 'alice')
+    await expectVideoPlaying(shared)
+    const captured = getLocalScreenShareVideo(alice.page.page)
+    await expect.poll(async () => videoAspectRatio(captured)).toBeCloseTo(4 / 3, 2)
+    expect(await videoAspectRatio(shared)).toBeCloseTo(await videoAspectRatio(captured), 2)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
   }
 })
 

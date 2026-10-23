@@ -11,6 +11,8 @@ export interface ArrangeMeetingClientOptions {
   jwt?: string
   // Extra page URL parameters, such as e2eVideoLowHeight for a second camera rendition.
   params?: Record<string, string>
+  // Also the size of the tab a screen share captures.
+  viewport?: { width: number; height: number }
 }
 
 // Use a short camera keyframe interval (~1s at 15fps) so newly-subscribed clients
@@ -65,6 +67,7 @@ function createMeetingClientPageModel(page: Page) {
     leaveButton: page.getByTestId('room-leave-button'),
     toggleCameraButton: page.getByTestId('toggle-camera-button'),
     toggleMicrophoneButton: page.getByTestId('toggle-microphone-button'),
+    screenShareButton: page.getByRole('button', { name: /screen share$/ }),
     chatInput: page.getByTestId('chat-message-input'),
     chatSendButton: page.getByTestId('chat-send-button'),
     joinError: page.getByTestId('join-error')
@@ -75,11 +78,12 @@ export type MeetingClientPageModel = ReturnType<typeof createMeetingClientPageMo
 
 export async function arrangeMeetingClient(
   browser: Browser,
-  { jwt = MEETING_JWT, params = {} }: ArrangeMeetingClientOptions = {}
+  { jwt = MEETING_JWT, params = {}, viewport }: ArrangeMeetingClientOptions = {}
 ) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
-    permissions: ['camera', 'microphone']
+    permissions: ['camera', 'microphone'],
+    viewport
   })
   const rawPage = await context.newPage()
   const label = `meeting-client-${++meetingClientCounter}`
@@ -121,6 +125,13 @@ export async function enableMedia(model: MeetingClientPageModel): Promise<void> 
   await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
 }
 
+// Share this client's own tab, which the Playwright config picks without a dialog.
+export async function startScreenShare(model: MeetingClientPageModel): Promise<void> {
+  await expect(model.screenShareButton).toBeEnabled({ timeout: 30_000 })
+  await model.screenShareButton.click()
+  await expect(model.screenShareButton).toHaveAccessibleName('Stop screen share', { timeout: 15_000 })
+}
+
 // Locate the header chip of a remote member, which carries its catalog and track states.
 function getMemberChip(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-chip-${memberName}`)
@@ -155,6 +166,14 @@ export async function openChat(model: MeetingClientPageModel): Promise<void> {
 // Locate the video element inside a remote member card.
 export function getMemberVideo(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-video-${memberName}`)
+}
+
+export function getMemberScreenShareVideo(page: Page, memberName: string): Locator {
+  return page.getByTestId(`member-screenshare-video-${memberName}`)
+}
+
+export function getLocalScreenShareVideo(page: Page): Locator {
+  return page.getByTestId('member-share-local').locator('video')
 }
 
 // Locate the playback stats line under a remote member's video.
