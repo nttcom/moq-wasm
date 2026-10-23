@@ -10,6 +10,7 @@ use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
+    fetch::{Fetch, FetchOption},
     object::{
         ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
         ObjectStatus, Subgroup, SubgroupStart,
@@ -182,6 +183,15 @@ async fn run(config: Config) -> anyhow::Result<()> {
         &scenario_namespace(&config.track_namespace, &run_id, "ordered-a-to-b"),
         &config.track_name,
         ORDERED_OBJECT_COUNT,
+    )
+    .await?;
+
+    run_joined_subscribe_joining_fetch_scenario(
+        "dual relay joining fetch on a joined upstream relay-a to relay-b",
+        &config.relay_a_url,
+        &config.relay_b_url,
+        &scenario_namespace(&config.track_namespace, &run_id, "joined-joining-fetch"),
+        &config.track_name,
     )
     .await?;
 
@@ -590,6 +600,129 @@ fn spawn_subscriber_namespace_discovery_loop(
             }
         }
     })
+}
+
+/// The only object reaches relay-a before relay-b subscribes upstream, so
+/// relay-b's cache stays empty. The second subscriber joins relay-b's existing
+/// upstream subscription, and its joining FETCH returns the object only if
+/// relay-b advertises the upstream SUBSCRIBE_OK's Largest Location.
+async fn run_joined_subscribe_joining_fetch_scenario(
+    name: &str,
+    publisher_url: &str,
+    subscriber_url: &str,
+    track_namespace: &str,
+    track_name: &str,
+) -> anyhow::Result<()> {
+    tracing::info!(
+        scenario = name,
+        %publisher_url,
+        %subscriber_url,
+        %track_namespace,
+        %track_name,
+        "running joined subscribe joining fetch scenario"
+    );
+
+    let publisher_session = Arc::new(connect_with_retry(publisher_url).await?);
+    let publisher = publisher_session.publisher();
+    publisher
+        .publish_namespace(track_namespace.to_string())
+        .await
+        .context("publisher failed to publish namespace")?;
+    let published = publisher
+        .publish(
+            track_namespace.to_string(),
+            track_name.to_string(),
+            moqt::publish::PublishOption::default(),
+        )
+        .await
+        .context("publisher failed to publish track")?;
+    send_test_object(publisher_session.clone(), published, TEST_PAYLOAD).await?;
+
+    // Give relay-a time to cache the object and the namespace route time to
+    // propagate to relay-b.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let first_session = connect_with_retry(subscriber_url).await?;
+    let first_subscription = subscribe_largest_object(&first_session, track_namespace, track_name)
+        .await
+        .context("first subscriber failed to subscribe")?;
+    let expected_largest = ContentExists::True {
+        location: Location {
+            group_id: 0,
+            object_id: 0,
+        },
+    };
+    if first_subscription.content_exists() != expected_largest {
+        bail!(
+            "relay-b did not report relay-a's largest to the first subscriber in {name}: {:?}",
+            first_subscription.content_exists()
+        );
+    }
+
+    let second_session = connect_with_retry(subscriber_url).await?;
+    let second_subscription =
+        subscribe_largest_object(&second_session, track_namespace, track_name)
+            .await
+            .context("second subscriber failed to subscribe")?;
+    let fetched = tokio::time::timeout(
+        Duration::from_secs(15),
+        joining_fetch_payloads(&second_session, &second_subscription),
+    )
+    .await
+    .context("timed out waiting for the joining fetch")??;
+
+    if fetched != [TEST_PAYLOAD] {
+        bail!(
+            "unexpected joining fetch objects in {name}: expected [{:?}], got {:?}",
+            TEST_PAYLOAD,
+            fetched
+        );
+    }
+    tracing::info!(
+        scenario = name,
+        "joined subscribe joining fetch scenario passed"
+    );
+    Ok(())
+}
+
+async fn subscribe_largest_object(
+    session: &Session,
+    track_namespace: &str,
+    track_name: &str,
+) -> anyhow::Result<Subscription> {
+    let option = SubscribeOption {
+        subscriber_priority: 128,
+        group_order: GroupOrder::Ascending,
+        forward: true,
+        filter_type: FilterType::LargestObject,
+    };
+    tracing::info!(%track_namespace, %track_name, "subscriber sending SUBSCRIBE");
+    Ok(session
+        .subscriber()
+        .subscribe(track_namespace.to_string(), track_name.to_string(), option)
+        .await?)
+}
+
+async fn joining_fetch_payloads(
+    session: &Session,
+    subscription: &Subscription,
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    let mut subscriber = session.subscriber();
+    let handle = subscriber
+        .fetch_relative_joining(subscription, 0, FetchOption::default())
+        .await
+        .context("joining fetch was rejected")?;
+    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
+    let mut payloads = Vec::new();
+    loop {
+        match receiver.receive().await? {
+            Fetch::Object(object) => {
+                tracing::info!(location = ?object.location, "joining fetch received object");
+                payloads.push(object.payload.to_vec());
+            }
+            Fetch::End => return Ok(payloads),
+        }
+    }
 }
 
 /// Publisher sends `count` objects in order on a single subgroup stream, then the
