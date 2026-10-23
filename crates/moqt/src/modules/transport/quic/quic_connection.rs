@@ -84,7 +84,15 @@ impl TransportConnection for QUICConnection {
     }
 
     fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {
-        Ok(self.connection.send_datagram(bytes.into())?)
+        let len = bytes.len();
+        match self.connection.send_datagram(bytes.into()) {
+            Err(quinn::SendDatagramError::TooLarge) => {
+                // draft-14 §10.3, draft-18 §11.3
+                tracing::debug!(len, "dropping a datagram larger than the session allows");
+                Ok(())
+            }
+            result => Ok(result?),
+        }
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut> {
