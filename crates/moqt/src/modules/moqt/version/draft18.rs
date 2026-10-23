@@ -111,6 +111,21 @@ struct RequestStream {
     default_publisher_priority: u8,
     /// For a FETCH the peer sent: how far its response has come.
     fetch_end: FetchEnd,
+    /// Notified when this side cancels the request: the task reading the
+    /// stream then stops the peer's half with STOP_SENDING (§3.3.2).
+    reader_stop: Arc<tokio::sync::Notify>,
+}
+
+impl RequestStream {
+    fn new(kind: RequestStreamKind, sender: Arc<StreamSender>) -> Self {
+        Self {
+            kind,
+            sender,
+            default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
+            fetch_end: FetchEnd::default(),
+            reader_stop: Arc::default(),
+        }
+    }
 }
 
 /// §5.2: a publisher destroys the state of a FETCH after closing its
@@ -153,10 +168,15 @@ fn cancelled() -> u64 {
     error_codes::stream_reset_code_to_wire(DataStreamResetCode::Cancelled)
 }
 
-/// Withdraws a request by resetting its stream (§3.3.2).
+/// Withdraws a request (§3.3.2): this side's half of its stream is reset,
+/// and the peer's half stopped with STOP_SENDING, which a FETCH requires
+/// (§5.2).
 async fn cancel(stream: Option<RequestStream>) -> Result<(), TransportSendError> {
     match stream {
-        Some(stream) => stream.sender.reset(cancelled()).await,
+        Some(stream) => {
+            stream.reader_stop.notify_one();
+            stream.sender.reset(cancelled()).await
+        }
         None => Ok(()),
     }
 }
@@ -431,21 +451,13 @@ impl ControlChannel {
             .map_err(|_| RequestFailure::SessionClosed)?;
         let sender = Arc::new(StreamSender::new(send_stream));
         sender.send(&message).await?;
-        self.requests().outgoing.insert(
-            request_id,
-            RequestStream {
-                kind: kind.clone(),
-                sender: sender.clone(),
-                default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
-                fetch_end: FetchEnd::default(),
-            },
-        );
+        let stream = RequestStream::new(kind, sender);
+        self.requests().outgoing.insert(request_id, stream.clone());
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
         request_streams::OutgoingRequestTask {
             connection: Arc::downgrade(connection),
             request_id,
-            kind,
-            sender,
+            stream,
             receiver: MessageReceiver::new(receive_stream, MessageDecoder),
             response: response_sender,
             group_order: group_order.unwrap_or(GroupOrder::Ascending),
@@ -647,8 +659,8 @@ impl ControlChannel {
 
 /// §5.2: a subscriber keeps the state of a FETCH until its response stream
 /// ends with FIN or a reset. Ends the request stream of a FETCH this side
-/// sent with FIN then, or with a reset (cancelling it, §3.3.2) when the
-/// reader of the response stream is dropped first.
+/// sent with FIN then, or cancels it (`cancel`) when the reader of the
+/// response stream is dropped first.
 #[derive(Debug)]
 pub(crate) struct FetchRequestEnd {
     connection: Weak<Connection>,
@@ -691,7 +703,7 @@ fn end_outgoing(connection: &Weak<Connection>, request_id: RequestId, finished: 
         let ended = if finished {
             stream.sender.close().await
         } else {
-            stream.sender.reset(cancelled()).await
+            cancel(Some(stream)).await
         };
         if let Err(error) = ended {
             tracing::debug!(%error, "could not end a request stream");
@@ -1349,6 +1361,91 @@ mod tests {
 
         // Assert: §3.3.2
         assert!(matches!(event, SessionEvent::FetchCancel(_)), "{event:?}");
+    }
+
+    /// A FETCH from `client` that `server` answers with FETCH_OK and its
+    /// response stream; returns the server's FETCH handler and data sender
+    /// and the client's receiver.
+    async fn fetch_with_response_stream(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (
+        crate::fetch::FetchHandler,
+        crate::fetch::FetchDataSender,
+        crate::fetch::FetchDataReceiver,
+    ) {
+        let end = Location {
+            group_id: 1,
+            object_id: 0,
+        };
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            let handle = subscriber
+                .fetch(
+                    "ns".into(),
+                    "track".into(),
+                    Location {
+                        group_id: 0,
+                        object_id: 0,
+                    },
+                    end,
+                    FetchOption::default(),
+                )
+                .await
+                .unwrap();
+            subscriber.accept_fetch_receiver(&handle).await.unwrap()
+        });
+        let SessionEvent::Fetch(handler) = next_event(server).await else {
+            panic!("expected FETCH");
+        };
+        handler.ok(false, end).await.unwrap();
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        (handler, sender, request.await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_fetch_stops_its_request_stream() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions(&format!("draft18-fetch-stop-{scheme}"), scheme)
+                    .await;
+            let (handler, _sender, receiver) = fetch_with_response_stream(&client, &server).await;
+            let request_stream = ControlChannel::of(&server.publisher().session.connection())
+                .requests()
+                .incoming
+                .get(&handler.request_id)
+                .cloned()
+                .unwrap();
+            let request_ok = messages::encode_empty_request_ok().unwrap();
+
+            // Act
+            drop(receiver);
+            let refused = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                loop {
+                    if let Err(error) = request_stream.sender.send(&request_ok).await {
+                        return error;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+
+            // Assert: §5.2 STOP_SENDING with CANCELLED (§3.3.3)
+            assert!(
+                matches!(
+                    refused,
+                    Ok(crate::modules::transport::transport_send_stream::TransportSendError::Stopped {
+                        code: 0x1
+                    })
+                ),
+                "{scheme}: {refused:?}"
+            );
+        }
     }
 
     #[tokio::test]

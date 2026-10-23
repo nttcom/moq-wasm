@@ -144,6 +144,21 @@ fn accept_request_go_away(scope: &Scope, received_before: bool, new_session_uri:
     }
 }
 
+/// The next message on a request stream, or `None` once this side cancelled
+/// the request; the peer's half is then stopped with STOP_SENDING (§3.3.2).
+async fn receive_unless_cancelled(
+    receiver: &mut MessageReceiver,
+    reader_stop: &tokio::sync::Notify,
+) -> Option<Result<Option<Message>, StreamReceiveError>> {
+    tokio::select! {
+        received = receiver.receive() => Some(received),
+        () = reader_stop.notified() => {
+            receiver.stop(super::cancelled());
+            None
+        }
+    }
+}
+
 /// Reads the peer's control stream and accepts the request streams the
 /// peer opens, until the connection ends. The Request ID of every
 /// PUBLISH_DONE also goes to `publish_done_sender`.
@@ -266,15 +281,19 @@ impl IncomingRequestTask {
             }
             Ok(None) | Err(StreamReceiveError::Closed(_)) => return,
         };
-        let Some((request_id, kind, mut baseline)) =
+        let Some((request_id, stream, mut baseline)) =
             Self::accept_request(&context, &sender, message).await
         else {
             return;
         };
+        let kind = stream.kind;
         drop(context);
         let mut go_away_received = false;
         loop {
-            let received = receiver.receive().await;
+            let Some(received) = receive_unless_cancelled(&mut receiver, &stream.reader_stop).await
+            else {
+                return;
+            };
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
@@ -331,7 +350,7 @@ impl IncomingRequestTask {
         scope: &Scope,
         sender: &Arc<StreamSender>,
         message: Message,
-    ) -> Option<(RequestId, RequestStreamKind, Option<SubscribeUpdate>)> {
+    ) -> Option<(RequestId, RequestStream, Option<SubscribeUpdate>)> {
         let channel = scope.channel();
         let request_id = match &message {
             Message::Subscribe(m) | Message::TrackStatus(m) => m.request_id,
@@ -437,18 +456,17 @@ impl IncomingRequestTask {
             ),
             _ => unreachable!("non-request messages returned above"),
         };
+        let stream = RequestStream {
+            default_publisher_priority,
+            ..RequestStream::new(kind, sender.clone())
+        };
         // Registered before the event, so a handler can answer at once.
-        channel.requests().incoming.insert(
-            request_id,
-            RequestStream {
-                kind: kind.clone(),
-                sender: sender.clone(),
-                default_publisher_priority,
-                fetch_end: Default::default(),
-            },
-        );
+        channel
+            .requests()
+            .incoming
+            .insert(request_id, stream.clone());
         emit(scope, event);
-        Some((request_id, kind, baseline))
+        Some((request_id, stream, baseline))
     }
 
     async fn reject(sender: &StreamSender, code: RequestErrorCode) {
@@ -662,8 +680,7 @@ fn apply_update(
 pub(crate) struct OutgoingRequestTask {
     pub(super) connection: Weak<Connection>,
     pub(super) request_id: RequestId,
-    pub(super) kind: RequestStreamKind,
-    pub(super) sender: Arc<StreamSender>,
+    pub(super) stream: RequestStream,
     pub(super) receiver: MessageReceiver,
     pub(super) response: tokio::sync::oneshot::Sender<ResponseMessage>,
     pub(super) group_order: GroupOrder,
@@ -682,7 +699,7 @@ impl OutgoingRequestTask {
         }
     }
 
-    pub(crate) fn run(self) {
+    pub(super) fn run(self) {
         executor::spawn("draft-18 outgoing request", self.read().in_current_span());
     }
 
@@ -690,13 +707,20 @@ impl OutgoingRequestTask {
         let Self {
             connection,
             request_id,
-            kind,
-            sender,
+            stream,
             mut receiver,
             response,
             group_order,
         } = self;
-        let first = receiver.receive().await;
+        let RequestStream {
+            kind,
+            sender,
+            reader_stop,
+            ..
+        } = stream;
+        let Some(first) = receive_unless_cancelled(&mut receiver, &reader_stop).await else {
+            return;
+        };
         let Some(context) = Scope::of(&connection) else {
             return;
         };
@@ -742,8 +766,12 @@ impl OutgoingRequestTask {
         // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn.
         let mut namespaces: HashSet<Vec<String>> = HashSet::new();
         loop {
-            let received = receiver.receive().await;
+            let received = receive_unless_cancelled(&mut receiver, &reader_stop).await;
             let Some(context) = Scope::of(&connection) else {
+                return;
+            };
+            let Some(received) = received else {
+                Self::withdraw_namespaces(&context, namespaces);
                 return;
             };
             match received {

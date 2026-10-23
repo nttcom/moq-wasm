@@ -74,7 +74,10 @@ The creator yields `Box<dyn TransportConnection>`, whose streams are
 `Box<dyn TransportSendStream>` / `Box<dyn TransportReceiveStream>`
 (`BoxedConnection`, `BoxedSendStream`, `BoxedReceiveStream` in
 `transport_connection.rs`), so the transport is erased as soon as a
-connection exists.
+connection exists. `TransportReceiveStream::stop` sends STOP_SENDING with a
+code (quinn `RecvStream::stop`, web-transport-quinn `RecvStream::stop`,
+`ReadableStreamDefaultReader.cancel` with a `WebTransportError` in the
+browser).
 
 Four zero-sized markers implement it; the first three are native-only:
 
@@ -83,7 +86,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
-| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM and STOP_SENDING codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 `T: TransportProtocol`, because the creator's constructors are static
@@ -183,7 +186,10 @@ call through the adapter; a draft never gets a task of its own (see
     it with FIN. The cancelling notifications (UNSUBSCRIBE, FETCH_CANCEL,
     PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE) reset it, and so
     does dropping a `PendingResponse` before a success response (§3.3.2).
-    When the peer ends a request, this side's half ends with FIN.
+    Cancelling also notifies the stream's `reader_stop`, on which the task
+    reading the peer's half stops it with STOP_SENDING CANCELLED; §5.2
+    requires that of a FETCH requester. When the peer ends a request, this
+    side's half ends with FIN.
   - A FETCH's state lasts until its response stream ends (§5.2). The
     publisher ends the request stream with FIN once both its FETCH_OK and the
     FIN or reset of the response stream (`FetchDataSender::close` /

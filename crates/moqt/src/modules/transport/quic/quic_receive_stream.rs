@@ -27,4 +27,13 @@ impl TransportReceiveStream for QUICReceiveStream {
                 _ => todo!("handle other read errors: {:?}", e),
             })
     }
+
+    fn stop(&mut self, error_code: u64) {
+        let Ok(error_code) = quinn::VarInt::try_from(error_code) else {
+            tracing::debug!(error_code, "STOP_SENDING code out of range");
+            return;
+        };
+        // Fails only for a stream that already ended.
+        let _ = self.recv_stream.stop(error_code);
+    }
 }
