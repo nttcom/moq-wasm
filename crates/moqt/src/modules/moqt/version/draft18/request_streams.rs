@@ -884,10 +884,10 @@ impl OutgoingRequestTask {
     }
 
     /// The peer ended a request this endpoint still had open: raises the
-    /// withdrawal draft-14 would have sent as a message. With `going_away` (a
-    /// GOAWAY on the request stream, §10.4) the request ends with GOING_AWAY
-    /// and its stream is reset, as draft-14 events have no per-request
-    /// migration.
+    /// withdrawal draft-14 would have sent as a message, then ends this side's
+    /// half with FIN. With `going_away` (a GOAWAY on the request stream,
+    /// §10.4) the request ends with GOING_AWAY and its stream is reset, as
+    /// draft-14 events have no per-request migration.
     async fn peer_ended(
         scope: &Scope,
         request_id: RequestId,
@@ -932,15 +932,18 @@ impl OutgoingRequestTask {
         if let Some(event) = event {
             emit(scope, event);
         }
-        if going_away
-            && let Err(error) = stream
+        let ended = if going_away {
+            stream
                 .sender
                 .reset(super::error_codes::stream_reset_code_to_wire(
                     DataStreamResetCode::GoingAway,
                 ))
                 .await
-        {
-            tracing::debug!(%error, "could not cancel a request moved by GOAWAY");
+        } else {
+            stream.sender.close().await
+        };
+        if let Err(error) = ended {
+            tracing::debug!(%error, "could not end the stream of a request the peer ended");
         }
     }
 }

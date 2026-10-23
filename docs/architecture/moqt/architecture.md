@@ -183,6 +183,7 @@ call through the adapter; a draft never gets a task of its own (see
     it with FIN. The cancelling notifications (UNSUBSCRIBE, FETCH_CANCEL,
     PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE) reset it, and so
     does dropping a `PendingResponse` before a success response (§3.3.2).
+    When the peer ends a request, this side's half ends with FIN.
   - A FETCH's state lasts until its response stream ends (§5.2). The
     publisher ends the request stream with FIN once both its FETCH_OK and the
     FIN or reset of the response stream (`FetchDataSender::close` /
