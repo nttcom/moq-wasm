@@ -684,22 +684,25 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use crate::{
-        RequestErrorCode, RequestFailure, Session, SessionEvent, TerminationErrorCode,
+        RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription,
+        TerminationErrorCode,
         fetch::{
             Fetch, FetchCancelHandler, FetchDataReceiver, FetchDataSender, FetchHandle,
             FetchHandler, FetchOption,
         },
         modules::{
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, location, read_fetch_objects,
-                spawn_connected_dual_sessions, subscription, within,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, first_subgroup_stream, location,
+                object_with_extensions, read_fetch_objects, read_subgroup_objects,
+                send_subgroup_object, spawn_connected_dual_sessions, subgroup_receiver,
+                subscription, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         },
-        subscribe::{SubscribeOption, SubscribeUpdateOption},
+        subscribe::{SubscribeHandler, SubscribeOption, SubscribeUpdateOption},
     };
 
     const START: Location = Location {
@@ -1156,6 +1159,202 @@ mod tests {
         // Assert
         let received = received.expect("the receive wait ends once the peer disconnects");
         assert!(received.is_err(), "{received:?}");
+    }
+
+    async fn start_subscribe(
+        client: &Session,
+        server: &Session,
+        track_name: &str,
+    ) -> (
+        JoinHandle<Result<Subscription, RequestFailure>>,
+        SubscribeHandler,
+    ) {
+        let mut subscriber = client.subscriber();
+        let track_name = track_name.to_string();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe("ns".to_string(), track_name, SubscribeOption::default())
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        (request, handler)
+    }
+
+    async fn receive_subscribe_objects(
+        client: &Session,
+        subscription: &Subscription,
+    ) -> (u64, Vec<Object>) {
+        let mut receiver = first_subgroup_stream(client, subscription).await;
+        let objects = read_subgroup_objects(&mut receiver).await;
+        (receiver.track_alias, objects)
+    }
+
+    #[tokio::test]
+    async fn subscribe_ok_after_cancellation_unsubscribes_and_later_subscribe_delivers() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-subscribe-late-ok").await;
+        let (request, handler) = start_subscribe(&client, &server, "cancelled").await;
+        let mut object = object_with_extensions();
+        object.payload = Bytes::from_static(b"later subscription");
+
+        // Act
+        request.abort();
+        let cancelled = request.await.unwrap_err();
+        let unsubscribe = within(async {
+            handler.ok(0, ContentExists::False).await.unwrap();
+            let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected UNSUBSCRIBE after a late SUBSCRIBE_OK");
+            };
+            unsubscribe
+        })
+        .await;
+        let (later_request, later_handler) = start_subscribe(&client, &server, "later").await;
+        let (later, received_alias, objects) = within(async {
+            let alias = later_handler.ok(0, ContentExists::False).await.unwrap();
+            let later = later_request.await.unwrap().unwrap();
+            send_subgroup_object(&server, &later_handler.into_subscription(alias), &object).await;
+            let (received_alias, objects) = receive_subscribe_objects(&client, &later).await;
+            (later, received_alias, objects)
+        })
+        .await;
+
+        // Assert
+        assert!(cancelled.is_cancelled());
+        assert_eq!(unsubscribe.subscribe_id(), handler.request_id());
+        assert_ne!(later.request_id(), handler.request_id());
+        assert_eq!(later.track_name(), "later");
+        assert_eq!(received_alias, later.track_alias());
+        assert_eq!(objects, [object]);
+    }
+
+    #[tokio::test]
+    async fn unsubscribing_one_track_leaves_the_other_delivering_on_the_same_session() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-unsubscribe-one").await;
+        let (cancelled_request, cancelled_handler) =
+            start_subscribe(&client, &server, "cancelled").await;
+        let cancelled_alias = within(cancelled_handler.ok(0, ContentExists::False))
+            .await
+            .unwrap();
+        let cancelled = within(cancelled_request).await.unwrap().unwrap();
+        let (kept_request, kept_handler) = start_subscribe(&client, &server, "kept").await;
+        let kept_alias = within(kept_handler.ok(0, ContentExists::False))
+            .await
+            .unwrap();
+        let kept = within(kept_request).await.unwrap().unwrap();
+        let mut before = object_with_extensions();
+        before.payload = Bytes::from_static(b"before unsubscribe");
+        within(send_subgroup_object(
+            &server,
+            &cancelled_handler.into_subscription(cancelled_alias),
+            &before,
+        ))
+        .await;
+        let (_, cancelled_before) = within(receive_subscribe_objects(&client, &cancelled)).await;
+        within(send_subgroup_object(
+            &server,
+            &kept_handler.into_subscription(kept_alias),
+            &before,
+        ))
+        .await;
+        let mut kept_receiver = within(subgroup_receiver(&client, &kept)).await;
+        let mut first = within(kept_receiver.next()).await.unwrap();
+        let kept_before = within(read_subgroup_objects(&mut first)).await;
+        let mut after = object_with_extensions();
+        after.location.group_id += 1;
+        after.payload = Bytes::from_static(b"after unsubscribe");
+
+        // Act
+        let (unsubscribe, received_alias, objects) = within(async {
+            client.subscriber().unsubscribe(&cancelled).await.unwrap();
+            let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected UNSUBSCRIBE from the client");
+            };
+            send_subgroup_object(&server, &kept_handler.into_subscription(kept_alias), &after)
+                .await;
+            let mut next = kept_receiver.next().await.unwrap();
+            let received_alias = next.track_alias;
+            let objects = read_subgroup_objects(&mut next).await;
+            (unsubscribe, received_alias, objects)
+        })
+        .await;
+
+        // Assert
+        assert_eq!(cancelled_before, [before.clone()]);
+        assert_eq!(kept_before, [before]);
+        assert_eq!(unsubscribe.subscribe_id(), cancelled_handler.request_id());
+        assert_ne!(unsubscribe.subscribe_id(), kept.request_id());
+        assert_eq!(received_alias, kept_alias);
+        assert_eq!(objects, [after]);
+    }
+
+    #[tokio::test]
+    async fn subscribes_answered_in_reverse_order_receive_their_own_metadata_alias_and_objects() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-subscribe-reverse-order").await;
+        let tracks = ["track-0", "track-1", "track-2"];
+        let mut requests = Vec::new();
+        for track in tracks {
+            requests.push(start_subscribe(&client, &server, track).await);
+        }
+        let objects = tracks.map(|track| {
+            let mut object = object_with_extensions();
+            object.payload = Bytes::copy_from_slice(track.as_bytes());
+            object
+        });
+        let content_of = |index: usize| ContentExists::True {
+            location: location(index as u64 + 1, 0),
+        };
+        let mut aliases = vec![0; tracks.len()];
+
+        // Act
+        let received = within(async {
+            for (index, (_, handler)) in requests.iter_mut().enumerate().rev() {
+                handler.max_cache_duration = Some(1000 + index as u64);
+                aliases[index] = handler
+                    .ok(10 + index as u64, content_of(index))
+                    .await
+                    .unwrap();
+            }
+            let mut received = Vec::new();
+            for (index, (request, handler)) in requests.into_iter().enumerate() {
+                let subscription = request.await.unwrap().unwrap();
+                send_subgroup_object(
+                    &server,
+                    &handler.into_subscription(aliases[index]),
+                    &objects[index],
+                )
+                .await;
+                let (received_alias, objects) =
+                    receive_subscribe_objects(&client, &subscription).await;
+                received.push((handler.request_id(), subscription, received_alias, objects));
+            }
+            received
+        })
+        .await;
+
+        // Assert
+        for (index, (request_id, subscription, received_alias, received_objects)) in
+            received.into_iter().enumerate()
+        {
+            assert_eq!(subscription.request_id(), request_id, "{}", tracks[index]);
+            assert_eq!(subscription.track_namespace(), "ns");
+            assert_eq!(subscription.track_name(), tracks[index]);
+            assert_eq!(subscription.track_alias(), aliases[index]);
+            assert_eq!(received_alias, aliases[index]);
+            assert_eq!(subscription.expires(), Some(10 + index as u64));
+            assert_eq!(subscription.content_exists(), content_of(index));
+            assert_eq!(subscription.max_cache_duration(), Some(1000 + index as u64));
+            assert_eq!(received_objects, [objects[index].clone()]);
+        }
+        assert_ne!(aliases[0], aliases[1]);
+        assert_ne!(aliases[1], aliases[2]);
+        assert_ne!(aliases[0], aliases[2]);
     }
 
     #[tokio::test]
