@@ -22,7 +22,7 @@ impl StreamSender {
     }
 
     pub async fn close(&self) -> anyhow::Result<()> {
-        Ok(self.send_stream.lock().await.close().await?)
+        Ok(self.send_stream.lock().await.close()?)
     }
 
     pub async fn reset(&self, error_code: u64) -> anyhow::Result<()> {

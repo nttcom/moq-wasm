@@ -17,7 +17,7 @@ impl TransportSendStream for WtSendStream {
             .map_err(webtransport_write_error_to_transport_send_error)
     }
 
-    async fn close(&mut self) -> Result<(), TransportSendError> {
+    fn close(&mut self) -> Result<(), TransportSendError> {
         self.send_stream
             .finish()
             .map_err(|_| TransportSendError::ClosedStream)

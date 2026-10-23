@@ -33,7 +33,7 @@ impl TransportSendStream for BrowserSendStream {
     }
 
     /// `writer.close()` resolves only once the peer has acknowledged the FIN.
-    async fn close(&mut self) -> Result<(), TransportSendError> {
+    fn close(&mut self) -> Result<(), TransportSendError> {
         let close = self.writer.close();
         spawn_local(async move {
             if let Err(error) = JsFuture::from(close).await {
