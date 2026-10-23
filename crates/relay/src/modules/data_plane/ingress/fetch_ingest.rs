@@ -23,6 +23,16 @@ pub(crate) struct FetchIngestStart {
     pub(crate) fill_timeout: Duration,
 }
 
+/// Why a fill did not hand its range to the downstream FETCH.
+#[derive(Debug, thiserror::Error)]
+enum FillFailure {
+    /// draft-18 §11.4.4.2: the objects may exist, so the range is not known.
+    #[error("the upstream FETCH response left objects of unknown status")]
+    UnknownObjects,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 /// Strict store-and-forward: delivery starts only after the whole response
 /// reached `Fetch::End`, so first-byte latency equals the upstream transfer
 /// time and fills longer than MOQT_FETCH_FILL_TIMEOUT_SECS fail.
@@ -45,10 +55,11 @@ impl FetchIngest {
         let cache = start.egress_start.cache.clone();
         let join_handle = tokio::spawn(async move {
             if let Err(error) = Self::run_inner(session_repo.clone(), &egress_sender, start).await {
-                // Expected request-scoped failures (timeout, upstream reset):
-                // log the chain without anyhow's captured backtrace.
-                tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
-                let error_code = if cache.is_malformed() {
+                let error_code = if let FillFailure::UnknownObjects = error {
+                    tracing::warn!(%error, "fetch ingest cannot serve the range");
+                    DataStreamResetCode::UnknownObjectStatus
+                } else if cache.is_malformed() {
+                    tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                     let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
                         upstream_publisher_session_id,
                         track_key,
@@ -61,6 +72,9 @@ impl FetchIngest {
                     .await;
                     DataStreamResetCode::MalformedTrack
                 } else {
+                    // Expected request-scoped failures (timeout, upstream
+                    // reset): log the chain without anyhow's captured backtrace.
+                    tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                     DataStreamResetCode::InternalError
                 };
                 Self::reset_downstream_fetch(
@@ -81,7 +95,7 @@ impl FetchIngest {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), FillFailure> {
         let timeout = start.fill_timeout;
         tokio::time::timeout(
             timeout,
@@ -95,7 +109,7 @@ impl FetchIngest {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), FillFailure> {
         let (mut subscriber, persist) = {
             let session_repo = session_repo.lock().await;
             let subscriber = session_repo
@@ -119,25 +133,30 @@ impl FetchIngest {
             persist,
         };
 
+        let mut unknown_objects = false;
         loop {
             let received = tokio::select! {
                 received = receiver.receive() => received?,
                 _ = cache.malformed_track_detected() => {
-                    anyhow::bail!("malformed track detected while awaiting fetch data");
+                    return Err(anyhow::anyhow!("malformed track detected while awaiting fetch data").into());
                 }
             };
             match received {
                 moqt::fetch::Fetch::Object(object) => {
                     Self::append_fetch_object(&cache, object, stamp)?;
                 }
-                moqt::fetch::Fetch::UnknownRange { .. } => {}
+                // The known objects around it are still cached.
+                moqt::fetch::Fetch::UnknownRange { .. } => unknown_objects = true,
                 moqt::fetch::Fetch::End => {
                     if cache.eviction_generation() != start_eviction_generation {
                         tracing::warn!(
                             request_id = start.egress_start.request_id,
                             "fetch fill crossed cache eviction; resetting downstream fetch"
                         );
-                        anyhow::bail!("fetch fill crossed cache eviction");
+                        return Err(anyhow::anyhow!("fetch fill crossed cache eviction").into());
+                    }
+                    if unknown_objects {
+                        return Err(FillFailure::UnknownObjects);
                     }
                     cache.insert_fetch_known_range(
                         start.egress_start.start_location,
@@ -145,7 +164,8 @@ impl FetchIngest {
                     );
                     egress_sender
                         .send(EgressCommand::StartFetch(start.egress_start))
-                        .await?;
+                        .await
+                        .map_err(anyhow::Error::from)?;
                     return Ok(());
                 }
             }
@@ -224,10 +244,14 @@ mod tests {
     use super::*;
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::{
+        auth::verified_token::VerifiedToken,
         data_plane::cache::track_cache::FetchRangeResolution,
         session::session_event::EventKind,
         test_support::{
-            mock_session::session_repository_with_upstream_session,
+            mock_session::{
+                FetchAnswer, mock_session_answering_fetch, session_repository_with_session,
+                session_repository_with_upstream_session,
+            },
             relay_harness::fixtures::{
                 cached_object::{status_object, stream_object, stream_object_with_payload},
                 location,
@@ -356,6 +380,100 @@ mod tests {
         // Assert: the fill fails and the track is quarantined
         assert!(result.is_err());
         assert!(cache.is_malformed());
+    }
+
+    const UPSTREAM_SESSION: SessionId = 1;
+
+    /// Fills a fresh cache for {0,0}..{0,3} from an upstream FETCH answered
+    /// with `response`.
+    async fn ingest(
+        response: Vec<moqt::fetch::Fetch>,
+    ) -> (
+        Arc<TrackCache>,
+        mpsc::Receiver<EgressCommand>,
+        Result<(), FillFailure>,
+    ) {
+        let session_repo = session_repository_with_session(
+            UPSTREAM_SESSION,
+            mock_session_answering_fetch(FetchAnswer::Respond(response)),
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let cache = Arc::new(TrackCache::new());
+        let (egress_sender, egress_receiver) = mpsc::channel(1);
+        let start = FetchIngestStart {
+            track_key: TrackKey::new("ns", "track"),
+            upstream_publisher_session_id: UPSTREAM_SESSION,
+            fetch_handle: moqt::fetch::FetchHandle {
+                request_id: 7,
+                group_order: moqt::object::GroupOrder::Ascending,
+                end_of_track: false,
+                end_location: location(0, 3),
+                max_cache_duration: None,
+                remainder: None,
+            },
+            egress_start: EgressFetchRequest {
+                subscriber_session_id: 2,
+                request_id: 3,
+                cache: cache.clone(),
+                start_location: location(0, 0),
+                end_location: location(0, 3),
+                group_order: moqt::object::GroupOrder::Ascending,
+            },
+            fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
+        };
+        let result = FetchIngest::ingest_fetch_stream(session_repo, &egress_sender, start).await;
+        (cache, egress_receiver, result)
+    }
+
+    fn fetched(object_id: u64) -> moqt::fetch::Fetch {
+        moqt::fetch::Fetch::Object(stream_object(0, object_id).object)
+    }
+
+    #[tokio::test]
+    async fn a_complete_upstream_response_covers_its_range() {
+        // Act
+        let (cache, mut egress_receiver, result) =
+            ingest(vec![fetched(0), fetched(2), moqt::fetch::Fetch::End]).await;
+
+        // Assert: the gap at {0,1} is known not to exist
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 3)),
+            FetchRangeResolution::Serve {
+                end_location: location(0, 3)
+            }
+        );
+        assert!(matches!(
+            egress_receiver.try_recv(),
+            Ok(EgressCommand::StartFetch(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_unknown_range_in_the_upstream_response_leaves_the_range_uncovered() {
+        // Act
+        let (cache, mut egress_receiver, result) = ingest(vec![
+            fetched(0),
+            moqt::fetch::Fetch::UnknownRange {
+                last: location(0, 1),
+            },
+            fetched(2),
+            moqt::fetch::Fetch::End,
+        ])
+        .await;
+
+        // Assert: a later FETCH of the range is not served from the cache but
+        // goes upstream again, and this one is not served as complete
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 3)),
+            FetchRangeResolution::NotCovered
+        );
+        assert!(
+            matches!(result, Err(FillFailure::UnknownObjects)),
+            "{result:?}"
+        );
+        assert!(egress_receiver.try_recv().is_err());
     }
 
     #[tokio::test]

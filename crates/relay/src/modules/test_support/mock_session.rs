@@ -94,11 +94,13 @@ enum SubscribeAnswer {
     Never,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum FetchAnswer {
     Never,
     Refuse,
     FetchOk,
+    /// FETCH_OK, then a response stream yielding these, then nothing.
+    Respond(Vec<moqt::fetch::Fetch>),
 }
 
 type PublishAnswer = Arc<dyn Fn() -> anyhow::Result<bool> + Send + Sync>;
@@ -288,7 +290,7 @@ impl Session for MockUpstreamSession {
         Box::new(MockUpstreamSubscriber {
             recorded: self.recorded.clone(),
             answer_subscribe: self.answer_subscribe.clone(),
-            answer_fetch: self.answer_fetch,
+            answer_fetch: self.answer_fetch.clone(),
         })
     }
 
@@ -489,7 +491,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 code: RequestErrorCode::TrackDoesNotExist,
                 reason: "no objects".to_string(),
             })),
-            FetchAnswer::FetchOk => Ok(moqt::fetch::FetchHandle {
+            FetchAnswer::FetchOk | FetchAnswer::Respond(_) => Ok(moqt::fetch::FetchHandle {
                 request_id: 0,
                 group_order: GroupOrder::Ascending,
                 end_of_track: false,
@@ -504,7 +506,12 @@ impl Subscriber for MockUpstreamSubscriber {
         &mut self,
         _handle: &moqt::fetch::FetchHandle,
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
-        Ok(Box::new(PendingFetchReceiver))
+        match &self.answer_fetch {
+            FetchAnswer::Respond(response) => {
+                Ok(Box::new(ScriptedFetchReceiver(response.clone().into())))
+            }
+            _ => Ok(Box::new(PendingFetchReceiver)),
+        }
     }
 
     async fn send_fetch_cancel(&self, fetch: &moqt::fetch::FetchHandle) -> anyhow::Result<()> {
@@ -518,6 +525,18 @@ impl Subscriber for MockUpstreamSubscriber {
 }
 
 struct PendingFetchReceiver;
+
+struct ScriptedFetchReceiver(std::collections::VecDeque<moqt::fetch::Fetch>);
+
+#[async_trait::async_trait]
+impl UpstreamFetchReceiver for ScriptedFetchReceiver {
+    async fn receive(&mut self) -> anyhow::Result<moqt::fetch::Fetch> {
+        match self.0.pop_front() {
+            Some(fetched) => Ok(fetched),
+            None => std::future::pending().await,
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl UpstreamFetchReceiver for PendingFetchReceiver {

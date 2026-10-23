@@ -642,7 +642,11 @@ per-request authorization gate under "Event pipeline".
   an evicted position is never re-claimed as known (§9.2.1.3 "their state
   becomes unknown") and a skipped id stays undecided. Fetch fills register
   their requested range only at `Fetch::End` (guarded by the eviction
-  generation counter); datagram objects register nothing.
+  generation counter), and not at all after a `Fetch::UnknownRange`: the
+  objects it fetched stay cached, the range stays unknown so a later FETCH
+  goes upstream again, and the downstream FETCH is reset with
+  UNKNOWN_OBJECT_STATUS (draft-18 §10.12.3). Datagram objects register
+  nothing.
 - `next_subgroup_object_or_wait(key, generation, from)` (live egress) returns the next object of that
   subgroup, `Finished` once it closed cleanly, or `Aborted` once it closed without
   a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks.
