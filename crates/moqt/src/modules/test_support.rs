@@ -263,6 +263,8 @@ pub(crate) async fn first_subgroup_stream(
     factory.next().await.unwrap()
 }
 
+/// The data receiver resolves only once the first object has arrived, so
+/// this must run after the publisher has sent something.
 pub(crate) async fn datagram_receiver(
     server: &Session,
     subscription: &Subscription,
