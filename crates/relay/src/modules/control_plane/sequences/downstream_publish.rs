@@ -185,6 +185,7 @@ mod tests {
                     UPSTREAM_REQUEST_ID,
                     TrackProperties {
                         max_cache_duration: Some(2_000),
+                        ..Default::default()
                     },
                 ),
                 expires: None,

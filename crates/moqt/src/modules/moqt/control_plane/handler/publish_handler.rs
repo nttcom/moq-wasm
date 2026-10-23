@@ -179,6 +179,7 @@ mod tests {
                     PublishOption {
                         track_properties: TrackProperties {
                             max_cache_duration: Some(2_000),
+                            ..Default::default()
                         },
                         ..PublishOption::default()
                     },

@@ -38,6 +38,7 @@ impl SubscribeOk {
         let delivery_timeout = find_even(&parameters, 0x02);
         let track_properties = TrackProperties {
             max_cache_duration: find_even(&parameters, 0x04),
+            other: Vec::new(),
         };
 
         Ok(SubscribeOk {

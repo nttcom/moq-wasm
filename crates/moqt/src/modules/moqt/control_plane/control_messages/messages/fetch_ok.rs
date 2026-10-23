@@ -44,6 +44,7 @@ impl FetchOk {
         let parameters = KeyValuePair::decode_list(buf)?;
         let track_properties = TrackProperties {
             max_cache_duration: find_even(&parameters, 0x04),
+            other: Vec::new(),
         };
         Ok(FetchOk {
             request_id,
@@ -130,6 +131,7 @@ mod tests {
                 },
                 track_properties: TrackProperties {
                     max_cache_duration: Some(5000),
+                    ..Default::default()
                 },
             };
             let buf = expected.encode();

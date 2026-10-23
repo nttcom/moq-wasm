@@ -46,6 +46,7 @@ impl Publish {
         let delivery_timeout = find_even(&parameters, 0x02);
         let track_properties = TrackProperties {
             max_cache_duration: find_even(&parameters, 0x04),
+            other: Vec::new(),
         };
         Ok(Self {
             request_id,
@@ -97,6 +98,8 @@ impl Publish {
 mod tests {
     mod success {
         use bytes::Bytes;
+        use crate::modules::moqt::control_plane::control_messages::key_value_pair::KeyValuePair;
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::track_properties::TrackProperties;
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
         use crate::modules::moqt::control_plane::control_messages::messages::{
@@ -287,6 +290,33 @@ mod tests {
                 publish_message.track_properties,
                 depacketized_message.track_properties
             );
+        }
+
+        #[test]
+        fn track_properties_held_as_received_are_not_sent() {
+            // Arrange: draft-14 has no Track Properties to carry them
+            let publish = |other| Publish {
+                request_id: 1,
+                track_namespace_tuple: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                track_alias: 2,
+                group_order: GroupOrder::Ascending,
+                content_exists: ContentExists::False,
+                forward: true,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
+                track_properties: TrackProperties {
+                    max_cache_duration: Some(5),
+                    other,
+                },
+            };
+            let with = publish(vec![KeyValuePair::even(0x38, 1)]);
+
+            // Act
+            let encoded = with.encode();
+
+            // Assert
+            assert_eq!(encoded, publish(vec![]).encode());
         }
     }
 }

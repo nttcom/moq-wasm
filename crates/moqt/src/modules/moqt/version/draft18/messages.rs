@@ -582,18 +582,43 @@ fn varint_property(key: u64, value: u64) -> KeyValuePair {
     }
 }
 
-/// The model's track-level fields as Track Properties, in ascending type
-/// order.
+/// The mutable Track Properties the model holds in fields of SUBSCRIBE_OK,
+/// PUBLISH and TRACK_STATUS_OK rather than as received.
+const FIELD_PROPERTIES: &[u64] = &[
+    MAX_CACHE_DURATION_PROPERTY,
+    DEFAULT_PUBLISHER_GROUP_ORDER_PROPERTY,
+];
+/// FETCH_OK takes its group order from the FETCH, not from its properties.
+const FETCH_OK_FIELD_PROPERTIES: &[u64] = &[MAX_CACHE_DURATION_PROPERTY];
+
+/// The model's view of the Track Properties ending a message: everything
+/// but the `fields` types of the mutable list is held as received (§2.5).
+fn model_track_properties(properties: &[KeyValuePair], fields: &[u64]) -> TrackProperties {
+    TrackProperties {
+        max_cache_duration: varint_property_value(properties, MAX_CACHE_DURATION_PROPERTY),
+        other: properties
+            .iter()
+            .filter(|property| !fields.contains(&property.key))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// The model's track-level fields and the properties it holds as received,
+/// as Track Properties in ascending type order. A field one of the held
+/// properties already carries, in the mutable list or inside Immutable
+/// Properties, is not added, so the received value goes out unchanged
+/// (§2.5, §12.7).
 fn track_properties(
     delivery_timeout: Option<u64>,
-    max_cache_duration: Option<u64>,
+    held: &TrackProperties,
     group_order: GroupOrder,
 ) -> Vec<KeyValuePair> {
     let mut properties = Vec::new();
     if let Some(timeout) = delivery_timeout {
         properties.push(varint_property(OBJECT_DELIVERY_TIMEOUT_PROPERTY, timeout));
     }
-    if let Some(duration) = max_cache_duration {
+    if let Some(duration) = held.max_cache_duration {
         properties.push(varint_property(MAX_CACHE_DURATION_PROPERTY, duration));
     }
     properties.extend(
@@ -604,6 +629,11 @@ fn track_properties(
         }
         .map(|order| varint_property(DEFAULT_PUBLISHER_GROUP_ORDER_PROPERTY, order)),
     );
+    let carried = searched_properties(&held.other);
+    properties.retain(|field| carried.iter().all(|property| property.key != field.key));
+    properties.extend(held.other.iter().cloned());
+    // Stable, so properties of one type keep the order they arrived in.
+    properties.sort_by_key(|property| property.key);
     properties
 }
 
@@ -747,9 +777,7 @@ fn decode_publish(buf: &mut Bytes) -> Result<(Publish, Vec<KeyValuePair>), Decod
         forward,
         authorization_tokens: tokens(parameters),
         delivery_timeout: varint_property_value(&properties, OBJECT_DELIVERY_TIMEOUT_PROPERTY),
-        track_properties: TrackProperties {
-            max_cache_duration: varint_property_value(&properties, MAX_CACHE_DURATION_PROPERTY),
-        },
+        track_properties: model_track_properties(&properties, FIELD_PROPERTIES),
     };
     Ok((publish, properties))
 }
@@ -771,7 +799,7 @@ pub(crate) fn encode_publish(publish: &Publish) -> anyhow::Result<BytesMut> {
         &mut payload,
         &track_properties(
             publish.delivery_timeout,
-            publish.track_properties.max_cache_duration,
+            &publish.track_properties,
             publish.group_order,
         ),
     )?;
@@ -931,7 +959,7 @@ pub(crate) fn encode_subscribe_ok(subscribe_ok: &SubscribeOk) -> anyhow::Result<
         &mut payload,
         &track_properties(
             subscribe_ok.delivery_timeout,
-            subscribe_ok.track_properties.max_cache_duration,
+            &subscribe_ok.track_properties,
             subscribe_ok.group_order.delivered(),
         ),
     )?;
@@ -958,12 +986,7 @@ impl SubscribeOkMessage {
                 &self.track_properties,
                 OBJECT_DELIVERY_TIMEOUT_PROPERTY,
             ),
-            track_properties: TrackProperties {
-                max_cache_duration: varint_property_value(
-                    &self.track_properties,
-                    MAX_CACHE_DURATION_PROPERTY,
-                ),
-            },
+            track_properties: model_track_properties(&self.track_properties, FIELD_PROPERTIES),
         }
     }
 }
@@ -1012,7 +1035,7 @@ pub(crate) fn encode_track_status_ok(track_status_ok: &SubscribeOk) -> anyhow::R
         largest_object(&track_status_ok.content_exists).as_slice(),
         &track_properties(
             track_status_ok.delivery_timeout,
-            track_status_ok.track_properties.max_cache_duration,
+            &track_status_ok.track_properties,
             track_status_ok.group_order.delivered(),
         ),
     )
@@ -1063,11 +1086,7 @@ pub(crate) fn encode_fetch_ok(fetch_ok: &FetchOk) -> anyhow::Result<BytesMut> {
     put_parameters(&mut payload, &[])?;
     put_key_value_pairs(
         &mut payload,
-        &track_properties(
-            None,
-            fetch_ok.track_properties.max_cache_duration,
-            GroupOrder::Publisher,
-        ),
+        &track_properties(None, &fetch_ok.track_properties, GroupOrder::Publisher),
     )?;
     frame(FETCH_OK, &payload)
 }
@@ -1080,12 +1099,10 @@ impl FetchOkMessage {
             group_order: group_order.delivered(),
             end_of_track: self.end_of_track,
             end_location: self.end_location,
-            track_properties: TrackProperties {
-                max_cache_duration: varint_property_value(
-                    &self.track_properties,
-                    MAX_CACHE_DURATION_PROPERTY,
-                ),
-            },
+            track_properties: model_track_properties(
+                &self.track_properties,
+                FETCH_OK_FIELD_PROPERTIES,
+            ),
         }
     }
 }
@@ -1160,6 +1177,16 @@ pub(crate) fn encode_request_update(
     put_vi64(&mut payload, request_id);
     put_parameters(&mut payload, &parameters)?;
     frame(REQUEST_UPDATE, &payload)
+}
+
+/// Immutable Properties (§12.7) holding an application property (§2.5:
+/// 0x38-0x3F) whose value 5 takes two bytes; the model has no field for it.
+#[cfg(test)]
+pub(super) fn immutable_application_property() -> KeyValuePair {
+    KeyValuePair {
+        key: 0x0B,
+        value: VariantType::Odd(Bytes::from_static(&[0x38, 0x80, 0x05])),
+    }
 }
 
 #[cfg(test)]
@@ -1263,6 +1290,7 @@ mod tests {
             delivery_timeout: Some(200),
             track_properties: TrackProperties {
                 max_cache_duration: Some(60_000),
+                ..Default::default()
             },
         };
         let fetch = Fetch {
@@ -1307,6 +1335,10 @@ mod tests {
         else {
             panic!("expected PUBLISH");
         };
+        // OBJECT_DELIVERY_TIMEOUT is also held as received, for a relay to
+        // forward
+        let mut publish = publish;
+        publish.track_properties.other = vec![varint_property(0x02, 200)];
         assert_eq!(decoded_publish, publish);
         assert_eq!(decode(encode_fetch(&fetch).unwrap()), Message::Fetch(fetch));
         assert_eq!(
@@ -1395,6 +1427,7 @@ mod tests {
             delivery_timeout: Some(100),
             track_properties: TrackProperties {
                 max_cache_duration: Some(5_000),
+                ..Default::default()
             },
         };
         let publish_ok = PublishOk {
@@ -1412,6 +1445,7 @@ mod tests {
             end_location: location(4, 1),
             track_properties: TrackProperties {
                 max_cache_duration: Some(10),
+                ..Default::default()
             },
         };
 
@@ -1435,8 +1469,19 @@ mod tests {
             panic!("expected FETCH_OK");
         };
 
-        // Assert
-        assert_eq!(decoded_subscribe_ok.into_subscribe_ok(4), subscribe_ok);
+        // Assert: OBJECT_DELIVERY_TIMEOUT is also held as received, for a
+        // relay to forward
+        let subscribe_ok = SubscribeOk {
+            track_properties: TrackProperties {
+                other: vec![varint_property(0x02, 100)],
+                ..subscribe_ok.track_properties
+            },
+            ..subscribe_ok
+        };
+        assert_eq!(
+            decoded_subscribe_ok.into_subscribe_ok(4),
+            subscribe_ok.clone()
+        );
         assert_eq!(decoded_publish_ok.into_publish_ok(2), publish_ok);
         assert_eq!(
             decoded_track_status_ok.into_track_status_ok(4),
@@ -1672,56 +1717,74 @@ mod tests {
         }
     }
 
-    #[test]
-    fn track_properties_inside_immutable_properties_are_found() {
-        // Arrange
-        let properties = vec![immutable(&[varint_property(0x04, 50)])];
+    /// §12.7 Immutable Properties whose contents are `contents` exactly.
+    fn raw_immutable(contents: &'static [u8]) -> KeyValuePair {
+        KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(Bytes::from_static(contents)),
+        }
+    }
+
+    /// SUBSCRIBE_OK, PUBLISH and FETCH_OK ending with `properties`, laid out
+    /// as moqt encodes them.
+    fn messages_carrying(properties: &[KeyValuePair]) -> [BytesMut; 3] {
         let mut subscribe_ok = BytesMut::new();
         put_vi64(&mut subscribe_ok, 1);
         put_parameters(&mut subscribe_ok, &[]).unwrap();
-        put_key_value_pairs(&mut subscribe_ok, &properties).unwrap();
+        put_key_value_pairs(&mut subscribe_ok, properties).unwrap();
         let mut publish = BytesMut::new();
         put_vi64(&mut publish, 1);
         put_full_track_name(&mut publish, &["ns".to_string()], "track");
         put_vi64(&mut publish, 2);
-        put_parameters(&mut publish, &[]).unwrap();
-        put_key_value_pairs(&mut publish, &properties).unwrap();
+        put_parameters(&mut publish, &[Parameter::Forward(true)]).unwrap();
+        put_key_value_pairs(&mut publish, properties).unwrap();
         let mut fetch_ok = BytesMut::new();
         fetch_ok.put_u8(0);
         put_location(&mut fetch_ok, &location(1, 0));
         put_parameters(&mut fetch_ok, &[]).unwrap();
-        put_key_value_pairs(&mut fetch_ok, &properties).unwrap();
+        put_key_value_pairs(&mut fetch_ok, properties).unwrap();
+        [
+            frame(SUBSCRIBE_OK, &subscribe_ok).unwrap(),
+            frame(PUBLISH, &publish).unwrap(),
+            frame(FETCH_OK, &fetch_ok).unwrap(),
+        ]
+    }
+
+    /// The model's view of the Track Properties of a SUBSCRIBE_OK, PUBLISH
+    /// or FETCH_OK.
+    fn held_track_properties(framed: BytesMut) -> TrackProperties {
+        match decode(framed) {
+            Message::SubscribeOk(ok) => ok.into_subscribe_ok(1).track_properties,
+            Message::Publish { publish, .. } => publish.track_properties,
+            Message::FetchOk(ok) => ok.into_fetch_ok(1, GroupOrder::Ascending).track_properties,
+            message => panic!("expected a message with Track Properties, got {message:?}"),
+        }
+    }
+
+    /// Decodes `framed` into the model and encodes the model again, as a
+    /// relay forwarding the message does.
+    fn sent_again(framed: BytesMut) -> BytesMut {
+        match decode(framed) {
+            Message::SubscribeOk(ok) => encode_subscribe_ok(&ok.into_subscribe_ok(1)),
+            Message::Publish { publish, .. } => encode_publish(&publish),
+            Message::FetchOk(ok) => encode_fetch_ok(&ok.into_fetch_ok(1, GroupOrder::Ascending)),
+            message => panic!("expected a message with Track Properties, got {message:?}"),
+        }
+        .unwrap()
+    }
+
+    #[test]
+    fn track_properties_inside_immutable_properties_are_found() {
+        // Arrange
+        let messages = messages_carrying(&[immutable(&[varint_property(0x04, 50)])]);
 
         // Act
-        let subscribe_ok = decode(frame(SUBSCRIBE_OK, &subscribe_ok).unwrap());
-        let publish = decode(frame(PUBLISH, &publish).unwrap());
-        let fetch_ok = decode(frame(FETCH_OK, &fetch_ok).unwrap());
+        let found = messages.map(held_track_properties);
 
         // Assert: §12.7
-        let Message::SubscribeOk(subscribe_ok) = subscribe_ok else {
-            panic!("expected SUBSCRIBE_OK");
-        };
-        assert_eq!(
-            subscribe_ok
-                .into_subscribe_ok(1)
-                .track_properties
-                .max_cache_duration,
-            Some(50)
-        );
-        let Message::Publish { publish, .. } = publish else {
-            panic!("expected PUBLISH");
-        };
-        assert_eq!(publish.track_properties.max_cache_duration, Some(50));
-        let Message::FetchOk(fetch_ok) = fetch_ok else {
-            panic!("expected FETCH_OK");
-        };
-        assert_eq!(
-            fetch_ok
-                .into_fetch_ok(1, GroupOrder::Ascending)
-                .track_properties
-                .max_cache_duration,
-            Some(50)
-        );
+        for track_properties in found {
+            assert_eq!(track_properties.max_cache_duration, Some(50));
+        }
         assert_eq!(
             default_publisher_priority(&[immutable(&[varint_property(0x0E, 9)])]),
             9
@@ -1729,5 +1792,79 @@ mod tests {
         assert!(has_mandatory_track_property(&[immutable(&[
             varint_property(0x4000, 1)
         ])]));
+    }
+
+    fn application_properties() -> [KeyValuePair; 2] {
+        [
+            varint_property(0x38, 1),
+            KeyValuePair {
+                key: 0x3801,
+                value: VariantType::Odd(Bytes::from_static(b"app")),
+            },
+        ]
+    }
+
+    #[test]
+    fn the_model_keeps_the_track_properties_it_has_no_field_for_as_received() {
+        // Arrange
+        let mut properties = vec![
+            varint_property(0x02, 200),
+            varint_property(0x04, 5_000),
+            immutable_application_property(),
+            varint_property(0x22, 2),
+        ];
+        properties.extend(application_properties());
+
+        // Act
+        let held = messages_carrying(&properties).map(held_track_properties);
+
+        // Assert: MAX_CACHE_DURATION and DEFAULT PUBLISHER GROUP ORDER leave
+        // `other`; FETCH_OK keeps the group order
+        let mut other = vec![varint_property(0x02, 200), immutable_application_property()];
+        other.extend(application_properties());
+        let expected = TrackProperties {
+            max_cache_duration: Some(5_000),
+            other: other.clone(),
+        };
+        assert_eq!(held[0], expected);
+        assert_eq!(held[1], expected);
+        other.insert(2, varint_property(0x22, 2));
+        assert_eq!(
+            held[2],
+            TrackProperties {
+                max_cache_duration: Some(5_000),
+                other,
+            }
+        );
+    }
+
+    #[test]
+    fn track_properties_are_sent_again_byte_identical() {
+        // Arrange: MAX_CACHE_DURATION in the mutable list, then inside
+        // Immutable Properties with 50 in two bytes
+        let mut in_mutable_list = vec![
+            varint_property(0x02, 200),
+            varint_property(0x04, 5_000),
+            varint_property(0x06, 7),
+            immutable_application_property(),
+            varint_property(0x0E, 9),
+            varint_property(0x22, 2),
+        ];
+        in_mutable_list.extend(application_properties());
+        let mut inside_immutable = vec![
+            raw_immutable(&[0x04, 0x80, 0x32, 0x34, 0x05]),
+            varint_property(0x22, 1),
+        ];
+        inside_immutable.extend(application_properties());
+        for properties in [in_mutable_list, inside_immutable] {
+            for received in messages_carrying(&properties) {
+                // Act
+                let expected = received.clone();
+                let sent = sent_again(received);
+
+                // Assert
+                assert_eq!(sent, expected, "{properties:?}");
+            }
+        }
     }
 }

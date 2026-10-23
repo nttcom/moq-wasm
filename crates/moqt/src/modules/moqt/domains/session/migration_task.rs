@@ -279,6 +279,9 @@ impl Router {
     }
 }
 
+// Returned once per event and matched at once, never stored: boxing the event
+// would allocate for every one.
+#[allow(clippy::large_enum_variant)]
 enum PreviousSignal {
     Event(Option<SessionEvent>),
     Released,
