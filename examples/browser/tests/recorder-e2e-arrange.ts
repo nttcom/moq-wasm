@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -23,6 +23,11 @@ const RECORDING_FINISH_TIMEOUT_MS = 30_000
 /// Compositing re-encodes the whole room after it stopped, slower than real time in a debug build.
 const COMPOSITE_TIMEOUT_MS = 120_000
 const POLL_INTERVAL_MS = 200
+
+/// The fields of `recorder serve`'s `manifest.json` that the tests read.
+export interface RecordingManifest {
+  members: { namespace: string; screen_share_files: { key: string }[] }[]
+}
 
 /// Records with `--from-cache` and stops the recorder with SIGINT, as Ctrl-C would, `liveSeconds`
 /// after it starts recording.
@@ -144,6 +149,10 @@ export async function startRecorderServe() {
         .filter((name) => name.endsWith('.mp4') && name !== 'composite.mp4')
         .map((name) => join(recordingDir, name))
     },
+    /// Throws until the recording is `finished`: `recorder serve` writes `manifest.json` only then.
+    manifest(recording: RoomRecording): RecordingManifest {
+      return JSON.parse(readFileSync(join(storeDir, recording.id, 'manifest.json'), 'utf8')) as RecordingManifest
+    },
     /// Waits for a stopped recording's composite and returns its path.
     async composite(recording: RoomRecording): Promise<string> {
       const deadline = Date.now() + COMPOSITE_TIMEOUT_MS
@@ -186,6 +195,34 @@ export function probeRecording(path: string) {
     largestGapSeconds: { video: largestGap(packetSeconds.video), audio: largestGap(packetSeconds.audio) },
     decodeErrors: decoded.stderr
   }
+}
+
+/// The mean red, green and blue of a box in the frame `secondsFromEnd` before the end of a video. The box edges
+/// are fractions of the frame width and height.
+export function meanColor(
+  path: string,
+  secondsFromEnd: number,
+  [left, top, right, bottom]: [number, number, number, number]
+): [number, number, number] {
+  const crop = `crop=iw*${right - left}:ih*${bottom - top}:iw*${left}:ih*${top}`
+  const [red, green, blue] = execFileSync('ffmpeg', [
+    '-v',
+    'error',
+    '-sseof',
+    `-${secondsFromEnd}`,
+    '-i',
+    path,
+    '-frames:v',
+    '1',
+    '-vf',
+    `${crop},scale=1:1:flags=area`,
+    '-f',
+    'rawvideo',
+    '-pix_fmt',
+    'rgb24',
+    '-'
+  ])
+  return [red, green, blue]
 }
 
 /// The probe with the most packets of `track`.

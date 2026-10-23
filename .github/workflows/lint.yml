@@ -47,6 +47,32 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run Unit Tests
         run: cargo test
+  moqt-version-boundary:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Warn when moqt version/ changes together with transport or runtime/tasks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          modules=crates/moqt/src/modules
+          version_files="$(git diff --name-only "$BASE_SHA...HEAD" -- \
+            "$modules/moqt/version.rs" "$modules/moqt/version/")"
+          shared_files="$(git diff --name-only "$BASE_SHA...HEAD" -- \
+            "$modules/transport.rs" "$modules/transport/" \
+            "$modules/moqt/runtime/tasks.rs" "$modules/moqt/runtime/tasks/")"
+          if [[ -n "$version_files" && -n "$shared_files" ]]; then
+            message="Move draft-specific logic from transport and runtime/tasks into version/<draft> or the wire layer: docs/architecture/moqt/architecture.md#version-adapter-modulesmoqtversion"
+            message+="%0AChanges that only route a call through the adapter are fine."
+            message+="%0A%0AVersion adapter:%0A${version_files//$'\n'/%0A}"
+            message+="%0A%0AVersion-independent:%0A${shared_files//$'\n'/%0A}"
+            echo "::warning title=moqt version boundary::$message"
+          fi
   cargo-audit:
     runs-on: ubuntu-latest
     container:
