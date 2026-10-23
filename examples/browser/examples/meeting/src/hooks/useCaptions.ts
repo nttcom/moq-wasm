@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { type BotRoomEnd, BotRoomRequest } from '../../../../utils/botRoom'
 import { resolveServiceUrl } from '../../../../utils/serviceUrl'
-import type { TranscriberStatus, TranscriptRecord } from '../media/transcript'
+import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
 import { TRANSCRIBER_AVAILABLE } from '../session/trackNamespace'
 
@@ -10,8 +10,6 @@ const TRANSCRIBER_SERVICE = {
   local: 'http://127.0.0.1:8100',
   cloud: 'https://moq-meeting-transcriber.moqt.research.skyway.io'
 }
-/// How long a speaker's newest live utterance stays on their tile after it arrives.
-const CAPTION_MS = 5_000
 const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
   full: 'no transcriber free',
   closed: 'transcriber closed',
@@ -32,25 +30,34 @@ export function asrLabel(asr: string): string {
 }
 
 export type CaptionsControls = {
-  /// Whether this page keeps the transcriber in the room and shows captions on the tiles.
+  /// Whether the transcriber is in the room or this page has asked it in.
+  active: boolean
+  /// Whether this page shows captions on the tiles: while `active`, unless hidden with `show(false)`.
   on: boolean
+  /// Whether this page has asked the transcriber in.
+  requested: boolean
   /// Asks the transcriber in with `asr`; a transcriber already in the room keeps its own.
   start: (asr: string) => void
+  /// Lets the transcriber go; it stays while another page keeps it.
   stop: () => void
+  /// Affects this page's tile captions only.
+  show: (shown: boolean) => void
   /// `undefined` until the transcriber's status arrives and after it leaves.
   status: TranscriberStatus | undefined
   /// Why the transcriber left while this page asked for it.
   error: string | undefined
   /// The room's transcript while the transcriber is in the room, whether or not `on`.
   records: TranscriptRecord[]
-  /// The newest utterance of each speaker, while it is fresh.
+  /// `freshCaptions` of `records` while `on`; empty otherwise.
   captions: Map<string, string>
 }
 
 /// `null` in a room the transcriber does not serve.
 export function useCaptions(session: LocalSession, transcriberPresent: boolean): CaptionsControls | null {
   const [asr, setAsr] = useState<string>()
-  const on = asr !== undefined
+  const [hidden, setHidden] = useState(false)
+  const active = transcriberPresent || asr !== undefined
+  const on = active && !hidden
   const [status, setStatus] = useState<TranscriberStatus>()
   const [error, setError] = useState<string>()
   const [records, setRecords] = useState<TranscriptRecord[]>([])
@@ -89,7 +96,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       (next) => {
         const receivedAt = Date.now()
         for (const record of next) {
-          const key = recordKey(record)
+          const key = transcriptRecordKey(record)
           if (record.live && !arrivals.current.has(key)) {
             arrivals.current.set(key, receivedAt)
           }
@@ -102,39 +109,32 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   }, [session, transcriberPresent])
 
   useEffect(() => {
-    if (!on) {
+    if (!transcriberPresent) {
       return
     }
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
-  }, [on])
+  }, [transcriberPresent])
 
-  const captions = useMemo(() => {
-    const fresh = new Map<string, string>()
-    if (!on) {
-      return fresh
-    }
-    for (const record of records) {
-      const receivedAt = arrivals.current.get(recordKey(record)) ?? 0
-      if (now - receivedAt < CAPTION_MS) {
-        fresh.set(record.speaker, record.text)
-      }
-    }
-    return fresh
-  }, [now, on, records])
+  const captions = useMemo(
+    () => (on ? freshCaptions(records, arrivals.current, now) : new Map<string, string>()),
+    [now, on, records]
+  )
 
   if (!TRANSCRIBER_AVAILABLE) {
     return null
   }
   return {
+    active,
     on,
+    requested: asr !== undefined,
     start: (choice) => {
-      // The clock stops while captions are off, so records that arrived meanwhile would read as fresh.
-      setNow(Date.now())
       setError(undefined)
+      setHidden(false)
       setAsr(choice)
     },
     stop: () => setAsr(undefined),
+    show: (shown) => setHidden(!shown),
     status,
     error,
     records,
@@ -150,8 +150,4 @@ function holdSubscription(session: LocalSession, subscribed: Promise<bigint>, tr
       .then((id) => (session.isSubscribed(id) ? session.unsubscribe(id) : undefined))
       .catch(() => undefined)
   }
-}
-
-function recordKey(record: TranscriptRecord): string {
-  return `${record.startedAtMs}:${record.speaker}`
 }

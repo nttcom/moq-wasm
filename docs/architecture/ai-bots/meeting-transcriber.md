@@ -45,7 +45,7 @@ in the room read.
 
 ```mermaid
 sequenceDiagram
-    participant A as Page (alice, captions on)
+    participant A as Page (alice, asked for captions)
     participant S as Transcriber service
     participant R as Relay
     participant B as Page (bob)
@@ -59,7 +59,7 @@ sequenceDiagram
     Note over S: VAD + Whisper per participant
     S->>R: transcript record {t, speaker: bob, text}
     R->>A: transcript record
-    R->>B: transcript record (when bob has captions on)
+    R->>B: transcript record
 ```
 
 ### Rooms it serves
@@ -69,11 +69,11 @@ under another app's root would need a token for the bot, which the service
 does not have.
 
 ### Starting and stopping
-The Meeting page gains a captions button in the bottom bar. Turning it on
-opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and keeps it
-open; turning it off, Leave, or closing the tab closes it and tells the
-service the page left. The bot runs while at least one page in the room holds
-the request, and leaves at once when the last one leaves this way. It stops
+The Meeting page gains a captions button in the bottom bar. Choosing a model
+from it opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and
+keeps it open; Stop transcription in its menu, Leave, or closing the tab
+closes it and tells the service the page left. The bot runs while at least
+one page in the room holds the request, and leaves at once when the last one leaves this way. It stops
 30 s after the last request closes without word, or 30 s after the room's last participant withdraws their
 namespace, since Cloud Run does not tell the server that a page went away
 (see [on-demand-rooms.md](on-demand-rooms.md)). The limits of `moq-bot-rooms`
@@ -216,22 +216,23 @@ collide with it. The track is `transcript`, an MSF event timeline
 - While the bot's namespace is announced, every page in the room shows `CC`
   in the header, as it shows `REC` for a recording, since everyone's speech
   is being transcribed.
-- A page with captions on subscribes to `transcript` with the LargestObject
+- Every page subscribes to `transcript` with the LargestObject
   filter and sends a joining FETCH for the current group: the FETCH ends at
   the largest object and the subscription starts after it, so together they
   carry the whole group. A group's first object replaces the records and
   later objects add to them, in whichever order the two deliver them.
-- The newest record of a speaker appears at the bottom of that speaker's
-  tile for 5 s after it arrives. Records from the joining FETCH are history
+- A speaker's live records from the last 5 s appear at the bottom of their
+  tile, joined and cut to the last 60 characters, since a fast recognizer
+  publishes fragments under a second apart. Records from the joining FETCH are history
   and are not shown there, however late a live record arrives. The sidebar gains a Transcript tab next
-  to the chat that lists every record with speaker and time. The tab shows on
-  every page while the transcriber is in the room; the tile captions only on
-  the pages that turned captions on.
+  to the chat that lists every record with speaker and time. The tab and the
+  tile captions show on every page while the transcriber is in the room; the
+  captions button hides or shows the tile captions on its own page only.
 
 ## Consequences
 
 ### Positive
-- Transcription runs only while someone in the room wants captions.
+- Transcription runs only while a page in the room holds the request.
 - Audio stays inside the deployment: the model runs in the bot.
 
 ### Negative
