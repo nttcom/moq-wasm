@@ -129,9 +129,8 @@ coding-style rule that an abstraction waits for its second concrete use.
 
 A draft is added under `modules/moqt/version/<draft>` and the wire layer.
 `modules/moqt/runtime/tasks` and `modules/transport` change only to route a
-call through the adapter: the background tasks and their concurrency stay
-shared, and a draft never gets a task of its own (see *Performance
-invariants*).
+call through the adapter; a draft never gets a task of its own (see
+*Performance invariants*).
 
 - `Version` names the draft a session speaks.
 - `ControlChannel` is an enum with one variant per draft, matched in place
@@ -660,18 +659,16 @@ Two latency fixes live in version-independent layers and must hold for every
 draft:
 
 - **A stream whose header has not arrived does not hold back later streams**
-  (`UniStreamReceiveTask`). Headers are read concurrently
-  (`stream::unfold` + `for_each_concurrent`); a draft only parses them, in
-  `Version::accept_uni_stream`. Guarded by
+  (`UniStreamReceiveTask`). Headers are read concurrently; a draft only
+  parses them, in `Version::accept_uni_stream`. Guarded by
   `uni_stream_receive_task::tests::a_stream_without_its_header_does_not_hold_back_later_streams`,
   which writes draft-14 header bytes through `open_subgroup`, so it covers
   draft-14 only, and by the meeting E2E below, which bounds the longest gap
   between consecutive audio or video arrivals across audio group boundaries.
 - **Closing a send stream does not wait for the peer to acknowledge the FIN**
   (`TransportSendStream::close`). quinn and WebTransport call `finish()`; the
-  browser transport does not await `writer.close()`. Meeting rotates its
-  audio group every second, so awaiting the ACK stalled every send behind
-  the rotation (p50 57 ms, measured 2026-10-23). Guarded by the meeting E2E
+  browser transport does not await `writer.close()`. Awaiting the ACK stalls
+  every send queued behind a stream close. Guarded by the meeting E2E
   `rotating the audio group neither stalls the sender nor gaps the receiver`
   (`examples/browser/tests/meeting-e2e.spec.ts`), which bounds how long the
   publisher's audio EndOfGroup and stream close take. The measurement lives in
