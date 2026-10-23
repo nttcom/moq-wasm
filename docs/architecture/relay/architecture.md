@@ -433,7 +433,13 @@ Start Location, the smaller End Group). An update that widens the range is
 not closed with the PROTOCOL_VIOLATION §9.10 allows: its widening part is
 logged and ignored. An update for no registered subscription is logged and
 dropped. The upstream subscription keeps Forward 1 and its own range, so the
-cache keeps filling for FETCH.
+cache keeps filling for FETCH. Every update is answered through
+`SubscribeUpdateHandler::ok` with the track's Largest Object, resolved like a
+SUBSCRIBE's (draft-18 §10.2.11; draft-14 sends no answer). When `ok` reports
+that the subscriber was given that location, an update that turns Forward
+from 0 to 1 also makes it the registration's joining location (draft-18
+§5.1), so a later Joining FETCH ends there; draft-14 keeps the SUBSCRIBE_OK's
+Largest Location (§9.16.2). The relay itself never branches on the draft.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Joining

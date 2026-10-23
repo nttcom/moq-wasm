@@ -6,6 +6,7 @@ use std::{
 };
 
 use dashmap::{DashMap, DashSet, Entry};
+use moqt::object::Location;
 use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
@@ -772,25 +773,33 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Applies a SUBSCRIBE_UPDATE to the registration's delivery control (see
-    /// `DeliveryControl::apply_update`). Returns `None` when no such downstream
-    /// subscription is registered.
+    /// `DeliveryControl::apply_update`). `told_largest` is the Largest
+    /// Location the update's answer gave the subscriber, if it gave one; an
+    /// update that turns Forward on makes it the Joining Location. Returns
+    /// `None` when no such downstream subscription is registered.
     pub(crate) fn update_downstream_delivery(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         update: DeliveryControl,
+        told_largest: Option<Option<Location>>,
     ) -> Option<UpdateOutcome> {
-        let registered = self
+        let mut registered = self
             .downstream_subscriptions
-            .get(&(downstream_session_id, downstream_subscribe_id))?;
+            .get_mut(&(downstream_session_id, downstream_subscribe_id))?;
         let mut outcome = UpdateOutcome::Applied;
+        let mut forward_turned_on = false;
         registered
             .delivery_control_sender
             .send_if_modified(|control| {
                 let previous = *control;
                 outcome = control.apply_update(update);
+                forward_turned_on = !previous.forward && control.forward;
                 *control != previous
             });
+        if forward_turned_on && let Some(largest_location) = told_largest {
+            registered.subscription.joining_location = largest_location;
+        }
         Some(outcome)
     }
 
@@ -1289,7 +1298,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let outcome = table.update_downstream_delivery(2, 100, delivery_control(false));
+        let outcome = table.update_downstream_delivery(2, 100, delivery_control(false), None);
 
         // Assert
         assert_eq!(outcome, Some(UpdateOutcome::Applied));
@@ -1348,7 +1357,7 @@ mod tests {
         );
 
         // Act
-        let outcome = table.update_downstream_delivery(2, 101, delivery_control(false));
+        let outcome = table.update_downstream_delivery(2, 101, delivery_control(false), None);
 
         // Assert
         assert_eq!(outcome, None);
