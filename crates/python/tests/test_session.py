@@ -6,6 +6,8 @@ import pytest
 import moqt
 
 TIMEOUT_SECONDS = 10
+# moqt ends a subscription this long after its PUBLISH_DONE (PUBLISH_DONE_GRACE_PERIOD).
+PUBLISH_DONE_GRACE_SECONDS = 10
 TRACK = "timeline"
 
 
@@ -99,6 +101,24 @@ async def test_close_resolves_closed_and_fails_later_calls(relay_url):
     ):
         with pytest.raises(RuntimeError, match="connection lost"):
             await within(request)
+
+
+async def test_the_subscription_ends_when_the_publisher_closes_inside_an_open_group(relay_url):
+    # Arrange: the group stays open until the next write starts a new one
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    await track.write(b"v1", new_group=True)
+    assert (await within(objects.__anext__())).payload == b"v1"
+
+    # Act
+    await publisher.close()
+
+    # Assert: the reset of the open group does not surface; PUBLISH_DONE ends the track
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(objects.__anext__(), PUBLISH_DONE_GRACE_SECONDS + TIMEOUT_SECONDS)
+    await subscriber.close()
 
 
 async def test_a_subscriber_after_an_unsubscribe_inside_an_open_group_gets_its_later_objects(relay_url):

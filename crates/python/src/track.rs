@@ -4,7 +4,7 @@ use bytes::Bytes;
 use moqt::{
     Session, Subscription, TrackObject, TrackReader,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
-    object::ObjectStatus,
+    object::{MalformedTrackError, ObjectStatus},
     subscribe::{FilterType, SubscribeOption},
 };
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*, types::PyBytes};
@@ -129,9 +129,16 @@ impl Track {
                     Ok(Fetch::End) | Err(_) => reading.current_group = None,
                 }
             }
-            match reading.reader.next_object().await? {
-                Some(object) => Ok(Object::from(object)),
-                None => Err(PyStopAsyncIteration::new_err("the track ended")),
+            // A failed subgroup stream does not end the track: a publisher that
+            // leaves resets its open group before the track ends, and a GOAWAY's
+            // cutover cuts the group still open on the retired connection.
+            loop {
+                match reading.reader.next_object().await {
+                    Ok(Some(object)) => return Ok(Object::from(object)),
+                    Ok(None) => return Err(PyStopAsyncIteration::new_err("the track ended")),
+                    Err(err) if err.is::<MalformedTrackError>() => return Err(err.into()),
+                    Err(err) => tracing::debug!(%err, "skipping a failed subgroup stream"),
+                }
             }
         })
     }
