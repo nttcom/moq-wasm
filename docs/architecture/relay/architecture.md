@@ -441,8 +441,15 @@ from the downstream subscription's registration, which records its track,
 filter and joining location), reply FETCH_OK,
 then delegate to `EgressCommand::StartFetch`, which serves the range from
 `TrackCache` over a new uni stream (see "Fetch delivery" under "Egress").
-A Joining FETCH of a subscription whose filter is not Largest Object closes
-the session with a PROTOCOL_VIOLATION (draft-14 §9.16.2).
+A Joining FETCH is checked in this order: an unknown joined Request ID gets
+INVALID_JOINING_REQUEST_ID; then `FetchHandler::check_joining` applies the
+session draft's rule to the registration's filter and current Forward State
+(draft-14 §9.16.2: a filter other than Largest Object closes the session with
+a PROTOCOL_VIOLATION; draft-18 §10.12.2: Forward State 0 gets INVALID_RANGE);
+then a subscription accepted before the track had objects gets INVALID_RANGE;
+then the range. The session worker handles a session's events in order, so
+every update received before the FETCH is applied first, as draft-18
+§10.12.2 requires.
 
 A range the cache cannot serve goes upstream. The worker hands it to
 `UpstreamFetchTask` (`control_plane/sequences/fetch/upstream_fetch_task.rs`) and moves on to

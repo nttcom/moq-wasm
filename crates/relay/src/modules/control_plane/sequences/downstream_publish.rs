@@ -207,7 +207,7 @@ mod tests {
         send_publish(&ctx).await.unwrap();
 
         // Assert
-        let registered = ctx
+        let (registered, _) = ctx
             .table
             .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
             .expect("PUBLISH_OK should register a downstream subscription");

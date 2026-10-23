@@ -597,10 +597,16 @@ impl InMemoryLocalPubSubDirectory {
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
-    ) -> Option<DownstreamSubscription> {
+    ) -> Option<(DownstreamSubscription, DeliveryControl)> {
         self.downstream_subscriptions
             .get(&(downstream_session_id, downstream_subscribe_id))
-            .map(|entry| entry.value().subscription.clone())
+            .map(|entry| {
+                let registered = entry.value();
+                (
+                    registered.subscription.clone(),
+                    *registered.delivery_control_sender.borrow(),
+                )
+            })
     }
 
     pub(crate) fn has_downstream_subscription_to_track(
@@ -1241,7 +1247,10 @@ mod tests {
         assert!(runner_signals.is_some());
         assert_eq!(
             table.get_downstream_subscription(2, 100),
-            Some(downstream_subscription(track_key, Some(largest)))
+            Some((
+                downstream_subscription(track_key, Some(largest)),
+                delivery_control(true)
+            ))
         );
     }
 
