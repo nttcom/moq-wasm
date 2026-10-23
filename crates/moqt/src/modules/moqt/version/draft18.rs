@@ -1833,6 +1833,56 @@ mod tests {
         assert_eq!(done.status_code(), PublishDoneCode::GoingAway);
     }
 
+    fn request_go_away(new_session_uri: &str) -> BytesMut {
+        messages::encode_go_away(&messages::GoAwayMessage {
+            new_session_uri: new_session_uri.to_string(),
+            request_id: None,
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_second_goaway_on_a_request_stream_closes_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-request-goaway-twice", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+        stream.sender.send(&request_go_away("")).await.unwrap();
+
+        // Act
+        stream.sender.send(&request_go_away("")).await.unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+
+        // Assert: §10.4 PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
+    #[tokio::test]
+    async fn a_goaway_with_a_new_session_uri_on_a_request_stream_to_the_server_closes_the_session()
+    {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-request-goaway-uri", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+
+        // Act
+        stream
+            .sender
+            .send(&request_go_away("moqt://elsewhere"))
+            .await
+            .unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+
+        // Assert: §10.4 PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
     /// §12.4 DEFAULT PUBLISHER PRIORITY.
     fn default_priority_property(priority: u64) -> KeyValuePair {
         KeyValuePair {

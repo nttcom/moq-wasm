@@ -126,6 +126,24 @@ fn refused_track(properties: &[KeyValuePair]) -> Option<(RequestErrorCode, &'sta
     }
 }
 
+/// §10.4: a request stream carries at most one GOAWAY, and one sent to a
+/// server carries no New Session URI. `false` after closing the session when
+/// this GOAWAY breaks either rule.
+fn accept_request_go_away(scope: &Scope, received_before: bool, new_session_uri: &str) -> bool {
+    let checked = if received_before {
+        Err("received a second GOAWAY on a request stream")
+    } else {
+        scope.connection.check_go_away_uri(new_session_uri)
+    };
+    match checked {
+        Ok(()) => true,
+        Err(reason) => {
+            close_on_violation(scope, reason);
+            false
+        }
+    }
+}
+
 /// Reads the peer's control stream and accepts the request streams the
 /// peer opens, until the connection ends. The Request ID of every
 /// PUBLISH_DONE also goes to `publish_done_sender`.
@@ -254,12 +272,21 @@ impl IncomingRequestTask {
             return;
         };
         drop(context);
+        let mut go_away_received = false;
         loop {
             let received = receiver.receive().await;
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
             match received {
+                Ok(Some(Message::GoAway(go_away))) => {
+                    if !accept_request_go_away(&context, go_away_received, &go_away.new_session_uri)
+                    {
+                        return;
+                    }
+                    go_away_received = true;
+                    tracing::debug!(request_id, "per-request GOAWAY ignored");
+                }
                 Ok(Some(message)) => {
                     match Self::follow_up(
                         &context,
@@ -481,10 +508,6 @@ impl IncomingRequestTask {
                 );
                 scope.channel().take_incoming(request_id);
                 FollowUp::Done
-            }
-            (_, Message::GoAway(_)) => {
-                tracing::debug!(request_id, "per-request GOAWAY ignored");
-                FollowUp::Continue
             }
             _ => {
                 close_on_violation(scope, "unexpected message on a request stream");
@@ -780,7 +803,11 @@ impl OutgoingRequestTask {
                     }
                     Self::namespace_withdrawn(&context, namespace);
                 }
+                // The request ends at its first GOAWAY; a second is never read.
                 Ok(Some(Message::GoAway(go_away))) => {
+                    if !accept_request_go_away(&context, false, &go_away.new_session_uri) {
+                        return;
+                    }
                     tracing::info!(
                         request_id,
                         new_session_uri = go_away.new_session_uri,

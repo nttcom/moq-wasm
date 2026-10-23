@@ -371,6 +371,12 @@ impl Connection {
         if self.go_away_received.swap(true, Ordering::SeqCst) {
             return Err("received a second GOAWAY");
         }
+        self.check_go_away_uri(new_session_uri)
+    }
+
+    /// A GOAWAY sent to a server carries no New Session URI (draft-14 §9.4,
+    /// draft-18 §10.4), on the control stream or on a request stream.
+    pub(crate) fn check_go_away_uri(&self, new_session_uri: &str) -> Result<(), &'static str> {
         if self.is_server && !new_session_uri.is_empty() {
             return Err("GOAWAY sent to a server carries a New Session URI");
         }
