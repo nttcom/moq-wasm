@@ -501,46 +501,56 @@ function MetricChart({
         </div>
       </div>
       {hasRenderableSeries ? (
-        <svg
-          viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}
-          className={`block w-full ${CHART_HEIGHT_CLASS} overflow-visible rounded bg-black/20`}
-        >
-          {tickValues.map((tick) => {
-            const y = toChartY(tick)
-            return (
-              <g key={`${title}-tick-${tick}`}>
+        <div className={`relative ${CHART_HEIGHT_CLASS} rounded bg-black/20`}>
+          <svg
+            viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}
+            preserveAspectRatio="none"
+            className="block h-full w-full overflow-visible"
+          >
+            {tickValues.map((tick) => {
+              const y = toChartY(tick)
+              return (
                 <line
+                  key={`${title}-tick-${tick}`}
                   x1={0}
                   y1={y}
                   x2={CHART_VIEWBOX_WIDTH}
                   y2={y}
                   stroke="rgba(148, 163, 184, 0.28)"
-                  strokeDasharray="1.2 1.2"
-                />
-                <text x={1.2} y={Math.max(2.5, y - 0.6)} fontSize={2.4} fill="rgba(191, 219, 254, 0.75)">
-                  {formatTickLabel(tick, scale.unit)}
-                </text>
-              </g>
-            )
-          })}
-          {visibleSeries.map((entry) => {
-            if (entry.points.length < 2) {
-              return null
-            }
-            return (
-              <g key={entry.key} className={entry.colorClass}>
-                <polygon points={toAreaPoints(entry.points)} fill="currentColor" fillOpacity={0.16} />
-                <polyline
-                  points={toPolylinePoints(entry.points)}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={CHART_LINE_STROKE_WIDTH}
+                  strokeDasharray="4 4"
                   vectorEffect="non-scaling-stroke"
                 />
-              </g>
-            )
-          })}
-        </svg>
+              )
+            })}
+            {visibleSeries.map((entry) => {
+              if (entry.points.length < 2) {
+                return null
+              }
+              return (
+                <g key={entry.key} className={entry.colorClass}>
+                  <polygon points={toAreaPoints(entry.points)} fill="currentColor" fillOpacity={0.16} />
+                  <polyline
+                    points={toPolylinePoints(entry.points)}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={CHART_LINE_STROKE_WIDTH}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </g>
+              )
+            })}
+          </svg>
+          {/* Outside the SVG so that its non-uniform scaling does not stretch the labels. */}
+          {tickValues.map((tick) => (
+            <span
+              key={`${title}-tick-label-${tick}`}
+              className="absolute left-1.5 -translate-y-full text-xs leading-none text-blue-200/75"
+              style={{ top: `${(Math.max(2.5, toChartY(tick) - 0.6) / CHART_VIEWBOX_HEIGHT) * 100}%` }}
+            >
+              {formatTickLabel(tick, scale.unit)}
+            </span>
+          ))}
+        </div>
       ) : (
         <div
           className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded bg-black/20 text-xs text-blue-200`}
