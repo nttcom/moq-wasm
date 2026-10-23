@@ -41,8 +41,8 @@ impl TransportSendError {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub(crate) trait TransportSendStream: MaybeSend + MaybeSync + 'static + Debug {
     async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError>;
-    /// Queues the FIN synchronously, so an implementation cannot wait for the peer's ACK.
-    fn close(&mut self) -> Result<(), TransportSendError>;
+    /// Sends the FIN and returns without waiting for the peer to acknowledge it.
+    async fn close(&mut self) -> Result<(), TransportSendError>;
     async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError>;
     fn set_priority(&mut self, priority: i32) -> Result<(), TransportSendError>;
 }
