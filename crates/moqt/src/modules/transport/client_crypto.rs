@@ -10,7 +10,9 @@ use quinn::rustls::{
 };
 
 use crate::modules::transport::{
-    crypto_provider::install_default_crypto_provider, quic::skip_certd_validation::SkipVerification,
+    crypto_provider::install_default_crypto_provider,
+    quic::skip_certd_validation::SkipVerification,
+    server_transport_config::MAX_CONCURRENT_BIDI_STREAMS,
 };
 
 pub(crate) fn client_crypto(verify_certificate: bool) -> anyhow::Result<rustls::ClientConfig> {
@@ -54,9 +56,13 @@ pub(crate) fn quic_client_config(
 ) -> anyhow::Result<quinn::ClientConfig> {
     crypto.alpn_protocols = alpn_protocols;
     crypto.key_log = Arc::new(rustls::KeyLogFile::new());
-    Ok(quinn::ClientConfig::new(Arc::new(
+    let mut config = quinn::ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
-    )))
+    ));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into());
+    config.transport_config(Arc::new(transport));
+    Ok(config)
 }
 
 pub(crate) fn client_endpoint(port_num: u16) -> anyhow::Result<quinn::Endpoint> {

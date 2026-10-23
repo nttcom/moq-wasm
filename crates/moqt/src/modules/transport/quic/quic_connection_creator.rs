@@ -133,11 +133,18 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 mod tests {
     use super::QUICConnectionCreator;
     use crate::modules::{
+        moqt::version::APPLICATION_PROTOCOLS,
         test_support::{HANDSHAKE_TIMEOUT, server_transport_creator},
         transport::{
-            accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
+            accept_error::AcceptError, connect_target::ConnectTarget,
+            transport_connection::BoxedConnection,
+            transport_connection_creator::TransportConnectionCreator,
         },
     };
+
+    /// More than quinn's default limit of 100 concurrent bidirectional
+    /// streams.
+    const OPEN_STREAMS: usize = 150;
 
     #[tokio::test]
     async fn accept_on_a_closed_endpoint_reports_endpoint_closing() {
@@ -150,5 +157,45 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Ok(Err(AcceptError::EndpointClosing))));
+    }
+
+    async fn open_bi_streams(connection: &BoxedConnection) -> anyhow::Result<Vec<impl Sized>> {
+        let mut streams = Vec::with_capacity(OPEN_STREAMS);
+        for _ in 0..OPEN_STREAMS {
+            streams.push(connection.open_bi().await?);
+        }
+        Ok(streams)
+    }
+
+    #[tokio::test]
+    async fn either_side_keeps_more_than_a_hundred_bidirectional_streams_open() {
+        // Arrange
+        let server: QUICConnectionCreator = server_transport_creator("quic-bidi-streams");
+        let client = QUICConnectionCreator::client(0, false, APPLICATION_PROTOCOLS).unwrap();
+        let target = ConnectTarget::parse(&format!(
+            "moqt://127.0.0.1:{}",
+            server.local_port().unwrap()
+        ))
+        .unwrap();
+        let (client_connection, server_connection) = tokio::join!(
+            client.create_new_transport(&target),
+            server.accept_new_transport()
+        );
+        let (client_connection, server_connection) =
+            (client_connection.unwrap(), server_connection.unwrap());
+
+        // Act
+        let opened = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            tokio::join!(
+                open_bi_streams(&client_connection),
+                open_bi_streams(&server_connection)
+            )
+        })
+        .await;
+
+        // Assert
+        let (from_client, from_server) = opened.expect("every stream opens in time");
+        assert!(from_client.is_ok(), "{:?}", from_client.err());
+        assert!(from_server.is_ok(), "{:?}", from_server.err());
     }
 }
