@@ -653,7 +653,7 @@ mod tests {
             DRAFTS, accept_publish, connected_sessions, data_receiver, next_subgroup,
             read_fetch_objects, rejection, subscribed_track_reader, within,
         },
-        object::{GroupOrder, Object, Subgroup},
+        object::{DataReceiver, GroupOrder, Object, StreamDataReceiver, Subgroup},
         subscribe::{FilterType, SubscribeOption},
     };
 
@@ -1004,23 +1004,30 @@ mod tests {
         }
     }
 
+    /// Subscribes from the next group, writes its first object and receives
+    /// the header of its stream.
+    async fn open_group_stream(peers: &Peers) -> (Subscription, DataReceiver, StreamDataReceiver) {
+        let subscription = subscribe(peers, FilterType::NextGroupStart).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        let mut streams = data_receiver(&peers.server, &subscription).await;
+        let mut subgroup = within(next_subgroup(&mut streams)).await;
+        assert!(matches!(
+            within(subgroup.receive()).await,
+            Ok(Some(Subgroup::Header(_)))
+        ));
+        (subscription, streams, subgroup)
+    }
+
     #[tokio::test]
     async fn an_unsubscribe_resets_the_open_group_instead_of_finishing_it() {
         for version in DRAFTS {
             // Arrange: the subscriber reads the first object of a group that stays open
             let peers = origin_with_track("origin-release-reset", RETENTION, version).await;
-            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
-            peers
-                .origin
-                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-                .await
-                .unwrap();
-            let mut streams = data_receiver(&peers.server, &subscription).await;
-            let mut subgroup = within(next_subgroup(&mut streams)).await;
-            assert!(matches!(
-                within(subgroup.receive()).await,
-                Ok(Some(Subgroup::Header(_)))
-            ));
+            let (subscription, _streams, mut subgroup) = open_group_stream(&peers).await;
             assert!(matches!(
                 within(subgroup.receive()).await,
                 Ok(Some(Subgroup::Object(_)))
@@ -1031,6 +1038,54 @@ mod tests {
 
             // Assert: the stream is reset (receive errors), not finished
             assert!(within(subgroup.receive()).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subgroup_the_subscriber_stops_is_reported_and_the_track_resumes_at_the_next_group() {
+        for version in DRAFTS {
+            // Arrange: the subscriber has the header of an open group's stream
+            let peers = origin_with_track("origin-stop-sending", RETENTION, version).await;
+            let origin = &peers.origin;
+            let (_subscription, mut streams, stopped) = open_group_stream(&peers).await;
+
+            // Act: dropping the stream sends STOP_SENDING; writes go on until it arrives
+            drop(stopped);
+            let outcome = within(async {
+                loop {
+                    let outcome = origin
+                        .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+                        .await
+                        .unwrap();
+                    if !matches!(outcome, WriteOutcome::Sent(_)) {
+                        return outcome;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            let within_stopped = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"c"))
+                .await
+                .unwrap();
+            let next_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"d"))
+                .await
+                .unwrap();
+            let mut resumed = within(next_subgroup(&mut streams)).await;
+            let header = within(resumed.receive()).await;
+            let object = within(resumed.receive()).await;
+
+            // Assert: the stopped group gets nothing more; the next one is delivered
+            assert!(matches!(outcome, WriteOutcome::Stopped(_)), "{outcome:?}");
+            assert_eq!(within_stopped, WriteOutcome::NotSent);
+            assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+            assert!(matches!(header, Ok(Some(Subgroup::Header(_)))));
+            let Ok(Some(Subgroup::Object(object))) = object else {
+                panic!("expected an object of the next group, got {object:?}");
+            };
+            assert_eq!(object.location, location(FIRST_GROUP_ID + 1, 0));
+            assert_eq!(object.payload, Bytes::from_static(b"d"));
         }
     }
 
