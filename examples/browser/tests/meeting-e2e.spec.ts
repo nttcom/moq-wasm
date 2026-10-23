@@ -17,6 +17,7 @@ import {
   openMemberDetails,
   removeCatalogTrack,
   sendChatMessage,
+  setAudioGroupInterval,
   startScreenShare
 } from './meeting-e2e-arrange'
 
@@ -67,6 +68,14 @@ function widestPlotRatio(page: Page): Promise<number> {
       })
     )
   )
+}
+
+// The A/V offset disappears 1 s after the last audio chunk is scheduled, so an audio stall fails one of these samples.
+async function expectAudioKeepsPlaying(stats: import('@playwright/test').Locator): Promise<void> {
+  for (let sample = 0; sample < 10; sample++) {
+    expect(await stats.textContent()).toMatch(/A\/V [+-]\d+ ms/)
+    await stats.page().waitForTimeout(500)
+  }
 }
 
 function videoWidth(video: import('@playwright/test').Locator): Promise<number> {
@@ -564,6 +573,43 @@ test('multiple clients on a single relay all connect and receive video+audio', a
     await expectMediaFlowing(bob.page.page, 'carol')
     await expectMediaFlowing(carol.page.page, 'alice')
     await expectMediaFlowing(carol.page.page, 'bob')
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
+  }
+})
+
+test('a subscriber keeps hearing a member who changes an audio setting while another subscriber joins', async ({
+  browser
+}) => {
+  // Arrange
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-audio-continuity-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await expectCatalogSubscribed(bob.page.page, 'alice')
+    await subscribeAndExpectMedia(bob.page.page, 'alice')
+    const bobStats = getMemberStats(bob.page.page, 'alice')
+
+    // Act: alice changes the audio group interval from its 1 s default
+    await setAudioGroupInterval(alice.page.page, 2)
+
+    // Assert
+    await expectAudioKeepsPlaying(bobStats)
+
+    // Act
+    await joinRoom(carol.page, roomName, 'carol', 'b')
+    await expectCatalogSubscribed(carol.page.page, 'alice')
+    await subscribeAndExpectMedia(carol.page.page, 'alice')
+
+    // Assert
+    await expectAudioKeepsPlaying(bobStats)
   } finally {
     await alice.context.close()
     await bob.context.close()
