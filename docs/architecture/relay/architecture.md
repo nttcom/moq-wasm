@@ -727,9 +727,9 @@ per-request authorization gate under "Event pipeline".
   before or after the relay TTL, and the newest-object exception does not
   extend it. Objects received without the value keep the relay TTL.
   Downstream, the relay sends the value it received unchanged:
-  `UpstreamTrack::max_cache_duration` (the newest publisher's) goes into the
+  `UpstreamTrack::track_properties` (the newest publisher's) goes into the
   SUBSCRIBE_OK, the forwarded PUBLISH and a FETCH_OK served from cache, and an
-  upstream FETCH_OK's value goes into the relayed FETCH_OK. Each relay counts
+  upstream FETCH_OK's `TrackProperties` go into the relayed FETCH_OK. Each relay counts
   from its own receipt, so in a cascade an object can stay cached up to N ms
   per hop. A value above `RETENTION_LIMIT` (1 h) is cut to it; caching is
   optional (§8.1), so keeping an object for less is allowed.

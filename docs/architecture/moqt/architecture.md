@@ -553,14 +553,14 @@ state name the connection:
   tuple (`track_namespace_tuple`) and as the `/`-joined string
   (`track_namespace`); the tuple is authoritative because a tuple element may
   itself contain `/`.
-- MAX_CACHE_DURATION (draft-14 §9.2.1.3, milliseconds) is read from received
-  messages and set on outgoing ones, but never enforced here; caching
-  endpoints such as the relay apply it.
-  Received values are on `Subscription::max_cache_duration()` (from
-  SUBSCRIBE_OK or PUBLISH), `PublishHandler.max_cache_duration` and
-  `FetchHandle.max_cache_duration`; values to send go in
-  `SubscribeHandler.max_cache_duration`, `FetchHandler.max_cache_duration` and
-  `PublishOption.max_cache_duration`.
+- `TrackProperties` is what PUBLISH, SUBSCRIBE_OK and FETCH_OK say about the
+  track. Received values are on `Subscription::track_properties()` (from
+  SUBSCRIBE_OK or PUBLISH), `PublishHandler.track_properties` and
+  `FetchHandle.track_properties`; values to send go in
+  `SubscribeHandler.track_properties`, `FetchHandler.track_properties` and
+  `PublishOption.track_properties`.
+  - MAX_CACHE_DURATION (draft-14 §9.2.1.3, milliseconds) is read and sent but
+    never enforced here; caching endpoints such as the relay apply it.
 - `enums.rs` — `SessionEvent` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14

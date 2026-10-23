@@ -1,4 +1,5 @@
 use crate::{
+    TrackProperties,
     modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk,
     object::{GroupOrder, Location},
 };
@@ -9,9 +10,8 @@ pub struct FetchHandle {
     pub group_order: GroupOrder,
     pub end_of_track: bool,
     pub end_location: Location,
-    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the FETCH_OK
-    /// carried.
-    pub max_cache_duration: Option<u64>,
+    /// What the FETCH_OK said about the track.
+    pub track_properties: TrackProperties,
     /// Set by a session that follows GOAWAY for a FETCH it can send again;
     /// `None` for a handle built outside a session.
     pub remainder: Option<FetchRemainder>,
@@ -34,7 +34,7 @@ impl FetchHandle {
             group_order: fetch_ok.group_order,
             end_of_track: fetch_ok.end_of_track,
             end_location: fetch_ok.end_location,
-            max_cache_duration: fetch_ok.max_cache_duration,
+            track_properties: fetch_ok.track_properties,
             remainder: None,
         }
     }

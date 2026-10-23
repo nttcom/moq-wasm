@@ -73,7 +73,7 @@ impl DownstreamPublish {
                 track_key.track_namespace.clone(),
                 track_key.track_name.clone(),
                 content_exists,
-                upstream_track.max_cache_duration(),
+                upstream_track.track_properties(),
                 forward,
             )
             .await?;
@@ -146,10 +146,11 @@ mod tests {
             mock_session::{PUBLISH_REQUEST_ID, SentPublish},
             relay_harness::fixtures::{
                 cached_object::insert_closed_group, location,
-                subscription::upstream_subscription_with_max_cache_duration,
+                subscription::upstream_subscription_with_track_properties,
             },
         },
     };
+    use moqt::TrackProperties;
 
     fn published_table() -> Arc<InMemoryLocalPubSubDirectory> {
         Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Publish).0)
@@ -180,9 +181,11 @@ mod tests {
             track_key(),
             PUBLISHER_SESSION,
             ActiveUpstreamSubscription {
-                subscription: upstream_subscription_with_max_cache_duration(
+                subscription: upstream_subscription_with_track_properties(
                     UPSTREAM_REQUEST_ID,
-                    2_000,
+                    TrackProperties {
+                        max_cache_duration: Some(2_000),
+                    },
                 ),
                 expires: None,
                 content_exists: ContentExists::False,
@@ -198,7 +201,10 @@ mod tests {
         // Assert
         let publishes = ctx.subscriber.publishes();
         assert_eq!(publishes.len(), 1);
-        assert_eq!(publishes[0].max_cache_duration, Some(2_000));
+        assert_eq!(
+            publishes[0].track_properties.max_cache_duration,
+            Some(2_000)
+        );
     }
 
     #[tokio::test]
@@ -243,7 +249,7 @@ mod tests {
                 content_exists: ContentExists::True {
                     location: location(4, 1)
                 },
-                max_cache_duration: None,
+                track_properties: TrackProperties::default(),
                 forward: true,
             }]
         );

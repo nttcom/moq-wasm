@@ -31,6 +31,7 @@ use crate::modules::moqt::control_plane::{
         parameters::{
             authorization_token::AuthorizationToken, content_exists::ContentExists,
             filter_type::FilterType, group_order::GroupOrder, location::Location,
+            track_properties::TrackProperties,
         },
         publish::Publish,
         publish_namespace::PublishNamespace,
@@ -746,7 +747,9 @@ fn decode_publish(buf: &mut Bytes) -> Result<(Publish, Vec<KeyValuePair>), Decod
         forward,
         authorization_tokens: tokens(parameters),
         delivery_timeout: varint_property_value(&properties, OBJECT_DELIVERY_TIMEOUT_PROPERTY),
-        max_duration: varint_property_value(&properties, MAX_CACHE_DURATION_PROPERTY),
+        track_properties: TrackProperties {
+            max_cache_duration: varint_property_value(&properties, MAX_CACHE_DURATION_PROPERTY),
+        },
     };
     Ok((publish, properties))
 }
@@ -768,7 +771,7 @@ pub(crate) fn encode_publish(publish: &Publish) -> anyhow::Result<BytesMut> {
         &mut payload,
         &track_properties(
             publish.delivery_timeout,
-            publish.max_duration,
+            publish.track_properties.max_cache_duration,
             publish.group_order,
         ),
     )?;
@@ -928,7 +931,7 @@ pub(crate) fn encode_subscribe_ok(subscribe_ok: &SubscribeOk) -> anyhow::Result<
         &mut payload,
         &track_properties(
             subscribe_ok.delivery_timeout,
-            subscribe_ok.max_duration,
+            subscribe_ok.track_properties.max_cache_duration,
             subscribe_ok.group_order.delivered(),
         ),
     )?;
@@ -955,10 +958,12 @@ impl SubscribeOkMessage {
                 &self.track_properties,
                 OBJECT_DELIVERY_TIMEOUT_PROPERTY,
             ),
-            max_duration: varint_property_value(
-                &self.track_properties,
-                MAX_CACHE_DURATION_PROPERTY,
-            ),
+            track_properties: TrackProperties {
+                max_cache_duration: varint_property_value(
+                    &self.track_properties,
+                    MAX_CACHE_DURATION_PROPERTY,
+                ),
+            },
         }
     }
 }
@@ -1007,7 +1012,7 @@ pub(crate) fn encode_track_status_ok(track_status_ok: &SubscribeOk) -> anyhow::R
         largest_object(&track_status_ok.content_exists).as_slice(),
         &track_properties(
             track_status_ok.delivery_timeout,
-            track_status_ok.max_duration,
+            track_status_ok.track_properties.max_cache_duration,
             track_status_ok.group_order.delivered(),
         ),
     )
@@ -1058,7 +1063,11 @@ pub(crate) fn encode_fetch_ok(fetch_ok: &FetchOk) -> anyhow::Result<BytesMut> {
     put_parameters(&mut payload, &[])?;
     put_key_value_pairs(
         &mut payload,
-        &track_properties(None, fetch_ok.max_cache_duration, GroupOrder::Publisher),
+        &track_properties(
+            None,
+            fetch_ok.track_properties.max_cache_duration,
+            GroupOrder::Publisher,
+        ),
     )?;
     frame(FETCH_OK, &payload)
 }
@@ -1071,10 +1080,12 @@ impl FetchOkMessage {
             group_order: group_order.delivered(),
             end_of_track: self.end_of_track,
             end_location: self.end_location,
-            max_cache_duration: varint_property_value(
-                &self.track_properties,
-                MAX_CACHE_DURATION_PROPERTY,
-            ),
+            track_properties: TrackProperties {
+                max_cache_duration: varint_property_value(
+                    &self.track_properties,
+                    MAX_CACHE_DURATION_PROPERTY,
+                ),
+            },
         }
     }
 }
@@ -1250,7 +1261,9 @@ mod tests {
             forward: true,
             authorization_tokens: vec![],
             delivery_timeout: Some(200),
-            max_duration: Some(60_000),
+            track_properties: TrackProperties {
+                max_cache_duration: Some(60_000),
+            },
         };
         let fetch = Fetch {
             request_id: 6,
@@ -1380,7 +1393,9 @@ mod tests {
                 location: location(8, 2),
             },
             delivery_timeout: Some(100),
-            max_duration: Some(5_000),
+            track_properties: TrackProperties {
+                max_cache_duration: Some(5_000),
+            },
         };
         let publish_ok = PublishOk {
             request_id: 2,
@@ -1395,7 +1410,9 @@ mod tests {
             group_order: GroupOrder::Descending,
             end_of_track: true,
             end_location: location(4, 1),
-            max_cache_duration: Some(10),
+            track_properties: TrackProperties {
+                max_cache_duration: Some(10),
+            },
         };
 
         // Act
@@ -1684,17 +1701,24 @@ mod tests {
         let Message::SubscribeOk(subscribe_ok) = subscribe_ok else {
             panic!("expected SUBSCRIBE_OK");
         };
-        assert_eq!(subscribe_ok.into_subscribe_ok(1).max_duration, Some(50));
+        assert_eq!(
+            subscribe_ok
+                .into_subscribe_ok(1)
+                .track_properties
+                .max_cache_duration,
+            Some(50)
+        );
         let Message::Publish { publish, .. } = publish else {
             panic!("expected PUBLISH");
         };
-        assert_eq!(publish.max_duration, Some(50));
+        assert_eq!(publish.track_properties.max_cache_duration, Some(50));
         let Message::FetchOk(fetch_ok) = fetch_ok else {
             panic!("expected FETCH_OK");
         };
         assert_eq!(
             fetch_ok
                 .into_fetch_ok(1, GroupOrder::Ascending)
+                .track_properties
                 .max_cache_duration,
             Some(50)
         );

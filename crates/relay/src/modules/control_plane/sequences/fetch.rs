@@ -167,10 +167,11 @@ impl Fetch {
             }) => {
                 // The relay does not yet track final End Of Track via PUBLISH_DONE,
                 // so local cache responses cannot assert it.
-                let max_cache_duration = table
+                let track_properties = table
                     .get_upstream_track(&target.track_key)
-                    .and_then(|upstream_track| upstream_track.max_cache_duration());
-                if let Err(e) = handler.ok(false, end_location, max_cache_duration).await {
+                    .map(|upstream_track| upstream_track.track_properties())
+                    .unwrap_or_default();
+                if let Err(e) = handler.ok(false, end_location, track_properties).await {
                     tracing::error!(?e, "Failed to send FETCH_OK");
                     return;
                 }

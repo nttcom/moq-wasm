@@ -7,7 +7,7 @@ use crate::modules::{
         key_value_pair::{KeyValuePair, find_even, odd_values},
         messages::parameters::{
             authorization_token::AuthorizationToken, content_exists::ContentExists,
-            group_order::GroupOrder,
+            group_order::GroupOrder, track_properties::TrackProperties,
         },
         util,
     },
@@ -24,7 +24,7 @@ pub struct Publish {
     pub forward: bool,
     pub authorization_tokens: Vec<AuthorizationToken>,
     pub delivery_timeout: Option<u64>,
-    pub max_duration: Option<u64>,
+    pub track_properties: TrackProperties,
 }
 
 impl Publish {
@@ -44,7 +44,9 @@ impl Publish {
             .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
         let delivery_timeout = find_even(&parameters, 0x02);
-        let max_duration = find_even(&parameters, 0x04);
+        let track_properties = TrackProperties {
+            max_cache_duration: find_even(&parameters, 0x04),
+        };
         Ok(Self {
             request_id,
             track_namespace_tuple,
@@ -55,7 +57,7 @@ impl Publish {
             forward,
             authorization_tokens,
             delivery_timeout,
-            max_duration,
+            track_properties,
         })
     }
 
@@ -77,7 +79,8 @@ impl Publish {
                 [
                     self.delivery_timeout
                         .map(|value| KeyValuePair::even(0x02, value)),
-                    self.max_duration
+                    self.track_properties
+                        .max_cache_duration
                         .map(|value| KeyValuePair::even(0x04, value)),
                 ]
                 .into_iter()
@@ -118,7 +121,7 @@ mod tests {
                 forward: true,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
 
             let buf = publish_message.encode();
@@ -152,8 +155,8 @@ mod tests {
                 depacketized_message.delivery_timeout
             );
             assert_eq!(
-                publish_message.max_duration,
-                depacketized_message.max_duration
+                publish_message.track_properties,
+                depacketized_message.track_properties
             );
         }
 
@@ -169,7 +172,7 @@ mod tests {
                 forward: false,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
 
             let buf = publish_message.encode();
@@ -203,8 +206,8 @@ mod tests {
                 depacketized_message.delivery_timeout
             );
             assert_eq!(
-                publish_message.max_duration,
-                depacketized_message.max_duration
+                publish_message.track_properties,
+                depacketized_message.track_properties
             );
         }
 
@@ -220,7 +223,7 @@ mod tests {
                 forward: true,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
 
             let buf = publish_message.encode();
@@ -246,7 +249,7 @@ mod tests {
                     token_value: Bytes::from_static(b"secret"),
                 }],
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
 
             let buf = publish_message.encode();
@@ -281,8 +284,8 @@ mod tests {
                 depacketized_message.delivery_timeout
             );
             assert_eq!(
-                publish_message.max_duration,
-                depacketized_message.max_duration
+                publish_message.track_properties,
+                depacketized_message.track_properties
             );
         }
     }

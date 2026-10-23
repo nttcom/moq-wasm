@@ -72,7 +72,7 @@ impl TrackStatusHandler {
             group_order: self.group_order.delivered(),
             content_exists,
             delivery_timeout: None,
-            max_duration: None,
+            track_properties: Default::default(),
         };
         self.guard
             .connection()

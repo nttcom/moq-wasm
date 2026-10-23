@@ -2,7 +2,10 @@ use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, find_even},
-        messages::parameters::{content_exists::ContentExists, group_order::GroupOrder},
+        messages::parameters::{
+            content_exists::ContentExists, group_order::GroupOrder,
+            track_properties::TrackProperties,
+        },
     },
 };
 use anyhow::Context;
@@ -16,7 +19,7 @@ pub struct SubscribeOk {
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub delivery_timeout: Option<u64>,
-    pub max_duration: Option<u64>,
+    pub track_properties: TrackProperties,
 }
 
 impl SubscribeOk {
@@ -33,7 +36,9 @@ impl SubscribeOk {
 
         let parameters = KeyValuePair::decode_list(buf)?;
         let delivery_timeout = find_even(&parameters, 0x02);
-        let max_duration = find_even(&parameters, 0x04);
+        let track_properties = TrackProperties {
+            max_cache_duration: find_even(&parameters, 0x04),
+        };
 
         Ok(SubscribeOk {
             request_id,
@@ -42,7 +47,7 @@ impl SubscribeOk {
             group_order,
             content_exists,
             delivery_timeout,
-            max_duration,
+            track_properties,
         })
     }
 
@@ -56,7 +61,8 @@ impl SubscribeOk {
         let parameters: Vec<KeyValuePair> = [
             self.delivery_timeout
                 .map(|value| KeyValuePair::even(0x02, value)),
-            self.max_duration
+            self.track_properties
+                .max_cache_duration
                 .map(|value| KeyValuePair::even(0x04, value)),
         ]
         .into_iter()
@@ -93,7 +99,7 @@ mod tests {
                 group_order,
                 content_exists,
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
             let buf = subscribe_ok.encode();
 
@@ -128,7 +134,7 @@ mod tests {
                 group_order,
                 content_exists,
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
             let buf = subscribe_ok.encode();
 
@@ -173,7 +179,7 @@ mod tests {
                 group_order,
                 content_exists,
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
 
             assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
@@ -214,7 +220,7 @@ mod tests {
                 group_order,
                 content_exists,
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
 
             assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);

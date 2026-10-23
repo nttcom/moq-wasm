@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use moqt::{
+    TrackProperties,
     namespace::NamespaceInterest,
     object::{ContentExists, Location},
     publish::PublishDoneCode,
@@ -70,13 +71,20 @@ impl UpstreamTrack {
             .and_then(|subscription| subscription.expires)
     }
 
-    /// The newest publisher's MAX_CACHE_DURATION in milliseconds, which the
-    /// relay passes downstream unchanged.
-    pub(crate) fn max_cache_duration(&self) -> Option<u64> {
+    /// The newest publisher's track properties, which the relay passes
+    /// downstream unchanged.
+    pub(crate) fn track_properties(&self) -> TrackProperties {
         self.subscriptions
             .values()
             .next_back()
-            .and_then(|subscription| subscription.subscription.as_moqt().max_cache_duration())
+            .map(|subscription| {
+                subscription
+                    .subscription
+                    .as_moqt()
+                    .track_properties()
+                    .clone()
+            })
+            .unwrap_or_default()
     }
 }
 

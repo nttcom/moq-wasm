@@ -1020,7 +1020,7 @@ mod tests {
                 group_order: crate::object::GroupOrder::Ascending,
                 content_exists: ContentExists::False,
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             }),
         )
         .await;
@@ -2369,7 +2369,7 @@ mod tests {
 
             // Assert
             assert_eq!(
-                subscription.max_cache_duration(),
+                subscription.track_properties().max_cache_duration,
                 Some(50),
                 "{properties:?}"
             );

@@ -546,7 +546,7 @@ impl Subscribe {
                 subscriber_track_alias,
                 upstream_track.expires().unwrap_or(0),
                 content_exists,
-                upstream_track.max_cache_duration(),
+                upstream_track.track_properties(),
             )
             .await
             .is_err()

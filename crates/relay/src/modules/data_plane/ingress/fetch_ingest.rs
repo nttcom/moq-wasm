@@ -128,6 +128,7 @@ impl FetchIngest {
         let stamp = CacheStamp {
             max_cache_duration: start
                 .fetch_handle
+                .track_properties
                 .max_cache_duration
                 .map(Duration::from_millis),
             persist,
@@ -302,7 +303,7 @@ mod tests {
                 group_order: moqt::object::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 1),
-                max_cache_duration: None,
+                track_properties: moqt::TrackProperties::default(),
                 remainder: None,
             },
             egress_start: EgressFetchRequest {
@@ -435,7 +436,7 @@ mod tests {
                 group_order: moqt::object::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 3),
-                max_cache_duration: None,
+                track_properties: moqt::TrackProperties::default(),
                 remainder: None,
             },
             egress_start: EgressFetchRequest {

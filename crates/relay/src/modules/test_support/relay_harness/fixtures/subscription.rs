@@ -15,7 +15,7 @@ fn subscriber_initiated(
         content_exists: moqt::object::ContentExists::False,
         filter_type,
         delivery_timeout: None,
-        max_cache_duration: None,
+        track_properties: moqt::TrackProperties::default(),
     })
 }
 
@@ -34,14 +34,14 @@ pub(crate) fn upstream_subscription(request_id: u64) -> UpstreamSubscription {
     ))
 }
 
-pub(crate) fn upstream_subscription_with_max_cache_duration(
+pub(crate) fn upstream_subscription_with_track_properties(
     request_id: u64,
-    max_cache_duration: u64,
+    track_properties: moqt::TrackProperties,
 ) -> UpstreamSubscription {
     let mut subscription =
         subscriber_initiated(request_id, moqt::subscribe::FilterType::LargestObject);
     if let moqt::Subscription::SubscriberInitiated(subscriber_initiated) = &mut subscription {
-        subscriber_initiated.max_cache_duration = Some(max_cache_duration);
+        subscriber_initiated.track_properties = track_properties;
     }
     UpstreamSubscription::from(subscription)
 }

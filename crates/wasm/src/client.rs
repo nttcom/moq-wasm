@@ -473,7 +473,7 @@ impl MOQTClient {
                 largest_object_id,
             ),
             forward,
-            max_cache_duration: None,
+            track_properties: moqt::TrackProperties::default(),
         };
         let result = session
             .publisher()
@@ -620,7 +620,7 @@ impl MOQTClient {
                     group_order: subscription.group_order(),
                     content_exists: subscription.content_exists(),
                     delivery_timeout: None,
-                    max_duration: None,
+                    track_properties: moqt::TrackProperties::default(),
                 };
                 self.shared
                     .issued_subscriptions
@@ -814,7 +814,7 @@ impl MOQTClient {
             .activate_incoming_subscribe(request_id, track_alias)
             .map_err(anyhow_error)?;
         handler.delivery_timeout = delivery_timeout;
-        handler.max_cache_duration = max_duration;
+        handler.track_properties.max_cache_duration = max_duration;
         handler
             .ok_with_track_alias(track_alias, expires, content_exists)
             .await

@@ -1,5 +1,5 @@
-use moqt::RequestErrorCode;
 use moqt::publish::PublishDoneCode;
+use moqt::{RequestErrorCode, TrackProperties};
 use std::sync::{Arc, Mutex};
 
 use moqt::{
@@ -45,7 +45,7 @@ pub(crate) struct SentPublish {
     pub(crate) track_namespace: String,
     pub(crate) track_name: String,
     pub(crate) content_exists: ContentExists,
-    pub(crate) max_cache_duration: Option<u64>,
+    pub(crate) track_properties: TrackProperties,
     pub(crate) forward: bool,
 }
 
@@ -368,14 +368,14 @@ impl Publisher for MockUpstreamPublisher {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
         forward: bool,
     ) -> anyhow::Result<DownstreamSubscription> {
         self.recorded.publishes.lock().unwrap().push(SentPublish {
             track_namespace: track_namespace.clone(),
             track_name: track_name.clone(),
             content_exists,
-            max_cache_duration,
+            track_properties,
             forward,
         });
         let Some(answer_publish) = &self.answer_publish else {
@@ -394,7 +394,7 @@ impl Publisher for MockUpstreamPublisher {
                 forward,
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
-                max_cache_duration: None,
+                track_properties: TrackProperties::default(),
             }),
         ))
     }
@@ -464,7 +464,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 content_exists: answer_subscribe(),
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
-                max_cache_duration: None,
+                track_properties: TrackProperties::default(),
             }),
         ))
     }
@@ -512,7 +512,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 group_order: GroupOrder::Ascending,
                 end_of_track: false,
                 end_location,
-                max_cache_duration: None,
+                track_properties: TrackProperties::default(),
                 remainder: None,
             }),
         }
@@ -665,7 +665,7 @@ impl SubscribeHandler for MockSubscribeHandler {
         _track_alias: u64,
         _expires: u64,
         _content_exists: ContentExists,
-        _max_cache_duration: Option<u64>,
+        _track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
         *self.subscribe_ok_count.lock().unwrap() += 1;
         Ok(())
@@ -744,7 +744,7 @@ impl FetchHandler for MockFetchHandler {
         &self,
         _end_of_track: bool,
         _end_location: moqt::object::Location,
-        _max_cache_duration: Option<u64>,
+        _track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }
@@ -831,7 +831,7 @@ impl PublishHandler for MockPublishHandler {
             forward: true,
             filter_type,
             delivery_timeout: None,
-            max_cache_duration: None,
+            track_properties: TrackProperties::default(),
         })
     }
 
