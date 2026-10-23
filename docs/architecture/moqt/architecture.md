@@ -584,6 +584,14 @@ state name the connection:
     as received (see `version/draft18` above). Draft-14 has no Track
     Properties: a draft-14 session receives an empty `other` and does not
     send it, so a set from a draft-18 peer is dropped toward a draft-14 one.
+  - A draft-14 peer understands no Mandatory Track Property
+    (`Version::understands`), so such a track is never sent to it (draft-18
+    §2.5.1): `SubscribeHandler::ok*` and `FetchHandler::ok` refuse the
+    request with UNSUPPORTED_EXTENSION, which draft-14 sends as NOT_SUPPORTED,
+    and fail; `SubscribeHandler::understands` tells beforehand whether `ok*`
+    would refuse; `Publisher::publish` fails with
+    `RequestFailure::TrackNotUnderstood` and sends nothing. A draft-18 peer
+    is sent the properties as they are.
 - `enums.rs` — `SessionEvent` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
@@ -705,7 +713,13 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     object is sent as its status (§10.2.1.1), and an object with a payload is
     always `Normal`: an End of Group type sets `Object::ends_group` instead of
     the status, and only a datagram with a payload sends it back. FETCH cannot
-    carry it, so a fetched copy of that object has `ends_group` false.
+    carry it, so a fetched copy of that object has `ends_group` false. A
+    datagram larger than the session's maximum datagram size is dropped and
+    the send succeeds (draft-14 §10.3, draft-18 §11.3); the QUIC and
+    WebTransport connections map quinn's `TooLarge` to that drop.
+  - `Publisher::mixes_forwarding_preferences()` tells, without naming the
+    draft, whether one track sent on the session may use subgroup streams and
+    datagrams alike (draft-18 §11) or keeps one preference (draft-14 §10).
   - `FetchDataSender::send_object(&Object)` / `FetchDataReceiver::receive()
     -> Fetch::{Object(Object), UnknownRange { last }, End}` do the same for
     FETCH responses (`FetchObjectField::from_object` / `into_object`): a
