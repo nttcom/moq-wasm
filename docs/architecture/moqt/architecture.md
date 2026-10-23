@@ -185,7 +185,9 @@ call through the adapter; a draft never gets a task of its own (see
   `negotiated_protocol()` before running that draft's SETUP exchange: ALPN
   `moq-00` (draft-14 §3.1.2) and a WebTransport session without a subprotocol
   (draft-14 defines none, §3.1.1) are draft-14; ALPN or subprotocol `moqt-18`
-  is draft-18; anything else fails the session.
+  is draft-18; anything else, or a draft the endpoint's config does not
+  list, fails the session, so a server that accepts only draft-18 refuses a
+  WebTransport session without a subprotocol.
 - `draft18` (docs/spec/draft-ietf-moq-transport-18.txt) has one
   unidirectional control stream per endpoint (SETUP, then only GOAWAY) and one
   bidirectional stream per request that carries its response, so there is no

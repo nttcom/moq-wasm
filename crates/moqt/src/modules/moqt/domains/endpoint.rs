@@ -71,6 +71,7 @@ impl<T: TransportProtocol> Endpoint<T> {
             transport_creator: client,
             authorization_token: config.authorization_token.clone(),
             follow_go_away: config.follow_go_away,
+            versions: config.versions.clone(),
         };
         Ok(Self {
             session_creator: Arc::new(session_creator),
@@ -90,6 +91,7 @@ impl<T: TransportProtocol> Endpoint<T> {
             transport_creator: client,
             authorization_token: None,
             follow_go_away: true,
+            versions: DEFAULT_VERSIONS.to_vec(),
         };
         Ok(Self {
             session_creator: Arc::new(session_creator),
@@ -108,6 +110,7 @@ impl<T: TransportProtocol> Endpoint<T> {
             transport_creator: server,
             authorization_token: None,
             follow_go_away: false,
+            versions: server_config.versions.clone(),
         };
         Ok(Self {
             session_creator: Arc::new(session_creator),
@@ -249,6 +252,38 @@ mod tests {
         // Assert
         assert_eq!(draft14_first, Version::Draft14);
         assert_eq!(draft18_first, Version::Draft18);
+    }
+
+    #[tokio::test]
+    async fn a_draft18_only_server_refuses_a_web_transport_session_without_a_subprotocol() {
+        // Arrange: a WebTransport client offering draft-14 asks for no subprotocol
+        let server = Endpoint::<DUAL>::create_server(&ServerConfig {
+            versions: vec![Version::Draft18],
+            ..self_signed_server_config("draft18-only-web-transport")
+        })
+        .unwrap();
+        let port = server.local_port().unwrap();
+        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.map(|_| ()) });
+        let client = Endpoint::<DUAL>::create_client(&ClientConfig {
+            versions: vec![Version::Draft14],
+            ..insecure_client_config()
+        })
+        .unwrap();
+
+        // Act
+        let url = format!("https://127.0.0.1:{port}/moq");
+        let connecting = tokio::spawn(async move {
+            let _session = client.connect(&url).await?.await;
+            anyhow::Ok(())
+        });
+        let accepted = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
+            .await
+            .unwrap()
+            .unwrap();
+        connecting.abort();
+
+        // Assert
+        assert!(accepted.is_err());
     }
 
     #[test]
