@@ -63,7 +63,7 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
 
 /// Reads the catalog's latest group with the Joining FETCH (offset 0) that
 /// MSF §5 requires beside the SUBSCRIBE. Falls back to the subscription's
-/// next group when the FETCH fails, e.g. before the first catalog was sent.
+/// next object when the FETCH fails, e.g. before the first catalog was sent.
 pub async fn read_catalog(session: &Session, subscription: &Subscription) -> Result<Bytes> {
     match fetch_current_group(session, subscription).await {
         Ok(objects) => {
