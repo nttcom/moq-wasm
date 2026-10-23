@@ -1210,6 +1210,72 @@ mod tests {
         assert_eq!(done.status_code(), PublishDoneCode::GoingAway);
     }
 
+    #[tokio::test]
+    async fn a_goaway_on_a_namespace_subscription_withdraws_its_namespaces_once() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-goaway", "moqt").await;
+        let subscriber = client.subscriber();
+        let request =
+            tokio::spawn(async move { subscriber.subscribe_namespace("live".into()).await });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+        for namespace in ["live/room", "live/hall"] {
+            server
+                .publisher()
+                .publish_namespace(namespace.into())
+                .await
+                .unwrap();
+            let SessionEvent::PublishNamespace(_) = next_event(&client).await else {
+                panic!("expected PUBLISH_NAMESPACE");
+            };
+        }
+        let stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .values()
+            .find(|stream| {
+                stream.kind == super::RequestStreamKind::SubscribeNamespace(vec!["live".into()])
+            })
+            .cloned()
+            .unwrap();
+        let go_away = messages::encode_go_away(&messages::GoAwayMessage {
+            new_session_uri: String::new(),
+            request_id: None,
+        })
+        .unwrap();
+
+        // Act
+        stream.sender.send(&go_away).await.unwrap();
+        let mut withdrawn = Vec::new();
+        for _ in 0..2 {
+            let event = next_event(&client).await;
+            let SessionEvent::PublishNamespaceDone(done) = event else {
+                panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
+            };
+            withdrawn.push(done.track_namespace().to_string());
+        }
+        let later = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            client.receive_event(),
+        )
+        .await;
+
+        // Assert
+        withdrawn.sort();
+        assert_eq!(withdrawn, ["live/hall", "live/room"]);
+        assert!(later.is_err(), "no duplicate withdrawal: {later:?}");
+        assert!(
+            ControlChannel::of(&client.publisher().session.connection())
+                .requests()
+                .outgoing
+                .is_empty()
+        );
+    }
+
     fn outgoing_stream(session: &crate::Session, request_id: u64) -> super::RequestStream {
         ControlChannel::of(&session.publisher().session.connection())
             .requests()

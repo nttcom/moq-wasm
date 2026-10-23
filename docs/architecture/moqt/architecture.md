@@ -203,7 +203,9 @@ call through the adapter; a draft never gets a task of its own (see
       send nothing.
     - SUBSCRIBE_TRACKS raises `SubscribeNameSpace` and gets no NAMESPACE.
     - A per-request GOAWAY ends the request as a peer cancellation with
-      GOING_AWAY.
+      GOING_AWAY. On our SUBSCRIBE_NAMESPACE it raises
+      `PublishNamespaceDone` for every namespace still announced, as the
+      end of the stream does (§10.18).
     - REQUEST_UPDATE is applied as a delta to the request's current state
       (§10.9), then raised as `SubscribeUpdate`. Its REQUEST_OK waits for
       `SubscribeUpdateHandler::ok`, which gives the LARGEST_OBJECT (§10.2.11),

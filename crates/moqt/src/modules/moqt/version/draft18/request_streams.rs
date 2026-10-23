@@ -734,6 +734,7 @@ impl OutgoingRequestTask {
                         new_session_uri = go_away.new_session_uri,
                         "GOAWAY on a request stream; ending the request"
                     );
+                    Self::withdraw_namespaces(&context, namespaces);
                     Self::peer_ended(&context, request_id, kind, publish_done, true).await;
                     return;
                 }
@@ -750,10 +751,7 @@ impl OutgoingRequestTask {
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
-                    // §10.18: the end of the stream withdraws every namespace.
-                    for namespace in namespaces {
-                        Self::namespace_withdrawn(&context, namespace);
-                    }
+                    Self::withdraw_namespaces(&context, namespaces);
                     Self::peer_ended(&context, request_id, kind, publish_done, false).await;
                     return;
                 }
@@ -777,6 +775,14 @@ impl OutgoingRequestTask {
                 },
             )),
         );
+    }
+
+    /// §10.18: the end of a SUBSCRIBE_NAMESPACE request withdraws every
+    /// namespace it announced.
+    fn withdraw_namespaces(scope: &Scope, namespaces: HashSet<Vec<String>>) {
+        for namespace in namespaces {
+            Self::namespace_withdrawn(scope, namespace);
+        }
     }
 
     fn namespace_withdrawn(scope: &Scope, namespace: Vec<String>) {
