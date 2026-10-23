@@ -128,8 +128,13 @@ pub(crate) async fn spawn_relay_and_connect_client(
     token: VerifiedToken,
 ) -> (RunningRelay, Session) {
     let relay = spawn_relay_with_verifier(token).await;
+    let client = connect_client(&relay).await;
+    (relay, client)
+}
+
+pub(crate) async fn connect_client(relay: &RunningRelay) -> Session {
     let endpoint = client_endpoint(Some("jwt".to_string()));
-    let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         endpoint
             .connect(&format!("moqt://127.0.0.1:{}", relay.port))
             .await?
@@ -137,6 +142,5 @@ pub(crate) async fn spawn_relay_and_connect_client(
     })
     .await
     .expect("handshake timed out")
-    .expect("handshake failed");
-    (relay, client)
+    .expect("handshake failed")
 }

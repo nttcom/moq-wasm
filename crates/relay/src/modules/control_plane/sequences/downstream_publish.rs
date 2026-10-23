@@ -18,7 +18,10 @@ use crate::modules::{
     },
     domain::{
         delivery_control::DeliveryControl,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
+        pub_sub_directory::{
+            InMemoryLocalPubSubDirectory,
+            entry::{JoinPoint, PublishDoneReason},
+        },
         session_id::SessionId,
         track_key::TrackKey,
     },
@@ -77,17 +80,14 @@ impl DownstreamPublish {
         };
         let subscriber_peer = super::session_peer(subscriber_session_id, &self.forwarder).await;
 
+        let filter_type = downstream_subscription.filter_type();
         let Some(runner_signals) = self.table.register_downstream_subscription(
             subscriber_session_id,
             request_id,
             subscriber_peer,
             track_key.clone(),
-            largest_location,
-            DeliveryControl::new(
-                forward,
-                &downstream_subscription.filter_type(),
-                largest_location,
-            ),
+            JoinPoint::new(&filter_type, largest_location),
+            DeliveryControl::new(forward, &filter_type, largest_location),
         ) else {
             let track_ended = PublishDoneReason {
                 status_code: PublishDoneCode::TrackEnded,

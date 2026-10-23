@@ -48,6 +48,7 @@ impl UpstreamPublishDone {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         domain::{
@@ -88,7 +89,7 @@ mod tests {
                 DOWNSTREAM_SUBSCRIBE_ID,
                 SessionPeer::Client,
                 track_key(),
-                None,
+                JoinPoint::Largest(None),
                 delivery_control(true),
             )
             .unwrap()

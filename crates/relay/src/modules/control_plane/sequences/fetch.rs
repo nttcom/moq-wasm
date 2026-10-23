@@ -21,8 +21,10 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
     domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::JoinPoint},
+        session_id::SessionId,
+        session_peer::SessionPeer,
+        track_key::TrackKey,
     },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
 };
@@ -59,6 +61,7 @@ enum FetchSource {
 enum FetchError {
     TrackNotFound,
     UnknownJoiningRequestId,
+    JoinedNotLargestObject,
     NoObjectsPublished,
     InvalidRange,
     NoObjects,
@@ -66,14 +69,16 @@ enum FetchError {
 }
 
 impl FetchError {
-    fn code(&self) -> RequestErrorCode {
+    /// `None` when the FETCH is a protocol violation rather than a FETCH_ERROR.
+    fn code(&self) -> Option<RequestErrorCode> {
         match self {
-            Self::TrackNotFound => RequestErrorCode::TrackDoesNotExist,
-            Self::UnknownJoiningRequestId => RequestErrorCode::InvalidJoiningRequestId,
-            Self::NoObjectsPublished => RequestErrorCode::InvalidRange,
-            Self::InvalidRange => RequestErrorCode::InvalidRange,
-            Self::NoObjects => RequestErrorCode::NoObjects,
-            Self::MalformedTrack => RequestErrorCode::MalformedTrack,
+            Self::TrackNotFound => Some(RequestErrorCode::TrackDoesNotExist),
+            Self::UnknownJoiningRequestId => Some(RequestErrorCode::InvalidJoiningRequestId),
+            Self::JoinedNotLargestObject => None,
+            Self::NoObjectsPublished => Some(RequestErrorCode::InvalidRange),
+            Self::InvalidRange => Some(RequestErrorCode::InvalidRange),
+            Self::NoObjects => Some(RequestErrorCode::NoObjects),
+            Self::MalformedTrack => Some(RequestErrorCode::MalformedTrack),
         }
     }
 
@@ -81,6 +86,9 @@ impl FetchError {
         match self {
             Self::TrackNotFound => "Track not found",
             Self::UnknownJoiningRequestId => "Unknown joining request id",
+            Self::JoinedNotLargestObject => {
+                "Joining FETCH of a subscription without the Largest Object filter"
+            }
             Self::NoObjectsPublished => "No objects published",
             Self::InvalidRange => "Invalid fetch range",
             Self::NoObjects => "No objects in fetch range",
@@ -117,7 +125,17 @@ impl Fetch {
             match self.resolve_target_and_source(session_id, fetch_params, table, cache_store) {
                 Ok(resolved) => resolved,
                 Err(err) => {
-                    let _ = handler.error(err.code(), err.reason().to_string()).await;
+                    let reason = err.reason().to_string();
+                    match err.code() {
+                        Some(code) => {
+                            let _ = handler.error(code, reason).await;
+                        }
+                        None => {
+                            let _ = session_event_sender.send(
+                                SessionEvent::protocol_violation_detected(session_id, reason),
+                            );
+                        }
+                    }
                     return;
                 }
             };
@@ -411,8 +429,8 @@ impl Fetch {
         Ok(source)
     }
 
-    /// When no objects existed at subscribe time (`start_location` is `None`), §9.16.2
-    /// requires rejecting the Joining Fetch with INVALID_RANGE.
+    /// draft-14 §9.16.2: a Joining FETCH of a subscription without the Largest Object
+    /// filter is a PROTOCOL_VIOLATION; one made before any object existed gets INVALID_RANGE.
     fn resolve_joining_target(
         &self,
         session_id: SessionId,
@@ -430,6 +448,15 @@ impl Fetch {
             return Err(FetchError::UnknownJoiningRequestId);
         };
 
+        let largest = match downstream_sub.join_point {
+            JoinPoint::Largest(Some(largest)) => largest,
+            JoinPoint::Largest(None) => {
+                tracing::warn!("Joining fetch: no objects published at subscribe time");
+                return Err(FetchError::NoObjectsPublished);
+            }
+            JoinPoint::NotLargestObject => return Err(FetchError::JoinedNotLargestObject),
+        };
+
         if table
             .get_upstream_track(&downstream_sub.track_key)
             .is_none()
@@ -437,11 +464,6 @@ impl Fetch {
             tracing::warn!("Joined subscription has no active upstream subscription");
             return Err(FetchError::TrackNotFound);
         }
-
-        let Some(largest) = downstream_sub.start_location else {
-            tracing::warn!("Joining fetch: no objects published at subscribe time");
-            return Err(FetchError::NoObjectsPublished);
-        };
 
         let start_location = moqt::object::Location {
             group_id: start_group(largest),
@@ -466,7 +488,10 @@ mod tests {
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
-        auth::verified_token::VerifiedToken,
+        auth::{
+            test_support::{app_token, connect_client, spawn_relay_and_connect_client},
+            verified_token::VerifiedToken,
+        },
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::{
             directory_fixtures::{active_upstream, local_publisher_resolver, table_with_upstream},
@@ -965,7 +990,7 @@ mod tests {
             100,
             SessionPeer::Client,
             key,
-            None,
+            JoinPoint::Largest(None),
             delivery_control(true),
         );
 
@@ -974,6 +999,69 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(FetchError::NoObjectsPublished)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn joining_fetch_of_a_next_group_start_subscription_closes_the_session() {
+        // Arrange: a publisher serves one object through the relay
+        let (relay, publisher) =
+            spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let origin = moqt::publish::Origin::default();
+        origin
+            .ensure_track("APP/ns", "track", 0, moqt::publish::Retention::NewestOnly)
+            .await;
+        origin
+            .write(
+                "APP/ns",
+                "track",
+                moqt::publish::OutgoingObject::plain(
+                    moqt::publish::GroupBoundary::Next,
+                    bytes::Bytes::from_static(b"o0"),
+                ),
+            )
+            .await
+            .unwrap();
+        publisher
+            .publisher()
+            .publish_namespace("APP/ns".to_string())
+            .await
+            .unwrap();
+        let serving = origin.clone();
+        let publisher_events = tokio::spawn(async move {
+            while let Ok(event) = publisher.receive_event().await {
+                serving.handle(event).await;
+            }
+        });
+        let subscriber = connect_client(&relay).await;
+        let subscription = subscriber
+            .subscriber()
+            .subscribe(
+                "APP/ns".to_string(),
+                "track".to_string(),
+                moqt::subscribe::SubscribeOption {
+                    filter_type: moqt::subscribe::FilterType::NextGroupStart,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // Act
+        let _ = subscriber
+            .subscriber()
+            .fetch_relative_joining(&subscription, 0, moqt::fetch::FetchOption::default())
+            .await;
+        let event = tokio::time::timeout(Duration::from_secs(5), subscriber.receive_event())
+            .await
+            .expect("the relay kept the session open")
+            .unwrap();
+
+        // Assert: the peer of a closed session sees the close as a disconnection
+        assert!(
+            matches!(event, moqt::SessionEvent::Disconnected()),
+            "{event:?}"
+        );
+        publisher_events.abort();
     }
 
     #[test]
@@ -989,7 +1077,7 @@ mod tests {
             100,
             SessionPeer::Client,
             key,
-            Some(largest),
+            JoinPoint::Largest(Some(largest)),
             delivery_control(true),
         );
 
@@ -1023,10 +1111,10 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::object::Location {
+            JoinPoint::Largest(Some(moqt::object::Location {
                 group_id: 1,
                 object_id: 1,
-            }),
+            })),
             delivery_control(true),
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
@@ -1080,10 +1168,10 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::object::Location {
+            JoinPoint::Largest(Some(moqt::object::Location {
                 group_id: 2,
                 object_id: 3,
-            }),
+            })),
             delivery_control(true),
         );
 
@@ -1132,10 +1220,10 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::object::Location {
+            JoinPoint::Largest(Some(moqt::object::Location {
                 group_id: 1,
                 object_id: 1,
-            }),
+            })),
             delivery_control(true),
         );
 
@@ -1184,10 +1272,10 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::object::Location {
+            JoinPoint::Largest(Some(moqt::object::Location {
                 group_id: 1,
                 object_id: 1,
-            }),
+            })),
             delivery_control(true),
         );
 

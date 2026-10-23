@@ -14,7 +14,10 @@ use crate::modules::{
     },
     domain::{
         delivery_control::DeliveryControl,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
+        pub_sub_directory::{
+            InMemoryLocalPubSubDirectory,
+            entry::{JoinPoint, UpstreamTrack},
+        },
         session_id::SessionId,
         session_peer::SessionPeer,
         track_key::TrackKey,
@@ -476,17 +479,14 @@ impl Subscribe {
         };
 
         let downstream_subscription = handler.to_downstream_subscription(subscriber_track_alias);
+        let filter_type = downstream_subscription.filter_type();
         let Some(runner_signals) = table.register_downstream_subscription(
             session_id,
             handler.subscribe_id(),
             subscriber_peer,
             track_key.clone(),
-            largest_location,
-            DeliveryControl::new(
-                INITIAL_FORWARD,
-                &downstream_subscription.filter_type(),
-                largest_location,
-            ),
+            JoinPoint::new(&filter_type, largest_location),
+            DeliveryControl::new(INITIAL_FORWARD, &filter_type, largest_location),
         ) else {
             tracing::debug!(
                 subscribe_id = handler.subscribe_id(),
@@ -786,7 +786,7 @@ mod tests {
                     1,
                     SessionPeer::Client,
                     access.track_key.clone(),
-                    None,
+                    JoinPoint::Largest(None),
                     delivery_control(true),
                 )
                 .unwrap();
