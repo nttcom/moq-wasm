@@ -75,7 +75,7 @@ runs:
         fi
 
     - name: Save apt package cache
-      if: ${{ steps.install.outputs.downloaded == 'true' && github.ref == 'refs/heads/master' }}
+      if: ${{ steps.install.outputs.downloaded == 'true' }}
       # actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
