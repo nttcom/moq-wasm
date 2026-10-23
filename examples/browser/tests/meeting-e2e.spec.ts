@@ -18,6 +18,7 @@ import {
   removeCatalogTrack,
   sendChatMessage,
   setAudioGroupInterval,
+  setAudioSingleStream,
   startScreenShare
 } from './meeting-e2e-arrange'
 
@@ -610,6 +611,37 @@ test('a subscriber keeps hearing a member who changes an audio setting while ano
 
     // Assert
     await expectAudioKeepsPlaying(bobStats)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
+  }
+})
+
+test('a subscriber who joins after a member switches audio to a single stream hears that member', async ({
+  browser
+}) => {
+  // Arrange: bob's subscription keeps alice encoding, so carol joins in the middle of alice's single audio group
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-audio-single-stream-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await expectCatalogSubscribed(bob.page.page, 'alice')
+    await subscribeAndExpectMedia(bob.page.page, 'alice')
+    await setAudioSingleStream(alice.page.page)
+
+    // Act
+    await joinRoom(carol.page, roomName, 'carol', 'b')
+    await expectCatalogSubscribed(carol.page.page, 'alice')
+    await subscribeMedia(carol.page.page, 'alice')
+
+    // Assert
+    await expectAudioPlaying(getMemberStats(carol.page.page, 'alice'))
   } finally {
     await alice.context.close()
     await bob.context.close()
