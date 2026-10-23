@@ -671,7 +671,10 @@ draft:
   every send queued behind a stream close. Guarded by the meeting E2E
   `rotating the audio group neither stalls the sender nor gaps the receiver`
   (`examples/browser/tests/meeting-e2e.spec.ts`), which bounds how long the
-  publisher's audio EndOfGroup and stream close take. The measurement lives in
+  publisher's audio EndOfGroup and stream close take. On Linux the runner
+  (`tests/browser-e2e/run-meeting-e2e.mjs`) delays every relay reply with
+  `tc netem`, so a close that awaits the ACK exceeds the bound even though CI
+  runs the relays on the same host. The measurement lives in
   `examples/browser/utils/media/audioTransport.ts`, which every draft shares.
 
 ## Testing conventions

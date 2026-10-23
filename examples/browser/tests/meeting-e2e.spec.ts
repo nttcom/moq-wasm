@@ -708,7 +708,8 @@ test('an invalid token is rejected by the relay with a surfaced reason', async (
 // Tentative bounds from one local run with two native relays on one machine; tighten once CI runs show the spread.
 // Closing a browser send stream does not await the FIN's ACK. Through a remote relay the audio EndOfGroup and
 // close took p50 57 / max 261 ms before the fix, p50 0.2 / max 2.1 ms after. Over loopback a regression adds
-// only the relay's round trip (0.4-8 ms, measured with the fix reverted), so this bound catches it only at a real RTT.
+// only the relay's round trip (0.4-8 ms, measured with the fix reverted), so on Linux the runner delays
+// every relay reply by 60 ms (`relayReplyDelayMs` in tests/browser-e2e/run-meeting-e2e.mjs).
 const MAX_AUDIO_END_OF_GROUP_MS = 50
 // A stream whose header has not arrived does not hold back later streams. So the audio group that opens every
 // second and the video frames keep their pace: 20 ms audio chunks, 15 fps video.
