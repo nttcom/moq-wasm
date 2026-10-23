@@ -99,3 +99,26 @@ async def test_close_resolves_closed_and_fails_later_calls(relay_url):
     ):
         with pytest.raises(RuntimeError, match="connection lost"):
             await within(request)
+
+
+async def test_a_subscriber_after_an_unsubscribe_inside_an_open_group_gets_its_later_objects(relay_url):
+    # Arrange: the relay's UNSUBSCRIBE makes the publisher leave the open group mid-way
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    first = await connect(relay_url)
+    first_objects = await within(first.subscribe(namespace, TRACK))
+    await track.write(b"v1", new_group=True)
+    assert (await within(first_objects.__anext__())).payload == b"v1"
+    await first_objects.unsubscribe()
+    with pytest.raises(StopAsyncIteration):
+        await within(first_objects.__anext__())
+    second = await connect(relay_url)
+    second_objects = await within(second.subscribe(namespace, TRACK))
+
+    # Act
+    await track.write(b"v2")
+
+    # Assert
+    assert (await within(second_objects.__anext__())).payload == b"v2"
+    for session in (second, first, publisher):
+        await session.close()
