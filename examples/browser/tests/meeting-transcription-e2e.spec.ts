@@ -30,10 +30,10 @@ async function openTranscript(model: MeetingClientPageModel) {
   return model.page.getByTestId('transcript-record')
 }
 
-test('captions bring the transcriber, show what a participant says and reach a late joiner', async ({ browser }) => {
+test('captions bring the transcriber, reach a late joiner and stay until someone stops them', async ({ browser }) => {
   // Arrange: alice speaks; a room name with a space reaches the bot through the URL
   const room = `captions room ${Date.now() % 100_000}`
-  const alice = await arrangeMeetingClient(browser)
+  const alice = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
   await joinRoom(alice.page, room, 'alice', 'a')
   await alice.page.toggleMicrophoneButton.click()
   await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
@@ -74,21 +74,49 @@ test('captions bring the transcriber, show what a participant says and reach a l
   const saidBefore = await bobRecords.count()
 
   // Act: carol joins while alice is muted, so only the joining FETCH can bring alice's records
-  const carol = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
   await joinRoom(carol.page, room, 'carol', 'a')
 
   // Assert: carol gets every record bob saw before she joined
   const carolRecords = await openTranscript(carol.page)
   await expect.poll(() => carolRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(saidBefore)
 
-  // Act: bob, who asked the transcriber in, stops it
-  await bob.page.page.getByTestId('captions-button').click()
-  await bob.page.page.getByTestId('captions-stop').click()
+  // Act: bob, who asked the transcriber in, leaves
+  await bob.page.leaveButton.click()
+  await bob.context.close()
+  await alice.page.page.waitForTimeout(5_000)
 
-  // Assert: the transcriber leaves at once rather than after the grace period
+  // Assert
+  await expect(alice.page.page.getByTestId('transcriber-badge')).toBeVisible()
+
+  // Act
+  const dialogMessages: string[] = []
+  carol.page.page.once('dialog', (dialog) => {
+    dialogMessages.push(dialog.message())
+    void dialog.dismiss()
+  })
+  await carol.page.page.getByTestId('captions-button').click()
+  await carol.page.page.getByTestId('captions-stop').click()
+  await alice.page.page.waitForTimeout(5_000)
+
+  // Assert: cancelling keeps the transcriber
+  expect(dialogMessages).toEqual(['Stopping transcription stops it for everyone in the room.'])
+  await expect(alice.page.page.getByTestId('transcriber-badge')).toBeVisible()
+  await expect(carol.page.page.getByTestId('captions-button')).toHaveAccessibleName('Captions on')
+
+  // Act
+  carol.page.page.once('dialog', (dialog) => void dialog.accept())
+  await carol.page.page.getByTestId('captions-button').click()
+  await carol.page.page.getByTestId('captions-stop').click()
+
+  // Assert: the transcriber leaves at once rather than after the grace period, on every page
   await expect(alice.page.page.getByTestId('transcriber-badge')).toBeHidden({ timeout: 10_000 })
+  await expect(alice.page.page.getByTestId('captions-button')).toHaveAccessibleName(
+    'Captions (stopped by a participant)'
+  )
+  await expect(carol.page.page.getByTestId('transcriber-badge')).toBeHidden()
 
-  for (const client of [carol, bob, alice]) {
+  for (const client of [carol, alice]) {
     await client.page.leaveButton.click()
     await client.context.close()
   }

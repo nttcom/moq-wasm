@@ -6,6 +6,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 
 - 同じルームを開いたページは 1 つの bot を共有します。最後のページが離れてから 30 秒たつと bot を止めます。
 - イベントストリームは最初に `member` イベントで保持の ID を送ります。ページが `POST /rooms/{room}/leave?member={ID}` を送ると、その保持をすぐ外し、最後のページならすぐ bot を止めます。
+- `POST /rooms/{room}/stop?member={ID}` は、そのルームを保持しているすべてのページについて bot を止めます。各ストリームには `stopped` が届き、次の要求は新しい bot を起動します。
 - Cloud Run はページが離れてもリクエストを開いたままにするので、bot はルームのページが publish する namespace も見ています。それが 30 秒 publish されないと bot は戻り、サーバーはすぐルームを終えます。開いたままのリクエストは理由なしで終わるので、まだいるページは接続し直して新しい bot を始めます。
 - ルームの bot が止まった理由は、イベント名でページに届きます。
 
@@ -15,6 +16,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
   | `closed` | `--open-hours` の時間外に要求された、または動いている間に時間外になった |
   | `expired` | ルームが `--max-room-seconds` 動き続けた |
   | `failed` | bot が例外で止まった |
+  | `stopped` | ルームを保持しているページが `stop` を送った |
 
 - ルーム ID は既定で `[a-z0-9-]` の 1〜32 文字で、bot が `serve_rooms` に別の規則を渡せます。namespace の 1 要素になります。
 - bot が `serve_rooms` に `bot_from_query` を渡すと、ルームを始めたリクエストのクエリでそのルームの bot を選べます（例: 書き起こしのモデル）。受け付けないクエリには 400 を返します。
