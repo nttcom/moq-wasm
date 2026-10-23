@@ -717,7 +717,7 @@ mod tests {
         TerminationErrorCode, Version,
         fetch::{
             Fetch, FetchCancelHandler, FetchDataReceiver, FetchDataSender, FetchHandle,
-            FetchHandler, FetchOption,
+            FetchHandler, FetchOption, FetchParams,
         },
         modules::{
             test_support::{
@@ -1447,6 +1447,51 @@ mod tests {
                     Some(TransportSendError::ClosedStream)
                 )
             }),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relative_joining_fetch_names_its_subscription_and_delivers_the_joined_objects() {
+        for version in DRAFTS {
+            // Arrange: the subscription's Largest is {3, 1}
+            let (client, server) = connected_sessions("subscriber-relative-joining", version).await;
+            let (subscription, subscribe_handler) = subscribed(&client, &server).await;
+            let joined = [
+                fetch_object(location(2, 0), b"joined-2"),
+                fetch_object(location(3, 0), b"joined-3"),
+            ];
+
+            // Act
+            let mut subscriber = client.subscriber();
+            let (handle, fetch_params) = within(async {
+                tokio::join!(
+                    subscriber.fetch_relative_joining(&subscription, 1, FetchOption::default()),
+                    async {
+                        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap()
+                        else {
+                            panic!("expected FETCH from the client");
+                        };
+                        serve_fetch(&server, &handler, location(3, 2), &joined).await;
+                        handler.fetch.fetch_params.clone()
+                    }
+                )
+            })
+            .await;
+            let mut receiver = subscriber
+                .accept_fetch_receiver(&handle.unwrap())
+                .await
+                .unwrap();
+            let fetched = within(read_fetch_objects(&mut receiver)).await;
+
+            // Assert
+            assert_eq!(
+                fetch_params,
+                FetchParams::RelativeJoining {
+                    joining_request_id: subscribe_handler.request_id(),
+                    joining_start: 1,
+                }
+            );
+            assert_eq!(fetched, joined);
         }
     }
 

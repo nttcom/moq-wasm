@@ -579,8 +579,8 @@ mod tests {
         TrackWriter, Version,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::test_support::{
-            DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, accept_publish, client_with_config,
-            open_subgroup, send_payload, spawn_server, subscribed_track_reader,
+            DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
+            client_with_config, open_subgroup, send_payload, spawn_server, subscribed_track_reader,
         },
         namespace::NamespaceInterest,
         object::{
@@ -1020,13 +1020,6 @@ mod tests {
             assert_eq!(served_b.track_alias(), alias_b);
             assert_eq!(on_b, payload(1, b"b1-0"));
         }
-    }
-
-    async fn accept_namespace(server: &Session) {
-        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected PUBLISH_NAMESPACE");
-        };
-        handler.ok().await.unwrap();
     }
 
     async fn publish(client: &Session, server: &Session) -> (Subscription, Subscription) {

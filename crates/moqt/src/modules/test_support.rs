@@ -251,6 +251,13 @@ async fn connected_sessions_over(name: &str, version: Version, scheme: &str) -> 
     .unwrap()
 }
 
+pub(crate) async fn accept_namespace(server: &Session) {
+    let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+        panic!("expected PUBLISH_NAMESPACE");
+    };
+    handler.ok().await.unwrap();
+}
+
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
 pub(crate) async fn accept_publish(server: &Session) -> Subscription {

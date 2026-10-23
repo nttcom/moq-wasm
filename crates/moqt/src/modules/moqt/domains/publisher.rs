@@ -309,7 +309,7 @@ mod tests {
         modules::{
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
-                DRAFTS, HANDSHAKE_TIMEOUT, connected_sessions, data_receiver,
+                DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, connected_sessions, data_receiver,
                 first_subgroup_stream, mandatory_track_properties, next_subgroup,
                 object_with_extensions, read_subgroup_objects, send_subgroup_object,
                 spawn_connected_draft18_sessions, spawn_connected_dual_sessions, within,
@@ -414,6 +414,37 @@ mod tests {
                 .await
                 .expect("PUBLISH_NAMESPACE_OK should resolve the pending request")
                 .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_namespace_done_reaches_the_peer_as_publish_namespace_done() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("publisher-publish-namespace-done", version).await;
+            let publisher = client.publisher();
+            let (announced, ()) = within(async {
+                tokio::join!(
+                    publisher.publish_namespace("live/room".into()),
+                    accept_namespace(&server)
+                )
+            })
+            .await;
+            announced.unwrap();
+
+            // Act
+            publisher
+                .publish_namespace_done("live/room".into())
+                .await
+                .unwrap();
+            let event = within(server.receive_event()).await.unwrap();
+
+            // Assert
+            let SessionEvent::PublishNamespaceDone(done) = event else {
+                panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
+            };
+            assert_eq!(done.track_namespace(), "live/room");
         }
     }
 
