@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { type BotRoomEnd, BotRoomRequest } from '../../../../utils/botRoom'
 import { resolveServiceUrl } from '../../../../utils/serviceUrl'
-import type { TranscriberStatus, TranscriptRecord } from '../media/transcript'
+import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
 import { TRANSCRIBER_AVAILABLE } from '../session/trackNamespace'
 
@@ -10,8 +10,6 @@ const TRANSCRIBER_SERVICE = {
   local: 'http://127.0.0.1:8100',
   cloud: 'https://moq-meeting-transcriber.moqt.research.skyway.io'
 }
-/// How long a speaker's newest live utterance stays on their tile after it arrives.
-const CAPTION_MS = 5_000
 const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
   full: 'no transcriber free',
   closed: 'transcriber closed',
@@ -50,7 +48,7 @@ export type CaptionsControls = {
   error: string | undefined
   /// The room's transcript while the transcriber is in the room, whether or not `on`.
   records: TranscriptRecord[]
-  /// The newest utterance of each speaker, while it is fresh.
+  /// `freshCaptions` of `records` while `on`; empty otherwise.
   captions: Map<string, string>
 }
 
@@ -98,7 +96,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       (next) => {
         const receivedAt = Date.now()
         for (const record of next) {
-          const key = recordKey(record)
+          const key = transcriptRecordKey(record)
           if (record.live && !arrivals.current.has(key)) {
             arrivals.current.set(key, receivedAt)
           }
@@ -118,19 +116,10 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
     return () => window.clearInterval(timer)
   }, [transcriberPresent])
 
-  const captions = useMemo(() => {
-    const fresh = new Map<string, string>()
-    if (!on) {
-      return fresh
-    }
-    for (const record of records) {
-      const receivedAt = arrivals.current.get(recordKey(record)) ?? 0
-      if (now - receivedAt < CAPTION_MS) {
-        fresh.set(record.speaker, record.text)
-      }
-    }
-    return fresh
-  }, [now, on, records])
+  const captions = useMemo(
+    () => (on ? freshCaptions(records, arrivals.current, now) : new Map<string, string>()),
+    [now, on, records]
+  )
 
   if (!TRANSCRIBER_AVAILABLE) {
     return null
@@ -161,8 +150,4 @@ function holdSubscription(session: LocalSession, subscribed: Promise<bigint>, tr
       .then((id) => (session.isSubscribed(id) ? session.unsubscribe(id) : undefined))
       .catch(() => undefined)
   }
-}
-
-function recordKey(record: TranscriptRecord): string {
-  return `${record.startedAtMs}:${record.speaker}`
 }
