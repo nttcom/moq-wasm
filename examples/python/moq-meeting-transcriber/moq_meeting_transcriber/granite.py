@@ -1,18 +1,27 @@
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
-import torch
 from loguru import logger
-from transformers import Pipeline, pipeline
 
 from moq_meeting_transcriber.audio import SAMPLE_RATE
+
+if TYPE_CHECKING:
+    from transformers import Pipeline
 
 MODEL = "ibm-granite/granite-speech-5.0-470m-turboctc"
 
 
 def load_granite() -> Pipeline:
+    # Importing torch and transformers takes over 10 s and about 300 MB, which a bot whose rooms use
+    # only Whisper would spend on every start before it listens.
+    import torch
+    from transformers import pipeline
+
     logger.info(f"loading {MODEL}")
     # On the CPU, the weights' own bfloat16 took about four times as long per utterance as float32.
     model = pipeline("automatic-speech-recognition", model=MODEL, device="cpu", dtype=torch.float32)

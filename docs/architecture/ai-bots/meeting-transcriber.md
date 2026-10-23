@@ -144,8 +144,10 @@ recognizers:
 - `granite-speech-5-470m`: a CTC model, so one pass of its encoder writes
   the whole segment, with no window to fill as Whisper's. It takes no
   language and writes what it hears. All pipelines share one model, as with
-  `whisper`, but it loads when a room first picks it, so a bot whose rooms
-  use only Whisper does not hold its 3 GB in float32. Float32 rather than
+  `whisper`, but it loads, along with torch and transformers, when a room
+  first picks it, so a bot whose rooms use only Whisper neither holds its
+  3 GB in float32 nor spends the over 10 s that importing them takes before
+  it listens. Float32 rather than
   its bfloat16 weights, since bfloat16 took about four times as long on the
   CPU. On a 4-thread laptop CPU it took 0.8 s for an 8 s utterance, against
   1.3 s for Whisper `small`. The image carries its weights, as it carries
