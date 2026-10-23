@@ -10,7 +10,10 @@ use crate::modules::moqt::{
     domains::connection::Connection,
     version::{FetchEncoder, Version},
 };
-use crate::modules::transport::transport_connection::BoxedSendStream;
+use crate::modules::transport::{
+    transport_connection::BoxedSendStream, transport_send_stream::TransportSendError,
+};
+use futures::FutureExt;
 
 /// Dropped without `close` or `reset`, the response is incomplete, so it is
 /// reset with INTERNAL_ERROR.
@@ -70,18 +73,37 @@ impl FetchDataSender {
     /// objects and skips the others.
     pub async fn send_object(&self, object: &Object) -> anyhow::Result<()> {
         let mut encoder = self.encoder.lock().await;
-        match encoder.object(object)? {
-            Some(bytes) => Ok(self.stream_sender.send(&bytes).await?),
-            None => Ok(()),
+        let Some(bytes) = encoder.object(object)? else {
+            return Ok(());
+        };
+        let sent = self.stream_sender.send(&bytes).await;
+        drop(encoder);
+        if let Err(TransportSendError::Stopped { .. }) = &sent {
+            self.stopped_by_peer().await;
         }
+        Ok(sent?)
     }
 
     /// Ends the response with FIN: every object of the range this side
-    /// knows was sent.
+    /// knows was sent. Fails when the peer has stopped the stream, which
+    /// cancels the FETCH instead.
     pub async fn close(&self) -> anyhow::Result<()> {
         self.ended.store(true, Ordering::Relaxed);
+        if let Some(Some(code)) = self.stream_sender.stopped().now_or_never() {
+            self.stopped_by_peer().await;
+            return Err(TransportSendError::Stopped { code }.into());
+        }
         self.stream_sender.close().await?;
         response_ended(&self.connection, self.request_id).await
+    }
+
+    async fn stopped_by_peer(&self) {
+        if let Some(connection) = self.connection.upgrade() {
+            connection
+                .control
+                .fetch_response_stopped(&connection, self.request_id)
+                .await;
+        }
     }
 
     pub async fn reset(&self, code: DataStreamResetCode) -> anyhow::Result<()> {

@@ -421,6 +421,19 @@ impl ControlChannel {
         }
     }
 
+    /// The peer sent STOP_SENDING on the response stream of the FETCH
+    /// `request_id` it sent: draft-18 cancels the FETCH (§5.2), while draft-14
+    /// waits for its FETCH_CANCEL.
+    pub(crate) async fn fetch_response_stopped(
+        &self,
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) {
+        if let Self::Draft18(_) = self {
+            draft18::ControlChannel::fetch_response_stopped(connection, request_id).await;
+        }
+    }
+
     /// The response stream of the FETCH `request_id` the peer sent ended
     /// with FIN or a reset (draft-18 §5.2).
     pub(crate) async fn fetch_response_ended(

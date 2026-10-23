@@ -202,7 +202,9 @@ call through the adapter; a draft never gets a task of its own (see
     (`FetchRequestEnd`), and cancels the FETCH when the receiver is dropped
     before. A FIN from the requester does not cancel a FETCH; a reset of
     its half does, and so does STOP_SENDING on the publisher's half, which
-    the task reading the stream watches (`StreamSender::stopped`). The
+    the task reading the stream watches (`StreamSender::stopped`), or on
+    the response stream, which `FetchDataSender` notices when it sends or
+    closes. The
     publisher then resets both the request stream and the response stream
     and raises `FetchCancel`: `FetchDataSender` attaches its stream to the
     request (`attach_fetch_response`), and a response stream opened for a

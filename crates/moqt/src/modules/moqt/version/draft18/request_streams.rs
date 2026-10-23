@@ -611,10 +611,10 @@ impl IncomingRequestTask {
 }
 
 /// §5.2: the peer cancelled the FETCH it sent as `request_id`, by
-/// STOP_SENDING or by resetting its half. Its request and response streams
-/// are reset and the application hears `FetchCancel`, unless the FETCH had
-/// ended already.
-async fn fetch_cancelled(scope: &Scope, request_id: RequestId) {
+/// STOP_SENDING on either of its streams or by resetting its half of the
+/// request stream. Its request and response streams are reset and the
+/// application hears `FetchCancel`, unless the FETCH had ended already.
+pub(super) async fn fetch_cancelled(scope: &Scope, request_id: RequestId) {
     if !scope.channel().reset_cancelled_fetch(request_id).await {
         return;
     }

@@ -349,6 +349,15 @@ impl ControlChannel {
         }
     }
 
+    pub(super) async fn fetch_response_stopped(
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) {
+        if let Some(scope) = Scope::of(&Arc::downgrade(connection)) {
+            request_streams::fetch_cancelled(&scope, request_id).await;
+        }
+    }
+
     pub(super) async fn fetch_response_ended(
         &self,
         request_id: RequestId,
@@ -842,6 +851,7 @@ mod tests {
                 datagram_receiver, notify_datagram, published_track_between, read_fetch_objects,
                 spawn_connected_draft18_sessions, subgroup_receiver, subscribed_track_reader,
             },
+            transport::transport_send_stream::TransportSendError,
         },
         namespace::{NamespaceInterest, SubscribeNamespaceHandler},
         object::{
@@ -1433,12 +1443,7 @@ mod tests {
 
             // Assert: §5.2 STOP_SENDING with CANCELLED (§3.3.3)
             assert!(
-                matches!(
-                    refused,
-                    Ok(crate::modules::transport::transport_send_stream::TransportSendError::Stopped {
-                        code: 0x1
-                    })
-                ),
+                matches!(refused, Ok(TransportSendError::Stopped { code: 0x1 })),
                 "{scheme}: {refused:?}"
             );
         }
@@ -1570,21 +1575,117 @@ mod tests {
                 .await;
 
             // Assert: §5.2 the publisher resets the request and response streams
-            assert!(
-                matches!(event, SessionEvent::FetchCancel(_)),
-                "{scheme}: {event:?}"
-            );
+            assert_fetch_cancelled_with_reset_request_stream(scheme, event, request_reply);
             assert!(
                 matches!(&response, Ok(Err(error)) if error.to_string().contains("reset")),
                 "{scheme}: {response:?}"
             );
-            assert!(
-                matches!(
-                    request_reply,
-                    Err(crate::modules::transport::transport_send_stream::TransportSendError::ClosedStream)
-                ),
-                "{scheme}: {request_reply:?}"
-            );
+        }
+    }
+
+    /// A FETCH whose requester has sent STOP_SENDING on the response stream
+    /// alone; returns the publisher's data sender and its request stream.
+    async fn fetch_with_stopped_response_stream(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (FetchDataSender, super::RequestStream) {
+        let (_subscriber, receiver, handler, sender) =
+            fetch_with_open_response(client, server).await;
+        // Taken out of the registry, so dropping the receiver leaves the request stream alone.
+        ControlChannel::of(&client.publisher().session.connection())
+            .requests()
+            .outgoing
+            .remove(&receiver.request_id)
+            .unwrap();
+        let request_stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&handler.request_id)
+            .cloned()
+            .unwrap();
+        drop(receiver);
+        let response_stream = request_stream.fetch_response.clone().unwrap();
+        let stopped = tokio::time::timeout(HANDSHAKE_TIMEOUT, response_stream.stopped()).await;
+        assert!(matches!(stopped, Ok(Some(_))), "{stopped:?}");
+        (sender, request_stream)
+    }
+
+    fn assert_fetch_cancelled_with_reset_request_stream(
+        scheme: &str,
+        event: SessionEvent,
+        request_reply: Result<(), TransportSendError>,
+    ) {
+        assert!(
+            matches!(event, SessionEvent::FetchCancel(_)),
+            "{scheme}: {event:?}"
+        );
+        assert!(
+            matches!(request_reply, Err(TransportSendError::ClosedStream)),
+            "{scheme}: {request_reply:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_object_sent_on_a_stopped_fetch_response_resets_both_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-response-stopped-send-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (sender, request_stream) =
+                fetch_with_stopped_response_stream(&client, &server).await;
+            let object = Object {
+                location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+                publisher_priority: 128,
+                status: ObjectStatus::Normal,
+                extension_headers: Default::default(),
+                payload: Bytes::from_static(b"o"),
+                ends_group: false,
+            };
+
+            // Act
+            let sent = sender.send_object(&object).await;
+            let event = next_event(&server).await;
+            let request_reply = request_stream
+                .sender
+                .send(&messages::encode_empty_request_ok().unwrap())
+                .await;
+
+            // Assert: §5.2
+            assert!(sent.is_err(), "{scheme}: {sent:?}");
+            assert_fetch_cancelled_with_reset_request_stream(scheme, event, request_reply);
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_a_stopped_fetch_response_resets_both_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-response-stopped-close-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (sender, request_stream) =
+                fetch_with_stopped_response_stream(&client, &server).await;
+
+            // Act
+            let closed = sender.close().await;
+            let event = next_event(&server).await;
+            let request_reply = request_stream
+                .sender
+                .send(&messages::encode_empty_request_ok().unwrap())
+                .await;
+
+            // Assert: §5.2
+            assert!(closed.is_err(), "{scheme}: {closed:?}");
+            assert_fetch_cancelled_with_reset_request_stream(scheme, event, request_reply);
         }
     }
 
