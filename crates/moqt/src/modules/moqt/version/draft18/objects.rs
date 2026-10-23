@@ -998,6 +998,45 @@ mod tests {
     }
 
     #[test]
+    fn a_field_cut_inside_its_payload_length_needs_more_data_and_leaves_the_buffer() {
+        // Arrange: a 300-byte payload takes a two-byte length, 0x81 0x2c
+        let payload: &'static [u8] = &[7; 300];
+        let sent = object(3, 0, subgroup(2), payload);
+        let mut subgroup_encoder = SubgroupEncoder::new(9);
+        let subgroup_header = subgroup_encoder.header(SubgroupStart {
+            group_id: 3,
+            subgroup_id: 2,
+            publisher_priority: 128,
+            ends_group: false,
+        });
+        let subgroup_object = subgroup_encoder.object(&sent).unwrap();
+        let fetch_object = FetchEncoder::default().object(&sent).unwrap().unwrap();
+        for (header, field) in [
+            (subgroup_header, subgroup_object),
+            (encode_fetch_header(6), fetch_object),
+        ] {
+            let cut = field.len() - payload.len() - 1;
+            assert_eq!(field[cut - 1..cut + 1], [0x81, 0x2c]);
+            let mut decoder = StreamDecoder::default();
+            let mut buf = header;
+            decoder.decode(&mut buf).unwrap().expect("the header");
+            buf.extend_from_slice(&field[..cut]);
+
+            // Act
+            let partial = decoder.decode(&mut buf);
+            let left = buf.len();
+            buf.extend_from_slice(&field[cut..]);
+            let whole = decoder.decode(&mut buf);
+
+            // Assert
+            assert_eq!(partial.unwrap(), None);
+            assert_eq!(left, cut);
+            assert!(whole.unwrap().is_some());
+            assert!(buf.is_empty());
+        }
+    }
+
+    #[test]
     fn a_reserved_subgroup_id_mode_and_unknown_stream_types_are_rejected() {
         for stream_type in [0x16u64, 0x80, 0x0F] {
             // Arrange
