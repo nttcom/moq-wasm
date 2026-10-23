@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::{JsFuture, spawn_local};
+use wasm_bindgen_futures::JsFuture;
 use web_sys::{WebTransportSendStream, WritableStreamDefaultWriter};
 
 use super::js_value::{is_session_error, js_error, stream_error_code};
@@ -32,15 +32,12 @@ impl TransportSendStream for BrowserSendStream {
             .map_err(send_error)
     }
 
-    /// `writer.close()` resolves only once the peer has acknowledged the FIN.
+    // TEMP: verification only, awaits the FIN ACK again (the regression PR #920 fixed).
     async fn close(&mut self) -> Result<(), TransportSendError> {
-        let close = self.writer.close();
-        spawn_local(async move {
-            if let Err(error) = JsFuture::from(close).await {
-                tracing::debug!(?error, "failed to close send stream");
-            }
-        });
-        Ok(())
+        JsFuture::from(self.writer.close())
+            .await
+            .map(|_| ())
+            .map_err(send_error)
     }
 
     async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError> {
