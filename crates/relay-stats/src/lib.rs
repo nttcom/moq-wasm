@@ -219,3 +219,4 @@ mod tests {
         assert_eq!(track_namespace("relay-a"), "observability/relay-a");
     }
 }
+// TEMP: CI check that a relay-stats-only change moves the relay image tag.
