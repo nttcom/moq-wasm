@@ -100,13 +100,16 @@ ids.
 
 A subscription carried over is re-sent with `NextGroupStart` (or with its
 Forward state and its original range for a finite one). Its incoming streams
-of both connections feed the same `StreamDataReceiverFactory`. A subgroup
+of both connections feed the same `DataReceiver`. A subgroup
 stream carries one group, so the group cutover of `GroupCutover` becomes a
-per-stream decision: the factory hands out the streams of groups before the
+per-stream decision: the receiver hands out the streams of groups before the
 cutover from the previous connection and the rest from the new one, and drops
 the others before the application sees them. Datagrams take the same
 decision per object. `TrackReader`, `MigratingTrack`'s users and the wasm
-`track_io` all read the factory, so they need no change.
+`track_io` all read the receiver, so they need no change. The track's
+`ObjectLedger` belongs to the session, so an object received before the move
+is still compared with its copies after it, a FETCH on the new connection
+included.
 
 A FETCH in flight on the previous connection keeps reading there; when that
 stream is cut off after the move, the part not delivered yet (the range
