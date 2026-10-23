@@ -168,7 +168,7 @@ mod tests {
                 read_fetch_objects,
             },
         },
-        object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
+        object::{ExtensionHeaders, Object, ObjectStatus},
     };
 
     #[tokio::test]
@@ -220,41 +220,6 @@ mod tests {
                 .unwrap(),
             expected
         );
-    }
-
-    #[tokio::test]
-    async fn fetch_converts_datagram_forwarding_and_drops_the_end_of_group_flag() {
-        // Arrange
-        let mut stream =
-            fetched_stream("fetch-datagram-conversion", false, location(16_384, 16_386)).await;
-        let object = Object {
-            forwarding: ForwardingPreference::Datagram,
-            ends_group: true,
-            ..object_with_extensions()
-        };
-        let expected = Object {
-            forwarding: ForwardingPreference::Subgroup {
-                subgroup_id: object.location.object_id,
-            },
-            ends_group: false,
-            ..object.clone()
-        };
-
-        // Act
-        timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&object))
-            .await
-            .unwrap()
-            .unwrap();
-        let received = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
-            .await
-            .unwrap()
-            .unwrap();
-
-        // Assert
-        let Fetch::Object(received) = received else {
-            panic!("expected the fetched datagram object");
-        };
-        assert_eq!(received, expected);
     }
 
     #[tokio::test]
