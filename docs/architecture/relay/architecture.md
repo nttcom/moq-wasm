@@ -436,13 +436,13 @@ dropped. The upstream subscription keeps Forward 1 and its own range, so the
 cache keeps filling for FETCH.
 
 ### FETCH sequence
-Resolve the track and object range (Standalone from the message; Relative
-Joining from the downstream subscription's `JoinPoint`), reply FETCH_OK,
+Resolve the track and object range (Standalone from the message; Joining
+from the downstream subscription's registration, which records its track,
+filter and joining location), reply FETCH_OK,
 then delegate to `EgressCommand::StartFetch`, which serves the range from
 `TrackCache` over a new uni stream (see "Fetch delivery" under "Egress").
 A Joining FETCH of a subscription whose filter is not Largest Object closes
-the session with a PROTOCOL_VIOLATION (draft-14 §9.16.2): the registration's
-`JoinPoint` records whether it may be joined.
+the session with a PROTOCOL_VIOLATION (draft-14 §9.16.2).
 
 A range the cache cannot serve goes upstream. The worker hands it to
 `UpstreamFetchTask` (`control_plane/sequences/fetch/upstream_fetch_task.rs`) and moves on to

@@ -66,8 +66,8 @@ impl Unsubscribe {
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use tokio::sync::oneshot;
 
     use super::*;
@@ -105,8 +105,7 @@ mod tests {
                         *session_id,
                         *subscribe_id,
                         SessionPeer::Client,
-                        track_key(),
-                        JoinPoint::Largest(None),
+                        downstream_subscription(track_key(), None),
                         delivery_control(true),
                     )
                     .unwrap()

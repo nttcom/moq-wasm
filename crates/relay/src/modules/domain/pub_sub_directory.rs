@@ -13,7 +13,7 @@ use crate::modules::{
         delivery_control::{DeliveryControl, UpdateOutcome},
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
-            ActiveUpstreamSubscription, DownstreamSubscription, JoinPoint, MatchingPublication,
+            ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
             PublishDoneReason, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
             RemovedSessionSubscriptions, UpstreamSubscriptionOrigin, UpstreamTrack,
         },
@@ -734,14 +734,13 @@ impl InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         subscriber_peer: SessionPeer,
-        track_key: TrackKey,
-        join_point: JoinPoint,
+        subscription: DownstreamSubscription,
         delivery_control: DeliveryControl,
     ) -> Option<DownstreamRunnerSignals> {
         // The track entry stays locked until the registration is inserted: a concurrent removal
         // of the track either finds it or makes this registration fail. Lock order is always
         // upstream before downstream.
-        let mut upstream = self.upstream_tracks.get_mut(&track_key)?;
+        let mut upstream = self.upstream_tracks.get_mut(&subscription.track_key)?;
         upstream.downstream_subscriber_count += 1;
         if subscriber_peer == SessionPeer::Client {
             upstream.client_downstream_subscriber_count += 1;
@@ -752,10 +751,7 @@ impl InMemoryLocalPubSubDirectory {
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
             RegisteredDownstreamSubscription {
-                subscription: DownstreamSubscription {
-                    track_key,
-                    join_point,
-                },
+                subscription,
                 subscriber_peer,
                 runner_stop_sender,
                 delivery_control_sender,
@@ -895,9 +891,11 @@ impl InMemoryLocalPubSubDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, table_with_upstream,
+    };
+    use crate::modules::test_support::directory_fixtures::{
+        delivery_control, downstream_subscription,
     };
     use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
@@ -1222,7 +1220,7 @@ mod tests {
     }
 
     #[test]
-    fn register_downstream_subscription_stores_join_point() {
+    fn register_downstream_subscription_stores_the_subscription() {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let largest = moqt::object::Location {
@@ -1235,16 +1233,16 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            track_key.clone(),
-            JoinPoint::Largest(Some(largest)),
+            downstream_subscription(track_key.clone(), Some(largest)),
             delivery_control(true),
         );
 
         // Assert
         assert!(runner_signals.is_some());
-        let sub = table.get_downstream_subscription(2, 100).unwrap();
-        assert_eq!(sub.track_key, track_key);
-        assert_eq!(sub.join_point, JoinPoint::Largest(Some(largest)));
+        assert_eq!(
+            table.get_downstream_subscription(2, 100),
+            Some(downstream_subscription(track_key, Some(largest)))
+        );
     }
 
     #[test]
@@ -1258,8 +1256,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key,
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key, None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1277,8 +1274,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key,
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key, None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1300,8 +1296,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1339,8 +1334,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            track_key,
-            JoinPoint::Largest(None),
+            downstream_subscription(track_key, None),
             delivery_control(true),
         );
 
@@ -1360,8 +1354,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key,
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key, None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1415,8 +1408,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1442,8 +1434,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            track_key,
-            JoinPoint::Largest(None),
+            downstream_subscription(track_key, None),
             delivery_control(true),
         );
 
@@ -1471,8 +1462,7 @@ mod tests {
                             2,
                             100,
                             SessionPeer::Client,
-                            track_key,
-                            JoinPoint::Largest(None),
+                            downstream_subscription(track_key, None),
                             delivery_control(true),
                         )
                         .is_some()
@@ -1505,8 +1495,7 @@ mod tests {
                     2,
                     100,
                     SessionPeer::Client,
-                    track_key.clone(),
-                    JoinPoint::Largest(None),
+                    downstream_subscription(track_key.clone(), None),
                     delivery_control(true),
                 )
                 .unwrap();
@@ -1525,8 +1514,7 @@ mod tests {
                             3,
                             200,
                             SessionPeer::Client,
-                            track_key,
-                            JoinPoint::Largest(None),
+                            downstream_subscription(track_key, None),
                             delivery_control(true),
                         )
                         .is_some()
@@ -1597,8 +1585,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1629,8 +1616,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1666,8 +1652,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1716,8 +1701,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1726,8 +1710,7 @@ mod tests {
                 RELAY_SUBSCRIBER_SESSION,
                 200,
                 SessionPeer::Relay,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1761,8 +1744,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap();
@@ -1771,8 +1753,7 @@ mod tests {
                 RELAY_SUBSCRIBER_SESSION,
                 200,
                 SessionPeer::Relay,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap()
@@ -1809,8 +1790,7 @@ mod tests {
                     2,
                     100 + track_name.len() as u64,
                     subscriber_peer,
-                    track_key,
-                    JoinPoint::Largest(None),
+                    downstream_subscription(track_key, None),
                     delivery_control(true),
                 )
                 .unwrap();

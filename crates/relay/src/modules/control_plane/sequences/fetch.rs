@@ -5,7 +5,7 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::{sync::Arc, time::Duration};
 
-use moqt::fetch::FetchParams;
+use moqt::{fetch::FetchParams, subscribe::FilterType};
 use tracing::Span;
 
 use crate::modules::{
@@ -21,10 +21,8 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
     domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::JoinPoint},
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
+        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
+        session_peer::SessionPeer, track_key::TrackKey,
     },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
 };
@@ -448,13 +446,12 @@ impl Fetch {
             return Err(FetchError::UnknownJoiningRequestId);
         };
 
-        let largest = match downstream_sub.join_point {
-            JoinPoint::Largest(Some(largest)) => largest,
-            JoinPoint::Largest(None) => {
-                tracing::warn!("Joining fetch: no objects published at subscribe time");
-                return Err(FetchError::NoObjectsPublished);
-            }
-            JoinPoint::NotLargestObject => return Err(FetchError::JoinedNotLargestObject),
+        if downstream_sub.filter_type != FilterType::LargestObject {
+            return Err(FetchError::JoinedNotLargestObject);
+        }
+        let Some(largest) = downstream_sub.joining_location else {
+            tracing::warn!("Joining fetch: no objects published at subscribe time");
+            return Err(FetchError::NoObjectsPublished);
         };
 
         if table
@@ -486,7 +483,9 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
-    use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::{
+        delivery_control, downstream_subscription,
+    };
     use crate::modules::{
         auth::{
             test_support::{app_token, connect_client, spawn_relay_and_connect_client},
@@ -989,8 +988,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            key,
-            JoinPoint::Largest(None),
+            downstream_subscription(key, None),
             delivery_control(true),
         );
 
@@ -1076,8 +1074,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            key,
-            JoinPoint::Largest(Some(largest)),
+            downstream_subscription(key, Some(largest)),
             delivery_control(true),
         );
 
@@ -1110,11 +1107,13 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 1,
-                object_id: 1,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 1,
+                    object_id: 1,
+                }),
+            ),
             delivery_control(true),
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
@@ -1167,11 +1166,13 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 2,
-                object_id: 3,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 2,
+                    object_id: 3,
+                }),
+            ),
             delivery_control(true),
         );
 
@@ -1219,11 +1220,13 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 1,
-                object_id: 1,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 1,
+                    object_id: 1,
+                }),
+            ),
             delivery_control(true),
         );
 
@@ -1271,11 +1274,13 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 1,
-                object_id: 1,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 1,
+                    object_id: 1,
+                }),
+            ),
             delivery_control(true),
         );
 

@@ -45,7 +45,7 @@ impl SubscribeUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
         domain::{
             pub_sub_directory::{DownstreamRunnerSignals, entry::UpstreamSubscriptionOrigin},
@@ -64,8 +64,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                upstream_key,
-                JoinPoint::Largest(None),
+                downstream_subscription(upstream_key, None),
                 delivery_control(true),
             )
             .unwrap();

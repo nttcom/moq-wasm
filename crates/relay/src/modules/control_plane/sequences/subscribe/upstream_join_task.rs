@@ -226,8 +226,8 @@ async fn join_track(
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use std::time::Duration;
 
     use super::*;
@@ -336,8 +336,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key,
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key, None),
                 delivery_control(true),
             )
             .unwrap();
@@ -392,8 +391,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap();
