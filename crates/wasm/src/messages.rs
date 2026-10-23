@@ -2,10 +2,10 @@ mod subgroup_state;
 
 use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::{
-    object::{ForwardingPreference, Object},
+    object::{ForwardingPreference, Object, SubgroupStart},
     wire::{
-        ContentExists, FilterType, ObjectStatus, Publish, PublishOk, ServerSetup, Subscribe,
-        SubscribeNamespace, SubscribeOk,
+        ContentExists, FilterType, Publish, PublishOk, ServerSetup, Subscribe, SubscribeNamespace,
+        SubscribeOk,
     },
 };
 pub use subgroup_state::SubgroupState;
@@ -314,17 +314,12 @@ pub struct SubgroupHeaderMessage {
 }
 
 impl SubgroupHeaderMessage {
-    pub(crate) fn new(
-        track_alias: u64,
-        group_id: u64,
-        subgroup_id: u64,
-        publisher_priority: u8,
-    ) -> Self {
+    pub(crate) fn new(track_alias: u64, start: &SubgroupStart) -> Self {
         Self {
             track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
+            group_id: start.group_id,
+            subgroup_id: start.subgroup_id,
+            publisher_priority: start.publisher_priority,
         }
     }
 }
@@ -356,22 +351,15 @@ impl ObjectDatagramMessage {
 }
 
 impl ObjectDatagramMessage {
-    pub(crate) fn new(
-        track_alias: u64,
-        group_id: u64,
-        object_id: Option<u64>,
-        publisher_priority: u8,
-        object_payload: Vec<u8>,
-        loc_header: Vec<LocExtension>,
-    ) -> Self {
+    pub(crate) fn new(track_alias: u64, object: Object) -> Self {
         Self {
             track_alias,
-            group_id,
-            object_id,
-            publisher_priority,
-            object_payload_length: object_payload.len() as u32,
-            object_payload,
-            loc_header,
+            group_id: object.location.group_id,
+            object_id: Some(object.location.object_id),
+            publisher_priority: object.publisher_priority,
+            object_payload_length: object.payload.len() as u32,
+            object_payload: object.payload.to_vec(),
+            loc_header: from_extension_headers(&object.extension_headers),
         }
     }
 }
@@ -401,21 +389,14 @@ impl ObjectDatagramStatusMessage {
 }
 
 impl ObjectDatagramStatusMessage {
-    pub(crate) fn new(
-        track_alias: u64,
-        group_id: u64,
-        object_id: Option<u64>,
-        publisher_priority: u8,
-        object_status: ObjectStatus,
-        loc_header: Vec<LocExtension>,
-    ) -> Self {
+    pub(crate) fn new(track_alias: u64, object: Object) -> Self {
         Self {
             track_alias,
-            group_id,
-            object_id,
-            publisher_priority,
-            object_status: object_status as u8,
-            loc_header,
+            group_id: object.location.group_id,
+            object_id: Some(object.location.object_id),
+            publisher_priority: object.publisher_priority,
+            object_status: object.status as u8,
+            loc_header: from_extension_headers(&object.extension_headers),
         }
     }
 }
@@ -445,7 +426,8 @@ impl SubgroupObjectMessage {
 }
 
 impl SubgroupObjectMessage {
-    pub(crate) fn new(object: Object, loc_header: Vec<LocExtension>) -> Self {
+    pub(crate) fn new(object: Object) -> Self {
+        let loc_header = from_extension_headers(&object.extension_headers);
         let ForwardingPreference::Subgroup { subgroup_id } = object.forwarding else {
             unreachable!("a subgroup stream carries subgroup objects")
         };
@@ -587,6 +569,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use moqt::object::{ExtensionHeaders, Location};
+    use moqt::wire::ObjectStatus;
 
     fn subgroup_object(object_id: u64, status: ObjectStatus, payload: &'static [u8]) -> Object {
         Object {
@@ -609,7 +592,7 @@ mod tests {
         let object = subgroup_object(7, ObjectStatus::Normal, b"ab");
 
         // Act
-        let message = SubgroupObjectMessage::new(object, Vec::new());
+        let message = SubgroupObjectMessage::new(object);
 
         // Assert
         assert_eq!(message.object_id, 7);
@@ -624,7 +607,7 @@ mod tests {
         let object = subgroup_object(30, ObjectStatus::EndOfGroup, b"");
 
         // Act
-        let message = SubgroupObjectMessage::new(object, Vec::new());
+        let message = SubgroupObjectMessage::new(object);
 
         // Assert
         assert_eq!(message.object_status, Some(ObjectStatus::EndOfGroup as u8));

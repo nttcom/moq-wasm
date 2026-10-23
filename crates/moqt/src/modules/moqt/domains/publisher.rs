@@ -18,6 +18,7 @@ use crate::{
         },
         domains::{
             connection::{Connection, logical_id},
+            namespace_tuple,
             pending_publish_namespace::PendingPublishNamespace,
             send_targets::SendTargets,
             session_context::{Publication, PublicationTarget, SessionContext},
@@ -60,7 +61,7 @@ impl Publisher {
                 .published_namespaces
                 .retain(|carried| *carried != namespace);
         }
-        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+        let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
             connection
                 .control
@@ -84,7 +85,7 @@ impl Publisher {
             .connection()
             .control
             .notify(Notification::PublishNamespaceCancel {
-                namespace: namespace.split('/').map(|s| s.to_string()).collect(),
+                namespace: namespace_tuple(&namespace),
                 code,
                 reason: error_reason,
             })
@@ -211,7 +212,7 @@ pub(crate) async fn send_publish_namespace(
     connection: &Connection,
     namespace: String,
 ) -> Result<PendingPublishNamespace, RequestFailure> {
-    let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+    let vec_namespace = namespace_tuple(&namespace);
     let request_id = connection.control.next_request_id();
     let pending = connection
         .control
@@ -239,7 +240,7 @@ pub(crate) async fn send_publish(
     let request_id = connection.control.next_request_id();
     let publish = Publish {
         request_id,
-        track_namespace_tuple: track_namespace.split('/').map(|s| s.to_string()).collect(),
+        track_namespace_tuple: namespace_tuple(track_namespace),
         track_name: track_name.to_string(),
         track_alias,
         group_order: option.group_order,
