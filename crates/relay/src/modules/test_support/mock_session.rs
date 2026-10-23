@@ -600,6 +600,9 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 #[derive(Clone)]
 pub(crate) struct MockSubscribeHandler {
     pub(crate) forward: bool,
+    /// `false` stands in for a subscriber whose draft cannot carry the
+    /// track's properties: `ok_with_track_alias` then refuses, as moqt's does.
+    pub(crate) understands_track_properties: bool,
     /// The track properties of each SUBSCRIBE_OK sent.
     pub(crate) subscribe_oks: Arc<Mutex<Vec<TrackProperties>>>,
     pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
@@ -609,6 +612,7 @@ impl Default for MockSubscribeHandler {
     fn default() -> Self {
         Self {
             forward: true,
+            understands_track_properties: true,
             subscribe_oks: Arc::default(),
             subscribe_errors: Arc::default(),
         }
@@ -661,6 +665,10 @@ impl SubscribeHandler for MockSubscribeHandler {
         0
     }
 
+    fn understands(&self, _track_properties: &TrackProperties) -> bool {
+        self.understands_track_properties
+    }
+
     async fn ok_with_track_alias(
         &self,
         _track_alias: u64,
@@ -668,6 +676,13 @@ impl SubscribeHandler for MockSubscribeHandler {
         _content_exists: ContentExists,
         track_properties: TrackProperties,
     ) -> anyhow::Result<()> {
+        if !self.understands_track_properties {
+            self.subscribe_errors
+                .lock()
+                .unwrap()
+                .push(RequestErrorCode::UnsupportedExtension);
+            anyhow::bail!("the subscriber's draft cannot carry the track's properties");
+        }
         self.subscribe_oks.lock().unwrap().push(track_properties);
         Ok(())
     }

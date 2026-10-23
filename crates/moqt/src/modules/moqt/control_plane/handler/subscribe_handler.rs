@@ -113,6 +113,17 @@ impl SubscribeHandler {
         Ok(())
     }
 
+    /// Whether the subscriber's draft can be sent a track with
+    /// `track_properties`; `ok*` refuses the SUBSCRIBE when it cannot
+    /// (draft-18 §2.5.1).
+    pub fn understands(&self, track_properties: &TrackProperties) -> bool {
+        self.guard
+            .connection()
+            .control
+            .version()
+            .understands(track_properties)
+    }
+
     /// The track alias to pass to `ok_with_track_alias` and `into_subscription`.
     /// No track served on another connection of the session has it.
     pub fn allocate_track_alias(&self) -> u64 {
