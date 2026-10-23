@@ -169,13 +169,15 @@ impl TrackCache {
                 return Err(TrackMalformed);
             }
             Entry::Occupied(mut existing) => {
-                if object.is_datagram() && !existing.get().is_datagram() {
-                    // A fetched copy arrived first; the live datagram supplies the
-                    // forwarding preference, so datagram egress can find it, and
-                    // the End of Group type, which FETCH cannot carry.
+                if object.is_datagram() && existing.get().forwarding_inferred {
+                    // A draft-14 fetched copy arrived first; the live datagram
+                    // supplies the forwarding preference, so datagram egress can
+                    // find it, and the End of Group type, which FETCH cannot
+                    // carry.
                     let mut upgraded = (**existing.get()).clone();
                     upgraded.object.forwarding = ForwardingPreference::Datagram;
                     upgraded.object.ends_group = object.object.ends_group;
+                    upgraded.forwarding_inferred = false;
                     *existing.get_mut() = Arc::new(upgraded);
                 }
                 false
@@ -488,8 +490,9 @@ mod tests {
     use crate::modules::{
         data_plane::cache::subgroup_key::SubgroupKey,
         test_support::relay_harness::fixtures::cached_object::{
-            datagram_object, insert_aborted_group, insert_closed_group, open_group, stream_key,
-            stream_object, stream_object_in_subgroup, stream_object_with_payload,
+            datagram_object, fetched_copy_in_subgroup, insert_aborted_group, insert_closed_group,
+            open_group, stream_key, stream_object, stream_object_in_subgroup,
+            stream_object_with_payload,
         },
     };
 
@@ -569,7 +572,7 @@ mod tests {
     fn live_datagram_upgrades_the_fetched_copy_to_datagram_forwarding() {
         // Arrange: a fetch fill stored the datagram object first (§10.4.4 shape)
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object_in_subgroup(0, 5, 5));
+        let _ = cache.insert(fetched_copy_in_subgroup(0, 5, 5));
         // Act
         let _ = cache.insert_live(datagram_object(0, 5));
         // Assert: no conflict, and datagram egress now finds the object
@@ -584,11 +587,22 @@ mod tests {
     }
 
     #[test]
+    fn a_fetched_copy_with_a_known_preference_does_not_match_the_live_datagram() {
+        // Arrange: a draft-18 FETCH marks a datagram object, so this one is in a subgroup
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(datagram_object(0, 5));
+        // Act
+        let outcome = cache.insert(stream_object_in_subgroup(0, 5, 5));
+        // Assert
+        assert_eq!(outcome, Err(TrackMalformed));
+    }
+
+    #[test]
     fn fetched_copy_of_an_end_of_group_datagram_is_the_same_object() {
         // Arrange: FETCH cannot carry End of Group, so the fetched copy lacks `ends_group`
         let mut live = datagram_object(0, 5);
         live.object.ends_group = true;
-        let fetched = stream_object_in_subgroup(0, 5, 5);
+        let fetched = fetched_copy_in_subgroup(0, 5, 5);
         let live_first = TrackCache::new();
         let fetched_first = TrackCache::new();
         // Act

@@ -46,6 +46,9 @@ pub(crate) struct CachedObject {
     /// Where the disk cache wrote the payload. Past the memory TTL
     /// `object.payload` is emptied and `load` reads it from here.
     pub(crate) stored: Option<StoredPayload>,
+    /// From a draft-14 FETCH, which carries no forwarding preference: a
+    /// datagram object is in the subgroup of its Object ID (§10.4.4).
+    pub(crate) forwarding_inferred: bool,
 }
 
 impl CachedObject {
@@ -56,6 +59,7 @@ impl CachedObject {
             expires_at: None,
             persisted: false,
             stored: None,
+            forwarding_inferred: false,
         }
     }
 
@@ -172,20 +176,23 @@ impl CachedObject {
         }
     }
 
-    /// FETCH carries no forwarding preference; a fetched copy of a datagram
-    /// object arrives as a subgroup object whose Subgroup ID is its Object ID
-    /// (draft-14 §10.4.4), so that pairing is the same object, not a conflict.
+    /// A draft-14 FETCH carries no forwarding preference; its copy of a
+    /// datagram object arrives as a subgroup object whose Subgroup ID is its
+    /// Object ID (draft-14 §10.4.4), so that pairing is the same object, not a
+    /// conflict. Objects that carry their preference are compared exactly.
     fn forwarding_conflicts_with(&self, other: &Self) -> bool {
         match (self.object.forwarding, other.object.forwarding) {
-            (
-                ForwardingPreference::Subgroup { subgroup_id: a },
-                ForwardingPreference::Subgroup { subgroup_id: b },
-            ) => a != b,
-            (ForwardingPreference::Datagram, ForwardingPreference::Datagram) => false,
             (ForwardingPreference::Subgroup { subgroup_id }, ForwardingPreference::Datagram)
-            | (ForwardingPreference::Datagram, ForwardingPreference::Subgroup { subgroup_id }) => {
+                if self.forwarding_inferred =>
+            {
                 subgroup_id != self.object.location.object_id
             }
+            (ForwardingPreference::Datagram, ForwardingPreference::Subgroup { subgroup_id })
+                if other.forwarding_inferred =>
+            {
+                subgroup_id != self.object.location.object_id
+            }
+            (forwarding, other_forwarding) => forwarding != other_forwarding,
         }
     }
 
@@ -198,8 +205,8 @@ impl CachedObject {
 mod tests {
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::cached_object::{
-        datagram_object, status_object, stream_object, stream_object_in_subgroup,
-        stream_object_with_payload,
+        datagram_object, fetched_copy_in_subgroup, status_object, stream_object,
+        stream_object_in_subgroup, stream_object_with_payload,
     };
     use moqt::object::{KeyValuePair, VariantType};
 
@@ -245,7 +252,7 @@ mod tests {
     #[test]
     fn fetched_copy_of_a_datagram_object_is_not_a_conflict() {
         // Arrange: §10.4.4 — the fetched copy carries subgroup id = object id
-        let fetched = stream_object_in_subgroup(0, 5, 5);
+        let fetched = fetched_copy_in_subgroup(0, 5, 5);
         let live = datagram_object(0, 5);
         // Act / Assert: both orders
         assert!(!fetched.conflicts_with(&live));
@@ -255,10 +262,20 @@ mod tests {
     #[test]
     fn subgroup_object_with_another_subgroup_id_conflicts_with_a_datagram() {
         // Arrange
-        let subgroup = stream_object_in_subgroup(0, 1, 5);
+        let subgroup = fetched_copy_in_subgroup(0, 1, 5);
         let live = datagram_object(0, 5);
         // Act / Assert
         assert!(subgroup.conflicts_with(&live));
+    }
+
+    #[test]
+    fn subgroup_object_with_a_known_preference_conflicts_with_a_datagram() {
+        // Arrange: a live or draft-18 FETCH object tells its preference
+        let subgroup = stream_object_in_subgroup(0, 5, 5);
+        let live = datagram_object(0, 5);
+        // Act / Assert: both orders
+        assert!(subgroup.conflicts_with(&live));
+        assert!(live.conflicts_with(&subgroup));
     }
 
     #[test]

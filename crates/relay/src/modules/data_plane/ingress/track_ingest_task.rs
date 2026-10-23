@@ -133,45 +133,12 @@ impl Drop for TrackIngestTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::{
-        session::data_receiver::{receiver::UpstreamData, stream_receiver::StreamReceiver},
-        test_support::relay_harness::{
-            UpstreamSubgroupStream, fixtures::location, wait_largest_location,
-        },
+    use crate::modules::test_support::relay_harness::{
+        UpstreamTrack, fixtures::location, wait_largest_location,
     };
 
     const FIRST_PUBLISHER: SessionId = 1;
     const SECOND_PUBLISHER: SessionId = 2;
-
-    struct ChannelDataReceiver {
-        stream_receiver: mpsc::UnboundedReceiver<Box<dyn StreamReceiver>>,
-    }
-
-    #[async_trait::async_trait]
-    impl DataReceiver for ChannelDataReceiver {
-        async fn next(&mut self) -> anyhow::Result<UpstreamData> {
-            self.stream_receiver
-                .recv()
-                .await
-                .map(UpstreamData::Subgroup)
-                .ok_or_else(|| anyhow::anyhow!("upstream subscription ended"))
-        }
-    }
-
-    struct UpstreamPublisher {
-        stream_sender: mpsc::UnboundedSender<Box<dyn StreamReceiver>>,
-    }
-
-    impl UpstreamPublisher {
-        fn open_stream(&self) -> UpstreamSubgroupStream {
-            UpstreamSubgroupStream::open(|receiver| {
-                self.stream_sender
-                    .send(receiver)
-                    .expect("ingest should accept streams");
-                tokio::spawn(async {})
-            })
-        }
-    }
 
     struct IngestContext {
         _task: TrackIngestTask,
@@ -197,19 +164,19 @@ mod tests {
             }
         }
 
-        async fn start(&self, publisher_session_id: SessionId) -> UpstreamPublisher {
-            let (stream_sender, stream_receiver) = mpsc::unbounded_channel();
+        async fn start(&self, publisher_session_id: SessionId) -> UpstreamTrack {
+            let (upstream, receiver) = UpstreamTrack::channel();
             self.command_sender
                 .send(IngestCommand::Start(IngestStart {
                     track_key: track_key(),
                     publisher_session_id,
-                    receiver: Box::new(ChannelDataReceiver { stream_receiver }),
+                    receiver,
                     track_span: Span::none(),
                     stamp: CacheStamp::default(),
                 }))
                 .await
                 .unwrap();
-            UpstreamPublisher { stream_sender }
+            upstream
         }
 
         async fn stop(&self, publisher_session_id: SessionId) {

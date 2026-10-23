@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use moqt::object::Object;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
@@ -131,6 +132,51 @@ impl UpstreamSubgroupStream {
             .await
             .expect("stream reader should end")
             .expect("stream reader should not panic");
+    }
+}
+
+/// Feeds an ingest what moqt's `DataReceiver` would hand it: the subgroup
+/// streams and datagrams of one upstream subscription, which ends when this
+/// is dropped.
+pub(crate) struct UpstreamTrack {
+    sender: mpsc::UnboundedSender<UpstreamData>,
+}
+
+struct ChannelDataReceiver {
+    receiver: mpsc::UnboundedReceiver<UpstreamData>,
+}
+
+#[async_trait::async_trait]
+impl DataReceiver for ChannelDataReceiver {
+    async fn next(&mut self) -> anyhow::Result<UpstreamData> {
+        self.receiver
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("the subscription ended"))
+    }
+}
+
+impl UpstreamTrack {
+    pub(crate) fn channel() -> (Self, Box<dyn DataReceiver>) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (Self { sender }, Box::new(ChannelDataReceiver { receiver }))
+    }
+
+    pub(crate) fn datagram(&self, object: Object) {
+        self.sender
+            .send(UpstreamData::Datagram(object))
+            .expect("ingress should be reading this track");
+    }
+
+    /// The ingest reads the stream in a task of its own, so the returned
+    /// stream's `wait_reader_end` resolves at once.
+    pub(crate) fn open_stream(&self) -> UpstreamSubgroupStream {
+        UpstreamSubgroupStream::open(|receiver| {
+            self.sender
+                .send(UpstreamData::Subgroup(receiver))
+                .expect("ingress should be reading this track");
+            tokio::spawn(async {})
+        })
     }
 }
 

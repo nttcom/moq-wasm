@@ -36,7 +36,9 @@ pub(crate) mod fixtures;
 mod mocks;
 
 pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObservers, Sent};
-pub(crate) use self::mocks::upstream_client::{FailingUpstream, UpstreamSubgroupStream};
+pub(crate) use self::mocks::upstream_client::{
+    FailingUpstream, UpstreamSubgroupStream, UpstreamTrack,
+};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
@@ -115,6 +117,13 @@ impl EgressRunnerHandle {
             .await
             .expect("egress should open a downstream stream")
             .expect("egress dropped its publisher before opening a stream")
+    }
+
+    pub(crate) async fn expect_sent(&mut self) -> Sent {
+        tokio::time::timeout(RECV_TIMEOUT, self.sent.recv())
+            .await
+            .expect("egress should send downstream")
+            .expect("egress dropped its publisher")
     }
 
     pub(crate) async fn expect_sent_object(&mut self) -> DataObject {
@@ -246,6 +255,17 @@ impl RelayHarness {
         UpstreamSubgroupStream::open(|receiver| {
             tokio::spawn(read_stream(self.ingest.clone(), receiver))
         })
+    }
+
+    /// Ingests an upstream subscription until the returned track is dropped.
+    pub(crate) fn start_track_ingest(&self) -> UpstreamTrack {
+        let (upstream, receiver) = UpstreamTrack::channel();
+        tokio::spawn(read_track(
+            self.ingest.clone(),
+            receiver,
+            tracing::Span::none(),
+        ));
+        upstream
     }
 
     pub(crate) async fn run_ingest(&self, upstream: FailingUpstream) {
