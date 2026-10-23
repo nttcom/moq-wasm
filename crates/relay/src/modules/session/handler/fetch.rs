@@ -15,7 +15,7 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
         end_of_track: bool,
         end_location: moqt::object::Location,
         track_properties: TrackProperties,
-    ) -> Result<(), moqt::TransportSendError>;
+    ) -> anyhow::Result<()>;
     async fn error(
         &self,
         code: RequestErrorCode,
@@ -46,7 +46,7 @@ impl FetchHandler for moqt::fetch::FetchHandler {
         end_of_track: bool,
         end_location: moqt::object::Location,
         track_properties: TrackProperties,
-    ) -> Result<(), moqt::TransportSendError> {
+    ) -> anyhow::Result<()> {
         // moqt sends the handler's `track_properties` field; the clone shares
         // the original's response guard.
         let mut handler = self.clone();

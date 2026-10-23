@@ -234,6 +234,13 @@ pub(crate) async fn send_publish(
     track_name: &str,
     option: &PublishOption,
 ) -> Result<(PublishOk, u64), RequestFailure> {
+    if !connection
+        .control
+        .version()
+        .understands(&option.track_properties)
+    {
+        return Err(RequestFailure::TrackNotUnderstood);
+    }
     let track_alias = connection.allocate_track_alias();
     let request_id = connection.control.next_request_id();
     let publish = Publish {
@@ -289,9 +296,9 @@ mod tests {
         modules::{
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
-                HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream, next_subgroup,
-                object_with_extensions, read_subgroup_objects, send_subgroup_object,
-                spawn_connected_dual_sessions, within,
+                HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
+                mandatory_track_properties, next_subgroup, object_with_extensions,
+                read_subgroup_objects, send_subgroup_object, spawn_connected_dual_sessions, within,
             },
         },
         object::{Location, Object},
@@ -326,6 +333,29 @@ mod tests {
         // Assert
         assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
         request.abort();
+    }
+
+    #[tokio::test]
+    async fn a_draft14_publish_with_a_mandatory_track_property_is_not_sent() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("publisher-mandatory").await;
+        let option = PublishOption {
+            track_properties: mandatory_track_properties(),
+            ..PublishOption::default()
+        };
+
+        // Act
+        let published = within(client.publisher().publish(
+            "ns".to_string(),
+            "track".to_string(),
+            option,
+        ))
+        .await;
+
+        // Assert: draft-18 §2.5.1, a draft-14 peer understands no such property
+        assert!(matches!(published, Err(RequestFailure::TrackNotUnderstood)));
+        let event = tokio::time::timeout(Duration::from_millis(200), server.receive_event()).await;
+        assert!(event.is_err(), "no PUBLISH may reach the peer: {event:?}");
     }
 
     #[tokio::test]

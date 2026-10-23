@@ -69,25 +69,29 @@ impl SubscribeHandler {
         }
     }
 
-    /// Returns the track alias to pass to `into_subscription`.
-    pub async fn ok(
-        &self,
-        expires: u64,
-        content_exists: ContentExists,
-    ) -> Result<u64, TransportSendError> {
+    /// Returns the track alias to pass to `into_subscription`. Fails like
+    /// `ok_with_track_alias`.
+    pub async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64> {
         let track_alias = self.allocate_track_alias();
         self.ok_with_track_alias(track_alias, expires, content_exists)
             .await?;
         Ok(track_alias)
     }
 
-    /// `track_alias` comes from this handler's `allocate_track_alias`.
+    /// `track_alias` comes from this handler's `allocate_track_alias`. Fails
+    /// when SUBSCRIBE_OK cannot be sent, or when `track_properties` hold a
+    /// Mandatory Track Property the peer's draft does not understand: the
+    /// SUBSCRIBE is then refused with UNSUPPORTED_EXTENSION, NOT_SUPPORTED
+    /// on draft-14 (draft-18 §2.5.1).
     pub async fn ok_with_track_alias(
         &self,
         track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
-    ) -> Result<(), TransportSendError> {
+    ) -> anyhow::Result<()> {
+        self.guard
+            .refuse_unless_understood(&self.track_properties)
+            .await?;
         self.guard.mark_responded();
         let subscribe_ok = SubscribeOk {
             request_id: self.guard.request_id(),
@@ -143,10 +147,46 @@ impl SubscribeHandler {
 mod tests {
     use crate::subscribe::SubscribeOption;
     use crate::{
-        SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        RequestErrorCode, RequestFailure, SessionEvent,
+        modules::test_support::{
+            connect_sessions, mandatory_track_properties, spawn_connected_dual_sessions,
+            spawn_dual_server,
+        },
         object::{ContentExists, GroupOrder},
     };
+
+    #[tokio::test]
+    async fn a_draft14_subscribe_ok_with_a_mandatory_track_property_is_sent_as_a_refusal() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscribe-handler-mandatory").await;
+        let request = tokio::spawn(async move {
+            client
+                .subscriber()
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        handler.track_properties = mandatory_track_properties();
+
+        // Act
+        let answered = handler.ok(0, ContentExists::False).await;
+
+        // Assert: draft-18 §2.5.1; draft-14 refuses with NOT_SUPPORTED
+        assert!(answered.is_err());
+        assert!(matches!(
+            request.await.unwrap(),
+            Err(RequestFailure::Rejected {
+                code: RequestErrorCode::NotSupported,
+                ..
+            })
+        ));
+    }
 
     #[tokio::test]
     async fn subscribe_ok_states_ascending_when_the_subscriber_leaves_the_order_to_the_publisher() {

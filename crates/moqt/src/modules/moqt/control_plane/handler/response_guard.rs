@@ -3,14 +3,17 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::modules::{
-    executor,
-    moqt::{
-        control_plane::error_codes::{RequestErrorCode, RequestKind},
-        domains::connection::Connection,
-        version::OutgoingResponse,
+use crate::{
+    TrackProperties,
+    modules::{
+        executor,
+        moqt::{
+            control_plane::error_codes::{RequestErrorCode, RequestKind},
+            domains::connection::Connection,
+            version::OutgoingResponse,
+        },
+        transport::transport_send_stream::TransportSendError,
     },
-    transport::transport_send_stream::TransportSendError,
 };
 
 /// Sends the `*_ERROR` reply of one request, and auto-answers NOT_SUPPORTED
@@ -47,6 +50,24 @@ impl ResponseGuard {
 
     pub(crate) fn mark_responded(&self) {
         self.responded.store(true, Ordering::Relaxed);
+    }
+
+    /// Refuses the request with UNSUPPORTED_EXTENSION, NOT_SUPPORTED on
+    /// draft-14, and fails when the peer's draft does not understand
+    /// `properties` (draft-18 §2.5.1).
+    pub(crate) async fn refuse_unless_understood(
+        &self,
+        properties: &TrackProperties,
+    ) -> anyhow::Result<()> {
+        if self.connection.control.version().understands(properties) {
+            return Ok(());
+        }
+        self.reject(
+            RequestErrorCode::UnsupportedExtension,
+            "mandatory track property not understood".to_string(),
+        )
+        .await?;
+        anyhow::bail!("the peer's draft cannot carry the track's properties")
     }
 
     pub(crate) async fn reject(

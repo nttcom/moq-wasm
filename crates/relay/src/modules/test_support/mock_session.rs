@@ -667,7 +667,7 @@ impl SubscribeHandler for MockSubscribeHandler {
         _expires: u64,
         _content_exists: ContentExists,
         track_properties: TrackProperties,
-    ) -> Result<(), moqt::TransportSendError> {
+    ) -> anyhow::Result<()> {
         self.subscribe_oks.lock().unwrap().push(track_properties);
         Ok(())
     }
@@ -750,7 +750,7 @@ impl FetchHandler for MockFetchHandler {
         _end_of_track: bool,
         _end_location: moqt::object::Location,
         track_properties: TrackProperties,
-    ) -> Result<(), moqt::TransportSendError> {
+    ) -> anyhow::Result<()> {
         self.fetch_oks.lock().unwrap().push(track_properties);
         Ok(())
     }

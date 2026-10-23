@@ -35,6 +35,17 @@ use crate::{
     wire::{SubgroupId, SubgroupObject},
 };
 
+/// Key 0x4000 is in draft-18's Mandatory Track Property range (§2.5.1).
+pub(crate) fn mandatory_track_properties() -> crate::TrackProperties {
+    crate::TrackProperties {
+        max_cache_duration: None,
+        other: vec![KeyValuePair {
+            key: 0x4000,
+            value: VariantType::Even(1),
+        }],
+    }
+}
+
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const PUBLISHER_PRIORITY: u8 = 128;
 /// Well below quinn's 30 s default idle timeout and the 10 s control response

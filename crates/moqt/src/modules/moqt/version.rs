@@ -22,7 +22,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
 
 use crate::{
-    RequestFailure,
+    RequestFailure, TrackProperties,
     modules::{
         executor::JoinHandle,
         moqt::{
@@ -153,6 +153,16 @@ impl Version {
     pub(crate) fn fetch_carries_forwarding_preference(self) -> bool {
         match self {
             Self::Draft14 => false,
+            Self::Draft18 => true,
+        }
+    }
+
+    /// Whether a peer of this draft may be sent a track with `properties`:
+    /// draft-14 has no Track Properties, so it understands no Mandatory
+    /// Track Property (draft-18 §2.5.1).
+    pub(crate) fn understands(self, properties: &TrackProperties) -> bool {
+        match self {
+            Self::Draft14 => !draft18::messages::has_mandatory_track_property(&properties.other),
             Self::Draft18 => true,
         }
     }
