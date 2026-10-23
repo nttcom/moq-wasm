@@ -52,9 +52,9 @@ pub struct Track {
 }
 
 impl Track {
-    /// With `current_group`, the SUBSCRIBE starts at the next group and a joining
-    /// FETCH with offset 0 brings the group the relay holds, so the two meet
-    /// without a gap or a repeat (draft-ietf-moq-transport-14 §9.16.2).
+    /// The SUBSCRIBE starts after the largest object. With `current_group`, a
+    /// joining FETCH with offset 0 brings the group up to that object, so the
+    /// two meet without a gap or a repeat (draft-ietf-moq-transport-14 §9.16.2).
     pub(crate) async fn subscribe(
         session: Arc<Session>,
         namespace: String,
@@ -62,11 +62,7 @@ impl Track {
         current_group: bool,
     ) -> anyhow::Result<Self> {
         let option = SubscribeOption {
-            filter_type: if current_group {
-                FilterType::NextGroupStart
-            } else {
-                FilterType::LargestObject
-            },
+            filter_type: FilterType::LargestObject,
             ..SubscribeOption::default()
         };
         let mut subscriber = session.subscriber();

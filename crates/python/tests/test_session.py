@@ -122,3 +122,21 @@ async def test_a_subscriber_after_an_unsubscribe_inside_an_open_group_gets_its_l
     assert (await within(second_objects.__anext__())).payload == b"v2"
     for session in (second, first, publisher):
         await session.close()
+
+
+async def test_current_group_brings_the_rest_of_the_group_being_appended(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    await track.write(b"v1", new_group=True)
+    await track.write(b"v2")
+    late = await connect(relay_url)
+
+    # Act
+    late_objects = await within(late.subscribe(namespace, TRACK, current_group=True))
+    await track.write(b"v3")
+
+    # Assert
+    assert [(await within(late_objects.__anext__())).payload for _ in range(3)] == [b"v1", b"v2", b"v3"]
+    for session in (late, publisher):
+        await session.close()
