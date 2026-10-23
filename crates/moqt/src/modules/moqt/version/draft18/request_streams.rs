@@ -279,6 +279,9 @@ impl IncomingRequestTask {
                     }
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
+                // §3.3.2: a FIN does not cancel a FETCH; its stream ends once
+                // the response is done (§5.2).
+                Ok(None) if kind == RequestStreamKind::Fetch => return,
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
                     Self::peer_ended(&context, request_id, kind);
                     return;
@@ -407,6 +410,7 @@ impl IncomingRequestTask {
                 kind: kind.clone(),
                 sender: sender.clone(),
                 default_publisher_priority,
+                fetch_end: Default::default(),
             },
         );
         emit(scope, event);

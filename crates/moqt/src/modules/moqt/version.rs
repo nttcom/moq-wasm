@@ -383,6 +383,32 @@ impl ControlChannel {
         }
     }
 
+    /// `None` for draft-14, whose FETCH has no request stream of its own.
+    pub(crate) fn fetch_request_end(
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) -> Option<draft18::FetchRequestEnd> {
+        match connection.control {
+            Self::Draft14(_) => None,
+            Self::Draft18(_) => Some(draft18::FetchRequestEnd::new(
+                Arc::downgrade(connection),
+                request_id,
+            )),
+        }
+    }
+
+    /// The response stream of the FETCH `request_id` the peer sent ended
+    /// with FIN or a reset (draft-18 §5.2).
+    pub(crate) async fn fetch_response_ended(
+        &self,
+        request_id: RequestId,
+    ) -> Result<(), TransportSendError> {
+        match self {
+            Self::Draft14(_) => Ok(()),
+            Self::Draft18(channel) => channel.fetch_response_ended(request_id).await,
+        }
+    }
+
     /// draft-14 objects always carry a priority, so its value goes unused.
     pub(crate) fn default_publisher_priority(&self, request_id: RequestId) -> u8 {
         match self {

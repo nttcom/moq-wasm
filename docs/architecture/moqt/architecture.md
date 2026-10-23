@@ -183,6 +183,14 @@ call through the adapter; a draft never gets a task of its own (see
     it with FIN. The cancelling notifications (UNSUBSCRIBE, FETCH_CANCEL,
     PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE) reset it, and so
     does dropping a `PendingResponse` before a success response (§3.3.2).
+  - A FETCH's state lasts until its response stream ends (§5.2). The
+    publisher ends the request stream with FIN once both its FETCH_OK and the
+    FIN or reset of the response stream (`FetchDataSender::close` /
+    `reset`, or its drop, which resets an unfinished response) are sent. The requester ends its half with FIN when the
+    `FetchDataReceiver` reads the response stream's end or reset
+    (`FetchRequestEnd`), and cancels the FETCH when the receiver is dropped
+    before. A FIN from the requester does not cancel a FETCH; only a reset
+    does.
   - `request_streams` reads the streams. A request the peer opens becomes the
     draft-14 event once its Request ID passes the parity and reuse checks
     (§10.1). The peer ending an open request raises the event its draft-14

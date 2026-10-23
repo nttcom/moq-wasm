@@ -112,6 +112,17 @@ struct RequestStream {
     /// For a subscription: the priority its objects inherit when they omit
     /// one, from its SUBSCRIBE_OK or PUBLISH (§12.4).
     default_publisher_priority: u8,
+    /// For a FETCH the peer sent: how far its response has come.
+    fetch_end: FetchEnd,
+}
+
+/// §5.2: a publisher destroys the state of a FETCH after closing its
+/// response stream, so the request stream ends with FIN once the FETCH_OK
+/// is sent too.
+#[derive(Debug, Clone, Copy, Default)]
+struct FetchEnd {
+    fetch_ok_sent: bool,
+    response_ended: bool,
 }
 
 #[derive(Default)]
@@ -293,6 +304,39 @@ impl ControlChannel {
         }
     }
 
+    /// Records `progress` on the FETCH the peer sent as `request_id`, and
+    /// ends its request stream with FIN once both FETCH_OK and the end of
+    /// the response stream are done.
+    async fn advance_fetch(
+        &self,
+        request_id: RequestId,
+        progress: impl FnOnce(&mut FetchEnd),
+    ) -> Result<(), TransportSendError> {
+        let ended = {
+            let mut requests = self.requests();
+            let Some(stream) = requests.incoming.get_mut(&request_id) else {
+                return Ok(());
+            };
+            progress(&mut stream.fetch_end);
+            if !(stream.fetch_end.fetch_ok_sent && stream.fetch_end.response_ended) {
+                return Ok(());
+            }
+            requests.incoming.remove(&request_id)
+        };
+        match ended {
+            Some(stream) => stream.sender.close().await,
+            None => Ok(()),
+        }
+    }
+
+    pub(super) async fn fetch_response_ended(
+        &self,
+        request_id: RequestId,
+    ) -> Result<(), TransportSendError> {
+        self.advance_fetch(request_id, |end| end.response_ended = true)
+            .await
+    }
+
     fn take_incoming(&self, request_id: RequestId) -> Option<RequestStream> {
         self.requests().incoming.remove(&request_id)
     }
@@ -385,6 +429,7 @@ impl ControlChannel {
                 kind: kind.clone(),
                 sender: sender.clone(),
                 default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
+                fetch_end: FetchEnd::default(),
             },
         );
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
@@ -451,7 +496,9 @@ impl ControlChannel {
             }
             OutgoingResponse::FetchOk(ok) => {
                 let message = messages::encode_fetch_ok(&ok);
-                self.send_on_incoming(ok.request_id, message, false).await
+                self.send_on_incoming(ok.request_id, message, false).await?;
+                self.advance_fetch(ok.request_id, |end| end.fetch_ok_sent = true)
+                    .await
             }
             OutgoingResponse::PublishNamespaceOk(ok)
             | OutgoingResponse::SubscribeNamespaceOk(ok) => {
@@ -571,6 +618,60 @@ impl ControlChannel {
     }
 }
 
+/// §5.2: a subscriber keeps the state of a FETCH until its response stream
+/// ends with FIN or a reset. Ends the request stream of a FETCH this side
+/// sent with FIN then, or with a reset (cancelling it, §3.3.2) when the
+/// reader of the response stream is dropped first.
+#[derive(Debug)]
+pub(crate) struct FetchRequestEnd {
+    connection: Weak<Connection>,
+    request_id: RequestId,
+    response_ended: bool,
+}
+
+impl FetchRequestEnd {
+    pub(super) fn new(connection: Weak<Connection>, request_id: RequestId) -> Self {
+        Self {
+            connection,
+            request_id,
+            response_ended: false,
+        }
+    }
+
+    pub(crate) fn response_ended(mut self) {
+        self.response_ended = true;
+    }
+}
+
+impl Drop for FetchRequestEnd {
+    fn drop(&mut self) {
+        end_outgoing(&self.connection, self.request_id, self.response_ended);
+    }
+}
+
+/// Ends the stream of the request this side sent as `request_id`, if it is
+/// still open: with FIN when `finished`, otherwise with a reset that cancels
+/// the request (§3.3.2). Called from `Drop`, so it does not wait and, outside
+/// a runtime, leaves the stream to its own drop.
+fn end_outgoing(connection: &Weak<Connection>, request_id: RequestId, finished: bool) {
+    let Some(connection) = connection.upgrade() else {
+        return;
+    };
+    let Some(stream) = ControlChannel::of(&connection).take_outgoing(request_id) else {
+        return;
+    };
+    executor::try_spawn("end draft-18 request", async move {
+        let ended = if finished {
+            stream.sender.close().await
+        } else {
+            stream.sender.reset(cancelled()).await
+        };
+        if let Err(error) = ended {
+            tracing::debug!(%error, "could not end a request stream");
+        }
+    });
+}
+
 pub(crate) struct PendingResponse {
     receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
     /// The request whose stream is reset when the caller stops waiting
@@ -580,20 +681,9 @@ pub(crate) struct PendingResponse {
 
 impl Drop for PendingResponse {
     fn drop(&mut self) {
-        let Some((connection, request_id)) = self.cancel.take() else {
-            return;
-        };
-        let Some(connection) = connection.upgrade() else {
-            return;
-        };
-        let Some(stream) = ControlChannel::of(&connection).take_outgoing(request_id) else {
-            return;
-        };
-        executor::spawn("cancel draft-18 request", async move {
-            if let Err(error) = stream.sender.reset(cancelled()).await {
-                tracing::debug!(%error, "could not cancel an abandoned request");
-            }
-        });
+        if let Some((connection, request_id)) = self.cancel.take() {
+            end_outgoing(&connection, request_id, false);
+        }
     }
 }
 
@@ -654,13 +744,15 @@ mod tests {
 
     use crate::{
         RequestErrorCode, RequestFailure, SessionEvent, TrackWriter,
-        fetch::{Fetch, FetchOption},
+        fetch::{
+            Fetch, FetchDataReceiver, FetchDataSender, FetchHandler, FetchOption, FetchParams,
+        },
         modules::{
             moqt::{
                 control_plane::{
                     control_messages::messages::{
-                        parameters::group_order::GroupOrder, subscribe::Subscribe,
-                        subscribe_ok::SubscribeOk,
+                        fetch::Fetch as FetchMessage, parameters::group_order::GroupOrder,
+                        subscribe::Subscribe, subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
                 },
@@ -1068,6 +1160,288 @@ mod tests {
         // Assert
         assert_eq!(received, objects);
         assert!(matches!(receiver.receive().await.unwrap(), Fetch::End));
+    }
+
+    /// More FETCHes than the 1000 concurrent bidirectional streams a
+    /// connection allows.
+    const SEQUENTIAL_FETCHES: usize = 1010;
+
+    #[tokio::test]
+    async fn completed_fetches_release_their_request_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-release-{scheme}"),
+                scheme,
+            )
+            .await;
+            let end = Location {
+                group_id: 0,
+                object_id: 1,
+            };
+            let object = Object {
+                location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+                publisher_priority: 128,
+                status: ObjectStatus::Normal,
+                extension_headers: Default::default(),
+                payload: Bytes::from_static(b"o"),
+                ends_group: false,
+            };
+            let answering = tokio::spawn(async move {
+                for _ in 0..SEQUENTIAL_FETCHES {
+                    let SessionEvent::Fetch(handler) = next_event(&server).await else {
+                        panic!("expected FETCH");
+                    };
+                    handler.ok(false, end).await.unwrap();
+                    let sender = server
+                        .publisher()
+                        .create_fetch_stream(handler.request_id)
+                        .await
+                        .unwrap();
+                    sender.send_object(&object).await.unwrap();
+                    sender.close().await.unwrap();
+                }
+                let SessionEvent::Subscribe(handler) = next_event(&server).await else {
+                    panic!("expected SUBSCRIBE");
+                };
+                handler.ok(0, ContentExists::False).await.unwrap();
+                server
+            });
+            let mut subscriber = client.subscriber();
+
+            // Act
+            for index in 0..SEQUENTIAL_FETCHES {
+                let handle = tokio::time::timeout(
+                    HANDSHAKE_TIMEOUT,
+                    subscriber.fetch(
+                        "ns".into(),
+                        "track".into(),
+                        Location {
+                            group_id: 0,
+                            object_id: 0,
+                        },
+                        end,
+                        FetchOption::default(),
+                    ),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("{scheme}: FETCH {index} was not answered"))
+                .unwrap();
+                let mut receiver = subscriber.accept_fetch_receiver(&handle).await.unwrap();
+                assert_eq!(read_fetch_objects(&mut receiver).await.len(), 1);
+            }
+            let subscription = tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            )
+            .await;
+
+            // Assert: only the subscription keeps a request stream
+            assert!(matches!(subscription, Ok(Ok(_))), "{scheme}");
+            let server = answering.await.unwrap();
+            assert_eq!(
+                ControlChannel::of(&client.publisher().session.connection())
+                    .requests()
+                    .outgoing
+                    .len(),
+                1,
+                "{scheme}"
+            );
+            assert_eq!(
+                ControlChannel::of(&server.publisher().session.connection())
+                    .requests()
+                    .incoming
+                    .len(),
+                1,
+                "{scheme}"
+            );
+        }
+    }
+
+    /// A FETCH from `client` that `server` answers with FETCH_OK and a
+    /// response stream it keeps open.
+    async fn fetch_with_open_response(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (
+        crate::Subscriber,
+        FetchDataReceiver,
+        FetchHandler,
+        FetchDataSender,
+    ) {
+        let end = Location {
+            group_id: 1,
+            object_id: 0,
+        };
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            let handle = subscriber
+                .fetch(
+                    "ns".into(),
+                    "track".into(),
+                    Location {
+                        group_id: 0,
+                        object_id: 0,
+                    },
+                    end,
+                    FetchOption::default(),
+                )
+                .await
+                .unwrap();
+            let receiver = subscriber.accept_fetch_receiver(&handle).await.unwrap();
+            (subscriber, receiver)
+        });
+        let SessionEvent::Fetch(handler) = next_event(server).await else {
+            panic!("expected FETCH");
+        };
+        handler.ok(false, end).await.unwrap();
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        let (subscriber, receiver) = request.await.unwrap();
+        (subscriber, receiver, handler, sender)
+    }
+
+    #[tokio::test]
+    async fn dropping_a_fetch_receiver_before_the_end_cancels_the_fetch() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-receiver-dropped", "moqt").await;
+        let (_subscriber, receiver, _handler, _sender) =
+            fetch_with_open_response(&client, &server).await;
+
+        // Act
+        drop(receiver);
+        let event = next_event(&server).await;
+
+        // Assert: §3.3.2
+        assert!(matches!(event, SessionEvent::FetchCancel(_)), "{event:?}");
+    }
+
+    #[tokio::test]
+    async fn a_fetch_receiver_dropped_outside_a_runtime_does_not_panic() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-receiver-off-runtime", "moqt").await;
+        let (_subscriber, receiver, _handler, _sender) =
+            fetch_with_open_response(&client, &server).await;
+
+        // Act
+        let dropped = std::thread::spawn(move || drop(receiver)).join();
+
+        // Assert
+        assert!(dropped.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_fetch_sender_dropped_unended_releases_the_request_stream() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-sender-dropped", "moqt").await;
+        let (_subscriber, mut receiver, _handler, sender) =
+            fetch_with_open_response(&client, &server).await;
+
+        // Act
+        drop(sender);
+        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive()).await;
+        let released = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while !ControlChannel::of(&server.publisher().session.connection())
+                .requests()
+                .incoming
+                .is_empty()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+
+        // Assert: an unfinished response is reset, not ended with FIN (§5.2)
+        assert!(matches!(received, Ok(Err(_))), "{received:?}");
+        assert!(released.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_fetch_stream_for_a_subscribe_leaves_the_subscribe_open() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-stream-for-subscribe", "moqt").await;
+        let (_subscription, handler) =
+            subscribed_with_track_properties(&client, &server, 4, &[]).await;
+
+        // Act
+        send_raw_stream(
+            &server,
+            &Version::Draft18.encode_fetch_header(handler.request_id()),
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Assert: only a FETCH's own response stream ends its request
+        assert!(
+            ControlChannel::of(&client.publisher().session.connection())
+                .requests()
+                .outgoing
+                .contains_key(&handler.request_id())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fin_after_a_fetch_does_not_cancel_it() {
+        // Arrange
+        let (client, server) = spawn_connected_draft18_sessions("draft18-fetch-fin", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
+        let sender = StreamSender::new(send_stream);
+        let fetch = messages::encode_fetch(&FetchMessage {
+            request_id: connection.control.next_request_id(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            fetch_params: FetchParams::Standalone {
+                track_namespace: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                start_location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                end_location: Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            },
+            authorization_tokens: vec![],
+        })
+        .unwrap();
+        sender.send(&fetch).await.unwrap();
+
+        // Act
+        sender.close().await.unwrap();
+        let SessionEvent::Fetch(handler) = next_event(&server).await else {
+            panic!("expected FETCH");
+        };
+        let later = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            server.receive_event(),
+        )
+        .await;
+        let answered = handler
+            .ok(
+                false,
+                Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            )
+            .await;
+
+        // Assert: §3.3.2 cancels by reset, not by FIN
+        assert!(later.is_err(), "{later:?}");
+        assert!(answered.is_ok(), "{answered:?}");
     }
 
     #[tokio::test]
