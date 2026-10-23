@@ -1327,23 +1327,15 @@ impl MOQTClient {
             payload,
             ends_group: false,
         };
-        sender
-            .lock()
-            .await
-            .send_object(&object)
-            .await
-            .map_err(anyhow_error)?;
+        let mut sender = sender.lock().await;
+        sender.send_object(&object).await.map_err(anyhow_error)?;
         self.shared
             .state
             .borrow_mut()
             .record_published_object(track_alias, location);
         if matches!(status, ObjectStatus::EndOfGroup | ObjectStatus::EndOfTrack) {
+            let _ = sender.close().await;
             self.shared.stream_senders.borrow_mut().remove(&writer_key);
-            // Closing resolves only once the peer has acknowledged the FIN, so
-            // awaiting it would hold back the caller's next object by a round trip.
-            spawn_local(async move {
-                let _ = sender.lock().await.close().await;
-            });
         }
         Ok(())
     }
