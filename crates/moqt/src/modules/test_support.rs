@@ -308,7 +308,12 @@ pub(crate) fn object_with_extensions() -> Object {
         forwarding: ForwardingPreference::Subgroup { subgroup_id: 3 },
         publisher_priority: 7,
         status: ObjectStatus::Normal,
+        // In ascending key order, as draft-18 delta-encodes them (§1.4.3).
         extension_headers: ExtensionHeaders::new(vec![
+            KeyValuePair {
+                key: 0x0d,
+                value: VariantType::Odd(Bytes::from_static(b"\x00\xff\x7f")),
+            },
             KeyValuePair {
                 key: 0x10,
                 value: VariantType::Even(16_384),
@@ -316,10 +321,6 @@ pub(crate) fn object_with_extensions() -> Object {
             KeyValuePair {
                 key: 0x21,
                 value: VariantType::Odd(Bytes::from_static(b"\x01\x00\x80")),
-            },
-            KeyValuePair {
-                key: 0x0d,
-                value: VariantType::Odd(Bytes::from_static(b"\x00\xff\x7f")),
             },
             KeyValuePair {
                 key: 0x21,
