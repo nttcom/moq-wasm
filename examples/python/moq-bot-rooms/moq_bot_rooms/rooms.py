@@ -18,6 +18,7 @@ class RoomEnd(StrEnum):
     CLOSED = "closed"
     EXPIRED = "expired"
     FAILED = "failed"
+    STOPPED = "stopped"
 
 
 # Runs the bot for a room ID until it is cancelled, or returns once nobody is in the room. The
@@ -126,6 +127,18 @@ class Rooms:
         membership.leave(at_once=True)
         if room.ended.done():
             await asyncio.wait([room.task])
+        return True
+
+    async def stop(self, member_id: str) -> bool:
+        """Ends the named hold's room for every page that holds it; False for an ID no page holds.
+        Returns once the room's bot has left, and forgets the room so that the next join starts a new
+        bot."""
+        if member_id not in self._members:
+            return False
+        _, room = self._members[member_id]
+        self._end(room, RoomEnd.STOPPED)
+        await asyncio.wait([room.task])
+        self._remove(room)
         return True
 
     def close_outside_hours(self) -> None:
