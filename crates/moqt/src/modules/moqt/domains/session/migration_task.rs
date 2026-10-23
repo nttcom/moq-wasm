@@ -527,6 +527,9 @@ async fn carry_subscription(
                     previous: false,
                 }),
                 open_subgroups: OpenSubgroups::new(),
+                default_publisher_priority: connection
+                    .control
+                    .default_publisher_priority(subscribe_ok.request_id),
             },
         )
         .await

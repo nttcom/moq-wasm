@@ -325,6 +325,9 @@ impl SessionContext {
                     newest_group: None,
                     cutover: None,
                     open_subgroups: OpenSubgroups::new(),
+                    default_publisher_priority: connection
+                        .control
+                        .default_publisher_priority(request_id),
                 },
             )
             .await?;
@@ -503,7 +506,7 @@ mod tests {
         // Assert
         let received = receiver.try_recv();
         assert!(
-            matches!(&received, Ok(IncomingObject::Datagram(object)) if *object == datagram_object()),
+            matches!(&received, Ok(IncomingObject::Datagram(datagram)) if datagram.object == datagram_object()),
             "{received:?}"
         );
     }

@@ -20,7 +20,7 @@ use crate::{
             object_datagram::ObjectDatagram,
         },
         domains::{connection::IncomingObjectNotification, session_context::SessionContext},
-        runtime::dispatch::incoming_object::IncomingObject,
+        runtime::dispatch::incoming_object::{IncomingDatagram, IncomingObject},
         version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
     },
     modules::transport::application_protocol::ApplicationProtocols,
@@ -415,7 +415,10 @@ pub(crate) async fn notify_datagram(
 ) -> IncomingObjectNotification {
     context
         .connection()
-        .notify_incoming_object(track_alias, IncomingObject::Datagram(datagram_object()))
+        .notify_incoming_object(
+            track_alias,
+            IncomingObject::Datagram(IncomingDatagram::new(datagram_object())),
+        )
         .await
 }
 

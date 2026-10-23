@@ -113,7 +113,11 @@ const REQUEST_OK_PARAMETERS: &[u64] = &[
 // Track Property types (§15.8) the model maps.
 const OBJECT_DELIVERY_TIMEOUT_PROPERTY: u64 = 0x02;
 const MAX_CACHE_DURATION_PROPERTY: u64 = 0x04;
+const DEFAULT_PUBLISHER_PRIORITY_PROPERTY: u64 = 0x0E;
 const DEFAULT_PUBLISHER_GROUP_ORDER_PROPERTY: u64 = 0x22;
+/// §12.4: the priority of a track whose control message omits DEFAULT
+/// PUBLISHER PRIORITY.
+pub(crate) const DEFAULT_PUBLISHER_PRIORITY: u8 = 128;
 /// §2.5.1.
 const MANDATORY_TRACK_PROPERTIES: std::ops::RangeInclusive<u64> = 0x4000..=0x7FFF;
 
@@ -273,7 +277,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
         SUBSCRIBE_OK => Message::SubscribeOk(SubscribeOkMessage {
             track_alias: get_vi64(buf)?,
             parameters: get_parameters(buf, SUBSCRIBE_OK_PARAMETERS)?,
-            track_properties: get_key_value_pairs(buf)?,
+            track_properties: get_track_properties(buf)?,
         }),
         REQUEST_UPDATE => Message::RequestUpdate(RequestUpdateMessage {
             request_id: get_vi64(buf)?,
@@ -304,7 +308,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
             },
             end_location: get_location(buf)?,
             parameters: get_parameters(buf, &[])?,
-            track_properties: get_key_value_pairs(buf)?,
+            track_properties: get_track_properties(buf)?,
         }),
         PUBLISH_NAMESPACE => {
             let request_id = get_vi64(buf)?;
@@ -339,7 +343,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
         }
         REQUEST_OK | PUBLISH_OK => Message::RequestOk(RequestOkMessage {
             parameters: get_parameters(buf, REQUEST_OK_PARAMETERS)?,
-            track_properties: get_key_value_pairs(buf)?,
+            track_properties: get_track_properties(buf)?,
         }),
         REQUEST_ERROR => Message::RequestError(decode_request_error(buf)?),
         _ => {
@@ -599,6 +603,27 @@ fn varint_property_value(properties: &[KeyValuePair], key: u64) -> Option<u64> {
     })
 }
 
+/// The Track Properties ending a message (§2.5). Priorities above 255 are
+/// invalid (§12.4) and close the session with PROTOCOL_VIOLATION.
+fn get_track_properties(buf: &mut Bytes) -> Result<Vec<KeyValuePair>, DecodeError> {
+    let properties = get_key_value_pairs(buf)?;
+    if varint_property_value(&properties, DEFAULT_PUBLISHER_PRIORITY_PROPERTY)
+        .is_some_and(|priority| priority > u64::from(u8::MAX))
+    {
+        return Err(DecodeError::protocol_violation(
+            "DEFAULT PUBLISHER PRIORITY above 255",
+        ));
+    }
+    Ok(properties)
+}
+
+/// §12.4.
+pub(crate) fn default_publisher_priority(properties: &[KeyValuePair]) -> u8 {
+    varint_property_value(properties, DEFAULT_PUBLISHER_PRIORITY_PROPERTY)
+        .and_then(|priority| u8::try_from(priority).ok())
+        .unwrap_or(DEFAULT_PUBLISHER_PRIORITY)
+}
+
 fn property_group_order(properties: &[KeyValuePair]) -> GroupOrder {
     match varint_property_value(properties, DEFAULT_PUBLISHER_GROUP_ORDER_PROPERTY) {
         Some(0x2) => GroupOrder::Descending,
@@ -638,7 +663,7 @@ fn decode_publish(buf: &mut Bytes) -> Result<(Publish, Vec<KeyValuePair>), Decod
     let (track_namespace_tuple, track_name) = get_full_track_name(buf)?;
     let track_alias = get_vi64(buf)?;
     let parameters = get_parameters(buf, PUBLISH_PARAMETERS)?;
-    let properties = get_key_value_pairs(buf)?;
+    let properties = get_track_properties(buf)?;
     let forward = parameters
         .iter()
         .find_map(|parameter| match parameter {
@@ -1448,5 +1473,29 @@ mod tests {
         // Act / Assert
         assert!(has_mandatory_track_property(&properties));
         assert!(!has_mandatory_track_property(&[]));
+    }
+
+    #[test]
+    fn a_default_publisher_priority_above_255_is_a_protocol_violation() {
+        // Arrange
+        let mut payload = BytesMut::new();
+        put_vi64(&mut payload, 1);
+        put_parameters(&mut payload, &[]).unwrap();
+        put_key_value_pairs(&mut payload, &[varint_property(0x0E, 256)]).unwrap();
+
+        // Act
+        let result = decode_message(SUBSCRIBE_OK, payload.freeze());
+
+        // Assert: §12.4
+        assert!(
+            matches!(
+                result,
+                Err(DecodeError::Violation {
+                    code: TerminationErrorCode::ProtocolViolation,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
     }
 }

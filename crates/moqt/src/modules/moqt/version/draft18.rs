@@ -109,6 +109,9 @@ impl RequestStreamKind {
 struct RequestStream {
     kind: RequestStreamKind,
     sender: Arc<StreamSender>,
+    /// For a subscription: the priority its objects inherit when they omit
+    /// one, from its SUBSCRIBE_OK or PUBLISH (§12.4).
+    default_publisher_priority: u8,
 }
 
 #[derive(Default)]
@@ -273,6 +276,23 @@ impl ControlChannel {
         )))
     }
 
+    pub(super) fn default_publisher_priority(&self, request_id: RequestId) -> u8 {
+        let requests = self.requests();
+        requests
+            .outgoing
+            .get(&request_id)
+            .or_else(|| requests.incoming.get(&request_id))
+            .map_or(messages::DEFAULT_PUBLISHER_PRIORITY, |stream| {
+                stream.default_publisher_priority
+            })
+    }
+
+    fn set_default_publisher_priority(&self, request_id: RequestId, priority: u8) {
+        if let Some(stream) = self.requests().outgoing.get_mut(&request_id) {
+            stream.default_publisher_priority = priority;
+        }
+    }
+
     fn take_incoming(&self, request_id: RequestId) -> Option<RequestStream> {
         self.requests().incoming.remove(&request_id)
     }
@@ -364,6 +384,7 @@ impl ControlChannel {
             RequestStream {
                 kind: kind.clone(),
                 sender: sender.clone(),
+                default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
             },
         );
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
@@ -648,13 +669,14 @@ mod tests {
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, datagram_object,
-                notify_datagram, published_track_between, read_fetch_objects,
-                spawn_connected_draft18_sessions, subscribed_track_reader,
+                datagram_receiver, notify_datagram, published_track_between, read_fetch_objects,
+                spawn_connected_draft18_sessions, subgroup_receiver, subscribed_track_reader,
             },
         },
         namespace::SubscribeNamespaceHandler,
         object::{
-            ContentExists, DataReceiver, ForwardingPreference, Location, Object, ObjectStatus,
+            ContentExists, DataReceiver, ForwardingPreference, KeyValuePair, Location, Object,
+            ObjectStatus, Subgroup, VariantType,
         },
         publish::{PublishDoneCode, PublishOption},
         subscribe::{FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateHandler},
@@ -1208,6 +1230,149 @@ mod tests {
         };
         assert_eq!(done.request_id(), subscription.request_id());
         assert_eq!(done.status_code(), PublishDoneCode::GoingAway);
+    }
+
+    /// §12.4 DEFAULT PUBLISHER PRIORITY.
+    fn default_priority_property(priority: u64) -> KeyValuePair {
+        KeyValuePair {
+            key: 0x0E,
+            value: VariantType::Even(priority),
+        }
+    }
+
+    /// A SUBSCRIBE from `client` that `server` answers itself with a
+    /// SUBSCRIBE_OK for `track_alias` carrying `track_properties`. Hold the
+    /// returned handler: dropping it unanswered sends REQUEST_ERROR.
+    async fn subscribed_with_track_properties(
+        client: &crate::Session,
+        server: &crate::Session,
+        track_alias: u64,
+        track_properties: &[KeyValuePair],
+    ) -> (crate::Subscription, SubscribeHandler) {
+        let (request, handler) =
+            subscribe_requested(client, server, SubscribeOption::default()).await;
+        let stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&handler.request_id())
+            .cloned()
+            .unwrap();
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, track_alias);
+        parameters::put_parameters(&mut payload, &[]).unwrap();
+        codec::put_key_value_pairs(&mut payload, track_properties).unwrap();
+        stream
+            .sender
+            .send(&messages::frame(messages::SUBSCRIBE_OK, &payload).unwrap())
+            .await
+            .unwrap();
+        (request.await.unwrap().unwrap(), handler)
+    }
+
+    async fn send_raw_stream(session: &crate::Session, bytes: &[u8]) {
+        let connection = session.publisher().session.connection();
+        let sender = StreamSender::new(connection.transport.open_uni().await.unwrap());
+        sender.send(&BytesMut::from(bytes)).await.unwrap();
+        sender.close().await.unwrap();
+    }
+
+    async fn next_stream_object(
+        factory: &mut crate::object::StreamDataReceiverFactory,
+    ) -> (crate::object::SubgroupStart, Object) {
+        let mut stream = factory.next().await.unwrap();
+        let Some(Subgroup::Header(start)) = stream.receive().await.unwrap() else {
+            panic!("expected the subgroup header");
+        };
+        let Some(Subgroup::Object(object)) = stream.receive().await.unwrap() else {
+            panic!("expected an object");
+        };
+        (start, object)
+    }
+
+    #[tokio::test]
+    async fn subgroups_inherit_the_default_publisher_priority_of_the_subscribe_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-default-priority-stream", "moqt").await;
+        let (subscription, _handler) =
+            subscribed_with_track_properties(&client, &server, 4, &[default_priority_property(9)])
+                .await;
+
+        // Act: a header without priority (type 0x30), then one with 200 (0x10)
+        send_raw_stream(&server, &[0x30, 4, 0, 0, 1, b'a']).await;
+        let mut factory = subgroup_receiver(&client, &subscription).await;
+        let (inherited_start, inherited) = next_stream_object(&mut factory).await;
+        send_raw_stream(&server, &[0x10, 4, 1, 200, 0, 1, b'b']).await;
+        let (explicit_start, explicit) = next_stream_object(&mut factory).await;
+
+        // Assert
+        assert_eq!(inherited_start.publisher_priority, 9);
+        assert_eq!(inherited.publisher_priority, 9);
+        assert_eq!(explicit_start.publisher_priority, 200);
+        assert_eq!(explicit.publisher_priority, 200);
+    }
+
+    #[tokio::test]
+    async fn a_datagram_without_priority_takes_the_track_default_or_128() {
+        for (properties, expected) in [(vec![default_priority_property(9)], 9), (vec![], 128)] {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions("draft18-default-priority-datagram", "moqt").await;
+            let (subscription, _handler) =
+                subscribed_with_track_properties(&client, &server, 4, &properties).await;
+
+            // Act: type 0x0C omits the priority and the Object ID
+            server
+                .publisher()
+                .session
+                .connection()
+                .transport
+                .send_datagram(BytesMut::from(&[0x0C, 4, 0, b'd'][..]))
+                .unwrap();
+            let object = datagram_receiver(&client, &subscription)
+                .await
+                .receive()
+                .await
+                .unwrap();
+
+            // Assert
+            assert_eq!(object.publisher_priority, expected, "{properties:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_datagram_without_priority_takes_the_default_its_publish_announces() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-default-priority-publish", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, connection.control.next_request_id());
+        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
+        codec::put_vi64(&mut payload, 6);
+        parameters::put_parameters(&mut payload, &[]).unwrap();
+        codec::put_key_value_pairs(&mut payload, &[default_priority_property(9)]).unwrap();
+        let publish_stream = StreamSender::new(send_stream);
+        publish_stream
+            .send(&messages::frame(messages::PUBLISH, &payload).unwrap())
+            .await
+            .unwrap();
+        let subscription = accept_publish(&server).await;
+
+        // Act
+        connection
+            .transport
+            .send_datagram(BytesMut::from(&[0x0C, 6, 0, b'd'][..]))
+            .unwrap();
+        let object = datagram_receiver(&server, &subscription)
+            .await
+            .receive()
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(object.publisher_priority, 9);
     }
 
     #[tokio::test]

@@ -5,9 +5,12 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::Decoder;
 
-use super::codec::{
-    DecodeError, get_key_value_pairs, get_length_prefixed, get_u8, get_vi64, put_key_value_pairs,
-    put_vi64, take,
+use super::{
+    codec::{
+        DecodeError, get_key_value_pairs, get_length_prefixed, get_u8, get_vi64,
+        put_key_value_pairs, put_vi64, take,
+    },
+    messages::DEFAULT_PUBLISHER_PRIORITY,
 };
 use crate::modules::moqt::{
     control_plane::control_messages::messages::parameters::{
@@ -25,6 +28,7 @@ use crate::modules::moqt::{
             stream_receiver::{StreamReceiveError, StreamReceiver},
         },
     },
+    runtime::dispatch::incoming_object::IncomingDatagram,
     version::{self, IncomingStream},
 };
 use crate::modules::transport::transport_connection::BoxedReceiveStream;
@@ -32,11 +36,6 @@ use crate::modules::transport::transport_connection::BoxedReceiveStream;
 const FETCH_HEADER: u64 = 0x05;
 const PADDING_STREAM: u64 = 0x132B_3E28;
 const PADDING_DATAGRAM: u64 = 0x132B_3E29;
-
-/// The priority an object inherits when its header omits one (§11.3.1,
-/// §11.4.2); the subscription's control message is not visible here, so
-/// the default of §12.4 stands in.
-const DEFAULT_PUBLISHER_PRIORITY: u8 = 128;
 
 /// Object Properties (§11.2.1.2).
 fn get_properties(buf: &mut impl Buf) -> Result<ExtensionHeaders, DecodeError> {
@@ -317,6 +316,8 @@ impl Decoder for StreamDecoder {
 pub(crate) struct SubgroupState {
     header: SubgroupHeader,
     prev_object_id: Option<u64>,
+    /// The track's priority (§12.4), for a header that omits its own.
+    default_priority: u8,
 }
 
 impl SubgroupState {
@@ -324,6 +325,7 @@ impl SubgroupState {
         Self {
             header,
             prev_object_id: None,
+            default_priority: DEFAULT_PUBLISHER_PRIORITY,
         }
     }
 
@@ -341,7 +343,7 @@ impl SubgroupState {
     fn priority(&self) -> u8 {
         self.header
             .publisher_priority
-            .unwrap_or(DEFAULT_PUBLISHER_PRIORITY)
+            .unwrap_or(self.default_priority)
     }
 
     pub(crate) fn object(&mut self, field: SubgroupObjectField) -> Result<Object, DecodeError> {
@@ -566,6 +568,10 @@ impl SubgroupReader {
         self.state.start()
     }
 
+    pub(crate) fn inherit_priority(&mut self, default_publisher_priority: u8) {
+        self.state.default_priority = default_publisher_priority;
+    }
+
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self.stream.receive().await? {
             Some(StreamFrame::SubgroupObject(field)) => {
@@ -704,8 +710,10 @@ pub(crate) fn encode_datagram(track_alias: u64, object: &Object) -> anyhow::Resu
     Ok(buf)
 }
 
-/// Returns `(track alias, object)`, or `None` for a padding datagram.
-pub(crate) fn decode_datagram(data: &mut impl Buf) -> Result<Option<(u64, Object)>, DecodeError> {
+/// Returns `(track alias, datagram)`, or `None` for a padding datagram.
+pub(crate) fn decode_datagram(
+    data: &mut impl Buf,
+) -> Result<Option<(u64, IncomingDatagram)>, DecodeError> {
     let datagram_type = get_vi64(data)?;
     if datagram_type == PADDING_DATAGRAM {
         return Ok(None);
@@ -725,7 +733,8 @@ pub(crate) fn decode_datagram(data: &mut impl Buf) -> Result<Option<(u64, Object
     } else {
         get_vi64(data)?
     };
-    let publisher_priority = if datagram_type & DATAGRAM_DEFAULT_PRIORITY != 0 {
+    let inherits_priority = datagram_type & DATAGRAM_DEFAULT_PRIORITY != 0;
+    let publisher_priority = if inherits_priority {
         DEFAULT_PUBLISHER_PRIORITY
     } else {
         get_u8(data)?
@@ -754,17 +763,20 @@ pub(crate) fn decode_datagram(data: &mut impl Buf) -> Result<Option<(u64, Object
     };
     Ok(Some((
         track_alias,
-        Object {
-            location: Location {
-                group_id,
-                object_id,
+        IncomingDatagram {
+            object: Object {
+                location: Location {
+                    group_id,
+                    object_id,
+                },
+                forwarding: ForwardingPreference::Datagram,
+                publisher_priority,
+                status,
+                extension_headers: properties,
+                payload,
+                ends_group: datagram_type & DATAGRAM_END_OF_GROUP != 0,
             },
-            forwarding: ForwardingPreference::Datagram,
-            publisher_priority,
-            status,
-            extension_headers: properties,
-            payload,
-            ends_group: datagram_type & DATAGRAM_END_OF_GROUP != 0,
+            inherits_priority,
         },
     )))
 }
@@ -882,6 +894,7 @@ mod tests {
             extension_headers::ExtensionHeaders,
             object_status::ObjectStatus,
         },
+        runtime::dispatch::incoming_object::IncomingDatagram,
         version::draft18::codec::{DecodeError, put_vi64},
     };
 
@@ -1029,8 +1042,8 @@ mod tests {
             let mut encoded = encode_datagram(11, &sent).unwrap().freeze();
             let decoded = decode_datagram(&mut encoded).unwrap();
 
-            // Assert
-            assert_eq!(decoded, Some((11, sent)));
+            // Assert: an encoded datagram always states its priority
+            assert_eq!(decoded, Some((11, IncomingDatagram::new(sent))));
         }
         assert_eq!(decode_datagram(&mut padding.freeze()), Ok(None));
     }

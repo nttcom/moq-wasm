@@ -36,7 +36,7 @@ impl DatagramReceiver {
             None => bail!("Sender dropped."),
         };
         match result {
-            IncomingObject::Datagram(object) => Ok(object),
+            IncomingObject::Datagram(datagram) => Ok(datagram.object),
             IncomingObject::Subgroup(_) => Err(MalformedTrackError.into()),
         }
     }

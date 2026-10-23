@@ -54,6 +54,7 @@ use crate::{
                 },
             },
             domains::{connection::Connection, session_context::SessionContext},
+            runtime::dispatch::incoming_object::IncomingDatagram,
             version::draft14::control_message_receive_task::ControlMessageReceiveTask,
         },
         transport::{
@@ -141,14 +142,15 @@ impl Version {
         }
     }
 
-    /// Returns `(track alias, object)`, or `None` for a datagram that carries
-    /// no object (draft-18 padding).
+    /// Returns `(track alias, datagram)`, or `None` for a datagram that
+    /// carries no object (draft-18 padding).
     pub(crate) fn decode_datagram(
         self,
         data: &mut BytesMut,
-    ) -> anyhow::Result<Option<(u64, Object)>> {
+    ) -> anyhow::Result<Option<(u64, IncomingDatagram)>> {
         match self {
-            Self::Draft14 => draft14::objects::decode_datagram(data).map(Some),
+            Self::Draft14 => draft14::objects::decode_datagram(data)
+                .map(|(track_alias, object)| Some((track_alias, IncomingDatagram::new(object)))),
             Self::Draft18 => Ok(draft18::objects::decode_datagram(data)?),
         }
     }
@@ -192,6 +194,14 @@ impl SubgroupReader {
         match self {
             Self::Draft14(reader) => reader.group_id(),
             Self::Draft18(reader) => reader.group_id(),
+        }
+    }
+
+    /// draft-14 headers always carry a priority.
+    pub(crate) fn inherit_priority(&mut self, default_publisher_priority: u8) {
+        match self {
+            Self::Draft14(_) => {}
+            Self::Draft18(reader) => reader.inherit_priority(default_publisher_priority),
         }
     }
 
@@ -368,6 +378,14 @@ impl ControlChannel {
         match self {
             Self::Draft14(channel) => channel.next_request_id(),
             Self::Draft18(channel) => channel.next_request_id(),
+        }
+    }
+
+    /// draft-14 objects always carry a priority, so its value goes unused.
+    pub(crate) fn default_publisher_priority(&self, request_id: RequestId) -> u8 {
+        match self {
+            Self::Draft14(_) => draft18::messages::DEFAULT_PUBLISHER_PRIORITY,
+            Self::Draft18(channel) => channel.default_publisher_priority(request_id),
         }
     }
 

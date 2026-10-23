@@ -300,6 +300,7 @@ impl IncomingRequestTask {
             return None;
         }
         let mut baseline = None;
+        let mut default_publisher_priority = messages::DEFAULT_PUBLISHER_PRIORITY;
         let (kind, event) = match message {
             Message::Subscribe(subscribe) => {
                 baseline = Some(update_baseline(
@@ -341,6 +342,8 @@ impl IncomingRequestTask {
                     Self::reject(sender, RequestErrorCode::UnsupportedExtension).await;
                     return None;
                 }
+                default_publisher_priority =
+                    messages::default_publisher_priority(&track_properties);
                 (
                     RequestStreamKind::Publish,
                     SessionEvent::Publish(PublishHandler::new(
@@ -385,6 +388,7 @@ impl IncomingRequestTask {
             RequestStream {
                 kind: kind.clone(),
                 sender: sender.clone(),
+                default_publisher_priority,
             },
         );
         emit(scope, event);
@@ -645,6 +649,12 @@ impl OutgoingRequestTask {
                 return;
             }
         };
+        if let Message::SubscribeOk(ok) = &message {
+            context.channel().set_default_publisher_priority(
+                request_id,
+                messages::default_publisher_priority(&ok.track_properties),
+            );
+        }
         let Some(first_response) = Self::first_response(request_id, &kind, message, group_order)
         else {
             close_on_violation(&context, "the first response does not match the request");

@@ -194,6 +194,11 @@ call through the adapter; a draft never gets a task of its own (see
   - `objects` is the draft-18 data plane. FETCH objects are delta encoded
     against the previous one, so `FetchDataSender` keeps a `FetchEncoder` and
     `accept_fetch_receiver` passes the FETCH's group order to the reader.
+    A subgroup header or datagram that omits its priority takes the
+    DEFAULT PUBLISHER PRIORITY its subscription's SUBSCRIBE_OK or PUBLISH
+    announced (§12.4, 128 when absent): the request stream keeps the value,
+    and the subscription's object sink applies it to each object it
+    delivers, those buffered before the response included.
   - Messages draft-14 lacks map onto its events:
     - A `publish_namespace` matching the peer's SUBSCRIBE_NAMESPACE is sent as
       NAMESPACE on that stream and accepted at once.
