@@ -21,6 +21,7 @@ d3-flash（[d3-flash を Cloud Run にデプロイする](d3-flash-on-cloud-run.
 
 > この手順は、モデルカードと d3-flash の手順をもとに書いたもので、まだ GPU 上で通していません。初回のデプロイで確かめてください。
 > イメージは digest で固定します。Qwen3-ASR はモデルカードが求める nightly 版以降の `vllm/vllm-openai:nightly`、Granite Speech はリリース版の `vllm/vllm-openai` です。
+> Granite Speech 2b のリポジトリには、`model.safetensors` のほかに `weight` と `bias` だけを持つ `out_llm.safetensors` があり、index ファイルはありません。vLLM は index のないディレクトリの safetensors をすべて読み込み、`out_llm.safetensors` の重みを置く先がなくて起動に失敗するため、ダウンロードから除きます。
 
 ## 前提
 
@@ -58,7 +59,7 @@ steps:
       - -c
       - >-
         pip install -q "huggingface_hub>=1.5,<2" &&
-        hf download ${HF_MODEL} --revision ${HF_REVISION} --local-dir /workspace/${ASR} &&
+        hf download ${HF_MODEL} --revision ${HF_REVISION} --exclude out_llm.safetensors --local-dir /workspace/${ASR} &&
         rm -rf /workspace/${ASR}/.cache
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     args: ["gcloud", "storage", "cp", "-r", "/workspace/${ASR}", "gs://${BUCKET}/"]
