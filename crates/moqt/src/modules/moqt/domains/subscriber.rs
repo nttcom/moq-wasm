@@ -684,7 +684,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use crate::{
-        RequestErrorCode, RequestFailure, Session, SessionEvent,
+        RequestErrorCode, RequestFailure, Session, SessionEvent, TerminationErrorCode,
         fetch::{Fetch, FetchHandle, FetchHandler, FetchOption},
         modules::test_support::{DISCONNECT_TIMEOUT, spawn_connected_dual_sessions, subscription},
         object::{
@@ -791,6 +791,29 @@ mod tests {
             matches!(&object, Fetch::Object(received) if *received == fetch_object()),
             "{object:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn fetch_receiver_fails_when_the_peer_disconnects_before_the_stream() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-disconnect-before-stream").await;
+        let (request, handler) = start_fetch(&client, &server).await;
+        handler.ok(false, END).await.unwrap();
+        let fetch_handle = request.await.unwrap().unwrap();
+        let mut subscriber = client.subscriber();
+
+        // Act
+        server.close_with_error(TerminationErrorCode::NoError, "closing");
+        let accepted = tokio::time::timeout(
+            DISCONNECT_TIMEOUT,
+            subscriber.accept_fetch_receiver(&fetch_handle),
+        )
+        .await;
+
+        // Assert
+        let accepted = accepted.expect("the stream wait ends once the peer disconnects");
+        assert!(accepted.is_err(), "{accepted:?}");
     }
 
     #[tokio::test]
