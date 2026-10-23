@@ -125,9 +125,31 @@ pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Ses
     (port, accept)
 }
 
-/// `spawn_dual_server`, offering only draft-18.
-pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, &[Version::Draft18]);
+/// Every draft. Iterating it prints each draft to the test's captured
+/// output, so a failing test that loops over it names the draft it failed
+/// over.
+pub(crate) const DRAFTS: Drafts = Drafts;
+
+pub(crate) struct Drafts;
+
+impl IntoIterator for Drafts {
+    type Item = Version;
+    type IntoIter = std::iter::Inspect<std::array::IntoIter<Version, 2>, fn(&Version)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let announce: fn(&Version) = |version| eprintln!("running over {version:?}");
+        [Version::Draft14, Version::Draft18]
+            .into_iter()
+            .inspect(announce)
+    }
+}
+
+/// `spawn_dual_server`, accepting only `version`.
+pub(crate) fn spawn_server(
+    name: &str,
+    version: Version,
+) -> (u16, tokio::task::JoinHandle<Session>) {
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, &[version]);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
 }
@@ -136,13 +158,12 @@ pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
     Endpoint::<DUAL>::create_client(&config).unwrap()
 }
 
-/// `dual_client_with_config`, offering only draft-18.
-pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
-    Endpoint::<DUAL>::create_client(&ClientConfig {
-        versions: vec![Version::Draft18],
+/// `dual_client_with_config`, offering only `version`.
+pub(crate) fn client_with_config(config: ClientConfig, version: Version) -> Endpoint<DUAL> {
+    dual_client_with_config(ClientConfig {
+        versions: vec![version],
         ..config
     })
-    .unwrap()
 }
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
@@ -202,14 +223,24 @@ pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Sessi
         .unwrap()
 }
 
-/// Connects a DUAL client and server that offer only draft-18, over raw
-/// QUIC for `moqt` or WebTransport for `https`.
+/// Connects a DUAL client and server over raw QUIC that offer only
+/// `version`, and returns them as (client, server).
+pub(crate) async fn connected_sessions(name: &str, version: Version) -> (Session, Session) {
+    connected_sessions_over(name, version, "moqt").await
+}
+
+/// `connected_sessions` for draft-18, over raw QUIC for `moqt` or
+/// WebTransport for `https`.
 pub(crate) async fn spawn_connected_draft18_sessions(
     name: &str,
     scheme: &str,
 ) -> (Session, Session) {
-    let (port, accept) = spawn_draft18_server(name);
-    let client = draft18_client_with_config(insecure_client_config());
+    connected_sessions_over(name, Version::Draft18, scheme).await
+}
+
+async fn connected_sessions_over(name: &str, version: Version, scheme: &str) -> (Session, Session) {
+    let (port, accept) = spawn_server(name, version);
+    let client = client_with_config(insecure_client_config(), version);
     let path = if scheme == "https" { "/moq" } else { "" };
     connect_sessions_from(
         &client,
@@ -243,9 +274,9 @@ pub(crate) async fn published_track(name: &str) -> PublishedTrack {
     published_track_between(client, server).await
 }
 
-/// `published_track` on a draft-18 session.
-pub(crate) async fn published_draft18_track(name: &str) -> PublishedTrack {
-    let (client, server) = spawn_connected_draft18_sessions(name, "moqt").await;
+/// `published_track` on a session that speaks `version`.
+pub(crate) async fn published_track_over(name: &str, version: Version) -> PublishedTrack {
+    let (client, server) = connected_sessions(name, version).await;
     published_track_between(client, server).await
 }
 
@@ -300,7 +331,58 @@ pub(crate) fn object_with_extensions() -> Object {
     }
 }
 
+/// Subgroup 0 of a group; `send_payload` numbers its objects from 0.
+pub(crate) struct OpenSubgroup {
+    pub(crate) sender: SubgroupObjectSender,
+    group_id: u64,
+    next_object_id: u64,
+}
+
+/// Opens subgroup 0 of `group_id` in the draft of the session `factory`
+/// sends on.
 pub(crate) async fn open_subgroup(
+    factory: &StreamDataSenderFactory,
+    group_id: u64,
+) -> OpenSubgroup {
+    let sender = factory
+        .next()
+        .await
+        .unwrap()
+        .start(SubgroupStart {
+            group_id,
+            subgroup_id: 0,
+            publisher_priority: PUBLISHER_PRIORITY,
+            ends_group: false,
+        })
+        .await
+        .unwrap();
+    OpenSubgroup {
+        sender,
+        group_id,
+        next_object_id: 0,
+    }
+}
+
+pub(crate) async fn send_payload(subgroup: &mut OpenSubgroup, payload: &'static [u8]) {
+    let object = Object {
+        location: Location {
+            group_id: subgroup.group_id,
+            object_id: subgroup.next_object_id,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: PUBLISHER_PRIORITY,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::default(),
+        payload: Bytes::from_static(payload),
+        ends_group: false,
+    };
+    subgroup.next_object_id += 1;
+    subgroup.sender.send_object(&object).await.unwrap();
+}
+
+/// Opens a subgroup with a draft-14 header written field by field, for
+/// tests of the draft-14 encodings; panics on a draft-18 session.
+pub(crate) async fn open_raw_subgroup(
     factory: &StreamDataSenderFactory,
     group_id: u64,
     subgroup_id: SubgroupId,
@@ -314,7 +396,9 @@ pub(crate) async fn open_subgroup(
         .unwrap()
 }
 
-pub(crate) async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'static [u8]) {
+/// Sends a draft-14 object with Object ID Delta 0; panics on a draft-18
+/// session.
+pub(crate) async fn send_raw_payload(sender: &mut SubgroupObjectSender, payload: &'static [u8]) {
     sender
         .send_raw(0, SubgroupObject::new_payload(Bytes::from_static(payload)))
         .await
