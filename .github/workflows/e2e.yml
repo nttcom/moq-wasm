@@ -309,9 +309,13 @@ jobs:
           repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           image="ghcr.io/${repo}/relay:${RELAY_IMAGE_TAG}"
 
+          # A same-repository PR's merge ref hashes the same as the squash
+          # commit unless master's relay inputs move first, so publishing here
+          # lets the master push after the merge find the image. A fork PR's
+          # token cannot write packages.
           if docker manifest inspect "$image" >/dev/null 2>&1; then
             source=published
-          elif [[ "${{ github.event_name }}" == "pull_request" || ( "${{ github.event_name }}" == "push" && "${{ github.ref }}" != "refs/heads/master" ) ]]; then
+          elif [[ "${{ github.event.pull_request.head.repo.fork }}" == "true" ]]; then
             source=local
           else
             source=publish
