@@ -35,8 +35,10 @@ both tracks into one init segment and one fragment stream.
    relay drains, every subscription moves to the relay it names, keeping its
    ids, and the files continue without a gap (see the `moqt` architecture,
    session-migration.md).
-2. `catalog_reader::CatalogReader` subscribes to the catalog first and reads
-   its current object with the joining FETCH (offset 0)
+2. `catalog_reader::CatalogReader` subscribes to the catalog first with
+   Largest Object, the only filter a joining FETCH may join
+   (draft-ietf-moq-transport-14 §9.16.2). It then reads the current object
+   with the joining FETCH (offset 0)
    draft-ietf-moq-msf-01 §5 asks for, falling back to the subscription when
    the publisher has sent none yet.
    `track_selection::select_tracks` picks the LOC track named by
