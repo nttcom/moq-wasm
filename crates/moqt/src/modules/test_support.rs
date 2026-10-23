@@ -24,8 +24,8 @@ use crate::{
         runtime::dispatch::incoming_object::IncomingObject,
     },
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
-        ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender, VariantType,
+        DataReceiver, DatagramReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
+        Location, Object, ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender, VariantType,
     },
     publish::PublishOption,
     server::Handshake,
@@ -261,6 +261,21 @@ pub(crate) async fn first_subgroup_stream(
         panic!("expected a subgroup stream receiver");
     };
     factory.next().await.unwrap()
+}
+
+pub(crate) async fn datagram_receiver(
+    server: &Session,
+    subscription: &Subscription,
+) -> DatagramReceiver {
+    let DataReceiver::Datagram(receiver) = server
+        .subscriber()
+        .accept_data_receiver(subscription)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a datagram receiver");
+    };
+    receiver
 }
 
 /// The data receiver resolves only once the first object has arrived, so

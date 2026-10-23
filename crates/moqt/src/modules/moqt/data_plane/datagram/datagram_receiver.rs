@@ -46,10 +46,10 @@ impl DatagramReceiver {
 mod tests {
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, datagram_object, object_with_extensions, open_subgroup,
-            published_track,
+            HANDSHAKE_TIMEOUT, datagram_object, datagram_receiver, object_with_extensions,
+            open_subgroup, published_track,
         },
-        object::{DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus},
+        object::{ForwardingPreference, MalformedTrackError, ObjectStatus},
         wire::SubgroupId,
     };
 
@@ -65,15 +65,7 @@ mod tests {
         // Act
         let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             sender.send_object(&object).await.unwrap();
-            let DataReceiver::Datagram(mut receiver) = track
-                .server
-                .subscriber()
-                .accept_data_receiver(&track.accepted)
-                .await
-                .unwrap()
-            else {
-                panic!("expected a datagram receiver");
-            };
+            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
 
             receiver.receive().await.unwrap()
         })
@@ -97,15 +89,7 @@ mod tests {
         // Act
         let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             sender.send_object(&object).await.unwrap();
-            let DataReceiver::Datagram(mut receiver) = track
-                .server
-                .subscriber()
-                .accept_data_receiver(&track.accepted)
-                .await
-                .unwrap()
-            else {
-                panic!("expected a datagram receiver");
-            };
+            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
             receiver.receive().await.unwrap()
         })
         .await
@@ -144,15 +128,7 @@ mod tests {
             for object in &expected {
                 sender.send_object(object).await.unwrap();
             }
-            let DataReceiver::Datagram(mut receiver) = track
-                .server
-                .subscriber()
-                .accept_data_receiver(&track.accepted)
-                .await
-                .unwrap()
-            else {
-                panic!("expected a datagram receiver");
-            };
+            let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
 
             let mut received = Vec::new();
             for _ in &expected {
@@ -177,15 +153,7 @@ mod tests {
             .send_object(&datagram_object())
             .await
             .unwrap();
-        let DataReceiver::Datagram(mut receiver) = track
-            .server
-            .subscriber()
-            .accept_data_receiver(&track.accepted)
-            .await
-            .unwrap()
-        else {
-            panic!("expected a datagram receiver");
-        };
+        let mut receiver = datagram_receiver(&track.server, &track.accepted).await;
         receiver.receive().await.unwrap();
         let _subgroup = open_subgroup(
             &publisher.create_stream(&track.published),
