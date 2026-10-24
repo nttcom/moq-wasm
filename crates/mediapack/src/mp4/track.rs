@@ -5,7 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     av1,
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
-    mp4::atom::{Atom, FullAtom, find, full_atom, read_u32},
+    mp4::atom::{Atom, FullAtom, find, find_full_atom, full_atom, read_u32},
     sample::{AudioConfig, VideoConfig},
     vp8::Vp8Config,
     vp9::Vp9Config,
@@ -60,8 +60,7 @@ pub(super) fn find_path<'a>(payload: &'a [u8], path: &[&[u8]]) -> Option<Atom<'a
 }
 
 pub(super) fn read_track(trak: &Atom) -> Result<Option<(u32, Track)>> {
-    let tkhd = find(trak.payload, b"tkhd").context("trak has no tkhd")?;
-    let header = full_atom(tkhd.payload, "tkhd")?;
+    let header = find_full_atom(trak.payload, "tkhd")?.context("trak has no tkhd")?;
     let track_id_offset = if header.is_version_one() { 16 } else { 8 };
     let track_id = read_u32(header.body, track_id_offset)?;
 
