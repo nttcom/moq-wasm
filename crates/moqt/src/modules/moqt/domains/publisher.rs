@@ -309,10 +309,10 @@ mod tests {
         modules::{
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
-                HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
-                mandatory_track_properties, next_subgroup, object_with_extensions,
-                read_subgroup_objects, send_subgroup_object, spawn_connected_draft18_sessions,
-                spawn_connected_dual_sessions, within,
+                DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, connected_sessions, data_receiver,
+                first_subgroup_stream, mandatory_track_properties, next_subgroup,
+                object_with_extensions, read_subgroup_objects, send_subgroup_object,
+                spawn_connected_draft18_sessions, spawn_connected_dual_sessions, within,
             },
         },
         object::{Location, Object},
@@ -324,29 +324,31 @@ mod tests {
 
     #[tokio::test]
     async fn publish_takes_its_track_alias_from_the_counter_subscribe_ok_uses() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publisher-track-alias").await;
-        let session = client.publisher().session;
-        let request = tokio::spawn(async move {
-            client
-                .publisher()
-                .publish(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    PublishOption::default(),
-                )
-                .await
-        });
-        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected PUBLISH from the client");
-        };
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("publisher-track-alias", version).await;
+            let session = client.publisher().session;
+            let request = tokio::spawn(async move {
+                client
+                    .publisher()
+                    .publish(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        PublishOption::default(),
+                    )
+                    .await
+            });
+            let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+                panic!("expected PUBLISH from the client");
+            };
 
-        // Act
-        let subscribe_ok_track_alias = session.connection().allocate_track_alias();
+            // Act
+            let subscribe_ok_track_alias = session.connection().allocate_track_alias();
 
-        // Assert
-        assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
-        request.abort();
+            // Assert
+            assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
+            request.abort();
+        }
     }
 
     #[tokio::test]
@@ -386,30 +388,64 @@ mod tests {
 
     #[tokio::test]
     async fn pending_publish_namespace_is_accepted_by_publish_namespace_ok() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_dual_sessions("publisher-pending-publish-namespace").await;
-        let pending = tokio::time::timeout(
-            WAIT_TIMEOUT,
-            client
-                .publisher()
-                .begin_publish_namespace("a/b".to_string()),
-        )
-        .await
-        .expect("sending PUBLISH_NAMESPACE should not wait for the answer")
-        .unwrap();
-        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected PUBLISH_NAMESPACE from the client");
-        };
-
-        // Act
-        handler.ok().await.unwrap();
-
-        // Assert
-        tokio::time::timeout(WAIT_TIMEOUT, pending.accepted())
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("publisher-pending-publish-namespace", version).await;
+            let pending = tokio::time::timeout(
+                WAIT_TIMEOUT,
+                client
+                    .publisher()
+                    .begin_publish_namespace("a/b".to_string()),
+            )
             .await
-            .expect("PUBLISH_NAMESPACE_OK should resolve the pending request")
+            .expect("sending PUBLISH_NAMESPACE should not wait for the answer")
             .unwrap();
+            let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected PUBLISH_NAMESPACE from the client");
+            };
+
+            // Act
+            handler.ok().await.unwrap();
+
+            // Assert
+            tokio::time::timeout(WAIT_TIMEOUT, pending.accepted())
+                .await
+                .expect("PUBLISH_NAMESPACE_OK should resolve the pending request")
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_namespace_done_reaches_the_peer_as_publish_namespace_done() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("publisher-publish-namespace-done", version).await;
+            let publisher = client.publisher();
+            let (announced, ()) = within(async {
+                tokio::join!(
+                    publisher.publish_namespace("live/room".into()),
+                    accept_namespace(&server)
+                )
+            })
+            .await;
+            announced.unwrap();
+
+            // Act
+            publisher
+                .publish_namespace_done("live/room".into())
+                .await
+                .unwrap();
+            let event = within(server.receive_event()).await.unwrap();
+
+            // Assert
+            let SessionEvent::PublishNamespaceDone(done) = event else {
+                panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
+            };
+            assert_eq!(done.track_namespace(), "live/room");
+        }
     }
 
     #[tokio::test]
@@ -472,164 +508,171 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_publish_sends_done_for_late_ok_and_allows_later_publication() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-cancel-late-ok").await;
-        let (request, handler) = pending_publish(&client, &server, "cancelled").await;
-        let expected = object_with_extensions();
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("publish-cancel-late-ok", version).await;
+            let (request, handler) = pending_publish(&client, &server, "cancelled").await;
+            let expected = object_with_extensions();
 
-        // Act
-        request.abort();
-        let cancelled = request.await.unwrap_err();
-        let (done, received) = within(async {
-            handler.ok(128, FilterType::LargestObject).await.unwrap();
-            let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
-                panic!("expected PUBLISH_DONE after the late PUBLISH_OK");
-            };
-            let (published, accepted) = active_publish(&client, &server, "later").await;
-            send_subgroup_object(&client, &published, &expected).await;
-            let mut receiver = first_subgroup_stream(&server, &accepted).await;
-            let received = read_subgroup_objects(&mut receiver).await;
-            (done, received)
-        })
-        .await;
+            // Act
+            request.abort();
+            let cancelled = request.await.unwrap_err();
+            let (done, received) = within(async {
+                handler.ok(128, FilterType::LargestObject).await.unwrap();
+                let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
+                    panic!("expected PUBLISH_DONE after the late PUBLISH_OK");
+                };
+                let (published, accepted) = active_publish(&client, &server, "later").await;
+                send_subgroup_object(&client, &published, &expected).await;
+                let mut receiver = first_subgroup_stream(&server, &accepted).await;
+                let received = read_subgroup_objects(&mut receiver).await;
+                (done, received)
+            })
+            .await;
 
-        // Assert
-        assert!(cancelled.is_cancelled());
-        assert_eq!(done.request_id(), handler.request_id);
-        assert_eq!(done.status_code(), PublishDoneCode::InternalError);
-        assert_eq!(done.stream_count(), 0);
-        assert_eq!(received, vec![expected]);
+            // Assert
+            assert!(cancelled.is_cancelled());
+            assert_eq!(done.request_id(), handler.request_id);
+            assert_eq!(done.status_code(), PublishDoneCode::InternalError);
+            assert_eq!(done.stream_count(), 0);
+            assert_eq!(received, vec![expected]);
+        }
     }
 
     #[tokio::test]
     async fn publish_done_ends_only_its_publication() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-done-isolation").await;
-        let (ended, ended_peer) = within(active_publish(&client, &server, "ended")).await;
-        let (kept, kept_peer) = within(active_publish(&client, &server, "kept")).await;
-        let mut ended_reader = server.subscriber().track_reader(&ended_peer);
-        let before = object_with_extensions();
-        let after = Object {
-            location: Location {
-                group_id: before.location.group_id + 1,
-                object_id: 0,
-            },
-            payload: Bytes::from_static(b"after the other publication ended"),
-            ..object_with_extensions()
-        };
-        within(send_subgroup_object(&client, &kept, &before)).await;
-        let mut streams = within(data_receiver(&server, &kept_peer)).await;
-        let mut first_receiver = within(next_subgroup(&mut streams)).await;
-        let received_before = within(read_subgroup_objects(&mut first_receiver)).await;
-
-        // Act
-        let done = within(async {
-            client
-                .publisher()
-                .publish_done(
-                    &ended,
-                    PublishDoneCode::TrackEnded,
-                    0,
-                    "finished".to_string(),
-                )
-                .await
-                .unwrap();
-            let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
-                panic!("expected PUBLISH_DONE for the ended publication");
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("publish-done-isolation", version).await;
+            let (ended, ended_peer) = within(active_publish(&client, &server, "ended")).await;
+            let (kept, kept_peer) = within(active_publish(&client, &server, "kept")).await;
+            let mut ended_reader = server.subscriber().track_reader(&ended_peer);
+            let before = object_with_extensions();
+            let after = Object {
+                location: Location {
+                    group_id: before.location.group_id + 1,
+                    object_id: 0,
+                },
+                payload: Bytes::from_static(b"after the other publication ended"),
+                ..object_with_extensions()
             };
-            done
-        })
-        .await;
-        tokio::time::pause();
-        let ended_object = tokio::time::timeout(
-            PUBLISH_DONE_GRACE_PERIOD + HANDSHAKE_TIMEOUT,
-            ended_reader.next_object(),
-        )
-        .await
-        .expect("the ended track closes after the grace period")
-        .unwrap();
-        tokio::time::resume();
-        let received_after = within(async {
-            send_subgroup_object(&client, &kept, &after).await;
-            let mut receiver = next_subgroup(&mut streams).await;
-            read_subgroup_objects(&mut receiver).await
-        })
-        .await;
+            within(send_subgroup_object(&client, &kept, &before)).await;
+            let mut streams = within(data_receiver(&server, &kept_peer)).await;
+            let mut first_receiver = within(next_subgroup(&mut streams)).await;
+            let received_before = within(read_subgroup_objects(&mut first_receiver)).await;
 
-        // Assert
-        assert_eq!(done.request_id(), ended_peer.request_id());
-        assert_ne!(done.request_id(), kept_peer.request_id());
-        assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
-        assert_eq!(done.stream_count(), 0);
-        assert_eq!(done.error_reason(), "finished");
-        assert!(ended_object.is_none(), "{ended_object:?}");
-        assert_eq!(received_before, vec![before]);
-        assert_eq!(received_after, vec![after]);
+            // Act
+            let done = within(async {
+                client
+                    .publisher()
+                    .publish_done(
+                        &ended,
+                        PublishDoneCode::TrackEnded,
+                        0,
+                        "finished".to_string(),
+                    )
+                    .await
+                    .unwrap();
+                let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
+                    panic!("expected PUBLISH_DONE for the ended publication");
+                };
+                done
+            })
+            .await;
+            tokio::time::pause();
+            let ended_object = tokio::time::timeout(
+                PUBLISH_DONE_GRACE_PERIOD + HANDSHAKE_TIMEOUT,
+                ended_reader.next_object(),
+            )
+            .await
+            .expect("the ended track closes after the grace period")
+            .unwrap();
+            tokio::time::resume();
+            let received_after = within(async {
+                send_subgroup_object(&client, &kept, &after).await;
+                let mut receiver = next_subgroup(&mut streams).await;
+                read_subgroup_objects(&mut receiver).await
+            })
+            .await;
+
+            // Assert
+            assert_eq!(done.request_id(), ended_peer.request_id());
+            assert_ne!(done.request_id(), kept_peer.request_id());
+            assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
+            assert_eq!(done.stream_count(), 0);
+            assert_eq!(done.error_reason(), "finished");
+            assert!(ended_object.is_none(), "{ended_object:?}");
+            assert_eq!(received_before, vec![before]);
+            assert_eq!(received_after, vec![after]);
+        }
     }
 
     #[tokio::test]
     async fn reverse_publish_responses_keep_metadata_and_objects_with_their_requests() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-response-order").await;
-        let (first_request, first_handler) = pending_publish(&client, &server, "first").await;
-        let (second_request, second_handler) = pending_publish(&client, &server, "second").await;
-        first_handler.accept_data_receiver().await;
-        second_handler.accept_data_receiver().await;
-        let first_object = Object {
-            payload: Bytes::from_static(b"first publication"),
-            ..object_with_extensions()
-        };
-        let second_object = Object {
-            payload: Bytes::from_static(b"second publication"),
-            ..object_with_extensions()
-        };
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("publish-response-order", version).await;
+            let (first_request, first_handler) = pending_publish(&client, &server, "first").await;
+            let (second_request, second_handler) =
+                pending_publish(&client, &server, "second").await;
+            first_handler.accept_data_receiver().await;
+            second_handler.accept_data_receiver().await;
+            let first_object = Object {
+                payload: Bytes::from_static(b"first publication"),
+                ..object_with_extensions()
+            };
+            let second_object = Object {
+                payload: Bytes::from_static(b"second publication"),
+                ..object_with_extensions()
+            };
 
-        // Act
-        let (first, second, first_peer, second_peer, first_received, second_received) =
-            within(async {
-                let second_peer = second_handler
-                    .ok(17, FilterType::NextGroupStart)
-                    .await
-                    .unwrap();
-                let second = second_request.await.unwrap().unwrap();
-                let first_peer = first_handler
-                    .ok(241, FilterType::LargestObject)
-                    .await
-                    .unwrap();
-                let first = first_request.await.unwrap().unwrap();
-                send_subgroup_object(&client, &second, &second_object).await;
-                send_subgroup_object(&client, &first, &first_object).await;
-                let mut first_receiver = first_subgroup_stream(&server, &first_peer).await;
-                let first_received = read_subgroup_objects(&mut first_receiver).await;
-                let mut second_receiver = first_subgroup_stream(&server, &second_peer).await;
-                let second_received = read_subgroup_objects(&mut second_receiver).await;
-                (
-                    first,
-                    second,
-                    first_peer,
-                    second_peer,
-                    first_received,
-                    second_received,
-                )
-            })
-            .await;
+            // Act
+            let (first, second, first_peer, second_peer, first_received, second_received) =
+                within(async {
+                    let second_peer = second_handler
+                        .ok(17, FilterType::NextGroupStart)
+                        .await
+                        .unwrap();
+                    let second = second_request.await.unwrap().unwrap();
+                    let first_peer = first_handler
+                        .ok(241, FilterType::LargestObject)
+                        .await
+                        .unwrap();
+                    let first = first_request.await.unwrap().unwrap();
+                    send_subgroup_object(&client, &second, &second_object).await;
+                    send_subgroup_object(&client, &first, &first_object).await;
+                    let mut first_receiver = first_subgroup_stream(&server, &first_peer).await;
+                    let first_received = read_subgroup_objects(&mut first_receiver).await;
+                    let mut second_receiver = first_subgroup_stream(&server, &second_peer).await;
+                    let second_received = read_subgroup_objects(&mut second_receiver).await;
+                    (
+                        first,
+                        second,
+                        first_peer,
+                        second_peer,
+                        first_received,
+                        second_received,
+                    )
+                })
+                .await;
 
-        // Assert
-        assert_eq!(first.request_id(), first_handler.request_id);
-        assert_eq!(second.request_id(), second_handler.request_id);
-        assert_ne!(first.request_id(), second.request_id());
-        assert_eq!(first.track_alias(), first_handler.track_alias);
-        assert_eq!(second.track_alias(), second_handler.track_alias);
-        assert_ne!(first.track_alias(), second.track_alias());
-        assert_eq!(first.track_name(), "first");
-        assert_eq!(second.track_name(), "second");
-        assert_eq!(first.subscriber_priority(), 241);
-        assert_eq!(second.subscriber_priority(), 17);
-        assert_eq!(first.filter_type(), FilterType::LargestObject);
-        assert_eq!(second.filter_type(), FilterType::NextGroupStart);
-        assert_eq!(first_peer.track_alias(), first.track_alias());
-        assert_eq!(second_peer.track_alias(), second.track_alias());
-        assert_eq!(first_received, vec![first_object]);
-        assert_eq!(second_received, vec![second_object]);
+            // Assert
+            assert_eq!(first.request_id(), first_handler.request_id);
+            assert_eq!(second.request_id(), second_handler.request_id);
+            assert_ne!(first.request_id(), second.request_id());
+            assert_eq!(first.track_alias(), first_handler.track_alias);
+            assert_eq!(second.track_alias(), second_handler.track_alias);
+            assert_ne!(first.track_alias(), second.track_alias());
+            assert_eq!(first.track_name(), "first");
+            assert_eq!(second.track_name(), "second");
+            assert_eq!(first.subscriber_priority(), 241);
+            assert_eq!(second.subscriber_priority(), 17);
+            assert_eq!(first.filter_type(), FilterType::LargestObject);
+            assert_eq!(second.filter_type(), FilterType::NextGroupStart);
+            assert_eq!(first_peer.track_alias(), first.track_alias());
+            assert_eq!(second_peer.track_alias(), second.track_alias());
+            assert_eq!(first_received, vec![first_object]);
+            assert_eq!(second_received, vec![second_object]);
+        }
     }
 }

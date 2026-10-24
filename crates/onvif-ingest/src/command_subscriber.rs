@@ -337,7 +337,152 @@ fn handle_command_payload(payload: &[u8], command_sender: &Sender<Command>) -> R
 
 #[cfg(test)]
 mod tests {
-    use super::ViewerHandover;
+    use std::time::Duration;
+
+    use moqt::{
+        publish::PublishOption,
+        server::{write_self_signed_cert, CertificateFiles, ServerConfig},
+    };
+
+    use super::*;
+
+    const NAMESPACE: &str = "onvif/client";
+    const TRACK: &str = "command";
+    const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Longer than the 10 s a request waits for its response.
+    const PAST_THE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(11);
+
+    /// A command subscriber connected to a relay that has accepted its
+    /// SUBSCRIBE_NAMESPACE.
+    struct Peers {
+        subscriber: CommandSubscriber,
+        relay: Session,
+        _relay_endpoint: Endpoint<DUAL>,
+    }
+
+    async fn command_subscriber_on_a_relay(name: &str) -> Peers {
+        let dir = std::env::temp_dir().join(format!("onvif-test-{name}-{}", std::process::id()));
+        let CertificateFiles {
+            cert_path,
+            key_path,
+        } = write_self_signed_cert(&dir, &["localhost", "127.0.0.1"]).unwrap();
+        let endpoint = Endpoint::<DUAL>::create_server(&ServerConfig {
+            port: 0,
+            cert_path,
+            key_path,
+            keep_alive_interval_sec: 5,
+            versions: moqt::DEFAULT_VERSIONS.to_vec(),
+        })
+        .unwrap();
+        let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
+        let relay = tokio::spawn(async move {
+            let session = endpoint
+                .accept()
+                .await
+                .unwrap()
+                .await
+                .unwrap()
+                .accept()
+                .await
+                .unwrap();
+            let SessionEvent::SubscribeNameSpace(handler) = session.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_NAMESPACE");
+            };
+            handler.ok().await.unwrap();
+            (endpoint, session)
+        });
+        let (command_sender, _) = std::sync::mpsc::channel();
+        let subscriber = CommandSubscriber::run(
+            &url,
+            &ClientConfig {
+                verify_certificate: false,
+                ..ClientConfig::default()
+            },
+            CommandTrack {
+                namespace: NAMESPACE.to_string(),
+                track: TRACK.to_string(),
+                subscriber_priority: 0,
+            },
+            command_sender,
+        )
+        .await
+        .unwrap();
+        let (relay_endpoint, relay) = tokio::time::timeout(TEST_TIMEOUT, relay)
+            .await
+            .unwrap()
+            .unwrap();
+        Peers {
+            subscriber,
+            relay,
+            _relay_endpoint: relay_endpoint,
+        }
+    }
+
+    /// The relay announces the command namespace and returns the SUBSCRIBE
+    /// the command subscriber answers it with.
+    async fn announce(relay: &Session) -> moqt::subscribe::SubscribeHandler {
+        let publisher = relay.publisher();
+        let (announced, subscribe) = tokio::time::timeout(TEST_TIMEOUT, async {
+            tokio::join!(publisher.publish_namespace(NAMESPACE.into()), async {
+                let SessionEvent::Subscribe(handler) = relay.receive_event().await.unwrap() else {
+                    panic!("expected SUBSCRIBE for the command track");
+                };
+                handler
+            })
+        })
+        .await
+        .unwrap();
+        announced.unwrap();
+        subscribe
+    }
+
+    async fn takes_a_published_command_track(peers: &mut Peers) -> bool {
+        let published = tokio::time::timeout(
+            TEST_TIMEOUT,
+            peers.relay.publisher().publish(
+                NAMESPACE.into(),
+                TRACK.into(),
+                PublishOption::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        let finished =
+            tokio::time::timeout(Duration::from_millis(200), peers.subscriber.finished()).await;
+        published.is_ok() && finished.is_err()
+    }
+
+    #[tokio::test]
+    async fn a_rejected_command_subscribe_leaves_the_command_session_running() {
+        // Arrange
+        let mut peers = command_subscriber_on_a_relay("command-rejected").await;
+        let subscribe = announce(&peers.relay).await;
+
+        // Act
+        subscribe
+            .error(RequestErrorCode::TrackDoesNotExist, "gone".to_string())
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(takes_a_published_command_track(&mut peers).await);
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_command_subscribe_leaves_the_command_session_running() {
+        // Arrange
+        let mut peers = command_subscriber_on_a_relay("command-timeout").await;
+        let _unanswered = announce(&peers.relay).await;
+
+        // Act: paused time lets the response timeout pass at once
+        tokio::time::pause();
+        tokio::time::sleep(PAST_THE_RESPONSE_TIMEOUT).await;
+        tokio::time::resume();
+
+        // Assert
+        assert!(takes_a_published_command_track(&mut peers).await);
+    }
 
     #[test]
     fn a_viewer_announcing_while_none_is_followed_is_subscribed_at_once() {

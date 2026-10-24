@@ -131,8 +131,8 @@ mod tests {
         RequestErrorCode, RequestFailure, Session, SessionEvent,
         fetch::FetchOption,
         modules::test_support::{
-            connect_sessions, mandatory_track_properties, spawn_connected_draft18_sessions,
-            spawn_connected_dual_sessions, spawn_dual_server,
+            DRAFTS, connected_sessions, mandatory_track_properties,
+            spawn_connected_draft18_sessions, spawn_connected_dual_sessions,
         },
         object::{GroupOrder, Location},
         subscribe::FilterType,
@@ -149,36 +149,35 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_ok_states_ascending_when_the_subscriber_leaves_the_order_to_the_publisher() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("fetch-handler-group-order");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
-        let mut subscriber = client.subscriber();
-        let request = tokio::spawn(async move {
-            subscriber
-                .fetch(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    START,
-                    END,
-                    FetchOption {
-                        group_order: GroupOrder::Publisher,
-                        ..FetchOption::default()
-                    },
-                )
-                .await
-        });
-        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected FETCH from the client");
-        };
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("fetch-handler-group-order", version).await;
+            let mut subscriber = client.subscriber();
+            let request = tokio::spawn(async move {
+                subscriber
+                    .fetch(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        START,
+                        END,
+                        FetchOption {
+                            group_order: GroupOrder::Publisher,
+                            ..FetchOption::default()
+                        },
+                    )
+                    .await
+            });
+            let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+                panic!("expected FETCH from the client");
+            };
 
-        // Act
-        handler.ok(false, END).await.unwrap();
+            // Act
+            handler.ok(false, END).await.unwrap();
 
-        // Assert
-        let fetch_handle = request.await.unwrap().unwrap();
-        assert_eq!(fetch_handle.group_order, GroupOrder::Ascending);
+            // Assert
+            let fetch_handle = request.await.unwrap().unwrap();
+            assert_eq!(fetch_handle.group_order, GroupOrder::Ascending);
+        }
     }
 
     async fn received_fetch(client: &Session, server: &Session) -> FetchHandler {

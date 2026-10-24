@@ -2114,6 +2114,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_response_of_another_request_kind_closes_the_session_with_a_protocol_violation() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-wrong-response-kind", "moqt").await;
+        let (request, handler) =
+            subscribe_requested(&client, &server, SubscribeOption::default()).await;
+        let stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&handler.request_id())
+            .cloned()
+            .unwrap();
+
+        // Act: a SUBSCRIBE is answered by SUBSCRIBE_OK, not REQUEST_OK (§10.5)
+        stream
+            .sender
+            .send(&messages::encode_empty_request_ok().unwrap())
+            .await
+            .unwrap();
+        let closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server.closed()).await;
+        let subscribed = tokio::time::timeout(DISCONNECT_TIMEOUT, request).await;
+
+        // Assert
+        assert_eq!(
+            closed.expect("the client closes the session").code,
+            Some(0x3)
+        );
+        assert!(subscribed.unwrap().unwrap().is_err());
+    }
+
+    #[tokio::test]
     async fn a_goaway_on_a_subscription_ends_it_with_going_away() {
         // Arrange
         let (client, server) =

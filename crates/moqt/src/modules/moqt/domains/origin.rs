@@ -647,13 +647,13 @@ mod tests {
     use super::*;
     use crate::modules::test_support::location;
     use crate::{
-        RequestFailure, SessionEvent, Subscription, TrackObject,
+        RequestFailure, SessionEvent, Subscription, TrackObject, Version,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            accept_publish, data_receiver, next_subgroup, read_fetch_objects, rejection,
-            spawn_connected_dual_sessions, subscribed_track_reader, within,
+            DRAFTS, accept_publish, connected_sessions, data_receiver, next_subgroup,
+            read_fetch_objects, rejection, subscribed_track_reader, within,
         },
-        object::{GroupOrder, Object, Subgroup},
+        object::{DataReceiver, GroupOrder, Object, StreamDataReceiver, Subgroup},
         subscribe::{FilterType, SubscribeOption},
     };
 
@@ -668,8 +668,8 @@ mod tests {
         server: Session,
     }
 
-    async fn origin_with_track(name: &str, retention: Retention) -> Peers {
-        let (client, server) = spawn_connected_dual_sessions(name).await;
+    async fn origin_with_track(name: &str, retention: Retention, version: Version) -> Peers {
+        let (client, server) = connected_sessions(name, version).await;
         let client = Arc::new(client);
         let origin = Origin::default();
         origin
@@ -822,182 +822,192 @@ mod tests {
 
     #[tokio::test]
     async fn write_caches_before_publish_and_sends_from_the_next_group_after_it() {
-        // Arrange
-        let peers = origin_with_track("origin-publish", RETENTION).await;
-        let origin = &peers.origin;
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish", RETENTION, version).await;
+            let origin = &peers.origin;
 
-        // Act
-        let before_publish = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-            .await
-            .unwrap();
-        let accepted = publish(&peers).await;
-        let mid_group = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
-            .await
-            .unwrap();
-        let next_group = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"c"))
-            .await
-            .unwrap();
-        let received = next_object(&peers, &accepted).await;
+            // Act
+            let before_publish = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            let accepted = publish(&peers).await;
+            let mid_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+                .await
+                .unwrap();
+            let next_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"c"))
+                .await
+                .unwrap();
+            let received = next_object(&peers, &accepted).await;
 
-        // Assert
-        assert_eq!(before_publish, WriteOutcome::NotSent);
-        assert_eq!(mid_group, WriteOutcome::NotSent);
-        assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
-        assert_eq!(
-            (received.group_id, received.object_id, received.payload),
-            (FIRST_GROUP_ID + 1, 0, Bytes::from_static(b"c"))
-        );
-        let (handle, cached) = fetch(
-            &peers,
-            TRACK,
-            location(FIRST_GROUP_ID, 0),
-            location(FIRST_GROUP_ID + 2, 0),
-            GroupOrder::Ascending,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            ids(&cached),
-            [
-                (FIRST_GROUP_ID, 0),
-                (FIRST_GROUP_ID, 1),
-                (FIRST_GROUP_ID + 1, 0)
-            ]
-        );
-        assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+            // Assert
+            assert_eq!(before_publish, WriteOutcome::NotSent);
+            assert_eq!(mid_group, WriteOutcome::NotSent);
+            assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+            assert_eq!(
+                (received.group_id, received.object_id, received.payload),
+                (FIRST_GROUP_ID + 1, 0, Bytes::from_static(b"c"))
+            );
+            let (handle, cached) = fetch(
+                &peers,
+                TRACK,
+                location(FIRST_GROUP_ID, 0),
+                location(FIRST_GROUP_ID + 2, 0),
+                GroupOrder::Ascending,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                ids(&cached),
+                [
+                    (FIRST_GROUP_ID, 0),
+                    (FIRST_GROUP_ID, 1),
+                    (FIRST_GROUP_ID + 1, 0)
+                ]
+            );
+            assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+        }
     }
 
     #[tokio::test]
     async fn accepted_subscribe_never_expires() {
-        // Arrange
-        let peers = origin_with_track("origin-subscribe-expires", RETENTION).await;
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-subscribe-expires", RETENTION, version).await;
 
-        // Act
-        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            // Act
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
 
-        // Assert
-        assert_eq!(subscription.expires(), Some(0));
+            // Assert
+            assert_eq!(subscription.expires(), Some(0));
+        }
     }
 
     #[tokio::test]
     async fn accepted_subscribe_starts_at_the_next_group_and_reports_the_largest_cached_object() {
-        // Arrange
-        let peers = origin_with_track("origin-subscribe", RETENTION).await;
-        let origin = &peers.origin;
-        origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-            .await
-            .unwrap();
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-subscribe", RETENTION, version).await;
+            let origin = &peers.origin;
+            origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
 
-        // Act
-        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
-        let mid_group = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
-            .await
-            .unwrap();
-        let next_group = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"c"))
-            .await
-            .unwrap();
-        let received = next_object(&peers, &subscription).await;
-        let status = track_status(&peers, TRACK).await.unwrap();
-        let unknown = track_status(&peers, "other").await;
+            // Act
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            let mid_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+                .await
+                .unwrap();
+            let next_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"c"))
+                .await
+                .unwrap();
+            let received = next_object(&peers, &subscription).await;
+            let status = track_status(&peers, TRACK).await.unwrap();
+            let unknown = track_status(&peers, "other").await;
 
-        // Assert
-        assert_eq!(
-            subscription.content_exists(),
-            ContentExists::True {
-                location: location(FIRST_GROUP_ID, 0)
-            }
-        );
-        assert_eq!(mid_group, WriteOutcome::NotSent);
-        assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
-        assert_eq!(
-            (received.group_id, received.object_id),
-            (FIRST_GROUP_ID + 1, 0)
-        );
-        assert_eq!(
-            status.content_exists,
-            ContentExists::True {
-                location: location(FIRST_GROUP_ID + 1, 0)
-            }
-        );
-        assert_eq!(rejection(unknown).code, RequestErrorCode::TrackDoesNotExist);
+            // Assert
+            assert_eq!(
+                subscription.content_exists(),
+                ContentExists::True {
+                    location: location(FIRST_GROUP_ID, 0)
+                }
+            );
+            assert_eq!(mid_group, WriteOutcome::NotSent);
+            assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+            assert_eq!(
+                (received.group_id, received.object_id),
+                (FIRST_GROUP_ID + 1, 0)
+            );
+            assert_eq!(
+                status.content_exists,
+                ContentExists::True {
+                    location: location(FIRST_GROUP_ID + 1, 0)
+                }
+            );
+            assert_eq!(rejection(unknown).code, RequestErrorCode::TrackDoesNotExist);
+        }
     }
 
     #[tokio::test]
     async fn a_largest_object_subscribe_takes_the_rest_of_the_open_group() {
-        // Arrange
-        let peers = origin_with_track("origin-subscribe-largest", RETENTION).await;
-        let origin = &peers.origin;
-        origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-            .await
-            .unwrap();
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-subscribe-largest", RETENTION, version).await;
+            let origin = &peers.origin;
+            origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
 
-        // Act
-        let subscription = subscribe(&peers, FilterType::LargestObject).await;
-        let mid_group = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
-            .await
-            .unwrap();
-        let received = next_object(&peers, &subscription).await;
+            // Act
+            let subscription = subscribe(&peers, FilterType::LargestObject).await;
+            let mid_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+                .await
+                .unwrap();
+            let received = next_object(&peers, &subscription).await;
 
-        // Assert
-        assert_eq!(mid_group, sent(FIRST_GROUP_ID, 1, false));
-        assert_eq!(
-            (received.group_id, received.object_id, received.payload),
-            (FIRST_GROUP_ID, 1, Bytes::from_static(b"b"))
-        );
+            // Assert
+            assert_eq!(mid_group, sent(FIRST_GROUP_ID, 1, false));
+            assert_eq!(
+                (received.group_id, received.object_id, received.payload),
+                (FIRST_GROUP_ID, 1, Bytes::from_static(b"b"))
+            );
+        }
     }
 
     #[tokio::test]
     async fn an_absolute_start_subscribe_skips_what_precedes_its_start() {
-        // Arrange
-        let peers = origin_with_track("origin-subscribe-absolute", RETENTION).await;
-        let origin = &peers.origin;
-        let start = location(FIRST_GROUP_ID + 1, 1);
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-subscribe-absolute", RETENTION, version).await;
+            let origin = &peers.origin;
+            let start = location(FIRST_GROUP_ID + 1, 1);
 
-        // Act
-        let subscription = subscribe(&peers, FilterType::AbsoluteStart { location: start }).await;
-        let mut outcomes = Vec::new();
-        for (group, payload) in [
-            (GroupBoundary::Next, b"a" as &'static [u8]),
-            (GroupBoundary::Next, b"b"),
-            (GroupBoundary::Within, b"c"),
-        ] {
-            outcomes.push(
-                origin
-                    .write(NAMESPACE, TRACK, plain(group, payload))
-                    .await
-                    .unwrap(),
+            // Act
+            let subscription =
+                subscribe(&peers, FilterType::AbsoluteStart { location: start }).await;
+            let mut outcomes = Vec::new();
+            for (group, payload) in [
+                (GroupBoundary::Next, b"a" as &'static [u8]),
+                (GroupBoundary::Next, b"b"),
+                (GroupBoundary::Within, b"c"),
+            ] {
+                outcomes.push(
+                    origin
+                        .write(NAMESPACE, TRACK, plain(group, payload))
+                        .await
+                        .unwrap(),
+                );
+            }
+            let received = next_object(&peers, &subscription).await;
+
+            // Assert
+            assert_eq!(
+                outcomes,
+                [
+                    WriteOutcome::NotSent,
+                    WriteOutcome::NotSent,
+                    sent(FIRST_GROUP_ID + 1, 1, false)
+                ]
+            );
+            assert_eq!(
+                (received.group_id, received.object_id, received.payload),
+                (FIRST_GROUP_ID + 1, 1, Bytes::from_static(b"c"))
             );
         }
-        let received = next_object(&peers, &subscription).await;
-
-        // Assert
-        assert_eq!(
-            outcomes,
-            [
-                WriteOutcome::NotSent,
-                WriteOutcome::NotSent,
-                sent(FIRST_GROUP_ID + 1, 1, false)
-            ]
-        );
-        assert_eq!(
-            (received.group_id, received.object_id, received.payload),
-            (FIRST_GROUP_ID + 1, 1, Bytes::from_static(b"c"))
-        );
     }
 
-    #[tokio::test]
-    async fn an_unsubscribe_resets_the_open_group_instead_of_finishing_it() {
-        // Arrange: the subscriber reads the first object of a group that stays open
-        let peers = origin_with_track("origin-release-reset", RETENTION).await;
-        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+    /// Subscribes from the next group, writes its first object and receives
+    /// the header of its stream.
+    async fn open_group_stream(peers: &Peers) -> (Subscription, DataReceiver, StreamDataReceiver) {
+        let subscription = subscribe(peers, FilterType::NextGroupStart).await;
         peers
             .origin
             .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
@@ -1009,318 +1019,396 @@ mod tests {
             within(subgroup.receive()).await,
             Ok(Some(Subgroup::Header(_)))
         ));
-        assert!(matches!(
-            within(subgroup.receive()).await,
-            Ok(Some(Subgroup::Object(_)))
-        ));
+        (subscription, streams, subgroup)
+    }
 
-        // Act
-        unsubscribe(&peers, &subscription).await;
+    #[tokio::test]
+    async fn an_unsubscribe_resets_the_open_group_instead_of_finishing_it() {
+        for version in DRAFTS {
+            // Arrange: the subscriber reads the first object of a group that stays open
+            let peers = origin_with_track("origin-release-reset", RETENTION, version).await;
+            let (subscription, _streams, mut subgroup) = open_group_stream(&peers).await;
+            assert!(matches!(
+                within(subgroup.receive()).await,
+                Ok(Some(Subgroup::Object(_)))
+            ));
 
-        // Assert: the stream is reset (receive errors), not finished
-        assert!(within(subgroup.receive()).await.is_err());
+            // Act
+            unsubscribe(&peers, &subscription).await;
+
+            // Assert: the stream is reset (receive errors), not finished
+            assert!(within(subgroup.receive()).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subgroup_the_subscriber_stops_is_reported_and_the_track_resumes_at_the_next_group() {
+        for version in DRAFTS {
+            // Arrange: the subscriber has the header of an open group's stream
+            let peers = origin_with_track("origin-stop-sending", RETENTION, version).await;
+            let origin = &peers.origin;
+            let (_subscription, mut streams, stopped) = open_group_stream(&peers).await;
+
+            // Act: dropping the stream sends STOP_SENDING; writes go on until it arrives
+            drop(stopped);
+            let outcome = within(async {
+                loop {
+                    let outcome = origin
+                        .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+                        .await
+                        .unwrap();
+                    if !matches!(outcome, WriteOutcome::Sent(_)) {
+                        return outcome;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            let within_stopped = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"c"))
+                .await
+                .unwrap();
+            let next_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"d"))
+                .await
+                .unwrap();
+            let mut resumed = within(next_subgroup(&mut streams)).await;
+            let header = within(resumed.receive()).await;
+            let object = within(resumed.receive()).await;
+
+            // Assert: the stopped group gets nothing more; the next one is delivered
+            assert!(matches!(outcome, WriteOutcome::Stopped(_)), "{outcome:?}");
+            assert_eq!(within_stopped, WriteOutcome::NotSent);
+            assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+            assert!(matches!(header, Ok(Some(Subgroup::Header(_)))));
+            let Ok(Some(Subgroup::Object(object))) = object else {
+                panic!("expected an object of the next group, got {object:?}");
+            };
+            assert_eq!(object.location, location(FIRST_GROUP_ID + 1, 0));
+            assert_eq!(object.payload, Bytes::from_static(b"d"));
+        }
     }
 
     #[tokio::test]
     async fn fetch_is_served_from_the_cache_in_the_requested_group_order() {
-        // Arrange
-        let peers = origin_with_track("origin-fetch", RETENTION).await;
-        let origin = &peers.origin;
-        for (group, payload) in [
-            (GroupBoundary::Next, b"a" as &[u8]),
-            (GroupBoundary::Within, b"b"),
-            (GroupBoundary::Next, b"c"),
-            (GroupBoundary::Within, b"d"),
-            (GroupBoundary::Within, b"e"),
-            (GroupBoundary::Next, b"f"),
-        ] {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-fetch", RETENTION, version).await;
+            let origin = &peers.origin;
+            for (group, payload) in [
+                (GroupBoundary::Next, b"a" as &[u8]),
+                (GroupBoundary::Within, b"b"),
+                (GroupBoundary::Next, b"c"),
+                (GroupBoundary::Within, b"d"),
+                (GroupBoundary::Within, b"e"),
+                (GroupBoundary::Next, b"f"),
+            ] {
+                origin
+                    .write(NAMESPACE, TRACK, plain(group, payload))
+                    .await
+                    .unwrap();
+            }
             origin
-                .write(NAMESPACE, TRACK, plain(group, payload))
-                .await
-                .unwrap();
-        }
-        origin
-            .ensure_track(NAMESPACE, "empty", FIRST_GROUP_ID, RETENTION)
+                .ensure_track(NAMESPACE, "empty", FIRST_GROUP_ID, RETENTION)
+                .await;
+
+            // Act
+            let (ascending, ascending_objects) = fetch(
+                &peers,
+                TRACK,
+                location(7, 1),
+                location(8, 2),
+                GroupOrder::Ascending,
+            )
+            .await
+            .unwrap();
+            let (descending, descending_objects) = fetch(
+                &peers,
+                TRACK,
+                location(7, 0),
+                location(10, 0),
+                GroupOrder::Descending,
+            )
+            .await
+            .unwrap();
+            let unknown = fetch(
+                &peers,
+                "other",
+                location(7, 0),
+                location(8, 0),
+                GroupOrder::Ascending,
+            )
+            .await;
+            let empty = fetch(
+                &peers,
+                "empty",
+                location(7, 0),
+                location(8, 0),
+                GroupOrder::Ascending,
+            )
+            .await;
+            let invalid = fetch(
+                &peers,
+                TRACK,
+                location(9, 1),
+                location(10, 0),
+                GroupOrder::Ascending,
+            )
             .await;
 
-        // Act
-        let (ascending, ascending_objects) = fetch(
-            &peers,
-            TRACK,
-            location(7, 1),
-            location(8, 2),
-            GroupOrder::Ascending,
-        )
-        .await
-        .unwrap();
-        let (descending, descending_objects) = fetch(
-            &peers,
-            TRACK,
-            location(7, 0),
-            location(10, 0),
-            GroupOrder::Descending,
-        )
-        .await
-        .unwrap();
-        let unknown = fetch(
-            &peers,
-            "other",
-            location(7, 0),
-            location(8, 0),
-            GroupOrder::Ascending,
-        )
-        .await;
-        let empty = fetch(
-            &peers,
-            "empty",
-            location(7, 0),
-            location(8, 0),
-            GroupOrder::Ascending,
-        )
-        .await;
-        let invalid = fetch(
-            &peers,
-            TRACK,
-            location(9, 1),
-            location(10, 0),
-            GroupOrder::Ascending,
-        )
-        .await;
-
-        // Assert
-        assert_eq!(ids(&ascending_objects), [(7, 1), (8, 0), (8, 1)]);
-        assert_eq!(ascending.end_location, location(8, 2));
-        assert_eq!(
-            ids(&descending_objects),
-            [(9, 0), (8, 0), (8, 1), (8, 2), (7, 0), (7, 1)]
-        );
-        assert_eq!(descending.end_location, location(9, 1));
-        assert_eq!(rejection(unknown).code, RequestErrorCode::TrackDoesNotExist);
-        assert_eq!(rejection(empty).code, RequestErrorCode::NoObjects);
-        assert_eq!(rejection(invalid).code, RequestErrorCode::InvalidRange);
+            // Assert
+            assert_eq!(ids(&ascending_objects), [(7, 1), (8, 0), (8, 1)]);
+            assert_eq!(ascending.end_location, location(8, 2));
+            assert_eq!(
+                ids(&descending_objects),
+                [(9, 0), (8, 0), (8, 1), (8, 2), (7, 0), (7, 1)]
+            );
+            assert_eq!(descending.end_location, location(9, 1));
+            assert_eq!(rejection(unknown).code, RequestErrorCode::TrackDoesNotExist);
+            let no_objects = match version {
+                Version::Draft14 => RequestErrorCode::NoObjects,
+                // draft-18 has no NO_OBJECTS; it answers INVALID_RANGE (§10.12.3)
+                Version::Draft18 => RequestErrorCode::InvalidRange,
+            };
+            assert_eq!(rejection(empty).code, no_objects);
+            assert_eq!(rejection(invalid).code, RequestErrorCode::InvalidRange);
+        }
     }
 
     #[tokio::test]
     async fn a_track_released_after_a_subscribe_is_published_again() {
-        // Arrange
-        let peers = origin_with_track("origin-republish", RETENTION).await;
-        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
-        unsubscribe(&peers, &subscription).await;
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-republish", RETENTION, version).await;
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            unsubscribe(&peers, &subscription).await;
 
-        // Act
-        let accepted = publish(&peers).await;
-        let written = peers
-            .origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-            .await
-            .unwrap();
+            // Act
+            let accepted = publish(&peers).await;
+            let written = peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
 
-        // Assert
-        assert_eq!(accepted.track_name(), TRACK);
-        assert!(matches!(written, WriteOutcome::Sent(_)));
+            // Assert
+            assert_eq!(accepted.track_name(), TRACK);
+            assert!(matches!(written, WriteOutcome::Sent(_)));
+        }
     }
 
     #[tokio::test]
     async fn release_drops_the_writer_but_keeps_numbering_and_caching() {
-        // Arrange
-        let peers = origin_with_track("origin-release", RETENTION).await;
-        let origin = &peers.origin;
-        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
-        let live = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-release", RETENTION, version).await;
+            let origin = &peers.origin;
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            let live = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+
+            // Act
+            let released = unsubscribe(&peers, &subscription).await;
+            let after_release = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+                .await
+                .unwrap();
+            let (_, cached) = fetch(
+                &peers,
+                TRACK,
+                location(FIRST_GROUP_ID + 1, 0),
+                location(FIRST_GROUP_ID + 2, 0),
+                GroupOrder::Ascending,
+            )
             .await
             .unwrap();
 
-        // Act
-        let released = unsubscribe(&peers, &subscription).await;
-        let after_release = origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
-            .await
-            .unwrap();
-        let (_, cached) = fetch(
-            &peers,
-            TRACK,
-            location(FIRST_GROUP_ID + 1, 0),
-            location(FIRST_GROUP_ID + 2, 0),
-            GroupOrder::Ascending,
-        )
-        .await
-        .unwrap();
-
-        // Assert
-        assert_eq!(live, sent(FIRST_GROUP_ID, 0, true));
-        assert_eq!(released, Some((NAMESPACE.to_string(), TRACK.to_string())));
-        assert_eq!(after_release, WriteOutcome::NotSent);
-        assert_eq!(ids(&cached), [(FIRST_GROUP_ID + 1, 0)]);
+            // Assert
+            assert_eq!(live, sent(FIRST_GROUP_ID, 0, true));
+            assert_eq!(released, Some((NAMESPACE.to_string(), TRACK.to_string())));
+            assert_eq!(after_release, WriteOutcome::NotSent);
+            assert_eq!(ids(&cached), [(FIRST_GROUP_ID + 1, 0)]);
+        }
     }
 
     #[tokio::test]
     async fn write_group_finishes_each_group_at_once_and_newest_only_keeps_the_last() {
-        // Arrange
-        let peers = origin_with_track("origin-write-group", Retention::NewestOnly).await;
-        let origin = &peers.origin;
-        let accepted = publish(&peers).await;
+        for version in DRAFTS {
+            // Arrange
+            let peers =
+                origin_with_track("origin-write-group", Retention::NewestOnly, version).await;
+            let origin = &peers.origin;
+            let accepted = publish(&peers).await;
 
-        // Act
-        let first = origin
-            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c1"))
+            // Act
+            let first = origin
+                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c1"))
+                .await
+                .unwrap();
+            let second = origin
+                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c2"))
+                .await
+                .unwrap();
+            let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
+            let received_first = within(reader.next_object()).await.unwrap().unwrap();
+            let received_second = within(reader.next_object()).await.unwrap().unwrap();
+            let (handle, cached) = fetch(
+                &peers,
+                TRACK,
+                location(0, 0),
+                location(FIRST_GROUP_ID + 100, 0),
+                GroupOrder::Ascending,
+            )
             .await
             .unwrap();
-        let second = origin
-            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c2"))
-            .await
-            .unwrap();
-        let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
-        let received_first = within(reader.next_object()).await.unwrap().unwrap();
-        let received_second = within(reader.next_object()).await.unwrap().unwrap();
-        let (handle, cached) = fetch(
-            &peers,
-            TRACK,
-            location(0, 0),
-            location(FIRST_GROUP_ID + 100, 0),
-            GroupOrder::Ascending,
-        )
-        .await
-        .unwrap();
 
-        // Assert
-        assert_eq!(first, sent(FIRST_GROUP_ID, 0, true));
-        assert_eq!(second, sent(FIRST_GROUP_ID + 1, 0, true));
-        assert_eq!(
-            (received_first.group_id, received_first.payload),
-            (FIRST_GROUP_ID, Bytes::from_static(b"c1"))
-        );
-        assert_eq!(
-            (received_second.group_id, received_second.payload),
-            (FIRST_GROUP_ID + 1, Bytes::from_static(b"c2"))
-        );
-        assert_eq!(ids(&cached), [(FIRST_GROUP_ID + 1, 0)]);
-        assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+            // Assert
+            assert_eq!(first, sent(FIRST_GROUP_ID, 0, true));
+            assert_eq!(second, sent(FIRST_GROUP_ID + 1, 0, true));
+            assert_eq!(
+                (received_first.group_id, received_first.payload),
+                (FIRST_GROUP_ID, Bytes::from_static(b"c1"))
+            );
+            assert_eq!(
+                (received_second.group_id, received_second.payload),
+                (FIRST_GROUP_ID + 1, Bytes::from_static(b"c2"))
+            );
+            assert_eq!(ids(&cached), [(FIRST_GROUP_ID + 1, 0)]);
+            assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+        }
     }
 
     #[tokio::test]
     async fn a_group_written_while_another_is_in_flight_does_not_stall_the_track() {
-        // Arrange
-        let peers = origin_with_track("origin-write-group-in-flight", RETENTION).await;
-        let origin = &peers.origin;
-        let accepted = publish(&peers).await;
-        let key = track_key(NAMESPACE, TRACK);
-        origin
-            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c0"))
-            .await
-            .unwrap();
-        let in_flight = origin.state.lock().await.track_mut(&key).unwrap().outlets[0]
-            .writer
-            .take()
-            .unwrap();
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-write-group-in-flight", RETENTION, version).await;
+            let origin = &peers.origin;
+            let accepted = publish(&peers).await;
+            let key = track_key(NAMESPACE, TRACK);
+            origin
+                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c0"))
+                .await
+                .unwrap();
+            let in_flight = origin.state.lock().await.track_mut(&key).unwrap().outlets[0]
+                .writer
+                .take()
+                .unwrap();
 
-        // Act
-        let overlapped = origin
-            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c1"))
-            .await
-            .unwrap();
-        origin.state.lock().await.track_mut(&key).unwrap().outlets[0].writer = Some(in_flight);
-        let after = origin
-            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c2"))
-            .await
-            .unwrap();
-        let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
-        let received_first = within(reader.next_object()).await.unwrap().unwrap();
-        let received_after = within(reader.next_object()).await.unwrap().unwrap();
+            // Act
+            let overlapped = origin
+                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c1"))
+                .await
+                .unwrap();
+            origin.state.lock().await.track_mut(&key).unwrap().outlets[0].writer = Some(in_flight);
+            let after = origin
+                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c2"))
+                .await
+                .unwrap();
+            let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
+            let received_first = within(reader.next_object()).await.unwrap().unwrap();
+            let received_after = within(reader.next_object()).await.unwrap().unwrap();
 
-        // Assert
-        assert_eq!(overlapped, WriteOutcome::NotSent);
-        assert_eq!(after, sent(FIRST_GROUP_ID + 2, 0, true));
-        assert_eq!(received_first.group_id, FIRST_GROUP_ID);
-        assert_eq!(
-            (received_after.group_id, received_after.payload),
-            (FIRST_GROUP_ID + 2, Bytes::from_static(b"c2"))
-        );
-        assert_eq!(
-            received_after.extension_headers.prior_group_id_gap(),
-            vec![1]
-        );
+            // Assert
+            assert_eq!(overlapped, WriteOutcome::NotSent);
+            assert_eq!(after, sent(FIRST_GROUP_ID + 2, 0, true));
+            assert_eq!(received_first.group_id, FIRST_GROUP_ID);
+            assert_eq!(
+                (received_after.group_id, received_after.payload),
+                (FIRST_GROUP_ID + 2, Bytes::from_static(b"c2"))
+            );
+            assert_eq!(
+                received_after.extension_headers.prior_group_id_gap(),
+                vec![1]
+            );
+        }
     }
 
     #[tokio::test]
     async fn cancel_fetch_aborts_the_pending_response() {
-        // Arrange
-        let peers = origin_with_track("origin-fetch-cancel", RETENTION).await;
-        let origin = &peers.origin;
-        origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-            .await
-            .unwrap();
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-fetch-cancel", RETENTION, version).await;
+            let origin = &peers.origin;
+            origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
 
-        // Act
-        let mut subscriber = peers.server.subscriber();
-        let (result, ()) = within(async {
-            tokio::join!(
-                subscriber.fetch(
-                    NAMESPACE.to_string(),
-                    TRACK.to_string(),
-                    location(FIRST_GROUP_ID, 0),
-                    location(FIRST_GROUP_ID + 1, 0),
-                    FetchOption::default()
-                ),
-                async {
-                    let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
-                    else {
-                        panic!("expected FETCH from the relay");
-                    };
-                    let cancel = FetchCancelHandler::new(
-                        peers.client.context().clone(),
-                        &peers.client.context().connection(),
-                        crate::modules::moqt::control_plane::control_messages::messages::fetch_cancel::FetchCancel {
-                            request_id: handler.request_id,
-                        },
-                    );
-                    origin.serve_fetch(handler).await.unwrap();
-                    origin.cancel_fetch(&cancel).await;
-                }
-            )
-        })
-        .await;
+            // Act
+            let mut subscriber = peers.server.subscriber();
+            let (result, ()) = within(async {
+                tokio::join!(
+                    subscriber.fetch(
+                        NAMESPACE.to_string(),
+                        TRACK.to_string(),
+                        location(FIRST_GROUP_ID, 0),
+                        location(FIRST_GROUP_ID + 1, 0),
+                        FetchOption::default()
+                    ),
+                    async {
+                        let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
+                        else {
+                            panic!("expected FETCH from the relay");
+                        };
+                        let cancel = FetchCancelHandler::new(
+                            peers.client.context().clone(),
+                            &peers.client.context().connection(),
+                            crate::modules::moqt::control_plane::control_messages::messages::fetch_cancel::FetchCancel {
+                                request_id: handler.request_id,
+                            },
+                        );
+                        origin.serve_fetch(handler).await.unwrap();
+                        origin.cancel_fetch(&cancel).await;
+                    }
+                )
+            })
+            .await;
 
-        // Assert
-        assert!(origin.state.lock().await.fetches.is_empty());
-        assert_eq!(rejection(result).code, RequestErrorCode::NotSupported);
+            // Assert
+            assert!(origin.state.lock().await.fetches.is_empty());
+            assert_eq!(rejection(result).code, RequestErrorCode::NotSupported);
+        }
     }
 
     #[tokio::test]
     async fn a_track_taken_on_two_sessions_is_written_to_both_until_one_releases_it() {
-        // Arrange
-        let first = origin_with_track("origin-two-sessions-a", RETENTION).await;
-        let (client, server) = spawn_connected_dual_sessions("origin-two-sessions-b").await;
-        let second = Peers {
-            origin: first.origin.clone(),
-            client: Arc::new(client),
-            server,
-        };
-        let accepted_first = publish(&first).await;
-        let accepted_second = publish(&second).await;
-        let origin = &first.origin;
+        for version in DRAFTS {
+            // Arrange
+            let first = origin_with_track("origin-two-sessions-a", RETENTION, version).await;
+            let (client, server) = connected_sessions("origin-two-sessions-b", version).await;
+            let second = Peers {
+                origin: first.origin.clone(),
+                client: Arc::new(client),
+                server,
+            };
+            let accepted_first = publish(&first).await;
+            let accepted_second = publish(&second).await;
+            let origin = &first.origin;
 
-        // Act
-        let both = origin
-            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"g0"))
-            .await
-            .unwrap();
-        let first_object = next_object(&first, &accepted_first).await;
-        let second_object = next_object(&second, &accepted_second).await;
-        unsubscribe(&first, &accepted_first).await;
-        let one = origin
-            .write_group(NAMESPACE, TRACK, Bytes::from_static(b"g1"))
-            .await
-            .unwrap();
+            // Act
+            let both = origin
+                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"g0"))
+                .await
+                .unwrap();
+            let first_object = next_object(&first, &accepted_first).await;
+            let second_object = next_object(&second, &accepted_second).await;
+            unsubscribe(&first, &accepted_first).await;
+            let one = origin
+                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"g1"))
+                .await
+                .unwrap();
 
-        // Assert
-        assert_eq!(both, sent(FIRST_GROUP_ID, 0, true));
-        assert_eq!(first_object.payload, Bytes::from_static(b"g0"));
-        assert_eq!(second_object.payload, Bytes::from_static(b"g0"));
-        assert!(!origin.is_serving(&first.client).await);
-        assert!(origin.is_serving(&second.client).await);
-        assert_eq!(one, sent(FIRST_GROUP_ID + 1, 0, true));
+            // Assert
+            assert_eq!(both, sent(FIRST_GROUP_ID, 0, true));
+            assert_eq!(first_object.payload, Bytes::from_static(b"g0"));
+            assert_eq!(second_object.payload, Bytes::from_static(b"g0"));
+            assert!(!origin.is_serving(&first.client).await);
+            assert!(origin.is_serving(&second.client).await);
+            assert_eq!(one, sent(FIRST_GROUP_ID + 1, 0, true));
+        }
     }
 
     #[test]
@@ -1337,97 +1425,105 @@ mod tests {
 
     #[tokio::test]
     async fn handle_serves_a_subscribe_to_a_track_it_has() {
-        // Arrange
-        let peers = origin_with_track("origin-handle-subscribe", RETENTION).await;
-        let mut subscriber = peers.server.subscriber();
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-handle-subscribe", RETENTION, version).await;
+            let mut subscriber = peers.server.subscriber();
 
-        // Act
-        let (subscription, unhandled) = within(async {
-            tokio::join!(
-                subscriber.subscribe(
-                    NAMESPACE.to_string(),
-                    TRACK.to_string(),
-                    subscribe_option(FilterType::NextGroupStart)
-                ),
-                async {
-                    let event = peers.client.receive_event().await.unwrap();
-                    peers.origin.handle(event).await
-                }
-            )
-        })
-        .await;
+            // Act
+            let (subscription, unhandled) = within(async {
+                tokio::join!(
+                    subscriber.subscribe(
+                        NAMESPACE.to_string(),
+                        TRACK.to_string(),
+                        subscribe_option(FilterType::NextGroupStart)
+                    ),
+                    async {
+                        let event = peers.client.receive_event().await.unwrap();
+                        peers.origin.handle(event).await
+                    }
+                )
+            })
+            .await;
 
-        // Assert
-        assert!(unhandled.is_none());
-        let subscription = subscription.unwrap();
-        peers
-            .origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-            .await
-            .unwrap();
-        assert_eq!(
-            next_object(&peers, &subscription).await.payload,
-            Bytes::from_static(b"a")
-        );
+            // Assert
+            assert!(unhandled.is_none());
+            let subscription = subscription.unwrap();
+            peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            assert_eq!(
+                next_object(&peers, &subscription).await.payload,
+                Bytes::from_static(b"a")
+            );
+        }
     }
 
     #[tokio::test]
     async fn handle_returns_a_subscribe_to_a_track_it_does_not_have() {
-        // Arrange
-        let peers = origin_with_track("origin-handle-unknown-subscribe", RETENTION).await;
-        let mut subscriber = peers.server.subscriber();
+        for version in DRAFTS {
+            // Arrange
+            let peers =
+                origin_with_track("origin-handle-unknown-subscribe", RETENTION, version).await;
+            let mut subscriber = peers.server.subscriber();
 
-        // Act
-        let (subscription, ()) = within(async {
-            tokio::join!(
-                subscriber.subscribe(
-                    NAMESPACE.to_string(),
-                    "other".to_string(),
-                    subscribe_option(FilterType::NextGroupStart)
-                ),
-                async {
-                    let event = peers.client.receive_event().await.unwrap();
-                    let Some(SessionEvent::Subscribe(handler)) = peers.origin.handle(event).await
-                    else {
-                        panic!("expected the SUBSCRIBE back");
-                    };
-                    handler
-                        .error(RequestErrorCode::TrackDoesNotExist, "unknown".to_string())
-                        .await
-                        .unwrap();
-                }
-            )
-        })
-        .await;
+            // Act
+            let (subscription, ()) = within(async {
+                tokio::join!(
+                    subscriber.subscribe(
+                        NAMESPACE.to_string(),
+                        "other".to_string(),
+                        subscribe_option(FilterType::NextGroupStart)
+                    ),
+                    async {
+                        let event = peers.client.receive_event().await.unwrap();
+                        let Some(SessionEvent::Subscribe(handler)) =
+                            peers.origin.handle(event).await
+                        else {
+                            panic!("expected the SUBSCRIBE back");
+                        };
+                        handler
+                            .error(RequestErrorCode::TrackDoesNotExist, "unknown".to_string())
+                            .await
+                            .unwrap();
+                    }
+                )
+            })
+            .await;
 
-        // Assert: the caller's answer reaches the subscriber
-        assert_eq!(
-            rejection(subscription).code,
-            RequestErrorCode::TrackDoesNotExist
-        );
+            // Assert: the caller's answer reaches the subscriber
+            assert_eq!(
+                rejection(subscription).code,
+                RequestErrorCode::TrackDoesNotExist
+            );
+        }
     }
 
     #[tokio::test]
     async fn handle_returns_events_that_are_not_about_its_tracks() {
-        // Arrange
-        let peers = origin_with_track("origin-handle-other", RETENTION).await;
-        let publisher = peers.server.publisher();
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-handle-other", RETENTION, version).await;
+            let publisher = peers.server.publisher();
 
-        // Act
-        let (published, unhandled) = within(async {
-            tokio::join!(publisher.publish_namespace("other".to_string()), async {
-                let event = peers.client.receive_event().await.unwrap();
-                let unhandled = peers.origin.handle(event).await;
-                if let Some(SessionEvent::PublishNamespace(handler)) = &unhandled {
-                    handler.ok().await.unwrap();
-                }
-                unhandled
+            // Act
+            let (published, unhandled) = within(async {
+                tokio::join!(publisher.publish_namespace("other".to_string()), async {
+                    let event = peers.client.receive_event().await.unwrap();
+                    let unhandled = peers.origin.handle(event).await;
+                    if let Some(SessionEvent::PublishNamespace(handler)) = &unhandled {
+                        handler.ok().await.unwrap();
+                    }
+                    unhandled
+                })
             })
-        })
-        .await;
+            .await;
 
-        // Assert
-        assert!(matches!(unhandled, Some(SessionEvent::PublishNamespace(_))));
-        published.unwrap();
+            // Assert
+            assert!(matches!(unhandled, Some(SessionEvent::PublishNamespace(_))));
+            published.unwrap();
+        }
     }
 }

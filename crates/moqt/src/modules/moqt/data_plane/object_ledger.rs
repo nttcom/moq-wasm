@@ -133,11 +133,11 @@ mod tests {
 
     use super::ObjectLedger;
     use crate::{
-        SessionEvent,
+        SessionEvent, Version,
         fetch::{Fetch, FetchOption},
         modules::test_support::{
             PublishedTrack, data_receiver, location, next_subgroup, object_with_extensions,
-            published_draft18_track, published_track, read_subgroup_objects, send_subgroup_object,
+            published_track, published_track_over, read_subgroup_objects, send_subgroup_object,
             within,
         },
         object::{
@@ -456,8 +456,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_draft18_subgroup_object_repeated_with_another_payload_is_a_malformed_track() {
-        assert_subgroup_copies(published_draft18_track("ledger-subgroup-copies-draft18").await)
-            .await;
+        assert_subgroup_copies(
+            published_track_over("ledger-subgroup-copies-draft18", Version::Draft18).await,
+        )
+        .await;
     }
 
     async fn assert_datagram_copies(track: PublishedTrack) {
@@ -499,8 +501,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_draft18_datagram_repeated_with_another_priority_is_a_malformed_track() {
-        assert_datagram_copies(published_draft18_track("ledger-datagram-copies-draft18").await)
-            .await;
+        assert_datagram_copies(
+            published_track_over("ledger-datagram-copies-draft18", Version::Draft18).await,
+        )
+        .await;
     }
 
     /// The server FETCHes from the client publishing `track` and reads the
@@ -586,7 +590,7 @@ mod tests {
     async fn a_draft18_fetched_copy_of_a_subscribed_object_with_another_payload_is_a_malformed_track()
      {
         assert_fetched_copy_of_a_subscribed_object(
-            published_draft18_track("ledger-fetch-copy-draft18").await,
+            published_track_over("ledger-fetch-copy-draft18", Version::Draft18).await,
         )
         .await;
     }
@@ -628,7 +632,7 @@ mod tests {
     #[tokio::test]
     async fn a_draft18_fetched_copy_of_a_datagram_is_compared_with_its_preference() {
         // Arrange
-        let track = published_draft18_track("ledger-fetched-datagram-draft18").await;
+        let track = published_track_over("ledger-fetched-datagram-draft18", Version::Draft18).await;
         let live = datagram();
         let _receiver = receive_datagram(&track, &live).await;
 

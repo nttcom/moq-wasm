@@ -504,8 +504,8 @@ mod tests {
     use crate::modules::{
         moqt::runtime::dispatch::incoming_object::IncomingObject,
         test_support::{
-            datagram_object, notify_datagram, register_and_take_data_receiver,
-            spawn_connected_dual_sessions, subscription,
+            DRAFTS, connected_sessions, datagram_object, notify_datagram,
+            register_and_take_data_receiver, subscription,
         },
     };
 
@@ -515,113 +515,126 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_callers_get_distinct_request_ids() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("request-id-concurrent").await;
-        let context = server.subscriber().session;
+        for version in DRAFTS {
+            // Arrange
+            let (_client, server) = connected_sessions("request-id-concurrent", version).await;
+            let context = server.subscriber().session;
 
-        // Act
-        let request_ids: Vec<u64> = std::thread::scope(|scope| {
-            let callers: Vec<_> = (0..8)
-                .map(|_| {
-                    scope.spawn(|| {
-                        (0..1_000)
-                            .map(|_| context.connection().control.next_request_id())
-                            .collect::<Vec<_>>()
+            // Act
+            let request_ids: Vec<u64> = std::thread::scope(|scope| {
+                let callers: Vec<_> = (0..8)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            (0..1_000)
+                                .map(|_| context.connection().control.next_request_id())
+                                .collect::<Vec<_>>()
+                        })
                     })
-                })
-                .collect();
-            callers
-                .into_iter()
-                .flat_map(|caller| caller.join().unwrap())
-                .collect()
-        });
+                    .collect();
+                callers
+                    .into_iter()
+                    .flat_map(|caller| caller.join().unwrap())
+                    .collect()
+            });
 
-        // Assert
-        let distinct: HashSet<u64> = request_ids.iter().copied().collect();
-        assert_eq!(distinct.len(), request_ids.len());
+            // Assert
+            let distinct: HashSet<u64> = request_ids.iter().copied().collect();
+            assert_eq!(distinct.len(), request_ids.len());
+        }
     }
 
     #[tokio::test]
     async fn objects_buffered_before_registration_are_delivered_to_the_receiver() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("sinks-early-object").await;
-        let context = server.subscriber().session;
-        notify_datagram(&context, TRACK_ALIAS).await;
+        for version in DRAFTS {
+            // Arrange
+            let (_client, server) = connected_sessions("sinks-early-object", version).await;
+            let context = server.subscriber().session;
+            notify_datagram(&context, TRACK_ALIAS).await;
 
-        // Act
-        let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
+            // Act
+            let mut receiver =
+                register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
-        // Assert
-        let received = receiver.try_recv();
-        assert!(
-            matches!(&received, Ok(IncomingObject::Datagram(datagram)) if datagram.object == datagram_object()),
-            "{received:?}"
-        );
+            // Assert
+            let received = receiver.try_recv();
+            assert!(
+                matches!(&received, Ok(IncomingObject::Datagram(datagram)) if datagram.object == datagram_object()),
+                "{received:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn unsubscribe_drops_the_unaccepted_receiver_and_discards_later_objects() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-unaccepted").await;
-        let context = server.subscriber().session;
-        context
-            .register_data_receiver(&context.connection(), REQUEST_ID, TRACK_ALIAS)
-            .await
-            .unwrap();
+        for version in DRAFTS {
+            // Arrange
+            let (_client, server) =
+                connected_sessions("sinks-unsubscribe-unaccepted", version).await;
+            let context = server.subscriber().session;
+            context
+                .register_data_receiver(&context.connection(), REQUEST_ID, TRACK_ALIAS)
+                .await
+                .unwrap();
 
-        // Act
-        server
-            .subscriber()
-            .unsubscribe(&subscription(REQUEST_ID, TRACK_ALIAS))
-            .await
-            .unwrap();
-        let notification = notify_datagram(&context, TRACK_ALIAS).await;
+            // Act
+            server
+                .subscriber()
+                .unsubscribe(&subscription(REQUEST_ID, TRACK_ALIAS))
+                .await
+                .unwrap();
+            let notification = notify_datagram(&context, TRACK_ALIAS).await;
 
-        // Assert
-        assert!(!context.receiver_map.lock().await.contains_key(&TRACK_ALIAS));
-        assert!(
-            matches!(notification, IncomingObjectNotification::Discarded),
-            "{notification:?}"
-        );
+            // Assert
+            assert!(!context.receiver_map.lock().await.contains_key(&TRACK_ALIAS));
+            assert!(
+                matches!(notification, IncomingObjectNotification::Discarded),
+                "{notification:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn unsubscribe_ends_the_accepted_receiver() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-accepted").await;
-        let context = server.subscriber().session;
-        let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
+        for version in DRAFTS {
+            // Arrange
+            let (_client, server) = connected_sessions("sinks-unsubscribe-accepted", version).await;
+            let context = server.subscriber().session;
+            let mut receiver =
+                register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
-        // Act
-        server
-            .subscriber()
-            .unsubscribe(&subscription(REQUEST_ID, TRACK_ALIAS))
-            .await
-            .unwrap();
+            // Act
+            server
+                .subscriber()
+                .unsubscribe(&subscription(REQUEST_ID, TRACK_ALIAS))
+                .await
+                .unwrap();
 
-        // Assert
-        assert!(receiver.recv().await.is_none());
+            // Assert
+            assert!(receiver.recv().await.is_none());
+        }
     }
 
     #[tokio::test]
     async fn track_alias_of_a_cancelled_subscription_can_be_reused() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("sinks-reuse-alias").await;
-        let context = server.subscriber().session;
-        context
-            .register_data_receiver(&context.connection(), REQUEST_ID, TRACK_ALIAS)
-            .await
-            .unwrap();
-        context
-            .cancel_subscription(&context.connection(), REQUEST_ID)
-            .await;
+        for version in DRAFTS {
+            // Arrange
+            let (_client, server) = connected_sessions("sinks-reuse-alias", version).await;
+            let context = server.subscriber().session;
+            context
+                .register_data_receiver(&context.connection(), REQUEST_ID, TRACK_ALIAS)
+                .await
+                .unwrap();
+            context
+                .cancel_subscription(&context.connection(), REQUEST_ID)
+                .await;
 
-        // Act
-        let registration = context
-            .register_data_receiver(&context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
-            .await;
+            // Act
+            let registration = context
+                .register_data_receiver(&context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
+                .await;
 
-        // Assert
-        assert!(registration.is_ok());
+            // Assert
+            assert!(registration.is_ok());
+        }
     }
 }
