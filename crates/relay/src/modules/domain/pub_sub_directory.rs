@@ -374,6 +374,20 @@ impl InMemoryLocalPubSubDirectory {
         peer == SessionPeer::Client && !had_client
     }
 
+    /// Whether `session_id` already holds a subscription overlapping this one:
+    /// either prefix is a field-wise prefix of the other (draft-14 §9.28).
+    pub(crate) fn has_overlapping_namespace_subscription(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+    ) -> bool {
+        self.subscriber_namespaces.iter().any(|entry| {
+            (is_namespace_prefix(entry.key(), track_namespace_prefix)
+                || is_namespace_prefix(track_namespace_prefix, entry.key()))
+                && entry.value().contains_key(&session_id)
+        })
+    }
+
     /// Returns true when no client subscriber remains for the prefix,
     /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
@@ -969,6 +983,24 @@ mod tests {
             matching,
             HashSet::from([MatchingPublication::Namespace("room/member".to_string())])
         );
+    }
+
+    #[test]
+    fn a_namespace_subscription_overlaps_the_prefixes_of_its_session_on_either_side() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(1, "room/alice".to_string(), SessionPeer::Client);
+        let overlaps =
+            |session_id, prefix| table.has_overlapping_namespace_subscription(session_id, prefix);
+
+        // Act / Assert: draft-14 §9.28
+        assert!(overlaps(1, "room"));
+        assert!(overlaps(1, "room/alice"));
+        assert!(overlaps(1, "room/alice/camera"));
+        assert!(overlaps(1, ""));
+        assert!(!overlaps(1, "room/bob"));
+        assert!(!overlaps(1, "room/alice2"));
+        assert!(!overlaps(2, "room"));
     }
 
     #[test]
