@@ -2,8 +2,12 @@ use crate::modules::{
     cascading::route_registry::{RegisterRouteError, RelayRouteRegistry},
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::downstream_publish::{
-            DownstreamPublish, downstream_publish_task::DownstreamPublishTask,
+        sequences::{
+            CascadingRelayContext,
+            downstream_publish::{
+                DownstreamPublish, downstream_publish_task::DownstreamPublishTask,
+            },
+            unsubscribe_namespace::UnsubscribeNamespace,
         },
     },
     domain::{
@@ -12,8 +16,12 @@ use crate::modules::{
             entry::{MatchingPublication, NamespaceSubscription},
         },
         session_id::SessionId,
+        session_peer::SessionPeer,
     },
-    session::handler::subscribe_namespace::SubscribeNamespaceHandler,
+    session::handler::{
+        subscribe_namespace::SubscribeNamespaceHandler,
+        subscribe_namespace_update::SubscribeNamespaceUpdateHandler,
+    },
 };
 use moqt::RequestErrorCode;
 use tracing::Span;
@@ -55,6 +63,7 @@ impl SubscribeNameSpace {
             session_id,
             track_namespace_prefix,
             subscription.interest,
+            None,
         ) {
             tracing::info!(
                 track_namespace_prefix = %track_namespace_prefix,
@@ -80,8 +89,8 @@ impl SubscribeNameSpace {
             subscription,
         );
         if is_first_client
-            && !self
-                .register_route(route_registry, track_namespace_prefix, handler)
+            && let Err(error) = self
+                .register_route(route_registry, track_namespace_prefix)
                 .await
         {
             table.unregister_subscribe_namespace(
@@ -89,6 +98,18 @@ impl SubscribeNameSpace {
                 track_namespace_prefix,
                 subscription.interest,
             );
+            if let RegisterRouteError::Conflict = error {
+                match handler
+                    .error(
+                        RequestErrorCode::NamespacePrefixOverlap,
+                        "namespace already subscribed".to_string(),
+                    )
+                    .await
+                {
+                    Ok(_) => tracing::info!("sent `SUBSCRIBE_NAMESPACE_ERROR` ok"),
+                    Err(_) => tracing::error!("failed to send `SUBSCRIBE_NAMESPACE_ERROR`"),
+                }
+            }
             return;
         }
         if let Err(e) = handler.ok().await {
@@ -114,6 +135,131 @@ impl SubscribeNameSpace {
         }
     }
 
+    /// draft-18 §10.9.2: moves the session's subscription of the handler's
+    /// interest to the new prefix, or refuses it with PREFIX_OVERLAP
+    /// (§10.2.14). Tracks the session already receives are not PUBLISHed
+    /// again, and moqt announces each namespace once per subscription. A
+    /// refused update ends the subscription, which moqt reports as
+    /// UNSUBSCRIBE_NAMESPACE.
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.subscribe_namespace_update",
+        skip_all,
+        parent = session_span,
+        fields(session_id = %session_id)
+    )]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn handle_update(
+        &self,
+        session_id: SessionId,
+        session_span: &Span,
+        table: &InMemoryLocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
+        downstream_publish: &DownstreamPublish,
+        cascading_relay_context: CascadingRelayContext<'_>,
+        handler: &dyn SubscribeNamespaceUpdateHandler,
+    ) {
+        let track_namespace_prefix = handler.track_namespace_prefix();
+        let new_track_namespace_prefix = handler.new_track_namespace_prefix();
+        let interest = handler.interest();
+        tracing::info!(
+            track_namespace_prefix = %track_namespace_prefix,
+            new_track_namespace_prefix = %new_track_namespace_prefix,
+            ?interest,
+            "SequenceHandler::SubscribeNamespaceUpdate"
+        );
+        let Some(subscription) =
+            table.namespace_subscription(session_id, track_namespace_prefix, interest)
+        else {
+            tracing::warn!("update of a namespace subscription the session does not hold");
+            handler
+                .error(
+                    RequestErrorCode::InternalError,
+                    "no such namespace subscription".to_string(),
+                )
+                .await;
+            return;
+        };
+        // Nothing moves; registering and then releasing the same prefix
+        // would drop the subscription.
+        if new_track_namespace_prefix == track_namespace_prefix {
+            handler.ok().await;
+            return;
+        }
+        if table.has_overlapping_namespace_subscription(
+            session_id,
+            new_track_namespace_prefix,
+            interest,
+            Some(track_namespace_prefix),
+        ) {
+            tracing::info!("updated prefix overlaps another namespace subscription of the session");
+            handler
+                .error(
+                    RequestErrorCode::NamespacePrefixOverlap,
+                    "overlaps another namespace subscription of the session".to_string(),
+                )
+                .await;
+            return;
+        }
+        let is_first_client = table.register_subscribe_namespace(
+            session_id,
+            new_track_namespace_prefix.to_string(),
+            subscription,
+        );
+        if is_first_client
+            && let Err(error) = self
+                .register_route(
+                    cascading_relay_context.route_registry,
+                    new_track_namespace_prefix,
+                )
+                .await
+        {
+            table.unregister_subscribe_namespace(session_id, new_track_namespace_prefix, interest);
+            let (code, reason) = match error {
+                RegisterRouteError::Conflict => (
+                    RequestErrorCode::NamespacePrefixOverlap,
+                    "namespace already subscribed",
+                ),
+                _ => (
+                    RequestErrorCode::InternalError,
+                    "namespace route not registered",
+                ),
+            };
+            handler.error(code, reason.to_string()).await;
+            return;
+        }
+        handler.ok().await;
+        let no_clients_remain =
+            table.unregister_subscribe_namespace(session_id, track_namespace_prefix, interest);
+        if no_clients_remain && subscription.peer == SessionPeer::Client {
+            UnsubscribeNamespace::cleanup_empty_namespace_subscription(
+                track_namespace_prefix,
+                table,
+                forwarder,
+                cascading_relay_context.route_registry,
+                cascading_relay_context.inter_relay_connection_manager,
+            )
+            .await;
+        }
+        self.forward_matching_publications(
+            session_id,
+            new_track_namespace_prefix,
+            subscription,
+            forwarder,
+            downstream_publish,
+        )
+        .await;
+        if interest.includes_namespaces() {
+            self.notify_remote_publish_namespaces(
+                session_id,
+                new_track_namespace_prefix,
+                forwarder,
+                cascading_relay_context.route_registry,
+            )
+            .await;
+        }
+    }
+
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.subscribe_namespace.register_route",
@@ -124,32 +270,20 @@ impl SubscribeNameSpace {
         &self,
         route_registry: &dyn RelayRouteRegistry,
         track_namespace_prefix: &str,
-        handler: &dyn SubscribeNamespaceHandler,
-    ) -> bool {
-        match route_registry
+    ) -> Result<(), RegisterRouteError> {
+        let registered = route_registry
             .register_namespace_subscriber(track_namespace_prefix)
-            .await
-        {
-            Ok(()) => true,
+            .await;
+        match &registered {
+            Ok(()) => {}
             Err(RegisterRouteError::Conflict) => {
                 tracing::warn!(track_namespace_prefix = %track_namespace_prefix, "namespace already has an active subscriber");
-                match handler
-                    .error(
-                        RequestErrorCode::NamespacePrefixOverlap,
-                        "namespace already subscribed".to_string(),
-                    )
-                    .await
-                {
-                    Ok(_) => tracing::info!("sent `SUBSCRIBE_NAMESPACE_ERROR` ok"),
-                    Err(_) => tracing::error!("failed to send `SUBSCRIBE_NAMESPACE_ERROR`"),
-                }
-                false
             }
             Err(err) => {
                 tracing::warn!(?err, track_namespace_prefix = %track_namespace_prefix, "failed to register namespace subscription route");
-                false
             }
         }
+        registered
     }
 
     #[tracing::instrument(
@@ -242,15 +376,21 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        cascading::route_registry::NoopRelayRouteRegistry,
+        cascading::{
+            inter_relay_connection_manager::InterRelayConnectionManager,
+            route_registry::NoopRelayRouteRegistry,
+        },
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
+        session::session_repository::SessionRepository,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                downstream_publish_context, namespaces_and_tracks, table_with_upstream, track_key,
+                client_subscription, downstream_publish_context, namespaces_and_tracks,
+                table_with_upstream, track_key,
             },
             mock_session::{
-                MockPublishHandler, MockSubscribeNamespaceHandler, PUBLISH_REQUEST_ID, SentMessages,
+                MockPublishHandler, MockSubscribeNamespaceHandler,
+                MockSubscribeNamespaceUpdateHandler, PUBLISH_REQUEST_ID, SentMessages,
             },
         },
     };
@@ -432,5 +572,152 @@ mod tests {
         );
         assert!(ctx.table.subscriber_namespaces.get("ns").is_none());
         assert!(egress.is_err());
+    }
+
+    async fn update_namespace_subscription(
+        ctx: &DownstreamPublishContext,
+        handler: &MockSubscribeNamespaceUpdateHandler,
+    ) {
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        let inter_relay_connection_manager = InterRelayConnectionManager::new(
+            Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
+            session_event_sender,
+            "unused-relay-token".to_string(),
+        );
+        SubscribeNameSpace
+            .handle_update(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                &Span::none(),
+                &ctx.table,
+                &ctx.forwarder,
+                &ctx.downstream_publish(),
+                CascadingRelayContext {
+                    route_registry: &NoopRelayRouteRegistry,
+                    inter_relay_connection_manager: &inter_relay_connection_manager,
+                },
+                handler,
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_namespace_prefix_update_overlapping_another_subscription_is_refused() {
+        // Arrange
+        let ctx = context_with_published_track(SentMessages::default()).await;
+        for prefix in ["ns", "other"] {
+            ctx.table.register_subscribe_namespace(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                prefix.to_string(),
+                client_subscription(NamespaceInterest::Namespaces),
+            );
+        }
+        let handler = MockSubscribeNamespaceUpdateHandler::new(
+            "other",
+            "ns/room",
+            NamespaceInterest::Namespaces,
+        );
+
+        // Act
+        update_namespace_subscription(&ctx, &handler).await;
+
+        // Assert: draft-18 §10.2.14 PREFIX_OVERLAP; the subscription stays where it was
+        assert_eq!(
+            handler.answers(),
+            [Some(RequestErrorCode::NamespacePrefixOverlap)]
+        );
+        assert!(
+            ctx.table
+                .namespace_subscription(
+                    NAMESPACE_SUBSCRIBER_SESSION,
+                    "other",
+                    NamespaceInterest::Namespaces
+                )
+                .is_some()
+        );
+        assert!(ctx.table.subscriber_namespaces.get("ns/room").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_namespace_prefix_update_moves_the_subscription_and_offers_what_now_matches() {
+        // Arrange: the old prefix overlaps only the subscription being moved
+        let mut ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns/old".to_string(),
+            client_subscription(NamespaceInterest::Tracks),
+        );
+        let handler =
+            MockSubscribeNamespaceUpdateHandler::new("ns/old", "ns", NamespaceInterest::Tracks);
+
+        // Act
+        update_namespace_subscription(&ctx, &handler).await;
+        tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
+            .await
+            .expect("the accepted PUBLISH should start an egress reader");
+
+        // Assert: draft-18 §10.9.2
+        assert_eq!(handler.answers(), [None]);
+        assert!(ctx.table.subscriber_namespaces.get("ns/old").is_none());
+        assert_eq!(
+            ctx.table.namespace_subscription(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                "ns",
+                NamespaceInterest::Tracks
+            ),
+            Some(client_subscription(NamespaceInterest::Tracks))
+        );
+        assert_eq!(ctx.subscriber.publishes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_namespace_prefix_update_to_the_same_prefix_keeps_the_subscription() {
+        // Arrange
+        let ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns".to_string(),
+            client_subscription(NamespaceInterest::Namespaces),
+        );
+        let handler =
+            MockSubscribeNamespaceUpdateHandler::new("ns", "ns", NamespaceInterest::Namespaces);
+
+        // Act
+        update_namespace_subscription(&ctx, &handler).await;
+
+        // Assert
+        assert_eq!(handler.answers(), [None]);
+        assert_eq!(
+            ctx.table.namespace_subscription(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                "ns",
+                NamespaceInterest::Namespaces
+            ),
+            Some(client_subscription(NamespaceInterest::Namespaces))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_prefix_update_may_share_the_prefix_of_the_other_kind() {
+        // Arrange
+        let ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns".to_string(),
+            client_subscription(NamespaceInterest::Namespaces),
+        );
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "other".to_string(),
+            client_subscription(NamespaceInterest::Tracks),
+        );
+        let handler =
+            MockSubscribeNamespaceUpdateHandler::new("other", "ns", NamespaceInterest::Tracks);
+
+        // Act
+        update_namespace_subscription(&ctx, &handler).await;
+
+        // Assert: draft-18 §10.9.2 applies the overlap rule per type
+        assert_eq!(handler.answers(), [None]);
     }
 }

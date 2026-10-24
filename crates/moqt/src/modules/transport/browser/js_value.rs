@@ -1,3 +1,4 @@
+use js_sys::{Array, Function, Object, Reflect};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{ReadableStreamDefaultReader, ReadableStreamReadResult};
@@ -30,4 +31,31 @@ pub(super) async fn read_next(
         return Ok(None);
     }
     Ok(Some(result.get_value()))
+}
+
+/// A `WebTransportError` carrying `error_code`, the reason that resets a
+/// send stream or stops a receive stream with that code.
+///
+/// Chromium still implements the earlier constructor, which takes a single
+/// `WebTransportErrorInit`, and rejects the current `(message, options)` form
+/// with a `TypeError`.
+pub(super) fn web_transport_error(error_code: u64) -> Result<JsValue, JsValue> {
+    let init = Object::new();
+    Reflect::set(
+        &init,
+        &JsValue::from_str("message"),
+        &JsValue::from_str("reset"),
+    )?;
+    Reflect::set(
+        &init,
+        &JsValue::from_str("streamErrorCode"),
+        &JsValue::from_f64(error_code as f64),
+    )?;
+    let constructor: Function =
+        Reflect::get(&js_sys::global(), &JsValue::from_str("WebTransportError"))?.dyn_into()?;
+    Reflect::construct(
+        &constructor,
+        &Array::of2(&JsValue::from_str("reset"), &init),
+    )
+    .or_else(|_| Reflect::construct(&constructor, &Array::of1(&init)))
 }

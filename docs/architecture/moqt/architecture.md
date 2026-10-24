@@ -74,7 +74,14 @@ The creator yields `Box<dyn TransportConnection>`, whose streams are
 `Box<dyn TransportSendStream>` / `Box<dyn TransportReceiveStream>`
 (`BoxedConnection`, `BoxedSendStream`, `BoxedReceiveStream` in
 `transport_connection.rs`), so the transport is erased as soon as a
-connection exists.
+connection exists. `TransportReceiveStream::stop` sends STOP_SENDING with a
+code (quinn `RecvStream::stop`, web-transport-quinn `RecvStream::stop`,
+`ReadableStreamDefaultReader.cancel` with a `WebTransportError` in the
+browser); `TransportSendStream::poll_stopped` yields the peer's STOP_SENDING
+code (quinn `SendStream::stopped`, web-transport-quinn `poll_closed`, the
+rejection of `writer.closed` in the browser), keeping its wait inside the
+stream between polls so that `StreamSender::stopped` can wait without
+holding the stream.
 
 Four zero-sized markers implement it; the first three are native-only:
 
@@ -83,7 +90,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
-| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM and STOP_SENDING codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 `T: TransportProtocol`, because the creator's constructors are static
@@ -183,15 +190,25 @@ call through the adapter; a draft never gets a task of its own (see
     it with FIN. The cancelling notifications (UNSUBSCRIBE, FETCH_CANCEL,
     PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE) reset it, and so
     does dropping a `PendingResponse` before a success response (§3.3.2).
-    When the peer ends a request, this side's half ends with FIN.
+    Cancelling also notifies the stream's `reader_stop`, on which the task
+    reading the peer's half stops it with STOP_SENDING CANCELLED; §5.2
+    requires that of a FETCH requester. When the peer ends a request, this
+    side's half ends with FIN.
   - A FETCH's state lasts until its response stream ends (§5.2). The
     publisher ends the request stream with FIN once both its FETCH_OK and the
     FIN or reset of the response stream (`FetchDataSender::close` /
     `reset`, or its drop, which resets an unfinished response) are sent. The requester ends its half with FIN when the
     `FetchDataReceiver` reads the response stream's end or reset
     (`FetchRequestEnd`), and cancels the FETCH when the receiver is dropped
-    before. A FIN from the requester does not cancel a FETCH; only a reset
-    does.
+    before. A FIN from the requester does not cancel a FETCH; a reset of
+    its half does, and so does STOP_SENDING on the publisher's half, which
+    the task reading the stream watches (`StreamSender::stopped`), or on
+    the response stream, which `FetchDataSender` notices when it sends or
+    closes. The
+    publisher then resets both the request stream and the response stream
+    and raises `FetchCancel`: `FetchDataSender` attaches its stream to the
+    request (`attach_fetch_response`), and a response stream opened for a
+    FETCH no longer open is reset at once.
   - `request_streams` reads the streams. A request the peer opens becomes the
     draft-14 event once its Request ID passes the parity and reuse checks
     (§10.1). The peer ending an open request raises the event its draft-14
@@ -213,7 +230,7 @@ call through the adapter; a draft never gets a task of its own (see
     delivers, those buffered before the response included.
   - Messages draft-14 lacks map onto its events:
     - A `publish_namespace` matching the peer's SUBSCRIBE_NAMESPACE is sent as
-      NAMESPACE on that stream and accepted at once.
+      NAMESPACE on that stream, once per namespace, and accepted at once.
     - NAMESPACE / NAMESPACE_DONE on our SUBSCRIBE_NAMESPACE raise
       `PublishNamespace` / `PublishNamespaceDone`. `PublishNamespace` gets a
       synthetic Request ID counting down from `u64::MAX`; responses to it
@@ -236,13 +253,28 @@ call through the adapter; a draft never gets a task of its own (see
     - A per-request GOAWAY ends the request as a peer cancellation with
       GOING_AWAY. On our SUBSCRIBE_NAMESPACE it raises
       `PublishNamespaceDone` for every namespace still announced, as the
-      end of the stream does (§10.18).
+      end of the stream does (§10.18). On a request the peer opened it is
+      ignored, but a second one on the same stream, or one with a New
+      Session URI sent to a server, closes the session with
+      PROTOCOL_VIOLATION (§10.4).
     - REQUEST_UPDATE is applied as a delta to the request's current state
       (§10.9), then raised as `SubscribeUpdate`. Its REQUEST_OK waits for
       `SubscribeUpdateHandler::ok`, which gives the LARGEST_OBJECT (§10.2.11),
       or for the handler to be dropped, which sends none. The stream reads
       its next message only after that, so the answers keep the order of the
       updates.
+    - A REQUEST_UPDATE with TRACK_NAMESPACE_PREFIX on the peer's
+      SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS raises
+      `SubscribeNamespaceUpdate` (§10.9.2), which draft-14 never raises; the
+      application decides the PREFIX_OVERLAP rule (§10.2.14). Accepting moves
+      the stream's prefix and answers REQUEST_OK under the channel's
+      `namespace_writes` lock, which every NAMESPACE / NAMESPACE_DONE also
+      takes, so later suffixes are relative to the new prefix; namespaces
+      the new prefix leaves out are forgotten. Refusing, or dropping the
+      handler (NOT_SUPPORTED), answers REQUEST_ERROR, ends the stream with
+      FIN (§10.9.1) and raises `UnsubscribeNamespace` for the old prefix.
+      Without TRACK_NAMESPACE_PREFIX a namespace stream's REQUEST_UPDATE gets
+      an empty REQUEST_OK.
 - A rule that differs per draft but applies to state only the application
   holds is asked through the handler, so the version stays inside moqt:
   `FetchHandler::check_joining` tells whether a Joining FETCH may join a

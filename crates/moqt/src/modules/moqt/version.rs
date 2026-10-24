@@ -52,6 +52,7 @@ use crate::{
                     fetch_data_receiver::{self, FetchDataReceiver},
                     stream_data_receiver::StreamDataReceiver,
                     stream_receiver::{BiStreamReceiver, StreamReceiveError},
+                    stream_sender::StreamSender,
                 },
             },
             domains::{connection::Connection, session_context::SessionContext},
@@ -403,6 +404,33 @@ impl ControlChannel {
                 Arc::downgrade(connection),
                 request_id,
             )),
+        }
+    }
+
+    /// Registers `response` as the response stream of the FETCH `request_id`
+    /// the peer sent, so that draft-18 resets it when the FETCH is cancelled
+    /// (§5.2). `false` when that FETCH is no longer open.
+    pub(crate) fn attach_fetch_response(
+        &self,
+        request_id: RequestId,
+        response: &Arc<StreamSender>,
+    ) -> bool {
+        match self {
+            Self::Draft14(_) => true,
+            Self::Draft18(channel) => channel.attach_fetch_response(request_id, response),
+        }
+    }
+
+    /// The peer sent STOP_SENDING on the response stream of the FETCH
+    /// `request_id` it sent: draft-18 cancels the FETCH (§5.2), while draft-14
+    /// waits for its FETCH_CANCEL.
+    pub(crate) async fn fetch_response_stopped(
+        &self,
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) {
+        if let Self::Draft18(_) = self {
+            draft18::ControlChannel::fetch_response_stopped(connection, request_id).await;
         }
     }
 

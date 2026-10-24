@@ -1,4 +1,7 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    task::{Context, Poll},
+};
 
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -45,6 +48,12 @@ pub(crate) trait TransportSendStream: MaybeSend + MaybeSync + 'static + Debug {
     fn close(&mut self) -> Result<(), TransportSendError>;
     async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError>;
     fn set_priority(&mut self, priority: i32) -> Result<(), TransportSendError>;
+    /// `Ready(Some(code))` once the peer sent STOP_SENDING with `code`, and
+    /// `Ready(None)` once it no longer can: the FIN was acknowledged or the
+    /// connection is lost. Once this side has reset the stream, it may stay
+    /// `Pending` or report the reset's code. A `Pending` poll keeps its wait,
+    /// so `cx` is woken later.
+    fn poll_stopped<'a>(&mut self, cx: &mut Context<'a>) -> Poll<Option<u64>>;
 }
 
 #[cfg(test)]

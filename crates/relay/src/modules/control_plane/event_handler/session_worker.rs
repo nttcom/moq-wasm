@@ -244,6 +244,20 @@ impl SessionWorker {
                     .instrument(event_span)
                     .await;
             }
+            MoqtSessionEvent::SubscribeNamespaceUpdate(handler) => {
+                SubscribeNameSpace {}
+                    .handle_update(
+                        session_id,
+                        &session_span,
+                        deps.local_pub_sub_directory.as_ref(),
+                        &deps.control_message_forwarder,
+                        &self.downstream_publish(),
+                        self.cascading_relay_context(),
+                        handler.as_ref(),
+                    )
+                    .instrument(event_span)
+                    .await;
+            }
             MoqtSessionEvent::UnsubscribeNamespace(handler) => {
                 UnsubscribeNamespace {}
                     .handle(

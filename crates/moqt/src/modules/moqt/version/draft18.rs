@@ -111,6 +111,25 @@ struct RequestStream {
     default_publisher_priority: u8,
     /// For a FETCH the peer sent: how far its response has come.
     fetch_end: FetchEnd,
+    /// For a FETCH the peer sent: its response stream once opened, reset
+    /// with the request stream when the FETCH is cancelled (§5.2).
+    fetch_response: Option<Arc<StreamSender>>,
+    /// Notified when this side cancels the request: the task reading the
+    /// stream then stops the peer's half with STOP_SENDING (§3.3.2).
+    reader_stop: Arc<tokio::sync::Notify>,
+}
+
+impl RequestStream {
+    fn new(kind: RequestStreamKind, sender: Arc<StreamSender>) -> Self {
+        Self {
+            kind,
+            sender,
+            default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
+            fetch_end: FetchEnd::default(),
+            fetch_response: None,
+            reader_stop: Arc::default(),
+        }
+    }
 }
 
 /// §5.2: a publisher destroys the state of a FETCH after closing its
@@ -146,6 +165,11 @@ pub(crate) struct ControlChannel {
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
     requests: std::sync::Mutex<Requests>,
+    /// Held while a NAMESPACE or NAMESPACE_DONE is built and sent, and while
+    /// a namespace subscription moves to a new prefix and is answered, so
+    /// each suffix is relative to the prefix the subscriber last heard of
+    /// (§10.9.2).
+    namespace_writes: tokio::sync::Mutex<()>,
     binding: std::sync::OnceLock<Binding>,
 }
 
@@ -153,10 +177,15 @@ fn cancelled() -> u64 {
     error_codes::stream_reset_code_to_wire(DataStreamResetCode::Cancelled)
 }
 
-/// Withdraws a request by resetting its stream (§3.3.2).
+/// Withdraws a request (§3.3.2): this side's half of its stream is reset,
+/// and the peer's half stopped with STOP_SENDING, which a FETCH requires
+/// (§5.2).
 async fn cancel(stream: Option<RequestStream>) -> Result<(), TransportSendError> {
     match stream {
-        Some(stream) => stream.sender.reset(cancelled()).await,
+        Some(stream) => {
+            stream.reader_stop.notify_one();
+            stream.sender.reset(cancelled()).await
+        }
         None => Ok(()),
     }
 }
@@ -175,6 +204,7 @@ impl ControlChannel {
             synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
             requests: std::sync::Mutex::new(Requests::default()),
+            namespace_writes: tokio::sync::Mutex::new(()),
             binding: std::sync::OnceLock::new(),
         }
     }
@@ -259,28 +289,69 @@ impl ControlChannel {
 
     /// draft-14 announces a namespace to a namespace subscriber with
     /// PUBLISH_NAMESPACE; draft-18 sends NAMESPACE on the subscription's
-    /// stream instead (§6.1). The announcement is accepted at once, as no
-    /// response follows. `None` when the peer has no SUBSCRIBE_NAMESPACE for
-    /// it, so it goes as PUBLISH_NAMESPACE.
+    /// stream instead (§6.1), once: a namespace the subscription already
+    /// heard of is not sent again. The announcement is accepted at once, as
+    /// no response follows. `None` when the peer has no SUBSCRIBE_NAMESPACE
+    /// for it, so it goes as PUBLISH_NAMESPACE.
     async fn advertise_namespace(
         &self,
         request_id: RequestId,
         namespace: &[String],
     ) -> Result<Option<PendingResponse>, RequestFailure> {
+        let _namespace_writes = self.namespace_writes.lock().await;
         let Some((subscription_request_id, stream, prefix_len)) =
             self.namespace_subscription(namespace)
         else {
             return Ok(None);
         };
+        let accepted = PendingResponse::resolved(ResponseMessage::PublishNamespaceOk(request_id));
+        if self.requests().advertised.get(namespace) == Some(&subscription_request_id) {
+            return Ok(Some(accepted));
+        }
         let message = messages::encode_namespace(messages::NAMESPACE, &namespace[prefix_len..])
             .map_err(|_| RequestFailure::ProtocolViolation("namespace could not be encoded"))?;
         stream.sender.send(&message).await?;
         self.requests()
             .advertised
             .insert(namespace.to_vec(), subscription_request_id);
-        Ok(Some(PendingResponse::resolved(
-            ResponseMessage::PublishNamespaceOk(request_id),
-        )))
+        Ok(Some(accepted))
+    }
+
+    /// §10.9.2: the peer's SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS
+    /// `request_id`, of `kind`, moves to `prefix` and is answered with
+    /// REQUEST_OK on `sender`. A namespace announced under the old prefix that
+    /// the new one leaves out is forgotten, as no NAMESPACE_DONE could name it.
+    /// Returns the subscription's new kind.
+    async fn move_namespace_subscription(
+        &self,
+        request_id: RequestId,
+        kind: &RequestStreamKind,
+        prefix: Vec<String>,
+        sender: &StreamSender,
+    ) -> RequestStreamKind {
+        let moved = match kind {
+            RequestStreamKind::SubscribeNamespace(_) => {
+                RequestStreamKind::SubscribeNamespace(prefix)
+            }
+            RequestStreamKind::SubscribeTracks(_) => RequestStreamKind::SubscribeTracks(prefix),
+            _ => unreachable!("only namespace subscriptions take a TRACK_NAMESPACE_PREFIX"),
+        };
+        let _namespace_writes = self.namespace_writes.lock().await;
+        {
+            let mut requests = self.requests();
+            if let Some(stream) = requests.incoming.get_mut(&request_id) {
+                stream.kind = moved.clone();
+            }
+            requests.advertised.retain(|namespace, subscription| {
+                *subscription != request_id || moved.namespace_prefix_of(namespace).is_some()
+            });
+        }
+        if let Ok(message) = messages::encode_empty_request_ok()
+            && let Err(error) = sender.send(&message).await
+        {
+            tracing::debug!(%error, "could not answer REQUEST_UPDATE");
+        }
+        moved
     }
 
     pub(super) fn default_publisher_priority(&self, request_id: RequestId) -> u8 {
@@ -325,12 +396,54 @@ impl ControlChannel {
         }
     }
 
+    pub(super) async fn fetch_response_stopped(
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) {
+        if let Some(scope) = Scope::of(&Arc::downgrade(connection)) {
+            request_streams::fetch_cancelled(&scope, request_id).await;
+        }
+    }
+
     pub(super) async fn fetch_response_ended(
         &self,
         request_id: RequestId,
     ) -> Result<(), TransportSendError> {
         self.advance_fetch(request_id, |end| end.response_ended = true)
             .await
+    }
+
+    pub(super) fn attach_fetch_response(
+        &self,
+        request_id: RequestId,
+        response: &Arc<StreamSender>,
+    ) -> bool {
+        match self.requests().incoming.get_mut(&request_id) {
+            Some(stream) if stream.kind == RequestStreamKind::Fetch => {
+                stream.fetch_response = Some(response.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// §5.2: the publisher of a cancelled FETCH resets its request stream
+    /// and its response stream. `false` when the FETCH the peer sent as
+    /// `request_id` had ended already.
+    async fn reset_cancelled_fetch(&self, request_id: RequestId) -> bool {
+        let Some(stream) = self.take_incoming(request_id) else {
+            return false;
+        };
+        let response = stream.fetch_response.clone();
+        if let Err(error) = cancel(Some(stream)).await {
+            tracing::debug!(%error, "could not reset the request stream of a cancelled FETCH");
+        }
+        if let Some(response) = response
+            && let Err(error) = response.reset(cancelled()).await
+        {
+            tracing::debug!(%error, "could not reset the response stream of a cancelled FETCH");
+        }
+        true
     }
 
     fn take_incoming(&self, request_id: RequestId) -> Option<RequestStream> {
@@ -431,21 +544,13 @@ impl ControlChannel {
             .map_err(|_| RequestFailure::SessionClosed)?;
         let sender = Arc::new(StreamSender::new(send_stream));
         sender.send(&message).await?;
-        self.requests().outgoing.insert(
-            request_id,
-            RequestStream {
-                kind: kind.clone(),
-                sender: sender.clone(),
-                default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
-                fetch_end: FetchEnd::default(),
-            },
-        );
+        let stream = RequestStream::new(kind, sender);
+        self.requests().outgoing.insert(request_id, stream.clone());
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
         request_streams::OutgoingRequestTask {
             connection: Arc::downgrade(connection),
             request_id,
-            kind,
-            sender,
+            stream,
             receiver: MessageReceiver::new(receive_stream, MessageDecoder),
             response: response_sender,
             group_order: group_order.unwrap_or(GroupOrder::Ascending),
@@ -578,6 +683,7 @@ impl ControlChannel {
                 cancel(self.take_outgoing(fetch_cancel.request_id)).await
             }
             Notification::PublishNamespaceDone(done) => {
+                let _namespace_writes = self.namespace_writes.lock().await;
                 let advertised = self.requests().advertised.remove(&done.track_namespace);
                 if let Some(subscription_request_id) = advertised {
                     let stream = self
@@ -647,8 +753,8 @@ impl ControlChannel {
 
 /// §5.2: a subscriber keeps the state of a FETCH until its response stream
 /// ends with FIN or a reset. Ends the request stream of a FETCH this side
-/// sent with FIN then, or with a reset (cancelling it, §3.3.2) when the
-/// reader of the response stream is dropped first.
+/// sent with FIN then, or cancels it (`cancel`) when the reader of the
+/// response stream is dropped first.
 #[derive(Debug)]
 pub(crate) struct FetchRequestEnd {
     connection: Weak<Connection>,
@@ -691,7 +797,7 @@ fn end_outgoing(connection: &Weak<Connection>, request_id: RequestId, finished: 
         let ended = if finished {
             stream.sender.close().await
         } else {
-            stream.sender.reset(cancelled()).await
+            cancel(Some(stream)).await
         };
         if let Err(error) = ended {
             tracing::debug!(%error, "could not end a request stream");
@@ -760,6 +866,8 @@ fn is_success(response: &ResponseMessage) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use bytes::{Bytes, BytesMut};
 
     use super::{
@@ -791,6 +899,7 @@ mod tests {
                 datagram_receiver, notify_datagram, published_track_between, read_fetch_objects,
                 spawn_connected_draft18_sessions, subgroup_receiver, subscribed_track_reader,
             },
+            transport::transport_send_stream::TransportSendError,
         },
         namespace::{NamespaceInterest, SubscribeNamespaceHandler},
         object::{
@@ -1352,6 +1461,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelling_a_fetch_stops_its_request_stream() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions(&format!("draft18-fetch-stop-{scheme}"), scheme)
+                    .await;
+            let (_subscriber, receiver, handler, _sender) =
+                fetch_with_open_response(&client, &server).await;
+            // Arrange: taken out of the registry, so the publisher leaves the stream to the test
+            let request_stream = ControlChannel::of(&server.publisher().session.connection())
+                .requests()
+                .incoming
+                .remove(&handler.request_id)
+                .unwrap();
+            let request_ok = messages::encode_empty_request_ok().unwrap();
+
+            // Act
+            drop(receiver);
+            let refused = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                loop {
+                    if let Err(error) = request_stream.sender.send(&request_ok).await {
+                        return error;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+
+            // Assert: §5.2 STOP_SENDING with CANCELLED (§3.3.3)
+            assert!(
+                matches!(refused, Ok(TransportSendError::Stopped { code: 0x1 })),
+                "{scheme}: {refused:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_fetch_receiver_dropped_outside_a_runtime_does_not_panic() {
         // Arrange
         let (client, server) =
@@ -1416,6 +1562,179 @@ mod tests {
                 .outgoing
                 .contains_key(&handler.request_id())
         );
+    }
+
+    #[tokio::test]
+    async fn a_stop_sending_after_the_requester_fin_on_an_ended_fetch_ends_its_reading() {
+        // Arrange: taken out of the registry, as a FETCH that has ended is
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-ended-stop", "moqt").await;
+        let (_subscriber, receiver, handler, _sender) =
+            fetch_with_open_response(&client, &server).await;
+        let request_stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .remove(&handler.request_id)
+            .unwrap();
+        let client_request_stream = outgoing_stream(&client, receiver.request_id);
+
+        // Act: FIN, then STOP_SENDING on the publisher's half
+        client_request_stream.sender.close().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        client_request_stream.reader_stop.notify_one();
+        let released = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while Arc::strong_count(&request_stream.sender) > 1 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+
+        // Assert: the task reading the request stream ends
+        assert!(released.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_stop_sending_on_a_fetch_request_stream_resets_both_its_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-stopped-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (_subscriber, mut receiver, handler, _sender) =
+                fetch_with_open_response(&client, &server).await;
+            let request_stream = ControlChannel::of(&server.publisher().session.connection())
+                .requests()
+                .incoming
+                .get(&handler.request_id)
+                .cloned()
+                .unwrap();
+
+            // Act: STOP_SENDING alone, the requester's half left open
+            outgoing_stream(&client, receiver.request_id)
+                .reader_stop
+                .notify_one();
+            let event = next_event(&server).await;
+            let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive()).await;
+            let request_reply = request_stream
+                .sender
+                .send(&messages::encode_empty_request_ok().unwrap())
+                .await;
+
+            // Assert: §5.2 the publisher resets the request and response streams
+            assert_fetch_cancelled_with_reset_request_stream(scheme, event, request_reply);
+            assert!(
+                matches!(&response, Ok(Err(error)) if error.to_string().contains("reset")),
+                "{scheme}: {response:?}"
+            );
+        }
+    }
+
+    /// A FETCH whose requester has sent STOP_SENDING on the response stream
+    /// alone; returns the publisher's data sender and its request stream.
+    async fn fetch_with_stopped_response_stream(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (FetchDataSender, super::RequestStream) {
+        let (_subscriber, receiver, handler, sender) =
+            fetch_with_open_response(client, server).await;
+        // Taken out of the registry, so dropping the receiver leaves the request stream alone.
+        ControlChannel::of(&client.publisher().session.connection())
+            .requests()
+            .outgoing
+            .remove(&receiver.request_id)
+            .unwrap();
+        let request_stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&handler.request_id)
+            .cloned()
+            .unwrap();
+        drop(receiver);
+        let response_stream = request_stream.fetch_response.clone().unwrap();
+        let stopped = tokio::time::timeout(HANDSHAKE_TIMEOUT, response_stream.stopped()).await;
+        assert!(matches!(stopped, Ok(Some(_))), "{stopped:?}");
+        (sender, request_stream)
+    }
+
+    fn assert_fetch_cancelled_with_reset_request_stream(
+        scheme: &str,
+        event: SessionEvent,
+        request_reply: Result<(), TransportSendError>,
+    ) {
+        assert!(
+            matches!(event, SessionEvent::FetchCancel(_)),
+            "{scheme}: {event:?}"
+        );
+        assert!(
+            matches!(request_reply, Err(TransportSendError::ClosedStream)),
+            "{scheme}: {request_reply:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_object_sent_on_a_stopped_fetch_response_resets_both_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-response-stopped-send-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (sender, request_stream) =
+                fetch_with_stopped_response_stream(&client, &server).await;
+            let object = Object {
+                location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+                publisher_priority: 128,
+                status: ObjectStatus::Normal,
+                extension_headers: Default::default(),
+                payload: Bytes::from_static(b"o"),
+                ends_group: false,
+            };
+
+            // Act
+            let sent = sender.send_object(&object).await;
+            let event = next_event(&server).await;
+            let request_reply = request_stream
+                .sender
+                .send(&messages::encode_empty_request_ok().unwrap())
+                .await;
+
+            // Assert: §5.2
+            assert!(sent.is_err(), "{scheme}: {sent:?}");
+            assert_fetch_cancelled_with_reset_request_stream(scheme, event, request_reply);
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_a_stopped_fetch_response_resets_both_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-response-stopped-close-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (sender, request_stream) =
+                fetch_with_stopped_response_stream(&client, &server).await;
+
+            // Act
+            let closed = sender.close().await;
+            let event = next_event(&server).await;
+            let request_reply = request_stream
+                .sender
+                .send(&messages::encode_empty_request_ok().unwrap())
+                .await;
+
+            // Assert: §5.2
+            assert!(closed.is_err(), "{scheme}: {closed:?}");
+            assert_fetch_cancelled_with_reset_request_stream(scheme, event, request_reply);
+        }
     }
 
     #[tokio::test]
@@ -1831,6 +2150,56 @@ mod tests {
         };
         assert_eq!(done.request_id(), subscription.request_id());
         assert_eq!(done.status_code(), PublishDoneCode::GoingAway);
+    }
+
+    fn request_go_away(new_session_uri: &str) -> BytesMut {
+        messages::encode_go_away(&messages::GoAwayMessage {
+            new_session_uri: new_session_uri.to_string(),
+            request_id: None,
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_second_goaway_on_a_request_stream_closes_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-request-goaway-twice", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+        stream.sender.send(&request_go_away("")).await.unwrap();
+
+        // Act
+        stream.sender.send(&request_go_away("")).await.unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+
+        // Assert: §10.4 PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
+    #[tokio::test]
+    async fn a_goaway_with_a_new_session_uri_on_a_request_stream_to_the_server_closes_the_session()
+    {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-request-goaway-uri", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+
+        // Act
+        stream
+            .sender
+            .send(&request_go_away("moqt://elsewhere"))
+            .await
+            .unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+
+        // Assert: §10.4 PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
     }
 
     /// §12.4 DEFAULT PUBLISHER PRIORITY.
@@ -2408,6 +2777,140 @@ mod tests {
             matches!(event, Ok(Ok(SessionEvent::Disconnected()))),
             "{event:?}"
         );
+    }
+
+    /// A SUBSCRIBE_NAMESPACE for "live" that `client` sends on a stream it
+    /// reads itself, or a SUBSCRIBE_TRACKS with `tracks`; returns the stream
+    /// after `server` accepted it.
+    async fn raw_namespace_subscription(
+        client: &crate::Session,
+        server: &crate::Session,
+        tracks: bool,
+    ) -> (StreamSender, MessageReceiver) {
+        let connection = client.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
+        let sender = StreamSender::new(send_stream);
+        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let request_id = connection.control.next_request_id();
+        let prefix = vec!["live".to_string()];
+        let request = if tracks {
+            messages::encode_subscribe_tracks(&messages::SubscribeTracksMessage {
+                request_id,
+                track_namespace_prefix: prefix,
+                authorization_tokens: vec![],
+                forward: true,
+            })
+        } else {
+            messages::encode_subscribe_namespace(&crate::modules::moqt::control_plane::control_messages::messages::subscribe_namespace::SubscribeNamespace {
+                request_id,
+                track_namespace_prefix: prefix,
+                authorization_token: vec![],
+            })
+        };
+        sender.send(&request.unwrap()).await.unwrap();
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        let response = receiver.receive().await.unwrap();
+        assert!(
+            matches!(response, Some(messages::Message::RequestOk(_))),
+            "{response:?}"
+        );
+        (sender, receiver)
+    }
+
+    /// Sends a REQUEST_UPDATE moving the subscription on `stream` to
+    /// `prefix` and returns the handler `server` receives for it.
+    async fn requested_namespace_update(
+        client: &crate::Session,
+        server: &crate::Session,
+        stream: &StreamSender,
+        prefix: &[&str],
+    ) -> crate::namespace::SubscribeNamespaceUpdateHandler {
+        let request_id = client
+            .publisher()
+            .session
+            .connection()
+            .control
+            .next_request_id();
+        let prefix = prefix.iter().map(|field| field.to_string()).collect();
+        stream
+            .send(&request_update(
+                request_id,
+                &[parameters::Parameter::TrackNamespacePrefix(prefix)],
+            ))
+            .await
+            .unwrap();
+        let event = next_event(server).await;
+        let SessionEvent::SubscribeNamespaceUpdate(handler) = event else {
+            panic!("expected SubscribeNamespaceUpdate, got {event:?}");
+        };
+        handler
+    }
+
+    #[tokio::test]
+    async fn an_accepted_namespace_prefix_update_announces_namespaces_under_the_new_prefix() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+
+        // Act
+        handler.ok().await;
+        let answer = receiver.receive().await.unwrap();
+        server
+            .publisher()
+            .publish_namespace("live/room/alice".into())
+            .await
+            .unwrap();
+        let announced = receiver.receive().await.unwrap();
+
+        // Assert: §10.9.2 suffixes follow the updated prefix after the REQUEST_OK
+        assert_eq!(handler.track_namespace_prefix(), "live");
+        assert_eq!(handler.new_track_namespace_prefix(), "live/room");
+        assert_eq!(handler.new_track_namespace_prefix_tuple(), ["live", "room"]);
+        assert_eq!(handler.interest(), NamespaceInterest::Namespaces);
+        assert!(
+            matches!(answer, Some(messages::Message::RequestOk(_))),
+            "{answer:?}"
+        );
+        assert_eq!(
+            announced,
+            Some(messages::Message::Namespace(vec!["alice".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_namespace_prefix_update_ends_the_subscription() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-refused", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let handler = requested_namespace_update(&client, &server, &sender, &["other"]).await;
+
+        // Act
+        handler
+            .error(RequestErrorCode::NamespacePrefixOverlap, String::new())
+            .await;
+        let answer = receiver.receive().await.unwrap();
+        let end = receiver.receive().await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert: §10.2.14 PREFIX_OVERLAP, and §10.9.1 closes the stream
+        assert_eq!(handler.interest(), NamespaceInterest::Tracks);
+        let Some(messages::Message::RequestError(error)) = answer else {
+            panic!("expected REQUEST_ERROR, got {answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::NamespacePrefixOverlap);
+        assert!(end.is_none(), "{end:?}");
+        let SessionEvent::UnsubscribeNamespace(unsubscribed) = event else {
+            panic!("expected UnsubscribeNamespace, got {event:?}");
+        };
+        assert_eq!(unsubscribed.track_namespace_prefix(), "live");
+        assert_eq!(unsubscribed.interest, NamespaceInterest::Tracks);
     }
 
     #[tokio::test]

@@ -70,6 +70,11 @@ impl Session for moqt::Session {
             moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
                 MoqtSessionEvent::SubscribeNamespace(Box::new(subscribe_namespace_handler))
             }
+            moqt::SessionEvent::SubscribeNamespaceUpdate(subscribe_namespace_update_handler) => {
+                MoqtSessionEvent::SubscribeNamespaceUpdate(Box::new(
+                    subscribe_namespace_update_handler,
+                ))
+            }
             moqt::SessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler) => {
                 MoqtSessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler)
             }

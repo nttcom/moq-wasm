@@ -435,6 +435,20 @@ the existing messages once the subscription succeeded; a subscriber that
 handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise never
 answer the PUBLISH before the request timeout.
 
+A draft-18 update of the prefix (`SubscribeNamespaceUpdate`, §10.9.2) is
+authorized for the new prefix and goes through the same sequence
+(`handle_update`). It is refused with PREFIX_OVERLAP when the new prefix
+overlaps another subscription of the session with the same interest, the
+moving one not counted (§10.2.14). Otherwise the new prefix is registered as
+a new subscription would be, the update answered, and the old prefix released
+as an UNSUBSCRIBE_NAMESPACE would release it; then what the new prefix
+matches is offered as above. Tracks the session already receives are not
+PUBLISHed again (an update has no effect on existing subscriptions), and moqt
+sends a namespace once per subscription. An update to the prefix the
+subscription already has is accepted and changes nothing. A refused update
+ends the subscription, which moqt reports as UNSUBSCRIBE_NAMESPACE for the old
+prefix.
+
 ### SUBSCRIBE_UPDATE sequence
 Forward State, Start Location and End Group are applied; Subscriber Priority
 is not. Every downstream registration owns a `watch::Sender<DeliveryControl>`

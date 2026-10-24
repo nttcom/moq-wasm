@@ -52,6 +52,9 @@ use crate::{
                     publish_namespace_handler::PublishNamespaceHandler,
                     subscribe_handler::SubscribeHandler,
                     subscribe_namespace_handler::SubscribeNamespaceHandler,
+                    subscribe_namespace_update_handler::{
+                        NamespaceUpdateAnswerReceiver, SubscribeNamespaceUpdateHandler,
+                    },
                     subscribe_update_handler::{SubscribeUpdateHandler, UpdateAnswerReceiver},
                     track_status_handler::TrackStatusHandler,
                     unsubscribe_handler::UnsubscribeHandler,
@@ -123,6 +126,39 @@ fn refused_track(properties: &[KeyValuePair]) -> Option<(RequestErrorCode, &'sta
         ))
     } else {
         None
+    }
+}
+
+/// §10.4: a request stream carries at most one GOAWAY, and one sent to a
+/// server carries no New Session URI. `false` after closing the session when
+/// this GOAWAY breaks either rule.
+fn accept_request_go_away(scope: &Scope, received_before: bool, new_session_uri: &str) -> bool {
+    let checked = if received_before {
+        Err("received a second GOAWAY on a request stream")
+    } else {
+        scope.connection.check_go_away_uri(new_session_uri)
+    };
+    match checked {
+        Ok(()) => true,
+        Err(reason) => {
+            close_on_violation(scope, reason);
+            false
+        }
+    }
+}
+
+/// The next message on a request stream, or `None` once this side cancelled
+/// the request; the peer's half is then stopped with STOP_SENDING (§3.3.2).
+async fn receive_unless_cancelled(
+    receiver: &mut MessageReceiver,
+    reader_stop: &tokio::sync::Notify,
+) -> Option<Result<Option<Message>, StreamReceiveError>> {
+    tokio::select! {
+        received = receiver.receive() => Some(received),
+        () = reader_stop.notified() => {
+            receiver.stop(super::cancelled());
+            None
+        }
     }
 }
 
@@ -248,18 +284,56 @@ impl IncomingRequestTask {
             }
             Ok(None) | Err(StreamReceiveError::Closed(_)) => return,
         };
-        let Some((request_id, kind, mut baseline)) =
+        let Some((request_id, stream, mut baseline)) =
             Self::accept_request(&context, &sender, message).await
         else {
             return;
         };
+        let mut kind = stream.kind;
         drop(context);
+        let mut go_away_received = false;
+        // A FIN on a FETCH ends only the reading (§3.3.2).
+        let mut reading = true;
+        // §5.2: a FETCH requester cancels with STOP_SENDING on this side's half.
+        let mut watching_stop = kind == RequestStreamKind::Fetch;
         loop {
-            let received = receiver.receive().await;
+            let next = tokio::select! {
+                received = receiver.receive(), if reading => Next::Received(received),
+                stopped = sender.stopped(), if watching_stop => Next::Stopped(stopped),
+                () = stream.reader_stop.notified() => Next::Cancelled,
+            };
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
+            let received = match next {
+                Next::Received(received) => received,
+                Next::Stopped(stopped) => {
+                    watching_stop = false;
+                    if stopped.is_some() {
+                        // Cancelling notifies `reader_stop`, which ends this task.
+                        fetch_cancelled(&context, request_id).await;
+                    }
+                    if !reading {
+                        return;
+                    }
+                    continue;
+                }
+                Next::Cancelled => {
+                    if reading {
+                        receiver.stop(super::cancelled());
+                    }
+                    return;
+                }
+            };
             match received {
+                Ok(Some(Message::GoAway(go_away))) => {
+                    if !accept_request_go_away(&context, go_away_received, &go_away.new_session_uri)
+                    {
+                        return;
+                    }
+                    go_away_received = true;
+                    tracing::debug!(request_id, "per-request GOAWAY ignored");
+                }
                 Ok(Some(message)) => {
                     match Self::follow_up(
                         &context,
@@ -276,15 +350,49 @@ impl IncomingRequestTask {
                             drop(context);
                             answer_update(&sender, answer_receiver).await;
                         }
+                        FollowUp::AnswerNamespaceUpdate(answer_receiver, prefix) => {
+                            drop(context);
+                            // `_sent` is dropped once the answer is on the stream.
+                            let (answer, _sent) = match answer_receiver.await {
+                                Ok((answer, sent)) => (answer, Some(sent)),
+                                Err(_) => (
+                                    Err((
+                                        RequestErrorCode::NotSupported,
+                                        "namespace prefix update not handled".to_string(),
+                                    )),
+                                    None,
+                                ),
+                            };
+                            let Some(context) = Scope::of(&connection) else {
+                                return;
+                            };
+                            let Err((code, reason)) = answer else {
+                                kind = context
+                                    .channel()
+                                    .move_namespace_subscription(request_id, &kind, prefix, &sender)
+                                    .await;
+                                continue;
+                            };
+                            // §10.9.1: a failed update closes the stream, which
+                            // ends the subscription as the peer's withdrawal would.
+                            Self::reject(&sender, code, &reason).await;
+                            Self::peer_ended(&context, request_id, kind).await;
+                            return;
+                        }
                         FollowUp::Done => return,
                     }
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
                 // §3.3.2: a FIN does not cancel a FETCH; its stream ends once
                 // the response is done (§5.2).
-                Ok(None) if kind == RequestStreamKind::Fetch => return,
+                Ok(None) if kind == RequestStreamKind::Fetch => {
+                    reading = false;
+                    if !watching_stop {
+                        return;
+                    }
+                }
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
-                    Self::peer_ended(&context, request_id, kind);
+                    Self::peer_ended(&context, request_id, kind).await;
                     return;
                 }
                 Err(
@@ -304,7 +412,7 @@ impl IncomingRequestTask {
         scope: &Scope,
         sender: &Arc<StreamSender>,
         message: Message,
-    ) -> Option<(RequestId, RequestStreamKind, Option<SubscribeUpdate>)> {
+    ) -> Option<(RequestId, RequestStream, Option<SubscribeUpdate>)> {
         let channel = scope.channel();
         let request_id = match &message {
             Message::Subscribe(m) | Message::TrackStatus(m) => m.request_id,
@@ -360,8 +468,8 @@ impl IncomingRequestTask {
                 publish,
                 track_properties,
             } => {
-                if let Some((code, _)) = refused_track(&track_properties) {
-                    Self::reject(sender, code).await;
+                if let Some((code, reason)) = refused_track(&track_properties) {
+                    Self::reject(sender, code, reason).await;
                     return None;
                 }
                 default_publisher_priority =
@@ -410,22 +518,21 @@ impl IncomingRequestTask {
             ),
             _ => unreachable!("non-request messages returned above"),
         };
+        let stream = RequestStream {
+            default_publisher_priority,
+            ..RequestStream::new(kind, sender.clone())
+        };
         // Registered before the event, so a handler can answer at once.
-        channel.requests().incoming.insert(
-            request_id,
-            RequestStream {
-                kind: kind.clone(),
-                sender: sender.clone(),
-                default_publisher_priority,
-                fetch_end: Default::default(),
-            },
-        );
+        channel
+            .requests()
+            .incoming
+            .insert(request_id, stream.clone());
         emit(scope, event);
-        Some((request_id, kind, baseline))
+        Some((request_id, stream, baseline))
     }
 
-    async fn reject(sender: &StreamSender, code: RequestErrorCode) {
-        let Ok(message) = messages::encode_request_error(code, "") else {
+    async fn reject(sender: &StreamSender, code: RequestErrorCode, reason: &str) {
+        let Ok(message) = messages::encode_request_error(code, reason) else {
             return;
         };
         if sender.send(&message).await.is_ok() {
@@ -453,6 +560,32 @@ impl IncomingRequestTask {
                 };
                 let update = apply_update(baseline, update.request_id, update.parameters);
                 FollowUp::AnswerUpdate(emit_update(scope, update))
+            }
+            (
+                RequestStreamKind::SubscribeNamespace(prefix)
+                | RequestStreamKind::SubscribeTracks(prefix),
+                Message::RequestUpdate(update),
+            ) => {
+                let new_prefix = update
+                    .parameters
+                    .into_iter()
+                    .filter_map(|parameter| match parameter {
+                        Parameter::TrackNamespacePrefix(prefix) => Some(prefix),
+                        _ => None,
+                    })
+                    .last();
+                let Some(new_prefix) = new_prefix else {
+                    send_update_answer(sender, None).await;
+                    return FollowUp::Continue;
+                };
+                let interest = match kind {
+                    RequestStreamKind::SubscribeNamespace(_) => NamespaceInterest::Namespaces,
+                    _ => NamespaceInterest::Tracks,
+                };
+                let (handler, answer_receiver) =
+                    SubscribeNamespaceUpdateHandler::new(prefix, &new_prefix, interest);
+                emit(scope, SessionEvent::SubscribeNamespaceUpdate(handler));
+                FollowUp::AnswerNamespaceUpdate(answer_receiver, new_prefix)
             }
             // §10.14: the subscriber cannot update a TRACK_STATUS.
             (RequestStreamKind::TrackStatus, Message::RequestUpdate(_)) => {
@@ -482,10 +615,6 @@ impl IncomingRequestTask {
                 scope.channel().take_incoming(request_id);
                 FollowUp::Done
             }
-            (_, Message::GoAway(_)) => {
-                tracing::debug!(request_id, "per-request GOAWAY ignored");
-                FollowUp::Continue
-            }
             _ => {
                 close_on_violation(scope, "unexpected message on a request stream");
                 FollowUp::Done
@@ -496,7 +625,11 @@ impl IncomingRequestTask {
     /// The peer closed or reset its half: for an open request, that
     /// withdraws it (§3.3.2), as draft-14's UNSUBSCRIBE / FETCH_CANCEL /
     /// PUBLISH_NAMESPACE_DONE / UNSUBSCRIBE_NAMESPACE would.
-    fn peer_ended(scope: &Scope, request_id: RequestId, kind: RequestStreamKind) {
+    async fn peer_ended(scope: &Scope, request_id: RequestId, kind: RequestStreamKind) {
+        if kind == RequestStreamKind::Fetch {
+            fetch_cancelled(scope, request_id).await;
+            return;
+        }
         if scope.channel().take_incoming(request_id).is_none() {
             return;
         }
@@ -506,11 +639,7 @@ impl IncomingRequestTask {
                 &scope.connection,
                 Unsubscribe { request_id },
             )),
-            RequestStreamKind::Fetch => SessionEvent::FetchCancel(FetchCancelHandler::new(
-                scope.session.clone(),
-                &scope.connection,
-                FetchCancel::new(request_id),
-            )),
+            RequestStreamKind::Fetch => unreachable!("a FETCH returned above"),
             RequestStreamKind::PublishNamespace(namespace) => SessionEvent::PublishNamespaceDone(
                 PublishNamespaceDoneHandler::new(PublishNamespaceDone::new(namespace)),
             ),
@@ -539,12 +668,43 @@ impl IncomingRequestTask {
     }
 }
 
+/// §5.2: the peer cancelled the FETCH it sent as `request_id`, by
+/// STOP_SENDING on either of its streams or by resetting its half of the
+/// request stream. Its request and response streams are reset and the
+/// application hears `FetchCancel`, unless the FETCH had ended already.
+pub(super) async fn fetch_cancelled(scope: &Scope, request_id: RequestId) {
+    if !scope.channel().reset_cancelled_fetch(request_id).await {
+        return;
+    }
+    emit(
+        scope,
+        SessionEvent::FetchCancel(FetchCancelHandler::new(
+            scope.session.clone(),
+            &scope.connection,
+            FetchCancel::new(request_id),
+        )),
+    );
+}
+
+/// What a peer's request stream yields next.
+enum Next {
+    Received(Result<Option<Message>, StreamReceiveError>),
+    /// The peer's STOP_SENDING code on this side's half, `None` once it can
+    /// no longer send one.
+    Stopped(Option<u64>),
+    /// This side cancelled the request.
+    Cancelled,
+}
+
 /// What reading the next message of a peer's request stream leads to.
 enum FollowUp {
     Continue,
     /// Answer the REQUEST_UPDATE once its handler is answered or dropped,
     /// then continue.
     AnswerUpdate(UpdateAnswerReceiver),
+    /// Move the namespace subscription to the prefix once the handler
+    /// accepts, or end it when the handler refuses or is dropped (§10.9).
+    AnswerNamespaceUpdate(NamespaceUpdateAnswerReceiver, Vec<String>),
     Done,
 }
 
@@ -639,8 +799,7 @@ fn apply_update(
 pub(crate) struct OutgoingRequestTask {
     pub(super) connection: Weak<Connection>,
     pub(super) request_id: RequestId,
-    pub(super) kind: RequestStreamKind,
-    pub(super) sender: Arc<StreamSender>,
+    pub(super) stream: RequestStream,
     pub(super) receiver: MessageReceiver,
     pub(super) response: tokio::sync::oneshot::Sender<ResponseMessage>,
     pub(super) group_order: GroupOrder,
@@ -659,7 +818,7 @@ impl OutgoingRequestTask {
         }
     }
 
-    pub(crate) fn run(self) {
+    pub(super) fn run(self) {
         executor::spawn("draft-18 outgoing request", self.read().in_current_span());
     }
 
@@ -667,13 +826,20 @@ impl OutgoingRequestTask {
         let Self {
             connection,
             request_id,
-            kind,
-            sender,
+            stream,
             mut receiver,
             response,
             group_order,
         } = self;
-        let first = receiver.receive().await;
+        let RequestStream {
+            kind,
+            sender,
+            reader_stop,
+            ..
+        } = stream;
+        let Some(first) = receive_unless_cancelled(&mut receiver, &reader_stop).await else {
+            return;
+        };
         let Some(context) = Scope::of(&connection) else {
             return;
         };
@@ -719,8 +885,12 @@ impl OutgoingRequestTask {
         // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn.
         let mut namespaces: HashSet<Vec<String>> = HashSet::new();
         loop {
-            let received = receiver.receive().await;
+            let received = receive_unless_cancelled(&mut receiver, &reader_stop).await;
             let Some(context) = Scope::of(&connection) else {
+                return;
+            };
+            let Some(received) = received else {
+                Self::withdraw_namespaces(&context, namespaces);
                 return;
             };
             match received {
@@ -780,7 +950,11 @@ impl OutgoingRequestTask {
                     }
                     Self::namespace_withdrawn(&context, namespace);
                 }
+                // The request ends at its first GOAWAY; a second is never read.
                 Ok(Some(Message::GoAway(go_away))) => {
+                    if !accept_request_go_away(&context, false, &go_away.new_session_uri) {
+                        return;
+                    }
                     tracing::info!(
                         request_id,
                         new_session_uri = go_away.new_session_uri,
