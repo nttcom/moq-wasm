@@ -126,6 +126,7 @@ impl Track {
                             });
                         }
                     }
+                    Ok(Fetch::UnknownRange { .. }) => {}
                     Ok(Fetch::End) | Err(_) => reading.current_group = None,
                 }
             }

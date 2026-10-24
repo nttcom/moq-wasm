@@ -581,11 +581,9 @@ impl Subscriber {
             IncomingObject::Subgroup(first) => Ok(DataReceiver::Stream(
                 StreamDataReceiverFactory::new(first, receiver),
             )),
-            IncomingObject::Datagram(object) => Ok(DataReceiver::Datagram(DatagramReceiver::new(
-                track_alias,
-                object,
-                receiver,
-            ))),
+            IncomingObject::Datagram(datagram) => Ok(DataReceiver::Datagram(
+                DatagramReceiver::new(track_alias, datagram.object, receiver),
+            )),
         }
     }
 }

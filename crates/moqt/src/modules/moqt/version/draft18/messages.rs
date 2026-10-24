@@ -113,7 +113,12 @@ const REQUEST_OK_PARAMETERS: &[u64] = &[
 // Track Property types (§15.8) the model maps.
 const OBJECT_DELIVERY_TIMEOUT_PROPERTY: u64 = 0x02;
 const MAX_CACHE_DURATION_PROPERTY: u64 = 0x04;
+const DEFAULT_PUBLISHER_PRIORITY_PROPERTY: u64 = 0x0E;
+const IMMUTABLE_PROPERTIES: u64 = 0x0B;
 const DEFAULT_PUBLISHER_GROUP_ORDER_PROPERTY: u64 = 0x22;
+/// §12.4: the priority of a track whose control message omits DEFAULT
+/// PUBLISHER PRIORITY.
+pub(crate) const DEFAULT_PUBLISHER_PRIORITY: u8 = 128;
 /// §2.5.1.
 const MANDATORY_TRACK_PROPERTIES: std::ops::RangeInclusive<u64> = 0x4000..=0x7FFF;
 
@@ -273,7 +278,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
         SUBSCRIBE_OK => Message::SubscribeOk(SubscribeOkMessage {
             track_alias: get_vi64(buf)?,
             parameters: get_parameters(buf, SUBSCRIBE_OK_PARAMETERS)?,
-            track_properties: get_key_value_pairs(buf)?,
+            track_properties: get_track_properties(buf)?,
         }),
         REQUEST_UPDATE => Message::RequestUpdate(RequestUpdateMessage {
             request_id: get_vi64(buf)?,
@@ -304,7 +309,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
             },
             end_location: get_location(buf)?,
             parameters: get_parameters(buf, &[])?,
-            track_properties: get_key_value_pairs(buf)?,
+            track_properties: get_track_properties(buf)?,
         }),
         PUBLISH_NAMESPACE => {
             let request_id = get_vi64(buf)?;
@@ -339,7 +344,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
         }
         REQUEST_OK | PUBLISH_OK => Message::RequestOk(RequestOkMessage {
             parameters: get_parameters(buf, REQUEST_OK_PARAMETERS)?,
-            track_properties: get_key_value_pairs(buf)?,
+            track_properties: get_track_properties(buf)?,
         }),
         REQUEST_ERROR => Message::RequestError(decode_request_error(buf)?),
         _ => {
@@ -589,14 +594,54 @@ fn track_properties(
     properties
 }
 
+/// §12.7: a property is searched in the mutable list, then inside
+/// Immutable Properties.
+fn searched_properties(properties: &[KeyValuePair]) -> Vec<KeyValuePair> {
+    let mut searched = properties.to_vec();
+    for property in properties {
+        if let KeyValuePair {
+            key: IMMUTABLE_PROPERTIES,
+            value: VariantType::Odd(contents),
+        } = property
+            && let Ok(immutable) = get_key_value_pairs(&mut contents.clone())
+        {
+            searched.extend(immutable);
+        }
+    }
+    searched
+}
+
 fn varint_property_value(properties: &[KeyValuePair], key: u64) -> Option<u64> {
-    properties.iter().find_map(|property| match property {
-        KeyValuePair {
-            key: found,
-            value: VariantType::Even(value),
-        } if *found == key => Some(*value),
-        _ => None,
-    })
+    searched_properties(properties)
+        .into_iter()
+        .find_map(|property| match property {
+            KeyValuePair {
+                key: found,
+                value: VariantType::Even(value),
+            } if found == key => Some(value),
+            _ => None,
+        })
+}
+
+/// The Track Properties ending a message (§2.5). Priorities above 255 are
+/// invalid (§12.4) and close the session with PROTOCOL_VIOLATION.
+fn get_track_properties(buf: &mut Bytes) -> Result<Vec<KeyValuePair>, DecodeError> {
+    let properties = get_key_value_pairs(buf)?;
+    if varint_property_value(&properties, DEFAULT_PUBLISHER_PRIORITY_PROPERTY)
+        .is_some_and(|priority| priority > u64::from(u8::MAX))
+    {
+        return Err(DecodeError::protocol_violation(
+            "DEFAULT PUBLISHER PRIORITY above 255",
+        ));
+    }
+    Ok(properties)
+}
+
+/// §12.4.
+pub(crate) fn default_publisher_priority(properties: &[KeyValuePair]) -> u8 {
+    varint_property_value(properties, DEFAULT_PUBLISHER_PRIORITY_PROPERTY)
+        .and_then(|priority| u8::try_from(priority).ok())
+        .unwrap_or(DEFAULT_PUBLISHER_PRIORITY)
 }
 
 fn property_group_order(properties: &[KeyValuePair]) -> GroupOrder {
@@ -606,10 +651,26 @@ fn property_group_order(properties: &[KeyValuePair]) -> GroupOrder {
     }
 }
 
+/// §12.7: Immutable Properties that do not parse, or that hold Immutable
+/// Properties, make the track malformed.
+pub(crate) fn has_malformed_immutable_properties(properties: &[KeyValuePair]) -> bool {
+    properties.iter().any(|property| match property {
+        KeyValuePair {
+            key: IMMUTABLE_PROPERTIES,
+            value: VariantType::Odd(contents),
+        } => get_key_value_pairs(&mut contents.clone()).map_or(true, |immutable| {
+            immutable
+                .iter()
+                .any(|property| property.key == IMMUTABLE_PROPERTIES)
+        }),
+        _ => false,
+    })
+}
+
 /// §2.5.1: none is understood, so any Mandatory Track Property means the
 /// track must not be processed.
 pub(crate) fn has_mandatory_track_property(properties: &[KeyValuePair]) -> bool {
-    properties
+    searched_properties(properties)
         .iter()
         .any(|property| MANDATORY_TRACK_PROPERTIES.contains(&property.key))
 }
@@ -638,7 +699,7 @@ fn decode_publish(buf: &mut Bytes) -> Result<(Publish, Vec<KeyValuePair>), Decod
     let (track_namespace_tuple, track_name) = get_full_track_name(buf)?;
     let track_alias = get_vi64(buf)?;
     let parameters = get_parameters(buf, PUBLISH_PARAMETERS)?;
-    let properties = get_key_value_pairs(buf)?;
+    let properties = get_track_properties(buf)?;
     let forward = parameters
         .iter()
         .find_map(|parameter| match parameter {
@@ -1448,5 +1509,91 @@ mod tests {
         // Act / Assert
         assert!(has_mandatory_track_property(&properties));
         assert!(!has_mandatory_track_property(&[]));
+    }
+
+    #[test]
+    fn a_default_publisher_priority_above_255_is_a_protocol_violation() {
+        // Arrange
+        let mut payload = BytesMut::new();
+        put_vi64(&mut payload, 1);
+        put_parameters(&mut payload, &[]).unwrap();
+        put_key_value_pairs(&mut payload, &[varint_property(0x0E, 256)]).unwrap();
+
+        // Act
+        let result = decode_message(SUBSCRIBE_OK, payload.freeze());
+
+        // Assert: §12.4
+        assert!(
+            matches!(
+                result,
+                Err(DecodeError::Violation {
+                    code: TerminationErrorCode::ProtocolViolation,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// §12.7 Immutable Properties holding `properties`.
+    fn immutable(properties: &[KeyValuePair]) -> KeyValuePair {
+        let mut contents = BytesMut::new();
+        put_key_value_pairs(&mut contents, properties).unwrap();
+        KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(contents.freeze()),
+        }
+    }
+
+    #[test]
+    fn track_properties_inside_immutable_properties_are_found() {
+        // Arrange
+        let properties = vec![immutable(&[varint_property(0x04, 50)])];
+        let mut subscribe_ok = BytesMut::new();
+        put_vi64(&mut subscribe_ok, 1);
+        put_parameters(&mut subscribe_ok, &[]).unwrap();
+        put_key_value_pairs(&mut subscribe_ok, &properties).unwrap();
+        let mut publish = BytesMut::new();
+        put_vi64(&mut publish, 1);
+        put_full_track_name(&mut publish, &["ns".to_string()], "track");
+        put_vi64(&mut publish, 2);
+        put_parameters(&mut publish, &[]).unwrap();
+        put_key_value_pairs(&mut publish, &properties).unwrap();
+        let mut fetch_ok = BytesMut::new();
+        fetch_ok.put_u8(0);
+        put_location(&mut fetch_ok, &location(1, 0));
+        put_parameters(&mut fetch_ok, &[]).unwrap();
+        put_key_value_pairs(&mut fetch_ok, &properties).unwrap();
+
+        // Act
+        let subscribe_ok = decode(frame(SUBSCRIBE_OK, &subscribe_ok).unwrap());
+        let publish = decode(frame(PUBLISH, &publish).unwrap());
+        let fetch_ok = decode(frame(FETCH_OK, &fetch_ok).unwrap());
+
+        // Assert: §12.7
+        let Message::SubscribeOk(subscribe_ok) = subscribe_ok else {
+            panic!("expected SUBSCRIBE_OK");
+        };
+        assert_eq!(subscribe_ok.into_subscribe_ok(1).max_duration, Some(50));
+        let Message::Publish { publish, .. } = publish else {
+            panic!("expected PUBLISH");
+        };
+        assert_eq!(publish.max_duration, Some(50));
+        let Message::FetchOk(fetch_ok) = fetch_ok else {
+            panic!("expected FETCH_OK");
+        };
+        assert_eq!(
+            fetch_ok
+                .into_fetch_ok(1, GroupOrder::Ascending)
+                .max_cache_duration,
+            Some(50)
+        );
+        assert_eq!(
+            default_publisher_priority(&[immutable(&[varint_property(0x0E, 9)])]),
+            9
+        );
+        assert!(has_mandatory_track_property(&[immutable(&[
+            varint_property(0x4000, 1)
+        ])]));
     }
 }

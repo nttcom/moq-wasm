@@ -99,7 +99,7 @@ async fn fetch_joining_group(
     loop {
         match receiver.receive().await? {
             Fetch::Object(object) if !object.payload.is_empty() => latest = Some(object.payload),
-            Fetch::Object(_) => {}
+            Fetch::Object(_) | Fetch::UnknownRange { .. } => {}
             Fetch::End => return Ok(latest),
         }
     }

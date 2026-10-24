@@ -527,6 +527,9 @@ async fn carry_subscription(
                     previous: false,
                 }),
                 open_subgroups: OpenSubgroups::new(),
+                default_publisher_priority: connection
+                    .control
+                    .default_publisher_priority(subscribe_ok.request_id),
             },
         )
         .await
@@ -1137,6 +1140,7 @@ mod tests {
             loop {
                 match receiver.receive().await {
                     Ok(Fetch::Object(object)) => rest.push(object.payload),
+                    Ok(Fetch::UnknownRange { .. }) => {}
                     Ok(Fetch::End) => return Ok(rest),
                     Err(error) => return Err(error),
                 }

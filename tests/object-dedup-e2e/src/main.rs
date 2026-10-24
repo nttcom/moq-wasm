@@ -160,6 +160,9 @@ async fn run_fetch(
                 );
                 received.push((obj.location.group_id, obj.location.object_id, payload));
             }
+            Ok(Fetch::UnknownRange { last }) => {
+                return Err(anyhow::anyhow!("[bob] unknown range through {last:?}"));
+            }
             Ok(Fetch::End) => break,
             Err(e) => return Err(anyhow::anyhow!("[bob] fetch failed: {}", e)),
         }

@@ -183,6 +183,15 @@ call through the adapter; a draft never gets a task of its own (see
     it with FIN. The cancelling notifications (UNSUBSCRIBE, FETCH_CANCEL,
     PUBLISH_NAMESPACE_DONE / _CANCEL, UNSUBSCRIBE_NAMESPACE) reset it, and so
     does dropping a `PendingResponse` before a success response (§3.3.2).
+    When the peer ends a request, this side's half ends with FIN.
+  - A FETCH's state lasts until its response stream ends (§5.2). The
+    publisher ends the request stream with FIN once both its FETCH_OK and the
+    FIN or reset of the response stream (`FetchDataSender::close` /
+    `reset`, or its drop, which resets an unfinished response) are sent. The requester ends its half with FIN when the
+    `FetchDataReceiver` reads the response stream's end or reset
+    (`FetchRequestEnd`), and cancels the FETCH when the receiver is dropped
+    before. A FIN from the requester does not cancel a FETCH; only a reset
+    does.
   - `request_streams` reads the streams. A request the peer opens becomes the
     draft-14 event once its Request ID passes the parity and reuse checks
     (§10.1). The peer ending an open request raises the event its draft-14
@@ -191,9 +200,17 @@ call through the adapter; a draft never gets a task of its own (see
   - `messages` / `parameters` encode the draft-14 structs: Message Parameters
     and Track Properties carry the former fields, absent ones take their
     draft-18 defaults, and responses take their Request ID from the stream.
+    A Track Property is looked up in the mutable list and inside Immutable
+    Properties (§12.7). Immutable Properties that do not parse, or that hold
+    Immutable Properties, refuse the track with MALFORMED_TRACK.
   - `objects` is the draft-18 data plane. FETCH objects are delta encoded
     against the previous one, so `FetchDataSender` keeps a `FetchEncoder` and
     `accept_fetch_receiver` passes the FETCH's group order to the reader.
+    A subgroup header or datagram that omits its priority takes the
+    DEFAULT PUBLISHER PRIORITY its subscription's SUBSCRIBE_OK or PUBLISH
+    announced (§12.4, 128 when absent): the request stream keeps the value,
+    and the subscription's object sink applies it to each object it
+    delivers, those buffered before the response included.
   - Messages draft-14 lacks map onto its events:
     - A `publish_namespace` matching the peer's SUBSCRIBE_NAMESPACE is sent as
       NAMESPACE on that stream and accepted at once.
@@ -203,7 +220,9 @@ call through the adapter; a draft never gets a task of its own (see
       send nothing.
     - SUBSCRIBE_TRACKS raises `SubscribeNameSpace` and gets no NAMESPACE.
     - A per-request GOAWAY ends the request as a peer cancellation with
-      GOING_AWAY.
+      GOING_AWAY. On our SUBSCRIBE_NAMESPACE it raises
+      `PublishNamespaceDone` for every namespace still announced, as the
+      end of the stream does (§10.18).
     - REQUEST_UPDATE is applied as a delta to the request's current state
       (§10.9), then raised as `SubscribeUpdate`. Its REQUEST_OK waits for
       `SubscribeUpdateHandler::ok`, which gives the LARGEST_OBJECT (§10.2.11),
@@ -588,11 +607,14 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     the status, and only a datagram with a payload sends it back. FETCH cannot
     carry it, so a fetched copy of that object has `ends_group` false.
   - `FetchDataSender::send_object(&Object)` / `FetchDataReceiver::receive()
-    -> Fetch::{Object(Object), End}` do the same for FETCH responses
-    (`FetchObjectField::from_object` / `into_object`): a datagram object is
-    sent with its Object ID as the Subgroup ID (§10.4.4) and a zero-length
-    object as its status. The FETCH_HEADER is consumed by moqt and not
-    returned.
+    -> Fetch::{Object(Object), UnknownRange { last }, End}` do the same for
+    FETCH responses (`FetchObjectField::from_object` / `into_object`): a
+    datagram object is sent with its Object ID as the Subgroup ID (§10.4.4)
+    and a zero-length object as its status. The FETCH_HEADER is consumed by
+    moqt and not returned. `UnknownRange` is draft-18's End of Unknown Range
+    (§11.4.4.2): the objects through `last` were not sent and may exist, so
+    `End` after it does not mean the range is complete. draft-14 never
+    yields it; draft-18's End of Non-Existent Range yields nothing.
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

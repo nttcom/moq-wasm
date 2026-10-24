@@ -184,7 +184,7 @@ impl Publisher {
             .connection_of(request_id)
             .ok_or_else(|| anyhow::anyhow!("the connection of FETCH {request_id} is gone"))?;
         let send_stream = connection.transport.open_uni().await?;
-        FetchDataSender::new(connection.control.version(), send_stream, wire_request_id).await
+        FetchDataSender::new(&connection, send_stream, wire_request_id).await
     }
 
     fn send_targets(&self, subscription: &Subscription) -> SendTargets {
