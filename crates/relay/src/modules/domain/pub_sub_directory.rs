@@ -390,19 +390,22 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Whether `session_id` already holds a subscription overlapping this one:
-    /// either prefix is a field-wise prefix of the other (draft-14 §9.28).
+    /// either prefix is a field-wise prefix of the other and both want
+    /// namespaces or both want tracks (draft-14 §9.28, draft-18 §10.18 /
+    /// §10.19).
     pub(crate) fn has_overlapping_namespace_subscription(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
+        interest: NamespaceInterest,
     ) -> bool {
         self.subscriber_namespaces.iter().any(|entry| {
             (is_namespace_prefix(entry.key(), track_namespace_prefix)
                 || is_namespace_prefix(track_namespace_prefix, entry.key()))
-                && entry
-                    .value()
-                    .iter()
-                    .any(|subscription| subscription.key().0 == session_id)
+                && entry.value().iter().any(|subscription| {
+                    let (subscriber, held) = *subscription.key();
+                    subscriber == session_id && covers(held, interest)
+                })
         })
     }
 
@@ -1172,8 +1175,13 @@ mod tests {
             "room/alice".to_string(),
             namespaces_and_tracks(SessionPeer::Client),
         );
-        let overlaps =
-            |session_id, prefix| table.has_overlapping_namespace_subscription(session_id, prefix);
+        let overlaps = |session_id, prefix| {
+            table.has_overlapping_namespace_subscription(
+                session_id,
+                prefix,
+                NamespaceInterest::NamespacesAndTracks,
+            )
+        };
 
         // Act / Assert: draft-14 §9.28
         assert!(overlaps(1, "room"));
@@ -1183,6 +1191,24 @@ mod tests {
         assert!(!overlaps(1, "room/bob"));
         assert!(!overlaps(1, "room/alice2"));
         assert!(!overlaps(2, "room"));
+    }
+
+    #[test]
+    fn subscribe_namespace_and_subscribe_tracks_overlap_only_their_own_kind() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            client_subscription(NamespaceInterest::Namespaces),
+        );
+        let overlaps =
+            |prefix, interest| table.has_overlapping_namespace_subscription(1, prefix, interest);
+
+        // Act / Assert: draft-18 §10.18 / §10.19
+        assert!(!overlaps("room", NamespaceInterest::Tracks));
+        assert!(overlaps("room/alice", NamespaceInterest::Namespaces));
+        assert!(overlaps("room", NamespaceInterest::NamespacesAndTracks));
     }
 
     #[test]

@@ -419,10 +419,12 @@ the PUBLISH_DONE TRACK_ENDED answer above.
 Also handles draft-18 SUBSCRIBE_TRACKS, which moqt raises as the same event
 with `NamespaceInterest::Tracks`. Refuse with PREFIX_OVERLAP a subscription
 whose prefix is a prefix of, equal to or an extension of one the session
-already holds (draft-14 §9.28). Otherwise register the prefix under the
-session and interest (and, for the first client subscriber of the prefix,
-its Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward what
-already matches and the subscription asks for: for namespaces, PUBLISH_NAMESPACE for
+already holds for an overlapping interest (draft-14 §9.28; draft-18 §10.18 /
+§10.19 compare SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS only with their own
+kind). Otherwise register the prefix under the session and interest (and,
+for the first client subscriber of the prefix, its Redis route), reply
+SUBSCRIBE_NAMESPACE_OK, and only then forward what already
+matches and the subscription asks for: for namespaces, PUBLISH_NAMESPACE for
 published namespaces (reply handled by a `PublishNamespaceResponseTask`) and
 then for remote namespace-publisher routes; for tracks, a `DownstreamPublish`
 with the subscription's Forward State for each published track (one per

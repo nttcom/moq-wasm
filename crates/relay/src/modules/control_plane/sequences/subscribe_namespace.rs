@@ -51,7 +51,11 @@ impl SubscribeNameSpace {
             ?subscription,
             "SequenceHandler::SubscribeNamespace"
         );
-        if table.has_overlapping_namespace_subscription(session_id, track_namespace_prefix) {
+        if table.has_overlapping_namespace_subscription(
+            session_id,
+            track_namespace_prefix,
+            subscription.interest,
+        ) {
             tracing::info!(
                 track_namespace_prefix = %track_namespace_prefix,
                 "namespace subscription overlaps another of the session"
@@ -420,7 +424,7 @@ mod tests {
         subscribe_namespace(&ctx, handler.clone()).await;
         let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
 
-        // Assert: draft-14 §9.28
+        // Assert: draft-14 §9.28 / draft-18 §10.18
         assert_eq!(*handler.sent.lock().unwrap(), ["SUBSCRIBE_NAMESPACE_ERROR"]);
         assert_eq!(
             *handler.error_codes.lock().unwrap(),
