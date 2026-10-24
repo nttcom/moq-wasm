@@ -312,7 +312,7 @@ fn parse_f32(value: &str) -> Option<f32> {
     value.trim().parse::<f32>().ok()
 }
 
-fn find_text(node: Node, tag: &str) -> Option<String> {
+pub(crate) fn find_text(node: Node, tag: &str) -> Option<String> {
     node.descendants()
         .find(|child| has_tag(*child, tag))
         .and_then(|child| child.text())
