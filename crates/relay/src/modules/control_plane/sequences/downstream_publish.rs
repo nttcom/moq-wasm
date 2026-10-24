@@ -20,7 +20,7 @@ use crate::modules::{
         delivery_control::DeliveryControl,
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
-            entry::{JoinPoint, PublishDoneReason},
+            entry::{DownstreamSubscription, PublishDoneReason},
         },
         session_id::SessionId,
         track_key::TrackKey,
@@ -85,8 +85,11 @@ impl DownstreamPublish {
             subscriber_session_id,
             request_id,
             subscriber_peer,
-            track_key.clone(),
-            JoinPoint::new(&filter_type, largest_location),
+            DownstreamSubscription {
+                track_key: track_key.clone(),
+                filter_type,
+                joining_location: largest_location,
+            },
             DeliveryControl::new(forward, &filter_type, largest_location),
         ) else {
             let track_ended = PublishDoneReason {
@@ -204,7 +207,7 @@ mod tests {
         send_publish(&ctx).await.unwrap();
 
         // Assert
-        let registered = ctx
+        let (registered, _) = ctx
             .table
             .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
             .expect("PUBLISH_OK should register a downstream subscription");

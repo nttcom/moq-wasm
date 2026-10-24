@@ -614,7 +614,39 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 }
 
-pub(crate) struct MockFetchHandler;
+/// `joining_rule` stands in for the session draft's Joining FETCH rule.
+pub(crate) struct MockFetchHandler {
+    pub(crate) fetch_params: moqt::fetch::FetchParams,
+    pub(crate) joining_rule:
+        fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
+}
+
+impl MockFetchHandler {
+    /// Permits every Joining FETCH.
+    pub(crate) fn fetching(fetch_params: moqt::fetch::FetchParams) -> Self {
+        Self {
+            fetch_params,
+            joining_rule: |_| Ok(()),
+        }
+    }
+}
+
+impl Default for MockFetchHandler {
+    fn default() -> Self {
+        Self::fetching(moqt::fetch::FetchParams::Standalone {
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            start_location: moqt::object::Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            end_location: moqt::object::Location {
+                group_id: 1,
+                object_id: 0,
+            },
+        })
+    }
+}
 
 #[async_trait::async_trait]
 impl FetchHandler for MockFetchHandler {
@@ -627,18 +659,14 @@ impl FetchHandler for MockFetchHandler {
     }
 
     fn fetch_params(&self) -> moqt::fetch::FetchParams {
-        moqt::fetch::FetchParams::Standalone {
-            track_namespace: vec!["ns".to_string()],
-            track_name: "track".to_string(),
-            start_location: moqt::object::Location {
-                group_id: 0,
-                object_id: 0,
-            },
-            end_location: moqt::object::Location {
-                group_id: 1,
-                object_id: 0,
-            },
-        }
+        self.fetch_params.clone()
+    }
+
+    fn check_joining(
+        &self,
+        subscription: moqt::fetch::JoinedSubscription,
+    ) -> Result<(), moqt::fetch::JoiningFetchRefusal> {
+        (self.joining_rule)(subscription)
     }
 
     async fn ok(

@@ -433,16 +433,29 @@ Start Location, the smaller End Group). An update that widens the range is
 not closed with the PROTOCOL_VIOLATION §9.10 allows: its widening part is
 logged and ignored. An update for no registered subscription is logged and
 dropped. The upstream subscription keeps Forward 1 and its own range, so the
-cache keeps filling for FETCH.
+cache keeps filling for FETCH. Every update is answered through
+`SubscribeUpdateHandler::ok` with the track's Largest Object, resolved like a
+SUBSCRIBE's (draft-18 §10.2.11; draft-14 sends no answer). When `ok` reports
+that the subscriber was given that location, an update that turns Forward
+from 0 to 1 also makes it the registration's joining location (draft-18
+§5.1), so a later Joining FETCH ends there; draft-14 keeps the SUBSCRIBE_OK's
+Largest Location (§9.16.2). The relay itself never branches on the draft.
 
 ### FETCH sequence
-Resolve the track and object range (Standalone from the message; Relative
-Joining from the downstream subscription's `JoinPoint`), reply FETCH_OK,
+Resolve the track and object range (Standalone from the message; Joining
+from the downstream subscription's registration, which records its track,
+filter and joining location), reply FETCH_OK,
 then delegate to `EgressCommand::StartFetch`, which serves the range from
 `TrackCache` over a new uni stream (see "Fetch delivery" under "Egress").
-A Joining FETCH of a subscription whose filter is not Largest Object closes
-the session with a PROTOCOL_VIOLATION (draft-14 §9.16.2): the registration's
-`JoinPoint` records whether it may be joined.
+A Joining FETCH is checked in this order: an unknown joined Request ID gets
+INVALID_JOINING_REQUEST_ID; then `FetchHandler::check_joining` applies the
+session draft's rule to the registration's filter and current Forward State
+(draft-14 §9.16.2: a filter other than Largest Object closes the session with
+a PROTOCOL_VIOLATION; draft-18 §10.12.2: Forward State 0 gets INVALID_RANGE);
+then a subscription accepted before the track had objects gets INVALID_RANGE;
+then the range. The session worker handles a session's events in order, so
+every update received before the FETCH is applied first, as draft-18
+§10.12.2 requires.
 
 A range the cache cannot serve goes upstream. The worker hands it to
 `UpstreamFetchTask` (`control_plane/sequences/fetch/upstream_fetch_task.rs`) and moves on to

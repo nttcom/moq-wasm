@@ -1,22 +1,48 @@
 use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
+use thiserror::Error;
+
 use crate::{
     modules::{
         moqt::{
             control_plane::{
                 control_messages::messages::{
-                    fetch::Fetch, fetch_ok::FetchOk, parameters::location::Location,
+                    fetch::Fetch,
+                    fetch_ok::FetchOk,
+                    parameters::{filter_type::FilterType, location::Location},
                 },
                 error_codes::{RequestErrorCode, RequestKind},
                 handler::response_guard::ResponseGuard,
             },
             domains::{connection::Connection, session_context::SessionContext},
+            version::Version,
         },
         transport::transport_send_stream::TransportSendError,
     },
     object::GroupOrder,
 };
+
+/// The state of the subscription a Joining FETCH names, as the publisher
+/// holds it when it evaluates the FETCH.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JoinedSubscription {
+    pub filter_type: FilterType,
+    pub forward: bool,
+}
+
+/// Why the session's draft does not let a Joining FETCH join its subscription.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum JoiningFetchRefusal {
+    /// draft-14 §9.16.2: the publisher closes the session with
+    /// PROTOCOL_VIOLATION.
+    #[error("the joined subscription does not use the Largest Object filter")]
+    NotLargestObjectFilter,
+    /// draft-18 §10.12.2: the publisher answers REQUEST_ERROR INVALID_RANGE.
+    #[error("the joined subscription has Forward State 0")]
+    NotForwarding,
+}
 
 #[derive(Debug, Clone)]
 pub struct FetchHandler {
@@ -46,6 +72,22 @@ impl FetchHandler {
             fetch,
             max_cache_duration: None,
             guard,
+        }
+    }
+
+    /// Whether this Joining FETCH may join `subscription` under the session's
+    /// draft (draft-14 §9.16.2, draft-18 §10.12.2); each refusal names the
+    /// answer its draft requires. Not meaningful for a Standalone FETCH.
+    pub fn check_joining(
+        &self,
+        subscription: JoinedSubscription,
+    ) -> Result<(), JoiningFetchRefusal> {
+        match self.guard.connection().control.version() {
+            Version::Draft14 if subscription.filter_type != FilterType::LargestObject => {
+                Err(JoiningFetchRefusal::NotLargestObjectFilter)
+            }
+            Version::Draft18 if !subscription.forward => Err(JoiningFetchRefusal::NotForwarding),
+            Version::Draft14 | Version::Draft18 => Ok(()),
         }
     }
 
@@ -80,11 +122,16 @@ impl FetchHandler {
 
 #[cfg(test)]
 mod tests {
+    use super::{FetchHandler, JoinedSubscription, JoiningFetchRefusal};
     use crate::{
-        SessionEvent,
+        Session, SessionEvent,
         fetch::FetchOption,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::test_support::{
+            connect_sessions, spawn_connected_draft18_sessions, spawn_connected_dual_sessions,
+            spawn_dual_server,
+        },
         object::{GroupOrder, Location},
+        subscribe::FilterType,
     };
 
     const START: Location = Location {
@@ -128,5 +175,70 @@ mod tests {
         // Assert
         let fetch_handle = request.await.unwrap().unwrap();
         assert_eq!(fetch_handle.group_order, GroupOrder::Ascending);
+    }
+
+    async fn received_fetch(client: &Session, server: &Session) -> FetchHandler {
+        let mut subscriber = client.subscriber();
+        tokio::spawn(async move {
+            let _ = subscriber
+                .fetch(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    START,
+                    END,
+                    FetchOption::default(),
+                )
+                .await;
+        });
+        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected FETCH from the client");
+        };
+        handler
+    }
+
+    #[tokio::test]
+    async fn a_draft14_joining_fetch_joins_only_a_largest_object_subscription() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("fetch-handler-join-14").await;
+        let handler = received_fetch(&client, &server).await;
+
+        // Act
+        let next_group_start = handler.check_joining(JoinedSubscription {
+            filter_type: FilterType::NextGroupStart,
+            forward: true,
+        });
+        let not_forwarding = handler.check_joining(JoinedSubscription {
+            filter_type: FilterType::LargestObject,
+            forward: false,
+        });
+
+        // Assert: draft-14 §9.16.2 sets no Forward State condition
+        assert_eq!(
+            next_group_start,
+            Err(JoiningFetchRefusal::NotLargestObjectFilter)
+        );
+        assert_eq!(not_forwarding, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn a_draft18_joining_fetch_joins_only_a_forwarding_subscription() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("fetch-handler-join-18", "moqt").await;
+        let handler = received_fetch(&client, &server).await;
+
+        // Act
+        let not_forwarding = handler.check_joining(JoinedSubscription {
+            filter_type: FilterType::LargestObject,
+            forward: false,
+        });
+        let next_group_start = handler.check_joining(JoinedSubscription {
+            filter_type: FilterType::NextGroupStart,
+            forward: true,
+        });
+
+        // Assert: draft-18 §10.12.2 sets no filter condition
+        assert_eq!(not_forwarding, Err(JoiningFetchRefusal::NotForwarding));
+        assert_eq!(next_group_start, Ok(()));
     }
 }
