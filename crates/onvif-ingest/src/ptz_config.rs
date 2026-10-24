@@ -8,7 +8,7 @@ pub struct AxisRange {
 
 impl AxisRange {
     pub fn new(min: f32, max: f32) -> Self {
-        let (min, max) = ordered_pair(min, max);
+        let (min, max) = if min <= max { (min, max) } else { (max, min) };
         Self { min, max }
     }
 
@@ -157,16 +157,16 @@ pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
     }
 
     let mut range = PtzRange::default();
-    if let Some((uri, x, y)) = pan_tilt_limits(config) {
+    if let Some(limits) = pan_tilt_limits(config) {
         tracing::info!(
             "pan/tilt limits: space={} x=[{:.3}..{:.3}] y=[{:.3}..{:.3}]",
-            uri.as_deref().unwrap_or("-"),
-            x.min,
-            x.max,
-            y.min,
-            y.max
+            limits.uri.as_deref().unwrap_or("-"),
+            limits.x.min,
+            limits.x.max,
+            limits.y.min,
+            limits.y.max
         );
-        range.abs_pan_tilt = Some(PanTiltRange { uri, x, y });
+        range.abs_pan_tilt = Some(limits);
     }
     if let Some((space, x, y)) = default_pan_tilt_speed(config) {
         tracing::info!(
@@ -192,54 +192,23 @@ pub fn update_range_from_options(mut range: PtzRange, body: &str) -> PtzRange {
     else {
         return range;
     };
-    if let Some(spaces) = options
+    let Some(spaces) = options
         .descendants()
         .find(|node| node.is_element() && node.tag_name().name() == "Spaces")
-    {
-        for space in spaces.children().filter(|node| node.is_element()) {
-            match space.tag_name().name() {
-                "AbsolutePanTiltPositionSpace" => {
-                    if let Some(parsed) = parse_pan_tilt_space(space) {
-                        range.abs_pan_tilt = Some(parsed);
-                    }
-                }
-                "AbsoluteZoomPositionSpace" => {
-                    if let Some(parsed) = parse_zoom_space(space) {
-                        range.abs_zoom = Some(parsed);
-                    }
-                }
-                "RelativePanTiltTranslationSpace" => {
-                    if let Some(parsed) = parse_pan_tilt_space(space) {
-                        range.rel_pan_tilt = Some(parsed);
-                    }
-                }
-                "RelativeZoomTranslationSpace" => {
-                    if let Some(parsed) = parse_zoom_space(space) {
-                        range.rel_zoom = Some(parsed);
-                    }
-                }
-                "ContinuousPanTiltVelocitySpace" => {
-                    if let Some(parsed) = parse_pan_tilt_space(space) {
-                        range.cont_pan_tilt = Some(parsed);
-                    }
-                }
-                "ContinuousZoomVelocitySpace" => {
-                    if let Some(parsed) = parse_zoom_space(space) {
-                        range.cont_zoom = Some(parsed);
-                    }
-                }
-                "PanTiltSpeedSpace" => {
-                    if let Some(parsed) = parse_pan_tilt_space(space) {
-                        range.speed_pan_tilt = Some(parsed);
-                    }
-                }
-                "ZoomSpeedSpace" => {
-                    if let Some(parsed) = parse_zoom_space(space) {
-                        range.speed_zoom = Some(parsed);
-                    }
-                }
-                _ => {}
-            }
+    else {
+        return range;
+    };
+    for space in spaces.children().filter(|node| node.is_element()) {
+        match space.tag_name().name() {
+            "AbsolutePanTiltPositionSpace" => set_pan_tilt(&mut range.abs_pan_tilt, space),
+            "AbsoluteZoomPositionSpace" => set_zoom(&mut range.abs_zoom, space),
+            "RelativePanTiltTranslationSpace" => set_pan_tilt(&mut range.rel_pan_tilt, space),
+            "RelativeZoomTranslationSpace" => set_zoom(&mut range.rel_zoom, space),
+            "ContinuousPanTiltVelocitySpace" => set_pan_tilt(&mut range.cont_pan_tilt, space),
+            "ContinuousZoomVelocitySpace" => set_zoom(&mut range.cont_zoom, space),
+            "PanTiltSpeedSpace" => set_pan_tilt(&mut range.speed_pan_tilt, space),
+            "ZoomSpeedSpace" => set_zoom(&mut range.speed_zoom, space),
+            _ => {}
         }
     }
     range
@@ -287,17 +256,11 @@ fn push_kv(items: &mut Vec<String>, key: &str, value: Option<String>) {
     }
 }
 
-fn pan_tilt_limits(config: Node) -> Option<(Option<String>, AxisRange, AxisRange)> {
+fn pan_tilt_limits(config: Node) -> Option<PanTiltRange> {
     let limits = config
         .descendants()
         .find(|node| has_tag(*node, "PanTiltLimits"))?;
-    let range = limits.descendants().find(|node| has_tag(*node, "Range"))?;
-    let uri = find_text(range, "URI");
-    let x_range = range.descendants().find(|node| has_tag(*node, "XRange"))?;
-    let y_range = range.descendants().find(|node| has_tag(*node, "YRange"))?;
-    let x = parse_axis_range(x_range)?;
-    let y = parse_axis_range(y_range)?;
-    Some((uri, x, y))
+    parse_pan_tilt_space(limits.descendants().find(|node| has_tag(*node, "Range"))?)
 }
 
 fn default_pan_tilt_speed(config: Node) -> Option<(Option<String>, f32, f32)> {
@@ -309,6 +272,18 @@ fn default_pan_tilt_speed(config: Node) -> Option<(Option<String>, f32, f32)> {
     let x = parse_f32(pan_tilt.attribute("x")?)?;
     let y = parse_f32(pan_tilt.attribute("y")?)?;
     Some((space, x, y))
+}
+
+fn set_pan_tilt(slot: &mut Option<PanTiltRange>, space: Node) {
+    if let Some(parsed) = parse_pan_tilt_space(space) {
+        *slot = Some(parsed);
+    }
+}
+
+fn set_zoom(slot: &mut Option<ZoomRange>, space: Node) {
+    if let Some(parsed) = parse_zoom_space(space) {
+        *slot = Some(parsed);
+    }
 }
 
 fn parse_pan_tilt_space(space: Node) -> Option<PanTiltRange> {
@@ -331,14 +306,6 @@ fn parse_axis_range(range: Node) -> Option<AxisRange> {
     let min = parse_f32(find_text(range, "Min")?.as_str())?;
     let max = parse_f32(find_text(range, "Max")?.as_str())?;
     Some(AxisRange::new(min, max))
-}
-
-fn ordered_pair(a: f32, b: f32) -> (f32, f32) {
-    if a <= b {
-        (a, b)
-    } else {
-        (b, a)
-    }
 }
 
 fn parse_f32(value: &str) -> Option<f32> {
