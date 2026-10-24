@@ -5,7 +5,7 @@ use bytes::Bytes;
 use moqt::{
     ClientConfig, DUAL, Endpoint, Session, Subscription, TrackReader,
     fetch::{Fetch, FetchOption},
-    object::{DataReceiver, GroupOrder},
+    object::GroupOrder,
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -55,17 +55,13 @@ pub async fn subscribe(
         .with_context(|| format!("subscribe {namespace}/{name}"))
 }
 
-/// Waits for the first data stream of `subscription`.
 pub async fn track_reader(session: &Session, subscription: &Subscription) -> Result<TrackReader> {
     let receiver = session
         .subscriber()
         .accept_data_receiver(subscription)
         .await
         .context("accept data receiver")?;
-    let DataReceiver::Stream(factory) = receiver else {
-        bail!("expected a stream data receiver");
-    };
-    Ok(TrackReader::new(factory))
+    Ok(TrackReader::new(receiver))
 }
 
 /// Reads the catalog's latest object with the joining FETCH (offset 0) that

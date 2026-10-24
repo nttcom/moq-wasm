@@ -7,8 +7,8 @@ use crate::modules::{
     session::{
         data_object::DataObject,
         data_receiver::{
-            datagram_receiver::DatagramReceiver,
-            stream_receiver::{StreamReceiver, StreamReceiverFactory},
+            receiver::{DataReceiver, UpstreamData},
+            stream_receiver::StreamReceiver,
         },
     },
     test_support::relay_harness::{
@@ -112,6 +112,17 @@ impl UpstreamSubgroupStream {
         )));
     }
 
+    pub(crate) fn malformed_track(&self) {
+        self.push(Err(moqt::object::StreamReceiveError::MalformedTrack(
+            moqt::object::MalformedTrackError::ConflictingDuplicate {
+                location: moqt::object::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+            },
+        )));
+    }
+
     pub(crate) fn fin(&self) {
         self.push(Ok(None));
     }
@@ -124,18 +135,56 @@ impl UpstreamSubgroupStream {
     }
 }
 
-pub(crate) struct FailingUpstream(pub(crate) fn() -> anyhow::Error);
+/// Feeds an ingest what moqt's `DataReceiver` would hand it: the subgroup
+/// streams and datagrams of one upstream subscription, which ends when this
+/// is dropped.
+pub(crate) struct UpstreamTrack {
+    sender: mpsc::UnboundedSender<UpstreamData>,
+}
 
-#[async_trait::async_trait]
-impl StreamReceiverFactory for FailingUpstream {
-    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
-        Err(self.0())
-    }
+struct ChannelDataReceiver {
+    receiver: mpsc::UnboundedReceiver<UpstreamData>,
 }
 
 #[async_trait::async_trait]
-impl DatagramReceiver for FailingUpstream {
-    async fn receive_object(&mut self) -> anyhow::Result<Object> {
+impl DataReceiver for ChannelDataReceiver {
+    async fn next(&mut self) -> anyhow::Result<UpstreamData> {
+        self.receiver
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("the subscription ended"))
+    }
+}
+
+impl UpstreamTrack {
+    pub(crate) fn channel() -> (Self, Box<dyn DataReceiver>) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (Self { sender }, Box::new(ChannelDataReceiver { receiver }))
+    }
+
+    pub(crate) fn datagram(&self, object: Object) {
+        self.sender
+            .send(UpstreamData::Datagram(object))
+            .expect("ingress should be reading this track");
+    }
+
+    /// The ingest reads the stream in a task of its own, so the returned
+    /// stream's `wait_reader_end` resolves at once.
+    pub(crate) fn open_stream(&self) -> UpstreamSubgroupStream {
+        UpstreamSubgroupStream::open(|receiver| {
+            self.sender
+                .send(UpstreamData::Subgroup(receiver))
+                .expect("ingress should be reading this track");
+            tokio::spawn(async {})
+        })
+    }
+}
+
+pub(crate) struct FailingUpstream(pub(crate) fn() -> anyhow::Error);
+
+#[async_trait::async_trait]
+impl DataReceiver for FailingUpstream {
+    async fn next(&mut self) -> anyhow::Result<UpstreamData> {
         Err(self.0())
     }
 }

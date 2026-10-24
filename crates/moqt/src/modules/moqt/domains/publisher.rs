@@ -289,9 +289,9 @@ mod tests {
         modules::{
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
-                HANDSHAKE_TIMEOUT, first_subgroup_stream, object_with_extensions,
-                read_subgroup_objects, send_subgroup_object, spawn_connected_dual_sessions,
-                subgroup_receiver, within,
+                HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream, next_subgroup,
+                object_with_extensions, read_subgroup_objects, send_subgroup_object,
+                spawn_connected_dual_sessions, within,
             },
         },
         object::{Location, Object},
@@ -462,8 +462,8 @@ mod tests {
             ..object_with_extensions()
         };
         within(send_subgroup_object(&client, &kept, &before)).await;
-        let mut streams = within(subgroup_receiver(&server, &kept_peer)).await;
-        let mut first_receiver = within(streams.next()).await.unwrap();
+        let mut streams = within(data_receiver(&server, &kept_peer)).await;
+        let mut first_receiver = within(next_subgroup(&mut streams)).await;
         let received_before = within(read_subgroup_objects(&mut first_receiver)).await;
 
         // Act
@@ -495,7 +495,7 @@ mod tests {
         tokio::time::resume();
         let received_after = within(async {
             send_subgroup_object(&client, &kept, &after).await;
-            let mut receiver = streams.next().await.unwrap();
+            let mut receiver = next_subgroup(&mut streams).await;
             read_subgroup_objects(&mut receiver).await
         })
         .await;

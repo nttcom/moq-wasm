@@ -1,0 +1,655 @@
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    hash::{BuildHasher, RandomState},
+};
+
+use crate::modules::moqt::{
+    control_plane::control_messages::messages::parameters::location::Location,
+    data_plane::{
+        malformed_track_error::MalformedTrackError,
+        object::{
+            canonical_object::{ForwardingPreference, Object},
+            object_status::ObjectStatus,
+        },
+    },
+};
+
+/// The objects of one track a session has received, kept while a
+/// subscription or FETCH of the track is read. No entry is ever removed, so
+/// the ledger grows by one entry per object for that whole time. An object
+/// that arrives again with another forwarding preference, subgroup, priority
+/// or payload, or whose status moves between Normal, End of Group and End of
+/// Track, makes the track malformed (draft-14 §8.1, draft-18 §9.1). Its
+/// extension headers may change, and so may its status to or from Does Not
+/// Exist.
+pub(crate) struct ObjectLedger {
+    hasher: RandomState,
+    objects: std::sync::Mutex<HashMap<Location, Recorded>>,
+}
+
+/// What a duplicate is compared on; the payload is kept as a hash so the
+/// ledger stays small.
+struct Recorded {
+    forwarding: ForwardingPreference,
+    /// From a draft-14 FETCH, which carries no forwarding preference.
+    forwarding_inferred: bool,
+    publisher_priority: u8,
+    status: ObjectStatus,
+    payload_hash: u64,
+}
+
+impl std::fmt::Debug for ObjectLedger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectLedger").finish_non_exhaustive()
+    }
+}
+
+impl ObjectLedger {
+    pub(crate) fn new() -> Self {
+        Self {
+            hasher: RandomState::new(),
+            objects: std::sync::Mutex::default(),
+        }
+    }
+
+    /// Records `object`; fails when an earlier copy of it differs.
+    /// `forwarding_inferred`: the object comes from a draft-14 FETCH, which
+    /// carries no forwarding preference, so a datagram object arrives as a
+    /// subgroup object whose Subgroup ID is its Object ID (§10.4.4).
+    pub(crate) fn check(
+        &self,
+        object: &Object,
+        forwarding_inferred: bool,
+    ) -> Result<(), MalformedTrackError> {
+        let received = Recorded {
+            forwarding: object.forwarding,
+            forwarding_inferred,
+            publisher_priority: object.publisher_priority,
+            status: object.status,
+            payload_hash: self.hasher.hash_one(&object.payload),
+        };
+        let mut objects = self
+            .objects
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match objects.entry(object.location) {
+            Entry::Vacant(slot) => {
+                slot.insert(received);
+            }
+            Entry::Occupied(mut recorded) => {
+                let recorded = recorded.get_mut();
+                if recorded.conflicts_with(&received, object.location.object_id) {
+                    return Err(MalformedTrackError::ConflictingDuplicate {
+                        location: object.location,
+                    });
+                }
+                if recorded.status == ObjectStatus::DoesNotExist {
+                    *recorded = received;
+                } else if recorded.forwarding_inferred && !received.forwarding_inferred {
+                    recorded.forwarding = received.forwarding;
+                    recorded.forwarding_inferred = false;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Recorded {
+    fn conflicts_with(&self, other: &Self, object_id: u64) -> bool {
+        if self.forwarding_conflicts_with(other, object_id)
+            || self.publisher_priority != other.publisher_priority
+        {
+            return true;
+        }
+        if self.status == ObjectStatus::DoesNotExist || other.status == ObjectStatus::DoesNotExist {
+            return false;
+        }
+        self.status != other.status || self.payload_hash != other.payload_hash
+    }
+
+    /// A draft-14 FETCH copy in the subgroup of its Object ID is the same
+    /// object as a datagram.
+    fn forwarding_conflicts_with(&self, other: &Self, object_id: u64) -> bool {
+        match (self.forwarding, other.forwarding) {
+            (ForwardingPreference::Subgroup { subgroup_id }, ForwardingPreference::Datagram)
+                if self.forwarding_inferred =>
+            {
+                subgroup_id != object_id
+            }
+            (ForwardingPreference::Datagram, ForwardingPreference::Subgroup { subgroup_id })
+                if other.forwarding_inferred =>
+            {
+                subgroup_id != object_id
+            }
+            (forwarding, other_forwarding) => forwarding != other_forwarding,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::ObjectLedger;
+    use crate::{
+        SessionEvent,
+        fetch::{Fetch, FetchOption},
+        modules::test_support::{
+            PublishedTrack, data_receiver, location, next_subgroup, object_with_extensions,
+            published_draft18_track, published_track, read_subgroup_objects, send_subgroup_object,
+            within,
+        },
+        object::{
+            DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
+            MalformedTrackError, Object, ObjectStatus, StreamReceiveError, Subgroup, TrackData,
+            VariantType,
+        },
+    };
+
+    fn conflict(object: &Object) -> Result<(), MalformedTrackError> {
+        Err(MalformedTrackError::ConflictingDuplicate {
+            location: object.location,
+        })
+    }
+
+    fn status_object(status: ObjectStatus) -> Object {
+        Object {
+            status,
+            payload: Bytes::new(),
+            ..object_with_extensions()
+        }
+    }
+
+    fn check_both(first: &Object, second: &Object) -> Result<(), MalformedTrackError> {
+        let ledger = ObjectLedger::new();
+        ledger.check(first, false).unwrap();
+        ledger.check(second, false)
+    }
+
+    #[test]
+    fn an_identical_duplicate_passes() {
+        // Arrange
+        let object = object_with_extensions();
+        // Act / Assert
+        assert_eq!(check_both(&object, &object), Ok(()));
+    }
+
+    #[test]
+    fn a_duplicate_with_other_extension_headers_passes() {
+        // Arrange
+        let first = object_with_extensions();
+        let second = Object {
+            extension_headers: ExtensionHeaders::new(vec![KeyValuePair {
+                key: 0x02,
+                value: VariantType::Even(1),
+            }]),
+            ..first.clone()
+        };
+        // Act / Assert
+        assert_eq!(check_both(&first, &second), Ok(()));
+    }
+
+    #[test]
+    fn a_duplicate_with_another_payload_is_a_conflict() {
+        // Arrange
+        let first = object_with_extensions();
+        let second = Object {
+            payload: Bytes::from_static(b"other"),
+            ..first.clone()
+        };
+        // Act / Assert
+        assert_eq!(check_both(&first, &second), conflict(&first));
+    }
+
+    #[test]
+    fn a_duplicate_with_a_payload_of_the_same_length_is_a_conflict() {
+        // Arrange
+        let first = Object {
+            payload: Bytes::from_static(b"aa"),
+            ..object_with_extensions()
+        };
+        let second = Object {
+            payload: Bytes::from_static(b"ab"),
+            ..first.clone()
+        };
+        // Act / Assert
+        assert_eq!(check_both(&first, &second), conflict(&first));
+    }
+
+    #[test]
+    fn a_duplicate_with_another_priority_is_a_conflict() {
+        // Arrange
+        let first = object_with_extensions();
+        let second = Object {
+            publisher_priority: first.publisher_priority + 1,
+            ..first.clone()
+        };
+        // Act / Assert
+        assert_eq!(check_both(&first, &second), conflict(&first));
+    }
+
+    #[test]
+    fn a_duplicate_in_another_subgroup_is_a_conflict() {
+        // Arrange
+        let first = object_with_extensions();
+        let second = Object {
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 9 },
+            ..first.clone()
+        };
+        // Act / Assert
+        assert_eq!(check_both(&first, &second), conflict(&first));
+    }
+
+    #[test]
+    fn a_duplicate_with_another_forwarding_preference_is_a_conflict() {
+        // Arrange
+        let first = object_with_extensions();
+        let second = Object {
+            forwarding: ForwardingPreference::Datagram,
+            ..first.clone()
+        };
+        // Act / Assert: both orders
+        assert_eq!(check_both(&first, &second), conflict(&first));
+        assert_eq!(check_both(&second, &first), conflict(&first));
+    }
+
+    #[test]
+    fn a_status_moving_between_normal_end_of_group_and_end_of_track_is_a_conflict() {
+        let statuses = [
+            ObjectStatus::Normal,
+            ObjectStatus::EndOfGroup,
+            ObjectStatus::EndOfTrack,
+        ];
+        for first in statuses {
+            for second in statuses.into_iter().filter(|second| *second != first) {
+                // Arrange
+                let (first, second) = (status_object(first), status_object(second));
+                // Act / Assert
+                assert_eq!(
+                    check_both(&first, &second),
+                    conflict(&first),
+                    "{:?} then {:?}",
+                    first.status,
+                    second.status
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_status_moving_to_or_from_does_not_exist_passes() {
+        // Arrange
+        let normal = object_with_extensions();
+        let missing = status_object(ObjectStatus::DoesNotExist);
+        // Act / Assert: both orders
+        assert_eq!(check_both(&normal, &missing), Ok(()));
+        assert_eq!(check_both(&missing, &normal), Ok(()));
+    }
+
+    #[test]
+    fn an_object_found_missing_is_still_compared_with_its_first_copy() {
+        // Arrange
+        let ledger = ObjectLedger::new();
+        let normal = object_with_extensions();
+        ledger.check(&normal, false).unwrap();
+        ledger
+            .check(&status_object(ObjectStatus::DoesNotExist), false)
+            .unwrap();
+        let other = Object {
+            payload: Bytes::from_static(b"other"),
+            ..normal.clone()
+        };
+        // Act / Assert
+        assert_eq!(ledger.check(&other, false), conflict(&normal));
+    }
+
+    fn datagram() -> Object {
+        Object {
+            forwarding: ForwardingPreference::Datagram,
+            ..object_with_extensions()
+        }
+    }
+
+    /// A draft-14 FETCH copy of `object` in subgroup `subgroup_id`.
+    fn fetched_in(object: &Object, subgroup_id: u64) -> Object {
+        Object {
+            forwarding: ForwardingPreference::Subgroup { subgroup_id },
+            ..object.clone()
+        }
+    }
+
+    #[test]
+    fn a_draft14_fetched_copy_of_a_datagram_in_the_subgroup_of_its_object_id_passes() {
+        // Arrange
+        let live = datagram();
+        let fetched = fetched_in(&live, live.location.object_id);
+        let (live_first, fetched_first) = (ObjectLedger::new(), ObjectLedger::new());
+        live_first.check(&live, false).unwrap();
+        fetched_first.check(&fetched, true).unwrap();
+        // Act / Assert: both orders
+        assert_eq!(live_first.check(&fetched, true), Ok(()));
+        assert_eq!(fetched_first.check(&live, false), Ok(()));
+    }
+
+    #[test]
+    fn a_draft14_fetched_copy_of_a_datagram_in_another_subgroup_is_a_conflict() {
+        // Arrange
+        let live = datagram();
+        let ledger = ObjectLedger::new();
+        ledger.check(&live, false).unwrap();
+        // Act / Assert
+        assert_eq!(
+            ledger.check(&fetched_in(&live, live.location.object_id + 1), true),
+            conflict(&live)
+        );
+    }
+
+    #[test]
+    fn a_draft14_fetched_copy_is_compared_exactly_once_the_live_object_arrives() {
+        // Arrange: the live datagram tells the preference the FETCH copy lacked
+        let live = datagram();
+        let fetched = fetched_in(&live, live.location.object_id);
+        let ledger = ObjectLedger::new();
+        ledger.check(&fetched, true).unwrap();
+        ledger.check(&live, false).unwrap();
+        // Act / Assert: a subgroup copy with a known preference
+        assert_eq!(ledger.check(&fetched, false), conflict(&live));
+    }
+
+    #[test]
+    fn a_subgroup_copy_of_a_datagram_with_a_known_preference_is_a_conflict() {
+        // Arrange: draft-18 FETCH carries the preference
+        let live = datagram();
+        let ledger = ObjectLedger::new();
+        ledger.check(&live, false).unwrap();
+        // Act / Assert
+        assert_eq!(
+            ledger.check(&fetched_in(&live, live.location.object_id), false),
+            conflict(&live)
+        );
+    }
+
+    #[test]
+    fn objects_at_other_locations_are_not_compared() {
+        // Arrange
+        let first = object_with_extensions();
+        let second = Object {
+            location: location(first.location.group_id, first.location.object_id + 1),
+            payload: Bytes::from_static(b"other"),
+            publisher_priority: first.publisher_priority + 1,
+            ..first.clone()
+        };
+        // Act / Assert
+        assert_eq!(check_both(&first, &second), Ok(()));
+    }
+
+    /// The server side of `track` receives `first`, then `second` on
+    /// another subgroup stream; returns how the second stream's object reads.
+    async fn receive_second_copy(
+        track: &PublishedTrack,
+        receiver: &mut DataReceiver,
+        first: &Object,
+        second: &Object,
+    ) -> Result<Option<Subgroup>, StreamReceiveError> {
+        within(send_subgroup_object(&track.client, &track.published, first)).await;
+        let mut first_stream = within(next_subgroup(receiver)).await;
+        let delivered = within(read_subgroup_objects(&mut first_stream)).await;
+        assert_eq!(
+            delivered
+                .iter()
+                .map(|object| object.location)
+                .collect::<Vec<_>>(),
+            [first.location]
+        );
+        within(send_subgroup_object(
+            &track.client,
+            &track.published,
+            second,
+        ))
+        .await;
+        let mut second_stream = within(next_subgroup(receiver)).await;
+        within(second_stream.receive()).await.unwrap();
+        within(second_stream.receive()).await
+    }
+
+    async fn assert_subgroup_copies(track: PublishedTrack) {
+        // Arrange
+        let identical = object_with_extensions();
+        let first = Object {
+            location: location(identical.location.group_id + 1, 0),
+            ..identical.clone()
+        };
+        let other_payload = Object {
+            payload: Bytes::from_static(b"other"),
+            ..first.clone()
+        };
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+
+        // Act
+        let identical_copy =
+            receive_second_copy(&track, &mut receiver, &identical, &identical).await;
+        let conflicting_copy =
+            receive_second_copy(&track, &mut receiver, &first, &other_payload).await;
+
+        // Assert
+        assert!(
+            matches!(&identical_copy, Ok(Some(Subgroup::Object(object)))
+                if object.payload == identical.payload),
+            "{identical_copy:?}"
+        );
+        assert!(
+            matches!(
+                conflicting_copy,
+                Err(StreamReceiveError::MalformedTrack(
+                    MalformedTrackError::ConflictingDuplicate { location }
+                )) if location == first.location
+            ),
+            "{conflicting_copy:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subgroup_object_repeated_with_another_payload_is_a_malformed_track() {
+        assert_subgroup_copies(published_track("ledger-subgroup-copies").await).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_subgroup_object_repeated_with_another_payload_is_a_malformed_track() {
+        assert_subgroup_copies(published_draft18_track("ledger-subgroup-copies-draft18").await)
+            .await;
+    }
+
+    async fn assert_datagram_copies(track: PublishedTrack) {
+        // Arrange
+        let first = Object {
+            forwarding: ForwardingPreference::Datagram,
+            ..object_with_extensions()
+        };
+        let other_priority = Object {
+            publisher_priority: first.publisher_priority + 1,
+            ..first.clone()
+        };
+        let mut sender = track.client.publisher().create_datagram(&track.published);
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+
+        // Act
+        sender.send_object(&first).await.unwrap();
+        let delivered = within(receiver.next()).await;
+        sender.send_object(&other_priority).await.unwrap();
+        let repeated = within(receiver.next()).await;
+
+        // Assert
+        assert!(
+            matches!(delivered, Ok(TrackData::Datagram(_))),
+            "{delivered:?}"
+        );
+        assert_eq!(
+            repeated.unwrap_err().downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::ConflictingDuplicate {
+                location: first.location
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_datagram_repeated_with_another_priority_is_a_malformed_track() {
+        assert_datagram_copies(published_track("ledger-datagram-copies").await).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_datagram_repeated_with_another_priority_is_a_malformed_track() {
+        assert_datagram_copies(published_draft18_track("ledger-datagram-copies-draft18").await)
+            .await;
+    }
+
+    /// The server FETCHes from the client publishing `track` and reads the
+    /// first object the client answers with `answer`.
+    async fn fetch_answered_with(track: &PublishedTrack, answer: &Object) -> anyhow::Result<Fetch> {
+        let mut subscriber = track.server.subscriber();
+        let end = location(answer.location.group_id + 1, 0);
+        let (handle, sender) = within(async {
+            tokio::join!(
+                subscriber.fetch(
+                    "ns".into(),
+                    "track".into(),
+                    location(0, 0),
+                    end,
+                    FetchOption::default(),
+                ),
+                async {
+                    // An earlier FETCH whose receiver is gone may be cancelled first.
+                    let handler = loop {
+                        match track.client.receive_event().await.unwrap() {
+                            SessionEvent::Fetch(handler) => break handler,
+                            SessionEvent::FetchCancel(_) => continue,
+                            _ => panic!("expected FETCH from the server"),
+                        }
+                    };
+                    handler.ok(false, end).await.unwrap();
+                    track
+                        .client
+                        .publisher()
+                        .create_fetch_stream(handler.request_id)
+                        .await
+                        .unwrap()
+                }
+            )
+        })
+        .await;
+        sender.send_object(answer).await.unwrap();
+        let mut receiver = within(subscriber.accept_fetch_receiver(&handle.unwrap()))
+            .await
+            .unwrap();
+        within(receiver.receive()).await
+    }
+
+    async fn assert_fetched_copy_of_a_subscribed_object(track: PublishedTrack) {
+        // Arrange
+        let delivered = object_with_extensions();
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        within(send_subgroup_object(
+            &track.client,
+            &track.published,
+            &delivered,
+        ))
+        .await;
+        let mut stream = within(next_subgroup(&mut receiver)).await;
+        within(read_subgroup_objects(&mut stream)).await;
+
+        // Act
+        let fetched = fetch_answered_with(
+            &track,
+            &Object {
+                payload: Bytes::from_static(b"other"),
+                ..delivered.clone()
+            },
+        )
+        .await;
+
+        // Assert
+        assert_eq!(
+            fetched.unwrap_err().downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::ConflictingDuplicate {
+                location: delivered.location
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fetched_copy_of_a_subscribed_object_with_another_payload_is_a_malformed_track() {
+        assert_fetched_copy_of_a_subscribed_object(published_track("ledger-fetch-copy").await)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetched_copy_of_a_subscribed_object_with_another_payload_is_a_malformed_track()
+     {
+        assert_fetched_copy_of_a_subscribed_object(
+            published_draft18_track("ledger-fetch-copy-draft18").await,
+        )
+        .await;
+    }
+
+    /// The server side of `track` receives `live` in a datagram.
+    async fn receive_datagram(track: &PublishedTrack, live: &Object) -> DataReceiver {
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        track
+            .client
+            .publisher()
+            .create_datagram(&track.published)
+            .send_object(live)
+            .await
+            .unwrap();
+        within(receiver.next()).await.unwrap();
+        receiver
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetched_copy_of_a_datagram_matches_it() {
+        // Arrange: draft-14 FETCH sends it in the subgroup of its Object ID
+        let track = published_track("ledger-fetched-datagram").await;
+        let live = datagram();
+        let _receiver = receive_datagram(&track, &live).await;
+
+        // Act
+        let fetched = fetch_answered_with(&track, &live).await;
+
+        // Assert
+        assert!(
+            matches!(&fetched, Ok(Fetch::Object(object))
+            if object.forwarding == ForwardingPreference::Subgroup {
+                subgroup_id: live.location.object_id
+            }),
+            "{fetched:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetched_copy_of_a_datagram_is_compared_with_its_preference() {
+        // Arrange
+        let track = published_draft18_track("ledger-fetched-datagram-draft18").await;
+        let live = datagram();
+        let _receiver = receive_datagram(&track, &live).await;
+
+        // Act
+        let as_datagram = fetch_answered_with(&track, &live).await;
+        let in_subgroup =
+            fetch_answered_with(&track, &fetched_in(&live, live.location.object_id)).await;
+
+        // Assert
+        assert!(
+            matches!(&as_datagram, Ok(Fetch::Object(object))
+                if object.forwarding == ForwardingPreference::Datagram),
+            "{as_datagram:?}"
+        );
+        assert_eq!(
+            in_subgroup
+                .unwrap_err()
+                .downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::ConflictingDuplicate {
+                location: live.location
+            })
+        );
+    }
+}

@@ -582,8 +582,8 @@ mod tests {
         },
         namespace::NamespaceInterest,
         object::{
-            ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
-            StreamDataSenderFactory,
+            ContentExists, ExtensionHeaders, ForwardingPreference, Location, MalformedTrackError,
+            Object, ObjectStatus, StreamDataSenderFactory,
         },
         publish::{PublishDoneCode, PublishOption},
         subscribe::{FilterType, SubscribeOption},
@@ -1221,6 +1221,72 @@ mod tests {
             }
         );
         assert_eq!(rest.unwrap(), vec![Bytes::from("o2")]);
+    }
+
+    #[tokio::test]
+    async fn an_object_received_before_go_away_is_still_compared_after_it() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-ledger-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-ledger-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let _ = serve_subscribe(&server_b).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while client.subscriber().session.connection().generation == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the session moves to B");
+        let end = Location {
+            group_id: 1,
+            object_id: 1,
+        };
+
+        // Act: B answers a FETCH with object {1, 0} carrying another payload
+        let mut subscriber = client.subscriber();
+        let (handle, (_, sender_b)) = tokio::join!(
+            subscriber.fetch(
+                "ns".into(),
+                "track".into(),
+                Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+                end,
+                FetchOption::default(),
+            ),
+            serve_fetch(&server_b, end)
+        );
+        sender_b.send_object(&fetched_object(0)).await.unwrap();
+        let mut receiver = subscriber
+            .accept_fetch_receiver(&handle.unwrap())
+            .await
+            .unwrap();
+        let fetched = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            fetched.unwrap_err().downcast_ref::<MalformedTrackError>(),
+            Some(&MalformedTrackError::ConflictingDuplicate {
+                location: Location {
+                    group_id: 1,
+                    object_id: 0
+                }
+            })
+        );
     }
 
     #[tokio::test]

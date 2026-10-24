@@ -136,14 +136,20 @@ impl FetchIngest {
         let mut unknown_objects = false;
         loop {
             let received = tokio::select! {
-                received = receiver.receive() => received?,
+                received = receiver.receive() => received.inspect_err(|error| {
+                    if error.is::<moqt::object::MalformedTrackError>() {
+                        cache.mark_malformed();
+                    }
+                })?,
                 _ = cache.malformed_track_detected() => {
                     return Err(anyhow::anyhow!("malformed track detected while awaiting fetch data").into());
                 }
             };
             match received {
                 moqt::fetch::Fetch::Object(object) => {
-                    Self::append_fetch_object(&cache, object, stamp)?;
+                    let mut object = stamp.apply(CachedObject::from_object(object));
+                    object.forwarding_inferred = !receiver.carries_forwarding_preference();
+                    Self::append_fetch_object(&cache, object)?;
                 }
                 // The known objects around it are still cached.
                 moqt::fetch::Fetch::UnknownRange { .. } => unknown_objects = true,
@@ -172,19 +178,16 @@ impl FetchIngest {
         }
     }
 
-    fn append_fetch_object(
-        cache: &TrackCache,
-        object: moqt::object::Object,
-        stamp: CacheStamp,
-    ) -> anyhow::Result<()> {
-        let (group_id, object_id) = (object.location.group_id, object.location.object_id);
-        cache
-            .insert(stamp.apply(CachedObject::from_object(object)))
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "malformed track detected during fetch fill (group {group_id}, object {object_id})"
-                )
-            })
+    fn append_fetch_object(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
+        let (group_id, object_id) = (
+            object.object.location.group_id,
+            object.object.location.object_id,
+        );
+        cache.insert(object).map_err(|_| {
+            anyhow::anyhow!(
+                "malformed track detected during fetch fill (group {group_id}, object {object_id})"
+            )
+        })
     }
 
     async fn cancel_upstream_fetch(
@@ -245,7 +248,7 @@ mod tests {
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
-        data_plane::cache::track_cache::FetchRangeResolution,
+        data_plane::cache::{subgroup_key::SubgroupKey, track_cache::FetchRangeResolution},
         session::session_event::EventKind,
         test_support::{
             mock_session::{
@@ -253,7 +256,10 @@ mod tests {
                 session_repository_with_upstream_session,
             },
             relay_harness::fixtures::{
-                cached_object::{status_object, stream_object, stream_object_with_payload},
+                cached_object::{
+                    datagram_object, status_object, stream_object, stream_object_in_subgroup,
+                    stream_object_with_payload,
+                },
                 location,
             },
         },
@@ -262,7 +268,7 @@ mod tests {
     use moqt::object::ObjectStatus;
 
     fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
-        FetchIngest::append_fetch_object(cache, object.object.clone(), CacheStamp::default())
+        FetchIngest::append_fetch_object(cache, object)
     }
 
     #[tokio::test]
@@ -393,13 +399,33 @@ mod tests {
         mpsc::Receiver<EgressCommand>,
         Result<(), FillFailure>,
     ) {
+        ingest_answered(FetchAnswer::Respond(response)).await
+    }
+
+    async fn ingest_answered(
+        answer: FetchAnswer,
+    ) -> (
+        Arc<TrackCache>,
+        mpsc::Receiver<EgressCommand>,
+        Result<(), FillFailure>,
+    ) {
+        ingest_into(Arc::new(TrackCache::new()), answer).await
+    }
+
+    async fn ingest_into(
+        cache: Arc<TrackCache>,
+        answer: FetchAnswer,
+    ) -> (
+        Arc<TrackCache>,
+        mpsc::Receiver<EgressCommand>,
+        Result<(), FillFailure>,
+    ) {
         let session_repo = session_repository_with_session(
             UPSTREAM_SESSION,
-            mock_session_answering_fetch(FetchAnswer::Respond(response)),
+            mock_session_answering_fetch(answer),
             VerifiedToken::full_access(),
         )
         .await;
-        let cache = Arc::new(TrackCache::new());
         let (egress_sender, egress_receiver) = mpsc::channel(1);
         let start = FetchIngestStart {
             track_key: TrackKey::new("ns", "track"),
@@ -473,6 +499,47 @@ mod tests {
             matches!(result, Err(FillFailure::UnknownObjects)),
             "{result:?}"
         );
+        assert!(egress_receiver.try_recv().is_err());
+    }
+
+    /// A cache holding the live datagram {0,1}, filled from a response with
+    /// that object in subgroup 1.
+    async fn fill_over_a_datagram(
+        respond: fn(Vec<moqt::fetch::Fetch>) -> FetchAnswer,
+    ) -> Arc<TrackCache> {
+        let cache = Arc::new(TrackCache::new());
+        let _ = cache
+            .open_subgroup(SubgroupKey::Datagram { group_id: 0 })
+            .insert(datagram_object(0, 1));
+        let copy = moqt::fetch::Fetch::Object(stream_object_in_subgroup(0, 1, 1).object);
+        let _ = ingest_into(cache.clone(), respond(vec![copy, moqt::fetch::Fetch::End])).await;
+        cache
+    }
+
+    #[tokio::test]
+    async fn a_draft14_copy_of_a_datagram_in_the_subgroup_of_its_object_id_matches_it() {
+        // Act
+        let cache = fill_over_a_datagram(FetchAnswer::Respond).await;
+        // Assert
+        assert!(!cache.is_malformed());
+    }
+
+    #[tokio::test]
+    async fn a_draft18_copy_of_a_datagram_in_a_subgroup_latches_the_track() {
+        // Act
+        let cache = fill_over_a_datagram(FetchAnswer::RespondWithPreference).await;
+        // Assert
+        assert!(cache.is_malformed());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_upstream_response_latches_the_track() {
+        // Act
+        let (cache, mut egress_receiver, result) = ingest_answered(FetchAnswer::Malformed).await;
+
+        // Assert: the fill fails as for a malformed track, so the upstream FETCH is cancelled
+        assert!(result.is_err());
+        assert!(cache.is_malformed());
         assert!(egress_receiver.try_recv().is_err());
     }
 

@@ -32,9 +32,8 @@ use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
-        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location,
-        Object, ObjectStatus, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup,
-        SubgroupStart,
+        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
+        ObjectStatus, StreamDataSenderFactory, Subgroup, SubgroupStart, TrackData,
     },
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
@@ -391,11 +390,7 @@ async fn bob(
         subscription.track_alias()
     );
 
-    let data_receiver = subscriber.accept_data_receiver(&subscription).await?;
-    let mut factory: StreamDataReceiverFactory = match data_receiver {
-        DataReceiver::Stream(f) => f,
-        DataReceiver::Datagram(_) => anyhow::bail!("[bob] unexpected datagram"),
-    };
+    let mut receiver = subscriber.accept_data_receiver(&subscription).await?;
 
     // Drain every group's stream to completion. QUIC gives no cross-stream
     // ordering, so fetching on first sight of g2 can race streams that have
@@ -405,7 +400,9 @@ async fn bob(
     // by relay unit tests (resolve + delivery wait).
     let mut closed_groups = std::collections::HashSet::new();
     while closed_groups.len() < GROUPS as usize {
-        let mut stream = factory.next().await?;
+        let TrackData::Subgroup(mut stream) = receiver.next().await? else {
+            anyhow::bail!("[bob] unexpected datagram");
+        };
         let mut group_id = None;
         loop {
             match stream.receive().await {
@@ -554,13 +551,11 @@ async fn drain_until_group_complete(
     until_group: u64,
     label: &str,
 ) -> anyhow::Result<()> {
-    let data_receiver = subscriber.accept_data_receiver(subscription).await?;
-    let mut factory: StreamDataReceiverFactory = match data_receiver {
-        DataReceiver::Stream(f) => f,
-        DataReceiver::Datagram(_) => anyhow::bail!("[{}] unexpected datagram", label),
-    };
+    let mut receiver = subscriber.accept_data_receiver(subscription).await?;
     loop {
-        let mut stream = factory.next().await?;
+        let TrackData::Subgroup(mut stream) = receiver.next().await? else {
+            anyhow::bail!("[{}] unexpected datagram", label);
+        };
         let mut current_group = None;
         let mut target_group_objects = 0;
         loop {

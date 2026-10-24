@@ -107,6 +107,23 @@ impl Version {
         }
     }
 
+    /// Whether a track may carry objects on subgroup streams and in
+    /// datagrams alike: draft-18 §11 allows it, draft-14 §10 forbids it.
+    pub(crate) fn mixes_forwarding_preferences(self) -> bool {
+        match self {
+            Self::Draft14 => false,
+            Self::Draft18 => true,
+        }
+    }
+
+    /// draft-18 marks a datagram object in FETCH (§11.4.4); draft-14 does not (§10.4.4).
+    pub(crate) fn fetch_carries_forwarding_preference(self) -> bool {
+        match self {
+            Self::Draft14 => false,
+            Self::Draft18 => true,
+        }
+    }
+
     pub(crate) fn data_stream_reset_code(self, code: DataStreamResetCode) -> u64 {
         match self {
             Self::Draft14 => draft14::error_codes::data_stream_reset_code_to_wire(code),
@@ -223,6 +240,13 @@ pub(crate) enum FetchReader {
 }
 
 impl FetchReader {
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
+        }
+    }
+
     /// draft-18 encodes Group IDs as deltas in the FETCH's group order.
     pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
         match self {

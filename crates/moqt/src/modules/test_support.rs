@@ -25,9 +25,9 @@ use crate::{
     },
     modules::transport::application_protocol::ApplicationProtocols,
     object::{
-        DataReceiver, DatagramReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
-        Location, Object, ObjectStatus, StreamDataReceiver, StreamDataReceiverFactory,
-        StreamDataSenderFactory, Subgroup, SubgroupObjectSender, SubgroupStart, VariantType,
+        DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
+        ObjectStatus, StreamDataReceiver, StreamDataSenderFactory, Subgroup, SubgroupObjectSender,
+        SubgroupStart, TrackData, VariantType,
     },
     publish::PublishOption,
     server::Handshake,
@@ -224,6 +224,12 @@ pub(crate) async fn published_track(name: &str) -> PublishedTrack {
     published_track_between(client, server).await
 }
 
+/// `published_track` on a draft-18 session.
+pub(crate) async fn published_draft18_track(name: &str) -> PublishedTrack {
+    let (client, server) = spawn_connected_draft18_sessions(name, "moqt").await;
+    published_track_between(client, server).await
+}
+
 /// The client publishes `ns/track` and the server accepts it.
 pub(crate) async fn published_track_between(client: Session, server: Session) -> PublishedTrack {
     let publisher = client.publisher();
@@ -337,54 +343,37 @@ pub(crate) async fn read_subgroup_objects(receiver: &mut StreamDataReceiver) -> 
 pub(crate) async fn first_subgroup_stream(
     server: &Session,
     subscription: &Subscription,
-) -> crate::object::StreamDataReceiver {
-    subgroup_receiver(server, subscription)
-        .await
-        .next()
-        .await
-        .unwrap()
+) -> StreamDataReceiver {
+    next_subgroup(&mut data_receiver(server, subscription).await).await
 }
 
-/// Resolves once the first subgroup header has arrived; call after sending it.
-pub(crate) async fn subgroup_receiver(
-    server: &Session,
-    subscription: &Subscription,
-) -> StreamDataReceiverFactory {
-    let DataReceiver::Stream(factory) = server
+pub(crate) async fn data_receiver(server: &Session, subscription: &Subscription) -> DataReceiver {
+    server
         .subscriber()
         .accept_data_receiver(subscription)
         .await
         .unwrap()
-    else {
-        panic!("expected a subgroup stream receiver");
-    };
-    factory
 }
 
-/// The data receiver resolves only once the first object has arrived, so
-/// this must run after the publisher has sent something.
-pub(crate) async fn datagram_receiver(
-    server: &Session,
-    subscription: &Subscription,
-) -> DatagramReceiver {
-    let DataReceiver::Datagram(receiver) = server
-        .subscriber()
-        .accept_data_receiver(subscription)
-        .await
-        .unwrap()
-    else {
-        panic!("expected a datagram receiver");
-    };
-    receiver
+pub(crate) async fn next_subgroup(receiver: &mut DataReceiver) -> StreamDataReceiver {
+    match receiver.next().await.unwrap() {
+        TrackData::Subgroup(stream) => stream,
+        TrackData::Datagram(object) => panic!("expected a subgroup stream, got {object:?}"),
+    }
 }
 
-/// The data receiver resolves only once the first object has arrived, so
-/// this must run after the publisher has sent something.
+pub(crate) async fn next_datagram(receiver: &mut DataReceiver) -> Object {
+    match receiver.next().await.unwrap() {
+        TrackData::Datagram(object) => object,
+        TrackData::Subgroup(stream) => panic!("expected a datagram, got {stream:?}"),
+    }
+}
+
 pub(crate) async fn subscribed_track_reader(
     server: &Session,
     subscription: &Subscription,
 ) -> TrackReader {
-    TrackReader::new(subgroup_receiver(server, subscription).await)
+    TrackReader::new(data_receiver(server, subscription).await)
 }
 
 pub(crate) async fn read_fetch_objects(
@@ -447,6 +436,7 @@ pub(crate) async fn register_and_take_data_receiver(
         .await
         .remove(&track_alias)
         .unwrap()
+        .receiver
 }
 
 /// A subscriber-initiated subscription with the given ids, for operations

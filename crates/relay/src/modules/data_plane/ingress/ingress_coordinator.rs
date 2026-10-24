@@ -8,12 +8,12 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use crate::modules::{
     data_plane::{
         cache::{cached_object::CacheStamp, store::TrackCacheStore},
-        ingress::track_ingest_task::{IngestCommand, IngestSource, IngestStart, TrackIngestTask},
+        ingress::track_ingest_task::{IngestCommand, IngestStart, TrackIngestTask},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{
-        data_receiver::receiver::DataReceiver, session_event::SessionEvent,
-        session_repository::SessionRepository, subscription::UpstreamSubscription,
+        session_event::SessionEvent, session_repository::SessionRepository,
+        subscription::UpstreamSubscription,
     },
 };
 
@@ -128,36 +128,30 @@ impl IngressCoordinator {
                                 return (track_key, publisher_session_id, create_id);
                             };
                             tracing::info!(%track_key, "upstream data receiver created");
-                            let source = match receiver {
-                                DataReceiver::Stream(factory) => {
-                                    let dataplane_track_span = tracing::info_span!(
-                                        parent: &publisher_session_span,
-                                        "relay.dataplane.ingress.track",
-                                        subscriber_session_id = command.subscriber_session_id,
-                                        publisher_session_id = command.publisher_session_id,
-                                        track_key = %track_key,
-                                        track_alias = subscription.track_alias(),
-                                        track_namespace = %track_key.track_namespace,
-                                        track_name = %track_key.track_name,
-                                    );
-                                    dataplane_track_span.add_link(
-                                        command
-                                            .parent_span
-                                            .context()
-                                            .span()
-                                            .span_context()
-                                            .clone(),
-                                    );
-                                    IngestSource::Stream { factory, track_span: dataplane_track_span }
-                                }
-                                DataReceiver::Datagram(datagram_receiver) => IngestSource::Datagram(datagram_receiver),
-                            };
-                            let kind = source.kind().label();
+                            let track_span = tracing::info_span!(
+                                parent: &publisher_session_span,
+                                "relay.dataplane.ingress.track",
+                                subscriber_session_id = command.subscriber_session_id,
+                                publisher_session_id = command.publisher_session_id,
+                                track_key = %track_key,
+                                track_alias = subscription.track_alias(),
+                                track_namespace = %track_key.track_namespace,
+                                track_name = %track_key.track_name,
+                            );
+                            track_span.add_link(
+                                command
+                                    .parent_span
+                                    .context()
+                                    .span()
+                                    .span_context()
+                                    .clone(),
+                            );
                             if ingest_tx
                                 .send(IngestCommand::Start(IngestStart {
                                     track_key: track_key.clone(),
                                     publisher_session_id: command.publisher_session_id,
-                                    source,
+                                    receiver,
+                                    track_span,
                                     stamp: CacheStamp {
                                         max_cache_duration: subscription.max_cache_duration(),
                                         persist,
@@ -166,9 +160,9 @@ impl IngressCoordinator {
                                 .await
                                 .is_ok()
                             {
-                                tracing::info!(%track_key, "{kind} ingress start command sent");
+                                tracing::info!(%track_key, "ingress start command sent");
                             } else {
-                                tracing::info!(%track_key, "failed to send {kind} ingress start command");
+                                tracing::info!(%track_key, "failed to send the ingress start command");
                             }
                             (track_key, publisher_session_id, create_id)
                         }.instrument(create_receiver_span));

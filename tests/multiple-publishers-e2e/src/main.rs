@@ -24,8 +24,8 @@ use std::time::Duration;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectStatus, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupStart,
+        ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus,
+        StreamDataSenderFactory, Subgroup, SubgroupStart, TrackData,
     },
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
@@ -187,11 +187,7 @@ async fn bob(
         subscription.track_alias()
     );
 
-    let data_receiver = subscriber.accept_data_receiver(&subscription).await?;
-    let mut factory: StreamDataReceiverFactory = match data_receiver {
-        DataReceiver::Stream(f) => f,
-        DataReceiver::Datagram(_) => anyhow::bail!("[bob] unexpected datagram"),
-    };
+    let mut receiver = subscriber.accept_data_receiver(&subscription).await?;
 
     let mut received = HashMap::<String, u64>::new();
     let mut max_group = 0u64;
@@ -199,9 +195,8 @@ async fn bob(
 
     let collect = async {
         loop {
-            let mut stream = match factory.next().await {
-                Ok(s) => s,
-                Err(_) => break,
+            let Ok(TrackData::Subgroup(mut stream)) = receiver.next().await else {
+                break;
             };
             loop {
                 match stream.receive().await {

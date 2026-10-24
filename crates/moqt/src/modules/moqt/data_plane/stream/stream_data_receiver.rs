@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use crate::modules::moqt::{
     data_plane::{
         object::canonical_object::{Object, SubgroupStart},
+        object_ledger::ObjectLedger,
         stream::{
             open_subgroups::{OpenSubgroup, OpenSubgroups},
             stream_receiver::StreamReceiveError,
@@ -22,6 +25,8 @@ pub struct StreamDataReceiver {
     header_returned: bool,
     first_object: Option<Object>,
     open: Option<OpenSubgroup>,
+    /// The track's ledger once the stream is handed to the application.
+    ledger: Option<Arc<ObjectLedger>>,
 }
 
 impl StreamDataReceiver {
@@ -32,7 +37,13 @@ impl StreamDataReceiver {
             header_returned: false,
             first_object: None,
             open: None,
+            ledger: None,
         }
+    }
+
+    /// Checks every object read from here on against the track's `ledger`.
+    pub(crate) fn check_with(&mut self, ledger: Arc<ObjectLedger>) {
+        self.ledger = Some(ledger);
     }
 
     pub(crate) fn group_id(&self) -> u64 {
@@ -52,13 +63,26 @@ impl StreamDataReceiver {
     /// `Ok(None)` means the peer finished the stream (FIN). A header whose
     /// subgroup id comes from the first object is returned only after that
     /// object arrives, so a stream that ends before it returns `Ok(None)`
-    /// without a header.
+    /// without a header. An object that repeats one received before with
+    /// other properties is `StreamReceiveError::MalformedTrack`.
     pub async fn receive(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
-        let received = self.receive_next().await;
+        let received = self
+            .receive_next()
+            .await
+            .and_then(|received| self.check(received));
         if !matches!(received, Ok(Some(_))) {
             self.open = None;
         }
         received
+    }
+
+    fn check(&self, received: Option<Subgroup>) -> Result<Option<Subgroup>, StreamReceiveError> {
+        if let (Some(Subgroup::Object(object)), Some(ledger)) = (&received, &self.ledger) {
+            ledger
+                .check(object, false)
+                .map_err(StreamReceiveError::MalformedTrack)?;
+        }
+        Ok(received)
     }
 
     async fn receive_next(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {

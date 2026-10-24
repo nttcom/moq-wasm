@@ -9,53 +9,17 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     data_plane::{
         cache::{cached_object::CacheStamp, store::TrackCacheStore, track_cache::TrackCache},
-        ingress::{datagram_reader::read_datagrams, stream_reader::accept_streams},
+        ingress::track_reader::read_track,
     },
     domain::{session_id::SessionId, track_key::TrackKey},
-    session::{
-        data_receiver::{
-            datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiverFactory,
-        },
-        session_event::SessionEvent,
-    },
+    session::{data_receiver::receiver::DataReceiver, session_event::SessionEvent},
 };
-
-pub(crate) enum IngestSource {
-    Stream {
-        factory: Box<dyn StreamReceiverFactory>,
-        track_span: Span,
-    },
-    Datagram(Box<dyn DatagramReceiver>),
-}
-
-impl IngestSource {
-    pub(crate) fn kind(&self) -> IngestKind {
-        match self {
-            Self::Stream { .. } => IngestKind::Stream,
-            Self::Datagram(_) => IngestKind::Datagram,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum IngestKind {
-    Stream,
-    Datagram,
-}
-
-impl IngestKind {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Stream => "stream",
-            Self::Datagram => "datagram",
-        }
-    }
-}
 
 pub(crate) struct IngestStart {
     pub(crate) track_key: TrackKey,
     pub(crate) publisher_session_id: SessionId,
-    pub(crate) source: IngestSource,
+    pub(crate) receiver: Box<dyn DataReceiver>,
+    pub(crate) track_span: Span,
     pub(crate) stamp: CacheStamp,
 }
 
@@ -77,7 +41,7 @@ pub(crate) struct TrackIngest {
     pub(crate) stamp: CacheStamp,
 }
 
-type IngestKey = (TrackKey, SessionId, IngestKind);
+type IngestKey = (TrackKey, SessionId);
 
 pub(crate) struct TrackIngestTask {
     join_handle: JoinHandle<()>,
@@ -97,7 +61,7 @@ impl TrackIngestTask {
                 tokio::select! {
                     Some(command) = receiver.recv() => match command {
                         IngestCommand::Start(start) => {
-                            let ingest_key = (start.track_key.clone(), start.publisher_session_id, start.source.kind());
+                            let ingest_key = (start.track_key.clone(), start.publisher_session_id);
                             if stop_senders.contains_key(&ingest_key) {
                                 tracing::warn!(track_key = %start.track_key, publisher_session_id = start.publisher_session_id, "ignoring a second ingest of the same publisher for an active track");
                                 continue;
@@ -115,17 +79,14 @@ impl TrackIngestTask {
                                 stamp: start.stamp,
                             };
                             ingests.spawn(async move {
-                                Self::ingest(ingest, start.source).await;
+                                Self::ingest(ingest, start.receiver, start.track_span).await;
                                 (ingest_key, ingest_id)
                             });
                         }
                         IngestCommand::Stop { track_key, publisher_session_id } => {
-                            for kind in [IngestKind::Stream, IngestKind::Datagram] {
-                                let ingest_key = (track_key.clone(), publisher_session_id, kind);
-                                if let Some((_, stop_sender)) = stop_senders.remove(&ingest_key) {
-                                    let _ = stop_sender.send(true);
-                                    tracing::info!(%track_key, publisher_session_id, "{} ingress track stop requested", kind.label());
-                                }
+                            if let Some((_, stop_sender)) = stop_senders.remove(&(track_key.clone(), publisher_session_id)) {
+                                let _ = stop_sender.send(true);
+                                tracing::info!(%track_key, publisher_session_id, "ingress track stop requested");
                             }
                         }
                     },
@@ -134,8 +95,8 @@ impl TrackIngestTask {
                             if stop_senders.get(&ingest_key).is_some_and(|(id, _)| *id == ingest_id) {
                                 stop_senders.remove(&ingest_key);
                             }
-                            let (track_key, _, kind) = ingest_key;
-                            tracing::debug!(%track_key, "{} ingress track ended", kind.label());
+                            let (track_key, _) = ingest_key;
+                            tracing::debug!(%track_key, "ingress track ended");
                         }
                         Err(e) => {
                             tracing::error!("ingress track task panicked: {:?}", e);
@@ -148,25 +109,17 @@ impl TrackIngestTask {
         Self { join_handle }
     }
 
-    async fn ingest(ingest: TrackIngest, source: IngestSource) {
+    async fn ingest(ingest: TrackIngest, receiver: Box<dyn DataReceiver>, track_span: Span) {
         let cache = ingest.cache.clone();
         cache.begin_live_ingest();
-        match source {
-            IngestSource::Stream {
-                factory,
-                track_span,
-            } => {
-                let span = tracing::debug_span!(
-                    parent: &track_span,
-                    "relay.dataplane.ingress.stream_factory",
-                    track_key = %ingest.track_key,
-                );
-                accept_streams(ingest, factory, track_span)
-                    .instrument(span)
-                    .await;
-            }
-            IngestSource::Datagram(receiver) => read_datagrams(ingest, receiver).await,
-        }
+        let span = tracing::debug_span!(
+            parent: &track_span,
+            "relay.dataplane.ingress.data_receiver",
+            track_key = %ingest.track_key,
+        );
+        read_track(ingest, receiver, track_span)
+            .instrument(span)
+            .await;
         cache.end_live_ingest();
     }
 }
@@ -180,44 +133,12 @@ impl Drop for TrackIngestTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::{
-        session::data_receiver::stream_receiver::StreamReceiver,
-        test_support::relay_harness::{
-            UpstreamSubgroupStream, fixtures::location, wait_largest_location,
-        },
+    use crate::modules::test_support::relay_harness::{
+        UpstreamTrack, fixtures::location, wait_largest_location,
     };
 
     const FIRST_PUBLISHER: SessionId = 1;
     const SECOND_PUBLISHER: SessionId = 2;
-
-    struct ChannelStreamReceiverFactory {
-        stream_receiver: mpsc::UnboundedReceiver<Box<dyn StreamReceiver>>,
-    }
-
-    #[async_trait::async_trait]
-    impl StreamReceiverFactory for ChannelStreamReceiverFactory {
-        async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
-            self.stream_receiver
-                .recv()
-                .await
-                .ok_or_else(|| anyhow::anyhow!("upstream subscription ended"))
-        }
-    }
-
-    struct UpstreamPublisher {
-        stream_sender: mpsc::UnboundedSender<Box<dyn StreamReceiver>>,
-    }
-
-    impl UpstreamPublisher {
-        fn open_stream(&self) -> UpstreamSubgroupStream {
-            UpstreamSubgroupStream::open(|receiver| {
-                self.stream_sender
-                    .send(receiver)
-                    .expect("ingest should accept streams");
-                tokio::spawn(async {})
-            })
-        }
-    }
 
     struct IngestContext {
         _task: TrackIngestTask,
@@ -243,21 +164,19 @@ mod tests {
             }
         }
 
-        async fn start(&self, publisher_session_id: SessionId) -> UpstreamPublisher {
-            let (stream_sender, stream_receiver) = mpsc::unbounded_channel();
+        async fn start(&self, publisher_session_id: SessionId) -> UpstreamTrack {
+            let (upstream, receiver) = UpstreamTrack::channel();
             self.command_sender
                 .send(IngestCommand::Start(IngestStart {
                     track_key: track_key(),
                     publisher_session_id,
-                    source: IngestSource::Stream {
-                        factory: Box::new(ChannelStreamReceiverFactory { stream_receiver }),
-                        track_span: Span::none(),
-                    },
+                    receiver,
+                    track_span: Span::none(),
                     stamp: CacheStamp::default(),
                 }))
                 .await
                 .unwrap();
-            UpstreamPublisher { stream_sender }
+            upstream
         }
 
         async fn stop(&self, publisher_session_id: SessionId) {
