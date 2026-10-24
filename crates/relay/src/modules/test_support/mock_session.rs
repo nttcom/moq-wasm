@@ -1,5 +1,5 @@
-use moqt::RequestErrorCode;
 use moqt::publish::PublishDoneCode;
+use moqt::{RequestErrorCode, TrackProperties};
 use std::sync::{Arc, Mutex};
 
 use moqt::{
@@ -45,7 +45,7 @@ pub(crate) struct SentPublish {
     pub(crate) track_namespace: String,
     pub(crate) track_name: String,
     pub(crate) content_exists: ContentExists,
-    pub(crate) max_cache_duration: Option<u64>,
+    pub(crate) track_properties: TrackProperties,
     pub(crate) forward: bool,
 }
 
@@ -368,14 +368,14 @@ impl Publisher for MockUpstreamPublisher {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
         forward: bool,
     ) -> anyhow::Result<DownstreamSubscription> {
         self.recorded.publishes.lock().unwrap().push(SentPublish {
             track_namespace: track_namespace.clone(),
             track_name: track_name.clone(),
             content_exists,
-            max_cache_duration,
+            track_properties,
             forward,
         });
         let Some(answer_publish) = &self.answer_publish else {
@@ -394,7 +394,7 @@ impl Publisher for MockUpstreamPublisher {
                 forward,
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
-                max_cache_duration: None,
+                track_properties: TrackProperties::default(),
             }),
         ))
     }
@@ -464,7 +464,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 content_exists: answer_subscribe(),
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
-                max_cache_duration: None,
+                track_properties: TrackProperties::default(),
             }),
         ))
     }
@@ -512,7 +512,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 group_order: GroupOrder::Ascending,
                 end_of_track: false,
                 end_location,
-                max_cache_duration: None,
+                track_properties: TrackProperties::default(),
                 remainder: None,
             }),
         }
@@ -600,7 +600,8 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 #[derive(Clone)]
 pub(crate) struct MockSubscribeHandler {
     pub(crate) forward: bool,
-    pub(crate) subscribe_ok_count: Arc<Mutex<usize>>,
+    /// The track properties of each SUBSCRIBE_OK sent.
+    pub(crate) subscribe_oks: Arc<Mutex<Vec<TrackProperties>>>,
     pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
 }
 
@@ -608,7 +609,7 @@ impl Default for MockSubscribeHandler {
     fn default() -> Self {
         Self {
             forward: true,
-            subscribe_ok_count: Arc::default(),
+            subscribe_oks: Arc::default(),
             subscribe_errors: Arc::default(),
         }
     }
@@ -665,9 +666,9 @@ impl SubscribeHandler for MockSubscribeHandler {
         _track_alias: u64,
         _expires: u64,
         _content_exists: ContentExists,
-        _max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
-        *self.subscribe_ok_count.lock().unwrap() += 1;
+        self.subscribe_oks.lock().unwrap().push(track_properties);
         Ok(())
     }
 
@@ -686,10 +687,13 @@ impl SubscribeHandler for MockSubscribeHandler {
 }
 
 /// `joining_rule` stands in for the session draft's Joining FETCH rule.
+#[derive(Clone)]
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
+    /// The track properties of each FETCH_OK sent.
+    pub(crate) fetch_oks: Arc<Mutex<Vec<TrackProperties>>>,
 }
 
 impl MockFetchHandler {
@@ -698,6 +702,7 @@ impl MockFetchHandler {
         Self {
             fetch_params,
             joining_rule: |_| Ok(()),
+            fetch_oks: Arc::default(),
         }
     }
 }
@@ -744,8 +749,9 @@ impl FetchHandler for MockFetchHandler {
         &self,
         _end_of_track: bool,
         _end_location: moqt::object::Location,
-        _max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
+        self.fetch_oks.lock().unwrap().push(track_properties);
         Ok(())
     }
 
@@ -831,7 +837,7 @@ impl PublishHandler for MockPublishHandler {
             forward: true,
             filter_type,
             delivery_timeout: None,
-            max_cache_duration: None,
+            track_properties: TrackProperties::default(),
         })
     }
 

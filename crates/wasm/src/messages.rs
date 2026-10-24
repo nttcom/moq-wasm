@@ -295,7 +295,7 @@ impl From<&SubscribeOk> for SubscribeOkMessage {
             largest_group_id,
             largest_object_id,
             delivery_timeout: message.delivery_timeout,
-            max_duration: message.max_duration,
+            max_duration: message.track_properties.max_cache_duration,
         }
     }
 }

@@ -156,6 +156,7 @@ impl IngressCoordinator {
                                         max_cache_duration: subscription.max_cache_duration(),
                                         persist,
                                     },
+                                    track_properties: subscription.as_moqt().track_properties().clone(),
                                 }))
                                 .await
                                 .is_ok()

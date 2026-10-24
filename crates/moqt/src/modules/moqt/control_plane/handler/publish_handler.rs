@@ -2,7 +2,7 @@ use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
-    PublisherInitiatedSubscription, Subscription,
+    PublisherInitiatedSubscription, Subscription, TrackProperties,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -33,9 +33,8 @@ pub struct PublishHandler {
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
-    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the PUBLISH
-    /// carried.
-    pub max_cache_duration: Option<u64>,
+    /// What the PUBLISH said about the track.
+    pub track_properties: TrackProperties,
     pub delivery_timeout: Option<u64>,
     guard: ResponseGuard,
 }
@@ -64,7 +63,7 @@ impl PublishHandler {
             group_order: publish_message.group_order,
             content_exists: publish_message.content_exists,
             forward: publish_message.forward,
-            max_cache_duration: publish_message.max_duration,
+            track_properties: publish_message.track_properties,
             delivery_timeout: None,
         }
     }
@@ -101,7 +100,7 @@ impl PublishHandler {
                 forward: self.forward,
                 filter_type,
                 delivery_timeout: self.delivery_timeout,
-                max_cache_duration: self.max_cache_duration,
+                track_properties: self.track_properties.clone(),
             },
         ))
     }
@@ -151,9 +150,9 @@ impl PublishHandler {
 mod tests {
     use tokio::sync::mpsc::error::TryRecvError;
 
-    use crate::RequestErrorCode;
     use crate::publish::PublishOption;
     use crate::subscribe::FilterType;
+    use crate::{RequestErrorCode, TrackProperties};
     use crate::{
         SessionEvent,
         modules::{
@@ -178,7 +177,10 @@ mod tests {
                     "ns".to_string(),
                     "track".to_string(),
                     PublishOption {
-                        max_cache_duration: Some(2_000),
+                        track_properties: TrackProperties {
+                            max_cache_duration: Some(2_000),
+                            ..Default::default()
+                        },
                         ..PublishOption::default()
                     },
                 )
@@ -192,10 +194,10 @@ mod tests {
         let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
 
         // Assert
-        assert_eq!(handler.max_cache_duration, Some(2_000));
-        assert_eq!(accepted.max_cache_duration(), Some(2_000));
+        assert_eq!(handler.track_properties.max_cache_duration, Some(2_000));
+        assert_eq!(accepted.track_properties().max_cache_duration, Some(2_000));
         let published = request.await.unwrap().unwrap();
-        assert_eq!(published.max_cache_duration(), Some(2_000));
+        assert_eq!(published.track_properties().max_cache_duration, Some(2_000));
     }
 
     #[tokio::test]

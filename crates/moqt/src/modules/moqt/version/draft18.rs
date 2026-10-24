@@ -1020,7 +1020,7 @@ mod tests {
                 group_order: crate::object::GroupOrder::Ascending,
                 content_exists: ContentExists::False,
                 delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             }),
         )
         .await;
@@ -2246,6 +2246,29 @@ mod tests {
         (subscription.unwrap(), handler)
     }
 
+    /// A PUBLISH of track `ns/track` that `publisher` sends with
+    /// `track_properties`; returns the stream its answer arrives on.
+    async fn raw_publish(
+        publisher: &crate::Session,
+        track_alias: u64,
+        track_properties: &[KeyValuePair],
+    ) -> (StreamSender, MessageReceiver) {
+        let connection = publisher.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, connection.control.next_request_id());
+        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
+        codec::put_vi64(&mut payload, track_alias);
+        parameters::put_parameters(&mut payload, &[]).unwrap();
+        codec::put_key_value_pairs(&mut payload, track_properties).unwrap();
+        let sender = StreamSender::new(send_stream);
+        sender
+            .send(&messages::frame(messages::PUBLISH, &payload).unwrap())
+            .await
+            .unwrap();
+        (sender, MessageReceiver::new(receive_stream, MessageDecoder))
+    }
+
     async fn send_raw_stream(session: &crate::Session, bytes: &[u8]) {
         let connection = session.publisher().session.connection();
         let sender = StreamSender::new(connection.transport.open_uni().await.unwrap());
@@ -2318,23 +2341,14 @@ mod tests {
         // Arrange
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-default-priority-publish", "moqt").await;
-        let connection = client.publisher().session.connection();
-        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
-        let mut payload = BytesMut::new();
-        codec::put_vi64(&mut payload, connection.control.next_request_id());
-        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
-        codec::put_vi64(&mut payload, 6);
-        parameters::put_parameters(&mut payload, &[]).unwrap();
-        codec::put_key_value_pairs(&mut payload, &[default_priority_property(9)]).unwrap();
-        let publish_stream = StreamSender::new(send_stream);
-        publish_stream
-            .send(&messages::frame(messages::PUBLISH, &payload).unwrap())
-            .await
-            .unwrap();
+        let _publish_stream = raw_publish(&client, 6, &[default_priority_property(9)]).await;
         let subscription = accept_publish(&server).await;
 
         // Act
-        connection
+        client
+            .publisher()
+            .session
+            .connection()
             .transport
             .send_datagram(BytesMut::from(&[0x0C, 6, 0, b'd'][..]))
             .unwrap();
@@ -2369,11 +2383,121 @@ mod tests {
 
             // Assert
             assert_eq!(
-                subscription.max_cache_duration(),
+                subscription.track_properties().max_cache_duration,
                 Some(50),
                 "{properties:?}"
             );
         }
+    }
+
+    /// Track Properties moqt has no field for: Immutable Properties holding
+    /// an application property, and an application property (§2.5).
+    fn properties_without_a_field() -> Vec<KeyValuePair> {
+        vec![
+            messages::immutable_application_property(),
+            KeyValuePair {
+                key: 0x38,
+                value: VariantType::Even(1),
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn track_properties_without_a_field_reach_the_subscription_as_received() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-other-track-properties", "moqt").await;
+
+        // Act
+        let (subscription, _handler) =
+            subscribed_with_track_properties(&client, &server, 4, &properties_without_a_field())
+                .await;
+
+        // Assert
+        assert_eq!(
+            subscription.track_properties().other,
+            properties_without_a_field()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_carries_the_track_properties_held_as_received() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-send-other-track-properties", "moqt").await;
+        let (_sender, mut receiver, mut handler) = raw_subscribe(&client, &server).await;
+        handler.track_properties.other = properties_without_a_field();
+
+        // Act
+        handler.ok(0, ContentExists::False).await.unwrap();
+
+        // Assert: DEFAULT PUBLISHER GROUP ORDER comes from the model
+        let response = receiver.receive().await.unwrap();
+        let Some(messages::Message::SubscribeOk(subscribe_ok)) = response else {
+            panic!("expected SUBSCRIBE_OK, got {response:?}");
+        };
+        let mut expected = properties_without_a_field();
+        expected.insert(
+            1,
+            KeyValuePair {
+                key: 0x22,
+                value: VariantType::Even(1),
+            },
+        );
+        assert_eq!(subscribe_ok.track_properties, expected);
+    }
+
+    /// §2.5.1.
+    fn mandatory_track_property() -> KeyValuePair {
+        KeyValuePair {
+            key: 0x4000,
+            value: VariantType::Even(1),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_with_a_mandatory_track_property_fails_the_subscribe() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-mandatory-subscribe-ok", "moqt").await;
+
+        // Act
+        let (result, _handler) = subscribe_answered_with_track_properties(
+            &client,
+            &server,
+            4,
+            &[mandatory_track_property()],
+        )
+        .await;
+
+        // Assert
+        assert!(
+            matches!(
+                &result,
+                Err(RequestFailure::Rejected {
+                    code: RequestErrorCode::UnsupportedExtension,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publish_with_a_mandatory_track_property_is_refused() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-mandatory-publish", "moqt").await;
+
+        // Act
+        let (_sender, mut receiver) = raw_publish(&client, 6, &[mandatory_track_property()]).await;
+        let response = receiver.receive().await.unwrap();
+
+        // Assert
+        let Some(messages::Message::RequestError(error)) = response else {
+            panic!("expected REQUEST_ERROR, got {response:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::UnsupportedExtension);
     }
 
     #[tokio::test]
@@ -2541,16 +2665,16 @@ mod tests {
         );
     }
 
-    /// A SUBSCRIBE `client` sends on a stream it reads itself, answered by
-    /// `server`; returns the stream after its SUBSCRIBE_OK.
-    async fn raw_subscription(
+    /// A SUBSCRIBE `client` sends on a stream it reads itself; returns the
+    /// stream and the unanswered handler `server` receives.
+    async fn raw_subscribe(
         client: &crate::Session,
         server: &crate::Session,
-    ) -> (StreamSender, MessageReceiver) {
+    ) -> (StreamSender, MessageReceiver, SubscribeHandler) {
         let connection = client.publisher().session.connection();
         let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let sender = StreamSender::new(send_stream);
-        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let receiver = MessageReceiver::new(receive_stream, MessageDecoder);
         let subscribe = messages::encode_subscribe(&Subscribe {
             request_id: connection.control.next_request_id(),
             track_namespace: vec!["ns".to_string()],
@@ -2567,6 +2691,16 @@ mod tests {
         let SessionEvent::Subscribe(handler) = next_event(server).await else {
             panic!("expected SUBSCRIBE");
         };
+        (sender, receiver, handler)
+    }
+
+    /// A SUBSCRIBE `client` sends on a stream it reads itself, answered by
+    /// `server`; returns the stream after its SUBSCRIBE_OK.
+    async fn raw_subscription(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (StreamSender, MessageReceiver) {
+        let (sender, mut receiver, handler) = raw_subscribe(client, server).await;
         handler.ok(0, ContentExists::False).await.unwrap();
         let response = receiver.receive().await.unwrap();
         assert!(

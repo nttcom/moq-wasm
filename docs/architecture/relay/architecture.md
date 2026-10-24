@@ -726,13 +726,25 @@ per-request authorization gate under "Event pipeline".
   FETCH goes upstream. Eviction removes it at `expires_at` whether that is
   before or after the relay TTL, and the newest-object exception does not
   extend it. Objects received without the value keep the relay TTL.
-  Downstream, the relay sends the value it received unchanged:
-  `UpstreamTrack::max_cache_duration` (the newest publisher's) goes into the
-  SUBSCRIBE_OK, the forwarded PUBLISH and a FETCH_OK served from cache, and an
-  upstream FETCH_OK's value goes into the relayed FETCH_OK. Each relay counts
+  Downstream, the relay sends the value it received unchanged, as part of the
+  track properties below. Each relay counts
   from its own receipt, so in a cascade an object can stay cached up to N ms
   per hop. A value above `RETENTION_LIMIT` (1 h) is cut to it; caching is
   optional (§8.1), so keeping an object for less is allowed.
+- Track properties (`moqt::TrackProperties`: MAX_CACHE_DURATION and the
+  draft-18 Track Properties moqt holds as received, Immutable Properties
+  included) go downstream whole and unchanged (draft-18 §2.5). The relay
+  never merges two sets; a newer one replaces the older.
+  - SUBSCRIBE_OK and the forwarded PUBLISH carry
+    `UpstreamTrack::track_properties`, the newest publisher's.
+  - A relayed upstream FETCH_OK carries that FETCH_OK's set.
+  - A FETCH_OK served from cache carries the same newest publisher's set
+    while one is live. Once the last publisher has left, it carries
+    `TrackCache::track_properties`: the latest set of the newest publisher
+    (largest session id) whose ingest started (its SUBSCRIBE_OK or PUBLISH)
+    or whose upstream FETCH_OK filled the cache; an older publisher's later
+    set does not replace it (§2.5 caches properties with the track).
+  - A draft-14 session sends none of the draft-18 properties.
 - Disk cache (`disk_cache.rs`, on when `RELAY_DISK_CACHE_DIR` is set): the
   relay a client publisher sends to keeps the payloads for up to
   `RETENTION_LIMIT`; a downstream relay keeps its memory cache only and

@@ -36,7 +36,9 @@ use crate::modules::{
         RecordedControlMessages, mock_session_answering_publish, session_repository_with_session,
         session_repository_with_upstream_session,
     },
-    test_support::relay_harness::fixtures::subscription::upstream_subscription,
+    test_support::relay_harness::fixtures::subscription::{
+        upstream_subscription, upstream_subscription_with_track_properties,
+    },
 };
 
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;
@@ -91,6 +93,20 @@ pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstr
         content_exists: ContentExists::False,
         origin,
         publisher_peer: SessionPeer::Client,
+    }
+}
+
+/// A SUBSCRIBE_OK'd upstream subscription whose answer said
+/// `track_properties`.
+pub(crate) fn upstream_carrying(
+    track_properties: moqt::TrackProperties,
+) -> ActiveUpstreamSubscription {
+    ActiveUpstreamSubscription {
+        subscription: upstream_subscription_with_track_properties(
+            UPSTREAM_REQUEST_ID,
+            track_properties,
+        ),
+        ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
     }
 }
 

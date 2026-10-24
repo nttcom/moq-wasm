@@ -124,10 +124,15 @@ impl FetchIngest {
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
         let cache = start.egress_start.cache.clone();
+        cache.record_track_properties(
+            start.upstream_publisher_session_id,
+            start.fetch_handle.track_properties.clone(),
+        );
         let start_eviction_generation = cache.eviction_generation();
         let stamp = CacheStamp {
             max_cache_duration: start
                 .fetch_handle
+                .track_properties
                 .max_cache_duration
                 .map(Duration::from_millis),
             persist,
@@ -261,6 +266,7 @@ mod tests {
                     stream_object_with_payload,
                 },
                 location,
+                subscription::unknown_track_properties,
             },
         },
     };
@@ -302,7 +308,7 @@ mod tests {
                 group_order: moqt::object::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 1),
-                max_cache_duration: None,
+                track_properties: moqt::TrackProperties::default(),
                 remainder: None,
             },
             egress_start: EgressFetchRequest {
@@ -409,12 +415,19 @@ mod tests {
         mpsc::Receiver<EgressCommand>,
         Result<(), FillFailure>,
     ) {
-        ingest_into(Arc::new(TrackCache::new()), answer).await
+        ingest_into(
+            Arc::new(TrackCache::new()),
+            answer,
+            moqt::TrackProperties::default(),
+        )
+        .await
     }
 
+    /// The upstream FETCH_OK says `track_properties`.
     async fn ingest_into(
         cache: Arc<TrackCache>,
         answer: FetchAnswer,
+        track_properties: moqt::TrackProperties,
     ) -> (
         Arc<TrackCache>,
         mpsc::Receiver<EgressCommand>,
@@ -435,7 +448,7 @@ mod tests {
                 group_order: moqt::object::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 3),
-                max_cache_duration: None,
+                track_properties,
                 remainder: None,
             },
             egress_start: EgressFetchRequest {
@@ -454,6 +467,24 @@ mod tests {
 
     fn fetched(object_id: u64) -> moqt::fetch::Fetch {
         moqt::fetch::Fetch::Object(stream_object(0, object_id).object)
+    }
+
+    #[tokio::test]
+    async fn an_upstream_fetch_ok_replaces_the_cached_track_properties() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        cache.record_track_properties(UPSTREAM_SESSION, unknown_track_properties(1));
+
+        // Act
+        let _ = ingest_into(
+            cache.clone(),
+            FetchAnswer::Respond(vec![moqt::fetch::Fetch::End]),
+            unknown_track_properties(2),
+        )
+        .await;
+
+        // Assert: draft-18 §2.5, the most recent set replaces the cached one
+        assert_eq!(cache.track_properties(), unknown_track_properties(2));
     }
 
     #[tokio::test]
@@ -512,7 +543,12 @@ mod tests {
             .open_subgroup(SubgroupKey::Datagram { group_id: 0 })
             .insert(datagram_object(0, 1));
         let copy = moqt::fetch::Fetch::Object(stream_object_in_subgroup(0, 1, 1).object);
-        let _ = ingest_into(cache.clone(), respond(vec![copy, moqt::fetch::Fetch::End])).await;
+        let _ = ingest_into(
+            cache.clone(),
+            respond(vec![copy, moqt::fetch::Fetch::End]),
+            moqt::TrackProperties::default(),
+        )
+        .await;
         cache
     }
 

@@ -99,7 +99,7 @@ fn on_publish(shared: &ClientShared, handler: PublishHandler) {
         forward: handler.forward,
         authorization_tokens: vec![],
         delivery_timeout: handler.delivery_timeout,
-        max_duration: handler.max_cache_duration,
+        track_properties: handler.track_properties.clone(),
     };
     shared
         .incoming
