@@ -10,7 +10,7 @@ use mediapack::Timestamp;
 use moqt::TrackObject;
 
 use crate::{
-    file_writer::{ClosedFile, RecordingFile},
+    file_writer::{ClosedFile, RecordingFile, suffixed_path},
     pipeline::{FileTracks, Output, Pipeline, capture_timestamp},
     track_selection::{AudioTrack, Selection, VideoTrack},
     upload_task::{Upload, UploadQueue},
@@ -304,7 +304,7 @@ impl TrackFile {
         segment_length: Option<Duration>,
     ) -> Result<Self> {
         let path = match track {
-            Some(track) => track_path(path, track),
+            Some(track) => suffixed_path(path, &track.replace('/', "_")),
             None => path.to_path_buf(),
         };
         Ok(Self {
@@ -327,19 +327,6 @@ impl TrackFile {
         }
         Ok(closed)
     }
-}
-
-fn track_path(path: &Path, track: &str) -> PathBuf {
-    let stem = path
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let track = track.replace('/', "_");
-    let name = match path.extension() {
-        Some(extension) => format!("{stem}-{track}.{}", extension.to_string_lossy()),
-        None => format!("{stem}-{track}"),
-    };
-    path.with_file_name(name)
 }
 
 #[cfg(test)]
