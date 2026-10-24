@@ -38,7 +38,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   | `moqt::subscribe` | SUBSCRIBE, SUBSCRIBE_UPDATE, UNSUBSCRIBE and TRACK_STATUS: options, `FilterType`, handlers |
   | `moqt::publish` | PUBLISH and PUBLISH_DONE: `PublishOption`, handlers |
   | `moqt::fetch` | FETCH and FETCH_CANCEL: options, `FetchParams`, handlers, fetch stream sender/receiver |
-  | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, handlers |
+  | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE (and draft-18 SUBSCRIBE_TRACKS) and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, `NamespaceInterest`, handlers |
   | `moqt::object` | Draft-independent object model (`Object`, `ForwardingPreference`, `SubgroupStart`, `Location`, `GroupOrder`, `ExtensionHeaders`, `ObjectStatus`) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
   | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
   | `moqt::executor` | `spawn` / `JoinHandle`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
@@ -218,7 +218,21 @@ call through the adapter; a draft never gets a task of its own (see
       `PublishNamespace` / `PublishNamespaceDone`. `PublishNamespace` gets a
       synthetic Request ID counting down from `u64::MAX`; responses to it
       send nothing.
-    - SUBSCRIBE_TRACKS raises `SubscribeNameSpace` and gets no NAMESPACE.
+    - SUBSCRIBE_TRACKS raises `SubscribeNameSpace` with
+      `NamespaceInterest::Tracks` and its FORWARD as `forward`;
+      SUBSCRIBE_NAMESPACE raises it with `Namespaces`. A SUBSCRIBE_TRACKS
+      gets no NAMESPACE: a `publish_namespace` that matches only one goes as a
+      PUBLISH_NAMESPACE request. PUBLISH_BLOCKED on our SUBSCRIBE_TRACKS is
+      logged and the stream read on (§6.1).
+    - `NamespaceInterest` says what `Subscriber::subscribe_namespace` asks
+      for. `version::ControlChannel::namespace_requests` splits it per draft:
+      draft-18 sends SUBSCRIBE_NAMESPACE for namespaces and SUBSCRIBE_TRACKS
+      (`OutgoingRequest::SubscribeTracks`) for tracks, in parallel, and
+      withdraws the accepted one when the other fails; draft-14 sends one
+      SUBSCRIBE_NAMESPACE for any interest, and its handlers report
+      `NamespacesAndTracks`. Ending either draft-18 stream raises
+      `UnsubscribeNamespace` with that stream's interest;
+      `unsubscribe_namespace` withdraws both.
     - A per-request GOAWAY ends the request as a peer cancellation with
       GOING_AWAY. On our SUBSCRIBE_NAMESPACE it raises
       `PublishNamespaceDone` for every namespace still announced, as the
@@ -296,9 +310,10 @@ the server's GOAWAY by itself (draft-14 §3.5; see
 events to a `MigrationTask` (`domains/session/migration_task.rs`) instead of
 the application: it forwards them with logical ids, and on GOAWAY it opens
 the next connection through the endpoint's `SessionCreator` (`Reconnect`),
-sends every SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE
-made on the session again (`NextGroupStart`, the last Forward state; a
-rejected namespace or SUBSCRIBE is repeated every 500 ms for up to 10 s),
+sends every namespace subscription (with its `NamespaceInterest`),
+PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE made on the session again
+(`NextGroupStart`, the last Forward state; a rejected namespace or SUBSCRIBE
+is repeated every 500 ms for up to 10 s),
 makes it the current connection, and closes the previous one with NO_ERROR
 once the server takes no track this side sends there any more and no
 carried subscription has a subgroup stream open there (each sink counts the
@@ -475,8 +490,9 @@ state name the connection:
   takes per logical track alias and per logical FETCH request id.
   Registering a FETCH returns a `PendingFetch` drop-guard that removes both
   FETCH entries unless FETCH_OK arrived.
-- `carried` — for a session that follows GOAWAY, the namespace and track
-  subscriptions and the published namespaces a migration sends again.
+- `carried` — for a session that follows GOAWAY, the namespace (with their
+  `NamespaceInterest`) and track subscriptions and the published namespaces a
+  migration sends again.
 - `publications` — for a session that follows GOAWAY, the tracks PUBLISHed
   on it with every connection each is on (`SendTargets::Publication`); a
   track served for a SUBSCRIBE goes to the connection the SUBSCRIBE arrived

@@ -13,9 +13,9 @@ use crate::{
                 parameters::content_exists::ContentExists, subscribe::Subscribe,
                 subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
                 subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
-                unsubscribe_namespace::UnsubscribeNamespace,
             },
             enums::ResponseMessage,
+            namespace_interest::NamespaceInterest,
         },
         data_plane::stream::{
             fetch_data_receiver::FetchDataReceiver,
@@ -44,17 +44,25 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
+    /// Asks the peer for the namespaces and/or tracks under `namespace`, as
+    /// `interest` says. On draft-18 `NamespacesAndTracks` takes both
+    /// SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS (§6.1): when either fails,
+    /// the other is withdrawn and the failure returned.
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscriber.subscribe_namespace",
         skip_all,
-        fields(namespace = %namespace)
+        fields(namespace = %namespace, interest = ?interest)
     )]
-    pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
+    pub async fn subscribe_namespace(
+        &self,
+        namespace: String,
+        interest: NamespaceInterest,
+    ) -> Result<(), RequestFailure> {
         let mut carried = self.session.lock_carried().await;
-        send_subscribe_namespace(&self.session.connection(), namespace.clone()).await?;
+        send_subscribe_namespace(&self.session.connection(), &namespace, interest).await?;
         if let Some(carried) = carried.as_mut() {
-            carried.namespaces.push(namespace);
+            carried.namespaces.push((namespace, interest));
         }
         Ok(())
     }
@@ -444,6 +452,8 @@ impl Subscriber {
         Ok(())
     }
 
+    /// Withdraws every namespace subscription for `namespace`, whatever its
+    /// interest.
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscriber.unsubscribe_namespace",
@@ -452,15 +462,18 @@ impl Subscriber {
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         if let Some(carried) = self.session.lock_carried().await.as_mut() {
-            carried.namespaces.retain(|carried| *carried != namespace);
+            carried
+                .namespaces
+                .retain(|(carried, _)| *carried != namespace);
         }
-        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+        let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
             connection
                 .control
-                .notify(Notification::UnsubscribeNamespace(
-                    UnsubscribeNamespace::new(vec_namespace.clone()),
-                ))
+                .notify(Notification::UnsubscribeNamespace {
+                    track_namespace_prefix: vec_namespace.clone(),
+                    interest: NamespaceInterest::NamespacesAndTracks,
+                })
                 .await?;
         }
         Ok(())
@@ -588,18 +601,62 @@ impl Subscriber {
     }
 }
 
+fn namespace_tuple(namespace: &str) -> Vec<String> {
+    namespace.split('/').map(|s| s.to_string()).collect()
+}
+
+/// Sends the requests `interest` takes on `connection`'s draft and waits for
+/// all of them; when one fails, those accepted are withdrawn.
 pub(crate) async fn send_subscribe_namespace(
     connection: &Arc<Connection>,
-    namespace: String,
+    namespace: &str,
+    interest: NamespaceInterest,
 ) -> Result<(), RequestFailure> {
-    let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+    let prefix = namespace_tuple(namespace);
+    let requests = connection.control.namespace_requests(interest);
+    let results = futures::future::join_all(
+        requests
+            .iter()
+            .map(|&request| send_namespace_request(connection, prefix.clone(), request)),
+    )
+    .await;
+    let (accepted, failed): (Vec<_>, Vec<_>) = requests
+        .into_iter()
+        .zip(results)
+        .partition(|(_, result)| result.is_ok());
+    let Some((_, Err(failure))) = failed.into_iter().next() else {
+        return Ok(());
+    };
+    for (request, _) in accepted {
+        if let Err(error) = connection
+            .control
+            .notify(Notification::UnsubscribeNamespace {
+                track_namespace_prefix: prefix.clone(),
+                interest: request,
+            })
+            .await
+        {
+            tracing::debug!(%error, ?request, "could not withdraw a namespace subscription");
+        }
+    }
+    Err(failure)
+}
+
+async fn send_namespace_request(
+    connection: &Arc<Connection>,
+    prefix: Vec<String>,
+    interest: NamespaceInterest,
+) -> Result<(), RequestFailure> {
     let request_id = connection.control.next_request_id();
-    let pending = connection
-        .send_request(OutgoingRequest::SubscribeNamespace(
-            SubscribeNamespace::new(request_id, vec_namespace, vec![]),
-        ))
-        .await?;
-    tracing::info!("Subscribe namespace");
+    let message = SubscribeNamespace::new(request_id, prefix, vec![]);
+    let request = match interest {
+        NamespaceInterest::Tracks => OutgoingRequest::SubscribeTracks(message),
+        NamespaceInterest::Namespaces | NamespaceInterest::NamespacesAndTracks => {
+            OutgoingRequest::SubscribeNamespace(message)
+        }
+    };
+    let pending = connection.send_request(request).await?;
+    tracing::info!(?interest, "Subscribe namespace");
     let response = pending.response().await?;
     match response {
         ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
@@ -608,12 +665,12 @@ pub(crate) async fn send_subscribe_namespace(
                     "response for another request ID",
                 ))
             } else {
-                tracing::info!("Subscribe namespace ok");
+                tracing::info!(?interest, "Subscribe namespace ok");
                 Ok(())
             }
         }
         ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
-            tracing::info!("Subscribe namespace error");
+            tracing::info!(?interest, "Subscribe namespace error");
             Err(RequestFailure::Rejected {
                 request_id,
                 code: error_code,

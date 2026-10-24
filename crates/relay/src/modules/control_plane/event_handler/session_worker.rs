@@ -256,6 +256,7 @@ impl SessionWorker {
                             self.verified_token.as_deref(),
                             handler.track_namespace_prefix(),
                         ),
+                        handler.interest,
                     )
                     .instrument(event_span)
                     .await;

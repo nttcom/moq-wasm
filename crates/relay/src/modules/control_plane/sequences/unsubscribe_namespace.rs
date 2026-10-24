@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use moqt::namespace::NamespaceInterest;
+
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
@@ -22,6 +24,7 @@ impl UnsubscribeNamespace {
         parent = session_span,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
@@ -30,15 +33,17 @@ impl UnsubscribeNamespace {
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
         track_namespace_prefix: &str,
+        interest: NamespaceInterest,
     ) {
         tracing::info!(
             session_id = %session_id,
             track_namespace_prefix = %track_namespace_prefix,
+            ?interest,
             "SequenceHandler::UnsubscribeNamespace"
         );
 
         let no_clients_remain =
-            table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
+            table.unregister_subscribe_namespace(session_id, track_namespace_prefix, interest);
         if !super::is_origin_client(session_id, forwarder).await {
             return;
         }

@@ -38,12 +38,13 @@ use crate::{
                     requests_blocked::RequestsBlocked, server_setup::ServerSetup,
                     subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
                     subscribe_ok::SubscribeOk, subscribe_update::SubscribeUpdate,
-                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
+                    unsubscribe::Unsubscribe,
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::{
                     DataStreamResetCode, PublishDoneCode, RequestErrorCode, RequestKind,
                 },
+                namespace_interest::NamespaceInterest,
             },
             data_plane::{
                 object::canonical_object::{Object, SubgroupStart},
@@ -322,6 +323,9 @@ pub(crate) enum OutgoingRequest {
     Publish(Publish),
     PublishNamespace(PublishNamespace),
     SubscribeNamespace(SubscribeNamespace),
+    /// draft-18's SUBSCRIBE_TRACKS; draft-14 sends it as SUBSCRIBE_NAMESPACE,
+    /// which also asks for the tracks.
+    SubscribeTracks(SubscribeNamespace),
 }
 
 pub(crate) enum OutgoingResponse {
@@ -356,7 +360,12 @@ pub(crate) enum Notification {
         code: RequestErrorCode,
         reason: String,
     },
-    UnsubscribeNamespace(UnsubscribeNamespace),
+    /// Withdraws the namespace subscriptions for the prefix that cover
+    /// `interest`.
+    UnsubscribeNamespace {
+        track_namespace_prefix: Vec<String>,
+        interest: NamespaceInterest,
+    },
     GoAway(GoAway),
     MaxRequestId(MaxRequestId),
     RequestsBlocked(RequestsBlocked),
@@ -414,6 +423,19 @@ impl ControlChannel {
         match self {
             Self::Draft14(_) => draft18::messages::DEFAULT_PUBLISHER_PRIORITY,
             Self::Draft18(channel) => channel.default_publisher_priority(request_id),
+        }
+    }
+
+    /// The interests a namespace subscription of `interest` is sent as, one
+    /// request each: draft-18 asks for namespaces with SUBSCRIBE_NAMESPACE and
+    /// for tracks with SUBSCRIBE_TRACKS (draft-18 §6.1), while draft-14's
+    /// single SUBSCRIBE_NAMESPACE covers both (draft-14 §6.1).
+    pub(crate) fn namespace_requests(&self, interest: NamespaceInterest) -> Vec<NamespaceInterest> {
+        match (self, interest) {
+            (Self::Draft18(_), NamespaceInterest::NamespacesAndTracks) => {
+                vec![NamespaceInterest::Namespaces, NamespaceInterest::Tracks]
+            }
+            _ => vec![interest],
         }
     }
 

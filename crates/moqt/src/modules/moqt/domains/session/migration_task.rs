@@ -325,12 +325,14 @@ async fn migrate(
         .context("a session that follows GOAWAY carries its requests")?;
     let mut carried = carried.lock().await;
     let moved_from = session.connection();
-    for namespace in &carried.namespaces {
+    for (namespace, interest) in &carried.namespaces {
         retry_until(deadline, || {
-            send_subscribe_namespace(&connection, namespace.clone())
+            send_subscribe_namespace(&connection, namespace, *interest)
         })
         .await
-        .with_context(|| format!("SUBSCRIBE_NAMESPACE {namespace} on the new connection failed"))?;
+        .with_context(|| {
+            format!("SUBSCRIBE_NAMESPACE {namespace} ({interest:?}) on the new connection failed")
+        })?;
     }
     for namespace in &carried.published_namespaces {
         retry_until(deadline, || async {
@@ -574,9 +576,11 @@ mod tests {
         TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::test_support::{
-            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, dual_client_with_config,
-            open_subgroup, send_payload, spawn_dual_server, subscribed_track_reader,
+            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, draft18_client_with_config,
+            dual_client_with_config, open_subgroup, send_payload, spawn_draft18_server,
+            spawn_dual_server, subscribed_track_reader,
         },
+        namespace::NamespaceInterest,
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
             StreamDataSenderFactory,
@@ -590,13 +594,20 @@ mod tests {
 
     use super::*;
 
-    async fn connect(port: u16) -> Session {
-        let client = dual_client_with_config(ClientConfig {
+    fn following_go_away() -> ClientConfig {
+        ClientConfig {
             port: 0,
             verify_certificate: false,
             authorization_token: None,
             follow_go_away: true,
-        });
+        }
+    }
+
+    async fn connect(port: u16) -> Session {
+        connect_from(dual_client_with_config(following_go_away()), port).await
+    }
+
+    async fn connect_from(client: crate::Endpoint<crate::DUAL>, port: u16) -> Session {
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             client
                 .connect(&format!("moqt://127.0.0.1:{port}"))
@@ -817,13 +828,17 @@ mod tests {
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let subscriber = client.subscriber();
-        let (subscribed, ()) = tokio::join!(subscriber.subscribe_namespace("room".into()), async {
-            let SessionEvent::SubscribeNameSpace(handler) = server_a.receive_event().await.unwrap()
-            else {
-                panic!("expected SUBSCRIBE_NAMESPACE");
-            };
-            handler.ok().await.unwrap();
-        });
+        let (subscribed, ()) = tokio::join!(
+            subscriber.subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
+            async {
+                let SessionEvent::SubscribeNameSpace(handler) =
+                    server_a.receive_event().await.unwrap()
+                else {
+                    panic!("expected SUBSCRIBE_NAMESPACE");
+                };
+                handler.ok().await.unwrap();
+            }
+        );
         subscribed.unwrap();
 
         // Act
@@ -853,6 +868,46 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE, got {event:?}");
         };
         assert_eq!(announced.track_namespace, "room/alice");
+    }
+
+    #[tokio::test]
+    async fn go_away_subscribes_each_namespace_interest_again() {
+        // Arrange
+        let (port_a, accept_a) = spawn_draft18_server("session-migration-interest-a");
+        let (port_b, accept_b) = spawn_draft18_server("session-migration-interest-b");
+        let client = connect_from(draft18_client_with_config(following_go_away()), port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let subscriber = client.subscriber();
+        let (subscribed, ()) = tokio::join!(
+            subscriber.subscribe_namespace("room".into(), NamespaceInterest::Tracks),
+            async {
+                let SessionEvent::SubscribeNameSpace(handler) =
+                    server_a.receive_event().await.unwrap()
+                else {
+                    panic!("expected SUBSCRIBE_TRACKS");
+                };
+                handler.ok().await.unwrap();
+            }
+        );
+        subscribed.unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        let SessionEvent::SubscribeNameSpace(handler) = event else {
+            panic!("expected SUBSCRIBE_TRACKS on the new connection, got {event:?}");
+        };
+        assert_eq!(handler.interest, NamespaceInterest::Tracks);
+        assert_eq!(handler.track_namespace_prefix, "room");
     }
 
     #[tokio::test]

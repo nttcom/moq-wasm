@@ -9,6 +9,7 @@ use crate::{
             },
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
+            namespace_interest::NamespaceInterest,
         },
         domains::connection::Connection,
     },
@@ -19,13 +20,33 @@ use crate::{
 pub struct SubscribeNamespaceHandler {
     pub track_namespace_prefix: String,
     pub track_namespace_prefix_tuple: Vec<String>,
+    pub interest: NamespaceInterest,
+    /// The Forward State of the PUBLISH requests this subscription leads to:
+    /// the FORWARD parameter of a draft-18 SUBSCRIBE_TRACKS (§10.19), always
+    /// `true` for draft-14.
+    pub forward: bool,
     guard: ResponseGuard,
 }
 
 impl SubscribeNamespaceHandler {
+    /// draft-14's SUBSCRIBE_NAMESPACE, which asks for namespaces and tracks.
     pub(crate) fn new(
         connection: Arc<Connection>,
         subscribe_namespace: SubscribeNamespace,
+    ) -> Self {
+        Self::with_interest(
+            connection,
+            subscribe_namespace,
+            NamespaceInterest::NamespacesAndTracks,
+            true,
+        )
+    }
+
+    pub(crate) fn with_interest(
+        connection: Arc<Connection>,
+        subscribe_namespace: SubscribeNamespace,
+        interest: NamespaceInterest,
+        forward: bool,
     ) -> Self {
         let guard = ResponseGuard::new(
             connection,
@@ -36,6 +57,8 @@ impl SubscribeNamespaceHandler {
             guard,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
             track_namespace_prefix_tuple: subscribe_namespace.track_namespace_prefix,
+            interest,
+            forward,
         }
     }
 
@@ -66,6 +89,7 @@ mod tests {
     use crate::{
         SessionEvent,
         modules::test_support::{connect_sessions, spawn_dual_server},
+        namespace::NamespaceInterest,
     };
 
     #[tokio::test]
@@ -78,7 +102,7 @@ mod tests {
         let request = tokio::spawn(async move {
             client
                 .subscriber()
-                .subscribe_namespace("a/b/c".to_string())
+                .subscribe_namespace("a/b/c".to_string(), NamespaceInterest::NamespacesAndTracks)
                 .await
         });
 
@@ -92,5 +116,34 @@ mod tests {
         assert_eq!(handler.track_namespace_prefix_tuple, vec!["a", "b", "c"]);
         assert_eq!(handler.track_namespace_prefix, "a/b/c");
         request.abort();
+    }
+
+    #[tokio::test]
+    async fn a_draft14_subscribe_namespace_asks_for_namespaces_and_tracks_whatever_the_interest() {
+        for interest in [NamespaceInterest::Namespaces, NamespaceInterest::Tracks] {
+            // Arrange
+            let (port, accept) = spawn_dual_server("subscribe-namespace-handler-interest");
+            let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+                .await
+                .unwrap();
+            let request = tokio::spawn(async move {
+                client
+                    .subscriber()
+                    .subscribe_namespace("room".to_string(), interest)
+                    .await
+            });
+
+            // Act
+            let SessionEvent::SubscribeNameSpace(handler) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_NAMESPACE from the client");
+            };
+
+            // Assert: draft-14 §6.1 has one SUBSCRIBE_NAMESPACE, echoing PUBLISH back too
+            assert_eq!(handler.interest, NamespaceInterest::NamespacesAndTracks);
+            assert!(handler.forward);
+            handler.ok().await.unwrap();
+            assert!(request.await.unwrap().is_ok());
+        }
     }
 }
