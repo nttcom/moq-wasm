@@ -155,7 +155,6 @@ impl Subscriber {
             delivery_timeout: None,
         };
         let response = connection
-            .control
             .send_request(OutgoingRequest::TrackStatus(track_status))
             .await?
             .response()
@@ -300,7 +299,6 @@ impl Subscriber {
             authorization_tokens: vec![],
         };
         let response = connection
-            .control
             .send_request(OutgoingRequest::Fetch(fetch))
             .await?
             .response()
@@ -525,6 +523,7 @@ impl Subscriber {
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
+        receiver.set_group_order(fetch_handle.group_order);
         if let Some(remainder) = fetch_handle.remainder.clone() {
             receiver.carry_with(
                 self.session.clone(),
@@ -592,13 +591,12 @@ impl Subscriber {
 }
 
 pub(crate) async fn send_subscribe_namespace(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     namespace: String,
 ) -> Result<(), RequestFailure> {
     let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
     let request_id = connection.control.next_request_id();
     let pending = connection
-        .control
         .send_request(OutgoingRequest::SubscribeNamespace(
             SubscribeNamespace::new(request_id, vec_namespace, vec![]),
         ))
@@ -632,7 +630,7 @@ pub(crate) async fn send_subscribe_namespace(
 
 /// The SUBSCRIBE_OK, with `connection`'s wire ids.
 pub(crate) async fn send_subscribe(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     track_namespace: &str,
     track_name: &str,
     option: &SubscribeOption,
@@ -650,7 +648,6 @@ pub(crate) async fn send_subscribe(
         delivery_timeout: None,
     };
     let response = connection
-        .control
         .send_request(OutgoingRequest::Subscribe(subscribe))
         .await?
         .response()

@@ -30,7 +30,7 @@ impl Handshake {
     }
 
     pub async fn accept(self) -> anyhow::Result<Session> {
-        let (control, control_receiver) = self.setup.accept().await?;
+        let (control, control_receiver) = self.setup.accept(&self.transport_connection).await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
         let context = SessionContext::new(
             Connection::new(
