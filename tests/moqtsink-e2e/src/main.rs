@@ -79,6 +79,7 @@ async fn connect(relay_url: &str) -> Result<Session> {
         verify_certificate: false,
         authorization_token: None,
         follow_go_away: true,
+        ..Default::default()
     })?;
     endpoint.connect(relay_url).await?.await
 }

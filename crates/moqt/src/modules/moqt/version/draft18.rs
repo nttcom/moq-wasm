@@ -896,9 +896,9 @@ mod tests {
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, data_receiver,
-                datagram_object, next_datagram, next_subgroup, notify_datagram,
-                published_track_between, read_fetch_objects, spawn_connected_draft18_sessions,
-                subscribed_track_reader,
+                datagram_object, mandatory_track_properties, next_datagram, next_subgroup,
+                notify_datagram, published_track_between, read_fetch_objects,
+                spawn_connected_draft18_sessions, subscribed_track_reader,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -2447,14 +2447,6 @@ mod tests {
         assert_eq!(subscribe_ok.track_properties, expected);
     }
 
-    /// §2.5.1.
-    fn mandatory_track_property() -> KeyValuePair {
-        KeyValuePair {
-            key: 0x4000,
-            value: VariantType::Even(1),
-        }
-    }
-
     #[tokio::test]
     async fn a_subscribe_ok_with_a_mandatory_track_property_fails_the_subscribe() {
         // Arrange
@@ -2466,7 +2458,7 @@ mod tests {
             &client,
             &server,
             4,
-            &[mandatory_track_property()],
+            &mandatory_track_properties().other,
         )
         .await;
 
@@ -2490,7 +2482,8 @@ mod tests {
             spawn_connected_draft18_sessions("draft18-mandatory-publish", "moqt").await;
 
         // Act
-        let (_sender, mut receiver) = raw_publish(&client, 6, &[mandatory_track_property()]).await;
+        let (_sender, mut receiver) =
+            raw_publish(&client, 6, &mandatory_track_properties().other).await;
         let response = receiver.receive().await.unwrap();
 
         // Assert

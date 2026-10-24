@@ -70,7 +70,16 @@ impl TransportConnection for WtConnection {
     }
 
     fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {
-        Ok(self.session.send_datagram(bytes.freeze())?)
+        let len = bytes.len();
+        match self.session.send_datagram(bytes.freeze()) {
+            Err(web_transport_quinn::SessionError::SendDatagramError(
+                quinn::SendDatagramError::TooLarge,
+            )) => {
+                tracing::debug!(len, "dropping a datagram larger than the session allows");
+                Ok(())
+            }
+            result => Ok(result?),
+        }
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut> {

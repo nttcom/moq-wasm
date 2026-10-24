@@ -78,6 +78,7 @@ pub(crate) struct MockPublisher {
     sent: mpsc::UnboundedSender<Sent>,
     priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedSender<SentPublishDone>,
+    mixes_forwarding_preferences: bool,
 }
 
 pub(crate) struct MockPublisherObservers {
@@ -88,6 +89,12 @@ pub(crate) struct MockPublisherObservers {
 
 impl MockPublisher {
     pub(crate) fn channel() -> (Self, MockPublisherObservers) {
+        Self::channel_mixing(true)
+    }
+
+    pub(crate) fn channel_mixing(
+        mixes_forwarding_preferences: bool,
+    ) -> (Self, MockPublisherObservers) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let (priorities_sender, priorities_receiver) = mpsc::unbounded_channel();
         let (publish_done_sender, publish_done_receiver) = mpsc::unbounded_channel();
@@ -96,6 +103,7 @@ impl MockPublisher {
                 sent: sender,
                 priorities: priorities_sender,
                 publish_done: publish_done_sender,
+                mixes_forwarding_preferences,
             },
             MockPublisherObservers {
                 sent: receiver,
@@ -144,6 +152,10 @@ impl Publisher for MockPublisher {
                 stream_count,
             })
             .map_err(|_| anyhow::anyhow!("test side dropped"))
+    }
+
+    fn mixes_forwarding_preferences(&self) -> bool {
+        self.mixes_forwarding_preferences
     }
 
     fn new_stream_factory(

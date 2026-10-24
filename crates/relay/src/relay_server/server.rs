@@ -39,6 +39,7 @@ pub struct RelayServer {
     runtime: RelayRuntime,
     key_path: String,
     cert_path: String,
+    client_versions: Vec<moqt::Version>,
 }
 
 impl RelayServer {
@@ -70,7 +71,7 @@ impl RelayServer {
             prepare_directory(&disk_cache.dir).await?;
             tracing::info!(dir = %disk_cache.dir.display(), max_bytes = disk_cache.max_bytes, "disk cache enabled");
         }
-        Ok(Self::new_with_deps(
+        let mut server = Self::new_with_deps(
             key_path,
             cert_path,
             RelayServerDeps {
@@ -84,7 +85,9 @@ impl RelayServer {
                     fetch_fill_timeout: config.fetch_fill_timeout,
                 },
             },
-        ))
+        );
+        server.client_versions = config.client_versions;
+        Ok(server)
     }
 
     pub(crate) fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
@@ -113,6 +116,7 @@ impl RelayServer {
             runtime,
             key_path: key_path.to_string(),
             cert_path: cert_path.to_string(),
+            client_versions: moqt::DEFAULT_VERSIONS.to_vec(),
         }
     }
 
@@ -120,13 +124,15 @@ impl RelayServer {
         &self,
         port: u16,
         accepted_peer: SessionPeer,
+        versions: Vec<moqt::Version>,
     ) -> anyhow::Result<SessionHandler> {
-        tracing::info!(port = port, peer = ?accepted_peer, "Spawning transport handler");
+        tracing::info!(port = port, peer = ?accepted_peer, ?versions, "Spawning transport handler");
         let server_config = ServerConfig {
             port,
             cert_path: self.cert_path.clone(),
             key_path: self.key_path.clone(),
             keep_alive_interval_sec: 15,
+            versions,
         };
 
         SessionHandler::run::<T>(
@@ -145,7 +151,7 @@ impl RelayServer {
         &self,
         port: u16,
     ) -> anyhow::Result<SessionHandler> {
-        self.spawn_transport::<T>(port, SessionPeer::Client)
+        self.spawn_transport::<T>(port, SessionPeer::Client, self.client_versions.clone())
     }
 
     /// Fails when the endpoint cannot bind `port` or load the certificate.
@@ -153,7 +159,7 @@ impl RelayServer {
         &self,
         port: u16,
     ) -> anyhow::Result<SessionHandler> {
-        self.spawn_transport::<T>(port, SessionPeer::Relay)
+        self.spawn_transport::<T>(port, SessionPeer::Relay, moqt::DEFAULT_VERSIONS.to_vec())
     }
 
     /// Sends GOAWAY to every client session and resolves once they have all

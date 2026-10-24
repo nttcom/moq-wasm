@@ -168,6 +168,19 @@ impl Publisher {
         ))
     }
 
+    /// Whether one track this session sends may carry objects on subgroup
+    /// streams and in datagrams alike: draft-18 §11 allows it, draft-14
+    /// §10 gives every track a single forwarding preference. A sender that
+    /// relays a mixed track to a session that answers `false` delivers it in
+    /// one preference.
+    pub fn mixes_forwarding_preferences(&self) -> bool {
+        self.session
+            .connection()
+            .control
+            .version()
+            .mixes_forwarding_preferences()
+    }
+
     pub fn create_stream(&self, subscription: &Subscription) -> StreamDataSenderFactory {
         StreamDataSenderFactory::new(self.send_targets(subscription))
     }
@@ -234,6 +247,13 @@ pub(crate) async fn send_publish(
     track_name: &str,
     option: &PublishOption,
 ) -> Result<(PublishOk, u64), RequestFailure> {
+    if !connection
+        .control
+        .version()
+        .understands(&option.track_properties)
+    {
+        return Err(RequestFailure::TrackNotUnderstood);
+    }
     let track_alias = connection.allocate_track_alias();
     let request_id = connection.control.next_request_id();
     let publish = Publish {
@@ -289,8 +309,9 @@ mod tests {
         modules::{
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
-                HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream, next_subgroup,
-                object_with_extensions, read_subgroup_objects, send_subgroup_object,
+                HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
+                mandatory_track_properties, next_subgroup, object_with_extensions,
+                read_subgroup_objects, send_subgroup_object, spawn_connected_draft18_sessions,
                 spawn_connected_dual_sessions, within,
             },
         },
@@ -326,6 +347,41 @@ mod tests {
         // Assert
         assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
         request.abort();
+    }
+
+    #[tokio::test]
+    async fn only_a_draft18_session_mixes_forwarding_preferences() {
+        // Arrange
+        let (draft14, _draft14_server) = spawn_connected_dual_sessions("publisher-mixes-14").await;
+        let (draft18, _draft18_server) =
+            spawn_connected_draft18_sessions("publisher-mixes-18", "moqt").await;
+
+        // Act / Assert
+        assert!(!draft14.publisher().mixes_forwarding_preferences());
+        assert!(draft18.publisher().mixes_forwarding_preferences());
+    }
+
+    #[tokio::test]
+    async fn a_draft14_publish_with_a_mandatory_track_property_is_not_sent() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("publisher-mandatory").await;
+        let option = PublishOption {
+            track_properties: mandatory_track_properties(),
+            ..PublishOption::default()
+        };
+
+        // Act
+        let published = within(client.publisher().publish(
+            "ns".to_string(),
+            "track".to_string(),
+            option,
+        ))
+        .await;
+
+        // Assert: draft-18 §2.5.1, a draft-14 peer understands no such property
+        assert!(matches!(published, Err(RequestFailure::TrackNotUnderstood)));
+        let event = tokio::time::timeout(Duration::from_millis(200), server.receive_event()).await;
+        assert!(event.is_err(), "no PUBLISH may reach the peer: {event:?}");
     }
 
     #[tokio::test]

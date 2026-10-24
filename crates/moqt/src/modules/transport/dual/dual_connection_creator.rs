@@ -140,7 +140,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
                 let connection = target
                     .connect_quic(&client.endpoint, client.web_transport_config.clone())
                     .await?;
-                let session = connect_session(connection, target, self.protocols).await?;
+                let session = connect_session(connection, target, &self.protocols).await?;
                 Ok(Box::new(WtConnection::new(session)))
             }
         }
@@ -172,7 +172,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
             let request = web_transport_quinn::Request::accept(connection)
                 .await
                 .map_err(anyhow::Error::from)?;
-            let session = accept_session(request, self.protocols).await?;
+            let session = accept_session(request, &self.protocols).await?;
             Ok(Box::new(WtConnection::new(session)))
         } else if self.protocols.quic_alpns.contains(&alpn.as_str()) {
             Ok(Box::new(QUICConnection::new(connection)))
@@ -253,12 +253,12 @@ mod tests {
             "moqt",
             "",
             ApplicationProtocols {
-                quic_alpns: &["moqt-b", "moqt-a"],
-                web_transport: &[],
+                quic_alpns: vec!["moqt-b", "moqt-a"],
+                web_transport: vec![],
             },
             ApplicationProtocols {
-                quic_alpns: &["moqt-a"],
-                web_transport: &[],
+                quic_alpns: vec!["moqt-a"],
+                web_transport: vec![],
             },
         )
         .await;
@@ -279,12 +279,12 @@ mod tests {
             "https",
             "/moq",
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-b", "moqt-a"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-b", "moqt-a"],
             },
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-a", "moqt-b"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-a", "moqt-b"],
             },
         )
         .await;
@@ -305,12 +305,12 @@ mod tests {
             "https",
             "/moq",
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-a"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-a"],
             },
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-b"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-b"],
             },
         )
         .await;

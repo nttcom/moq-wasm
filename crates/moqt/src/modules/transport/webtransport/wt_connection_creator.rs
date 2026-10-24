@@ -53,7 +53,7 @@ impl WtConnectionCreator {
 pub(crate) async fn connect_session(
     connection: quinn::Connection,
     target: &ConnectTarget,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<web_transport_quinn::Session> {
     let request = ConnectRequest::new(target.url.clone()).with_protocols(
         protocols
@@ -66,7 +66,7 @@ pub(crate) async fn connect_session(
 
 pub(crate) async fn accept_session(
     request: web_transport_quinn::Request,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<web_transport_quinn::Session> {
     let mut response = ConnectResponse::OK;
     response.protocol = protocols
@@ -141,7 +141,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let connection = target
             .connect_quic(&self.quic_endpoint, client_config.clone())
             .await?;
-        let session = connect_session(connection, target, self.protocols).await?;
+        let session = connect_session(connection, target, &self.protocols).await?;
 
         Ok(Box::new(WtConnection::new(session)))
     }
@@ -164,7 +164,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
                     .await;
                 continue;
             }
-            let session = accept_session(request, self.protocols).await?;
+            let session = accept_session(request, &self.protocols).await?;
             return Ok(Box::new(WtConnection::new(session)));
         }
     }

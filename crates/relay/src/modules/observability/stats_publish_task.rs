@@ -60,6 +60,7 @@ async fn publish_snapshots(
         verify_certificate: false,
         authorization_token: Some(config.relay_token.clone()),
         follow_go_away: false,
+        ..Default::default()
     })?;
     let session = endpoint
         .connect(&format!("moqt://127.0.0.1:{}", config.inner_port))

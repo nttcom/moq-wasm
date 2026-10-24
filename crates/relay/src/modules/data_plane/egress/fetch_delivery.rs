@@ -16,8 +16,8 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
     );
     loop {
         match objects.next().await {
-            Ok(Some(object)) => {
-                let object = match object.load().await {
+            Ok(Some(cached)) => {
+                let mut object = match cached.load().await {
                     Ok(object) => object,
                     Err(error) => {
                         tracing::warn!(
@@ -31,6 +31,7 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
                         return;
                     }
                 };
+                object.forwarding = request.cache.fetch_forwarding(&cached);
                 if let Err(e) = sender.send(object).await {
                     tracing::error!(?e, "failed to send fetch object");
                     return;

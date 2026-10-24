@@ -97,6 +97,7 @@ async fn main() -> Result<()> {
             verify_certificate: !args.insecure_skip_tls_verify,
             authorization_token: args.auth_token,
             follow_go_away: true,
+            ..Default::default()
         },
     )
     .await?;

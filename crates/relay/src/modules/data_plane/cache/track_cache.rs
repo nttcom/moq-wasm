@@ -56,6 +56,8 @@ pub(crate) struct TrackCache {
     eviction_generation: AtomicU64,
     malformed: AtomicBool,
     malformed_notify: Notify,
+    /// The latest object live ingest inserted was a datagram.
+    latest_live_datagram: AtomicBool,
     subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
     ingress_stats: IngressStats,
     payload_bytes: AtomicU64,
@@ -87,6 +89,7 @@ impl TrackCache {
             eviction_generation: AtomicU64::new(0),
             malformed: AtomicBool::new(false),
             malformed_notify: Notify::new(),
+            latest_live_datagram: AtomicBool::new(false),
             subgroup_opened_sender: broadcast::channel(256).0,
             ingress_stats: IngressStats::default(),
             payload_bytes: AtomicU64::new(0),
@@ -182,7 +185,29 @@ impl TrackCache {
             object.object.forwarding,
             ForwardingPreference::Subgroup { .. }
         );
+        self.latest_live_datagram
+            .store(object.is_datagram(), AtomicOrdering::Relaxed);
         self.insert_with_knowledge(object, registers_knowledge)
+    }
+
+    /// The forwarding preference a FETCH from the cache gives `object`. A
+    /// draft-14 track keeps one preference (§10), so while live ingest
+    /// inserts datagrams, an inferred copy in the subgroup of its Object ID
+    /// is a datagram: a draft-18 FETCH then marks it (§11.4.4), matching the
+    /// live datagram the subscriber may hold.
+    pub(crate) fn fetch_forwarding(&self, object: &CachedObject) -> ForwardingPreference {
+        let in_subgroup_of_its_object_id = object.object.forwarding
+            == ForwardingPreference::Subgroup {
+                subgroup_id: object.object.location.object_id,
+            };
+        if object.forwarding_inferred
+            && in_subgroup_of_its_object_id
+            && self.latest_live_datagram.load(AtomicOrdering::Relaxed)
+        {
+            ForwardingPreference::Datagram
+        } else {
+            object.object.forwarding
+        }
     }
 
     fn insert_with_knowledge(

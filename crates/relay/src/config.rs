@@ -124,6 +124,22 @@ impl CacheConfig {
 
 pub(crate) const DEFAULT_FETCH_FILL_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// `RELAY_MOQT_VERSIONS`, most preferred first.
+fn moqt_versions(value: Option<String>) -> anyhow::Result<Vec<moqt::Version>> {
+    let Some(text) = value else {
+        return Ok(moqt::DEFAULT_VERSIONS.to_vec());
+    };
+    let mut versions = Vec::new();
+    for name in text.split(',').map(str::trim) {
+        versions.push(match name {
+            "draft-14" => moqt::Version::Draft14,
+            "draft-18" => moqt::Version::Draft18,
+            _ => bail!("RELAY_MOQT_VERSIONS lists draft-14 and draft-18 only, got {name:?}"),
+        });
+    }
+    Ok(versions)
+}
+
 impl DiskCacheConfig {
     /// `None` without a directory: the cache then stays in memory only.
     fn from_env_values(
@@ -164,6 +180,10 @@ pub struct RelayConfig {
     /// How long the relay waits for an upstream FETCH to complete before it
     /// resets the downstream FETCH.
     pub fetch_fill_timeout: Duration,
+    /// The drafts the client transport accepts, most preferred first. The
+    /// inner transport, which other relays and the stats publisher reach,
+    /// keeps `moqt::DEFAULT_VERSIONS`.
+    pub client_versions: Vec<moqt::Version>,
 }
 
 /// `KEY=` in an env file and compose `${KEY:-}` set the variable to an empty
@@ -217,6 +237,7 @@ impl RelayConfig {
             "MOQT_FETCH_FILL_TIMEOUT_SECS",
             DEFAULT_FETCH_FILL_TIMEOUT,
         )?;
+        let client_versions = moqt_versions(non_empty_env("RELAY_MOQT_VERSIONS"))?;
 
         Ok(Self {
             relay_id,
@@ -230,6 +251,7 @@ impl RelayConfig {
             cache,
             disk_cache,
             fetch_fill_timeout,
+            client_versions,
         })
     }
 }
@@ -239,7 +261,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AuthConfig, AuthEnv, CacheConfig, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig, port_number,
+        AuthConfig, AuthEnv, CacheConfig, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig, moqt_versions,
+        port_number,
     };
     use crate::modules::auth::token_claims::ClaimPolicy;
 
@@ -395,5 +418,26 @@ mod tests {
             error.to_string(),
             "RELAY_INNER_PORT must be a port number, got \"4433x\""
         );
+    }
+
+    #[test]
+    fn moqt_versions_default_to_the_moqt_default() {
+        // Act / Assert
+        assert_eq!(moqt_versions(None).unwrap(), moqt::DEFAULT_VERSIONS);
+    }
+
+    #[test]
+    fn moqt_versions_keep_the_order_given() {
+        // Act
+        let versions = moqt_versions(Some("draft-18, draft-14".to_string())).unwrap();
+
+        // Assert
+        assert_eq!(versions, [moqt::Version::Draft18, moqt::Version::Draft14]);
+    }
+
+    #[test]
+    fn an_unknown_moqt_version_is_an_error() {
+        // Act / Assert
+        assert!(moqt_versions(Some("draft-14,draft-99".to_string())).is_err());
     }
 }

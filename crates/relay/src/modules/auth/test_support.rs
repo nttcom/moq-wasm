@@ -120,6 +120,7 @@ pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<Q
         verify_certificate: false,
         authorization_token,
         follow_go_away: false,
+        ..Default::default()
     })
     .unwrap()
 }

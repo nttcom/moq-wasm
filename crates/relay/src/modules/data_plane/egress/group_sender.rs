@@ -1,4 +1,4 @@
-use moqt::object::DataStreamResetCode;
+use moqt::object::{DataStreamResetCode, ForwardingPreference};
 use std::sync::Arc;
 
 use tokio::{
@@ -123,25 +123,43 @@ impl GroupSender {
         }
     }
 
+    fn stream_factory(
+        &self,
+        stream_factory: &mut Option<SharedStreamSenderFactory>,
+    ) -> SharedStreamSenderFactory {
+        stream_factory
+            .get_or_insert_with(|| {
+                Arc::new(Mutex::new(
+                    self.publisher
+                        .new_stream_factory(&self.downstream_subscription),
+                ))
+            })
+            .clone()
+    }
+
     pub(crate) async fn run(mut self) {
         let mut stream_factory: Option<SharedStreamSenderFactory> = None;
         let mut joinset = JoinSet::<()>::new();
         let track_alias = self.downstream_subscription.track_alias();
         let subscriber_priority = self.downstream_subscription.subscriber_priority();
         let group_order = self.downstream_subscription.group_order();
+        // draft-14 §10 gives a track one forwarding preference; a draft-18
+        // upstream may mix them (§11).
+        let keeps_one_preference = !self.publisher.mixes_forwarding_preferences();
+        let mut first_as_datagram: Option<bool> = None;
 
         loop {
             tokio::select! {
                 Some(task) = self.receiver.recv() => {
-                    match task.key {
-                        SubgroupKey::Stream { group_id, subgroup_id } => {
-                            let factory = stream_factory
-                                .get_or_insert_with(|| {
-                                    Arc::new(Mutex::new(
-                                        self.publisher.new_stream_factory(&self.downstream_subscription),
-                                    ))
-                                })
-                                .clone();
+                    let arrived_as_datagram = matches!(task.key, SubgroupKey::Datagram { .. });
+                    let as_datagram = if keeps_one_preference {
+                        *first_as_datagram.get_or_insert(arrived_as_datagram)
+                    } else {
+                        arrived_as_datagram
+                    };
+                    match (task.key, as_datagram) {
+                        (SubgroupKey::Stream { group_id, subgroup_id }, false) => {
+                            let factory = self.stream_factory(&mut stream_factory);
                             let group_sequence = self.group_sequence.sequence_of(group_id);
                             let span = tracing::info_span!(
                                 "relay.dataplane.egress.stream",
@@ -166,7 +184,20 @@ impl GroupSender {
                                 .instrument(span),
                             );
                         }
-                        SubgroupKey::Datagram { .. } => {
+                        (SubgroupKey::Datagram { group_id }, false) => {
+                            let factory = self.stream_factory(&mut stream_factory);
+                            let group_sequence = self.group_sequence.sequence_of(group_id);
+                            joinset.spawn(Self::send_datagrams_on_streams(StreamSendTask {
+                                source: self.source(&task),
+                                object_id: task.object_id,
+                                factory,
+                                delivery_stats: self.delivery_stats.clone(),
+                                subscriber_priority,
+                                group_order,
+                                group_sequence,
+                            }));
+                        }
+                        (_, true) => {
                             let sender = self.publisher.new_datagram(&self.downstream_subscription);
                             joinset.spawn(Self::send_datagram_task(
                                 track_alias,
@@ -307,6 +338,78 @@ impl GroupSender {
         }
     }
 
+    /// Sends each object of a datagram group alone on a subgroup stream whose
+    /// Subgroup ID is its Object ID: a draft-14 FETCH puts a datagram object
+    /// in that subgroup (§10.4.4), so a FETCH of the same object agrees.
+    async fn send_datagrams_on_streams(mut task: StreamSendTask) {
+        let group_id = task.source.key.group_id();
+        let mut cursor = task.object_id;
+        while let SubgroupNext::Cache(NextObject::Object(object)) = task.source.next(cursor).await {
+            let object_id = object.object.location.object_id;
+            cursor = object_id.saturating_add(1);
+            let mut loaded = match object.load().await {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    tracing::debug!(object_id, ?error, "skipping unloadable object");
+                    continue;
+                }
+            };
+            loaded.forwarding = ForwardingPreference::Subgroup {
+                subgroup_id: object_id,
+            };
+            let priority = moqt::object::StreamPriority {
+                subscriber_priority: task.subscriber_priority,
+                publisher_priority: loaded.publisher_priority,
+                group_order: task.group_order,
+                group_sequence: task.group_sequence,
+                subgroup_id: object_id,
+            };
+            let opened = {
+                let mut factory = task.factory.lock().await;
+                factory.next(priority).await
+            };
+            let mut sender = match opened {
+                Ok(sender) => sender,
+                Err(error) => {
+                    tracing::error!(?error, "failed to open stream sender");
+                    return;
+                }
+            };
+            task.delivery_stats.record_stream_opened();
+            let start = moqt::object::SubgroupStart {
+                group_id,
+                subgroup_id: object_id,
+                publisher_priority: loaded.publisher_priority,
+                ends_group: loaded.ends_group,
+            };
+            loaded.ends_group = false;
+            tracing::debug!(
+                group_id,
+                object_id,
+                "egress sending datagram object on a stream"
+            );
+            let sent = async {
+                sender
+                    .send_object(DataObject::SubgroupHeader(start))
+                    .await?;
+                sender
+                    .send_object(DataObject::SubgroupObject(loaded))
+                    .await?;
+                sender.close().await
+            };
+            if let Err(error) = sent.await {
+                tracing::error!(
+                    ?error,
+                    object_id,
+                    "failed to send datagram object on a stream"
+                );
+                return;
+            }
+            task.delivery_stats
+                .record_object_sent(object.payload_len(), object.received_at);
+        }
+    }
+
     async fn send_datagram_task(
         track_alias: u64,
         mut source: SubgroupSource,
@@ -318,13 +421,14 @@ impl GroupSender {
         while let SubgroupNext::Cache(NextObject::Object(object)) = source.next(cursor).await {
             let object_id = object.object.location.object_id;
             cursor = object_id.saturating_add(1);
-            let loaded = match object.load().await {
+            let mut loaded = match object.load().await {
                 Ok(loaded) => loaded,
                 Err(error) => {
                     tracing::debug!(object_id, ?error, "skipping unloadable object");
                     continue;
                 }
             };
+            loaded.forwarding = ForwardingPreference::Datagram;
             tracing::debug!(
                 track_alias,
                 group_id = source.key.group_id(),
