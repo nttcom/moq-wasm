@@ -34,6 +34,12 @@ impl DecodeError {
     }
 }
 
+impl From<DecodeError> for std::io::Error {
+    fn from(error: DecodeError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+    }
+}
+
 pub(crate) fn take(buf: &mut impl Buf, len: usize) -> Result<Bytes, DecodeError> {
     if buf.remaining() < len {
         return Err(DecodeError::NeedMoreData);
