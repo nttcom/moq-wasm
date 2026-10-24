@@ -11,11 +11,16 @@ use quinn::{
 
 use crate::modules::transport::crypto_provider::install_default_crypto_provider;
 
+/// draft-18 keeps a bidirectional stream open for every request in flight,
+/// so the peer may open this many before one ends.
+pub(crate) const MAX_CONCURRENT_BIDI_STREAMS: u32 = 1000;
+
 pub(crate) fn server_transport_config(keep_alive_sec: u64) -> TransportConfig {
     let mut transport_config = TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(keep_alive_sec)));
     // quinn allocates state for every remote stream ID up to this limit on each connection.
     transport_config.max_concurrent_uni_streams(1000u32.into());
+    transport_config.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into());
     transport_config.packet_threshold(5);
     transport_config.stream_receive_window(VarInt::from_u32(1024 * 1024));
     transport_config
