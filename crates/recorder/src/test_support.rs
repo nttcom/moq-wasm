@@ -13,10 +13,10 @@ use moqt::{
 use tokio::sync::mpsc;
 
 use crate::{
-    LauncherArgs, RoomArgs,
+    LauncherArgs, RoomArgs, ServeArgs,
     launcher::{Launcher, LauncherKind},
     pipeline::capture_timestamp,
-    recordings::{Recordings, ServeConfig},
+    recordings::Recordings,
     store::RecordingStore,
 };
 
@@ -166,11 +166,13 @@ pub(crate) fn write_fixture_fmp4(path: &std::path::Path) {
 /// A recording API over an in-memory store, whose jobs exit at once.
 pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
     let store_url = url::Url::parse("memory:///").unwrap();
-    let config = ServeConfig {
+    let config = ServeArgs {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        allowed_origins: Vec::new(),
         namespace_root: "anon".to_string(),
         max_recordings,
         composite,
-        store_url: store_url.clone(),
+        store: store_url.clone(),
         output_dir: std::env::temp_dir(),
         room: RoomArgs {
             relay: "moqt://127.0.0.1:1".to_string(),

@@ -7,36 +7,23 @@ use tokio::{
 };
 
 use crate::{
-    ServeArgs,
-    api_server::ApiServer,
-    launcher::Launcher,
-    recordings::{Recordings, ServeConfig},
+    ServeArgs, api_server::ApiServer, launcher::Launcher, recordings::Recordings,
     store::RecordingStore,
 };
 
 /// Serves the recording API until SIGINT or SIGTERM. The recordings run as
 /// jobs of their own and go on after the server exits.
-pub(crate) async fn serve(args: ServeArgs) -> Result<()> {
+pub(crate) async fn serve(mut args: ServeArgs) -> Result<()> {
     let store = RecordingStore::open(&args.store)?;
     let launcher = Launcher::from_args(&args.launcher)?;
-    let recordings = Arc::new(Recordings::new(
-        ServeConfig {
-            namespace_root: args.namespace_root,
-            max_recordings: args.max_recordings,
-            composite: args.composite,
-            store_url: args.store,
-            output_dir: args.output_dir,
-            room: args.room,
-            launcher: args.launcher,
-        },
-        store,
-        launcher,
-    ));
-    let listener = TcpListener::bind(args.listen)
+    let listen = args.listen;
+    let allowed_origins = std::mem::take(&mut args.allowed_origins);
+    let recordings = Arc::new(Recordings::new(args, store, launcher));
+    let listener = TcpListener::bind(listen)
         .await
-        .with_context(|| format!("cannot listen on {}", args.listen))?;
-    let server = ApiServer::run(listener, recordings, args.allowed_origins);
-    tracing::info!(listen = %args.listen, "recording API listening");
+        .with_context(|| format!("cannot listen on {listen}"))?;
+    let server = ApiServer::run(listener, recordings, allowed_origins);
+    tracing::info!(listen = %listen, "recording API listening");
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     tokio::select! {
