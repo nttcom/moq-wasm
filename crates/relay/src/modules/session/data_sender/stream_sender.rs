@@ -16,16 +16,27 @@ impl StreamSender {
             inner: Some(SenderInner::Uninitialized(inner)),
         }
     }
+
+    fn header_sent(&mut self) -> anyhow::Result<&mut moqt::object::SubgroupObjectSender> {
+        match self.inner.as_mut() {
+            Some(SenderInner::HeaderSent(sender)) => Ok(sender),
+            _ => Err(anyhow::anyhow!("Header not set for StreamSender")),
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl DataSender for StreamSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         match object {
-            DataObject::SubgroupObject(object) => match self.inner.as_mut() {
-                Some(SenderInner::HeaderSent(sender)) => sender.send_object(&object).await,
-                _ => Err(anyhow::anyhow!("Header not set for StreamSender")),
-            },
+            DataObject::SubgroupObject(object) => self.header_sent()?.send_object(&object).await,
+            DataObject::SubgroupObjectStart {
+                object,
+                payload_len,
+            } => self.header_sent()?.begin_object(&object, payload_len).await,
+            DataObject::SubgroupPayload { data, .. } => {
+                self.header_sent()?.send_payload(&data).await
+            }
             DataObject::SubgroupHeader(start) => match self.inner.take() {
                 Some(SenderInner::Uninitialized(sender)) => {
                     let sent = sender.start(start).await?;

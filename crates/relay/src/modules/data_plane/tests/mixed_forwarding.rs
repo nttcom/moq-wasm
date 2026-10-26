@@ -30,6 +30,9 @@ async fn sent_objects(egress: &mut EgressRunnerHandle, count: usize) -> Vec<(boo
             }
             Sent::Object(DataObject::SubgroupHeader(_)) | Sent::Closed => {}
             Sent::Reset(code) => panic!("a downstream stream was reset with {code:?}"),
+            Sent::Object(
+                DataObject::SubgroupObjectStart { .. } | DataObject::SubgroupPayload { .. },
+            ) => unreachable!("the upstream sends whole objects"),
         }
     }
     sent.sort();

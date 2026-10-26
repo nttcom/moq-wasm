@@ -7,7 +7,7 @@ use crate::modules::{
         cache::{
             cached_object::CachedObject,
             subgroup_key::SubgroupKey,
-            track_cache::{OpenSubgroupGuard, TrackCache},
+            track_cache::{OpenSubgroupGuard, PartialObjectWriter, TrackCache},
         },
         ingress::track_ingest_task::TrackIngest,
     },
@@ -35,6 +35,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
     let span = Span::current();
     let mut header: Option<ReceivedHeader> = None;
     let mut ingest: Option<OpenSubgroupGuard<'_>> = None;
+    let mut partial: Option<PartialObjectWriter<'_>> = None;
     loop {
         let receive_result = tokio::select! {
             _ = stop_receiver.changed() => {
@@ -84,9 +85,50 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     return;
                 }
             }
+            Ok(Some(DataObject::SubgroupObjectStart {
+                object,
+                payload_len,
+            })) => {
+                let (Some(header), Some(current)) = (header.as_mut(), ingest.as_ref()) else {
+                    span.record("end_reason", "object_before_header");
+                    tracing::error!(%track_key, "subgroup object received before its header");
+                    return;
+                };
+                header.prev_object_id = Some(object.location.object_id);
+                partial = Some(current.begin_object(object, payload_len));
+            }
+            Ok(Some(DataObject::SubgroupPayload { data, last })) => {
+                let (Some(writer), Some(current)) = (partial.as_ref(), ingest.as_ref()) else {
+                    span.record("end_reason", "payload_outside_object");
+                    tracing::error!(%track_key, "payload received outside an object");
+                    return;
+                };
+                writer.append(data);
+                if !last {
+                    continue;
+                }
+                let object = stamp.apply(CachedObject::from_object(writer.assemble()));
+                if current.insert(object).is_err() {
+                    report_malformed_track(
+                        &span,
+                        &session_event_sender,
+                        publisher_session_id,
+                        &track_key,
+                    );
+                    return;
+                }
+                if let Some(writer) = partial.take() {
+                    writer.finish();
+                }
+            }
             Ok(Some(DataObject::Datagram(_))) => {
                 span.record("end_reason", "unexpected_datagram");
                 tracing::error!(%track_key, "datagram received on a subgroup stream");
+                return;
+            }
+            Ok(None) if partial.is_some() => {
+                span.record("end_reason", "fin_inside_payload");
+                tracing::error!(%track_key, "stream finished inside an object's payload");
                 return;
             }
             Ok(None) => {

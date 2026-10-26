@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    hash::{BuildHasher, RandomState},
+    hash::{BuildHasher, DefaultHasher, Hasher, RandomState},
 };
 
 use crate::modules::moqt::{
@@ -52,6 +52,11 @@ impl ObjectLedger {
         }
     }
 
+    /// Hashes a payload that arrives in pieces, for `check_hashed`.
+    pub(crate) fn payload_hasher(&self) -> PayloadHasher {
+        PayloadHasher(self.hasher.build_hasher())
+    }
+
     /// Records `object`; fails when an earlier copy of it differs.
     /// `forwarding_inferred`: the object comes from a draft-14 FETCH, which
     /// carries no forwarding preference, so a datagram object arrives as a
@@ -61,12 +66,25 @@ impl ObjectLedger {
         object: &Object,
         forwarding_inferred: bool,
     ) -> Result<(), MalformedTrackError> {
+        let mut payload = self.payload_hasher();
+        payload.update(&object.payload);
+        self.check_hashed(object, payload, forwarding_inferred)
+    }
+
+    /// `check` for an object whose payload `payload` has hashed; the
+    /// object's own payload is ignored.
+    pub(crate) fn check_hashed(
+        &self,
+        object: &Object,
+        payload: PayloadHasher,
+        forwarding_inferred: bool,
+    ) -> Result<(), MalformedTrackError> {
         let received = Recorded {
             forwarding: object.forwarding,
             forwarding_inferred,
             publisher_priority: object.publisher_priority,
             status: object.status,
-            payload_hash: self.hasher.hash_one(&object.payload),
+            payload_hash: payload.0.finish(),
         };
         let mut objects = self
             .objects
@@ -92,6 +110,17 @@ impl ObjectLedger {
             }
         }
         Ok(())
+    }
+}
+
+/// The hash of a payload fed in pieces; SipHash, behind `DefaultHasher`,
+/// hashes a byte stream the same however it is split.
+#[derive(Debug)]
+pub(crate) struct PayloadHasher(DefaultHasher);
+
+impl PayloadHasher {
+    pub(crate) fn update(&mut self, piece: &[u8]) {
+        self.0.write(piece);
     }
 }
 
@@ -142,8 +171,8 @@ mod tests {
         },
         object::{
             DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
-            MalformedTrackError, Object, ObjectStatus, StreamReceiveError, Subgroup, TrackData,
-            VariantType,
+            MalformedTrackError, Object, ObjectStatus, StreamReceiveError, Subgroup, SubgroupPart,
+            SubgroupStart, TrackData, VariantType,
         },
     };
 
@@ -165,6 +194,24 @@ mod tests {
         let ledger = ObjectLedger::new();
         ledger.check(first, false).unwrap();
         ledger.check(second, false)
+    }
+
+    #[test]
+    fn a_payload_hashed_in_pieces_matches_the_whole_payload() {
+        // Arrange
+        let ledger = ObjectLedger::new();
+        let object = object_with_extensions();
+        ledger.check(&object, false).unwrap();
+        let mut pieces = ledger.payload_hasher();
+        let (first, rest) = object.payload.split_at(1);
+        pieces.update(first);
+        pieces.update(rest);
+
+        // Act
+        let result = ledger.check_hashed(&object, pieces, false);
+
+        // Assert: the same object, however its payload arrived
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
@@ -458,6 +505,99 @@ mod tests {
     async fn a_draft18_subgroup_object_repeated_with_another_payload_is_a_malformed_track() {
         assert_subgroup_copies(published_draft18_track("ledger-subgroup-copies-draft18").await)
             .await;
+    }
+
+    async fn assert_copy_arriving_in_pieces(track: PublishedTrack) {
+        // Arrange: the second copy's payload is sent in two pieces, the
+        // second only after the first piece has been read
+        let first = object_with_extensions();
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        within(send_subgroup_object(
+            &track.client,
+            &track.published,
+            &first,
+        ))
+        .await;
+        let mut first_stream = within(next_subgroup(&mut receiver)).await;
+        within(read_subgroup_objects(&mut first_stream)).await;
+        let ForwardingPreference::Subgroup { subgroup_id } = first.forwarding else {
+            unreachable!("object_with_extensions is a subgroup object");
+        };
+        let mut sender = within(async {
+            track
+                .client
+                .publisher()
+                .create_stream(&track.published)
+                .next()
+                .await
+                .unwrap()
+                .start(SubgroupStart {
+                    group_id: first.location.group_id,
+                    subgroup_id,
+                    publisher_priority: first.publisher_priority,
+                    ends_group: false,
+                })
+                .await
+                .unwrap()
+        })
+        .await;
+        let other = Bytes::from_static(b"other payload");
+        let head = Object {
+            payload: Bytes::new(),
+            ..first.clone()
+        };
+        within(sender.begin_object(&head, other.len()))
+            .await
+            .unwrap();
+        within(sender.send_payload(&other.slice(..1)))
+            .await
+            .unwrap();
+        let mut second_stream = within(next_subgroup(&mut receiver)).await.into_parts();
+        within(second_stream.receive()).await.unwrap();
+        let start = within(second_stream.receive()).await;
+        let first_piece = within(second_stream.receive()).await;
+
+        // Act
+        within(sender.send_payload(&other.slice(1..)))
+            .await
+            .unwrap();
+        let last_piece = within(second_stream.receive()).await;
+
+        // Assert: draft-14 §8.1 / draft-18 §9.1, checked once the payload is
+        // complete
+        assert!(
+            matches!(start, Ok(Some(SubgroupPart::ObjectStart { .. }))),
+            "{start:?}"
+        );
+        assert!(
+            matches!(
+                first_piece,
+                Ok(Some(SubgroupPart::Payload { last: false, .. }))
+            ),
+            "{first_piece:?}"
+        );
+        assert!(
+            matches!(
+                last_piece,
+                Err(StreamReceiveError::MalformedTrack(
+                    MalformedTrackError::ConflictingDuplicate { location }
+                )) if location == first.location
+            ),
+            "{last_piece:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_copy_arriving_in_pieces_with_another_payload_is_a_malformed_track() {
+        assert_copy_arriving_in_pieces(published_track("ledger-copy-in-pieces").await).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_copy_arriving_in_pieces_with_another_payload_is_a_malformed_track() {
+        assert_copy_arriving_in_pieces(
+            published_draft18_track("ledger-copy-in-pieces-draft18").await,
+        )
+        .await;
     }
 
     async fn assert_datagram_copies(track: PublishedTrack) {

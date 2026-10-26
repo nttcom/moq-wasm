@@ -19,7 +19,7 @@ pub(crate) trait DataReceiver: Send + 'static {
 impl DataReceiver for moqt::object::DataReceiver {
     async fn next(&mut self) -> anyhow::Result<UpstreamData> {
         Ok(match moqt::object::DataReceiver::next(self).await? {
-            TrackData::Subgroup(stream) => UpstreamData::Subgroup(Box::new(stream)),
+            TrackData::Subgroup(stream) => UpstreamData::Subgroup(Box::new(stream.into_parts())),
             TrackData::Datagram(object) => UpstreamData::Datagram(object),
         })
     }

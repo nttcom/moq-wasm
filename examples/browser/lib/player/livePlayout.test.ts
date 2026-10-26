@@ -107,3 +107,51 @@ test('a buffer below its target grows by stretching the audio without a break', 
   expect(playout.bufferMs()!).toBeGreaterThanOrEqual(playout.targetBufferMs() - 2 * AUDIO_CHUNK_MS)
   expect(playout.audioBreaks()).toBe(0)
 })
+
+const LIVE_VIDEO_DELAY_MS = 50
+
+function streamLiveVideo(playout: LivePlayout, durationMs: number): void {
+  const startMs = environment.nowMs
+  for (let elapsedMs = 0; elapsedMs < durationMs; elapsedMs += VIDEO_FRAME_MS) {
+    environment.advanceTo(startMs + elapsedMs)
+    const nowMs = environment.nowMs
+    playout.presentVideo(fakeVideoFrame((nowMs - LIVE_VIDEO_DELAY_MS) * MICROS_PER_MILLI), nowMs)
+  }
+}
+
+test('a cached frame of a still picture is shown at once and the live frames after it are not held back', () => {
+  // Arrange: the relay cached the keyframe of a screen that has not changed for two minutes
+  const shownDelaysMs: number[] = []
+  const playout = new LivePlayout((frame) => {
+    shownDelaysMs.push(environment.nowMs - frame.timestamp / MICROS_PER_MILLI)
+    frame.close()
+  })
+  const cachedDelayMs = 120_000
+
+  // Act
+  playout.presentCachedVideo(fakeVideoFrame((environment.nowMs - cachedDelayMs) * MICROS_PER_MILLI))
+  environment.advanceTo(environment.nowMs + 1)
+  const shownBeforeLive = shownDelaysMs.length
+  streamLiveVideo(playout, 2_000)
+  environment.advanceTo(environment.nowMs + 1_000)
+
+  // Assert
+  expect(shownBeforeLive).toBe(1)
+  expect(shownDelaysMs.length).toBeGreaterThan(2_000 / VIDEO_FRAME_MS / 2)
+  expect(Math.max(...shownDelaysMs.slice(1))).toBeLessThan(1_000)
+})
+
+test('cached frames arriving after the live ones leave the buffer target alone', () => {
+  // Arrange: the live frames anchor the clock before the joining FETCH delivers the last 4 s
+  const playout = new LivePlayout((frame) => frame.close())
+  streamLiveVideo(playout, 1_000)
+
+  // Act
+  for (let ageMs = 4_000; ageMs > 0; ageMs -= VIDEO_FRAME_MS) {
+    playout.presentCachedVideo(fakeVideoFrame((environment.nowMs - ageMs) * MICROS_PER_MILLI))
+  }
+  streamLiveVideo(playout, 1_000)
+
+  // Assert
+  expect(playout.targetBufferMs()).toBeCloseTo(200)
+})
