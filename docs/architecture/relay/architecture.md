@@ -733,13 +733,16 @@ per-request authorization gate under "Event pipeline".
   copy (from a draft-14 FETCH, §10.4.4) in the subgroup of its Object ID is
   the same object as a datagram; a draft-18 track may send an object in that
   subgroup and a datagram FETCH copy says so (§11.4.4), so elsewhere the
-  preference is compared exactly. When a live datagram meets such an inferred
-  copy that arrived first, the cache takes the forwarding preference and
-  `ends_group` from the datagram. A FETCH served from the cache asks
+  preference is compared exactly. When a copy that carries its preference
+  (live, or from a draft-18 FETCH) meets such an inferred copy that arrived
+  first, the cache takes the forwarding preference from it, and from a
+  datagram its `ends_group` too, so only an object no such copy has reached
+  is left to the guess below. A FETCH served from the cache asks
   `TrackCache::fetch_forwarding` for each object's preference. To a session
   the track went to in one preference (see "Relaying across versions") the
   object goes as live delivery gave it. Otherwise an inferred copy in the
-  subgroup of its Object ID goes as a datagram while the latest object live
+  subgroup of its Object ID, which no live copy has reached, goes as a
+  datagram while the latest object live
   ingest inserted is a datagram (a draft-14 track keeps one preference), so
   a draft-18 FETCH marks it and it matches the live datagram the subscriber
   may hold; every other object goes as cached.

@@ -305,14 +305,17 @@ impl TrackCache {
                 return Err(TrackMalformed);
             }
             Entry::Occupied(mut existing) => {
-                if object.is_datagram() && existing.get().forwarding_inferred {
-                    // A draft-14 fetched copy arrived first; the live datagram
-                    // supplies the forwarding preference, so datagram egress can
-                    // find it, and the End of Group type, which FETCH cannot
-                    // carry.
+                if existing.get().forwarding_inferred && !object.forwarding_inferred {
+                    // A draft-14 fetched copy arrived first; the live copy
+                    // supplies the forwarding preference, so a FETCH serves
+                    // the object as live delivery did and datagram egress can
+                    // find a datagram. A datagram also supplies the End of
+                    // Group type, which FETCH cannot carry.
                     let mut upgraded = (**existing.get()).clone();
-                    upgraded.object.forwarding = ForwardingPreference::Datagram;
-                    upgraded.object.ends_group = object.object.ends_group;
+                    upgraded.object.forwarding = object.object.forwarding;
+                    if object.is_datagram() {
+                        upgraded.object.ends_group = object.object.ends_group;
+                    }
                     upgraded.forwarding_inferred = false;
                     *existing.get_mut() = Arc::new(upgraded);
                 }
