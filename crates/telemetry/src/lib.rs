@@ -63,8 +63,11 @@ fn env_flag_is_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Unlike the OpenTelemetry default, no `OTEL_EXPORTER_OTLP_ENDPOINT` means
+/// no export rather than export to `localhost:4317`.
 fn otel_is_enabled() -> bool {
-    !env_flag_is_enabled("OTEL_SDK_DISABLED")
+    non_empty_env("OTEL_EXPORTER_OTLP_ENDPOINT").is_some()
+        && !env_flag_is_enabled("OTEL_SDK_DISABLED")
 }
 
 fn otel_protocol() -> Result<OtlpProtocol> {

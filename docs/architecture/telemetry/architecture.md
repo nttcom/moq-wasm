@@ -24,11 +24,13 @@ each `default_directives` entry, and `telemetry=info` for the startup line,
 is added unless the filter already names its target, so
 `RUST_LOG=quinn=debug` still logs `relay=info`.
 
-The OTLP exporters follow the standard OpenTelemetry variables:
-`OTEL_SDK_DISABLED` turns both off, `OTEL_EXPORTER_OTLP_PROTOCOL` picks `grpc`
-(default) or `http/protobuf`, `OTEL_EXPORTER_OTLP_ENDPOINT` /
-`OTEL_EXPORTER_OTLP_HEADERS` are read by `opentelemetry-otlp`, and
-`OTEL_SERVICE_NAME` overrides `service.name`. The resource carries
+The OTLP exporters run only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and
+`OTEL_SDK_DISABLED` is not. This departs from the OpenTelemetry default, which
+exports to `localhost:4317` when no endpoint is given: a binary deployed
+without a collector would keep sending to nothing. The other standard
+variables apply as usual: `OTEL_EXPORTER_OTLP_PROTOCOL` picks `grpc`
+(default) or `http/protobuf`, `OTEL_EXPORTER_OTLP_HEADERS` is read by
+`opentelemetry-otlp`, and `OTEL_SERVICE_NAME` overrides `service.name`. The resource carries
 `service.name`, `service.version` and the caller's `resource_attributes`.
 
 A log emitted inside an exported span carries that span's trace and span id:
