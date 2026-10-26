@@ -52,7 +52,8 @@ impl TrackStatus {
                     .ok(
                         upstream_track.expires().unwrap_or(0),
                         content_exists,
-                        moqt::TrackProperties::default(),
+                        // draft-18 §10.14: the set SUBSCRIBE_OK carries.
+                        upstream_track.track_properties(),
                     )
                     .await
             }
@@ -81,8 +82,11 @@ mod tests {
     use crate::modules::{
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
         test_support::{
-            directory_fixtures::table_with_upstream,
-            relay_harness::fixtures::{cached_object::insert_closed_group, location},
+            directory_fixtures::{table_with_upstream, upstream_carrying},
+            relay_harness::fixtures::{
+                cached_object::insert_closed_group, location,
+                subscription::unknown_track_properties,
+            },
         },
     };
 
@@ -199,6 +203,33 @@ mod tests {
                 expires: 0,
                 content_exists: ContentExists::False,
                 track_properties: moqt::TrackProperties::default(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscribed_track_reports_the_track_properties_its_subscribe_ok_carries() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            TrackKey::new("ns", "track"),
+            1,
+            upstream_carrying(unknown_track_properties(1)),
+        );
+        let handler = MockTrackStatusHandler::default();
+
+        // Act
+        TrackStatus
+            .handle(1, &Span::none(), &table, &TrackCacheStore::new(), &handler)
+            .await;
+
+        // Assert: draft-18 §10.14, the Track Properties of a SUBSCRIBE_OK
+        assert_eq!(
+            handler.responses(),
+            vec![Response::Ok {
+                expires: 0,
+                content_exists: ContentExists::False,
+                track_properties: unknown_track_properties(1),
             }]
         );
     }
