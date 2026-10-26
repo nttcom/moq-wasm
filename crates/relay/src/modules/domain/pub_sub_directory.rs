@@ -2,7 +2,7 @@ pub(crate) mod entry;
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    sync::{Arc, OnceLock, PoisonError, RwLock},
+    sync::{Arc, Mutex, OnceLock, PoisonError, RwLock},
 };
 
 use dashmap::{DashMap, Entry};
@@ -127,6 +127,11 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) upstream_tracks: DashMap<TrackKey, UpstreamTrack>,
     pub(crate) downstream_subscriptions:
         DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
+    /// Tracks whose PUBLISH a session's track subscription answered with
+    /// PUBLISH_BLOCKED (draft-18 §6.1), kept until that subscription ends.
+    /// Track subscriptions of a session do not overlap, so the session and
+    /// the track name the subscription.
+    blocked_publishes: Mutex<HashSet<(SessionId, TrackKey)>>,
     /// Unix milliseconds of the start of the drain.
     draining_since_ms: OnceLock<u64>,
 }
@@ -139,6 +144,7 @@ impl InMemoryLocalPubSubDirectory {
             published_handlers: RwLock::new(Vec::new()),
             upstream_tracks: DashMap::new(),
             downstream_subscriptions: DashMap::new(),
+            blocked_publishes: Mutex::new(HashSet::new()),
             draining_since_ms: OnceLock::new(),
         }
     }
@@ -443,6 +449,12 @@ impl InMemoryLocalPubSubDirectory {
             return true;
         };
         subscriptions.remove(&(session_id, interest));
+        if interest.includes_tracks() {
+            self.blocked_publishes().retain(|(subscriber, track_key)| {
+                *subscriber != session_id
+                    || !is_namespace_prefix(track_namespace_prefix, &track_key.track_namespace)
+            });
+        }
         let no_clients_remain = !has_client_subscription(&subscriptions);
         let is_empty = subscriptions.is_empty();
         drop(subscriptions);
@@ -455,6 +467,8 @@ impl InMemoryLocalPubSubDirectory {
     /// Returns the prefixes whose last client subscription was the removed
     /// session's; relay peers don't own Redis routes.
     fn remove_namespace_subscriptions(&self, session_id: SessionId) -> Vec<String> {
+        self.blocked_publishes()
+            .retain(|(subscriber, _)| *subscriber != session_id);
         let mut last_client_left = Vec::new();
         let mut empty_prefixes = Vec::new();
         for entry in self.subscriber_namespaces.iter() {
@@ -557,6 +571,24 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
         matching
+    }
+
+    /// draft-18 §6.1: after PUBLISH_BLOCKED no PUBLISH for the track goes to
+    /// the session's track subscription that covers it (MUST NOT).
+    pub(crate) fn block_publish(&self, session_id: SessionId, track_key: &TrackKey) {
+        self.blocked_publishes()
+            .insert((session_id, track_key.clone()));
+    }
+
+    pub(crate) fn is_publish_blocked(&self, session_id: SessionId, track_key: &TrackKey) -> bool {
+        self.blocked_publishes()
+            .contains(&(session_id, track_key.clone()))
+    }
+
+    fn blocked_publishes(&self) -> std::sync::MutexGuard<'_, HashSet<(SessionId, TrackKey)>> {
+        self.blocked_publishes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether the PUBLISH of the track goes to `session_id`'s namespace
