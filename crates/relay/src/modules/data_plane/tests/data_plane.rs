@@ -583,13 +583,31 @@ async fn a_subscriber_joining_inside_a_payload_receives_the_object_from_its_firs
         .await
         .expect("the first half reaches the cache as an arriving object");
 
-    // Act
+    // Act: the second half is held back until the subscriber has the first,
+    // so the object is still arriving when egress reaches it
     let mut egress = harness.start_egress(None).await;
+    let header = egress.expect_sent_object().await;
+    let start = egress.expect_sent_object().await;
+    let first_piece = egress.expect_sent_object().await;
     upstream_stream.send(make_payload_piece(b"rame", true));
     upstream_stream.fin();
+    let rest = receive_objects_until_close(&mut egress).await;
 
     // Assert
-    let objects = receive_objects_until_close(&mut egress).await;
-    let pieces: Vec<_> = objects[2..].iter().map(payload_piece).collect();
-    assert_eq!(pieces, vec![(&b"keyf"[..], false), (&b"rame"[..], true)]);
+    assert!(
+        matches!(header, DataObject::SubgroupHeader(_)),
+        "{header:?}"
+    );
+    assert!(
+        matches!(
+            start,
+            DataObject::SubgroupObjectStart { payload_len: 8, .. }
+        ),
+        "{start:?}"
+    );
+    assert_eq!(payload_piece(&first_piece), (&b"keyf"[..], false));
+    assert_eq!(
+        rest.iter().map(payload_piece).collect::<Vec<_>>(),
+        vec![(&b"rame"[..], true)]
+    );
 }
