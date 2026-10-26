@@ -1707,6 +1707,39 @@ mod tests {
         );
     }
 
+    /// Notifies `seen` when an event with `message` is logged on the test's
+    /// thread, where a `#[tokio::test]` runs every task the session spawns.
+    struct LoggedMessage {
+        message: &'static str,
+        seen: Arc<tokio::sync::Notify>,
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LoggedMessage {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Message(Option<String>);
+            impl tracing::field::Visit for Message {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = Some(format!("{value:?}"));
+                    }
+                }
+            }
+            let mut message = Message(None);
+            event.record(&mut message);
+            if message.0.as_deref() == Some(self.message) {
+                self.seen.notify_one();
+            }
+        }
+    }
+
     #[tokio::test]
     async fn a_stop_sending_after_the_requester_fin_on_an_ended_fetch_ends_its_reading() {
         // Arrange: taken out of the registry, as a FETCH that has ended is
@@ -1721,9 +1754,21 @@ mod tests {
             .unwrap();
         let client_request_stream = outgoing_stream(&client, receiver.request_id);
 
-        // Act: FIN, then STOP_SENDING on the publisher's half
+        let fin_read = Arc::new(tokio::sync::Notify::new());
+        let _logging =
+            tracing::subscriber::set_default(tracing_subscriber::layer::SubscriberExt::with(
+                tracing_subscriber::registry(),
+                LoggedMessage {
+                    message: "FETCH requester finished its request stream",
+                    seen: fin_read.clone(),
+                },
+            ));
+
+        // Act: FIN, then STOP_SENDING on the publisher's half once it read the FIN
         client_request_stream.sender.close().await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, fin_read.notified())
+            .await
+            .expect("the publisher should read the FIN");
         client_request_stream.reader_stop.notify_one();
         let released = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             while Arc::strong_count(&request_stream.sender) > 1 {

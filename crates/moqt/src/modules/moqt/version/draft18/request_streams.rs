@@ -401,6 +401,7 @@ impl IncomingRequestTask {
                 // §3.3.2: a FIN does not cancel a FETCH; its stream ends once
                 // the response is done (§5.2).
                 Ok(None) if kind == RequestStreamKind::Fetch => {
+                    tracing::debug!(request_id, "FETCH requester finished its request stream");
                     reading = false;
                     if !watching_stop {
                         return;
