@@ -20,3 +20,7 @@ pub(crate) mod subscriber;
 pub(crate) mod subscription;
 pub(crate) mod track_reader;
 pub(crate) mod track_writer;
+
+pub(crate) fn namespace_tuple(namespace: &str) -> Vec<String> {
+    namespace.split('/').map(str::to_string).collect()
+}

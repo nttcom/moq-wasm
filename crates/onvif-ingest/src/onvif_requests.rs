@@ -60,8 +60,7 @@ pub fn get_services() -> OnvifRequest {
         DEVICE_ACTION_NS,
         "GetServices",
         format!(
-            r#"<GetServices xmlns="{}"><IncludeCapability>false</IncludeCapability></GetServices>"#,
-            DEVICE_ACTION_NS
+            r#"<GetServices xmlns="{DEVICE_ACTION_NS}"><IncludeCapability>false</IncludeCapability></GetServices>"#
         ),
     )
 }
@@ -71,8 +70,7 @@ pub fn get_capabilities() -> OnvifRequest {
         DEVICE_ACTION_NS,
         "GetCapabilities",
         format!(
-            r#"<GetCapabilities xmlns="{}"><Category>All</Category></GetCapabilities>"#,
-            DEVICE_ACTION_NS
+            r#"<GetCapabilities xmlns="{DEVICE_ACTION_NS}"><Category>All</Category></GetCapabilities>"#
         ),
     )
 }
@@ -81,7 +79,7 @@ pub fn get_profiles() -> OnvifRequest {
     build(
         MEDIA_ACTION_NS,
         "GetProfiles",
-        format!(r#"<GetProfiles xmlns="{}"/>"#, MEDIA_ACTION_NS),
+        format!(r#"<GetProfiles xmlns="{MEDIA_ACTION_NS}"/>"#),
     )
 }
 
@@ -90,8 +88,7 @@ pub fn get_stream_uri(profile_token: &str) -> OnvifRequest {
         MEDIA_ACTION_NS,
         "GetStreamUri",
         format!(
-            r#"<GetStreamUri xmlns="{0}"><StreamSetup><Stream>RTP-Unicast</Stream><Transport><Protocol>RTSP</Protocol></Transport></StreamSetup><ProfileToken>{1}</ProfileToken></GetStreamUri>"#,
-            MEDIA_ACTION_NS, profile_token
+            r#"<GetStreamUri xmlns="{MEDIA_ACTION_NS}"><StreamSetup><Stream>RTP-Unicast</Stream><Transport><Protocol>RTSP</Protocol></Transport></StreamSetup><ProfileToken>{profile_token}</ProfileToken></GetStreamUri>"#
         ),
     )
 }
@@ -100,7 +97,7 @@ pub fn get_configurations() -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetConfigurations",
-        format!(r#"<GetConfigurations xmlns="{}"/>"#, PTZ_ACTION_NS),
+        format!(r#"<GetConfigurations xmlns="{PTZ_ACTION_NS}"/>"#),
     )
 }
 
@@ -109,8 +106,7 @@ pub fn get_configuration_options(token: &str) -> OnvifRequest {
         PTZ_ACTION_NS,
         "GetConfigurationOptions",
         format!(
-            r#"<GetConfigurationOptions xmlns="{0}"><ConfigurationToken>{1}</ConfigurationToken></GetConfigurationOptions>"#,
-            PTZ_ACTION_NS, token
+            r#"<GetConfigurationOptions xmlns="{PTZ_ACTION_NS}"><ConfigurationToken>{token}</ConfigurationToken></GetConfigurationOptions>"#
         ),
     )
 }
@@ -120,10 +116,19 @@ pub fn absolute_move(
     movement: PtzMoveRequest,
     spaces: PtzMoveSpaces<'_>,
 ) -> OnvifRequest {
+    let position = position_elements(
+        movement,
+        spaces,
+        PAN_TILT_POSITION_SPACE,
+        ZOOM_POSITION_SPACE,
+    );
+    let speed = speed_elements(movement.speed, spaces);
     build(
         PTZ_ACTION_NS,
         "AbsoluteMove",
-        absolute_move_body(profile, movement, spaces),
+        format!(
+            r#"<AbsoluteMove xmlns="{PTZ_ACTION_NS}"><ProfileToken>{profile}</ProfileToken><Position>{position}</Position><Speed>{speed}</Speed></AbsoluteMove>"#
+        ),
     )
 }
 
@@ -132,10 +137,19 @@ pub fn relative_move(
     movement: PtzMoveRequest,
     spaces: PtzMoveSpaces<'_>,
 ) -> OnvifRequest {
+    let translation = position_elements(
+        movement,
+        spaces,
+        PAN_TILT_TRANSLATION_SPACE,
+        ZOOM_TRANSLATION_SPACE,
+    );
+    let speed = speed_elements(movement.speed, spaces);
     build(
         PTZ_ACTION_NS,
         "RelativeMove",
-        relative_move_body(profile, movement, spaces),
+        format!(
+            r#"<RelativeMove xmlns="{PTZ_ACTION_NS}"><ProfileToken>{profile}</ProfileToken><Translation>{translation}</Translation><Speed>{speed}</Speed></RelativeMove>"#
+        ),
     )
 }
 
@@ -144,15 +158,30 @@ pub fn continuous_move(
     velocity: PtzVelocityRequest,
     spaces: PtzVelocitySpaces<'_>,
 ) -> OnvifRequest {
+    let pan_tilt_space = spaces.pan_tilt.unwrap_or(PAN_TILT_VELOCITY_SPACE);
+    let zoom_space = spaces.zoom.unwrap_or(ZOOM_VELOCITY_SPACE);
+    let velocity = format!(
+        "{}{}",
+        pan_tilt_element(velocity.pan, velocity.tilt, pan_tilt_space),
+        zoom_element(velocity.zoom, zoom_space)
+    );
     build(
         PTZ_ACTION_NS,
         "ContinuousMove",
-        continuous_move_body(profile, velocity, spaces),
+        format!(
+            r#"<ContinuousMove xmlns="{PTZ_ACTION_NS}"><ProfileToken>{profile}</ProfileToken><Velocity>{velocity}</Velocity></ContinuousMove>"#
+        ),
     )
 }
 
 pub fn stop(profile: &str, pan_tilt: bool, zoom: bool) -> OnvifRequest {
-    build(PTZ_ACTION_NS, "Stop", stop_body(profile, pan_tilt, zoom))
+    build(
+        PTZ_ACTION_NS,
+        "Stop",
+        format!(
+            r#"<Stop xmlns="{PTZ_ACTION_NS}"><ProfileToken>{profile}</ProfileToken><PanTilt>{pan_tilt}</PanTilt><Zoom>{zoom}</Zoom></Stop>"#
+        ),
+    )
 }
 
 fn build(namespace: &'static str, operation: &'static str, body: String) -> OnvifRequest {
@@ -163,136 +192,39 @@ fn build(namespace: &'static str, operation: &'static str, body: String) -> Onvi
     }
 }
 
-fn absolute_move_body(
-    profile: &str,
+fn position_elements(
     movement: PtzMoveRequest,
     spaces: PtzMoveSpaces<'_>,
+    default_pan_tilt_space: &str,
+    default_zoom_space: &str,
 ) -> String {
-    let pan_tilt_space = space_or_default(spaces.pan_tilt, PAN_TILT_POSITION_SPACE);
-    let zoom_space = space_or_default(spaces.zoom, ZOOM_POSITION_SPACE);
-    let pan_tilt_speed_space = space_or_default(spaces.pan_tilt_speed, PAN_TILT_SPEED_SPACE);
-    let zoom_speed_space = space_or_default(spaces.zoom_speed, ZOOM_SPEED_SPACE);
-    let position = format!(
+    let pan_tilt_space = spaces.pan_tilt.unwrap_or(default_pan_tilt_space);
+    let zoom_space = spaces.zoom.unwrap_or(default_zoom_space);
+    format!(
         "{}{}",
         pan_tilt_element(movement.pan, movement.tilt, pan_tilt_space),
         zoom_element(movement.zoom, zoom_space)
-    );
-    let speed = format!(
-        "{}{}",
-        pan_tilt_speed_element(movement.speed, pan_tilt_speed_space),
-        zoom_speed_element(movement.speed, zoom_speed_space)
-    );
-    format!(
-        r#"<AbsoluteMove xmlns="{ns}"><ProfileToken>{profile}</ProfileToken><Position>{position}</Position><Speed>{speed}</Speed></AbsoluteMove>"#,
-        ns = PTZ_ACTION_NS,
-        profile = profile,
-        position = position,
-        speed = speed
     )
 }
 
-fn relative_move_body(
-    profile: &str,
-    movement: PtzMoveRequest,
-    spaces: PtzMoveSpaces<'_>,
-) -> String {
-    let pan_tilt_space = space_or_default(spaces.pan_tilt, PAN_TILT_TRANSLATION_SPACE);
-    let zoom_space = space_or_default(spaces.zoom, ZOOM_TRANSLATION_SPACE);
-    let pan_tilt_speed_space = space_or_default(spaces.pan_tilt_speed, PAN_TILT_SPEED_SPACE);
-    let zoom_speed_space = space_or_default(spaces.zoom_speed, ZOOM_SPEED_SPACE);
-    let translation = format!(
-        "{}{}",
-        pan_tilt_element(movement.pan, movement.tilt, pan_tilt_space),
-        zoom_element(movement.zoom, zoom_space)
-    );
-    let speed = format!(
-        "{}{}",
-        pan_tilt_speed_element(movement.speed, pan_tilt_speed_space),
-        zoom_speed_element(movement.speed, zoom_speed_space)
-    );
+fn speed_elements(speed: f32, spaces: PtzMoveSpaces<'_>) -> String {
+    let speed = format_float(speed);
+    let pan_tilt_space = spaces.pan_tilt_speed.unwrap_or(PAN_TILT_SPEED_SPACE);
+    let zoom_space = spaces.zoom_speed.unwrap_or(ZOOM_SPEED_SPACE);
     format!(
-        r#"<RelativeMove xmlns="{ns}"><ProfileToken>{profile}</ProfileToken><Translation>{translation}</Translation><Speed>{speed}</Speed></RelativeMove>"#,
-        ns = PTZ_ACTION_NS,
-        profile = profile,
-        translation = translation,
-        speed = speed
-    )
-}
-
-fn continuous_move_body(
-    profile: &str,
-    velocity: PtzVelocityRequest,
-    spaces: PtzVelocitySpaces<'_>,
-) -> String {
-    let pan_tilt_space = space_or_default(spaces.pan_tilt, PAN_TILT_VELOCITY_SPACE);
-    let zoom_space = space_or_default(spaces.zoom, ZOOM_VELOCITY_SPACE);
-    let velocity = format!(
-        "{}{}",
-        pan_tilt_element(velocity.pan, velocity.tilt, pan_tilt_space),
-        zoom_element(velocity.zoom, zoom_space)
-    );
-    format!(
-        r#"<ContinuousMove xmlns="{ns}"><ProfileToken>{profile}</ProfileToken><Velocity>{velocity}</Velocity></ContinuousMove>"#,
-        ns = PTZ_ACTION_NS,
-        profile = profile,
-        velocity = velocity
-    )
-}
-
-fn stop_body(profile: &str, pan_tilt: bool, zoom: bool) -> String {
-    format!(
-        r#"<Stop xmlns="{ns}"><ProfileToken>{profile}</ProfileToken><PanTilt>{pan_tilt}</PanTilt><Zoom>{zoom}</Zoom></Stop>"#,
-        ns = PTZ_ACTION_NS,
-        profile = profile,
-        pan_tilt = pan_tilt,
-        zoom = zoom
+        r#"<PanTilt x="{speed}" y="{speed}" xmlns="{TT_NS}" space="{pan_tilt_space}"/><Zoom x="{speed}" xmlns="{TT_NS}" space="{zoom_space}"/>"#
     )
 }
 
 fn pan_tilt_element(pan: f32, tilt: f32, space: &str) -> String {
     let pan = format_float(pan);
     let tilt = format_float(tilt);
-    format!(
-        r#"<PanTilt x="{pan}" y="{tilt}" xmlns="{tt}" space="{space}"></PanTilt>"#,
-        pan = pan,
-        tilt = tilt,
-        tt = TT_NS,
-        space = space
-    )
+    format!(r#"<PanTilt x="{pan}" y="{tilt}" xmlns="{TT_NS}" space="{space}"></PanTilt>"#)
 }
 
 fn zoom_element(zoom: f32, space: &str) -> String {
     let zoom = format_float(zoom);
-    format!(
-        r#"<Zoom x="{zoom}" xmlns="{tt}" space="{space}"></Zoom>"#,
-        zoom = zoom,
-        tt = TT_NS,
-        space = space
-    )
-}
-
-fn pan_tilt_speed_element(speed: f32, space: &str) -> String {
-    let speed = format_float(speed);
-    format!(
-        r#"<PanTilt x="{speed}" y="{speed}" xmlns="{tt}" space="{space}"/>"#,
-        speed = speed,
-        tt = TT_NS,
-        space = space
-    )
-}
-
-fn zoom_speed_element(speed: f32, space: &str) -> String {
-    let speed = format_float(speed);
-    format!(
-        r#"<Zoom x="{speed}" xmlns="{tt}" space="{space}"/>"#,
-        speed = speed,
-        tt = TT_NS,
-        space = space
-    )
-}
-
-fn space_or_default<'a>(space: Option<&'a str>, fallback: &'a str) -> &'a str {
-    space.unwrap_or(fallback)
+    format!(r#"<Zoom x="{zoom}" xmlns="{TT_NS}" space="{space}"></Zoom>"#)
 }
 
 fn format_float(value: f32) -> String {

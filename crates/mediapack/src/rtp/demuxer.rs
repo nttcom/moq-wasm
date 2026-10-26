@@ -368,7 +368,7 @@ mod tests {
         },
         test_support::{
             FIXTURE_PPS, FIXTURE_SPS, audio_samples, delta_frame_annexb, fixture_video_config,
-            keyframe_annexb, mono_48k, video_samples,
+            h264_aac_configs, keyframe_annexb, video_samples,
         },
     };
 
@@ -380,13 +380,8 @@ mod tests {
     };
 
     fn source_events() -> Vec<MediaEvent> {
-        vec![
-            MediaEvent::Streams(StreamSet {
-                has_video: true,
-                has_audio: true,
-            }),
-            MediaEvent::VideoConfig(fixture_video_config()),
-            MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
+        let mut events = h264_aac_configs();
+        events.extend([
             MediaEvent::Video(VideoSample {
                 data: keyframe_annexb(),
                 is_keyframe: true,
@@ -413,7 +408,8 @@ mod tests {
                 pts: Timestamp::from_millis(1_066),
                 dts: Timestamp::from_millis(1_066),
             }),
-        ]
+        ]);
+        events
     }
 
     fn mux(events: &[MediaEvent]) -> (Vec<RtpPacket>, SessionDescription) {
@@ -446,17 +442,7 @@ mod tests {
 
         // Assert: timestamps restart at the first packet of each stream
         assert_eq!(discontinuities, 0);
-        assert_eq!(
-            &events[..3],
-            &[
-                MediaEvent::Streams(StreamSet {
-                    has_video: true,
-                    has_audio: true
-                }),
-                MediaEvent::VideoConfig(fixture_video_config()),
-                MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
-            ]
-        );
+        assert_eq!(&events[..3], h264_aac_configs().as_slice());
         let video = video_samples(&events);
         assert_eq!(video.len(), 3);
         assert_eq!(video[0].data, keyframe_annexb());
