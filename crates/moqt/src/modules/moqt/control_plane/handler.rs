@@ -2,6 +2,7 @@ pub mod fetch_cancel_handler;
 pub mod fetch_handler;
 pub mod go_away_handler;
 pub mod max_request_id_handler;
+pub mod publish_blocked_handler;
 pub mod publish_done_handler;
 pub mod publish_handler;
 pub mod publish_namespace_cancel_handler;

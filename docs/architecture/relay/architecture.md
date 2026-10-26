@@ -393,6 +393,11 @@ PUBLISH as a downstream subscription of the track (§5.1: a PUBLISH_OK
 establishes a subscription):
 - a subscriber that already has a downstream subscription to the track, e.g.
   from the PUBLISH of an earlier publisher of it, gets no second PUBLISH;
+- a PUBLISH moqt answers with `RequestFailure::PublishBlocked` (the
+  subscriber's stream limit left no stream, so moqt sent PUBLISH_BLOCKED on
+  its SUBSCRIBE_TRACKS) registers nothing, and the directory keeps the
+  session and track until that track subscription ends, so no PUBLISH for
+  the track goes to it again (draft-18 §6.1 MUST NOT);
 - the PUBLISH advertises the Largest Location resolved like a fresh
   SUBSCRIBE (max of the cache and the track's Content Exists), and the egress
   runner starts from the same location;

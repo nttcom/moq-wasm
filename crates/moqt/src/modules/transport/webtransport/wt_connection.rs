@@ -1,5 +1,10 @@
 use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use async_trait::async_trait;
+use futures::{FutureExt, future::BoxFuture};
+use std::{
+    sync::PoisonError,
+    task::{Context, Poll, Waker},
+};
 
 use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
@@ -8,15 +13,59 @@ use crate::modules::transport::transport_addresses::TransportAddresses;
 use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
 use crate::modules::transport::transport_stats::TransportStats;
 
-#[derive(Debug)]
+type OpeningBi = BoxFuture<
+    'static,
+    Result<
+        (
+            web_transport_quinn::SendStream,
+            web_transport_quinn::RecvStream,
+        ),
+        web_transport_quinn::SessionError,
+    >,
+>;
+
 pub struct WtConnection {
     session: web_transport_quinn::Session,
+    /// An open `try_open_bi` left pending. After taking a stream ID it still
+    /// writes the stream header, so dropping it then would strand the
+    /// stream; the next open resumes it instead.
+    opening_bi: std::sync::Mutex<Option<OpeningBi>>,
+}
+
+impl std::fmt::Debug for WtConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WtConnection")
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
 }
 
 impl WtConnection {
     pub(crate) fn new(session: web_transport_quinn::Session) -> Self {
-        Self { session }
+        Self {
+            session,
+            opening_bi: std::sync::Mutex::new(None),
+        }
     }
+
+    fn take_opening_bi(&self) -> Option<OpeningBi> {
+        self.opening_bi
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+}
+
+fn boxed_bi(
+    (send, recv): (
+        web_transport_quinn::SendStream,
+        web_transport_quinn::RecvStream,
+    ),
+) -> (BoxedSendStream, BoxedReceiveStream) {
+    (
+        Box::new(WtSendStream { send_stream: send }),
+        Box::new(WtReceiveStream { recv_stream: recv }),
+    )
 }
 
 #[async_trait]
@@ -44,11 +93,28 @@ impl TransportConnection for WtConnection {
     }
 
     async fn open_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
-        let (send, recv) = self.session.open_bi().await?;
-        Ok((
-            Box::new(WtSendStream { send_stream: send }),
-            Box::new(WtReceiveStream { recv_stream: recv }),
-        ))
+        let opened = match self.take_opening_bi() {
+            Some(opening) => opening.await?,
+            None => self.session.open_bi().await?,
+        };
+        Ok(boxed_bi(opened))
+    }
+
+    async fn try_open_bi(&self) -> anyhow::Result<Option<(BoxedSendStream, BoxedReceiveStream)>> {
+        let mut opening = self.take_opening_bi().unwrap_or_else(|| {
+            let session = self.session.clone();
+            async move { session.open_bi().await }.boxed()
+        });
+        match opening.poll_unpin(&mut Context::from_waker(Waker::noop())) {
+            Poll::Ready(opened) => Ok(Some(boxed_bi(opened?))),
+            Poll::Pending => {
+                *self
+                    .opening_bi
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(opening);
+                Ok(None)
+            }
+        }
     }
 
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {

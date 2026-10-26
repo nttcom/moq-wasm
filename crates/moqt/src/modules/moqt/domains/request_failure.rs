@@ -23,4 +23,10 @@ pub enum RequestFailure {
     Send(#[from] TransportSendError),
     #[error("protocol violation: {0}")]
     ProtocolViolation(&'static str),
+    /// A PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers found the
+    /// peer's stream limit reached, so PUBLISH_BLOCKED went on that
+    /// SUBSCRIBE_TRACKS instead, and no PUBLISH for the track may follow on
+    /// it (draft-18 §6.1 MUST NOT). draft-14 never fails so.
+    #[error("no stream for the PUBLISH; PUBLISH_BLOCKED was sent")]
+    PublishBlocked,
 }

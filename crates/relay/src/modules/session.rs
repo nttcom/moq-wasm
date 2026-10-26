@@ -78,6 +78,9 @@ impl Session for moqt::Session {
             moqt::SessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler) => {
                 MoqtSessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler)
             }
+            moqt::SessionEvent::PublishBlocked(publish_blocked_handler) => {
+                MoqtSessionEvent::PublishBlocked(publish_blocked_handler)
+            }
             moqt::SessionEvent::Publish(publish_handler) => {
                 MoqtSessionEvent::Publish(Box::new(publish_handler))
             }

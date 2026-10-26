@@ -45,6 +45,7 @@ use crate::{
                     fetch_cancel_handler::FetchCancelHandler,
                     fetch_handler::FetchHandler,
                     go_away_handler::GoAwayHandler,
+                    publish_blocked_handler::PublishBlockedHandler,
                     publish_done_handler::PublishDoneHandler,
                     publish_handler::PublishHandler,
                     publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
@@ -980,10 +981,20 @@ impl OutgoingRequestTask {
                 Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}
                 // §6.1: the peer could not open the stream of a PUBLISH; this
                 // side can still SUBSCRIBE to the track.
-                Ok(Some(Message::PublishBlocked))
-                    if matches!(kind, RequestStreamKind::SubscribeTracks(_)) =>
-                {
+                Ok(Some(Message::PublishBlocked(blocked))) => {
+                    let RequestStreamKind::SubscribeTracks(prefix) = &kind else {
+                        close_on_violation(&context, "PUBLISH_BLOCKED outside SUBSCRIBE_TRACKS");
+                        return;
+                    };
                     tracing::info!(request_id, "PUBLISH_BLOCKED on a SUBSCRIBE_TRACKS stream");
+                    emit(
+                        &context,
+                        SessionEvent::PublishBlocked(PublishBlockedHandler::new(
+                            prefix,
+                            &blocked.track_namespace_suffix,
+                            blocked.track_name,
+                        )),
+                    );
                 }
                 Ok(Some(Message::Namespace(suffix))) => {
                     let RequestStreamKind::SubscribeNamespace(prefix) = &kind else {
