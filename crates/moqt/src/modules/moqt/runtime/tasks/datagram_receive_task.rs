@@ -16,7 +16,7 @@ use crate::{
 pub(crate) struct DatagramReceiveTask;
 
 impl DatagramReceiveTask {
-    pub(crate) fn run(connection: Arc<Connection>, datagram_span: Span) -> JoinHandle {
+    pub(crate) fn run(connection: Arc<Connection>, session_span: Span) -> JoinHandle {
         executor::spawn(
             "Datagram Receiver",
             async move {
@@ -33,7 +33,7 @@ impl DatagramReceiveTask {
                     }
                 }
             }
-            .instrument(datagram_span),
+            .instrument(session_span),
         )
     }
 

@@ -48,7 +48,7 @@ impl ControlMessageReceiveTask {
         session_context: Weak<SessionContext>,
         connection: Weak<Connection>,
         publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
-        receiver_span: Span,
+        session_span: Span,
     ) -> JoinHandle {
         executor::spawn(
             "Control Message Receiver",
@@ -132,7 +132,7 @@ impl ControlMessageReceiveTask {
                         ControlChannel::of(&connection).fail_inflight_requests();
                     }
                 }
-            .instrument(receiver_span),
+            .instrument(session_span),
         )
     }
 

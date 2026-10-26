@@ -36,26 +36,26 @@ impl ConnectionTasks {
                 Arc::downgrade(session),
                 Arc::downgrade(connection),
                 publish_done_sender,
-                tracing::info_span!(parent: session_span, "moqt.control_plane.receiver"),
+                session_span.clone(),
             ),
             datagram_receive_task: DatagramReceiveTask::run(
                 connection.clone(),
-                tracing::info_span!(parent: session_span, "data_plane.datagram_receiver"),
+                session_span.clone(),
             ),
             uni_stream_receive_task: UniStreamReceiveTask::run(
                 connection.clone(),
-                tracing::info_span!(parent: session_span, "data_plane.uni_stream_receiver"),
+                session_span.clone(),
             ),
             disconnect_watch_task: DisconnectWatchTask::run(
                 connection.clone(),
                 connection.event_sender.clone(),
-                tracing::info_span!(parent: session_span, "moqt.transport.close_watcher"),
+                session_span.clone(),
             ),
             publish_done_expiry_task: PublishDoneExpiryTask::run(
                 publish_done_receiver,
                 Arc::downgrade(session),
                 Arc::downgrade(connection),
-                tracing::info_span!(parent: session_span, "moqt.publish_done_expiry"),
+                session_span.clone(),
             ),
         }
     }

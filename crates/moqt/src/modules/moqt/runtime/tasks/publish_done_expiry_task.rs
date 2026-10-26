@@ -27,7 +27,7 @@ impl PublishDoneExpiryTask {
         mut publish_done_receiver: mpsc::UnboundedReceiver<RequestId>,
         session_context: Weak<SessionContext>,
         connection: Weak<Connection>,
-        expiry_span: Span,
+        session_span: Span,
     ) -> JoinHandle {
         executor::spawn(
             "Publish Done Expiry",
@@ -54,7 +54,7 @@ impl PublishDoneExpiryTask {
                     }
                 }
             }
-            .instrument(expiry_span),
+            .instrument(session_span),
         )
     }
 }
