@@ -561,15 +561,31 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     For draft-14, `start(SubgroupStart)` always declares extensions present
     and omits the Subgroup ID field for subgroup 0; `send_object(&Object)`
     computes the Object ID Delta from the previous object and rejects ids that
-    do not increase. `TrackWriter` sends through the same two calls. Raw
-    header and object-field sends exist only in tests of how a receiver
-    resolves each header type and delta.
+    do not increase. `TrackWriter` sends through the same two calls.
+    `begin_object(&Object, payload_len)` sends an object up to its payload
+    and `send_payload(&Bytes)` the payload in pieces, so a relay can forward
+    an object before its last byte arrived; the sender rejects a piece past
+    the announced length, and `send_object` / `begin_object` / `close` while
+    a payload is incomplete. Raw header and object-field sends exist only in
+    tests of how a receiver resolves each header type and delta.
   - `StreamDataReceiver::receive()` returns `Subgroup::Header(SubgroupStart)`
     and then `Subgroup::Object(Object)` with absolute ids: header types
     without a Subgroup ID field mean subgroup 0, and the "first object id"
     types (0x12/0x13/0x1A/0x1B) are returned only once the first object
-    arrived (a stream that ends before it yields no header). An Object Status
-    draft-14 does not define is `StreamReceiveError::ProtocolViolation`.
+    started to arrive (a stream that ends before it yields no header). An
+    Object Status draft-14 does not define is
+    `StreamReceiveError::ProtocolViolation`.
+  - `StreamDataReceiver::into_parts()` returns a `SubgroupPartReceiver`
+    whose `receive()` hands over `SubgroupPart`s: the header, whole objects
+    whose payload arrived with the fields before it, and otherwise
+    `ObjectStart { object, payload_len }` followed by `Payload { data, last }`
+    pieces as they arrive. `SubgroupDecoder` produces both shapes: it splits
+    an object only when its payload is not buffered with its head, and
+    `StreamDataReceiver::receive()` puts the pieces back together. Payload
+    pieces share the read buffer (no copy); a whole object's payload is
+    copied, because a cache may keep it long after the buffer would
+    otherwise be freed. A stream that ends inside a payload is a decode
+    error.
   - `DatagramSender::send_object(&Object)` / `DatagramReceiver::receive()
     -> Object` do the same for datagrams (`ObjectDatagram::from_object` /
     `into_object`): an object id is always sent explicitly, a zero-length
