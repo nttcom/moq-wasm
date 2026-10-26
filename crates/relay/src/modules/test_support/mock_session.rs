@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use moqt::{
     TerminationErrorCode,
-    namespace::NamespaceInterest,
+    namespace::{NamespaceInterest, PrefixUpdateAnswer},
     object::{ContentExists, GroupOrder},
     subscribe::FilterType,
 };
@@ -1088,6 +1088,8 @@ pub(crate) struct MockSubscribeNamespaceUpdateHandler {
     pub(crate) new_track_namespace_prefix_tuple: Vec<String>,
     pub(crate) interest: NamespaceInterest,
     pub(crate) answers: Arc<Mutex<Vec<Option<RequestErrorCode>>>>,
+    /// What `ok` reports.
+    pub(crate) ok_answer: PrefixUpdateAnswer,
 }
 
 impl MockSubscribeNamespaceUpdateHandler {
@@ -1106,6 +1108,7 @@ impl MockSubscribeNamespaceUpdateHandler {
                 .collect(),
             interest,
             answers: Arc::default(),
+            ok_answer: PrefixUpdateAnswer::Accepted,
         }
     }
 
@@ -1132,8 +1135,9 @@ impl SubscribeNamespaceUpdateHandler for MockSubscribeNamespaceUpdateHandler {
         self.interest
     }
 
-    async fn ok(&self) {
+    async fn ok(&self) -> PrefixUpdateAnswer {
         self.answers.lock().unwrap().push(None);
+        self.ok_answer
     }
 
     async fn error(&self, code: RequestErrorCode, _reason_phrase: String) {
