@@ -97,6 +97,7 @@ const TABLES: &[Table] = &[
             ("request_id", COUNTER),
             ("bytes_sent", COUNTER),
             ("streams_reset", COUNTER),
+            ("datagrams_dropped", COUNTER),
             ("lag_behind_newest_received_us", COUNTER),
         ],
         order_by: &["subscriber_session_id", "request_id"],

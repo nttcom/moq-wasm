@@ -1,5 +1,5 @@
 use moqt::fetch::UnknownRange;
-use moqt::object::DataStreamResetCode;
+use moqt::object::{DataStreamResetCode, DatagramDelivery};
 use moqt::publish::PublishDoneCode;
 use tokio::sync::mpsc;
 
@@ -7,7 +7,8 @@ use crate::modules::session::{
     Session,
     data_object::DataObject,
     data_sender::{
-        DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
+        DataSender, datagram_sender::DatagramSender, fetch_sender::FetchSender,
+        stream_sender_factory::StreamSenderFactory,
     },
     moqt_session_event::MoqtSessionEvent,
     publisher::{PublishNamespaceResponse, Publisher},
@@ -18,6 +19,7 @@ use crate::modules::session::{
 #[derive(Debug)]
 pub(crate) enum Sent {
     Object(DataObject),
+    Datagram(moqt::object::Object),
     Closed,
     Reset(DataStreamResetCode),
 }
@@ -44,6 +46,25 @@ impl DataSender for MockDataSender {
         self.sent
             .send(Sent::Reset(error_code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+}
+
+/// Takes a datagram whose payload is at most `payload_limit` bytes.
+struct MockDatagramSender {
+    sent: mpsc::UnboundedSender<Sent>,
+    payload_limit: usize,
+}
+
+#[async_trait::async_trait]
+impl DatagramSender for MockDatagramSender {
+    async fn send(&mut self, object: moqt::object::Object) -> anyhow::Result<DatagramDelivery> {
+        if object.payload.len() > self.payload_limit {
+            return Ok(DatagramDelivery::TooLarge);
+        }
+        self.sent
+            .send(Sent::Datagram(object))
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))?;
+        Ok(DatagramDelivery::Sent)
     }
 }
 
@@ -80,6 +101,7 @@ pub(crate) struct MockPublisher {
     priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedSender<SentPublishDone>,
     mixes_forwarding_preferences: bool,
+    datagram_payload_limit: usize,
 }
 
 pub(crate) struct MockPublisherObservers {
@@ -105,12 +127,26 @@ impl MockPublisher {
                 priorities: priorities_sender,
                 publish_done: publish_done_sender,
                 mixes_forwarding_preferences,
+                datagram_payload_limit: usize::MAX,
             },
             MockPublisherObservers {
                 sent: receiver,
                 priorities: priorities_receiver,
                 publish_done: publish_done_receiver,
             },
+        )
+    }
+
+    /// `channel`, to a session whose datagrams take at most `limit` bytes of
+    /// payload.
+    pub(crate) fn channel_taking_datagrams_up_to(limit: usize) -> (Self, MockPublisherObservers) {
+        let (publisher, observers) = Self::channel();
+        (
+            Self {
+                datagram_payload_limit: limit,
+                ..publisher
+            },
+            observers,
         )
     }
 }
@@ -172,9 +208,10 @@ impl Publisher for MockPublisher {
     fn new_datagram(
         &self,
         _downstream_subscription: &DownstreamSubscription,
-    ) -> Box<dyn DataSender> {
-        Box::new(MockDataSender {
+    ) -> Box<dyn DatagramSender> {
+        Box::new(MockDatagramSender {
             sent: self.sent.clone(),
+            payload_limit: self.datagram_payload_limit,
         })
     }
 

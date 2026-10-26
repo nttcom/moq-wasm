@@ -90,6 +90,10 @@ pub struct SubscriptionStats {
     pub request_id: u64,
     pub bytes_sent: u64,
     pub streams_reset: u64,
+    /// Datagrams dropped as larger than the subscriber's session allows
+    /// (draft-14 §10.3, draft-18 §11.3).
+    #[serde(default)]
+    pub datagrams_dropped: u64,
     pub lag_behind_newest_received_us: u64,
 }
 
@@ -158,6 +162,7 @@ mod tests {
                 request_id: 2,
                 bytes_sent: 2,
                 streams_reset: 4,
+                datagrams_dropped: 2,
                 lag_behind_newest_received_us: 5,
             }],
         }

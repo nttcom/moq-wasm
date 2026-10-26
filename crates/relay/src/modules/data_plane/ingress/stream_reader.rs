@@ -121,11 +121,6 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     writer.finish();
                 }
             }
-            Ok(Some(DataObject::Datagram(_))) => {
-                span.record("end_reason", "unexpected_datagram");
-                tracing::error!(%track_key, "datagram received on a subgroup stream");
-                return;
-            }
             Ok(None) if partial.is_some() => {
                 span.record("end_reason", "fin_inside_payload");
                 tracing::error!(%track_key, "stream finished inside an object's payload");

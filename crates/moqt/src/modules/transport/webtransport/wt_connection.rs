@@ -10,7 +10,9 @@ use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
 use crate::modules::transport::application_protocol::NegotiatedProtocol;
 use crate::modules::transport::transport_addresses::TransportAddresses;
-use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
+use crate::modules::transport::transport_connection::{
+    DatagramDelivery, TransportClose, TransportConnection,
+};
 use crate::modules::transport::transport_stats::TransportStats;
 
 type OpeningBi = BoxFuture<
@@ -135,16 +137,13 @@ impl TransportConnection for WtConnection {
         Ok(Box::new(WtReceiveStream { recv_stream: recv }))
     }
 
-    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {
-        let len = bytes.len();
+    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<DatagramDelivery> {
         match self.session.send_datagram(bytes.freeze()) {
+            Ok(()) => Ok(DatagramDelivery::Sent),
             Err(web_transport_quinn::SessionError::SendDatagramError(
                 quinn::SendDatagramError::TooLarge,
-            )) => {
-                tracing::debug!(len, "dropping a datagram larger than the session allows");
-                Ok(())
-            }
-            result => Ok(result?),
+            )) => Ok(DatagramDelivery::TooLarge),
+            Err(error) => Err(error.into()),
         }
     }
 

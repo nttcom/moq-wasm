@@ -10,6 +10,7 @@ pub(crate) struct DeliveryStats {
     streams_opened: AtomicU64,
     streams_reset: AtomicU64,
     bytes_sent: AtomicU64,
+    datagrams_dropped: AtomicU64,
     last_sent_received_at: Mutex<Option<Instant>>,
 }
 
@@ -17,6 +18,8 @@ pub(crate) struct DeliveryStats {
 pub(crate) struct DeliveryCounters {
     pub(crate) streams_reset: u64,
     pub(crate) bytes_sent: u64,
+    /// Datagrams dropped as larger than the downstream session allows.
+    pub(crate) datagrams_dropped: u64,
     pub(crate) last_sent_received_at: Option<Instant>,
 }
 
@@ -27,6 +30,10 @@ impl DeliveryStats {
 
     pub(crate) fn record_stream_reset(&self) {
         self.streams_reset.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_datagram_dropped(&self) {
+        self.datagrams_dropped.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_object_sent(&self, payload_bytes: usize, received_at: Instant) {
@@ -47,6 +54,7 @@ impl DeliveryStats {
         DeliveryCounters {
             streams_reset: self.streams_reset.load(Ordering::Relaxed),
             bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
+            datagrams_dropped: self.datagrams_dropped.load(Ordering::Relaxed),
             last_sent_received_at: *self
                 .last_sent_received_at
                 .lock()
@@ -75,6 +83,7 @@ mod tests {
         stats.record_stream_reset();
         stats.record_object_sent(10, received_at);
         stats.record_object_sent(5, received_at);
+        stats.record_datagram_dropped();
 
         // Assert
         assert_eq!(stats.streams_opened(), 2);
@@ -83,6 +92,7 @@ mod tests {
             DeliveryCounters {
                 streams_reset: 1,
                 bytes_sent: 15,
+                datagrams_dropped: 1,
                 last_sent_received_at: Some(received_at),
             }
         );

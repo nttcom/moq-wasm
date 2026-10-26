@@ -195,6 +195,19 @@ impl Fetch {
                         || cache.track_properties(),
                         |upstream_track| upstream_track.track_properties(),
                     );
+                if !handler.understands(&track_properties) {
+                    let code = RequestErrorCode::UnsupportedExtension;
+                    let reason = "mandatory track property not understood".to_string();
+                    tracing::warn!(
+                        request_id,
+                        track_key = %target.track_key,
+                        error_code = ?code,
+                        reason_phrase = %reason,
+                        "Sending `FETCH_ERROR`"
+                    );
+                    let _ = handler.error(code, reason).await;
+                    return;
+                }
                 // The relay does not yet track final End Of Track via PUBLISH_DONE,
                 // so local cache responses cannot assert it.
                 if let Err(e) = handler.ok(false, end_location, track_properties).await {
@@ -1397,6 +1410,30 @@ mod tests {
             )
             .await;
         handler.fetch_oks.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn a_fetch_from_cache_the_fetcher_cannot_carry_is_refused_without_a_fetch_ok() {
+        // Arrange
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
+        insert_closed_group(&cache, 0, &[0]);
+        let handler = MockFetchHandler {
+            understands_track_properties: false,
+            ..MockFetchHandler::fetching(standalone_fetch_params(location(0, 0), location(1, 0)))
+        };
+        let errors = handler.errors.clone();
+
+        // Act
+        let handled = handle_fetch(handler, cache_store, FetchAnswer::Never).await;
+
+        // Assert: draft-18 §2.5.1; it is refused like a SUBSCRIBE, not by a failed FETCH_OK
+        assert!(handled.oks.is_empty(), "{:?}", handled.oks);
+        assert_eq!(
+            *errors.lock().unwrap(),
+            vec![RequestErrorCode::UnsupportedExtension]
+        );
+        assert!(handled.handed_over.is_none());
     }
 
     #[tokio::test]

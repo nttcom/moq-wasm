@@ -19,7 +19,7 @@ use super::{
 use crate::modules::transport::{
     application_protocol::NegotiatedProtocol,
     transport_addresses::TransportAddresses,
-    transport_connection::{TransportClose, TransportConnection},
+    transport_connection::{DatagramDelivery, TransportClose, TransportConnection},
     transport_stats::TransportStats,
 };
 
@@ -136,7 +136,8 @@ impl TransportConnection for BrowserConnection {
         )?))
     }
 
-    fn send_datagram(&self, bytes: BytesMut) -> anyhow::Result<()> {
+    /// The write settles later, so a datagram counts as sent.
+    fn send_datagram(&self, bytes: BytesMut) -> anyhow::Result<DatagramDelivery> {
         let writer = self
             .datagram_writer
             .as_ref()
@@ -147,7 +148,7 @@ impl TransportConnection for BrowserConnection {
                 tracing::warn!(?error, "failed to send datagram");
             }
         });
-        Ok(())
+        Ok(DatagramDelivery::Sent)
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<BytesMut> {

@@ -1,11 +1,13 @@
-use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
+use moqt::object::{DatagramDelivery, Object};
 
 #[async_trait::async_trait]
-impl DataSender for moqt::object::DatagramSender {
-    async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
-        match object {
-            DataObject::Datagram(object) => self.send_object(&object).await,
-            _ => Err(anyhow::anyhow!("Invalid object type for DatagramSender")),
-        }
+pub(crate) trait DatagramSender: 'static + Send + Sync {
+    async fn send(&mut self, object: Object) -> anyhow::Result<DatagramDelivery>;
+}
+
+#[async_trait::async_trait]
+impl DatagramSender for moqt::object::DatagramSender {
+    async fn send(&mut self, object: Object) -> anyhow::Result<DatagramDelivery> {
+        self.send_object(&object).await
     }
 }

@@ -232,6 +232,7 @@ fn subscription_stats(
         request_id,
         bytes_sent: delivery.bytes_sent,
         streams_reset: delivery.streams_reset,
+        datagrams_dropped: delivery.datagrams_dropped,
         lag_behind_newest_received_us: micros(lag),
     }
 }
@@ -297,6 +298,7 @@ mod tests {
                         self.repo.clone(),
                         session_event_sender,
                         "relay-token".to_string(),
+                        moqt::DEFAULT_VERSIONS.to_vec(),
                     )),
                 },
             )

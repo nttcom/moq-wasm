@@ -124,7 +124,10 @@ impl CacheConfig {
 
 pub(crate) const DEFAULT_FETCH_FILL_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// `RELAY_MOQT_VERSIONS`, most preferred first.
+/// `RELAY_MOQT_VERSIONS`, most preferred first. `draft-18,draft-14` is the
+/// order that enables draft-18: the endpoint picks the first draft it shares
+/// with the peer, so with `draft-14` first a peer offering both stays on
+/// draft-14.
 fn moqt_versions(value: Option<String>) -> anyhow::Result<Vec<moqt::Version>> {
     let Some(text) = value else {
         return Ok(moqt::DEFAULT_VERSIONS.to_vec());
@@ -181,10 +184,10 @@ pub struct RelayConfig {
     /// serves the downstream FETCH with what arrived, the rest reported as
     /// unknown.
     pub fetch_fill_timeout: Duration,
-    /// The drafts the client transport accepts, most preferred first. The
-    /// inner transport, which other relays and the stats publisher reach,
-    /// keeps `moqt::DEFAULT_VERSIONS`.
-    pub client_versions: Vec<moqt::Version>,
+    /// The drafts the client and inner transports accept, most preferred
+    /// first, and those the relay offers when it dials another relay's or
+    /// its own inner transport.
+    pub moqt_versions: Vec<moqt::Version>,
 }
 
 /// `KEY=` in an env file and compose `${KEY:-}` set the variable to an empty
@@ -238,7 +241,7 @@ impl RelayConfig {
             "MOQT_FETCH_FILL_TIMEOUT_SECS",
             DEFAULT_FETCH_FILL_TIMEOUT,
         )?;
-        let client_versions = moqt_versions(non_empty_env("RELAY_MOQT_VERSIONS"))?;
+        let moqt_versions = moqt_versions(non_empty_env("RELAY_MOQT_VERSIONS"))?;
 
         Ok(Self {
             relay_id,
@@ -252,7 +255,7 @@ impl RelayConfig {
             cache,
             disk_cache,
             fetch_fill_timeout,
-            client_versions,
+            moqt_versions,
         })
     }
 }

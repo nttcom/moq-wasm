@@ -157,6 +157,7 @@ pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
             Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
             session_event_sender,
             "unused-relay-token".to_string(),
+            moqt::DEFAULT_VERSIONS.to_vec(),
         )),
     )
 }

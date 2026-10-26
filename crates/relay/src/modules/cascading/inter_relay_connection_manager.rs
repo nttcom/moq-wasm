@@ -24,6 +24,8 @@ pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     relay_token: String,
+    /// The drafts offered to another relay's inner transport.
+    versions: Vec<moqt::Version>,
     sessions: DashMap<String, SessionId>,
 }
 
@@ -32,11 +34,13 @@ impl InterRelayConnectionManager {
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         relay_token: String,
+        versions: Vec<moqt::Version>,
     ) -> Self {
         Self {
             repo,
             session_event_sender,
             relay_token,
+            versions,
             sessions: DashMap::new(),
         }
     }
@@ -61,7 +65,7 @@ impl InterRelayConnectionManager {
             verify_certificate: false,
             authorization_token: Some(self.relay_token.clone()),
             follow_go_away: false,
-            ..Default::default()
+            versions: self.versions.clone(),
         })?;
         let session = tokio::time::timeout(CONNECT_TIMEOUT, async {
             endpoint
@@ -106,5 +110,48 @@ impl InterRelayConnectionManager {
             "inter-relay QUIC session established"
         );
         Ok(session_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use super::InterRelayConnectionManager;
+    use crate::modules::{
+        auth::{test_support::relay_server_offering, verified_token::VerifiedToken},
+        cascading::route_registry::RelayInfo,
+        session::session_repository::SessionRepository,
+    };
+
+    #[tokio::test]
+    async fn a_relay_dials_another_in_the_drafts_it_is_configured_with() {
+        // Arrange: the other relay accepts draft-18 only
+        let (other, _cert_dir) =
+            relay_server_offering(VerifiedToken::full_access(), &[moqt::Version::Draft18]);
+        let inner = other.spawn_inner_transport::<moqt::QUIC>(0).unwrap();
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        let manager = InterRelayConnectionManager::new(
+            Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
+            session_event_sender,
+            "relay-token".to_string(),
+            vec![moqt::Version::Draft18, moqt::Version::Draft14],
+        );
+
+        // Act
+        let dialed = tokio::time::timeout(
+            Duration::from_secs(5),
+            manager.get_or_connect(&RelayInfo {
+                relay_id: "relay-b".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: inner.local_port,
+            }),
+        )
+        .await
+        .expect("the dial should end");
+
+        // Assert
+        assert!(dialed.is_ok(), "{:?}", dialed.err());
     }
 }

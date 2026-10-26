@@ -20,7 +20,8 @@ use crate::modules::{
         Session,
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
         data_sender::{
-            DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
+            datagram_sender::DatagramSender, fetch_sender::FetchSender,
+            stream_sender_factory::StreamSenderFactory,
         },
         handler::{
             fetch::FetchHandler, publish::PublishHandler,
@@ -460,7 +461,7 @@ impl Publisher for MockUpstreamPublisher {
     fn new_datagram(
         &self,
         _downstream_subscription: &DownstreamSubscription,
-    ) -> Box<dyn DataSender> {
+    ) -> Box<dyn DatagramSender> {
         unimplemented!("not used by MockUpstreamSession tests")
     }
 
@@ -762,13 +763,15 @@ impl SubscribeHandler for MockSubscribeHandler {
 
 /// `joining_rule` stands in for the session draft's Joining FETCH rule;
 /// `errors` records the code of every `error` and `oks` the End Location of
-/// every `ok`.
+/// every `ok`. Without `understands_track_properties`, `ok` refuses the FETCH
+/// as moqt does.
 #[derive(Clone)]
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
     pub(crate) fill_timeout: Option<std::time::Duration>,
     /// Stands in for the session draft: true for draft-18.
     pub(crate) marks_unknown_ranges: bool,
+    pub(crate) understands_track_properties: bool,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
     /// The track properties of each FETCH_OK sent.
@@ -784,6 +787,7 @@ impl MockFetchHandler {
             fetch_params,
             fill_timeout: None,
             marks_unknown_ranges: false,
+            understands_track_properties: true,
             joining_rule: |_| Ok(()),
             fetch_oks: Arc::default(),
             errors: Arc::default(),
@@ -831,6 +835,10 @@ impl FetchHandler for MockFetchHandler {
         self.marks_unknown_ranges
     }
 
+    fn understands(&self, _track_properties: &TrackProperties) -> bool {
+        self.understands_track_properties
+    }
+
     fn check_joining(
         &self,
         subscription: moqt::fetch::JoinedSubscription,
@@ -845,6 +853,13 @@ impl FetchHandler for MockFetchHandler {
         track_properties: TrackProperties,
     ) -> anyhow::Result<()> {
         self.oks.lock().unwrap().push(end_location);
+        if !self.understands_track_properties {
+            self.errors
+                .lock()
+                .unwrap()
+                .push(RequestErrorCode::UnsupportedExtension);
+            anyhow::bail!("the fetcher's draft cannot carry the track's properties");
+        }
         self.fetch_oks.lock().unwrap().push(track_properties);
         Ok(())
     }

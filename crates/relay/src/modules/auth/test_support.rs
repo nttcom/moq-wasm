@@ -82,7 +82,13 @@ pub(crate) struct RunningRelay {
     _cert_dir: TempDir,
 }
 
-pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRelay {
+/// A relay accepting `versions` whose verifier takes every token as
+/// `token`; no transport is spawned yet. The certificate lives as long as
+/// the returned directory.
+pub(crate) fn relay_server_offering(
+    token: VerifiedToken,
+    versions: &[moqt::Version],
+) -> (RelayServer, TempDir) {
     let cert_dir = TempDir::new("auth-test");
     let CertificateFiles {
         cert_path,
@@ -98,6 +104,7 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),
             },
             relay_token: "unused-relay-token".to_string(),
+            versions: versions.to_vec(),
             data_plane: DataPlaneConfig {
                 cache: CacheConfig::default(),
                 disk_cache: None,
@@ -105,6 +112,11 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
             },
         },
     );
+    (server, cert_dir)
+}
+
+pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRelay {
+    let (server, cert_dir) = relay_server_offering(token, moqt::DEFAULT_VERSIONS);
     let handler = server.spawn_client_transport::<QUIC>(0).unwrap();
     RunningRelay {
         port: handler.local_port,

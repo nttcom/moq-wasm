@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{BTreeMap, HashMap, btree_map::Entry},
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
@@ -19,7 +19,7 @@ use crate::modules::{
         cached_object::CachedObject,
         disk_cache::{DiskSink, StoredPayload},
     },
-    domain::session_id::SessionId,
+    domain::{session_id::SessionId, single_preference::SinglePreference},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +63,10 @@ pub(crate) struct TrackCache {
     malformed_notify: Notify,
     /// The latest object live ingest inserted was a datagram.
     latest_live_datagram: AtomicBool,
+    /// The preference each downstream session that keeps one gets the
+    /// track in, fixed by its first subscription; dropped when the session
+    /// ends.
+    single_preferences: std::sync::Mutex<HashMap<SessionId, SinglePreference>>,
     subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
     ingress_stats: IngressStats,
     payload_bytes: AtomicU64,
@@ -112,6 +116,7 @@ impl TrackCache {
             malformed_at: std::sync::OnceLock::new(),
             malformed_notify: Notify::new(),
             latest_live_datagram: AtomicBool::new(false),
+            single_preferences: std::sync::Mutex::default(),
             subgroup_opened_sender: broadcast::channel(256).0,
             ingress_stats: IngressStats::default(),
             payload_bytes: AtomicU64::new(0),
@@ -225,12 +230,46 @@ impl TrackCache {
         self.insert_with_knowledge(object, registers_knowledge)
     }
 
-    /// The forwarding preference a FETCH from the cache gives `object`. A
-    /// draft-14 track keeps one preference (§10), so while live ingest
-    /// inserts datagrams, an inferred copy in the subgroup of its Object ID
-    /// is a datagram: a draft-18 FETCH then marks it (§11.4.4), matching the
-    /// live datagram the subscriber may hold.
-    pub(crate) fn fetch_forwarding(&self, object: &CachedObject) -> ForwardingPreference {
+    fn single_preferences(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<SessionId, SinglePreference>> {
+        self.single_preferences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The preference the track goes in to `session_id`, a session that
+    /// keeps one: the one fixed earlier, or else `first`, which is kept.
+    pub(crate) fn fix_single_preference(
+        &self,
+        session_id: SessionId,
+        first: SinglePreference,
+    ) -> SinglePreference {
+        *self.single_preferences().entry(session_id).or_insert(first)
+    }
+
+    pub(crate) fn forget_downstream_session(&self, session_id: SessionId) {
+        self.single_preferences().remove(&session_id);
+    }
+
+    /// The forwarding preference a FETCH from the cache to `session_id`
+    /// gives `object`. A session the track went to in one preference gets
+    /// the object as live delivery gave it. Otherwise, as a draft-14 track
+    /// keeps one preference (§10), while live ingest inserts datagrams an
+    /// inferred copy in the subgroup of its Object ID is a datagram: a
+    /// draft-18 FETCH then marks it (§11.4.4), matching the live datagram
+    /// the subscriber may hold.
+    pub(crate) fn fetch_forwarding(
+        &self,
+        object: &CachedObject,
+        session_id: SessionId,
+    ) -> ForwardingPreference {
+        let single_preference = self.single_preferences().get(&session_id).copied();
+        if let Some(forwarding) =
+            single_preference.and_then(|preference| preference.forwarding(&object.object))
+        {
+            return forwarding;
+        }
         let in_subgroup_of_its_object_id = object.object.forwarding
             == ForwardingPreference::Subgroup {
                 subgroup_id: object.object.location.object_id,
@@ -266,14 +305,17 @@ impl TrackCache {
                 return Err(TrackMalformed);
             }
             Entry::Occupied(mut existing) => {
-                if object.is_datagram() && existing.get().forwarding_inferred {
-                    // A draft-14 fetched copy arrived first; the live datagram
-                    // supplies the forwarding preference, so datagram egress can
-                    // find it, and the End of Group type, which FETCH cannot
-                    // carry.
+                if existing.get().forwarding_inferred && !object.forwarding_inferred {
+                    // A draft-14 fetched copy arrived first; the live copy
+                    // supplies the forwarding preference, so a FETCH serves
+                    // the object as live delivery did and datagram egress can
+                    // find a datagram. A datagram also supplies the End of
+                    // Group type, which FETCH cannot carry.
                     let mut upgraded = (**existing.get()).clone();
-                    upgraded.object.forwarding = ForwardingPreference::Datagram;
-                    upgraded.object.ends_group = object.object.ends_group;
+                    upgraded.object.forwarding = object.object.forwarding;
+                    if object.is_datagram() {
+                        upgraded.object.ends_group = object.object.ends_group;
+                    }
                     upgraded.forwarding_inferred = false;
                     *existing.get_mut() = Arc::new(upgraded);
                 }

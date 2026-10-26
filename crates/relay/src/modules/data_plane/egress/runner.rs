@@ -9,6 +9,7 @@ use crate::modules::{
         delivery_control::DeliveryControl,
         delivery_stats::DeliveryStats,
         pub_sub_directory::{DownstreamRunnerSignals, entry::PublishDoneReason},
+        session_id::SessionId,
         track_key::TrackKey,
     },
     session::{publisher::Publisher, subscription::DownstreamSubscription},
@@ -27,6 +28,14 @@ pub(crate) enum RunnerExit {
     Stopped,
 }
 
+/// The session a runner delivers to, and the subscription it delivers.
+#[derive(Clone)]
+pub(crate) struct Downstream {
+    pub(crate) session_id: SessionId,
+    pub(crate) publisher: Arc<dyn Publisher>,
+    pub(crate) subscription: DownstreamSubscription,
+}
+
 pub(crate) struct EgressRunner {
     stop_receiver: oneshot::Receiver<PublishDoneReason>,
     delivery: Delivery,
@@ -35,8 +44,7 @@ pub(crate) struct EgressRunner {
 struct Delivery {
     track_key: TrackKey,
     cache: Arc<TrackCache>,
-    publisher: Arc<dyn Publisher>,
-    downstream_subscription: DownstreamSubscription,
+    downstream: Downstream,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
     largest_location: Option<moqt::object::Location>,
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
@@ -47,8 +55,7 @@ impl EgressRunner {
     pub(crate) fn new(
         track_key: TrackKey,
         cache: Arc<TrackCache>,
-        publisher: Box<dyn Publisher>,
-        downstream_subscription: DownstreamSubscription,
+        downstream: Downstream,
         ready_sender: oneshot::Sender<anyhow::Result<()>>,
         largest_location: Option<moqt::object::Location>,
         signals: DownstreamRunnerSignals,
@@ -63,8 +70,7 @@ impl EgressRunner {
             delivery: Delivery {
                 track_key,
                 cache,
-                publisher: Arc::from(publisher),
-                downstream_subscription,
+                downstream,
                 ready_sender,
                 largest_location,
                 delivery_control_receiver,
@@ -79,8 +85,7 @@ impl EgressRunner {
             delivery,
         } = self;
         let track_key = delivery.track_key.clone();
-        let publisher = delivery.publisher.clone();
-        let downstream_subscription = delivery.downstream_subscription.clone();
+        let downstream = delivery.downstream.clone();
         let delivery_stats = delivery.delivery_stats.clone();
 
         let (reason, exit) = tokio::select! {
@@ -106,9 +111,9 @@ impl EgressRunner {
             && subscribe_ok_receiver.await.is_ok()
         {
             Self::send_publish_done(
-                publisher.as_ref(),
+                downstream.publisher.as_ref(),
                 &track_key,
-                &downstream_subscription,
+                &downstream.subscription,
                 reason,
                 delivery_stats.streams_opened(),
             )
@@ -152,8 +157,7 @@ impl Delivery {
         let Self {
             track_key,
             cache,
-            publisher,
-            downstream_subscription,
+            downstream,
             ready_sender,
             largest_location,
             delivery_control_receiver,
@@ -166,7 +170,7 @@ impl Delivery {
         }
 
         let (sender, receiver) = mpsc::channel(64);
-        let group_order = downstream_subscription.group_order();
+        let group_order = downstream.subscription.group_order();
         let scheduler = EgressScheduler::new(
             cache.clone(),
             group_order,
@@ -177,8 +181,7 @@ impl Delivery {
         let group_sender = GroupSender::new(
             track_key.clone(),
             cache.clone(),
-            publisher,
-            downstream_subscription,
+            downstream,
             receiver,
             delivery_stats,
             delivery_control_receiver,
