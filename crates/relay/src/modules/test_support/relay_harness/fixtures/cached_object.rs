@@ -23,6 +23,14 @@ pub(crate) fn stream_object(group_id: u64, object_id: u64) -> CachedObject {
     stream_object_with_payload(group_id, object_id, Bytes::from_static(b"payload"))
 }
 
+/// Object `object_id` of subgroup 0 of `group_id` before any payload arrived.
+pub(crate) fn arriving_object(group_id: u64, object_id: u64) -> Object {
+    Object {
+        payload: Bytes::new(),
+        ..stream_object(group_id, object_id).object
+    }
+}
+
 pub(crate) fn stream_object_in_subgroup(
     group_id: u64,
     subgroup_id: u64,

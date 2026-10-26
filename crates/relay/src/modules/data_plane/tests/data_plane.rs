@@ -3,10 +3,12 @@ use std::time::Duration;
 
 use crate::modules::session::data_object::DataObject;
 
+use crate::modules::data_plane::cache::track_cache::NextObject;
 use crate::modules::test_support::relay_harness::{
     OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery, downstream_object_ids,
     fixtures::{
-        cached_object::{FIXTURE_PRIORITY, stream_object},
+        cached_object::{FIXTURE_PRIORITY, stream_key, stream_object},
+        data_object::{make_object_start, make_payload_piece},
         location,
     },
     ordered_payload, payloads_of, receive_objects_until_close, receive_objects_until_end,
@@ -479,4 +481,115 @@ async fn a_publisher_reset_is_not_relayed_while_another_publisher_finishes_the_s
     let (objects, end) = receive_objects_until_end(&mut egress).await;
     assert_eq!(downstream_object_ids(&objects), vec![0, 1]);
     assert!(matches!(end, Sent::Closed), "expected a FIN, got {end:?}");
+}
+
+fn payload_piece(object: &DataObject) -> (&[u8], bool) {
+    match object {
+        DataObject::SubgroupPayload { data, last } => (&data[..], *last),
+        other => panic!("expected a payload piece, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_arriving_object_is_forwarded_before_its_last_byte() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.send(make_object_start(0, 0, 8));
+    upstream_stream.send(make_payload_piece(b"keyf", false));
+
+    // Act: the downstream receives while the second half is withheld
+    let header = egress.expect_sent_object().await;
+    let start = egress.expect_sent_object().await;
+    let first_piece = egress.expect_sent_object().await;
+    upstream_stream.send(make_payload_piece(b"rame", true));
+    upstream_stream.fin();
+    let (rest, end) = receive_objects_until_end(&mut egress).await;
+
+    // Assert
+    assert!(
+        matches!(header, DataObject::SubgroupHeader(_)),
+        "{header:?}"
+    );
+    assert!(
+        matches!(
+            &start,
+            DataObject::SubgroupObjectStart { object, payload_len: 8 }
+                if object.location == location(0, 0)
+        ),
+        "{start:?}"
+    );
+    assert_eq!(payload_piece(&first_piece), (&b"keyf"[..], false));
+    assert_eq!(
+        rest.iter().map(payload_piece).collect::<Vec<_>>(),
+        vec![(&b"rame"[..], true)]
+    );
+    assert!(matches!(end, Sent::Closed), "{end:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_upstream_reset_inside_a_payload_resets_the_downstream_stream() {
+    // Arrange: the downstream has received the first half
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.send(make_object_start(0, 0, 8));
+    upstream_stream.send(make_payload_piece(b"keyf", false));
+    for _ in 0..3 {
+        egress.expect_sent_object().await;
+    }
+
+    // Act
+    upstream_stream.reset();
+
+    // Assert
+    let (objects, end) = receive_objects_until_end(&mut egress).await;
+    assert!(objects.is_empty(), "{objects:?}");
+    assert!(
+        matches!(end, Sent::Reset(DataStreamResetCode::InternalError)),
+        "an object cut off upstream must be reset downstream, got {end:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_subscriber_joining_inside_a_payload_receives_the_object_from_its_first_byte() {
+    // Arrange: the first half has arrived before the subscription starts
+    let harness = RelayHarness::new();
+    let mut subgroup_opened = harness.subscribe_subgroup_opened();
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.send(make_object_start(0, 0, 8));
+    upstream_stream.send(make_payload_piece(b"keyf", false));
+    let first_half_cached = async {
+        subgroup_opened.recv().await.unwrap();
+        let NextObject::Partial(partial) = harness
+            .cache()
+            .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            .await
+            .unwrap()
+        else {
+            panic!("expected the arriving object");
+        };
+        partial
+            .subscribe()
+            .wait_for(|progress| !progress.pieces.is_empty())
+            .await
+            .unwrap();
+    };
+    tokio::time::timeout(Duration::from_secs(5), first_half_cached)
+        .await
+        .expect("the first half reaches the cache as an arriving object");
+
+    // Act
+    let mut egress = harness.start_egress(None).await;
+    upstream_stream.send(make_payload_piece(b"rame", true));
+    upstream_stream.fin();
+
+    // Assert
+    let objects = receive_objects_until_close(&mut egress).await;
+    let pieces: Vec<_> = objects[2..].iter().map(payload_piece).collect();
+    assert_eq!(pieces, vec![(&b"keyf"[..], false), (&b"rame"[..], true)]);
 }

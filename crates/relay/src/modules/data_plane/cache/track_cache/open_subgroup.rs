@@ -2,11 +2,16 @@ use std::sync::{Arc, OnceLock};
 
 use tokio::time::Instant;
 
+use bytes::Bytes;
+
 use crate::modules::data_plane::{
     cache::subgroup_key::SubgroupKey,
     cache::{
         cached_object::CachedObject,
-        track_cache::ledger::{Ledger, OpenSubgroup},
+        track_cache::{
+            ledger::{Ledger, OpenSubgroup},
+            partial_object::{PartialEnd, PartialObject},
+        },
     },
 };
 
@@ -31,7 +36,7 @@ pub(crate) struct OpenSubgroupGuard<'a> {
     finished: bool,
 }
 
-impl OpenSubgroupGuard<'_> {
+impl<'a> OpenSubgroupGuard<'a> {
     pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
         let object_id = object.object.location.object_id;
         if self.first_object_id.set(object_id).is_ok() {
@@ -43,6 +48,63 @@ impl OpenSubgroupGuard<'_> {
 
     pub(crate) fn finish(mut self) {
         self.finished = true;
+    }
+
+    /// Starts `object` (without its payload) whose `payload_len` bytes follow
+    /// through the returned writer. Unless the cache holds the object or
+    /// another stream is delivering it, egress can forward it from now on.
+    pub(crate) fn begin_object(
+        &self,
+        object: moqt::object::Object,
+        payload_len: usize,
+    ) -> PartialObjectWriter<'a> {
+        let partial = Arc::new(PartialObject::new(object, payload_len));
+        let published = self.cache.publish_partial(&partial);
+        PartialObjectWriter {
+            cache: self.cache,
+            partial,
+            published,
+            finished: false,
+        }
+    }
+}
+
+/// Receives the payload of one object of a live stream. Dropping it before
+/// `finish` aborts the object for the egress streams forwarding it.
+pub(crate) struct PartialObjectWriter<'a> {
+    cache: &'a TrackCache,
+    partial: Arc<PartialObject>,
+    published: bool,
+    finished: bool,
+}
+
+impl PartialObjectWriter<'_> {
+    pub(crate) fn append(&self, data: Bytes) {
+        self.partial.append(data);
+    }
+
+    /// Call after the last piece is appended; returns the object with its
+    /// whole payload.
+    pub(crate) fn assemble(&self) -> moqt::object::Object {
+        self.partial.assemble()
+    }
+
+    /// Call once the assembled object is in the cache.
+    pub(crate) fn finish(mut self) {
+        self.finished = true;
+    }
+}
+
+impl Drop for PartialObjectWriter<'_> {
+    fn drop(&mut self) {
+        self.partial.end(if self.finished {
+            PartialEnd::Complete
+        } else {
+            PartialEnd::Aborted
+        });
+        if self.published {
+            self.cache.withdraw_partial(&self.partial);
+        }
     }
 }
 
@@ -69,6 +131,8 @@ pub(crate) struct SubgroupRun {
 #[derive(Debug)]
 pub(crate) enum NextObject {
     Object(Arc<CachedObject>),
+    /// The next object is still arriving; forward it as it does.
+    Partial(Arc<PartialObject>),
     Finished,
     Aborted,
 }
@@ -129,6 +193,37 @@ impl TrackCache {
             first_object_id: OnceLock::new(),
             finished: false,
         }
+    }
+
+    fn publish_partial(&self, partial: &Arc<PartialObject>) -> bool {
+        let at = partial.object.location;
+        {
+            let mut ledger = self.write();
+            if self.is_malformed()
+                || ledger.objects.contains_key(&at)
+                || ledger.partial_objects.contains_key(&at)
+            {
+                return false;
+            }
+            ledger.partial_objects.insert(at, partial.clone());
+        }
+        self.notify.notify_waiters();
+        true
+    }
+
+    fn withdraw_partial(&self, partial: &Arc<PartialObject>) {
+        {
+            let mut ledger = self.write();
+            let at = partial.object.location;
+            if ledger
+                .partial_objects
+                .get(&at)
+                .is_some_and(|published| Arc::ptr_eq(published, partial))
+            {
+                ledger.partial_objects.remove(&at);
+            }
+        }
+        self.notify.notify_waiters();
     }
 
     fn record_stream_start(&self, key: SubgroupKey, epoch: u64, first_object_id: u64) {
@@ -236,15 +331,27 @@ impl TrackCache {
     ) -> Result<NextObject, TrackMalformed> {
         self.wait_until(|ledger| {
             let run_end = ledger.superseded_run_end(key, generation);
+            let in_run = |object_id: u64| run_end.is_none_or(|end| object_id < end);
             let next_object = ledger
                 .next_subgroup_object(key, from_object_id, Instant::now())
-                .filter(|object| run_end.is_none_or(|end| object.object.location.object_id < end));
-            match next_object {
-                Some(object) => Some(NextObject::Object(object)),
-                None if run_end.is_some() => Some(NextObject::Aborted),
-                None if ledger.is_open(key) => None,
-                None if ledger.aborted_subgroups.contains(&key) => Some(NextObject::Aborted),
-                None => Some(NextObject::Finished),
+                .filter(|object| in_run(object.object.location.object_id));
+            let next_partial = ledger
+                .next_subgroup_partial(key, from_object_id)
+                .filter(|partial| in_run(partial.object.location.object_id))
+                .filter(|partial| {
+                    next_object.as_ref().is_none_or(|object| {
+                        partial.object.location.object_id < object.object.location.object_id
+                    })
+                });
+            match (next_object, next_partial) {
+                (_, Some(partial)) => Some(NextObject::Partial(partial)),
+                (Some(object), None) => Some(NextObject::Object(object)),
+                (None, None) if run_end.is_some() => Some(NextObject::Aborted),
+                (None, None) if ledger.is_open(key) => None,
+                (None, None) if ledger.aborted_subgroups.contains(&key) => {
+                    Some(NextObject::Aborted)
+                }
+                (None, None) => Some(NextObject::Finished),
             }
         })
         .await
@@ -277,9 +384,19 @@ mod tests {
 
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::cached_object::{
-        datagram_object, insert_aborted_group, open_group, stream_key, stream_object,
-        stream_object_in_subgroup,
+        arriving_object, datagram_object, insert_aborted_group, open_group, stream_key,
+        stream_object, stream_object_in_subgroup,
     };
+
+    async fn next_at(cache: &TrackCache, object_id: u64) -> NextObject {
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            cache.next_subgroup_object_or_wait(stream_key(0), 0, object_id),
+        )
+        .await
+        .expect("the next object is decided")
+        .unwrap()
+    }
 
     #[tokio::test]
     async fn next_subgroup_object_or_wait_returns_exact_match() {
@@ -726,5 +843,110 @@ mod tests {
         drop(open);
         // Assert: datagrams cannot prove gaps are non-existence
         assert!(!cache.covers(location(0, 0), location(0, 1)));
+    }
+
+    #[tokio::test]
+    async fn an_object_still_arriving_is_the_next_object() {
+        // Arrange
+        let cache = TrackCache::new();
+        let open = cache.open_subgroup(stream_key(0));
+        let _writer = open.begin_object(arriving_object(0, 0), 8);
+
+        // Act
+        let next = next_at(&cache, 0).await;
+
+        // Assert
+        assert!(
+            matches!(&next, NextObject::Partial(partial) if partial.object.location == location(0, 0)),
+            "{next:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_completed_object_is_read_from_the_cache_instead() {
+        // Arrange
+        let cache = TrackCache::new();
+        let open = cache.open_subgroup(stream_key(0));
+        let writer = open.begin_object(arriving_object(0, 0), 8);
+        writer.append(bytes::Bytes::from_static(b"keyframe"));
+        open.insert(CachedObject::from_object(writer.assemble()))
+            .unwrap();
+        writer.finish();
+
+        // Act
+        let next = next_at(&cache, 0).await;
+
+        // Assert
+        assert_eq!(&next.unwrap().object.payload[..], b"keyframe");
+        assert!(cache.read().partial_objects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_object_the_cache_holds_is_not_published_while_arriving_again() {
+        // Arrange: one stream cached the object, another stream starts it
+        let cache = TrackCache::new();
+        let _first = open_group(&cache, 0, &[0]);
+        let second = cache.open_subgroup(stream_key(0));
+        let _writer = second.begin_object(arriving_object(0, 0), 8);
+
+        // Act
+        let next = next_at(&cache, 0).await;
+
+        // Assert
+        assert!(matches!(next, NextObject::Object(_)), "{next:?}");
+        assert!(cache.read().partial_objects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn only_the_first_stream_starting_an_object_publishes_it() {
+        // Arrange
+        let cache = TrackCache::new();
+        let first = cache.open_subgroup(stream_key(0));
+        let second = cache.open_subgroup(stream_key(0));
+        let first_writer = first.begin_object(arriving_object(0, 0), 8);
+        first_writer.append(bytes::Bytes::from_static(b"keyf"));
+        let second_writer = second.begin_object(arriving_object(0, 0), 8);
+
+        // Act
+        drop(second_writer);
+        let next = next_at(&cache, 0).await;
+
+        // Assert: the second stream's abort does not withdraw the first's object
+        let NextObject::Partial(partial) = next else {
+            panic!("expected the first stream's arriving object, got {next:?}");
+        };
+        assert_eq!(&partial.assemble().payload[..], b"keyf");
+    }
+
+    #[tokio::test]
+    async fn dropping_the_writer_aborts_and_withdraws_the_object() {
+        // Arrange
+        let cache = TrackCache::new();
+        let open = cache.open_subgroup(stream_key(0));
+        let writer = open.begin_object(arriving_object(0, 0), 8);
+        let NextObject::Partial(partial) = next_at(&cache, 0).await else {
+            panic!("expected the arriving object");
+        };
+        let progress = partial.subscribe();
+
+        // Act
+        drop(writer);
+
+        // Assert
+        assert_eq!(progress.borrow().end, Some(PartialEnd::Aborted));
+        assert!(cache.read().partial_objects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_object_still_arriving_is_not_the_largest_location() {
+        // Arrange
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0]);
+
+        // Act
+        let _writer = open.begin_object(arriving_object(0, 1), 8);
+
+        // Assert
+        assert_eq!(cache.largest_location(), Some(location(0, 0)));
     }
 }
