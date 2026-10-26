@@ -1,3 +1,5 @@
+use bytes::{Bytes, BytesMut};
+
 use crate::modules::moqt::control_plane::error_codes::DataStreamResetCode;
 use crate::modules::transport::transport_connection::BoxedSendStream;
 use std::marker::PhantomData;
@@ -33,6 +35,8 @@ pub type SubgroupObjectSender = StreamDataSender<HeaderSent>;
 /// when it was the last.
 pub struct StreamDataSender<S = Uninitialized> {
     streams: Vec<WireStream>,
+    /// Bytes still owed to the payload `begin_object` announced.
+    payload_remaining: usize,
     _state: PhantomData<S>,
 }
 
@@ -70,12 +74,24 @@ impl<S> StreamDataSender<S> {
         Ok(())
     }
 
+    /// Fails while a payload `begin_object` announced is incomplete: end such
+    /// a stream with `reset`.
     pub async fn close(&mut self) -> anyhow::Result<()> {
+        self.ensure_no_open_payload()?;
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &self.streams {
             results.push(stream.stream_sender.close().await.map_err(Into::into));
         }
         self.settle(results)
+    }
+
+    fn ensure_no_open_payload(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.payload_remaining == 0,
+            "the current object's payload lacks {} bytes",
+            self.payload_remaining
+        );
+        Ok(())
     }
 
     pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
@@ -95,6 +111,7 @@ impl StreamDataSender<Uninitialized> {
     pub(crate) fn on_streams(streams: Vec<WireStream>) -> Self {
         Self {
             streams,
+            payload_remaining: 0,
             _state: PhantomData,
         }
     }
@@ -153,13 +170,16 @@ impl StreamDataSender<Uninitialized> {
     fn into_header_sent(self) -> StreamDataSender<HeaderSent> {
         StreamDataSender {
             streams: self.streams,
+            payload_remaining: 0,
             _state: PhantomData,
         }
     }
 }
 
 impl StreamDataSender<HeaderSent> {
+    /// Fails while a payload `begin_object` announced is incomplete.
     pub async fn send_object(&mut self, object: &Object) -> anyhow::Result<()> {
+        self.ensure_no_open_payload()?;
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
             let result = match stream.encoder.object(object) {
@@ -169,6 +189,53 @@ impl StreamDataSender<HeaderSent> {
             results.push(result);
         }
         self.settle(results)
+    }
+
+    /// Sends `object` up to its payload; `send_payload` then delivers its
+    /// `payload_len` bytes. `object.payload` must be empty. Fails while the
+    /// previous object's payload is incomplete, or when `payload_len` is zero
+    /// (send such an object with `send_object`).
+    pub async fn begin_object(
+        &mut self,
+        object: &Object,
+        payload_len: usize,
+    ) -> anyhow::Result<()> {
+        self.ensure_no_open_payload()?;
+        anyhow::ensure!(payload_len > 0, "begin_object needs a payload");
+        anyhow::ensure!(
+            object.payload.is_empty(),
+            "begin_object takes the payload through send_payload"
+        );
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &mut self.streams {
+            let result = match stream.encoder.object_head(object, payload_len) {
+                Ok(bytes) => stream.stream_sender.send(&bytes).await.map_err(Into::into),
+                Err(error) => Err(error),
+            };
+            results.push(result);
+        }
+        self.settle(results)?;
+        self.payload_remaining = payload_len;
+        Ok(())
+    }
+
+    /// Sends the next bytes of the payload `begin_object` announced. Fails
+    /// when `data` is longer than what remains of it.
+    pub async fn send_payload(&mut self, data: &Bytes) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= self.payload_remaining,
+            "{} payload bytes exceed the {} the object has left",
+            data.len(),
+            self.payload_remaining
+        );
+        let bytes = BytesMut::from(&data[..]);
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &self.streams {
+            results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
+        }
+        self.settle(results)?;
+        self.payload_remaining -= data.len();
+        Ok(())
     }
 
     #[cfg(test)]
@@ -197,8 +264,10 @@ mod tests {
         },
         object::{
             DataStreamResetCode, ForwardingPreference, Location, Object, ObjectStatus, ReadError,
-            StreamReceiveError, Subgroup, SubgroupStart,
+            StreamReceiveError, Subgroup, SubgroupObjectSender, SubgroupPart, SubgroupPartReceiver,
+            SubgroupStart,
         },
+        wire::SubgroupId,
     };
 
     const START: SubgroupStart = SubgroupStart {
@@ -346,5 +415,216 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    async fn sender(
+        name: &str,
+    ) -> (
+        crate::modules::test_support::PublishedTrack,
+        SubgroupObjectSender,
+    ) {
+        let track = published_track(name).await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let sender = factory.next().await.unwrap().start(START).await.unwrap();
+        (track, sender)
+    }
+
+    /// Reads payload parts until `expected` arrived, and returns whether the
+    /// part that completed it was the payload's last.
+    async fn receive_payload_bytes(receiver: &mut SubgroupPartReceiver, expected: &[u8]) -> bool {
+        let mut received = Vec::new();
+        loop {
+            let Some(SubgroupPart::Payload { data, last }) = receiver.receive().await.unwrap()
+            else {
+                panic!("expected a payload part");
+            };
+            received.extend_from_slice(&data);
+            if received.len() >= expected.len() {
+                assert_eq!(received, expected);
+                return last;
+            }
+            assert!(!last, "the payload ended early");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_payload_sent_in_pieces_reaches_the_peer_before_its_last_byte() {
+        // Arrange
+        let (track, mut sender) = sender("sender-payload-pieces").await;
+
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            // Act: the receiver reads while the payload's second half is unsent
+            sender
+                .begin_object(&object(63, ObjectStatus::Normal, b""), 8)
+                .await
+                .unwrap();
+            sender
+                .send_payload(&Bytes::from_static(b"keyf"))
+                .await
+                .unwrap();
+            let mut receiver = first_subgroup_stream(&track.server, &track.accepted)
+                .await
+                .into_parts();
+            let header = receiver.receive().await.unwrap();
+            let start = receiver.receive().await.unwrap();
+            let first_half_was_last = receive_payload_bytes(&mut receiver, b"keyf").await;
+            sender
+                .send_payload(&Bytes::from_static(b"rame"))
+                .await
+                .unwrap();
+            sender.close().await.unwrap();
+
+            // Assert
+            assert!(matches!(header, Some(SubgroupPart::Header(start)) if start == START));
+            let Some(SubgroupPart::ObjectStart {
+                object: started,
+                payload_len: 8,
+            }) = start
+            else {
+                panic!("expected an object start of 8 payload bytes, got {start:?}");
+            };
+            assert_eq!(started, object(63, ObjectStatus::Normal, b""));
+            assert!(!first_half_was_last);
+            assert!(receive_payload_bytes(&mut receiver, b"rame").await);
+            assert!(receiver.receive().await.unwrap().is_none());
+        })
+        .await
+        .expect("the payload pieces and FIN arrive within timeout");
+    }
+
+    #[tokio::test]
+    async fn receive_puts_a_payload_sent_in_pieces_back_together() {
+        // Arrange
+        let (track, mut sender) = sender("sender-payload-whole").await;
+
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            // Act
+            sender
+                .begin_object(&object(63, ObjectStatus::Normal, b""), 8)
+                .await
+                .unwrap();
+            sender
+                .send_payload(&Bytes::from_static(b"keyf"))
+                .await
+                .unwrap();
+            sender
+                .send_payload(&Bytes::from_static(b"rame"))
+                .await
+                .unwrap();
+            sender.close().await.unwrap();
+            let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
+            receiver.receive().await.unwrap();
+            let received = receiver.receive().await.unwrap();
+
+            // Assert
+            let Some(Subgroup::Object(received)) = received else {
+                panic!("expected an object, got {received:?}");
+            };
+            assert_eq!(received, object(63, ObjectStatus::Normal, b"keyframe"));
+        })
+        .await
+        .expect("the object arrives within timeout");
+    }
+
+    #[tokio::test]
+    async fn a_header_taking_its_subgroup_id_from_a_streamed_object_comes_with_its_start() {
+        // Arrange
+        let track = published_track("sender-payload-first-id").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut sender = factory
+            .next()
+            .await
+            .unwrap()
+            .start_raw(START.group_id, SubgroupId::FirstObjectIdDelta, 0)
+            .await
+            .unwrap();
+
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            // Act
+            sender
+                .begin_object(&object(5, ObjectStatus::Normal, b""), 8)
+                .await
+                .unwrap();
+            sender.send_payload(&Bytes::from_static(b"keyf")).await.unwrap();
+            let mut receiver = first_subgroup_stream(&track.server, &track.accepted)
+                .await
+                .into_parts();
+            let header = receiver.receive().await.unwrap();
+            let start = receiver.receive().await.unwrap();
+
+            // Assert
+            assert!(
+                matches!(header, Some(SubgroupPart::Header(start)) if start.subgroup_id == 5),
+                "{header:?}"
+            );
+            assert!(
+                matches!(&start, Some(SubgroupPart::ObjectStart { object, .. }) if object.location.object_id == 5),
+                "{start:?}"
+            );
+        })
+        .await
+        .expect("the header and the object start arrive within timeout");
+    }
+
+    #[tokio::test]
+    async fn send_payload_beyond_the_announced_length_fails() {
+        // Arrange
+        let (_track, mut sender) = sender("sender-payload-overrun").await;
+        sender
+            .begin_object(&object(63, ObjectStatus::Normal, b""), 4)
+            .await
+            .unwrap();
+
+        // Act
+        let result = sender.send_payload(&Bytes::from_static(b"keyframe")).await;
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_payload_blocks_the_next_object_and_close() {
+        // Arrange
+        let (_track, mut sender) = sender("sender-payload-incomplete").await;
+        sender
+            .begin_object(&object(63, ObjectStatus::Normal, b""), 8)
+            .await
+            .unwrap();
+        sender
+            .send_payload(&Bytes::from_static(b"keyf"))
+            .await
+            .unwrap();
+
+        // Act
+        let next_object = sender
+            .send_object(&object(64, ObjectStatus::Normal, b"delta"))
+            .await;
+        let next_start = sender
+            .begin_object(&object(64, ObjectStatus::Normal, b""), 5)
+            .await;
+        let close = sender.close().await;
+
+        // Assert
+        assert!(next_object.is_err());
+        assert!(next_start.is_err());
+        assert!(close.is_err());
+    }
+
+    #[tokio::test]
+    async fn begin_object_needs_a_payload_length_and_no_payload() {
+        // Arrange
+        let (_track, mut sender) = sender("sender-payload-begin-args").await;
+
+        // Act
+        let without_length = sender
+            .begin_object(&object(63, ObjectStatus::Normal, b""), 0)
+            .await;
+        let with_payload = sender
+            .begin_object(&object(63, ObjectStatus::Normal, b"frame"), 5)
+            .await;
+
+        // Assert
+        assert!(without_length.is_err());
+        assert!(with_payload.is_err());
     }
 }

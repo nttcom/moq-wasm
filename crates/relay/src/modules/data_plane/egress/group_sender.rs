@@ -10,7 +10,7 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     data_plane::cache::{
         subgroup_key::SubgroupKey,
-        track_cache::{NextObject, TrackCache, TrackMalformed},
+        track_cache::{NextObject, PartialEnd, PartialObject, TrackCache, TrackMalformed},
     },
     domain::{
         delivery_control::DeliveryControl, delivery_stats::DeliveryStats, track_key::TrackKey,
@@ -203,8 +203,15 @@ impl GroupSender {
         else {
             unreachable!("run() spawns send_stream_task only for SubgroupKey::Stream");
         };
-        let first = match task.source.next(task.object_id).await {
-            SubgroupNext::Cache(NextObject::Object(first)) => first,
+        let (first, publisher_priority) = match task.source.next(task.object_id).await {
+            SubgroupNext::Cache(NextObject::Object(first)) => {
+                let publisher_priority = first.object.publisher_priority;
+                (NextObject::Object(first), publisher_priority)
+            }
+            SubgroupNext::Cache(NextObject::Partial(first)) => {
+                let publisher_priority = first.object.publisher_priority;
+                (NextObject::Partial(first), publisher_priority)
+            }
             SubgroupNext::LeftRange => {
                 tracing::debug!("group left the subscription range before any object to send");
                 return (0, "left_range");
@@ -217,14 +224,11 @@ impl GroupSender {
 
         let priority = moqt::object::StreamPriority {
             subscriber_priority: task.subscriber_priority,
-            publisher_priority: first.object.publisher_priority,
+            publisher_priority,
             group_order: task.group_order,
             group_sequence: task.group_sequence,
             subgroup_id,
         };
-        // Opening the stream awaits peer stream credit; if the subscriber
-        // stops granting streams every stream task queues on the factory,
-        // so leave a trace before it.
         tracing::debug!(
             group_sequence = task.group_sequence,
             transport_priority = priority.transport_priority(),
@@ -246,7 +250,7 @@ impl GroupSender {
         let start = moqt::object::SubgroupStart {
             group_id,
             subgroup_id,
-            publisher_priority: first.object.publisher_priority,
+            publisher_priority,
             ends_group: false,
         };
         tracing::debug!("egress sending subgroup header");
@@ -256,31 +260,68 @@ impl GroupSender {
         }
 
         let mut object_count = 0u64;
-        let mut next = NextObject::Object(first);
-        while let NextObject::Object(object) = next {
-            let object_id = object.object.location.object_id;
-            match object.load().await {
-                Ok(loaded) => {
-                    tracing::debug!(object_id, "egress sending subgroup object");
-                    if sender
-                        .send_object(DataObject::SubgroupObject(loaded))
-                        .await
-                        .is_err()
-                    {
-                        tracing::error!(object_id, "failed to send subgroup object");
-                        return (object_count, "send_object_failed");
+        let mut next = first;
+        loop {
+            let object_id = match next {
+                NextObject::Object(object) => {
+                    let object_id = object.object.location.object_id;
+                    match object.load().await {
+                        Ok(loaded) => {
+                            tracing::debug!(object_id, "egress sending subgroup object");
+                            if sender
+                                .send_object(DataObject::SubgroupObject(loaded))
+                                .await
+                                .is_err()
+                            {
+                                tracing::error!(object_id, "failed to send subgroup object");
+                                return (object_count, "send_object_failed");
+                            }
+                            task.delivery_stats
+                                .record_object_sent(object.payload_len(), object.received_at);
+                            object_count += 1;
+                        }
+                        Err(error) => {
+                            tracing::debug!(object_id, ?error, "skipping unloadable object")
+                        }
                     }
-                    task.delivery_stats
-                        .record_object_sent(object.payload_len(), object.received_at);
-                    object_count += 1;
+                    object_id
                 }
-                // Its payload could not be read: skipped, as an expired object is.
-                Err(error) => tracing::debug!(object_id, ?error, "skipping unloadable object"),
-            }
+                NextObject::Partial(partial) => {
+                    let object_id = partial.object.location.object_id;
+                    tracing::debug!(object_id, "egress forwarding an arriving subgroup object");
+                    match forward_partial(sender.as_mut(), &partial).await {
+                        Ok(()) => {
+                            task.delivery_stats
+                                .record_object_sent(partial.payload_len, partial.received_at);
+                            object_count += 1;
+                        }
+                        Err(PartialForwardFailure::Aborted) => {
+                            next = NextObject::Aborted;
+                            continue;
+                        }
+                        Err(PartialForwardFailure::SendFailed) => {
+                            tracing::error!(object_id, "failed to send subgroup object");
+                            return (object_count, "send_object_failed");
+                        }
+                    }
+                    object_id
+                }
+                NextObject::Aborted => {
+                    task.delivery_stats.record_stream_reset();
+                    if let Err(error) = sender.reset(DataStreamResetCode::InternalError).await {
+                        tracing::warn!(?error, "failed to reset egress stream sender");
+                    }
+                    return (object_count, "upstream_aborted");
+                }
+                NextObject::Finished => {
+                    if let Err(error) = sender.close().await {
+                        tracing::warn!(?error, "failed to close egress stream sender");
+                    }
+                    return (object_count, "cache_closed");
+                }
+            };
             next = match task.source.next(object_id.saturating_add(1)).await {
                 SubgroupNext::Cache(next) => next,
-                // The runner terminates the subscription with PUBLISH_DONE; a FIN
-                // here would claim the partial subgroup is complete.
                 SubgroupNext::Malformed => return (object_count, "malformed_track"),
                 SubgroupNext::LeftRange => {
                     task.delivery_stats.record_stream_reset();
@@ -290,20 +331,6 @@ impl GroupSender {
                     return (object_count, "left_range");
                 }
             };
-        }
-        if matches!(next, NextObject::Aborted) {
-            // draft-14 §10.4.3: a subgroup that ended upstream without a FIN
-            // may be missing objects, so the downstream stream is reset.
-            task.delivery_stats.record_stream_reset();
-            if let Err(error) = sender.reset(DataStreamResetCode::InternalError).await {
-                tracing::warn!(?error, "failed to reset egress stream sender");
-            }
-            (object_count, "upstream_aborted")
-        } else {
-            if let Err(error) = sender.close().await {
-                tracing::warn!(?error, "failed to close egress stream sender");
-            }
-            (object_count, "cache_closed")
         }
     }
 
@@ -339,6 +366,53 @@ impl GroupSender {
                 return;
             }
             delivery_stats.record_object_sent(object.payload_len(), object.received_at);
+        }
+    }
+}
+
+enum PartialForwardFailure {
+    /// The upstream stream ended inside the payload.
+    Aborted,
+    SendFailed,
+}
+
+/// Sends `partial` up to its payload, then each payload piece as it arrives.
+async fn forward_partial(
+    sender: &mut dyn DataSender,
+    partial: &PartialObject,
+) -> Result<(), PartialForwardFailure> {
+    sender
+        .send_object(DataObject::SubgroupObjectStart {
+            object: partial.object.clone(),
+            payload_len: partial.payload_len,
+        })
+        .await
+        .map_err(|_| PartialForwardFailure::SendFailed)?;
+    let mut progress_receiver = partial.subscribe();
+    let (mut sent_pieces, mut sent_bytes) = (0, 0);
+    loop {
+        // The writer sets `end` after its last piece, so one borrow sees
+        // every piece of an ended object.
+        let (pieces, end) = {
+            let progress = progress_receiver
+                .wait_for(|progress| progress.pieces.len() > sent_pieces || progress.end.is_some())
+                .await
+                .map_err(|_| PartialForwardFailure::Aborted)?;
+            (progress.pieces[sent_pieces..].to_vec(), progress.end)
+        };
+        for data in pieces {
+            sent_pieces += 1;
+            sent_bytes += data.len();
+            let last = sent_bytes == partial.payload_len;
+            sender
+                .send_object(DataObject::SubgroupPayload { data, last })
+                .await
+                .map_err(|_| PartialForwardFailure::SendFailed)?;
+        }
+        match end {
+            None => {}
+            Some(PartialEnd::Complete) => return Ok(()),
+            Some(PartialEnd::Aborted) => return Err(PartialForwardFailure::Aborted),
         }
     }
 }
