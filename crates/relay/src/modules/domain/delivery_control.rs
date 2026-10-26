@@ -12,13 +12,17 @@ pub(crate) struct DeliveryControl {
     /// The first group past the subscription; `None` is open-ended.
     pub(crate) end_group: Option<u64>,
     /// The track's Largest Object when the subscription was accepted or last
-    /// updated. A Start Location moved back delivers only the objects after
-    /// it, as a new subscription would (draft-18 §10.9.1); FETCH serves the
-    /// rest.
+    /// updated. Delivery restarted by an update (a Start Location moved
+    /// back, draft-18 §10.9.1, or Forward turned on) sends only the objects
+    /// after it, as a new subscription would; FETCH serves the rest.
     pub(crate) largest_at_update: Option<Location>,
     /// Counts the updates that moved the Start Location back, so egress
     /// restarts delivery even when it sees only the latest state.
     pub(crate) restarts: u64,
+    /// Counts the updates that turned Forward from 0 to 1. A stream opened
+    /// before the latest one is not continued: Forward 0 sends no object
+    /// (draft-14 §5.1, draft-18 §5.1), even when egress never saw it.
+    pub(crate) resumes: u64,
 }
 
 impl DeliveryControl {
@@ -35,6 +39,7 @@ impl DeliveryControl {
             end_group,
             largest_at_update: largest,
             restarts: 0,
+            resumes: 0,
         }
     }
 
@@ -48,6 +53,7 @@ impl DeliveryControl {
             end_group: (end_group != 0).then_some(end_group),
             largest_at_update: None,
             restarts: 0,
+            resumes: 0,
         }
     }
 
@@ -68,6 +74,7 @@ impl DeliveryControl {
             forward,
             largest_at_update: largest,
             restarts: self.restarts,
+            resumes: self.resumes,
             ..range
         }
     }
@@ -94,8 +101,10 @@ impl DeliveryControl {
     /// draft has already allowed (see `widens_to`).
     pub(crate) fn apply_update(&mut self, requested: DeliveryControl) {
         let restarts = self.restarts + u64::from(requested.start < self.start);
+        let resumes = self.resumes + u64::from(!self.forward && requested.forward);
         *self = Self {
             restarts,
+            resumes,
             ..requested
         };
     }
@@ -246,6 +255,20 @@ mod tests {
         assert_eq!(control.resume_object_id(4, 1), Some(3));
         assert_eq!(control.resume_object_id(4, 5), Some(5));
         assert_eq!(control.resume_object_id(5, 0), Some(0));
+    }
+
+    #[test]
+    fn turning_forward_on_counts_a_resume() {
+        // Arrange
+        let mut control = DeliveryControl::new(true, &FilterType::LargestObject, None);
+
+        // Act
+        control.apply_update(control.requested(false, None, None));
+        let paused = control.resumes;
+        control.apply_update(control.requested(true, None, Some(location(4, 2))));
+
+        // Assert
+        assert_eq!((paused, control.resumes), (0, 1));
     }
 
     #[test]

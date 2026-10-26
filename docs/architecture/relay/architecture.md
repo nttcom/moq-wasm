@@ -420,8 +420,8 @@ Forward State, Start Location and End Group are applied; Subscriber Priority
 is not. Every downstream registration owns a `watch::Sender<DeliveryControl>`
 (`domain/delivery_control.rs`: the Forward State, the Start Location resolved
 from the filter and the Largest Location, the End Group, the track's Largest
-Object at the latest update, and a count of the updates that moved the start
-back) next to its runner stop sender. The End Group is kept as the first group
+Object at the latest update, and counts of the updates that moved the start
+back and of those that turned Forward on) next to its runner stop sender. The End Group is kept as the first group
 past the range, `None` when open-ended: an AbsoluteRange End Group is the last
 group included (§9.7) and is stored plus 1. A SUBSCRIBE starts it at the
 SUBSCRIBE's Forward State (§5.1 of draft-14 and draft-18: no object is sent at
@@ -775,9 +775,15 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   group whose open event was dropped is still delivered under either Group
   Order. While the
   registration's Forward State is 0 it drops open events, and a runner that
-  starts at Forward 0 skips that cache scan, so no subgroup opened meanwhile is
-  ever sent; streams already scheduled run to their end, and
-  after Forward returns to 1 delivery resumes with the next subgroup opened. The start is a
+  starts at Forward 0 skips that cache scan. No object is sent at Forward 0
+  (draft-14 §5.1, draft-18 §5.1): the send tasks hold their subgroups and reset
+  their open streams (see `GroupSender`). An update that turns Forward to 1
+  restarts the schedule like a new subscription, from just past the Largest
+  Object at that update, so a subgroup opened while paused and still open
+  delivers the objects after it on a new stream (draft-18 §11.4.3 allows a
+  new stream after Forward 0→1), and the subscriber FETCHes the objects up to
+  it. A count of these updates tells the scheduler and the send tasks about
+  a pause they did not see, since a watch keeps only the latest state. The start is a
   lower bound in both paths: group ids may begin anywhere and skip values
   (§2.3.1), so the first delivered group is the first one at or above the
   start, not the start group itself. Groups at or past the End Group are never
@@ -807,10 +813,11 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   also watches the registration's `DeliveryControl`: when a SUBSCRIBE_UPDATE
   moves the range past its group (End Group at or below it, Start Location
   beyond it), the open stream is reset with CANCELLED (draft-14 §10.4.3). Past
-  the End Group the task ends. Before the Start Location it is held: it sends
-  nothing and ends once its subgroup ends, unless a later update moves the
-  start back over the group, after which the subgroup continues on a new
-  stream from just past the Largest Object at that update. Every object the
+  the End Group the task ends. Before the Start Location, and at Forward 0 or
+  after a resume it did not see, it is held: it sends nothing and ends once
+  its subgroup ends, unless a later update moves the start back over the group
+  or turns Forward to 1, after which the subgroup continues on a new stream
+  from just past the Largest Object at that update. Every object the
   task sent lies at or before that location, so none is sent twice. Groups
   still in the range are delivered to their end. Datagram groups are
   re-emitted with the downstream track alias, and stop at the same range

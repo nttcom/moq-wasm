@@ -40,12 +40,14 @@ pub(crate) struct GroupSender {
 }
 
 /// Where a send task reads its subgroup from: the cache, while the
-/// subscription's range holds the group.
+/// subscription forwards and its range holds the group.
 struct SubgroupSource {
     key: SubgroupKey,
     generation: usize,
     cache: Arc<TrackCache>,
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
+    /// `DeliveryControl::resumes` the task last delivered under.
+    resumes: u64,
 }
 
 enum SubgroupNext {
@@ -54,19 +56,26 @@ enum SubgroupNext {
     /// draft-14 §10.4.3: the group lies at or past the End Group, so an open
     /// stream is reset and the subgroup is not delivered any more.
     PastEnd,
-    /// The group lies before the Start Location. An open stream is reset
-    /// (draft-14 §10.4.3), and the subgroup may continue on a new stream if
-    /// an update moves the start back (see `SubgroupSource::held`).
+    /// The group lies before the Start Location, or Forward is 0 or was
+    /// since the task last delivered. An open stream is reset, as no object
+    /// may be sent at Forward 0 (draft-14 §5.1, draft-18 §5.1; draft-18
+    /// §11.4.3 lists both among the reasons to reset), and the subgroup may
+    /// continue on a new stream (see `SubgroupSource::held`).
     Held,
 }
 
 impl SubgroupSource {
     async fn next(&mut self, object_id: u64) -> SubgroupNext {
         let group_id = self.key.group_id();
+        let resumes = self.resumes;
         let receiver = &mut self.delivery_control_receiver;
         let interrupted = async {
             let interruption = receiver
-                .wait_for(|control| !control.contains_group(group_id))
+                .wait_for(|control| {
+                    !control.contains_group(group_id)
+                        || !control.forward
+                        || control.resumes != resumes
+                })
                 .await
                 .map(|control| {
                     if control.is_past_end(group_id) {
@@ -114,7 +123,8 @@ impl SubgroupSource {
         };
         let control = {
             let released = self.delivery_control_receiver.wait_for(|control| {
-                control.is_past_end(group_id) || control.contains_group(group_id)
+                control.is_past_end(group_id)
+                    || (control.forward && control.contains_group(group_id))
             });
             tokio::select! {
                 biased;
@@ -125,6 +135,7 @@ impl SubgroupSource {
         if control.is_past_end(group_id) {
             return None;
         }
+        self.resumes = control.resumes;
         control.resume_object_id(group_id, unsent)
     }
 }
@@ -167,6 +178,7 @@ impl GroupSender {
             generation: task.generation,
             cache: self.cache.clone(),
             delivery_control_receiver: self.delivery_control_receiver.clone(),
+            resumes: task.resumes,
         }
     }
 
@@ -243,9 +255,12 @@ impl GroupSender {
     }
 
     /// Sends the subgroup on a stream opened at its first object to send. An
-    /// update moving the start past the group resets the stream; if a later
-    /// one moves the start back, the subgroup continues on a new stream past
-    /// the Largest Object at that update (draft-18 §10.9.1).
+    /// update that holds the subgroup (Forward 0, or the start moved past
+    /// its group) resets the stream. Once a later update releases it, the
+    /// subgroup continues on a new stream past the Largest Object at that
+    /// update: draft-18 §11.4.3 lets the publisher reopen a subgroup after
+    /// Forward 0→1, and §10.9.1 serves a start moved back like a new
+    /// subscription.
     async fn send_stream(mut task: StreamSendTask) -> SentSubgroup {
         let SubgroupKey::Stream {
             group_id,
