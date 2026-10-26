@@ -32,7 +32,7 @@ use crate::{
     publish::PublishOption,
     server::Handshake,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
-    subscribe::{FilterType, SubscribeUpdateHandler},
+    subscribe::{FilterType, SubscribeOption, SubscribeUpdateHandler},
     wire::{SubgroupId, SubgroupObject},
 };
 
@@ -280,6 +280,39 @@ pub(crate) async fn published_track_between(client: Session, server: Session) ->
         server,
         published: published.unwrap(),
         accepted,
+    }
+}
+
+/// A subscription the client made to the server's `ns/track`.
+pub(crate) struct SubscribedTrack {
+    pub(crate) client: Session,
+    pub(crate) server: Session,
+    pub(crate) subscription: Subscription,
+}
+
+/// The client subscribes to `ns/track` and the server accepts it.
+pub(crate) async fn subscribed_track(name: &str) -> SubscribedTrack {
+    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let mut subscriber = client.subscriber();
+    let (subscribed, ()) = within(async {
+        tokio::join!(
+            subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            async {
+                let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+                    panic!("expected SUBSCRIBE from the client");
+                };
+                handler
+                    .ok(0, crate::object::ContentExists::False)
+                    .await
+                    .unwrap();
+            }
+        )
+    })
+    .await;
+    SubscribedTrack {
+        client,
+        server,
+        subscription: subscribed.unwrap(),
     }
 }
 
