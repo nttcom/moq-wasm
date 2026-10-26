@@ -24,14 +24,7 @@ import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContex
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../../utils/page'
-import {
-  CATALOG_TRACK_NAME,
-  type MediaCatalogTrack,
-  extractCatalogAudioTracks,
-  extractCatalogCmafTracks,
-  extractCatalogMediaTimelineTracks,
-  extractCatalogVideoTracks
-} from '../msf/catalog'
+import { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from '../msf/catalog'
 
 const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
@@ -549,10 +542,10 @@ export class LivePlayer {
     }
     try {
       const catalog = parse_msf_catalog_json(payload)
-      this.cmafTracks = extractCatalogCmafTracks(catalog)
+      this.cmafTracks = extractCatalogTracks(catalog).filter((track) => track.packaging === 'cmaf')
       const changed = this.replaceAllTracks(
-        extractCatalogVideoTracks(catalog).filter(isLocTrack),
-        extractCatalogAudioTracks(catalog).filter(isLocTrack),
+        extractCatalogTracks(catalog, 'video').filter(isLocTrack),
+        extractCatalogTracks(catalog, 'audio').filter(isLocTrack),
         'Catalog loaded'
       )
       await this.subscribeMediaTimeline(catalog)
@@ -602,7 +595,7 @@ export class LivePlayer {
   }
 
   private async subscribeMediaTimeline(catalog: unknown): Promise<void> {
-    const [track] = extractCatalogMediaTimelineTracks(catalog)
+    const [track] = extractCatalogTracks(catalog, 'mediatimeline')
     if (!track || !this.timeline.followMediaTimeline(track)) {
       return
     }

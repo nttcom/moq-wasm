@@ -87,7 +87,7 @@ export function resolveInitData(catalog: unknown, track: Record<string, unknown>
   return data
 }
 
-function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaCatalogTrack[] {
+export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaCatalogTrack[] {
   const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
     ? ((catalog as { tracks: unknown[] }).tracks ?? [])
     : []
@@ -120,22 +120,6 @@ function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaC
     })
     return acc
   }, [])
-}
-
-export function extractCatalogVideoTracks(catalog: unknown): MediaCatalogTrack[] {
-  return extractCatalogTracks(catalog, 'video')
-}
-
-export function extractCatalogAudioTracks(catalog: unknown): MediaCatalogTrack[] {
-  return extractCatalogTracks(catalog, 'audio')
-}
-
-export function extractCatalogMediaTimelineTracks(catalog: unknown): MediaCatalogTrack[] {
-  return extractCatalogTracks(catalog, 'mediatimeline')
-}
-
-export function extractCatalogCmafTracks(catalog: unknown): MediaCatalogTrack[] {
-  return extractCatalogTracks(catalog).filter((track) => track.packaging === 'cmaf')
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

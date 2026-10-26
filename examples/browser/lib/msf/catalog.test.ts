@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { buildMsfCatalogJson, extractCatalogAudioTracks, extractCatalogVideoTracks } from './catalog'
+import { buildMsfCatalogJson, extractCatalogTracks } from './catalog'
 
 const AUDIO_SPECIFIC_CONFIG = 'ERA='
 
@@ -35,8 +35,8 @@ test('a track takes the data of the inline entry its initRef names', () => {
   ])
 
   // Act
-  const [video] = extractCatalogVideoTracks(catalog)
-  const [audio] = extractCatalogAudioTracks(catalog)
+  const [video] = extractCatalogTracks(catalog, 'video')
+  const [audio] = extractCatalogTracks(catalog, 'audio')
 
   // Assert: a track without initRef has no init data and is not warned about
   expect(audio.initData).toBe(AUDIO_SPECIFIC_CONFIG)
@@ -53,7 +53,7 @@ for (const [reference, initDataList] of [
     const catalog = catalogWithInitDataList([...initDataList])
 
     // Act
-    const [audio] = extractCatalogAudioTracks(catalog)
+    const [audio] = extractCatalogTracks(catalog, 'audio')
 
     // Assert
     expect(audio.initData).toBeUndefined()
@@ -86,7 +86,7 @@ test('a video track keeps its alternate group and bitrate', () => {
   }
 
   // Act
-  const [source, rendition] = extractCatalogVideoTracks(catalog)
+  const [source, rendition] = extractCatalogTracks(catalog, 'video')
 
   // Assert
   expect(source.altGroup).toBe(1)
