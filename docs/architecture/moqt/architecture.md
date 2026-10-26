@@ -620,9 +620,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   answer, §9.13) turn the track alias's sink into `Cancelled`, which drops
   the buffered objects, the channel sender and a receiver not yet taken by
   `accept_data_receiver`. Objects still in flight are then dropped on arrival
-  instead of being buffered as an unknown alias until the session ends. The
-  `Cancelled` marker stays until a new subscription reuses the alias; it is
-  not released on PUBLISH_DONE because late streams may follow it (§9.12).
+  instead of being buffered as an unknown alias. The `Cancelled` marker stays
+  until a new subscription reuses the alias or `UNKNOWN_TRACK_ALIAS_PERIOD`
+  (10 s) ends; an object arriving later is buffered as one of an unknown
+  alias, bounded and expiring like any other. It is not released on
+  PUBLISH_DONE because late streams may follow it (§9.12).
 - **PUBLISH_DONE ends the subscription after a grace period** (draft-14
   §9.12): the event still reaches the application, and 10 s later
   `PublishDoneExpiryTask` cancels the subscription as an unsubscribe would,

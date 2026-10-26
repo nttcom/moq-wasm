@@ -8,13 +8,16 @@ use tokio::sync::watch;
 
 use crate::{
     SessionEvent,
-    modules::moqt::{
-        control_plane::{constants::TerminationErrorCode, enums::RequestId},
-        data_plane::stream::{
-            fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+    modules::{
+        executor,
+        moqt::{
+            control_plane::{constants::TerminationErrorCode, enums::RequestId},
+            data_plane::stream::{
+                fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+            },
+            domains::connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
+            runtime::dispatch::incoming_object::IncomingObject,
         },
-        domains::connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
-        runtime::dispatch::incoming_object::IncomingObject,
     },
     publish::PublishOption,
     subscribe::SubscribeOption,
@@ -335,7 +338,7 @@ impl SessionContext {
 
     pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
         let mut sinks = connection.object_sinks.lock().await;
-        if let Some(logical_alias) = sinks.cancel_subscription(request_id) {
+        if let Some(logical_alias) = sinks.cancel_subscription(request_id, executor::now()) {
             self.receiver_map.lock().await.remove(&logical_alias);
         }
     }
@@ -349,7 +352,7 @@ impl SessionContext {
             .object_sinks
             .lock()
             .await
-            .cancel_unclaimed(track_alias);
+            .cancel_unclaimed(track_alias, executor::now());
     }
 
     /// Call before sending the FETCH on `connection`: its data stream can

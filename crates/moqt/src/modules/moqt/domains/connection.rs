@@ -29,7 +29,8 @@ use crate::{
 
 /// draft-14 §10.3, §10.4.2: the objects of an unknown track alias are
 /// buffered for a brief period, until SUBSCRIBE_OK or an accepted PUBLISH
-/// establishes the alias.
+/// establishes the alias. §10.1: a cancelled subscription's alias discards
+/// late objects for the same period; after it, they are buffered as unknown.
 const UNKNOWN_TRACK_ALIAS_PERIOD: Duration = Duration::from_secs(10);
 const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 /// The objects buffered across all unknown track aliases of a connection:
@@ -94,8 +95,12 @@ enum ObjectSink {
     Receiver(SinkReceiver),
     /// Draft-14 §10.1: objects of a cancelled subscription can still arrive
     /// and are discarded instead of being buffered as an unknown track alias.
-    /// Kept until a new subscription reuses the track alias.
-    Cancelled,
+    /// Kept until a new subscription reuses the track alias or
+    /// `UNKNOWN_TRACK_ALIAS_PERIOD` ends.
+    Cancelled {
+        /// `executor::now()` when the track alias was cancelled.
+        created_at: Duration,
+    },
 }
 
 pub(crate) struct SinkReceiver {
@@ -191,23 +196,23 @@ impl ObjectSink {
         matches!(self, ObjectSink::Receiver(_))
     }
 
-    /// `None` for a sink that does not expire.
     fn created_at(&self) -> Option<Duration> {
         match self {
-            ObjectSink::Buffer { created_at, .. } => Some(*created_at),
-            ObjectSink::Receiver(_) | ObjectSink::Cancelled => None,
+            ObjectSink::Buffer { created_at, .. } | ObjectSink::Cancelled { created_at } => {
+                Some(*created_at)
+            }
+            ObjectSink::Receiver(_) => None,
         }
     }
 }
 
-/// The sink of each track alias on a connection.
 #[derive(Default)]
 pub(crate) struct ObjectSinks {
     sinks: HashMap<u64, ObjectSink>,
     /// The objects in every `ObjectSink::Buffer`.
     pending_objects: usize,
-    /// The track aliases of the `ObjectSink::Buffer`s, oldest first, with
-    /// their `created_at`. An alias whose sink has changed since is skipped.
+    /// The track aliases of the sinks that expire, oldest first, with their
+    /// `created_at`. An alias whose sink has changed since is skipped.
     expiries: VecDeque<(Duration, u64)>,
 }
 
@@ -252,7 +257,7 @@ impl ObjectSinks {
                         dropped_oldest,
                     }
                 }
-                ObjectSink::Cancelled => IncomingObjectNotification::Discarded,
+                ObjectSink::Cancelled { .. } => IncomingObjectNotification::Discarded,
             },
         }
     }
@@ -280,8 +285,6 @@ impl ObjectSinks {
         Ok(())
     }
 
-    /// Drops the buffers created `UNKNOWN_TRACK_ALIAS_PERIOD` or longer
-    /// before `now`.
     fn remove_expired(&mut self, now: Duration) {
         while let Some(&(created_at, track_alias)) = self.expiries.front()
             && created_at + UNKNOWN_TRACK_ALIAS_PERIOD <= now
@@ -289,9 +292,9 @@ impl ObjectSinks {
             self.expiries.pop_front();
             if let Entry::Occupied(entry) = self.sinks.entry(track_alias)
                 && entry.get().created_at() == Some(created_at)
-                && let ObjectSink::Buffer { objects, .. } = entry.remove()
             {
-                self.pending_objects -= objects.len();
+                let removed = entry.remove();
+                self.release(removed);
             }
         }
     }
@@ -310,25 +313,40 @@ impl ObjectSinks {
 
     /// Cancels the sink of the subscription `request_id` and returns its
     /// logical track alias. `None` when no such sink is installed.
-    pub(crate) fn cancel_subscription(&mut self, request_id: RequestId) -> Option<u64> {
+    pub(crate) fn cancel_subscription(
+        &mut self,
+        request_id: RequestId,
+        now: Duration,
+    ) -> Option<u64> {
         let (track_alias, receiver) = self.receiver_mut(request_id)?;
         let logical_alias = receiver.logical_alias;
-        self.sinks.insert(track_alias, ObjectSink::Cancelled);
+        self.cancel(track_alias, now);
         Some(logical_alias)
     }
 
-    /// Cancels `track_alias` unless a subscription holds it.
-    pub(crate) fn cancel_unclaimed(&mut self, track_alias: u64) {
-        if self
+    pub(crate) fn cancel_unclaimed(&mut self, track_alias: u64, now: Duration) {
+        if !self
             .sinks
             .get(&track_alias)
             .is_some_and(ObjectSink::is_receiver_registered)
         {
-            return;
+            self.cancel(track_alias, now);
         }
-        if let Some(ObjectSink::Buffer { objects, .. }) =
-            self.sinks.insert(track_alias, ObjectSink::Cancelled)
+    }
+
+    fn cancel(&mut self, track_alias: u64, now: Duration) {
+        self.remove_expired(now);
+        if let Some(replaced) = self
+            .sinks
+            .insert(track_alias, ObjectSink::Cancelled { created_at: now })
         {
+            self.release(replaced);
+        }
+        self.expiries.push_back((now, track_alias));
+    }
+
+    fn release(&mut self, removed: ObjectSink) {
+        if let ObjectSink::Buffer { objects, .. } = removed {
             self.pending_objects -= objects.len();
         }
     }
@@ -661,7 +679,7 @@ mod tests {
         let mut sinks = full_sinks();
 
         // Act
-        sinks.cancel_unclaimed(100);
+        sinks.cancel_unclaimed(100, START);
         let notification = notify_datagram(&mut sinks, TRACK_ALIAS, START);
 
         // Assert
@@ -669,5 +687,40 @@ mod tests {
             matches!(notification, IncomingObjectNotification::Buffered { .. }),
             "{notification:?}"
         );
+    }
+
+    #[test]
+    fn a_cancelled_track_alias_discards_its_objects_within_the_period() {
+        // Arrange
+        let mut sinks = ObjectSinks::default();
+        sinks.cancel_unclaimed(TRACK_ALIAS, START);
+
+        // Act
+        let notification = notify_datagram(
+            &mut sinks,
+            TRACK_ALIAS,
+            START + UNKNOWN_TRACK_ALIAS_PERIOD - Duration::from_millis(1),
+        );
+
+        // Assert
+        assert!(
+            matches!(notification, IncomingObjectNotification::Discarded),
+            "{notification:?}"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_track_alias_is_forgotten_once_the_period_ends() {
+        // Arrange
+        let mut sinks = ObjectSinks::default();
+        sinks.install(TRACK_ALIAS, sink_receiver()).unwrap();
+        sinks.cancel_subscription(1, START);
+
+        // Act: the next cancellation drops it, with no object arriving
+        sinks.cancel_unclaimed(OTHER_TRACK_ALIAS, START + UNKNOWN_TRACK_ALIAS_PERIOD);
+
+        // Assert
+        assert!(!sinks.sinks.contains_key(&TRACK_ALIAS));
+        assert_eq!(sinks.expiries.len(), 1);
     }
 }
