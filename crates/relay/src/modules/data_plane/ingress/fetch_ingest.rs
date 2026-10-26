@@ -480,7 +480,7 @@ mod tests {
         fill(&cache, status_object(1, 0, ObjectStatus::Normal)).unwrap();
 
         // Act
-        let resolution = cache.resolve_fetch_range(location(0, 0), location(1, 1));
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(1, 1), None);
 
         // Assert: only a completed FETCH known range may cover this historical gap.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
@@ -643,7 +643,7 @@ mod tests {
         assert_eq!(
             ingested
                 .cache
-                .resolve_fetch_range(location(0, 0), location(0, 3)),
+                .resolve_fetch_range(location(0, 0), location(0, 3), None),
             FetchRangeResolution::Serve {
                 end_location: location(0, 3)
             }
@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(
             ingested
                 .cache
-                .resolve_fetch_range(location(0, 0), location(0, 3)),
+                .resolve_fetch_range(location(0, 0), location(0, 3), None),
             FetchRangeResolution::NotCovered
         );
         assert!(
@@ -818,7 +818,7 @@ mod tests {
         fill(&cache, stream_object(0, 0)).unwrap();
 
         // Act
-        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 1));
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 1), None);
 
         // Assert: only Fetch::End may register the filled range as known.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
