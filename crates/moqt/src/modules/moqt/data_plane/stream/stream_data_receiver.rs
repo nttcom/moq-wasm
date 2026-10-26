@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
+use bytes::{Bytes, BytesMut};
+
 use crate::modules::moqt::{
     data_plane::{
         object::canonical_object::{Object, SubgroupStart},
-        object_ledger::ObjectLedger,
+        object_ledger::{ObjectLedger, PayloadHasher},
         stream::{
             open_subgroups::{OpenSubgroup, OpenSubgroups},
             stream_receiver::StreamReceiveError,
@@ -18,15 +20,43 @@ pub enum Subgroup {
     Object(Object),
 }
 
+/// One step of a subgroup stream as `SubgroupPartReceiver` reads it.
+#[derive(Debug)]
+pub enum SubgroupPart {
+    Header(SubgroupStart),
+    /// An object whose payload arrived with the fields before it, or a
+    /// status object.
+    Object(Object),
+    /// An object whose payload is still arriving: `object.payload` is empty,
+    /// and its `payload_len` bytes follow as `Payload` parts. `payload_len`
+    /// is the peer's claim, so do not allocate it up front.
+    ObjectStart {
+        object: Object,
+        payload_len: usize,
+    },
+    /// The next bytes of the current object's payload; `last` ends the
+    /// object. `data` shares the stream's read buffer: copy it before keeping
+    /// it beyond the object.
+    Payload {
+        data: Bytes,
+        last: bool,
+    },
+}
+
 #[derive(Debug)]
 pub struct StreamDataReceiver {
     pub track_alias: u64,
     reader: SubgroupReader,
     header_returned: bool,
-    first_object: Option<Object>,
+    /// Read ahead for a header that takes its subgroup id from the first
+    /// object. Boxed: rare, and inline it would grow every receiver.
+    first_part: Option<Box<SubgroupPart>>,
     open: Option<OpenSubgroup>,
     /// The track's ledger once the stream is handed to the application.
     ledger: Option<Arc<ObjectLedger>>,
+    /// The object whose payload is arriving, and the payload's hash so far.
+    /// Boxed like `first_part`.
+    arriving: Option<Box<(Object, PayloadHasher)>>,
 }
 
 impl StreamDataReceiver {
@@ -35,9 +65,10 @@ impl StreamDataReceiver {
             track_alias,
             reader,
             header_returned: false,
-            first_object: None,
+            first_part: None,
             open: None,
             ledger: None,
+            arriving: None,
         }
     }
 
@@ -59,13 +90,53 @@ impl StreamDataReceiver {
         self.open = Some(open_subgroups.open());
     }
 
-    /// Returns the header first, then each object with absolute ids.
-    /// `Ok(None)` means the peer finished the stream (FIN). A header whose
-    /// subgroup id comes from the first object is returned only after that
-    /// object arrives, so a stream that ends before it returns `Ok(None)`
-    /// without a header. An object that repeats one received before with
-    /// other properties is `StreamReceiveError::MalformedTrack`.
+    /// Returns the header first, then each object with absolute ids and its
+    /// whole payload. `Ok(None)` means the peer finished the stream (FIN). A
+    /// header whose subgroup id comes from the first object is returned only
+    /// after that object starts to arrive, so a stream that ends before it
+    /// returns `Ok(None)` without a header. An object that repeats one
+    /// received before with other properties is
+    /// `StreamReceiveError::MalformedTrack`.
     pub async fn receive(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
+        let Some(part) = self.receive_part().await? else {
+            return Ok(None);
+        };
+        let object = match part {
+            SubgroupPart::Header(start) => return Ok(Some(Subgroup::Header(start))),
+            SubgroupPart::Object(object) => object,
+            SubgroupPart::ObjectStart { object, .. } => Object {
+                payload: self.receive_payload().await?,
+                ..object
+            },
+            // `receive` reads every payload it starts up to its last part,
+            // and `into_parts` consumes the receiver.
+            SubgroupPart::Payload { .. } => unreachable!("a payload part outside an object"),
+        };
+        Ok(Some(Subgroup::Object(object)))
+    }
+
+    pub fn into_parts(self) -> SubgroupPartReceiver {
+        SubgroupPartReceiver { receiver: self }
+    }
+
+    async fn receive_payload(&mut self) -> Result<Bytes, StreamReceiveError> {
+        let mut payload = BytesMut::new();
+        loop {
+            match self.receive_part().await? {
+                Some(SubgroupPart::Payload { data, last }) => {
+                    payload.extend_from_slice(&data);
+                    if last {
+                        return Ok(payload.freeze());
+                    }
+                }
+                // The decoder fails a stream that ends inside a payload, and
+                // yields nothing else before the payload's last part.
+                other => unreachable!("expected a payload part, got {other:?}"),
+            }
+        }
+    }
+
+    async fn receive_part(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
         let received = self
             .receive_next()
             .await
@@ -76,34 +147,78 @@ impl StreamDataReceiver {
         received
     }
 
-    fn check(&self, received: Option<Subgroup>) -> Result<Option<Subgroup>, StreamReceiveError> {
-        if let (Some(Subgroup::Object(object)), Some(ledger)) = (&received, &self.ledger) {
-            ledger
-                .check(object, false)
-                .map_err(StreamReceiveError::MalformedTrack)?;
-        }
+    /// Checks an object against the ledger once its payload is complete; a
+    /// payload that arrives in pieces is hashed piece by piece.
+    fn check(
+        &mut self,
+        received: Option<SubgroupPart>,
+    ) -> Result<Option<SubgroupPart>, StreamReceiveError> {
+        let Some(ledger) = &self.ledger else {
+            return Ok(received);
+        };
+        let checked = match &received {
+            Some(SubgroupPart::Object(object)) => ledger.check(object, false),
+            Some(SubgroupPart::ObjectStart { object, .. }) => {
+                self.arriving = Some(Box::new((object.clone(), ledger.payload_hasher())));
+                Ok(())
+            }
+            Some(SubgroupPart::Payload { data, last }) => {
+                // The decoder yields payload parts only after an object start.
+                let arriving = self
+                    .arriving
+                    .as_mut()
+                    .expect("a payload part follows its object's start");
+                arriving.1.update(data);
+                match self.arriving.take_if(|_| *last) {
+                    Some(arrived) => {
+                        let (object, hasher) = *arrived;
+                        ledger.check_hashed(&object, hasher, false)
+                    }
+                    None => Ok(()),
+                }
+            }
+            Some(SubgroupPart::Header(_)) | None => Ok(()),
+        };
+        checked.map_err(StreamReceiveError::MalformedTrack)?;
         Ok(received)
     }
 
-    async fn receive_next(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
+    async fn receive_next(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
         if !self.header_returned {
             if self.reader.start().is_none() {
-                let Some(first) = self.reader.next_object().await? else {
+                let Some(first) = self.reader.next_part().await? else {
                     return Ok(None);
                 };
-                self.first_object = Some(first);
+                self.first_part = Some(Box::new(first));
             }
             self.header_returned = true;
             let start = self
                 .reader
                 .start()
                 .expect("the first object has fixed the subgroup id");
-            return Ok(Some(Subgroup::Header(start)));
+            return Ok(Some(SubgroupPart::Header(start)));
         }
-        if let Some(first) = self.first_object.take() {
-            return Ok(Some(Subgroup::Object(first)));
+        if let Some(first) = self.first_part.take() {
+            return Ok(Some(*first));
         }
-        Ok(self.reader.next_object().await?.map(Subgroup::Object))
+        self.reader.next_part().await
+    }
+}
+
+/// Reads a subgroup stream with each object's payload handed over as it
+/// arrives, so the object can be forwarded before its last byte.
+#[derive(Debug)]
+pub struct SubgroupPartReceiver {
+    receiver: StreamDataReceiver,
+}
+
+impl SubgroupPartReceiver {
+    /// Returns the header first, then objects, and for an object whose
+    /// payload had not arrived with it, its `ObjectStart` and `Payload` parts
+    /// up to the `last` one. `Ok(None)` means the peer finished the stream
+    /// (FIN); a stream that ends inside a payload is an error.
+    pub async fn receive(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
+        self.receiver.receive_part().await
     }
 }
 
