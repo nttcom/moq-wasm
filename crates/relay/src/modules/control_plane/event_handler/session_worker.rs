@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tracing::{Instrument, Span};
 
 use super::{WorkerDeps, session_cleanup::cleanup_session, session_event_span::session_event_span};
-use crate::logging::link_span;
+use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
     auth::{
         anonymous_root::{scope_anonymous_root_prefix, scope_anonymous_root_subscription},
@@ -116,6 +116,7 @@ impl SessionWorker {
                     parent: None,
                     "relay.malformed_track_detected",
                     session_id = %session_id,
+                    relay_hostname = relay_hostname(),
                     track_namespace = %track_key.track_namespace, track_name = %track_key.track_name,
                 );
                 link_span(&event_span, &self.session_span);
@@ -145,6 +146,7 @@ impl SessionWorker {
                     parent: None,
                     "relay.downstream_subscription_ended",
                     session_id = %session_id,
+                    relay_hostname = relay_hostname(),
                     request_id,
                 );
                 link_span(&event_span, &self.session_span);

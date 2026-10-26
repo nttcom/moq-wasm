@@ -6,6 +6,7 @@ use tokio::{
 };
 use tracing::{Instrument, Span};
 
+use crate::logging::relay_hostname;
 use crate::modules::{
     data_plane::{
         cache::{cached_object::CacheStamp, store::TrackCacheStore, track_cache::TrackCache},
@@ -124,7 +125,7 @@ impl TrackIngestTask {
                                 let ingest_key = (track_key.clone(), publisher_session_id, kind);
                                 if let Some((_, stop_sender)) = stop_senders.remove(&ingest_key) {
                                     let _ = stop_sender.send(true);
-                                    tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, kind = kind.label(), "track ingress stopped");
+                                    tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, kind = kind.label(), relay_hostname = relay_hostname(), "track ingress stopped");
                                 }
                             }
                         }

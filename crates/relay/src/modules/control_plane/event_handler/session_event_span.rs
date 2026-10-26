@@ -1,6 +1,6 @@
 use tracing::Span;
 
-use crate::logging::link_span;
+use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
     domain::session_id::SessionId, session::moqt_session_event::MoqtSessionEvent,
 };
@@ -20,6 +20,7 @@ pub(super) fn session_event_span(
             "relay.publish_namespace",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             track_namespace = %handler.track_namespace(),
         ),
         MoqtSessionEvent::PublishNamespaceDone(handler) => tracing::info_span!(
@@ -27,6 +28,7 @@ pub(super) fn session_event_span(
             "relay.publish_namespace_done",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             track_namespace = %handler.track_namespace(),
         ),
         MoqtSessionEvent::SubscribeNamespace(handler) => tracing::info_span!(
@@ -34,6 +36,7 @@ pub(super) fn session_event_span(
             "relay.subscribe_namespace",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             track_namespace_prefix = %handler.track_namespace_prefix(),
         ),
         MoqtSessionEvent::UnsubscribeNamespace(handler) => tracing::info_span!(
@@ -41,6 +44,7 @@ pub(super) fn session_event_span(
             "relay.unsubscribe_namespace",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             track_namespace_prefix = %handler.track_namespace_prefix(),
         ),
         MoqtSessionEvent::Publish(handler) => tracing::info_span!(
@@ -48,6 +52,7 @@ pub(super) fn session_event_span(
             "relay.publish",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             track_namespace = %handler.track_namespace(),
             track_name = %handler.track_name(),
             track_alias = handler.track_alias(),
@@ -60,6 +65,7 @@ pub(super) fn session_event_span(
             "relay.subscribe",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.subscribe_id(),
             track_namespace = %handler.track_namespace(),
             track_name = %handler.track_name(),
@@ -73,6 +79,7 @@ pub(super) fn session_event_span(
             "relay.unsubscribe",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.subscribe_id(),
         ),
         MoqtSessionEvent::Disconnected() => tracing::info_span!(
@@ -85,6 +92,7 @@ pub(super) fn session_event_span(
             "relay.fetch",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.request_id(),
             fetch_params = ?handler.fetch_params(),
         ),
@@ -98,6 +106,7 @@ pub(super) fn session_event_span(
             "relay.go_away",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             new_session_uri = %handler.new_session_uri(),
         ),
         MoqtSessionEvent::MaxRequestId(handler) => tracing::info_span!(
@@ -105,6 +114,7 @@ pub(super) fn session_event_span(
             "relay.max_request_id",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.request_id(),
         ),
         MoqtSessionEvent::RequestsBlocked(handler) => tracing::info_span!(
@@ -112,6 +122,7 @@ pub(super) fn session_event_span(
             "relay.requests_blocked",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             maximum_request_id = handler.maximum_request_id(),
         ),
         MoqtSessionEvent::PublishNamespaceCancel(handler) => tracing::info_span!(
@@ -119,6 +130,7 @@ pub(super) fn session_event_span(
             "relay.publish_namespace_cancel",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             track_namespace = %handler.track_namespace(),
             error_code = ?handler.error_code(),
             error_reason = %handler.error_reason(),
@@ -128,6 +140,7 @@ pub(super) fn session_event_span(
             "relay.publish_done",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.request_id(),
             status_code = ?handler.status_code(),
             stream_count = handler.stream_count(),
@@ -138,6 +151,7 @@ pub(super) fn session_event_span(
             "relay.subscribe_update",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.request_id(),
             subscription_request_id = handler.subscription_request_id(),
             start_location = ?handler.start_location(),
@@ -150,6 +164,7 @@ pub(super) fn session_event_span(
             "relay.fetch_cancel",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.request_id(),
         ),
         MoqtSessionEvent::TrackStatus(handler) => tracing::info_span!(
@@ -157,6 +172,7 @@ pub(super) fn session_event_span(
             "relay.track_status",
             session_id = %session_id,
             app_id,
+            relay_hostname = relay_hostname(),
             request_id = handler.request_id(),
             track_namespace = %handler.track_namespace(),
             track_name = %handler.track_name(),

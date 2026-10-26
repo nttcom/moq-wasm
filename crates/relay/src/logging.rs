@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use anyhow::{Context, Result};
 use opentelemetry::global;
 use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
@@ -81,10 +83,13 @@ pub(crate) fn link_span(span: &Span, linked: &Span) {
     span.add_link(linked.context().span().span_context().clone());
 }
 
-pub(crate) fn relay_hostname() -> String {
-    non_empty_env("RELAY_HOSTNAME")
-        .or_else(|| non_empty_env("HOSTNAME"))
-        .unwrap_or_else(|| "unknown".to_string())
+pub(crate) fn relay_hostname() -> &'static str {
+    static RELAY_HOSTNAME: OnceLock<String> = OnceLock::new();
+    RELAY_HOSTNAME.get_or_init(|| {
+        non_empty_env("RELAY_HOSTNAME")
+            .or_else(|| non_empty_env("HOSTNAME"))
+            .unwrap_or_else(|| "unknown".to_string())
+    })
 }
 
 fn otel_resource(service_name: &str) -> Resource {
@@ -93,7 +98,7 @@ fn otel_resource(service_name: &str) -> Resource {
         .with_attributes([
             opentelemetry::KeyValue::new("service.name", service_name.to_string()),
             opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-            opentelemetry::KeyValue::new("host.name", relay_hostname.clone()),
+            opentelemetry::KeyValue::new("host.name", relay_hostname),
             opentelemetry::KeyValue::new("relay.hostname", relay_hostname),
             opentelemetry::KeyValue::new("relay.id", relay_id()),
         ])

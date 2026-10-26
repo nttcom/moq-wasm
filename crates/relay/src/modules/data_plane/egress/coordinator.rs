@@ -6,7 +6,7 @@ use tokio::{
 };
 use tracing::{Instrument, Span};
 
-use crate::logging::link_span;
+use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
     data_plane::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
@@ -158,6 +158,7 @@ impl EgressCoordinator {
         let egress_track_span = tracing::info_span!(
             parent: None,
             "relay.dataplane.egress.track",
+            relay_hostname = relay_hostname(),
             subscriber_session_id = %request.subscriber_session_id,
             request_id = request.downstream_subscribe_id,
 
