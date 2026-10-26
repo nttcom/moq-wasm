@@ -66,6 +66,17 @@ impl Decoder for UniStreamDecoder {
             InnerDecoder::Unknown => unreachable!(),
         }
     }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if let InnerDecoder::Subgroup(dec) = &mut self.inner {
+            return Ok(dec.decode_eof(src)?.map(UniStreamData::Subgroup));
+        }
+        match self.decode(src)? {
+            Some(item) => Ok(Some(item)),
+            None if src.is_empty() => Ok(None),
+            None => Err(std::io::Error::other("bytes remaining on stream")),
+        }
+    }
 }
 
 impl UniStreamDecoder {

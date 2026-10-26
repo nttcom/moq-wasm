@@ -361,6 +361,7 @@ function resolveVideoConfig(videoConfig: Uint8Array | undefined): VideoDecoderCo
   return {
     codec: catalogCodec,
     description: videoConfig ?? catalogDescription,
-    hardwareAcceleration: 'prefer-software'
+    hardwareAcceleration: 'prefer-software',
+    optimizeForLatency: true
   }
 }
