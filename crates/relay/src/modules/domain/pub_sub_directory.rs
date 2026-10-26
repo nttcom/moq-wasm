@@ -819,9 +819,25 @@ impl InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
     ) -> Option<RemovedDownstreamSubscription> {
+        self.end_downstream_subscription(downstream_session_id, downstream_subscribe_id, None)
+    }
+
+    /// Removes the registration like `remove_downstream_subscription`; `end`,
+    /// when given, goes to its egress runner, which answers it with
+    /// PUBLISH_DONE once its streams are done. Without it the subscriber
+    /// ended the subscription and no PUBLISH_DONE is sent.
+    pub(crate) fn end_downstream_subscription(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+        end: Option<PublishDoneReason>,
+    ) -> Option<RemovedDownstreamSubscription> {
         let (_, registered) = self
             .downstream_subscriptions
             .remove(&(downstream_session_id, downstream_subscribe_id))?;
+        if let Some(end) = end {
+            let _ = registered.runner_stop_sender.send(end);
+        }
         let track_key = registered.subscription.track_key;
         let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
             return None;

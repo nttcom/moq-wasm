@@ -445,8 +445,14 @@ with the track's Largest Object, resolved like a SUBSCRIBE's (draft-18
 §10.2.11; draft-14 sends no answer). When `ok` reports that the subscriber was
 given that location, an update that turns Forward from 0 to 1 also makes it
 the registration's joining location (draft-18 §5.1), so a later Joining FETCH
-ends there; draft-14 keeps the SUBSCRIBE_OK's Largest Location (§9.16.2). The
-relay itself never branches on the draft.
+ends there; draft-14 keeps the SUBSCRIBE_OK's Largest Location (§9.16.2).
+When `ok` reports `UpdateAnswer::Failed` instead, moqt has already answered
+the update REQUEST_ERROR TIMEOUT because the session worker reached it after
+the control message timeout. The update is not applied, and the subscription
+ends as draft-18 §10.9.1 requires: the UNSUBSCRIBE sequence removes the
+registration, handing its runner PUBLISH_DONE UPDATE_FAILED, which it sends
+once its streams are done, and releases the upstream subscriptions left
+unneeded. The relay itself never branches on the draft.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Joining

@@ -154,6 +154,7 @@ impl SessionWorker {
                         &self.deps.control_message_forwarder,
                         &self.deps.ingress_sender,
                         request_id,
+                        None,
                     )
                     .instrument(event_span)
                     .await;
@@ -298,6 +299,7 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
                         handler.subscribe_id(),
+                        None,
                     )
                     .instrument(event_span)
                     .await;
@@ -338,7 +340,7 @@ impl SessionWorker {
                     .await;
             }
             MoqtSessionEvent::SubscribeUpdate(handler) => {
-                event_span.in_scope(|| {
+                let end = event_span.in_scope(|| {
                     SubscribeUpdate {}.handle(
                         session_id,
                         &session_span,
@@ -348,6 +350,20 @@ impl SessionWorker {
                         handler.as_ref(),
                     )
                 });
+                if let Some(end) = end {
+                    Unsubscribe {}
+                        .handle(
+                            session_id,
+                            &session_span,
+                            deps.local_pub_sub_directory.as_ref(),
+                            &deps.control_message_forwarder,
+                            &deps.ingress_sender,
+                            handler.subscription_request_id(),
+                            Some(end),
+                        )
+                        .instrument(event_span)
+                        .await;
+                }
             }
             MoqtSessionEvent::PublishDone(handler) => {
                 UpstreamPublishDone

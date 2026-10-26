@@ -705,6 +705,8 @@ enum UpdateDraft {
     Draft14,
     /// REQUEST_OK with LARGEST_OBJECT, widening allowed (draft-18 §10.9.1).
     Draft18,
+    /// A draft-18 update already answered REQUEST_ERROR TIMEOUT.
+    Draft18TimedOut,
 }
 
 impl MockSubscribeUpdateHandler {
@@ -731,6 +733,21 @@ impl MockSubscribeUpdateHandler {
             forward,
             filter,
             UpdateDraft::Draft18,
+        )
+    }
+
+    /// A draft-18 update `ok` reports as failed, as when the application
+    /// answers it after the timeout.
+    pub(crate) fn draft18_timed_out(
+        subscription_request_id: u64,
+        forward: bool,
+        filter: Option<FilterType>,
+    ) -> Self {
+        Self::new(
+            subscription_request_id,
+            forward,
+            filter,
+            UpdateDraft::Draft18TimedOut,
         )
     }
 
@@ -774,14 +791,18 @@ impl SubscribeUpdateHandler for MockSubscribeUpdateHandler {
     fn check_widening(&self) -> Result<(), moqt::subscribe::SubscriptionUpdateRefusal> {
         match self.draft {
             UpdateDraft::Draft14 => Err(moqt::subscribe::SubscriptionUpdateRefusal::Widening),
-            UpdateDraft::Draft18 => Ok(()),
+            UpdateDraft::Draft18 | UpdateDraft::Draft18TimedOut => Ok(()),
         }
     }
 
     fn ok(&self, largest: Option<moqt::object::Location>) -> moqt::subscribe::UpdateAnswer {
         self.answers.lock().unwrap().push(largest);
-        moqt::subscribe::UpdateAnswer::Accepted {
-            largest_told: matches!(self.draft, UpdateDraft::Draft18),
+        match self.draft {
+            UpdateDraft::Draft14 => moqt::subscribe::UpdateAnswer::Accepted {
+                largest_told: false,
+            },
+            UpdateDraft::Draft18 => moqt::subscribe::UpdateAnswer::Accepted { largest_told: true },
+            UpdateDraft::Draft18TimedOut => moqt::subscribe::UpdateAnswer::Failed,
         }
     }
 }

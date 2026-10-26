@@ -5,7 +5,10 @@ use tracing::Span;
 use super::subscribe::{cached_largest, existing_track_largest};
 use crate::modules::{
     data_plane::cache::store::TrackCacheStore,
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    domain::{
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
+        session_id::SessionId,
+    },
     session::{handler::subscribe_update::SubscribeUpdateHandler, session_event::SessionEvent},
 };
 
@@ -20,6 +23,11 @@ impl SubscribeUpdate {
     /// track's Largest Object (draft-18 §10.2.11); only when `ok` reports
     /// that the subscriber was given it does an update that turns Forward on
     /// make it the subscription's Joining Location (draft-18 §5.1).
+    ///
+    /// Returns the PUBLISH_DONE to end the subscription with when the update
+    /// failed: `ok` reports an update answered REQUEST_ERROR for being
+    /// answered too late, and draft-18 §10.9.1 then ends the subscription
+    /// with UPDATE_FAILED.
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.subscribe_update",
@@ -35,7 +43,7 @@ impl SubscribeUpdate {
         cache_store: &TrackCacheStore,
         session_event_sender: &mpsc::UnboundedSender<SessionEvent>,
         handler: &dyn SubscribeUpdateHandler,
-    ) {
+    ) -> Option<PublishDoneReason> {
         let subscription_request_id = handler.subscription_request_id();
         Span::current().record("subscription_request_id", subscription_request_id);
         let Some((subscription, current)) =
@@ -43,7 +51,7 @@ impl SubscribeUpdate {
         else {
             tracing::warn!("SUBSCRIBE_UPDATE for no active downstream subscription");
             handler.ok(None);
-            return;
+            return None;
         };
         let track_key = &subscription.track_key;
         let largest = match table.get_upstream_track(track_key) {
@@ -59,11 +67,11 @@ impl SubscribeUpdate {
                 session_id,
                 refusal.to_string(),
             ));
-            return;
+            return None;
         }
         let UpdateAnswer::Accepted { largest_told } = handler.ok(largest) else {
-            tracing::warn!("SUBSCRIBE_UPDATE answered too late; it failed and is not applied");
-            return;
+            tracing::warn!("SUBSCRIBE_UPDATE answered too late; ending the subscription");
+            return Some(PublishDoneReason::update_failed());
         };
         if table.update_downstream_delivery(
             session_id,
@@ -73,6 +81,7 @@ impl SubscribeUpdate {
         ) {
             tracing::info!(?requested, "downstream subscription updated");
         }
+        None
     }
 }
 
@@ -154,7 +163,11 @@ mod tests {
         }
     }
 
-    fn update(updated: &mut Updated, session_id: SessionId, handler: &MockSubscribeUpdateHandler) {
+    fn update(
+        updated: &mut Updated,
+        session_id: SessionId,
+        handler: &MockSubscribeUpdateHandler,
+    ) -> Option<PublishDoneReason> {
         let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
         updated.session_event_receiver = session_event_receiver;
         SubscribeUpdate.handle(
@@ -164,7 +177,7 @@ mod tests {
             &updated.cache_store,
             &session_event_sender,
             handler,
-        );
+        )
     }
 
     fn joining_location(updated: &Updated) -> Option<Location> {
@@ -296,6 +309,20 @@ mod tests {
         // Assert: draft-18 §10.2.9
         let control = updated.control();
         assert_eq!((control.forward, control.start), (false, location(5, 0)));
+    }
+
+    #[test]
+    fn an_update_answered_after_its_timeout_ends_the_subscription_with_update_failed() {
+        // Arrange
+        let mut updated = subscription_with(delivery_control(true));
+        let handler = MockSubscribeUpdateHandler::draft18_timed_out(SUBSCRIPTION, false, None);
+
+        // Act
+        let end = update(&mut updated, SUBSCRIBER_SESSION, &handler);
+
+        // Assert: draft-18 §10.9.1, and the failed update is not applied
+        assert_eq!(end, Some(PublishDoneReason::update_failed()));
+        assert!(updated.control().forward);
     }
 
     #[test]
