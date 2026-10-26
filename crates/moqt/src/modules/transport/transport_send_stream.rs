@@ -26,13 +26,18 @@ pub enum TransportSendError {
 }
 
 impl TransportSendError {
+    /// The transport failure behind a send error, through any context layers.
+    pub fn in_chain(error: &anyhow::Error) -> Option<&TransportSendError> {
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<TransportSendError>())
+    }
+
     pub fn is_stopped_by_peer(error: &anyhow::Error) -> bool {
-        error.chain().any(|cause| {
-            matches!(
-                cause.downcast_ref::<TransportSendError>(),
-                Some(TransportSendError::Stopped { .. })
-            )
-        })
+        matches!(
+            Self::in_chain(error),
+            Some(TransportSendError::Stopped { .. })
+        )
     }
 }
 
@@ -68,5 +73,23 @@ mod tests {
         // Act / Assert
         assert!(TransportSendError::is_stopped_by_peer(&stopped));
         assert!(!TransportSendError::is_stopped_by_peer(&lost));
+    }
+
+    #[test]
+    fn finds_the_transport_failure_through_context_layers() {
+        // Arrange
+        let lost = Err::<(), _>(TransportSendError::ConnectionLost {
+            reason: "timed out".into(),
+        })
+        .context("send subgroup object")
+        .unwrap_err();
+        let other = anyhow::anyhow!("the current object's payload lacks 3 bytes");
+
+        // Act / Assert
+        assert!(matches!(
+            TransportSendError::in_chain(&lost),
+            Some(TransportSendError::ConnectionLost { .. })
+        ));
+        assert!(TransportSendError::in_chain(&other).is_none());
     }
 }
