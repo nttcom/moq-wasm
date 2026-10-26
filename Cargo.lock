@@ -2738,9 +2738,9 @@ dependencies = [
  "object_store",
  "reqwest",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "transcode",
  "url",
 ]
