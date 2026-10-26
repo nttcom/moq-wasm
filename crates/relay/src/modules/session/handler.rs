@@ -4,4 +4,5 @@ pub(crate) mod publish_namespace;
 pub(crate) mod subscribe;
 pub(crate) mod subscribe_namespace;
 pub(crate) mod subscribe_namespace_update;
+pub(crate) mod subscribe_update;
 pub(crate) mod track_status;
