@@ -22,10 +22,7 @@ use crate::modules::{
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
-    domain::{
-        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
-        session_id::SessionId,
-    },
+    domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
     session::{
         handler::track_status::TrackStatusHandler,
         moqt_session_event::MoqtSessionEvent,
@@ -347,9 +344,8 @@ impl SessionWorker {
                         &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.cache_store,
-                        handler.subscription_request_id(),
-                        DeliveryControl::from_update(handler.forward(), handler.filter()),
-                        |largest| handler.ok(largest),
+                        &deps.relay_event_sender,
+                        handler.as_ref(),
                     )
                 });
             }
