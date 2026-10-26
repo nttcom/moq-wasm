@@ -44,19 +44,17 @@ pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<
     }
 }
 
+thread_local! {
+    // `now()` runs several times per received object.
+    static PERFORMANCE: web_sys::Performance =
+        js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("performance"))
+            .expect("performance is defined in every browser global scope")
+            .unchecked_into();
+}
+
 /// Monotonic time since an arbitrary origin; only differences are meaningful.
 pub fn now() -> Duration {
-    let global = js_sys::global();
-    let performance = js_sys::Reflect::get(&global, &JsValue::from_str("performance"))
-        .expect("performance is defined in every browser global scope");
-    let now: js_sys::Function = js_sys::Reflect::get(&performance, &JsValue::from_str("now"))
-        .expect("performance.now is defined in every browser global scope")
-        .unchecked_into();
-    let millis = now
-        .call0(&performance)
-        .expect("performance.now takes no arguments")
-        .as_f64()
-        .expect("performance.now returns a number");
+    let millis = PERFORMANCE.with(web_sys::Performance::now);
     Duration::from_secs_f64(millis / 1_000.0)
 }
 
