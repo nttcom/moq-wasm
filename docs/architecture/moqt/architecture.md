@@ -400,7 +400,9 @@ returned; requests the peer sends, on any connection, carry logical ids. A
 FETCH response stream a migration cuts off is FETCHed again on the current
 connection from the first object not delivered up to the FETCH_OK's End
 Location, and the `FetchDataReceiver` reads on from it; a descending FETCH
-is not sent again. While both
+is not sent again. The FETCH sent again carries the FILL_TIMEOUT left of the
+first one (draft-18 §10.2.5), counted from when the first was sent and 0
+once it ran out. While both
 connections deliver a subscription, the sinks of both share a `GroupCutover`
 (see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
 carried subscription is dropped; GOAWAY is never returned; `Disconnected`
@@ -760,6 +762,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     be written; there, and on draft-14, which has no marker, the response is
     reset with UNKNOWN_OBJECT_STATUS (draft-18 §10.12; draft-14's wire value
     is INTERNAL_ERROR) and has ended (`Reset`).
+    `FetchHandler::marks_unknown_ranges()` tells beforehand whether the
+    response can do the former, so a relay can choose how long to wait for
+    objects without knowing the draft.
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

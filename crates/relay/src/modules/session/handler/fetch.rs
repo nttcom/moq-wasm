@@ -11,6 +11,8 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
     fn fetch_params(&self) -> moqt::fetch::FetchParams;
     /// See `moqt::fetch::FetchHandler::fill_timeout`.
     fn fill_timeout(&self) -> Option<std::time::Duration>;
+    /// See `moqt::fetch::FetchHandler::marks_unknown_ranges`.
+    fn marks_unknown_ranges(&self) -> bool;
     fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal>;
     async fn ok(
         &self,
@@ -41,6 +43,10 @@ impl FetchHandler for moqt::fetch::FetchHandler {
 
     fn fill_timeout(&self) -> Option<std::time::Duration> {
         moqt::fetch::FetchHandler::fill_timeout(self)
+    }
+
+    fn marks_unknown_ranges(&self) -> bool {
+        moqt::fetch::FetchHandler::marks_unknown_ranges(self)
     }
 
     fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal> {

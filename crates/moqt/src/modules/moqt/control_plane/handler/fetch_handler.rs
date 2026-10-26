@@ -83,6 +83,16 @@ impl FetchHandler {
         self.fetch.fill_timeout.map(Duration::from_millis)
     }
 
+    /// Whether the response can mark a range of objects unknown and go on
+    /// (draft-18 §11.4.4.2 End of Unknown Range). Where it cannot (draft-14),
+    /// `FetchDataSender::report_unknown_range` resets the response instead.
+    pub fn marks_unknown_ranges(&self) -> bool {
+        match self.guard.connection().control.version() {
+            Version::Draft14 => false,
+            Version::Draft18 => true,
+        }
+    }
+
     /// Whether this Joining FETCH may join `subscription` under the session's
     /// draft (draft-14 §9.16.2, draft-18 §10.12.2); each refusal names the
     /// answer its draft requires. Not meaningful for a Standalone FETCH.
@@ -287,6 +297,28 @@ mod tests {
 
             // Assert: draft-18 §10.2.5 FILL_TIMEOUT; draft-14 §9.16 has none
             assert_eq!(handler.fill_timeout(), expected, "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn only_a_draft18_fetch_response_can_mark_objects_unknown() {
+        for (version, (client, server), expected) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-marks-unknown-14").await,
+                false,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-marks-unknown-18", "moqt").await,
+                true,
+            ),
+        ] {
+            // Act
+            let handler = received_fetch(&client, &server).await;
+
+            // Assert: draft-18 §11.4.4.2 End of Unknown Range; draft-14 §10.4.4 has no such marker
+            assert_eq!(handler.marks_unknown_ranges(), expected, "{version:?}");
         }
     }
 
