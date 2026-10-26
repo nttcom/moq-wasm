@@ -183,19 +183,18 @@ mod tests {
     #[test]
     fn the_newest_publishers_track_properties_replace_the_others_unmerged() {
         // Arrange: the older set holds a property the newer one lacks
-        let mut older = unknown_track_properties(1);
-        older.other.push(KeyValuePair {
+        let mut older_pairs: Vec<KeyValuePair> =
+            unknown_track_properties(1).iter().cloned().collect();
+        older_pairs.push(KeyValuePair {
             key: 0x3A,
             value: VariantType::Even(7),
         });
-        older.max_cache_duration = Some(1_000);
-        let newer = moqt::TrackProperties {
-            max_cache_duration: None,
-            other: vec![KeyValuePair {
-                key: 0x38,
-                value: VariantType::Even(2),
-            }],
-        };
+        let mut older = moqt::TrackProperties::from_pairs(older_pairs);
+        older.set_max_cache_duration(Some(1_000));
+        let newer = moqt::TrackProperties::from_pairs(vec![KeyValuePair {
+            key: 0x38,
+            value: VariantType::Even(2),
+        }]);
         let mut upstream_track = UpstreamTrack::default();
         upstream_track
             .subscriptions

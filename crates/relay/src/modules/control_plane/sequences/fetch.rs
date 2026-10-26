@@ -1365,7 +1365,8 @@ mod tests {
     }
 
     /// The track properties of each FETCH_OK sent for a FETCH that the
-    /// cache of `ns/track` serves, which recorded `cached` from publisher 1.
+    /// cache of `ns/track` serves, which served `cached` from publisher 1
+    /// until it left.
     async fn fetch_oks_from_cache(
         table: InMemoryLocalPubSubDirectory,
         cached: moqt::TrackProperties,
@@ -1373,7 +1374,8 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
         let _open_g1 = open_group(&cache, 1, &[2, 3]);
-        cache.record_track_properties(1, cached);
+        cache.publisher_started(1, cached);
+        cache.publisher_stopped(1);
         let (egress_sender, _egress_receiver) = tokio::sync::mpsc::channel(1);
         let (session_event_sender, _session_event_receiver) =
             tokio::sync::mpsc::unbounded_channel();
@@ -1412,8 +1414,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_fetch_served_from_cache_carries_the_newest_live_publishers_properties() {
-        // Arrange: publisher 3 answered SUBSCRIBE, but only publisher 1's
-        // ingest has recorded its set in the cache
+        // Arrange: publisher 3 answered SUBSCRIBE, but the cache has served
+        // only publisher 1's set
         let table = InMemoryLocalPubSubDirectory::new();
         for publisher_session_id in [1, 3] {
             table.register_upstream_subscription(

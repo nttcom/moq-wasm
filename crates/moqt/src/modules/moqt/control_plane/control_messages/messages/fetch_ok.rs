@@ -42,10 +42,8 @@ impl FetchOk {
         let end_of_track = util::u8_to_bool(end_of_track_u8).context("end of track")?;
         let end_location = Location::decode(buf)?;
         let parameters = KeyValuePair::decode_list(buf)?;
-        let track_properties = TrackProperties {
-            max_cache_duration: find_even(&parameters, 0x04),
-            other: Vec::new(),
-        };
+        let mut track_properties = TrackProperties::default();
+        track_properties.set_max_cache_duration(find_even(&parameters, 0x04));
         Ok(FetchOk {
             request_id,
             group_order,
@@ -63,7 +61,7 @@ impl FetchOk {
         payload.unsplit(self.end_location.encode());
         let parameters: Vec<KeyValuePair> = self
             .track_properties
-            .max_cache_duration
+            .max_cache_duration()
             .map(|value| KeyValuePair::even(0x04, value))
             .into_iter()
             .collect();
@@ -129,9 +127,10 @@ mod tests {
                     group_id: 100,
                     object_id: 200,
                 },
-                track_properties: TrackProperties {
-                    max_cache_duration: Some(5000),
-                    ..Default::default()
+                track_properties: {
+                    let mut properties = TrackProperties::default();
+                    properties.set_max_cache_duration(Some(5000));
+                    properties
                 },
             };
             let buf = expected.encode();

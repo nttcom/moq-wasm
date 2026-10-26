@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use moqt::RequestErrorCode;
-use moqt::{AuthorizationToken, object::ContentExists};
+use moqt::{AuthorizationToken, TrackProperties, object::ContentExists};
 
 #[async_trait]
 pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
@@ -13,6 +13,7 @@ pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
         &self,
         expires: u64,
         content_exists: ContentExists,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError>;
     async fn error(
         &self,
@@ -47,8 +48,9 @@ impl TrackStatusHandler for moqt::subscribe::TrackStatusHandler {
         &self,
         expires: u64,
         content_exists: ContentExists,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
-        self.ok(expires, content_exists).await
+        self.ok(expires, content_exists, track_properties).await
     }
 
     async fn error(

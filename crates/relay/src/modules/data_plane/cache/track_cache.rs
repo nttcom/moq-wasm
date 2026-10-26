@@ -1,5 +1,5 @@
 use std::{
-    collections::btree_map::Entry,
+    collections::{BTreeMap, btree_map::Entry},
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
@@ -66,11 +66,28 @@ pub(crate) struct TrackCache {
     ingress_stats: IngressStats,
     payload_bytes: AtomicU64,
     disk: Option<DiskSink>,
-    /// The track properties of the latest SUBSCRIBE_OK, PUBLISH or FETCH_OK
-    /// of the newest publisher an ingest started from, by the rule of
-    /// `UpstreamTrack::track_properties`; a FETCH served from the cache once
-    /// no publisher is left answers with them (draft-18 §2.5).
-    track_properties: std::sync::Mutex<Option<(SessionId, TrackProperties)>>,
+    /// The track properties the relay serves downstream; a FETCH served from
+    /// the cache once no publisher is left answers with them (draft-18 §2.5).
+    track_properties: std::sync::Mutex<ServedTrackProperties>,
+}
+
+/// The track properties the relay serves downstream: those of the newest
+/// live publisher, as `UpstreamTrack::track_properties` picks for SUBSCRIBE_OK
+/// and the forwarded PUBLISH, then the last served once none is left.
+#[derive(Debug, Default)]
+struct ServedTrackProperties {
+    /// What each live publisher's SUBSCRIBE_OK or PUBLISH said; session ids
+    /// grow with time, so the last is the newest publisher's.
+    publishers: BTreeMap<SessionId, TrackProperties>,
+    served: TrackProperties,
+}
+
+impl ServedTrackProperties {
+    fn follow_the_newest_publisher(&mut self) {
+        if let Some((_, track_properties)) = self.publishers.last_key_value() {
+            self.served = track_properties.clone();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -102,32 +119,45 @@ impl TrackCache {
         }
     }
 
-    /// Replaces the cached set whole, unless an older publisher sent it:
-    /// draft-18 §2.5 forbids merging it with the previous one.
-    pub(crate) fn record_track_properties(
+    fn served_track_properties(&self) -> std::sync::MutexGuard<'_, ServedTrackProperties> {
+        self.track_properties
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A publisher's ingest started with what its SUBSCRIBE_OK or PUBLISH
+    /// said. Each set replaces the served one whole: draft-18 §2.5 forbids
+    /// merging sets.
+    pub(crate) fn publisher_started(
         &self,
         publisher_session_id: SessionId,
         track_properties: TrackProperties,
     ) {
-        let mut recorded = self
-            .track_properties
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if recorded
-            .as_ref()
-            .is_none_or(|(newest, _)| publisher_session_id >= *newest)
-        {
-            *recorded = Some((publisher_session_id, track_properties));
+        let mut served = self.served_track_properties();
+        served
+            .publishers
+            .insert(publisher_session_id, track_properties);
+        served.follow_the_newest_publisher();
+    }
+
+    /// The relay no longer routes the track from this publisher.
+    pub(crate) fn publisher_stopped(&self, publisher_session_id: SessionId) {
+        let mut served = self.served_track_properties();
+        served.publishers.remove(&publisher_session_id);
+        served.follow_the_newest_publisher();
+    }
+
+    /// What an upstream FETCH_OK the relay forwarded said; it is served
+    /// only while no publisher is live, whose set SUBSCRIBE_OK carries.
+    pub(crate) fn fetched_track_properties(&self, track_properties: TrackProperties) {
+        let mut served = self.served_track_properties();
+        if served.publishers.is_empty() {
+            served.served = track_properties;
         }
     }
 
     pub(crate) fn track_properties(&self) -> TrackProperties {
-        self.track_properties
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map(|(_, track_properties)| track_properties.clone())
-            .unwrap_or_default()
+        self.served_track_properties().served.clone()
     }
 
     pub(crate) fn ingress_stats(&self) -> &IngressStats {
@@ -581,12 +611,39 @@ mod tests {
     use super::*;
     use crate::modules::{
         data_plane::cache::subgroup_key::SubgroupKey,
-        test_support::relay_harness::fixtures::cached_object::{
-            datagram_object, fetched_copy_in_subgroup, insert_aborted_group, insert_closed_group,
-            open_group, stream_key, stream_object, stream_object_in_subgroup,
-            stream_object_with_payload,
+        test_support::relay_harness::fixtures::{
+            cached_object::{
+                datagram_object, fetched_copy_in_subgroup, insert_aborted_group,
+                insert_closed_group, open_group, stream_key, stream_object,
+                stream_object_in_subgroup, stream_object_with_payload,
+            },
+            subscription::unknown_track_properties,
         },
     };
+
+    #[test]
+    fn the_served_track_properties_are_the_newest_live_publishers() {
+        // Arrange
+        let cache = TrackCache::new();
+        cache.publisher_started(1, unknown_track_properties(1));
+        cache.publisher_started(2, unknown_track_properties(2));
+
+        // Act
+        let while_both_publish = cache.track_properties();
+        cache.publisher_started(1, unknown_track_properties(3));
+        let after_the_older_sent_again = cache.track_properties();
+        cache.publisher_stopped(2);
+        let after_the_newest_left = cache.track_properties();
+        cache.publisher_stopped(1);
+        let after_every_publisher_left = cache.track_properties();
+
+        // Assert: the set SUBSCRIBE_OK carries at each point, then the last
+        // served one; draft-18 §2.5 replaces a set whole
+        assert_eq!(while_both_publish, unknown_track_properties(2));
+        assert_eq!(after_the_older_sent_again, unknown_track_properties(2));
+        assert_eq!(after_the_newest_left, unknown_track_properties(3));
+        assert_eq!(after_every_publisher_left, unknown_track_properties(3));
+    }
 
     fn subgroup_keys_in_group(cache: &TrackCache, group_id: u64) -> Vec<SubgroupKey> {
         cache

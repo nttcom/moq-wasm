@@ -1025,7 +1025,7 @@ mod tests {
             let (client, server) =
                 connected_sessions("subscriber-fetch-max-cache-duration", version).await;
             let (request, mut handler) = start_fetch(&client, &server, TRACK).await;
-            handler.track_properties.max_cache_duration = Some(2_000);
+            handler.track_properties.set_max_cache_duration(Some(2_000));
 
             // Act
             handler.ok(false, END).await.unwrap();
@@ -1033,7 +1033,7 @@ mod tests {
             // Assert
             let fetch_handle = request.await.unwrap().unwrap();
             assert_eq!(
-                fetch_handle.track_properties.max_cache_duration,
+                fetch_handle.track_properties.max_cache_duration(),
                 Some(2_000)
             );
         }
@@ -1430,7 +1430,9 @@ mod tests {
             // Act
             let received = within(async {
                 for (index, (_, handler)) in requests.iter_mut().enumerate().rev() {
-                    handler.track_properties.max_cache_duration = Some(1000 + index as u64);
+                    handler
+                        .track_properties
+                        .set_max_cache_duration(Some(1000 + index as u64));
                     aliases[index] = handler
                         .ok(10 + index as u64, content_of(index))
                         .await
@@ -1465,7 +1467,7 @@ mod tests {
                 assert_eq!(subscription.expires(), Some(10 + index as u64));
                 assert_eq!(subscription.content_exists(), content_of(index));
                 assert_eq!(
-                    subscription.track_properties().max_cache_duration,
+                    subscription.track_properties().max_cache_duration(),
                     Some(1000 + index as u64)
                 );
                 assert_eq!(received_objects, [objects[index].clone()]);

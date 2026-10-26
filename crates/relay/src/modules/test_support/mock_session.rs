@@ -511,7 +511,6 @@ impl Subscriber for MockUpstreamSubscriber {
                 subscriber_priority: 128,
                 content_exists: answer_subscribe(),
                 filter_type: FilterType::LargestObject,
-                delivery_timeout: None,
                 track_properties: TrackProperties::default(),
             }),
         ))

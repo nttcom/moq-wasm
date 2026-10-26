@@ -2,6 +2,7 @@ use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
+    TrackProperties,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -12,7 +13,7 @@ use crate::{
                 subscribe_ok::SubscribeOk,
             },
             error_codes::{RequestErrorCode, RequestKind},
-            handler::response_guard::ResponseGuard,
+            handler::{response_guard::ResponseGuard, subscribe_handler::delivered_group_order},
         },
         domains::connection::Connection,
     },
@@ -58,21 +59,23 @@ impl TrackStatusHandler {
         }
     }
 
-    /// draft-14 §9.21: the fields are those of a SUBSCRIBE_OK with Track Alias 0.
+    /// The fields and Track Properties are those of the SUBSCRIBE_OK the
+    /// track's publisher would send, with Track Alias 0 (draft-14 §9.21,
+    /// draft-18 §10.14).
     pub async fn ok(
         &self,
         expires: u64,
         content_exists: ContentExists,
+        track_properties: TrackProperties,
     ) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let track_status_ok = SubscribeOk {
             request_id: self.guard.request_id(),
             track_alias: 0,
             expires,
-            group_order: self.group_order.delivered(),
+            group_order: delivered_group_order(self.group_order, &track_properties),
             content_exists,
-            delivery_timeout: None,
-            track_properties: Default::default(),
+            track_properties,
         };
         self.guard
             .connection()
@@ -135,9 +138,10 @@ mod tests {
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{connect_sessions, rejection, spawn_dual_server},
         },
-        object::{ContentExists, Location},
+        object::{ContentExists, KeyValuePair, Location, VariantType},
         wire::TrackStatusOk,
     };
+    use crate::{TrackProperties, modules::test_support::spawn_connected_draft18_sessions};
 
     use super::TrackStatusHandler;
 
@@ -152,6 +156,13 @@ mod tests {
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
+        track_status_exchange_between(client, server).await
+    }
+
+    async fn track_status_exchange_between(
+        client: Session,
+        server: Session,
+    ) -> TrackStatusExchange {
         let request = tokio::spawn(async move {
             client
                 .subscriber()
@@ -178,7 +189,11 @@ mod tests {
         let exchange = track_status_exchange("track-status-ok").await;
 
         // Act
-        exchange.handler.ok(0, ContentExists::False).await.unwrap();
+        exchange
+            .handler
+            .ok(0, ContentExists::False, TrackProperties::default())
+            .await
+            .unwrap();
 
         // Assert
         let track_status_ok = exchange.request.await.unwrap().unwrap();
@@ -198,7 +213,11 @@ mod tests {
         };
 
         // Act
-        exchange.handler.ok(30, content_exists).await.unwrap();
+        exchange
+            .handler
+            .ok(30, content_exists, TrackProperties::default())
+            .await
+            .unwrap();
 
         // Assert
         let track_status_ok = exchange.request.await.unwrap().unwrap();
@@ -259,5 +278,61 @@ mod tests {
         // Assert
         let error = rejection(exchange.request.await.unwrap());
         assert_eq!(error.code, RequestErrorCode::NotSupported);
+    }
+
+    /// MAX_CACHE_DURATION 500, OBJECT_DELIVERY_TIMEOUT 200 and an
+    /// application property.
+    fn track_properties() -> TrackProperties {
+        let mut properties = TrackProperties::from_pairs(vec![KeyValuePair {
+            key: 0x38,
+            value: VariantType::Even(1),
+        }]);
+        properties.set_max_cache_duration(Some(500));
+        properties.set_delivery_timeout(Some(200));
+        properties
+    }
+
+    #[tokio::test]
+    async fn a_draft18_ok_carries_the_track_properties_of_a_subscribe_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("track-status-draft18-properties", "moqt").await;
+        let exchange = track_status_exchange_between(client, server).await;
+
+        // Act
+        exchange
+            .handler
+            .ok(0, ContentExists::False, track_properties())
+            .await
+            .unwrap();
+
+        // Assert: draft-18 §10.14, the Track Properties of a SUBSCRIBE_OK
+        let track_status_ok = exchange.request.await.unwrap().unwrap();
+        assert_eq!(track_status_ok.track_properties, track_properties());
+    }
+
+    #[tokio::test]
+    async fn a_draft14_ok_carries_the_parameters_of_a_subscribe_ok() {
+        // Arrange
+        let exchange = track_status_exchange("track-status-draft14-properties").await;
+
+        // Act
+        exchange
+            .handler
+            .ok(0, ContentExists::False, track_properties())
+            .await
+            .unwrap();
+
+        // Assert: draft-14 §9.21, the fields and parameters of a
+        // SUBSCRIBE_OK; draft-14 has no other Track Properties
+        let track_status_ok = exchange.request.await.unwrap().unwrap();
+        assert_eq!(
+            track_status_ok.track_properties.max_cache_duration(),
+            Some(500)
+        );
+        assert_eq!(
+            track_status_ok.track_properties.delivery_timeout(),
+            Some(200)
+        );
     }
 }

@@ -485,7 +485,10 @@ impl SessionWorker {
                             "authorization token refreshed"
                         );
                         self.verified_token = Some(token);
-                        handler.ok(0, ContentExists::False).await
+                        // The token refresh answers for no track.
+                        handler
+                            .ok(0, ContentExists::False, moqt::TrackProperties::default())
+                            .await
                     }
                     None => {
                         handler

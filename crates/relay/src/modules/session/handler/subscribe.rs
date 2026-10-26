@@ -63,10 +63,10 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
         self.filter_type
     }
     fn _max_cache_duration(&self) -> Option<u64> {
-        self.track_properties.max_cache_duration
+        self.track_properties.max_cache_duration()
     }
     fn _delivery_timeout(&self) -> Option<u64> {
-        self.delivery_timeout
+        self.track_properties.delivery_timeout()
     }
     fn allocate_track_alias(&self) -> u64 {
         moqt::subscribe::SubscribeHandler::allocate_track_alias(self)

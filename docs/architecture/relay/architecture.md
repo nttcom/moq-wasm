@@ -828,10 +828,12 @@ per-request authorization gate under "Event pipeline".
   - A relayed upstream FETCH_OK carries that FETCH_OK's set.
   - A FETCH_OK served from cache carries the same newest publisher's set
     while one is live. Once the last publisher has left, it carries
-    `TrackCache::track_properties`: the latest set of the newest publisher
-    (largest session id) whose ingest started (its SUBSCRIBE_OK or PUBLISH)
-    or whose upstream FETCH_OK filled the cache; an older publisher's later
-    set does not replace it (§2.5 caches properties with the track).
+    `TrackCache::track_properties`, the set the relay served last, so it
+    equals the last SUBSCRIBE_OK (§2.5 caches properties with the track).
+    The cache follows the routing: each ingest start and stop records the
+    publisher's set, and the served set is the newest live publisher's, so
+    when the newest leaves first the older publisher's set takes over. An
+    upstream FETCH_OK's set is served only while no publisher is live.
   - A draft-14 session sends none of the draft-18 properties (see
     "Relaying across versions" for Mandatory Track Properties).
 - Disk cache (`disk_cache.rs`, on when `RELAY_DISK_CACHE_DIR` is set): the

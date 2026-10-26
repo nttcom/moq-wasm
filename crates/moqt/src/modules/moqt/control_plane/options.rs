@@ -9,16 +9,15 @@ use crate::{
 
 #[derive(Clone)]
 pub struct PublishOption {
-    pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
+    /// Sent in the PUBLISH, with the track's group order (§12.5).
     pub track_properties: TrackProperties,
 }
 
 impl Default for PublishOption {
     fn default() -> Self {
         Self {
-            group_order: GroupOrder::Ascending,
             content_exists: ContentExists::False,
             forward: true,
             track_properties: TrackProperties::default(),

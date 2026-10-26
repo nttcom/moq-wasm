@@ -60,7 +60,12 @@ impl PublishHandler {
             track_namespace_tuple: publish_message.track_namespace_tuple,
             track_name: publish_message.track_name,
             track_alias,
-            group_order: publish_message.group_order,
+            // §12.5: the publisher's order is Ascending unless it says
+            // otherwise.
+            group_order: publish_message
+                .track_properties
+                .group_order()
+                .unwrap_or(GroupOrder::Ascending),
             content_exists: publish_message.content_exists,
             forward: publish_message.forward,
             track_properties: publish_message.track_properties,
@@ -178,9 +183,10 @@ mod tests {
                     "ns".to_string(),
                     "track".to_string(),
                     PublishOption {
-                        track_properties: TrackProperties {
-                            max_cache_duration: Some(2_000),
-                            ..Default::default()
+                        track_properties: {
+                            let mut properties = TrackProperties::default();
+                            properties.set_max_cache_duration(Some(2_000));
+                            properties
                         },
                         ..PublishOption::default()
                     },
@@ -195,10 +201,16 @@ mod tests {
         let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
 
         // Assert
-        assert_eq!(handler.track_properties.max_cache_duration, Some(2_000));
-        assert_eq!(accepted.track_properties().max_cache_duration, Some(2_000));
+        assert_eq!(handler.track_properties.max_cache_duration(), Some(2_000));
+        assert_eq!(
+            accepted.track_properties().max_cache_duration(),
+            Some(2_000)
+        );
         let published = request.await.unwrap().unwrap();
-        assert_eq!(published.track_properties().max_cache_duration, Some(2_000));
+        assert_eq!(
+            published.track_properties().max_cache_duration(),
+            Some(2_000)
+        );
     }
 
     #[tokio::test]

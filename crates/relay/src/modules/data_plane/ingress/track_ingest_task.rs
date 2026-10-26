@@ -74,7 +74,7 @@ impl TrackIngestTask {
                             let (stop_sender, stop_receiver) = watch::channel(false);
                             stop_senders.insert(ingest_key.clone(), (ingest_id, stop_sender));
                             let cache = cache_store.get_or_create(&start.track_key);
-                            cache.record_track_properties(
+                            cache.publisher_started(
                                 start.publisher_session_id,
                                 start.track_properties,
                             );
@@ -92,6 +92,9 @@ impl TrackIngestTask {
                             });
                         }
                         IngestCommand::Stop { track_key, publisher_session_id } => {
+                            if let Some(cache) = cache_store.get(&track_key) {
+                                cache.publisher_stopped(publisher_session_id);
+                            }
                             if let Some((_, stop_sender)) = stop_senders.remove(&(track_key.clone(), publisher_session_id)) {
                                 let _ = stop_sender.send(true);
                                 tracing::info!(%track_key, publisher_session_id, "ingress track stop requested");
@@ -214,6 +217,42 @@ mod tests {
         async fn wait_largest_location(&self, expected: moqt::object::Location) {
             wait_largest_location(&self.cache_store.get_or_create(&track_key()), expected).await;
         }
+
+        /// Returns once the task has handled every command sent before: it
+        /// handles them in order, so an ingest started after them has
+        /// cached an object.
+        async fn settle(&self) {
+            let probe = TrackKey::new("ns", "probe");
+            let (upstream, receiver) = UpstreamTrack::channel();
+            self.command_sender
+                .send(IngestCommand::Start(IngestStart {
+                    track_key: probe.clone(),
+                    publisher_session_id: FIRST_PUBLISHER,
+                    receiver,
+                    track_span: Span::none(),
+                    stamp: CacheStamp::default(),
+                    track_properties: moqt::TrackProperties::default(),
+                }))
+                .await
+                .unwrap();
+            let stream = upstream.open_stream();
+            stream.header(0);
+            stream.object(0);
+            wait_largest_location(&self.cache_store.get_or_create(&probe), location(0, 0)).await;
+            self.command_sender
+                .send(IngestCommand::Stop {
+                    track_key: probe,
+                    publisher_session_id: FIRST_PUBLISHER,
+                })
+                .await
+                .unwrap();
+        }
+
+        fn cached_track_properties(&self) -> moqt::TrackProperties {
+            self.cache_store
+                .get_or_create(&track_key())
+                .track_properties()
+        }
     }
 
     fn track_key() -> TrackKey {
@@ -315,6 +354,32 @@ mod tests {
                 .track_properties(),
             unknown_track_properties(2)
         );
+    }
+
+    #[tokio::test]
+    async fn the_cached_track_properties_follow_the_older_publisher_when_the_newest_leaves_first() {
+        // Arrange
+        let context = IngestContext::new();
+        let _first = context
+            .start_carrying(FIRST_PUBLISHER, unknown_track_properties(1))
+            .await;
+        let _second = context
+            .start_carrying(SECOND_PUBLISHER, unknown_track_properties(2))
+            .await;
+
+        // Act
+        context.stop(SECOND_PUBLISHER).await;
+        context.settle().await;
+        let while_the_older_serves = context.cached_track_properties();
+        context.stop(FIRST_PUBLISHER).await;
+        context.settle().await;
+        let after_every_publisher_left = context.cached_track_properties();
+
+        // Assert: SUBSCRIBE_OK now carries the older publisher's set, so the
+        // cache serves it too and keeps it once nobody publishes; draft-18
+        // §2.5 caches the properties with the track
+        assert_eq!(while_the_older_serves, unknown_track_properties(1));
+        assert_eq!(after_every_publisher_left, unknown_track_properties(1));
     }
 
     #[tokio::test]
