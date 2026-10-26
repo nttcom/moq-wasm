@@ -7,7 +7,9 @@ use crate::modules::transport::application_protocol::NegotiatedProtocol;
 use crate::modules::transport::quic::quic_receive_stream::QUICReceiveStream;
 use crate::modules::transport::quic::quic_send_stream::QUICSendStream;
 use crate::modules::transport::transport_addresses::TransportAddresses;
-use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
+use crate::modules::transport::transport_connection::{
+    DatagramDelivery, TransportClose, TransportConnection,
+};
 use crate::modules::transport::transport_stats::TransportStats;
 
 #[derive(Debug)]
@@ -103,15 +105,11 @@ impl TransportConnection for QUICConnection {
         Ok(Box::new(QUICReceiveStream { recv_stream }))
     }
 
-    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {
-        let len = bytes.len();
+    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<DatagramDelivery> {
         match self.connection.send_datagram(bytes.into()) {
-            Err(quinn::SendDatagramError::TooLarge) => {
-                // draft-14 §10.3, draft-18 §11.3
-                tracing::debug!(len, "dropping a datagram larger than the session allows");
-                Ok(())
-            }
-            result => Ok(result?),
+            Ok(()) => Ok(DatagramDelivery::Sent),
+            Err(quinn::SendDatagramError::TooLarge) => Ok(DatagramDelivery::TooLarge),
+            Err(error) => Err(error.into()),
         }
     }
 
