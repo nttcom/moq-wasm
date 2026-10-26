@@ -255,7 +255,9 @@ mod tests {
         },
     };
 
-    /// How long a PUBLISH that should not come is waited for.
+    /// How long a PUBLISH that should not come is waited for. The tests that
+    /// wait run on paused time, which advances only once every task is
+    /// idle, so a PUBLISH on its way is sent before the wait ends.
     const NO_PUBLISH_TIMEOUT: Duration = Duration::from_millis(200);
 
     async fn context_with_published_track(sent: SentMessages) -> DownstreamPublishContext {
@@ -346,7 +348,7 @@ mod tests {
             .await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_namespaces_subscription_is_sent_no_publish() {
         // Arrange
         let mut ctx = context_with_published_track(SentMessages::default()).await;
@@ -386,7 +388,7 @@ mod tests {
         assert!(!publishes[0].forward);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_tracks_subscription_is_not_sent_a_track_its_session_publishes() {
         // Arrange
         let mut ctx = context_with_published_track(SentMessages::default()).await;
@@ -419,7 +421,7 @@ mod tests {
         ctx
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_wider_namespace_subscription_after_a_narrower_one_is_refused_with_prefix_overlap() {
         // Arrange
         let mut ctx = context_holding_namespace_subscription("ns/track").await;
