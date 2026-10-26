@@ -453,7 +453,9 @@ and no namespace announced twice (an update has no effect on existing
 subscriptions), whether or not the subscriber accepted the PUBLISH. An update to the prefix the
 subscription already has is accepted and changes nothing. A refused update
 ends the subscription, which moqt reports as UNSUBSCRIBE_NAMESPACE for the old
-prefix.
+prefix. So does one moqt answered TIMEOUT before the relay accepted it: `ok`
+reports `PrefixUpdateAnswer::Failed`, the new prefix is released again and
+nothing is offered.
 
 ### SUBSCRIBE_UPDATE sequence
 Forward State, Start Location and End Group are applied; Subscriber Priority

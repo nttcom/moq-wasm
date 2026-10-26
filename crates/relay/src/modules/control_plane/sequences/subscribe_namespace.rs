@@ -24,7 +24,7 @@ use crate::modules::{
         subscribe_namespace_update::SubscribeNamespaceUpdateHandler,
     },
 };
-use moqt::RequestErrorCode;
+use moqt::{RequestErrorCode, namespace::PrefixUpdateAnswer};
 use tracing::Span;
 
 pub(crate) struct SubscribeNameSpace;
@@ -245,18 +245,29 @@ impl SubscribeNameSpace {
             handler.error(code, reason.to_string()).await;
             return;
         }
-        handler.ok().await;
+        // A failed update ended the subscription (§10.9.1); the
+        // UNSUBSCRIBE_NAMESPACE moqt reports for it releases the old prefix.
+        let failed = handler.ok().await == PrefixUpdateAnswer::Failed;
+        let released_prefix = if failed {
+            new_track_namespace_prefix
+        } else {
+            track_namespace_prefix
+        };
         let no_clients_remain =
-            table.unregister_subscribe_namespace(session_id, track_namespace_prefix, interest);
+            table.unregister_subscribe_namespace(session_id, released_prefix, interest);
         if no_clients_remain && subscription.peer == SessionPeer::Client {
             UnsubscribeNamespace::cleanup_empty_namespace_subscription(
-                track_namespace_prefix,
+                released_prefix,
                 table,
                 forwarder,
                 cascading_relay_context.route_registry,
                 cascading_relay_context.inter_relay_connection_manager,
             )
             .await;
+        }
+        if failed {
+            tracing::info!("namespace prefix update failed; not applied");
+            return;
         }
         let offer = Offer {
             prefix: new_track_namespace_prefix,
@@ -861,6 +872,39 @@ mod tests {
         // Assert: draft-18 §10.9.2, the subscriber already heard of the namespace
         assert_eq!(handler.answers(), [None]);
         assert_eq!(ctx.subscriber.publish_namespaces(), ["room/alice"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_namespace_prefix_update_is_not_applied() {
+        // Arrange: moqt answered TIMEOUT before the relay accepted the update
+        let mut ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns/old".to_string(),
+            client_subscription(NamespaceInterest::Tracks),
+        );
+        let handler = MockSubscribeNamespaceUpdateHandler {
+            ok_answer: PrefixUpdateAnswer::Failed,
+            ..MockSubscribeNamespaceUpdateHandler::new("ns/old", "ns", NamespaceInterest::Tracks)
+        };
+
+        // Act
+        update_namespace_subscription(&ctx, &handler).await;
+        let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
+
+        // Assert: draft-18 §10.9.1, the failed update ended the subscription; UNSUBSCRIBE_NAMESPACE releases the old prefix
+        assert!(ctx.table.subscriber_namespaces.get("ns").is_none());
+        assert!(
+            ctx.table
+                .namespace_subscription(
+                    NAMESPACE_SUBSCRIBER_SESSION,
+                    "ns/old",
+                    NamespaceInterest::Tracks
+                )
+                .is_some()
+        );
+        assert!(egress.is_err());
+        assert!(ctx.subscriber.publishes().is_empty());
     }
 
     #[tokio::test]

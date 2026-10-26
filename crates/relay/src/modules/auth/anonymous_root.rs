@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use moqt::{RequestErrorCode, namespace::NamespaceInterest};
+use moqt::{
+    RequestErrorCode,
+    namespace::{NamespaceInterest, PrefixUpdateAnswer},
+};
 
 use crate::modules::{
     auth::verified_token::{ANONYMOUS_APP_ID, VerifiedToken},
@@ -102,7 +105,7 @@ impl SubscribeNamespaceUpdateHandler for AnonymousRootSubscribeNamespaceUpdate {
         self.inner.interest()
     }
 
-    async fn ok(&self) {
+    async fn ok(&self) -> PrefixUpdateAnswer {
         self.inner.ok().await
     }
 
