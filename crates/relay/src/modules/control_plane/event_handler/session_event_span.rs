@@ -47,6 +47,14 @@ pub(super) fn session_event_span(
             event = "UnsubscribeNamespace",
             track_namespace_prefix = %handler.track_namespace_prefix(),
         ),
+        MoqtSessionEvent::PublishBlocked(handler) => tracing::info_span!(
+            parent: session_span,
+            "relay.session.event",
+            session_id = %session_id,
+            event = "PublishBlocked",
+            track_namespace = %handler.track_namespace,
+            track_name = %handler.track_name,
+        ),
         MoqtSessionEvent::Publish(handler) => tracing::info_span!(
             parent: session_span,
             "relay.session.event",
