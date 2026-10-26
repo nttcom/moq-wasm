@@ -1,4 +1,3 @@
-mod ingest;
 mod ingest_publisher;
 mod namespace;
 mod renditions;

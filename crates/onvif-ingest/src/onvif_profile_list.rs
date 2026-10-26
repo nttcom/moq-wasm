@@ -1,4 +1,4 @@
-use crate::{onvif_client::OnvifClient, onvif_requests, soap_client};
+use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text, soap_client};
 use anyhow::{anyhow, Result};
 use roxmltree::Document;
 
@@ -38,14 +38,6 @@ fn extract_profiles(body: &str) -> Result<Vec<ProfileSummary>> {
                 continue;
             }
         };
-        let find_text = |tag: &str| {
-            profile
-                .descendants()
-                .find(|node| node.has_tag_name(tag))
-                .and_then(|node| node.text())
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
-        };
         let find_token = |tag: &str| {
             profile
                 .descendants()
@@ -53,35 +45,24 @@ fn extract_profiles(body: &str) -> Result<Vec<ProfileSummary>> {
                 .and_then(|node| node.attribute("token"))
                 .map(str::to_string)
         };
-        let video_resolution = profile
+        let encoder = profile
             .descendants()
-            .find(|node| node.has_tag_name("VideoEncoderConfiguration"))
-            .and_then(|encoder| {
-                let width = encoder
-                    .descendants()
-                    .find(|n| n.has_tag_name("Width"))?
-                    .text()?;
-                let height = encoder
-                    .descendants()
-                    .find(|n| n.has_tag_name("Height"))?
-                    .text()?;
-                let width = width.trim().parse::<u32>().ok()?;
-                let height = height.trim().parse::<u32>().ok()?;
-                Some((width, height))
-            });
-        let video_framerate = profile
-            .descendants()
-            .find(|node| node.has_tag_name("VideoEncoderConfiguration"))
-            .and_then(|encoder| {
-                encoder
-                    .descendants()
-                    .find(|n| n.has_tag_name("FrameRateLimit") || n.has_tag_name("FrameRate"))
-                    .and_then(|node| node.text())
-                    .and_then(|text| text.trim().parse::<f64>().ok())
-            });
+            .find(|node| node.has_tag_name("VideoEncoderConfiguration"));
+        let video_resolution = encoder.and_then(|encoder| {
+            let width = find_text(encoder, "Width")?.parse::<u32>().ok()?;
+            let height = find_text(encoder, "Height")?.parse::<u32>().ok()?;
+            Some((width, height))
+        });
+        let video_framerate = encoder.and_then(|encoder| {
+            encoder
+                .descendants()
+                .find(|n| n.has_tag_name("FrameRateLimit") || n.has_tag_name("FrameRate"))
+                .and_then(|node| node.text())
+                .and_then(|text| text.trim().parse::<f64>().ok())
+        });
         profiles.push(ProfileSummary {
             token,
-            name: find_text("Name"),
+            name: find_text(profile, "Name"),
             video_source: find_token("VideoSourceConfiguration"),
             video_encoder: find_token("VideoEncoderConfiguration"),
             ptz_config: find_token("PTZConfiguration"),
