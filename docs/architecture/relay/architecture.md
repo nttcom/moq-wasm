@@ -707,6 +707,12 @@ per-request authorization gate under "Event pipeline".
   upstream request is sent; draft-14 defines that code for FETCH_ERROR
   only, so a draft-14 SUBSCRIBE_ERROR or TRACK_STATUS_ERROR carries
   INTERNAL_ERROR.
+- The latch lives in the track's `TrackCache`, and eviction keeps a latched
+  cache for the relay cache TTL after the latch was set even when it holds
+  no object (a latch from an object withheld by moqt or from a peer's
+  MALFORMED_TRACK caches nothing), so a request after the publisher left
+  is still answered MALFORMED_TRACK. Past that, the track goes like any
+  drained one and a later request finds no track.
 
 ### Cache (`modules/data_plane/cache`)
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
@@ -804,7 +810,8 @@ per-request authorization gate under "Event pipeline".
   subscriber is answered Content Exists from the cache (§9.8) and fetches that
   object, so a sparse track such as a catalog stays joinable; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
-  ingress/egress holds it — avoiding races with new joiners.
+  ingress/egress holds it — avoiding races with new joiners — and not
+  latched malformed within the TTL.
 - MAX_CACHE_DURATION (draft-14 §9.2.1.3): ingress stamps every object with
   `expires_at` = this relay's receipt time + the value its upstream
   SUBSCRIBE_OK, PUBLISH or FETCH_OK carried. From that instant
