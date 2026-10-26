@@ -640,7 +640,9 @@ per-request authorization gate under "Event pipeline".
   `MalformedTrackCleanup` (called by `UpstreamJoinTask` for a late
   publisher, raised as `MalformedTrackDetected` by `UpstreamFetchTask`). A
   PUBLISH with malformed Immutable Properties is refused by moqt itself and
-  never reaches the relay, so it latches nothing.
+  never reaches the relay, so it latches nothing. A SUBSCRIBE or FETCH for a
+  latched track is answered MALFORMED_TRACK; draft-14 defines that code for
+  FETCH_ERROR only, so a draft-14 SUBSCRIBE_ERROR carries INTERNAL_ERROR.
 
 ### Cache (`modules/data_plane/cache`)
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
