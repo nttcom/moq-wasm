@@ -20,7 +20,8 @@ use crate::modules::{
         Session,
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
         data_sender::{
-            DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
+            datagram_sender::DatagramSender, fetch_sender::FetchSender,
+            stream_sender_factory::StreamSenderFactory,
         },
         handler::{
             fetch::FetchHandler, publish::PublishHandler,
@@ -460,7 +461,7 @@ impl Publisher for MockUpstreamPublisher {
     fn new_datagram(
         &self,
         _downstream_subscription: &DownstreamSubscription,
-    ) -> Box<dyn DataSender> {
+    ) -> Box<dyn DatagramSender> {
         unimplemented!("not used by MockUpstreamSession tests")
     }
 

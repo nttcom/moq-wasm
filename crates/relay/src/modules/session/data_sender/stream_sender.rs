@@ -47,7 +47,6 @@ impl DataSender for StreamSender {
                     "StreamSender already initialized or in invalid state"
                 )),
             },
-            _ => Err(anyhow::anyhow!("Invalid object type for StreamSender")),
         }
     }
 

@@ -1065,7 +1065,9 @@ holds on each hop.
     `ends_group`, and the stream ranks last in its group.
   - Started with a datagram: stream objects go as datagrams, an End of
     Group status object included, and one larger than the session's maximum
-    datagram size is dropped as draft-14 §10.3 drops any datagram. A FETCH
+    datagram size is dropped as draft-14 §10.3 drops any datagram: moqt
+    logs it at DEBUG and reports it (`DatagramDelivery::TooLarge`), and the
+    subscription's `datagrams_dropped` stat counts it. A FETCH
     gives them as datagrams too, which a draft-14 FETCH sends in the
     subgroup of their Object ID (§10.4.4), as the live datagram's duplicate
     check expects.

@@ -397,6 +397,20 @@ impl RelayHarness {
             .await
     }
 
+    /// Egress to a downstream that drops a datagram of more than `limit`
+    /// bytes of payload as too large.
+    pub(crate) async fn start_egress_taking_datagrams_up_to(
+        &self,
+        limit: usize,
+    ) -> EgressRunnerHandle {
+        self.start_egress_to(
+            MockPublisher::channel_taking_datagrams_up_to(limit),
+            moqt::subscribe::FilterType::LargestObject,
+            None,
+        )
+        .await
+    }
+
     /// Egress to a downstream that keeps every track to one forwarding
     /// preference, as a draft-14 session does.
     pub(crate) async fn start_single_preference_egress(&self) -> EgressRunnerHandle {

@@ -23,7 +23,7 @@ async fn sent_objects(egress: &mut EgressRunnerHandle, count: usize) -> Vec<(boo
     let mut sent = Vec::new();
     while sent.len() < count {
         match egress.expect_sent().await {
-            Sent::Object(DataObject::Datagram(object)) => {
+            Sent::Datagram(object) => {
                 sent.push((true, object.location.group_id, object.location.object_id));
             }
             Sent::Object(DataObject::SubgroupObject(object)) => {
@@ -165,9 +165,9 @@ async fn a_single_preference_subscription_that_began_with_a_datagram_gets_stream
     let sent = [egress.expect_sent().await, egress.expect_sent().await];
 
     // Assert: no stream is opened for the subgroup
-    assert!(matches!(first, Sent::Object(DataObject::Datagram(_))));
+    assert!(matches!(first, Sent::Datagram(_)));
     for (object_id, sent) in sent.iter().enumerate() {
-        let Sent::Object(DataObject::Datagram(object)) = sent else {
+        let Sent::Datagram(object) = sent else {
             panic!("stream objects should go as datagrams, got {sent:?}");
         };
         assert_eq!(object.location.group_id, 1);
@@ -242,7 +242,7 @@ async fn sent_forwarding(
     let mut sent = Vec::new();
     while sent.len() < count {
         match egress.expect_sent().await {
-            Sent::Object(DataObject::Datagram(object) | DataObject::SubgroupObject(object)) => {
+            Sent::Datagram(object) | Sent::Object(DataObject::SubgroupObject(object)) => {
                 sent.push((
                     object.location.group_id,
                     object.location.object_id,

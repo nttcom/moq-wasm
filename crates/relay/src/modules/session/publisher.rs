@@ -6,7 +6,8 @@ use moqt::{TrackProperties, object::ContentExists};
 
 use crate::modules::session::{
     data_sender::{
-        DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
+        datagram_sender::DatagramSender, fetch_sender::FetchSender,
+        stream_sender_factory::StreamSenderFactory,
     },
     subscription::DownstreamSubscription,
 };
@@ -43,8 +44,10 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         &self,
         downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory>;
-    fn new_datagram(&self, downstream_subscription: &DownstreamSubscription)
-    -> Box<dyn DataSender>;
+    fn new_datagram(
+        &self,
+        downstream_subscription: &DownstreamSubscription,
+    ) -> Box<dyn DatagramSender>;
     async fn new_fetch_sender(&self, request_id: u64) -> anyhow::Result<Box<dyn FetchSender>>;
 }
 
@@ -109,7 +112,7 @@ impl Publisher for moqt::Publisher {
     fn new_datagram(
         &self,
         downstream_subscription: &DownstreamSubscription,
-    ) -> Box<dyn DataSender> {
+    ) -> Box<dyn DatagramSender> {
         Box::new(self.create_datagram(downstream_subscription.as_moqt()))
     }
 

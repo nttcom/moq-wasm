@@ -1,4 +1,4 @@
-use moqt::object::{DataStreamResetCode, ForwardingPreference};
+use moqt::object::{DataStreamResetCode, DatagramDelivery, ForwardingPreference};
 use std::sync::Arc;
 
 use tokio::{
@@ -20,7 +20,9 @@ use crate::modules::{
     },
     session::{
         data_object::DataObject,
-        data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
+        data_sender::{
+            DataSender, datagram_sender::DatagramSender, stream_sender_factory::StreamSenderFactory,
+        },
     },
 };
 
@@ -627,7 +629,7 @@ impl GroupSender {
         track_alias: u64,
         mut source: SubgroupSource,
         object_id: u64,
-        mut sender: Box<dyn DataSender>,
+        mut sender: Box<dyn DatagramSender>,
         delivery_stats: Arc<DeliveryStats>,
     ) {
         let mut cursor = object_id;
@@ -659,14 +661,13 @@ impl GroupSender {
                 object_id,
                 "egress sending datagram object"
             );
-            if sender
-                .send_object(DataObject::Datagram(loaded))
-                .await
-                .is_err()
-            {
-                return;
+            match sender.send(loaded).await {
+                Ok(DatagramDelivery::TooLarge) => delivery_stats.record_datagram_dropped(),
+                Ok(_) => {
+                    delivery_stats.record_object_sent(object.payload_len(), object.received_at)
+                }
+                Err(_) => return,
             }
-            delivery_stats.record_object_sent(object.payload_len(), object.received_at);
         }
     }
 }

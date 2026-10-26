@@ -98,7 +98,7 @@ neither is reported.
     {
       "namespace": "ac8adbc8-…/live/ch1", "name": "video", "publisher_session_id": 7,
       "subscriber_session_id": 9, "request_id": 2,
-      "bytes_sent": 1200000, "streams_reset": 0,
+      "bytes_sent": 1200000, "streams_reset": 0, "datagrams_dropped": 0,
       "lag_behind_newest_received_us": 40000
     }
   ]
@@ -119,6 +119,10 @@ neither is reported.
   relay on its own IP and nothing else connecting from a relay's IP (true on
   GCP and in docker compose, not for several relays, or a relay and the
   observability server, on one host).
+- `datagrams_dropped` counts the objects of the subscription dropped as
+  datagrams larger than the subscriber's session allows (draft-14 §10.3,
+  draft-18 §11.3); the subscriber is not told. A snapshot from a relay
+  without the field reads as 0.
 - `max_arrival_gap_since_last_snapshot_us` is the longest interval between two
   live objects of the track since the previous snapshot. Stream data is
   retransmitted, so uplink loss shows up as arrival gaps rather than as
