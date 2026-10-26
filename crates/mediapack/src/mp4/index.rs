@@ -5,7 +5,8 @@ use crate::{
     h264::AvcDecoderConfigurationRecord,
     mp4::{
         atom::{
-            HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find, full_atom, peek, read_u32, read_u64,
+            HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find, find_full_atom, full_atom, peek,
+            read_u32, read_u64,
         },
         track::{Media, annexb_access_unit, find_path, read_timescale, read_track},
     },
@@ -286,10 +287,7 @@ fn read_edit_shift(trak: &[u8], movie_timescale: u32, media_timescale: u32) -> R
 }
 
 fn read_sample_table(stbl: &[u8]) -> Result<SampleTable> {
-    let stts = full_atom(
-        find(stbl, b"stts").context("stbl has no stts")?.payload,
-        "stts",
-    )?;
+    let stts = find_full_atom(stbl, "stts")?.context("stbl has no stts")?;
     let mut durations = Vec::new();
     for entry in entries(stts.body, 8)? {
         let count = read_u32(entry, 0)?;
@@ -298,8 +296,7 @@ fn read_sample_table(stbl: &[u8]) -> Result<SampleTable> {
     }
 
     let mut composition_offsets = Vec::new();
-    if let Some(ctts) = find(stbl, b"ctts") {
-        let ctts = full_atom(ctts.payload, "ctts")?;
+    if let Some(ctts) = find_full_atom(stbl, "ctts")? {
         for entry in entries(ctts.body, 8)? {
             let count = read_u32(entry, 0)?;
             let composition = read_u32(entry, 4)? as i32;
@@ -307,10 +304,7 @@ fn read_sample_table(stbl: &[u8]) -> Result<SampleTable> {
         }
     }
 
-    let stsz = full_atom(
-        find(stbl, b"stsz").context("stbl has no stsz")?.payload,
-        "stsz",
-    )?;
+    let stsz = find_full_atom(stbl, "stsz")?.context("stbl has no stsz")?;
     let uniform_size = read_u32(stsz.body, 0)?;
     let sample_count = read_u32(stsz.body, 4)? as usize;
     let sizes = if uniform_size != 0 {
@@ -335,10 +329,7 @@ fn read_sample_table(stbl: &[u8]) -> Result<SampleTable> {
         None => None,
     };
 
-    let stsc = full_atom(
-        find(stbl, b"stsc").context("stbl has no stsc")?.payload,
-        "stsc",
-    )?;
+    let stsc = find_full_atom(stbl, "stsc")?.context("stbl has no stsc")?;
     let chunk_runs = entries(stsc.body, 12)?
         .map(|entry| {
             Ok(ChunkRun {

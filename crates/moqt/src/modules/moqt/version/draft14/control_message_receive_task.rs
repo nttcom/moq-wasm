@@ -8,8 +8,9 @@ use crate::{
     modules::moqt::{
         control_plane::{
             constants::TerminationErrorCode,
-            enums::{RequestId, ResponseMessage},
-            error_codes::{PublishDoneCode, RequestKind},
+            control_messages::messages::request_error::RequestError,
+            enums::{ErrorPhrase, RequestId, ResponseMessage},
+            error_codes::{PublishDoneCode, RequestErrorCode, RequestKind},
             handler::{
                 fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
                 go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
@@ -157,17 +158,11 @@ impl ControlMessageReceiveTask {
                 let response = ResponseMessage::SubscribeOk(subscribe_ok);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
-            ReceivedMessage::SubscribeError(subscribe_error) => {
-                let response = ResponseMessage::SubscribeError(
-                    subscribe_error.request_id,
-                    error_codes::request_error_code_from_wire(
-                        subscribe_error.error_code,
-                        RequestKind::Subscribe,
-                    ),
-                    subscribe_error.reason_phrase,
-                );
-                DepacketizeResult::ResponseMessage(subscribe_error.request_id, response)
-            }
+            ReceivedMessage::SubscribeError(error) => error_response(
+                error,
+                RequestKind::Subscribe,
+                ResponseMessage::SubscribeError,
+            ),
             ReceivedMessage::Publish(publish) => {
                 let publish_handler =
                     PublishHandler::new(session.clone(), connection.clone(), publish);
@@ -178,18 +173,8 @@ impl ControlMessageReceiveTask {
                 let response = ResponseMessage::PublishOk(publish_ok);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
-            ReceivedMessage::PublishError(publish_error) => {
-                let request_id = publish_error.request_id;
-                let error_code = error_codes::request_error_code_from_wire(
-                    publish_error.error_code,
-                    RequestKind::Publish,
-                );
-                let response = ResponseMessage::PublishError(
-                    request_id,
-                    error_code,
-                    publish_error.reason_phrase,
-                );
-                DepacketizeResult::ResponseMessage(request_id, response)
+            ReceivedMessage::PublishError(error) => {
+                error_response(error, RequestKind::Publish, ResponseMessage::PublishError)
             }
             ReceivedMessage::PublishNamespace(publish_namespace) => {
                 let publish_namespace_handler =
@@ -210,17 +195,11 @@ impl ControlMessageReceiveTask {
                 let response = ResponseMessage::PublishNamespaceOk(request_id);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
-            ReceivedMessage::PublishNamespaceError(publish_namespace_error) => {
-                let request_id = publish_namespace_error.request_id;
-                let error_code = error_codes::request_error_code_from_wire(
-                    publish_namespace_error.error_code,
-                    RequestKind::PublishNamespace,
-                );
-                let reason_phrase = publish_namespace_error.reason_phrase;
-                let response =
-                    ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase);
-                DepacketizeResult::ResponseMessage(request_id, response)
-            }
+            ReceivedMessage::PublishNamespaceError(error) => error_response(
+                error,
+                RequestKind::PublishNamespace,
+                ResponseMessage::PublishNamespaceError,
+            ),
             ReceivedMessage::SubscribeNamespace(subscribe_namespace) => {
                 let subscribe_namespace_handler =
                     SubscribeNamespaceHandler::new(connection.clone(), subscribe_namespace);
@@ -233,17 +212,11 @@ impl ControlMessageReceiveTask {
                 let response = ResponseMessage::SubscribeNameSpaceOk(request_id);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
-            ReceivedMessage::SubscribeNamespaceError(subscribe_namespace_error) => {
-                let request_id = subscribe_namespace_error.request_id;
-                let error_code = error_codes::request_error_code_from_wire(
-                    subscribe_namespace_error.error_code,
-                    RequestKind::SubscribeNamespace,
-                );
-                let reason_phrase = subscribe_namespace_error.reason_phrase;
-                let response =
-                    ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase);
-                DepacketizeResult::ResponseMessage(request_id, response)
-            }
+            ReceivedMessage::SubscribeNamespaceError(error) => error_response(
+                error,
+                RequestKind::SubscribeNamespace,
+                ResponseMessage::SubscribeNameSpaceError,
+            ),
             ReceivedMessage::UnsubscribeNamespace(unsubscribe_namespace) => {
                 let unsubscribe_namespace_handler =
                     UnsubscribeNamespaceHandler::new(unsubscribe_namespace);
@@ -260,16 +233,8 @@ impl ControlMessageReceiveTask {
                 let response = ResponseMessage::FetchOk(fetch_ok);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
-            ReceivedMessage::FetchError(fetch_error) => {
-                let response = ResponseMessage::FetchError(
-                    fetch_error.request_id,
-                    error_codes::request_error_code_from_wire(
-                        fetch_error.error_code,
-                        RequestKind::Fetch,
-                    ),
-                    fetch_error.reason_phrase,
-                );
-                DepacketizeResult::ResponseMessage(fetch_error.request_id, response)
+            ReceivedMessage::FetchError(error) => {
+                error_response(error, RequestKind::Fetch, ResponseMessage::FetchError)
             }
             ReceivedMessage::SubscribeUpdate(subscribe_update) => {
                 let subscribe_update_handler =
@@ -340,17 +305,11 @@ impl ControlMessageReceiveTask {
                 let response = ResponseMessage::TrackStatusOk(track_status_ok);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
-            ReceivedMessage::TrackStatusError(track_status_error) => {
-                let response = ResponseMessage::TrackStatusError(
-                    track_status_error.request_id,
-                    error_codes::request_error_code_from_wire(
-                        track_status_error.error_code,
-                        RequestKind::TrackStatus,
-                    ),
-                    track_status_error.reason_phrase,
-                );
-                DepacketizeResult::ResponseMessage(track_status_error.request_id, response)
-            }
+            ReceivedMessage::TrackStatusError(error) => error_response(
+                error,
+                RequestKind::TrackStatus,
+                ResponseMessage::TrackStatusError,
+            ),
             ReceivedMessage::ClientSetup(_) | ReceivedMessage::ServerSetup(_) => {
                 tracing::error!(
                     "Protocol violation: SETUP received after the session was established"
@@ -373,4 +332,14 @@ impl ControlMessageReceiveTask {
             }
         }
     }
+}
+
+fn error_response(
+    error: RequestError,
+    kind: RequestKind,
+    response: fn(RequestId, RequestErrorCode, ErrorPhrase) -> ResponseMessage,
+) -> DepacketizeResult {
+    let code = error_codes::request_error_code_from_wire(error.error_code, kind);
+    let request_id = error.request_id;
+    DepacketizeResult::ResponseMessage(request_id, response(request_id, code, error.reason_phrase))
 }

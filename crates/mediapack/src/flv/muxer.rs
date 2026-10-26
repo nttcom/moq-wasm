@@ -119,20 +119,13 @@ mod tests {
     use super::*;
     use crate::{
         flv::demuxer::Demuxer,
-        sample::{AudioConfig, AudioSample, VideoConfig, VideoSample},
-        test_support::{
-            delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb, mono_48k,
-        },
+        sample::{AudioSample, VideoConfig, VideoSample},
+        test_support::{delta_frame_annexb, fixture_record, h264_aac_configs, keyframe_annexb},
     };
 
     fn fixture_events() -> Vec<MediaEvent> {
-        vec![
-            MediaEvent::Streams(StreamSet {
-                has_video: true,
-                has_audio: true,
-            }),
-            MediaEvent::VideoConfig(fixture_video_config()),
-            MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
+        let mut events = h264_aac_configs();
+        events.extend([
             MediaEvent::Video(VideoSample {
                 data: keyframe_annexb(),
                 is_keyframe: true,
@@ -149,7 +142,8 @@ mod tests {
                 pts: Timestamp::from_millis(140),
                 dts: Timestamp::from_millis(100),
             }),
-        ]
+        ]);
+        events
     }
 
     #[test]

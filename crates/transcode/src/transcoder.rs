@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, ensure};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
-use mediapack::{MediaEvent, Timestamp, VideoConfig, VideoSample, h264::ParameterSetTracker};
+use mediapack::{MediaEvent, Timestamp, VideoSample, h264::ParameterSetTracker};
 use tokio::sync::mpsc;
 
 use crate::{buffer::video_buffer, ladder::Rendition};
@@ -221,21 +221,10 @@ fn install_sink_callbacks(
                     .map_or(pts, |_| running_timestamp(segment, buffer.dts()));
                 match parameter_sets.track(map.as_slice()) {
                     Ok(Some(unit)) => {
-                        if let Some(config) = unit.config_changed {
-                            let _ = message_sender.send(Message::Event(TranscodedEvent {
-                                rendition,
-                                event: MediaEvent::VideoConfig(VideoConfig::Avc(config)),
-                            }));
+                        for event in unit.into_events(pts, dts) {
+                            let _ = message_sender
+                                .send(Message::Event(TranscodedEvent { rendition, event }));
                         }
-                        let _ = message_sender.send(Message::Event(TranscodedEvent {
-                            rendition,
-                            event: MediaEvent::Video(VideoSample {
-                                data: unit.data,
-                                is_keyframe: unit.is_keyframe,
-                                pts,
-                                dts,
-                            }),
-                        }));
                     }
                     Ok(None) => {}
                     Err(error) => {

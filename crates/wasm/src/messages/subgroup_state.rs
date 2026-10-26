@@ -4,39 +4,16 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
 pub struct SubgroupState {
-    track_alias: u64,
-    group_id: u64,
-    subgroup_id: u64,
-    object_id: u64,
-    header_sent: bool,
-}
-
-#[wasm_bindgen]
-impl SubgroupState {
-    #[wasm_bindgen(getter, js_name = trackAlias)]
-    pub fn track_alias(&self) -> u64 {
-        self.track_alias
-    }
-
-    #[wasm_bindgen(getter, js_name = groupId)]
-    pub fn group_id(&self) -> u64 {
-        self.group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = subgroupId)]
-    pub fn subgroup_id(&self) -> u64 {
-        self.subgroup_id
-    }
-
-    #[wasm_bindgen(getter, js_name = objectId)]
-    pub fn object_id(&self) -> u64 {
-        self.object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = headerSent)]
-    pub fn header_sent(&self) -> bool {
-        self.header_sent
-    }
+    #[wasm_bindgen(readonly, js_name = trackAlias)]
+    pub track_alias: u64,
+    #[wasm_bindgen(readonly, js_name = groupId)]
+    pub group_id: u64,
+    #[wasm_bindgen(readonly, js_name = subgroupId)]
+    pub subgroup_id: u64,
+    #[wasm_bindgen(readonly, js_name = objectId)]
+    pub object_id: u64,
+    #[wasm_bindgen(readonly, js_name = headerSent)]
+    pub header_sent: bool,
 }
 
 impl SubgroupState {

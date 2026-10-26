@@ -92,6 +92,7 @@ fn loudest(loudness: &[Option<&Loudness>], window: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::ms;
 
     const LOUD: f32 = 0.1;
     const QUIET: f32 = 0.05;
@@ -108,10 +109,6 @@ mod tests {
                 })
                 .collect(),
         }
-    }
-
-    fn ms(millis: u64) -> gst::ClockTime {
-        gst::ClockTime::from_mseconds(millis)
     }
 
     #[test]

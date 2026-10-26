@@ -1,4 +1,4 @@
-use crate::{onvif_client::OnvifClient, onvif_requests, soap_client};
+use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text, soap_client};
 use anyhow::{anyhow, Result};
 use roxmltree::Document;
 
@@ -17,12 +17,5 @@ pub async fn fetch(onvif: &OnvifClient, profile_token: &str) -> Result<String> {
 
 fn extract_uri(body: &str) -> Result<String> {
     let doc = Document::parse(body).map_err(|err| anyhow!("invalid stream uri XML: {err}"))?;
-    let uri = doc
-        .descendants()
-        .find(|node| node.has_tag_name("Uri"))
-        .and_then(|node| node.text())
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-        .ok_or_else(|| anyhow!("Stream URI not found"))?;
-    Ok(uri)
+    find_text(doc.root(), "Uri").ok_or_else(|| anyhow!("Stream URI not found"))
 }
