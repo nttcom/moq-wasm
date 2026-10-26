@@ -279,6 +279,8 @@ impl Router {
     }
 }
 
+// Moved once out of a select arm; boxing would allocate for every event.
+#[allow(clippy::large_enum_variant)]
 enum PreviousSignal {
     Event(Option<SessionEvent>),
     Released,

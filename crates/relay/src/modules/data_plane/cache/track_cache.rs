@@ -37,11 +37,13 @@ fn after(at: moqt::object::Location) -> moqt::object::Location {
 }
 
 mod fetch_cursor;
+mod fetch_plan;
 mod ingress_stats;
 mod ledger;
 mod open_subgroup;
 
 pub(crate) use fetch_cursor::FetchCursor;
+pub(crate) use fetch_plan::PlannedFetch;
 pub(crate) use ingress_stats::{IngressCounters, IngressStats};
 use ledger::Ledger;
 pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, SubgroupRun};
@@ -313,12 +315,22 @@ impl TrackCache {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn insert_fetch_known_range(
         &self,
         start: moqt::object::Location,
         end: moqt::object::Location,
     ) {
         self.write().known_ranges.insert(start, end);
+    }
+
+    /// Registers the half-open range `start..end` as known.
+    pub(crate) fn insert_known_until(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) {
+        self.write().known_ranges.insert_until(start, end);
     }
 
     pub(crate) fn eviction_generation(&self) -> u64 {
@@ -415,6 +427,18 @@ impl TrackCache {
         }
 
         FetchRangeResolution::NotCovered
+    }
+
+    /// The FETCH_OK End Location of a response serving only what the cache
+    /// holds, or `None` when it holds no object at or after `start`.
+    pub(crate) fn known_end_location(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> Option<moqt::object::Location> {
+        let ledger = self.read();
+        let largest = ledger.largest_location()?;
+        (start <= largest).then(|| Self::resolve_fetch_end_location(&ledger, end, largest))
     }
 
     fn serves_after_in_flight_wait(

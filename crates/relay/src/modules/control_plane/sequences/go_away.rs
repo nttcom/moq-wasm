@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
 use tracing::Span;
 
 use crate::modules::{
     control_plane::{
-        control_message_forwarder::ControlMessageForwarder,
         sequences::{
             session_peer,
             subscribe::upstream_join_task::{
@@ -14,11 +12,7 @@ use crate::modules::{
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
-    data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
-    },
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
 };
 
 pub(crate) struct GoAway;
@@ -41,12 +35,11 @@ impl GoAway {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &Arc<InMemoryLocalPubSubDirectory>,
-        forwarder: &ControlMessageForwarder,
-        ingress_sender: &mpsc::Sender<IngressCommand>,
+        join_deps: UpstreamJoinDeps,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
     ) {
-        if session_peer(session_id, forwarder).await == SessionPeer::Client {
+        let table = &join_deps.table;
+        if session_peer(session_id, &join_deps.forwarder).await == SessionPeer::Client {
             tracing::info!("client announced that it is leaving");
             return;
         }
@@ -60,11 +53,6 @@ impl GoAway {
             tracks = fed_tracks.len(),
             "upstream relay is going away; subscribing the other publishers of its tracks"
         );
-        let join_deps = UpstreamJoinDeps {
-            table: table.clone(),
-            forwarder: forwarder.clone(),
-            ingress_sender: ingress_sender.clone(),
-        };
         for track_key in fed_tracks {
             let feeding = table
                 .get_upstream_track(&track_key)
@@ -113,9 +101,11 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::GoAway;
+    use crate::modules::control_plane::sequences::subscribe::upstream_join_task::UpstreamJoinDeps;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         control_plane::control_message_forwarder::ControlMessageForwarder,
+        data_plane::cache::store::TrackCacheStore,
         domain::{
             pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
             session_id::SessionId,
@@ -195,9 +185,12 @@ mod tests {
             .handle(
                 DEPARTING_RELAY,
                 &tracing::Span::none(),
-                &table,
-                &forwarder,
-                &ingress_sender,
+                UpstreamJoinDeps {
+                    table,
+                    forwarder,
+                    ingress_sender,
+                    cache_store: Arc::new(TrackCacheStore::new()),
+                },
                 &resolver,
             )
             .await;
@@ -219,9 +212,12 @@ mod tests {
             .handle(
                 DEPARTING_RELAY,
                 &tracing::Span::none(),
-                &table,
-                &forwarder,
-                &ingress_sender,
+                UpstreamJoinDeps {
+                    table,
+                    forwarder,
+                    ingress_sender,
+                    cache_store: Arc::new(TrackCacheStore::new()),
+                },
                 &resolver,
             )
             .await;
