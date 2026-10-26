@@ -11,7 +11,7 @@ use crate::modules::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         egress::{
             fetch_delivery::deliver_fetch,
-            runner::{EgressRunner, RunnerExit},
+            runner::{Downstream, EgressRunner, RunnerExit},
         },
     },
     domain::{
@@ -180,8 +180,10 @@ impl EgressCoordinator {
         let runner = EgressRunner::new(
             request.track_key,
             cache,
-            publisher,
-            request.downstream_subscription.clone(),
+            Downstream {
+                publisher: Arc::from(publisher),
+                subscription: request.downstream_subscription.clone(),
+            },
             request.ready_sender,
             request.largest_location,
             request.runner_signals,

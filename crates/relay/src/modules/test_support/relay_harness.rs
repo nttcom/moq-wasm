@@ -15,7 +15,7 @@ use crate::modules::{
         egress::{
             coordinator::{EgressFetchRequest, FetchWait},
             fetch_delivery::deliver_fetch,
-            runner::EgressRunner,
+            runner::{Downstream, EgressRunner},
         },
         ingress::{
             stream_reader::read_stream, track_ingest_task::TrackIngest, track_reader::read_track,
@@ -421,8 +421,10 @@ impl RelayHarness {
         let runner = EgressRunner::new(
             self.ingest.track_key.clone(),
             self.ingest.cache.clone(),
-            Box::new(publisher),
-            make_subscription(filter_type),
+            Downstream {
+                publisher: Arc::new(publisher),
+                subscription: make_subscription(filter_type),
+            },
             ready_sender,
             largest_location,
             DownstreamRunnerSignals {

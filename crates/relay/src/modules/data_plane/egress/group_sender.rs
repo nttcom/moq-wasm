@@ -19,20 +19,17 @@ use crate::modules::{
     session::{
         data_object::DataObject,
         data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
-        publisher::Publisher,
-        subscription::DownstreamSubscription,
     },
 };
 
-use super::{group_sequence::GroupSequence, scheduler::GroupSendTask};
+use super::{group_sequence::GroupSequence, runner::Downstream, scheduler::GroupSendTask};
 
 type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
 
 pub(crate) struct GroupSender {
     track_key: TrackKey,
     cache: Arc<TrackCache>,
-    publisher: Arc<dyn Publisher>,
-    downstream_subscription: DownstreamSubscription,
+    downstream: Downstream,
     receiver: mpsc::Receiver<GroupSendTask>,
     delivery_stats: Arc<DeliveryStats>,
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
@@ -166,8 +163,7 @@ impl GroupSender {
     pub(crate) fn new(
         track_key: TrackKey,
         cache: Arc<TrackCache>,
-        publisher: Arc<dyn Publisher>,
-        downstream_subscription: DownstreamSubscription,
+        downstream: Downstream,
         receiver: mpsc::Receiver<GroupSendTask>,
         delivery_stats: Arc<DeliveryStats>,
         delivery_control_receiver: watch::Receiver<DeliveryControl>,
@@ -175,8 +171,7 @@ impl GroupSender {
         Self {
             track_key,
             cache,
-            publisher,
-            downstream_subscription,
+            downstream,
             receiver,
             delivery_stats,
             delivery_control_receiver,
@@ -203,8 +198,9 @@ impl GroupSender {
         stream_factory
             .get_or_insert_with(|| {
                 Arc::new(Mutex::new(
-                    self.publisher
-                        .new_stream_factory(&self.downstream_subscription),
+                    self.downstream
+                        .publisher
+                        .new_stream_factory(&self.downstream.subscription),
                 ))
             })
             .clone()
@@ -213,12 +209,12 @@ impl GroupSender {
     pub(crate) async fn run(mut self) {
         let mut stream_factory: Option<SharedStreamSenderFactory> = None;
         let mut joinset = JoinSet::<()>::new();
-        let track_alias = self.downstream_subscription.track_alias();
-        let subscriber_priority = self.downstream_subscription.subscriber_priority();
-        let group_order = self.downstream_subscription.group_order();
+        let track_alias = self.downstream.subscription.track_alias();
+        let subscriber_priority = self.downstream.subscription.subscriber_priority();
+        let group_order = self.downstream.subscription.group_order();
         // draft-14 §10 gives a track one forwarding preference; a draft-18
         // upstream may mix them (§11).
-        let keeps_one_preference = !self.publisher.mixes_forwarding_preferences();
+        let keeps_one_preference = !self.downstream.publisher.mixes_forwarding_preferences();
         let mut first_as_datagram: Option<bool> = None;
         let mut schedule_over = false;
 
@@ -277,7 +273,10 @@ impl GroupSender {
                             }));
                         }
                         (_, true) => {
-                            let sender = self.publisher.new_datagram(&self.downstream_subscription);
+                            let sender = self
+                                .downstream
+                                .publisher
+                                .new_datagram(&self.downstream.subscription);
                             joinset.spawn(Self::send_datagram_task(
                                 track_alias,
                                 self.source(&task),
