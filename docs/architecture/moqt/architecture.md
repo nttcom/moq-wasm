@@ -675,6 +675,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Unknown response request id**: a response that matches no `inflight_requests`
   entry is a protocol violation; the session is closed with
   `ProtocolViolation`.
+- **SUBSCRIBE_UPDATE for a Request ID that never existed** (draft-14 §9.10):
+  the draft-14 `ControlChannel` keeps the next Request ID of either side, and
+  a Subscription Request ID at or above the next one of its parity closes the
+  session with `ProtocolViolation`. An update of a subscription that has
+  ended still reaches the application.
 - **Control response timeout**: `PendingResponse::response` bounds every
   request/response wait to 10 s; a timeout fails only that request with
   `RequestFailure::Timeout` and keeps the session open (draft-14 §12.2).
