@@ -12,10 +12,7 @@ use broadcast::{Broadcast, RelayConnection};
 
 use crate::stats_panel::Registration;
 
-use crate::{
-    ingest::flv::FlvRecorder,
-    ingest_publisher::{IngestOptions, IngestPublisher},
-};
+use crate::ingest_publisher::{IngestOptions, IngestPublisher};
 
 #[derive(Default)]
 pub struct RtmpCounters {
@@ -26,7 +23,6 @@ pub struct RtmpCounters {
 pub struct RtmpState {
     label: String,
     pub counters: RtmpCounters,
-    pub recorder: Option<FlvRecorder>,
     pub connection: RelayConnection,
     _registration: Option<Registration>,
     transcode: bool,
@@ -48,7 +44,6 @@ impl RtmpState {
         Self {
             label,
             counters: RtmpCounters::default(),
-            recorder: None,
             connection,
             _registration: registration,
             transcode: options.transcode,
@@ -56,7 +51,7 @@ impl RtmpState {
         }
     }
 
-    async fn handle_media_tag(&mut self, app_name: &str, stream_key: &str, tag: Tag) {
+    fn handle_media_tag(&mut self, app_name: &str, stream_key: &str, tag: Tag) {
         let label = self.label.as_str();
         let counter = match tag.tag_type {
             TagType::Audio => &mut self.counters.audio,
@@ -65,11 +60,6 @@ impl RtmpState {
         *counter += 1;
         if *counter == 1 || counter.is_multiple_of(1000) {
             tracing::debug!(peer = %label, app = %app_name, tag_type = ?tag.tag_type, packets = *counter, "RTMP media packets received");
-        }
-        if let Some(recorder) = self.recorder.as_mut()
-            && let Err(err) = recorder.write_tag(&tag).await
-        {
-            tracing::warn!(peer = %label, ?err, tag_type = ?tag.tag_type, "failed to record RTMP tag");
         }
         let (namespace_path, _stream_key) = split_namespace_and_key(app_name, stream_key);
         let stream = self
@@ -103,7 +93,7 @@ impl RtmpState {
     }
 }
 
-pub async fn handle_event(
+pub fn handle_event(
     session: &mut ServerSession,
     queue: &mut VecDeque<ServerSessionResult>,
     event: ServerSessionEvent,
@@ -128,14 +118,6 @@ pub async fn handle_event(
                 split_namespace_and_key(&app_name, &stream_key);
             tracing::info!(peer = %label, app = %app_name, stream = %cleaned_stream_key, namespace = %namespace_path, ?mode, "RTMP publish requested");
             queue.extend(session.accept_request(request_id)?);
-            if state.recorder.is_none() {
-                match FlvRecorder::open(&app_name, &stream_key).await {
-                    Ok(recorder) => state.recorder = Some(recorder),
-                    Err(err) => {
-                        tracing::warn!(peer = %label, ?err, "failed to start FLV recorder");
-                    }
-                }
-            }
         }
         ServerSessionEvent::PublishStreamFinished {
             app_name,
@@ -164,7 +146,7 @@ pub async fn handle_event(
                 timestamp: Timestamp::from_millis(timestamp.value as u64),
                 data: Bytes::copy_from_slice(&data),
             };
-            state.handle_media_tag(&app_name, &stream_key, tag).await;
+            state.handle_media_tag(&app_name, &stream_key, tag);
         }
         ServerSessionEvent::VideoDataReceived {
             app_name,
@@ -177,7 +159,7 @@ pub async fn handle_event(
                 timestamp: Timestamp::from_millis(timestamp.value as u64),
                 data: Bytes::copy_from_slice(&data),
             };
-            state.handle_media_tag(&app_name, &stream_key, tag).await;
+            state.handle_media_tag(&app_name, &stream_key, tag);
         }
         ServerSessionEvent::PlayStreamRequested { request_id, .. } => {
             queue.extend(session.reject_request(

@@ -5,27 +5,16 @@ pub struct ServiceEndpoints {
     pub ptz_endpoint: String,
 }
 pub async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints {
-    let mut media = None;
-    let mut ptz = None;
-    let cmd = onvif_requests::get_services();
-    if let Ok(services) = onvif.send_device(&cmd).await {
-        if services.status < 400 {
-            let parsed = parse_services(&services.body);
-            media = parsed.0;
-            ptz = parsed.1;
-        }
-    }
+    let (mut media, mut ptz) = match onvif.send_device(&onvif_requests::get_services()).await {
+        Ok(services) if services.status < 400 => parse_services(&services.body),
+        _ => (None, None),
+    };
     if media.is_none() || ptz.is_none() {
-        let cmd = onvif_requests::get_capabilities();
-        if let Ok(caps) = onvif.send_device(&cmd).await {
+        if let Ok(caps) = onvif.send_device(&onvif_requests::get_capabilities()).await {
             if caps.status < 400 {
-                let parsed = parse_capabilities(&caps.body);
-                if media.is_none() {
-                    media = parsed.0;
-                }
-                if ptz.is_none() {
-                    ptz = parsed.1;
-                }
+                let (caps_media, caps_ptz) = parse_capabilities(&caps.body);
+                media = media.or(caps_media);
+                ptz = ptz.or(caps_ptz);
             }
         }
     }
@@ -36,9 +25,8 @@ pub async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints {
     }
 }
 fn parse_services(body: &str) -> (Option<String>, Option<String>) {
-    let doc = match Document::parse(body) {
-        Ok(doc) => doc,
-        Err(_) => return (None, None),
+    let Ok(doc) = Document::parse(body) else {
+        return (None, None);
     };
     let mut media = None;
     let mut ptz = None;
@@ -60,9 +48,8 @@ fn parse_services(body: &str) -> (Option<String>, Option<String>) {
     (media, ptz)
 }
 fn parse_capabilities(body: &str) -> (Option<String>, Option<String>) {
-    let doc = match Document::parse(body) {
-        Ok(doc) => doc,
-        Err(_) => return (None, None),
+    let Ok(doc) = Document::parse(body) else {
+        return (None, None);
     };
     let media = doc
         .descendants()
