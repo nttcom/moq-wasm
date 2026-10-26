@@ -494,8 +494,10 @@ does not cover is served at once from the cache with the rest unknown,
 going upstream only when the cache holds no object at or after the start,
 so FETCH_OK has an End Location, and then waiting for no object. Without
 FILL_TIMEOUT (always on draft-14) the relay waits up to
-`MOQT_FETCH_FILL_TIMEOUT_SECS` and resets the downstream FETCH with
-INTERNAL_ERROR when that runs out. A response whose upstream marked objects
+`MOQT_FETCH_FILL_TIMEOUT_SECS` and then does the same (§10.2.5 "an
+implementation specific duration"); toward a draft-14 downstream moqt
+cannot mark the rest unknown and resets the FETCH there, with
+INTERNAL_ERROR on the wire. A response whose upstream marked objects
 unknown is served with the known objects and the unknown ranges reported
 (see Fetch delivery), on either draft.
 
@@ -683,7 +685,7 @@ per-request authorization gate under "Event pipeline".
   received is known except the ranges a `Fetch::UnknownRange` marked; it
   registers those known ranges when it ends (guarded by the eviction
   generation counter): through the end of the range at `Fetch::End`, through
-  the last item received when the FETCH's FILL_TIMEOUT ran out. A range with
+  the last item received when the fill budget ran out. A range with
   an unknown part stays uncovered, so a later FETCH of it goes upstream
   again. Datagram objects register nothing.
 - `next_subgroup_object_or_wait(key, generation, from)` (live egress) returns the next object of that
