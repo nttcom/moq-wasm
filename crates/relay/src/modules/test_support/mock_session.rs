@@ -55,6 +55,7 @@ pub(crate) struct RecordedControlMessages {
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     fetch_fill_timeouts: Arc<Mutex<Vec<Option<std::time::Duration>>>>,
+    subscribed_track_names: Arc<Mutex<Vec<String>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
     go_aways: Arc<Mutex<Vec<String>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
@@ -71,6 +72,11 @@ impl RecordedControlMessages {
     /// The FILL_TIMEOUT of each FETCH sent on the session.
     pub(crate) fn fetch_fill_timeouts(&self) -> Vec<Option<std::time::Duration>> {
         self.fetch_fill_timeouts.lock().unwrap().clone()
+    }
+
+    /// The track name of each SUBSCRIBE sent on the session.
+    pub(crate) fn subscribed_track_names(&self) -> Vec<String> {
+        self.subscribed_track_names.lock().unwrap().clone()
     }
 
     pub(crate) fn closes(&self) -> Vec<(TerminationErrorCode, String)> {
@@ -477,6 +483,11 @@ impl Subscriber for MockUpstreamSubscriber {
         track_name: String,
         _option: moqt::subscribe::SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription> {
+        self.recorded
+            .subscribed_track_names
+            .lock()
+            .unwrap()
+            .push(track_name.clone());
         let answer_subscribe = match &self.answer_subscribe {
             Some(SubscribeAnswer::SubscribeOk(answer_subscribe)) => answer_subscribe,
             Some(SubscribeAnswer::Refuse(code)) => {
@@ -750,6 +761,8 @@ impl SubscribeHandler for MockSubscribeHandler {
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
     pub(crate) fill_timeout: Option<std::time::Duration>,
+    /// Stands in for the session draft: true for draft-18.
+    pub(crate) marks_unknown_ranges: bool,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
     /// The track properties of each FETCH_OK sent.
@@ -764,6 +777,7 @@ impl MockFetchHandler {
         Self {
             fetch_params,
             fill_timeout: None,
+            marks_unknown_ranges: false,
             joining_rule: |_| Ok(()),
             fetch_oks: Arc::default(),
             errors: Arc::default(),
@@ -805,6 +819,10 @@ impl FetchHandler for MockFetchHandler {
 
     fn fill_timeout(&self) -> Option<std::time::Duration> {
         self.fill_timeout
+    }
+
+    fn marks_unknown_ranges(&self) -> bool {
+        self.marks_unknown_ranges
     }
 
     fn check_joining(
