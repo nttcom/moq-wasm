@@ -697,7 +697,7 @@ mod tests {
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         },
-        subscribe::{SubscribeHandler, SubscribeOption, SubscribeUpdateOption},
+        subscribe::{FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption},
     };
 
     const START: Location = Location {
@@ -1393,13 +1393,14 @@ mod tests {
         assert_eq!(update.subscription_request_id(), handler.request_id());
         assert!(!update.forward());
         assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 3,
-                object_id: 2
-            }
+            update.filter(),
+            Some(FilterType::AbsoluteStart {
+                location: Location {
+                    group_id: 3,
+                    object_id: 2
+                }
+            })
         );
-        assert_eq!(update.end_group(), 0);
         assert_eq!(update.subscriber_priority(), 128);
     }
 
@@ -1435,7 +1436,12 @@ mod tests {
         let told = update.ok(Some(location(3, 1)));
 
         // Assert: draft-14 SUBSCRIBE_UPDATE has no answer
-        assert!(!told);
+        assert_eq!(
+            told,
+            crate::subscribe::UpdateAnswer::Accepted {
+                largest_told: false
+            }
+        );
     }
 
     #[tokio::test]
@@ -1477,14 +1483,16 @@ mod tests {
             panic!("expected SUBSCRIBE_UPDATE from the client");
         };
         assert_eq!(update.subscription_request_id(), handler.request_id());
-        assert_eq!(update.end_group(), 7);
         assert!(update.forward());
         assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 3,
-                object_id: 2
-            }
+            update.filter(),
+            Some(FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 3,
+                    object_id: 2
+                },
+                end_group: 6,
+            })
         );
     }
 
@@ -1515,13 +1523,15 @@ mod tests {
         };
         assert_eq!(update.subscription_request_id(), 6);
         assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 4,
-                object_id: 2
-            }
+            update.filter(),
+            Some(FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 4,
+                    object_id: 2
+                },
+                end_group: 8,
+            })
         );
-        assert_eq!(update.end_group(), 9);
         assert_eq!(update.subscriber_priority(), 7);
         assert!(update.forward());
     }

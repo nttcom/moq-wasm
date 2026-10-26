@@ -11,7 +11,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     domain::{
-        delivery_control::{DeliveryControl, UpdateOutcome},
+        delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
@@ -772,35 +772,37 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
-    /// Applies a SUBSCRIBE_UPDATE to the registration's delivery control (see
+    /// Applies an update to the registration's delivery control (see
     /// `DeliveryControl::apply_update`). `told_largest` is the Largest
     /// Location the update's answer gave the subscriber, if it gave one; an
     /// update that turns Forward on makes it the Joining Location. Returns
-    /// `None` when no such downstream subscription is registered.
+    /// `false` when no such downstream subscription is registered.
     pub(crate) fn update_downstream_delivery(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
-        update: DeliveryControl,
+        requested: DeliveryControl,
         told_largest: Option<Option<Location>>,
-    ) -> Option<UpdateOutcome> {
-        let mut registered = self
+    ) -> bool {
+        let Some(mut registered) = self
             .downstream_subscriptions
-            .get_mut(&(downstream_session_id, downstream_subscribe_id))?;
-        let mut outcome = UpdateOutcome::Applied;
+            .get_mut(&(downstream_session_id, downstream_subscribe_id))
+        else {
+            return false;
+        };
         let mut forward_turned_on = false;
         registered
             .delivery_control_sender
             .send_if_modified(|control| {
                 let previous = *control;
-                outcome = control.apply_update(update);
+                control.apply_update(requested);
                 forward_turned_on = !previous.forward && control.forward;
                 *control != previous
             });
         if forward_turned_on && let Some(largest_location) = told_largest {
             registered.subscription.joining_location = largest_location;
         }
-        Some(outcome)
+        true
     }
 
     /// The last downstream subscriber leaving releases the track's
@@ -817,9 +819,25 @@ impl InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
     ) -> Option<RemovedDownstreamSubscription> {
+        self.end_downstream_subscription(downstream_session_id, downstream_subscribe_id, None)
+    }
+
+    /// Removes the registration like `remove_downstream_subscription`; `end`,
+    /// when given, goes to its egress runner, which answers it with
+    /// PUBLISH_DONE once its streams are done. Without it the subscriber
+    /// ended the subscription and no PUBLISH_DONE is sent.
+    pub(crate) fn end_downstream_subscription(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+        end: Option<PublishDoneReason>,
+    ) -> Option<RemovedDownstreamSubscription> {
         let (_, registered) = self
             .downstream_subscriptions
             .remove(&(downstream_session_id, downstream_subscribe_id))?;
+        if let Some(end) = end {
+            let _ = registered.runner_stop_sender.send(end);
+        }
         let track_key = registered.subscription.track_key;
         let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
             return None;
@@ -1298,10 +1316,10 @@ mod tests {
             .unwrap();
 
         // Act
-        let outcome = table.update_downstream_delivery(2, 100, delivery_control(false), None);
+        let registered = table.update_downstream_delivery(2, 100, delivery_control(false), None);
 
         // Assert
-        assert_eq!(outcome, Some(UpdateOutcome::Applied));
+        assert!(registered);
         assert!(!signals.delivery_control_receiver.borrow().forward);
     }
 
@@ -1357,10 +1375,10 @@ mod tests {
         );
 
         // Act
-        let outcome = table.update_downstream_delivery(2, 101, delivery_control(false), None);
+        let registered = table.update_downstream_delivery(2, 101, delivery_control(false), None);
 
         // Assert
-        assert_eq!(outcome, None);
+        assert!(!registered);
     }
 
     #[test]

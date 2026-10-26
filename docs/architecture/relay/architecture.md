@@ -419,27 +419,40 @@ answer the PUBLISH before the request timeout.
 Forward State, Start Location and End Group are applied; Subscriber Priority
 is not. Every downstream registration owns a `watch::Sender<DeliveryControl>`
 (`domain/delivery_control.rs`: the Forward State, the Start Location resolved
-from the filter and the subscribe-time Largest Location, and the End Group)
-next to its runner stop sender. The End Group is kept as the first group past
-the range, `None` when open-ended: an AbsoluteRange End Group is the last group
-included (§9.7) and is stored plus 1, while the SUBSCRIBE_UPDATE field already
-is the end group plus 1 with 0 meaning open-ended (§9.10). A SUBSCRIBE starts
-it at the SUBSCRIBE's Forward State (§5.1 of draft-14 and draft-18: no object
-is sent at Forward 0), while the relay's own upstream SUBSCRIBE always asks for
-Forward 1; a forwarded PUBLISH starts it at its PUBLISH_OK's Forward.
-SUBSCRIBE_UPDATE applies to the (session, Subscription Request ID)
-registration: Forward is taken as sent, the range only narrows (the later
-Start Location, the smaller End Group). An update that widens the range is
-not closed with the PROTOCOL_VIOLATION §9.10 allows: its widening part is
-logged and ignored. An update for no registered subscription is logged and
-dropped. The upstream subscription keeps Forward 1 and its own range, so the
-cache keeps filling for FETCH. Every update is answered through
-`SubscribeUpdateHandler::ok` with the track's Largest Object, resolved like a
-SUBSCRIBE's (draft-18 §10.2.11; draft-14 sends no answer). When `ok` reports
-that the subscriber was given that location, an update that turns Forward
-from 0 to 1 also makes it the registration's joining location (draft-18
-§5.1), so a later Joining FETCH ends there; draft-14 keeps the SUBSCRIBE_OK's
-Largest Location (§9.16.2). The relay itself never branches on the draft.
+from the filter and the Largest Location, the End Group, the track's Largest
+Object at the latest update, and counts of the updates that moved the start
+back and of those that turned Forward on) next to its runner stop sender. The End Group is kept as the first group
+past the range, `None` when open-ended: an AbsoluteRange End Group is the last
+group included (§9.7) and is stored plus 1. A SUBSCRIBE starts it at the
+SUBSCRIBE's Forward State (§5.1 of draft-14 and draft-18: no object is sent at
+Forward 0), while the relay's own upstream SUBSCRIBE always asks for Forward
+1; a forwarded PUBLISH starts it at its PUBLISH_OK's Forward.
+An update applies to the (session, Subscription Request ID) registration
+through `session::handler::SubscribeUpdateHandler`: Forward is taken as sent,
+and the filter `filter()` returns is resolved against the track's Largest
+Object like a SUBSCRIBE's (a draft-14 SUBSCRIBE_UPDATE states its range as an
+absolute filter; a draft-18 REQUEST_UPDATE without SUBSCRIPTION_FILTER keeps
+the range). An update that moves the Start Location back or the End Group out
+is applied only when `SubscribeUpdateHandler::check_widening` allows it;
+otherwise the session is closed with PROTOCOL_VIOLATION (draft-14 §9.10: the
+publisher MUST). draft-18 §10.9.1 allows both: a start moved back is served
+like a new SUBSCRIBE with that start, from just past the Largest Object at the
+update (see "Egress"), and the subscriber FETCHes what lies before it. An
+update for no registered subscription is logged and dropped. The upstream
+subscription keeps Forward 1 and its own range, so the cache keeps filling for
+FETCH. Every applied update is answered through `SubscribeUpdateHandler::ok`
+with the track's Largest Object, resolved like a SUBSCRIBE's (draft-18
+§10.2.11; draft-14 sends no answer). When `ok` reports that the subscriber was
+given that location, an update that turns Forward from 0 to 1 also makes it
+the registration's joining location (draft-18 §5.1), so a later Joining FETCH
+ends there; draft-14 keeps the SUBSCRIBE_OK's Largest Location (§9.16.2).
+When `ok` reports `UpdateAnswer::Failed` instead, moqt has already answered
+the update REQUEST_ERROR TIMEOUT because the session worker reached it after
+the control message timeout. The update is not applied, and the subscription
+ends as draft-18 §10.9.1 requires: the UNSUBSCRIBE sequence removes the
+registration, handing its runner PUBLISH_DONE UPDATE_FAILED, which it sends
+once its streams are done, and releases the upstream subscriptions left
+unneeded. The relay itself never branches on the draft.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Joining
@@ -772,15 +785,27 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   group whose open event was dropped is still delivered under either Group
   Order. While the
   registration's Forward State is 0 it drops open events, and a runner that
-  starts at Forward 0 skips that cache scan, so no subgroup opened meanwhile is
-  ever sent; streams already scheduled run to their end, and
-  after Forward returns to 1 delivery resumes with the next subgroup opened. The start is a
+  starts at Forward 0 skips that cache scan. No object is sent at Forward 0
+  (draft-14 §5.1, draft-18 §5.1): the send tasks hold their subgroups and reset
+  their open streams (see `GroupSender`). An update that turns Forward to 1
+  restarts the schedule like a new subscription, from just past the Largest
+  Object at that update, so a subgroup opened while paused and still open
+  delivers the objects after it on a new stream (draft-18 §11.4.3 allows a
+  new stream after Forward 0→1), and the subscriber FETCHes the objects up to
+  it. A count of these updates tells the scheduler and the send tasks about
+  a pause they did not see, since a watch keeps only the latest state. The start is a
   lower bound in both paths: group ids may begin anywhere and skip values
   (§2.3.1), so the first delivered group is the first one at or above the
   start, not the start group itself. Groups at or past the End Group are never
   scheduled, and an open event reads the current `DeliveryControl`, so a
-  SUBSCRIBE_UPDATE's later Start Location or smaller End Group applies to every
-  subgroup opened after it. The range has ended, and the scheduler returns
+  SUBSCRIBE_UPDATE's later Start Location, smaller End Group or larger End
+  Group applies to every subgroup opened after it. An update that moved the
+  Start Location back (draft-18 §10.9.1; the restart count tells, even when
+  the scheduler only sees the latest state) restarts the schedule like a new
+  subscription: it scans the cache from the new start clamped past the
+  Largest Object at the update and schedules the subgroups not scheduled yet.
+  A subgroup scheduled before continues in its own task (see
+  `GroupSender`). The range has ended, and the scheduler returns
   `SchedulerExit::EndGroupReached`, once the start lies at or past the End
   Group or the cache has opened a group at or past it: live groups arrive in
   ascending order, so no further group can enter the range (a subgroup of an
@@ -797,9 +822,14 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). Each task
   also watches the registration's `DeliveryControl`: when a SUBSCRIBE_UPDATE
   moves the range past its group (End Group at or below it, Start Location
-  beyond it), the open stream is reset with CANCELLED (draft-14 §10.4.3) and a
-  task that has not opened its stream yet ends without one. Groups still in
-  the range are delivered to their end. Datagram groups are
+  beyond it), the open stream is reset with CANCELLED (draft-14 §10.4.3). Past
+  the End Group the task ends. Before the Start Location, and at Forward 0 or
+  after a resume it did not see, it is held: it sends nothing and ends once
+  its subgroup ends, unless a later update moves the start back over the group
+  or turns Forward to 1, after which the subgroup continues on a new stream
+  from just past the Largest Object at that update. Every object the
+  task sent lies at or before that location, so none is sent twice. Groups
+  still in the range are delivered to their end. Datagram groups are
   re-emitted with the downstream track alias, and stop at the same range
   change.
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
