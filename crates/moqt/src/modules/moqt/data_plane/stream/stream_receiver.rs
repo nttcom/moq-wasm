@@ -65,9 +65,14 @@ mod tests {
     use std::task::Poll;
 
     use super::{StreamReceiveError, UniStreamReceiver};
-    use crate::modules::{
-        moqt::data_plane::codec::uni_stream_decoder::UniStreamDecoder,
-        transport::{read_error::ReadError, transport_receive_stream::MockTransportReceiveStream},
+    use crate::{
+        modules::{
+            moqt::data_plane::codec::uni_stream_decoder::UniStreamDecoder,
+            transport::{
+                read_error::ReadError, transport_receive_stream::MockTransportReceiveStream,
+            },
+        },
+        wire::{SubgroupHeader, SubgroupId},
     };
 
     fn receiver_reading(result: Result<&'static [u8], ReadError>) -> UniStreamReceiver {
@@ -118,5 +123,44 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(StreamReceiveError::Decode(_))));
+    }
+
+    #[tokio::test]
+    async fn a_stream_ending_inside_an_object_is_reported_as_decode_error() {
+        // Arrange: a subgroup header, then an object's id delta and a payload
+        // length of 8 with no payload, then FIN
+        let mut bytes = SubgroupHeader::new(1, 0, SubgroupId::None, 0, false, false)
+            .encode()
+            .to_vec();
+        bytes.extend_from_slice(&[0x00, 0x08]);
+        let mut chunks = vec![bytes].into_iter();
+        let mut receive_stream = MockTransportReceiveStream::new();
+        receive_stream.expect_poll_read().returning(move |_, buf| {
+            if let Some(chunk) = chunks.next() {
+                buf.put_slice(&chunk);
+            }
+            Poll::Ready(Ok(()))
+        });
+        let mut receiver =
+            UniStreamReceiver::new(Box::new(receive_stream), UniStreamDecoder::new());
+        receiver
+            .receive()
+            .await
+            .unwrap()
+            .expect("the subgroup header");
+        receiver
+            .receive()
+            .await
+            .unwrap()
+            .expect("the object's head");
+
+        // Act
+        let result = receiver.receive().await;
+
+        // Assert
+        assert!(
+            matches!(result, Err(StreamReceiveError::Decode(_))),
+            "{result:?}"
+        );
     }
 }
