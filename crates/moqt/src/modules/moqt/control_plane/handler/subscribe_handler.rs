@@ -212,6 +212,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_draft14_refusal_with_unsupported_extension_reaches_the_subscriber_as_not_supported()
+    {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscribe-handler-unsupported-extension").await;
+        let request = tokio::spawn(async move {
+            client
+                .subscriber()
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::UnsupportedExtension, String::new())
+            .await
+            .unwrap();
+
+        // Assert: draft-18 §2.5.1 relays UNSUPPORTED_EXTENSION, which draft-14 SUBSCRIBE_ERROR (§9.9) lacks; NOT_SUPPORTED stands in
+        assert!(matches!(
+            request.await.unwrap(),
+            Err(RequestFailure::Rejected {
+                code: RequestErrorCode::NotSupported,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
     async fn subscribe_ok_states_ascending_when_the_subscriber_leaves_the_order_to_the_publisher() {
         // Arrange
         let (port, accept) = spawn_dual_server("subscribe-handler-group-order");
