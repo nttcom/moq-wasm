@@ -531,9 +531,9 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
