@@ -33,7 +33,7 @@ use crate::{
     publish::PublishOption,
     server::Handshake,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
-    subscribe::FilterType,
+    subscribe::{FilterType, SubscribeUpdateHandler},
     wire::{SubgroupId, SubgroupObject},
 };
 
@@ -256,6 +256,22 @@ pub(crate) async fn published_track_between(client: Session, server: Session) ->
         published: published.unwrap(),
         accepted,
     }
+}
+
+/// Has the server update the Forward State of the track it accepted and
+/// returns the update as the publishing client receives it.
+pub(crate) async fn received_subscribe_update(track: &PublishedTrack) -> SubscribeUpdateHandler {
+    track
+        .server
+        .subscriber()
+        .update_forward(&track.accepted, true)
+        .await
+        .unwrap();
+    let event = within(track.client.receive_event()).await.unwrap();
+    let SessionEvent::SubscribeUpdate(update) = event else {
+        panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+    };
+    update
 }
 
 pub(crate) fn object_with_extensions() -> Object {
