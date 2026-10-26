@@ -1,4 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import type { FetchObjectMessage } from '../../../../pkg/moqt'
 import { type LiveStats, LocLive } from '@player/locLive'
 import { createPictureCanvas, createPictureVideo } from '@player/pictureElements'
 import { AdaptiveBitrate, type Rung, capLadderToHeight } from '@player/adaptiveBitrate'
@@ -39,6 +40,8 @@ type TrackRegistration = {
   retire?: () => void
   adaptation?: VideoAdaptation
   newestGroupId?: bigint
+  /// Held back because the decoder needs the joining FETCH's group first.
+  liveWhileJoining?: [bigint, SubgroupObjectMessageWithLoc][]
 }
 
 type PictureAdaptation = {
@@ -79,14 +82,20 @@ export class MediaSubscriber {
   /// the picture, lower when the capture-to-arrival lag rises, or when the
   /// largest lag, keyframes included, plus the output latency exceeds
   /// `TARGET_DELAY_MS` (see `AdaptiveBitrate`).
+  ///
+  /// Returns true when the track starts its picture while the relay has
+  /// content: the caller then fetches the current group with a joining FETCH,
+  /// hands its objects to `pushJoiningVideo` and calls `endJoining` once the
+  /// FETCH ends, and the live objects wait until then.
   registerVideoTrack(
     userId: string,
     trackName: string,
     trackAlias: bigint,
     config: TrackMediaConfig | undefined,
+    contentExists: boolean,
     retire: () => void,
     adaptation?: VideoAdaptation
-  ): void {
+  ): boolean {
     const source: RemoteVideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
     const outgoing = this.videoRegistration(userId, source)
     if (outgoing && !this.registrations.has(trackAlias)) {
@@ -97,7 +106,52 @@ export class MediaSubscriber {
         incoming: trackAlias
       })
     }
-    this.register(trackAlias, { userId, source, kind: 'video', trackName, config, retire, adaptation })
+    const joining = contentExists && !outgoing
+    this.register(trackAlias, {
+      userId,
+      source,
+      kind: 'video',
+      trackName,
+      config,
+      retire,
+      adaptation,
+      liveWhileJoining: joining ? [] : undefined
+    })
+    return joining
+  }
+
+  pushJoiningVideo(trackAlias: bigint, object: FetchObjectMessage): void {
+    const registration = this.registrations.get(trackAlias)
+    const pipeline = registration && this.pipelines.get(registration.userId)?.[registration.source]
+    if (!registration?.liveWhileJoining || !pipeline) {
+      return
+    }
+    const { groupId, objectId, objectPayload, locHeader } = object
+    const message = {
+      subgroupId: 0n,
+      objectId,
+      objectPayloadLength: objectPayload.length,
+      objectPayload,
+      objectStatus: undefined,
+      locHeader
+    }
+    pipeline.push('video', groupId, message, true)
+  }
+
+  endJoining(trackAlias: bigint): void {
+    const registration = this.registrations.get(trackAlias)
+    const live = registration?.liveWhileJoining
+    if (!registration || !live) {
+      return
+    }
+    registration.liveWhileJoining = undefined
+    const pipeline = this.pipelines.get(registration.userId)?.[registration.source]
+    if (!pipeline) {
+      return
+    }
+    for (const [groupId, message] of live) {
+      this.pushVideo(trackAlias, registration, pipeline, groupId, message)
+    }
   }
 
   /// The video decoder keeps the configuration of the first track it decodes,
@@ -210,6 +264,10 @@ export class MediaSubscriber {
     groupId: bigint,
     message: SubgroupObjectMessageWithLoc
   ): void {
+    if (registration.liveWhileJoining) {
+      registration.liveWhileJoining.push([groupId, message])
+      return
+    }
     const key = pictureKey(registration.userId, registration.source)
     const videoSwitch = this.videoSwitches.get(key)
     if (videoSwitch?.outgoing === trackAlias && videoSwitch.splice.acceptOutgoing(groupId) === 'retire') {

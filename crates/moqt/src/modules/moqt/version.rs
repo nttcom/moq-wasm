@@ -60,7 +60,7 @@ use crate::{
                 object::canonical_object::{Object, SubgroupStart},
                 stream::{
                     fetch_data_receiver::FetchDataReceiver,
-                    stream_data_receiver::StreamDataReceiver,
+                    stream_data_receiver::{StreamDataReceiver, SubgroupPart},
                     stream_receiver::{BiStreamReceiver, StreamReceiveError},
                 },
             },
@@ -179,10 +179,11 @@ impl SubgroupReader {
         }
     }
 
-    /// `Ok(None)` means the peer finished the stream (FIN).
-    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+    /// Objects and payload parts, never a header. `Ok(None)` means the peer
+    /// finished the stream (FIN).
+    pub(crate) async fn next_part(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
         match self {
-            Self::Draft14(reader) => reader.next_object().await,
+            Self::Draft14(reader) => reader.next_part().await,
         }
     }
 }
@@ -230,6 +231,18 @@ impl SubgroupEncoder {
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.object(object),
+        }
+    }
+
+    /// The bytes of `object` before a payload of `payload_len` bytes; fails
+    /// like `object`.
+    pub(crate) fn object_head(
+        &mut self,
+        object: &Object,
+        payload_len: usize,
+    ) -> anyhow::Result<BytesMut> {
+        match self {
+            Self::Draft14(encoder) => encoder.object_head(object, payload_len),
         }
     }
 }
