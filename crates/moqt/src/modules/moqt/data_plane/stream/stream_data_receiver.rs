@@ -4,8 +4,9 @@ use bytes::{Bytes, BytesMut};
 
 use crate::modules::moqt::{
     data_plane::{
+        immutable_properties,
         object::canonical_object::{Object, SubgroupStart},
-        object_ledger::{ObjectLedger, PayloadHasher},
+        object_ledger::{CopySource, ObjectLedger, PayloadHasher},
         stream::{
             open_subgroups::{OpenSubgroup, OpenSubgroups},
             stream_receiver::StreamReceiveError,
@@ -147,17 +148,26 @@ impl StreamDataReceiver {
         received
     }
 
-    /// Checks an object against the ledger once its payload is complete; a
+    /// Checks an object's Immutable Properties as soon as its head arrives,
+    /// and the object against the ledger once its payload is complete; a
     /// payload that arrives in pieces is hashed piece by piece.
     fn check(
         &mut self,
         received: Option<SubgroupPart>,
     ) -> Result<Option<SubgroupPart>, StreamReceiveError> {
+        let version = self.reader.version();
+        if let Some(SubgroupPart::Object(object) | SubgroupPart::ObjectStart { object, .. }) =
+            &received
+        {
+            immutable_properties::check(version, object)
+                .map_err(StreamReceiveError::MalformedTrack)?;
+        }
         let Some(ledger) = &self.ledger else {
             return Ok(received);
         };
+        let source = CopySource::Subscription(version);
         let checked = match &received {
-            Some(SubgroupPart::Object(object)) => ledger.check(object, false),
+            Some(SubgroupPart::Object(object)) => ledger.check(object, source),
             Some(SubgroupPart::ObjectStart { object, .. }) => {
                 self.arriving = Some(Box::new((object.clone(), ledger.payload_hasher())));
                 Ok(())
@@ -172,7 +182,7 @@ impl StreamDataReceiver {
                 match self.arriving.take_if(|_| *last) {
                     Some(arrived) => {
                         let (object, hasher) = *arrived;
-                        ledger.check_hashed(&object, hasher, false)
+                        ledger.check_hashed(&object, hasher, source)
                     }
                     None => Ok(()),
                 }

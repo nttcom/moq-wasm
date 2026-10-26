@@ -3,13 +3,15 @@
 
 use std::time::Duration;
 
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 
 #[cfg(test)]
 use crate::modules::moqt::data_plane::object::subgroup::SubgroupObjectField;
 use crate::modules::{
     moqt::{
-        control_plane::control_messages::messages::parameters::location::Location,
+        control_plane::control_messages::{
+            key_value_pair::KeyValuePair, messages::parameters::location::Location,
+        },
         data_plane::{
             codec::{
                 fetch_decoder::FetchFrame,
@@ -18,7 +20,7 @@ use crate::modules::{
             },
             object::{
                 canonical_object::{ForwardingPreference, Object, SubgroupStart},
-                extension_headers::ExtensionHeaders,
+                extension_headers::{ExtensionHeaderType, ExtensionHeaders},
                 fetch::{FetchHeader, FetchObjectField},
                 object_datagram::ObjectDatagram,
                 object_status::ObjectStatus,
@@ -148,6 +150,26 @@ impl SubgroupEncoder {
         }
         .encode()
     }
+}
+
+/// §11.2: Immutable Extensions that hold Immutable Extensions, or a
+/// Key-Value-Pair that does not parse, make the track malformed.
+pub(crate) fn has_malformed_immutable_extensions(headers: &ExtensionHeaders) -> bool {
+    headers
+        .immutable_extensions()
+        .into_iter()
+        .any(|mut contents| {
+            while contents.has_remaining() {
+                match KeyValuePair::decode(&mut contents) {
+                    Ok(pair) if pair.key == ExtensionHeaderType::ImmutableExtensions as u64 => {
+                        return true;
+                    }
+                    Ok(_) => {}
+                    Err(_) => return true,
+                }
+            }
+            false
+        })
 }
 
 pub(crate) fn encode_datagram(track_alias: u64, object: &Object) -> anyhow::Result<BytesMut> {

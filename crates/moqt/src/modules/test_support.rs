@@ -568,6 +568,50 @@ pub(crate) async fn subscribed_track_reader(
     TrackReader::new(data_receiver(server, subscription).await)
 }
 
+/// The server side of `track` FETCHes the track and the client answers
+/// with `answer`; returns what the FETCH receiver reads first.
+pub(crate) async fn fetch_answered_with(
+    track: &PublishedTrack,
+    answer: &Object,
+) -> anyhow::Result<Fetch> {
+    let mut subscriber = track.server.subscriber();
+    let end = location(answer.location.group_id + 1, 0);
+    let (handle, sender) = within(async {
+        tokio::join!(
+            subscriber.fetch(
+                "ns".into(),
+                "track".into(),
+                location(0, 0),
+                end,
+                FetchOption::default(),
+            ),
+            async {
+                // An earlier FETCH whose receiver is gone may be cancelled first.
+                let handler = loop {
+                    match track.client.receive_event().await.unwrap() {
+                        SessionEvent::Fetch(handler) => break handler,
+                        SessionEvent::FetchCancel(_) => continue,
+                        _ => panic!("expected FETCH from the server"),
+                    }
+                };
+                handler.ok(false, end).await.unwrap();
+                track
+                    .client
+                    .publisher()
+                    .create_fetch_stream(handler.request_id)
+                    .await
+                    .unwrap()
+            }
+        )
+    })
+    .await;
+    sender.send_object(answer).await.unwrap();
+    let mut receiver = within(subscriber.accept_fetch_receiver(&handle.unwrap()))
+        .await
+        .unwrap();
+    within(receiver.receive()).await
+}
+
 pub(crate) async fn read_fetch_objects(
     receiver: &mut FetchDataReceiver,
 ) -> Vec<crate::object::Object> {

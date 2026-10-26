@@ -5,7 +5,9 @@ use crate::{
     fetch::FetchOption,
     modules::moqt::{
         data_plane::{
-            object::canonical_object::Object, object_ledger::ObjectLedger,
+            immutable_properties,
+            object::canonical_object::Object,
+            object_ledger::{CopySource, ObjectLedger},
             stream::stream_receiver::StreamReceiveError,
         },
         domains::{
@@ -40,8 +42,8 @@ pub struct FetchDataReceiver {
     carry: Option<FetchCarry>,
     /// `None` on draft-14, whose FETCH has no request stream.
     request_end: Option<FetchRequestEnd>,
-    /// The fetched track's ledger once the stream is handed to the
-    /// application.
+    /// The fetched track's ledger from when the stream is handed to the
+    /// application until the response ends.
     ledger: Option<Arc<ObjectLedger>>,
 }
 
@@ -157,12 +159,19 @@ impl FetchDataReceiver {
         loop {
             let error = match self.reader.next().await {
                 Ok(fetched) => {
-                    if let (Fetch::Object(object), Some(ledger)) = (&fetched, &self.ledger) {
-                        ledger.check(object, !self.carries_forwarding_preference())?;
+                    if let Fetch::Object(object) = &fetched {
+                        let version = self.reader.version();
+                        immutable_properties::check(version, object)?;
+                        if let Some(ledger) = &self.ledger {
+                            ledger.check(object, CopySource::Fetch(version))?;
+                        }
                     }
                     match (&fetched, &mut self.carry) {
                         (Fetch::Object(object), Some(carry)) => carry.delivered(object.location),
-                        (Fetch::End, _) => self.response_ended(),
+                        (Fetch::End, _) => {
+                            self.response_ended();
+                            self.ledger = None;
+                        }
                         _ => {}
                     }
                     return Ok(fetched);
@@ -197,6 +206,7 @@ impl FetchDataReceiver {
                     }
                 }
             }
+            self.ledger = None;
             anyhow::bail!("Failed to receive data from fetch stream: {error}")
         }
     }
