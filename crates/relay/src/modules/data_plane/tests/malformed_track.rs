@@ -1,4 +1,4 @@
-use moqt::publish::PublishDoneCode;
+use moqt::{object::MalformedTrackError, publish::PublishDoneCode};
 
 use crate::modules::{
     session::session_event::EventKind,
@@ -81,4 +81,27 @@ async fn detection_reports_the_publisher_session_and_track() {
         event.kind,
         EventKind::MalformedTrackDetected(ref track_key) if track_key == harness.track_key()
     ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_object_with_malformed_immutable_properties_terminates_the_subscription() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let stream = harness.open_upstream_stream();
+    stream.header(0);
+    stream.object(0);
+    harness.wait_largest_location(location(0, 0)).await;
+
+    // Act: moqt withholds object 1 and reports why
+    stream.malformed_track(MalformedTrackError::MalformedImmutableProperties {
+        location: location(0, 1),
+    });
+
+    // Assert: draft-14 §11.2 / draft-18 §12.7 make the track malformed; the
+    // object never reaches the cache
+    let publish_done = egress.expect_publish_done().await;
+    assert_eq!(publish_done.status_code, PublishDoneCode::MalformedTrack);
+    assert!(harness.is_track_malformed());
+    assert_eq!(harness.cache().occupancy().objects, 1);
 }

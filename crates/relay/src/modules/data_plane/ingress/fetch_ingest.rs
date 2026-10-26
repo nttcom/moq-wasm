@@ -377,7 +377,7 @@ mod tests {
         },
     };
     use bytes::Bytes;
-    use moqt::object::ObjectStatus;
+    use moqt::object::{MalformedTrackError, ObjectStatus};
 
     fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
         FetchIngest::append_fetch_object(cache, object)
@@ -770,7 +770,9 @@ mod tests {
         // Act
         let mut ingested = ingest_into(
             Arc::new(TrackCache::new()),
-            FetchAnswer::Malformed,
+            FetchAnswer::Malformed(MalformedTrackError::ConflictingDuplicate {
+                location: location(0, 0),
+            }),
             unlimited(),
         )
         .await;
@@ -778,6 +780,26 @@ mod tests {
         // Assert: the fill fails as for a malformed track, so the upstream FETCH is cancelled
         assert!(ingested.result.is_err());
         assert!(ingested.cache.is_malformed());
+        assert!(ingested.handed_over().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_upstream_fetch_object_with_malformed_immutable_properties_latches_the_track() {
+        // Act: moqt withholds the object and reports why
+        let mut ingested = ingest_into(
+            Arc::new(TrackCache::new()),
+            FetchAnswer::Malformed(MalformedTrackError::MalformedImmutableProperties {
+                location: location(0, 0),
+            }),
+            unlimited(),
+        )
+        .await;
+
+        // Assert: draft-14 §11.2 / draft-18 §12.7 make the track malformed, so
+        // the fill fails and nothing reaches the cache
+        assert!(ingested.result.is_err());
+        assert!(ingested.cache.is_malformed());
+        assert_eq!(ingested.cache.occupancy().objects, 0);
         assert!(ingested.handed_over().is_none());
     }
 
