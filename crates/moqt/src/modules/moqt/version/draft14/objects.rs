@@ -3,6 +3,10 @@
 
 use bytes::{Bytes, BytesMut};
 
+#[cfg(test)]
+use crate::modules::moqt::data_plane::object::{
+    extension_headers::ExtensionHeaders, subgroup::SubgroupObjectField,
+};
 use crate::modules::{
     moqt::{
         control_plane::control_messages::messages::parameters::location::Location,
@@ -14,11 +18,13 @@ use crate::modules::{
             },
             object::{
                 canonical_object::{ForwardingPreference, Object, SubgroupStart},
-                extension_headers::ExtensionHeaders,
                 fetch::{FetchHeader, FetchObjectField},
                 object_datagram::ObjectDatagram,
                 object_status::ObjectStatus,
-                subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
+                subgroup::{
+                    SubgroupHeader, SubgroupHeaderType, SubgroupId, SubgroupObject,
+                    SubgroupObjectHead,
+                },
             },
             stream::{
                 fetch_data_receiver::FetchDataReceiver,
@@ -91,6 +97,13 @@ impl SubgroupEncoder {
     /// Fails when the object id is not greater than the previous object's. An
     /// object without payload is sent as its status.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
+        let mut bytes = self.object_head(object)?;
+        bytes.extend_from_slice(&object.payload);
+        Ok(bytes)
+    }
+
+    /// The bytes of `object` before its payload.
+    fn object_head(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         let object_id = object.location.object_id;
         let object_id_delta = match self.prev_object_id {
             None => Some(object_id),
@@ -104,38 +117,26 @@ impl SubgroupEncoder {
                 self.prev_object_id
             )
         })?;
-        let subgroup_object = if object.payload.is_empty() {
-            SubgroupObject::new_status(u8::from(object.status) as u64)
-        } else {
-            SubgroupObject::new_payload(object.payload.clone())
-        };
-        let bytes = self
-            .raw_object(
+        let extension_headers = object.extension_headers.clone();
+        let head = if object.payload.is_empty() {
+            SubgroupObjectHead::status(
                 object_id_delta,
-                object.extension_headers.clone(),
-                subgroup_object,
+                extension_headers,
+                u8::from(object.status) as u64,
             )
-            .encode();
+        } else {
+            SubgroupObjectHead::payload(object_id_delta, extension_headers, object.payload.len())
+        };
+        let bytes = head.encode(self.message_type());
         self.prev_object_id = Some(object_id);
         Ok(bytes)
     }
 
-    fn raw_object(
-        &self,
-        object_id_delta: u64,
-        extension_headers: ExtensionHeaders,
-        subgroup_object: SubgroupObject,
-    ) -> SubgroupObjectField {
-        let header = self
-            .header
+    fn message_type(&self) -> SubgroupHeaderType {
+        self.header
             .as_ref()
-            .expect("the typestate sends the header before any object");
-        SubgroupObjectField {
-            message_type: header.message_type,
-            object_id_delta,
-            extension_headers,
-            subgroup_object,
-        }
+            .expect("the typestate sends the header before any object")
+            .message_type
     }
 
     #[cfg(test)]
@@ -144,11 +145,12 @@ impl SubgroupEncoder {
         object_id_delta: u64,
         subgroup_object: SubgroupObject,
     ) -> BytesMut {
-        self.raw_object(
+        SubgroupObjectField {
+            message_type: self.message_type(),
             object_id_delta,
-            ExtensionHeaders::default(),
+            extension_headers: ExtensionHeaders::default(),
             subgroup_object,
-        )
+        }
         .encode()
     }
 }
@@ -318,5 +320,84 @@ impl FetchReader {
             }
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::{Bytes, BytesMut};
+
+    use super::SubgroupEncoder;
+    use crate::modules::moqt::{
+        control_plane::control_messages::messages::parameters::location::Location,
+        data_plane::object::{
+            canonical_object::{ForwardingPreference, Object, SubgroupStart},
+            extension_headers::ExtensionHeaders,
+            object_status::ObjectStatus,
+        },
+    };
+
+    fn encoder() -> SubgroupEncoder {
+        let mut encoder = SubgroupEncoder::new(1);
+        encoder.header(SubgroupStart {
+            group_id: 0,
+            subgroup_id: 0,
+            publisher_priority: 0,
+            ends_group: false,
+        });
+        encoder
+    }
+
+    fn object(object_id: u64, status: ObjectStatus, payload: &'static [u8]) -> Object {
+        let mut extension_headers = ExtensionHeaders::default();
+        extension_headers.push_immutable_extension(Bytes::from_static(b"ext"));
+        Object {
+            location: Location {
+                group_id: 0,
+                object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 0,
+            status,
+            extension_headers,
+            payload: Bytes::from_static(payload),
+            ends_group: false,
+        }
+    }
+
+    #[test]
+    fn an_object_is_its_delta_extensions_and_length_then_its_payload() {
+        // Arrange
+        let mut encoder = encoder();
+        let object = object(2, ObjectStatus::Normal, b"frame");
+        let mut expected = BytesMut::from(&[2u8][..]);
+        expected.extend_from_slice(&object.extension_headers.encode());
+        expected.extend_from_slice(&[5]);
+        expected.extend_from_slice(b"frame");
+
+        // Act
+        let bytes = encoder.object(&object).unwrap();
+
+        // Assert
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn an_object_without_payload_is_a_zero_length_then_its_status() {
+        // Arrange
+        let mut encoder = encoder();
+        encoder
+            .object(&object(0, ObjectStatus::Normal, b"frame"))
+            .unwrap();
+        let object = object(1, ObjectStatus::EndOfGroup, b"");
+        let mut expected = BytesMut::from(&[0u8][..]);
+        expected.extend_from_slice(&object.extension_headers.encode());
+        expected.extend_from_slice(&[0, 3]);
+
+        // Act
+        let bytes = encoder.object(&object).unwrap();
+
+        // Assert
+        assert_eq!(bytes, expected);
     }
 }
