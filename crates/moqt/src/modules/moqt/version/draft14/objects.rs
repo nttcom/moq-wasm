@@ -1,12 +1,12 @@
 //! How draft-14 lays out objects on subgroup streams (§10.4.2), datagrams
 //! (§10.3.1) and FETCH responses (§10.4.4).
 
+use std::time::Duration;
+
 use bytes::{Bytes, BytesMut};
 
 #[cfg(test)]
-use crate::modules::moqt::data_plane::object::{
-    extension_headers::ExtensionHeaders, subgroup::SubgroupObjectField,
-};
+use crate::modules::moqt::data_plane::object::subgroup::SubgroupObjectField;
 use crate::modules::{
     moqt::{
         control_plane::control_messages::messages::parameters::location::Location,
@@ -18,6 +18,7 @@ use crate::modules::{
             },
             object::{
                 canonical_object::{ForwardingPreference, Object, SubgroupStart},
+                extension_headers::ExtensionHeaders,
                 fetch::{FetchHeader, FetchObjectField},
                 object_datagram::ObjectDatagram,
                 object_status::ObjectStatus,
@@ -28,7 +29,7 @@ use crate::modules::{
             },
             stream::{
                 fetch_data_receiver::FetchDataReceiver,
-                stream_data_receiver::StreamDataReceiver,
+                stream_data_receiver::{StreamDataReceiver, SubgroupPart},
                 stream_receiver::{StreamReceiveError, UniStreamReceiver},
             },
         },
@@ -97,13 +98,18 @@ impl SubgroupEncoder {
     /// Fails when the object id is not greater than the previous object's. An
     /// object without payload is sent as its status.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
-        let mut bytes = self.object_head(object)?;
+        let mut bytes = self.object_head(object, object.payload.len())?;
         bytes.extend_from_slice(&object.payload);
         Ok(bytes)
     }
 
-    /// The bytes of `object` before its payload.
-    fn object_head(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
+    /// The bytes of `object` before a payload of `payload_len` bytes, or its
+    /// status when `payload_len` is zero. Fails like `object`.
+    pub(crate) fn object_head(
+        &mut self,
+        object: &Object,
+        payload_len: usize,
+    ) -> anyhow::Result<BytesMut> {
         let object_id = object.location.object_id;
         let object_id_delta = match self.prev_object_id {
             None => Some(object_id),
@@ -118,14 +124,14 @@ impl SubgroupEncoder {
             )
         })?;
         let extension_headers = object.extension_headers.clone();
-        let head = if object.payload.is_empty() {
+        let head = if payload_len == 0 {
             SubgroupObjectHead::status(
                 object_id_delta,
                 extension_headers,
                 u8::from(object.status) as u64,
             )
         } else {
-            SubgroupObjectHead::payload(object_id_delta, extension_headers, object.payload.len())
+            SubgroupObjectHead::payload(object_id_delta, extension_headers, payload_len)
         };
         let bytes = head.encode(self.message_type());
         self.prev_object_id = Some(object_id);
@@ -208,6 +214,7 @@ pub(crate) struct SubgroupReader {
     /// subgroup id from the first object's id.
     subgroup_id: Option<u64>,
     prev_object_id: Option<u64>,
+    streaming_payload_len: usize,
 }
 
 impl SubgroupReader {
@@ -222,6 +229,7 @@ impl SubgroupReader {
             header,
             subgroup_id,
             prev_object_id: None,
+            streaming_payload_len: 0,
         }
     }
 
@@ -238,16 +246,11 @@ impl SubgroupReader {
         })
     }
 
-    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
-        let (field, receive_time) = match self.stream.receive().await? {
-            Some(UniStreamData::Subgroup(SubgroupFrame::Object {
-                field,
-                receive_time,
-            })) => (field, receive_time),
-            // The decoder yields the header once, and accept_uni_stream took it.
-            Some(UniStreamData::Subgroup(SubgroupFrame::Header(_))) => {
-                unreachable!("a subgroup stream has one header")
-            }
+    /// Returns objects and the payload parts of objects whose payload had
+    /// not arrived with their head; never a header.
+    pub(crate) async fn next_part(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
+        let frame = match self.stream.receive().await? {
+            Some(UniStreamData::Subgroup(frame)) => frame,
             Some(UniStreamData::Fetch(_)) => {
                 unreachable!("Unexpected fetch data in subgroup stream")
             }
@@ -256,24 +259,56 @@ impl SubgroupReader {
                 return Ok(None);
             }
         };
-        let object_id = field.resolve_object_id(self.prev_object_id);
+        match frame {
+            // The decoder yields the header once, and accept_uni_stream took it.
+            SubgroupFrame::Header(_) => unreachable!("a subgroup stream has one header"),
+            SubgroupFrame::Object {
+                field,
+                receive_time,
+            } => {
+                let object_id = field.resolve_object_id(self.prev_object_id);
+                let (status, payload) = match field.subgroup_object {
+                    SubgroupObject::Payload { data, .. } => (ObjectStatus::Normal, data),
+                    SubgroupObject::Status { code, .. } => {
+                        (status_from_code(code, object_id)?, Bytes::new())
+                    }
+                };
+                self.log_received(object_id, payload.len(), receive_time);
+                let object = self.object(object_id, status, field.extension_headers);
+                Ok(Some(SubgroupPart::Object(Object { payload, ..object })))
+            }
+            SubgroupFrame::ObjectHead(head) => {
+                let object_id = head.resolve_object_id(self.prev_object_id);
+                let payload_len = head.payload_len();
+                self.streaming_payload_len = payload_len;
+                Ok(Some(SubgroupPart::ObjectStart {
+                    object: self.object(object_id, ObjectStatus::Normal, head.extension_headers),
+                    payload_len,
+                }))
+            }
+            SubgroupFrame::Payload { data, completed_in } => {
+                if let (Some(receive_time), Some(object_id)) = (completed_in, self.prev_object_id) {
+                    self.log_received(object_id, self.streaming_payload_len, receive_time);
+                }
+                Ok(Some(SubgroupPart::Payload {
+                    data,
+                    last: completed_in.is_some(),
+                }))
+            }
+        }
+    }
+
+    /// The object `object_id` without its payload; it becomes the previous
+    /// object for the next Object ID Delta.
+    fn object(
+        &mut self,
+        object_id: u64,
+        status: ObjectStatus,
+        extension_headers: ExtensionHeaders,
+    ) -> Object {
         self.prev_object_id = Some(object_id);
         let subgroup_id = *self.subgroup_id.get_or_insert(object_id);
-        let (status, payload) = match field.subgroup_object {
-            SubgroupObject::Payload { data, .. } => (ObjectStatus::Normal, data),
-            SubgroupObject::Status { code, .. } => {
-                (status_from_code(code, object_id)?, Bytes::new())
-            }
-        };
-        tracing::debug!(
-            track_alias = self.header.track_alias,
-            group_id = self.header.group_id,
-            object_id,
-            payload_bytes = payload.len(),
-            receive_us = receive_time.as_micros() as u64,
-            "subgroup object received"
-        );
-        Ok(Some(Object {
+        Object {
             location: Location {
                 group_id: self.header.group_id,
                 object_id,
@@ -281,10 +316,21 @@ impl SubgroupReader {
             forwarding: ForwardingPreference::Subgroup { subgroup_id },
             publisher_priority: self.header.publisher_priority,
             status,
-            extension_headers: field.extension_headers,
-            payload,
+            extension_headers,
+            payload: Bytes::new(),
             ends_group: false,
-        }))
+        }
+    }
+
+    fn log_received(&self, object_id: u64, payload_bytes: usize, receive_time: Duration) {
+        tracing::debug!(
+            track_alias = self.header.track_alias,
+            group_id = self.header.group_id,
+            object_id,
+            payload_bytes,
+            receive_us = receive_time.as_micros() as u64,
+            "subgroup object received"
+        );
     }
 }
 
