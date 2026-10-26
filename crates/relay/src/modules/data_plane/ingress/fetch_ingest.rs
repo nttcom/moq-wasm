@@ -255,10 +255,7 @@ impl FetchIngest {
         let mut receiver = subscriber
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
-        cache.record_track_properties(
-            start.upstream_publisher_session_id,
-            start.fetch_handle.track_properties.clone(),
-        );
+        cache.fetched_track_properties(start.fetch_handle.track_properties.clone());
         let stamp = CacheStamp {
             max_cache_duration: start
                 .fetch_handle
@@ -615,7 +612,7 @@ mod tests {
     async fn an_upstream_fetch_ok_replaces_the_cached_track_properties() {
         // Arrange
         let cache = Arc::new(TrackCache::new());
-        cache.record_track_properties(UPSTREAM_SESSION, unknown_track_properties(1));
+        cache.fetched_track_properties(unknown_track_properties(1));
 
         // Act
         let _ = ingest_into(
@@ -628,6 +625,26 @@ mod tests {
 
         // Assert: draft-18 §2.5, the most recent set replaces the cached one
         assert_eq!(cache.track_properties(), unknown_track_properties(2));
+    }
+
+    #[tokio::test]
+    async fn an_upstream_fetch_ok_does_not_replace_the_set_of_a_live_publisher() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        cache.publisher_started(UPSTREAM_SESSION, unknown_track_properties(1));
+
+        // Act
+        let _ = ingest_into(
+            cache.clone(),
+            FetchAnswer::Respond(vec![moqt::fetch::Fetch::End]),
+            unlimited(),
+            unknown_track_properties(2),
+        )
+        .await;
+
+        // Assert: SUBSCRIBE_OK carries the live publisher's set, and so does
+        // a FETCH served from the cache
+        assert_eq!(cache.track_properties(), unknown_track_properties(1));
     }
 
     #[tokio::test]
