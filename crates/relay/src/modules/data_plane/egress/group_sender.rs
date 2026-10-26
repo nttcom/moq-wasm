@@ -1,4 +1,4 @@
-use moqt::object::DataStreamResetCode;
+use moqt::{TransportSendError, object::DataStreamResetCode};
 use std::sync::Arc;
 
 use tokio::{
@@ -255,8 +255,7 @@ impl GroupSender {
         };
         tracing::debug!("egress sending subgroup header");
         if let Err(error) = sender.send_object(DataObject::SubgroupHeader(start)).await {
-            tracing::error!(?error, "failed to send subgroup header");
-            return (0, "send_header_failed");
+            return (0, send_failure_reason(&error, None, "send_header_failed"));
         }
 
         let mut object_count = 0u64;
@@ -268,13 +267,15 @@ impl GroupSender {
                     match object.load().await {
                         Ok(loaded) => {
                             tracing::debug!(object_id, "egress sending subgroup object");
-                            if sender
-                                .send_object(DataObject::SubgroupObject(loaded))
-                                .await
-                                .is_err()
+                            if let Err(error) =
+                                sender.send_object(DataObject::SubgroupObject(loaded)).await
                             {
-                                tracing::error!(object_id, "failed to send subgroup object");
-                                return (object_count, "send_object_failed");
+                                let reason = send_failure_reason(
+                                    &error,
+                                    Some(object_id),
+                                    "send_object_failed",
+                                );
+                                return (object_count, reason);
                             }
                             task.delivery_stats
                                 .record_object_sent(object.payload_len(), object.received_at);
@@ -299,9 +300,10 @@ impl GroupSender {
                             next = NextObject::Aborted;
                             continue;
                         }
-                        Err(PartialForwardFailure::SendFailed) => {
-                            tracing::error!(object_id, "failed to send subgroup object");
-                            return (object_count, "send_object_failed");
+                        Err(PartialForwardFailure::SendFailed(error)) => {
+                            let reason =
+                                send_failure_reason(&error, Some(object_id), "send_object_failed");
+                            return (object_count, reason);
                         }
                     }
                     object_id
@@ -370,10 +372,36 @@ impl GroupSender {
     }
 }
 
+/// Logs a failed egress write and returns the stream's end reason. The
+/// subscriber stopping the stream or its connection ending is routine; any
+/// other failure is a relay fault, ending the stream with `fault_reason`.
+fn send_failure_reason(
+    error: &anyhow::Error,
+    object_id: Option<u64>,
+    fault_reason: &'static str,
+) -> &'static str {
+    match TransportSendError::in_chain(error) {
+        Some(TransportSendError::Stopped { .. }) => {
+            tracing::debug!(?object_id, %error, "subscriber stopped the egress stream");
+            "peer_stopped"
+        }
+        Some(
+            TransportSendError::ConnectionLost { .. } | TransportSendError::SessionError { .. },
+        ) => {
+            tracing::debug!(?object_id, %error, "subscriber connection ended during egress");
+            "connection_lost"
+        }
+        _ => {
+            tracing::error!(?object_id, %error, fault_reason, "failed to send on an egress stream");
+            fault_reason
+        }
+    }
+}
+
 enum PartialForwardFailure {
     /// The upstream stream ended inside the payload.
     Aborted,
-    SendFailed,
+    SendFailed(anyhow::Error),
 }
 
 /// Sends `partial` up to its payload, then each payload piece as it arrives.
@@ -387,7 +415,7 @@ async fn forward_partial(
             payload_len: partial.payload_len,
         })
         .await
-        .map_err(|_| PartialForwardFailure::SendFailed)?;
+        .map_err(PartialForwardFailure::SendFailed)?;
     let mut progress_receiver = partial.subscribe();
     let (mut sent_pieces, mut sent_bytes) = (0, 0);
     loop {
@@ -407,12 +435,57 @@ async fn forward_partial(
             sender
                 .send_object(DataObject::SubgroupPayload { data, last })
                 .await
-                .map_err(|_| PartialForwardFailure::SendFailed)?;
+                .map_err(PartialForwardFailure::SendFailed)?;
         }
         match end {
             None => {}
             Some(PartialEnd::Complete) => return Ok(()),
             Some(PartialEnd::Aborted) => return Err(PartialForwardFailure::Aborted),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Context;
+    use moqt::TransportSendError;
+
+    use super::send_failure_reason;
+
+    fn send_error(error: TransportSendError) -> anyhow::Error {
+        Err::<(), _>(error)
+            .context("send subgroup object")
+            .unwrap_err()
+    }
+
+    #[test]
+    fn subscriber_leaving_ends_the_stream_as_routine() {
+        // Arrange
+        let stopped = send_error(TransportSendError::Stopped { code: 0 });
+        let lost = send_error(TransportSendError::ConnectionLost {
+            reason: "timed out".into(),
+        });
+
+        // Act / Assert
+        assert_eq!(
+            send_failure_reason(&stopped, Some(3), "send_object_failed"),
+            "peer_stopped"
+        );
+        assert_eq!(
+            send_failure_reason(&lost, Some(3), "send_object_failed"),
+            "connection_lost"
+        );
+    }
+
+    #[test]
+    fn other_send_failures_keep_the_fault_reason() {
+        // Arrange
+        let error = anyhow::anyhow!("Header not set for StreamSender");
+
+        // Act
+        let reason = send_failure_reason(&error, None, "send_header_failed");
+
+        // Assert
+        assert_eq!(reason, "send_header_failed");
     }
 }
