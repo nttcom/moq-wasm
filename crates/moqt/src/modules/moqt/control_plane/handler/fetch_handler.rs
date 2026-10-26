@@ -130,10 +130,13 @@ impl FetchHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{FetchHandler, JoinedSubscription, JoiningFetchRefusal};
     use crate::{
         Session, SessionEvent,
         fetch::FetchOption,
+        modules::moqt::version::Version,
         modules::test_support::{
             connect_sessions, spawn_connected_draft18_sessions, spawn_connected_dual_sessions,
             spawn_dual_server,
@@ -186,16 +189,18 @@ mod tests {
     }
 
     async fn received_fetch(client: &Session, server: &Session) -> FetchHandler {
+        received_fetch_with(client, server, FetchOption::default()).await
+    }
+
+    async fn received_fetch_with(
+        client: &Session,
+        server: &Session,
+        option: FetchOption,
+    ) -> FetchHandler {
         let mut subscriber = client.subscriber();
         tokio::spawn(async move {
             let _ = subscriber
-                .fetch(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    START,
-                    END,
-                    FetchOption::default(),
-                )
+                .fetch("ns".to_string(), "track".to_string(), START, END, option)
                 .await;
         });
         let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
@@ -214,6 +219,37 @@ mod tests {
 
         // Assert: draft-14 §9.16 defines no FILL_TIMEOUT
         assert_eq!(handler.fill_timeout(), None);
+    }
+
+    #[tokio::test]
+    async fn a_fetch_option_fill_timeout_is_sent_on_draft18_only() {
+        let fill_timeout = Duration::from_millis(1500);
+        for (version, (client, server), expected) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-option-fill-14").await,
+                None,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-option-fill-18", "moqt").await,
+                Some(fill_timeout),
+            ),
+        ] {
+            // Act
+            let handler = received_fetch_with(
+                &client,
+                &server,
+                FetchOption {
+                    fill_timeout: Some(fill_timeout),
+                    ..FetchOption::default()
+                },
+            )
+            .await;
+
+            // Assert: draft-18 §10.2.5 FILL_TIMEOUT; draft-14 §9.16 has none
+            assert_eq!(handler.fill_timeout(), expected, "{version:?}");
+        }
     }
 
     #[tokio::test]

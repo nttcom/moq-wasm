@@ -345,10 +345,11 @@ impl Fetch {
                 target.start_location,
                 target.end_location,
                 // The fill proves positions known in Location order; egress
-                // serves the downstream's order.
+                // serves the downstream's order. The downstream FILL_TIMEOUT
+                // bounds this relay's wait and is not forwarded.
                 moqt::fetch::FetchOption {
-                    subscriber_priority: moqt::fetch::FetchOption::default().subscriber_priority,
                     group_order: moqt::object::GroupOrder::Ascending,
+                    ..moqt::fetch::FetchOption::default()
                 },
             )
             .await;
@@ -589,7 +590,8 @@ mod tests {
         test_support::{
             directory_fixtures::{active_upstream, local_publisher_resolver, table_with_upstream},
             mock_session::{
-                FetchAnswer, MockFetchHandler, mock_session_answering_fetch,
+                FetchAnswer, MockFetchHandler, RecordedControlMessages,
+                mock_session_answering_fetch, recorded_session_answering_fetch,
                 session_repository_with_sessions,
             },
             relay_harness::fixtures::{
@@ -770,6 +772,7 @@ mod tests {
     struct HandledFetch {
         oks: Vec<moqt::object::Location>,
         handed_over: Option<EgressFetchRequest>,
+        upstream: RecordedControlMessages,
     }
 
     /// Handles a FETCH of {0,0}..{2,0} with `fill_timeout` from session 2,
@@ -782,8 +785,9 @@ mod tests {
         const PUBLISHER: SessionId = 5;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(PUBLISHER, "ns".to_string(), SessionPeer::Client);
+        let (publisher, recorded) = recorded_session_answering_fetch(upstream);
         let repository = session_repository_with_sessions(
-            vec![(PUBLISHER, mock_session_answering_fetch(upstream))],
+            vec![(PUBLISHER, publisher)],
             VerifiedToken::full_access(),
         )
         .await;
@@ -817,7 +821,11 @@ mod tests {
                 EgressCommand::StartReader(_) => panic!("expected a fetch"),
             });
         let oks = oks.lock().unwrap().clone();
-        HandledFetch { oks, handed_over }
+        HandledFetch {
+            oks,
+            handed_over,
+            upstream: recorded,
+        }
     }
 
     #[tokio::test]
@@ -915,6 +923,21 @@ mod tests {
             handled.handed_over.map(|request| request.wait),
             Some(FetchWait::Until(arrival + Duration::from_millis(500)))
         );
+    }
+
+    #[tokio::test]
+    async fn a_fetch_forwarded_upstream_carries_no_fill_timeout() {
+        // Act: nothing is cached, so the FETCH goes upstream
+        let handled = handle_fetch_with_fill_timeout(
+            Duration::from_millis(500),
+            Arc::new(TrackCacheStore::new()),
+            FetchAnswer::FetchOk,
+        )
+        .await;
+
+        // Assert: draft-18 §10.2.5, the FILL_TIMEOUT bounds this relay's wait;
+        // an upstream relay waits as long as it decides itself
+        assert_eq!(handled.upstream.fetch_fill_timeouts(), vec![None]);
     }
 
     #[test]
