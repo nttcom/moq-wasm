@@ -1,3 +1,4 @@
+use crate::onvif_requests::{PtzMoveSpaces, PtzVelocitySpaces};
 use roxmltree::{Document, Node};
 
 #[derive(Clone, Copy, Debug)]
@@ -51,14 +52,6 @@ impl PtzRange {
         zoom_or_default(self.abs_zoom.as_ref(), None)
     }
 
-    pub fn absolute_pan_tilt_space(&self) -> Option<&str> {
-        pan_tilt_space(self.abs_pan_tilt.as_ref(), None)
-    }
-
-    pub fn absolute_zoom_space(&self) -> Option<&str> {
-        zoom_space(self.abs_zoom.as_ref(), None)
-    }
-
     pub fn relative_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
         pan_tilt_or_default(self.rel_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
     }
@@ -67,28 +60,12 @@ impl PtzRange {
         zoom_or_default(self.rel_zoom.as_ref(), self.abs_zoom.as_ref())
     }
 
-    pub fn relative_pan_tilt_space(&self) -> Option<&str> {
-        pan_tilt_space(self.rel_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
-    }
-
-    pub fn relative_zoom_space(&self) -> Option<&str> {
-        zoom_space(self.rel_zoom.as_ref(), self.abs_zoom.as_ref())
-    }
-
     pub fn continuous_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
         pan_tilt_or_default(self.cont_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
     }
 
     pub fn continuous_zoom_range(&self) -> AxisRange {
         zoom_or_default(self.cont_zoom.as_ref(), self.abs_zoom.as_ref())
-    }
-
-    pub fn continuous_pan_tilt_space(&self) -> Option<&str> {
-        pan_tilt_space(self.cont_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
-    }
-
-    pub fn continuous_zoom_space(&self) -> Option<&str> {
-        zoom_space(self.cont_zoom.as_ref(), self.abs_zoom.as_ref())
     }
 
     pub fn speed_range(&self) -> AxisRange {
@@ -103,12 +80,28 @@ impl PtzRange {
         AxisRange::new(0.0, 1.0)
     }
 
-    pub fn speed_pan_tilt_space(&self) -> Option<&str> {
-        pan_tilt_space(self.speed_pan_tilt.as_ref(), None)
+    pub fn absolute_spaces(&self) -> PtzMoveSpaces<'_> {
+        PtzMoveSpaces {
+            pan_tilt: pan_tilt_space(self.abs_pan_tilt.as_ref(), None),
+            zoom: zoom_space(self.abs_zoom.as_ref(), None),
+            pan_tilt_speed: pan_tilt_space(self.speed_pan_tilt.as_ref(), None),
+            zoom_speed: zoom_space(self.speed_zoom.as_ref(), None),
+        }
     }
 
-    pub fn speed_zoom_space(&self) -> Option<&str> {
-        zoom_space(self.speed_zoom.as_ref(), None)
+    pub fn relative_spaces(&self) -> PtzMoveSpaces<'_> {
+        PtzMoveSpaces {
+            pan_tilt: pan_tilt_space(self.rel_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref()),
+            zoom: zoom_space(self.rel_zoom.as_ref(), self.abs_zoom.as_ref()),
+            ..self.absolute_spaces()
+        }
+    }
+
+    pub fn continuous_spaces(&self) -> PtzVelocitySpaces<'_> {
+        PtzVelocitySpaces {
+            pan_tilt: pan_tilt_space(self.cont_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref()),
+            zoom: zoom_space(self.cont_zoom.as_ref(), self.abs_zoom.as_ref()),
+        }
     }
 }
 
