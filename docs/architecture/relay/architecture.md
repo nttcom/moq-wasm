@@ -715,7 +715,10 @@ per-request authorization gate under "Event pipeline".
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;
   extension changes and Does Not Exist transitions are tolerated duplicates.
-  A datagram's `ends_group` is not compared. Only a `forwarding_inferred`
+  draft-18 §9.1 compares no status: the ingest asks moqt whether its upstream
+  session compares it (`compares_duplicate_status`) and stamps the answer on
+  each object as `status_may_change`, and the status counts only when neither
+  copy carries it. A datagram's `ends_group` is not compared. Only a `forwarding_inferred`
   copy (from a draft-14 FETCH, §10.4.4) in the subgroup of its Object ID is
   the same object as a datagram; a draft-18 track may send an object in that
   subgroup and a datagram FETCH copy says so (§11.4.4), so elsewhere the

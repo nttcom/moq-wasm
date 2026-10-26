@@ -138,6 +138,7 @@ pub(crate) struct UpstreamTrack {
 
 struct ChannelDataReceiver {
     receiver: mpsc::UnboundedReceiver<UpstreamData>,
+    compares_duplicate_status: bool,
 }
 
 #[async_trait::async_trait]
@@ -148,12 +149,34 @@ impl DataReceiver for ChannelDataReceiver {
             .await
             .ok_or_else(|| anyhow::anyhow!("the subscription ended"))
     }
+
+    fn compares_duplicate_status(&self) -> bool {
+        self.compares_duplicate_status
+    }
 }
 
 impl UpstreamTrack {
+    /// A draft-14 subscription.
     pub(crate) fn channel() -> (Self, Box<dyn DataReceiver>) {
+        Self::channel_comparing_duplicate_status(true)
+    }
+
+    /// A draft-18 subscription, whose duplicates may differ in status.
+    pub(crate) fn draft18_channel() -> (Self, Box<dyn DataReceiver>) {
+        Self::channel_comparing_duplicate_status(false)
+    }
+
+    fn channel_comparing_duplicate_status(
+        compares_duplicate_status: bool,
+    ) -> (Self, Box<dyn DataReceiver>) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        (Self { sender }, Box::new(ChannelDataReceiver { receiver }))
+        (
+            Self { sender },
+            Box::new(ChannelDataReceiver {
+                receiver,
+                compares_duplicate_status,
+            }),
+        )
     }
 
     pub(crate) fn datagram(&self, object: Object) {
@@ -180,5 +203,9 @@ pub(crate) struct FailingUpstream(pub(crate) fn() -> anyhow::Error);
 impl DataReceiver for FailingUpstream {
     async fn next(&mut self) -> anyhow::Result<UpstreamData> {
         Err(self.0())
+    }
+
+    fn compares_duplicate_status(&self) -> bool {
+        true
     }
 }

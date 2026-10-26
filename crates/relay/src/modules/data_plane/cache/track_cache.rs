@@ -1524,6 +1524,7 @@ mod max_cache_duration_tests {
         CacheStamp {
             max_cache_duration: Some(max_cache_duration),
             persist: false,
+            ..CacheStamp::default()
         }
         .apply(object)
     }
