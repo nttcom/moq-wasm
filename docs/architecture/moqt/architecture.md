@@ -607,7 +607,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Buffer-before-subscribe**: objects can arrive before the application
   registers a receiver (data races SUBSCRIBE_OK). `object_sinks` buffers up to
   256 objects per track alias (`MAX_PENDING_OBJECTS_PER_TRACK_ALIAS` in
-  `session_context.rs`), dropping the oldest on overflow.
+  `connection.rs`), dropping the oldest on overflow, and at most 1024 objects
+  across a connection's unknown aliases (`MAX_PENDING_OBJECTS`), dropping a
+  later object. A buffer expires 10 s after its first object
+  (`UNKNOWN_TRACK_ALIAS_PERIOD`, draft-14 §10.3 "a brief period"), which
+  leaves an application time to accept a PUBLISH.
   `register_data_receiver` drains the buffer into the new channel atomically
   under the sinks lock.
 - **Cancelled subscriptions discard late objects** (draft-14 §10.1):

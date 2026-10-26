@@ -5,6 +5,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use tokio::sync::{mpsc, oneshot};
@@ -12,6 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{
     SessionEvent,
     modules::{
+        executor,
         moqt::{
             control_plane::{constants::TerminationErrorCode, enums::RequestId},
             data_plane::stream::{
@@ -25,7 +27,14 @@ use crate::{
     },
 };
 
+/// draft-14 §10.3, §10.4.2: the objects of an unknown track alias are
+/// buffered for a brief period, until SUBSCRIBE_OK or an accepted PUBLISH
+/// establishes the alias.
+const UNKNOWN_TRACK_ALIAS_PERIOD: Duration = Duration::from_secs(10);
 const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
+/// The objects buffered across all unknown track aliases of a connection:
+/// the peer picks the aliases, and datagrams take no flow control.
+const MAX_PENDING_OBJECTS: usize = 1024;
 /// A logical id is `generation << GENERATION_SHIFT | wire id`: the first
 /// connection's ids are their own logical ids, and the ids of a later
 /// connection never meet those of another in the session's maps. Request
@@ -77,7 +86,11 @@ struct CarriedIds {
 
 enum ObjectSink {
     /// Buffers objects that arrive before the receiver is registered.
-    Buffer(VecDeque<IncomingObject>),
+    Buffer {
+        objects: VecDeque<IncomingObject>,
+        /// `executor::now()` when the first object arrived.
+        created_at: Duration,
+    },
     Receiver(SinkReceiver),
     /// Draft-14 §10.1: objects of a cancelled subscription can still arrive
     /// and are discarded instead of being buffered as an unknown track alias.
@@ -177,12 +190,25 @@ impl ObjectSink {
     fn is_receiver_registered(&self) -> bool {
         matches!(self, ObjectSink::Receiver(_))
     }
+
+    /// `None` for a sink that does not expire.
+    fn created_at(&self) -> Option<Duration> {
+        match self {
+            ObjectSink::Buffer { created_at, .. } => Some(*created_at),
+            ObjectSink::Receiver(_) | ObjectSink::Cancelled => None,
+        }
+    }
 }
 
 /// The sink of each track alias on a connection.
 #[derive(Default)]
 pub(crate) struct ObjectSinks {
     sinks: HashMap<u64, ObjectSink>,
+    /// The objects in every `ObjectSink::Buffer`.
+    pending_objects: usize,
+    /// The track aliases of the `ObjectSink::Buffer`s, oldest first, with
+    /// their `created_at`. An alias whose sink has changed since is skipped.
+    expiries: VecDeque<(Duration, u64)>,
 }
 
 impl ObjectSinks {
@@ -190,12 +216,20 @@ impl ObjectSinks {
         &mut self,
         track_alias: u64,
         incoming_object: IncomingObject,
+        now: Duration,
     ) -> IncomingObjectNotification {
+        self.remove_expired(now);
         match self.sinks.entry(track_alias) {
+            Entry::Vacant(_) if self.pending_objects >= MAX_PENDING_OBJECTS => {
+                IncomingObjectNotification::BufferFull
+            }
             Entry::Vacant(entry) => {
-                let mut objects = VecDeque::new();
-                objects.push_back(incoming_object);
-                entry.insert(ObjectSink::Buffer(objects));
+                entry.insert(ObjectSink::Buffer {
+                    objects: VecDeque::from([incoming_object]),
+                    created_at: now,
+                });
+                self.pending_objects += 1;
+                self.expiries.push_back((now, track_alias));
                 IncomingObjectNotification::Buffered {
                     pending_objects: 1,
                     dropped_oldest: false,
@@ -203,10 +237,14 @@ impl ObjectSinks {
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 ObjectSink::Receiver(receiver) => receiver.deliver(incoming_object),
-                ObjectSink::Buffer(objects) => {
+                ObjectSink::Buffer { objects, .. } => {
                     let dropped_oldest = objects.len() >= MAX_PENDING_OBJECTS_PER_TRACK_ALIAS;
                     if dropped_oldest {
                         objects.pop_front();
+                    } else if self.pending_objects >= MAX_PENDING_OBJECTS {
+                        return IncomingObjectNotification::BufferFull;
+                    } else {
+                        self.pending_objects += 1;
                     }
                     objects.push_back(incoming_object);
                     IncomingObjectNotification::Buffered {
@@ -231,14 +269,31 @@ impl ObjectSinks {
         {
             return Err(TerminationErrorCode::DuplicateTrackAlias);
         }
-        if let Some(ObjectSink::Buffer(pending_objects)) = self.sinks.remove(&track_alias) {
-            for incoming_object in pending_objects {
+        if let Some(ObjectSink::Buffer { objects, .. }) = self.sinks.remove(&track_alias) {
+            self.pending_objects -= objects.len();
+            for incoming_object in objects {
                 receiver.deliver(incoming_object);
             }
         }
         self.sinks
             .insert(track_alias, ObjectSink::Receiver(receiver));
         Ok(())
+    }
+
+    /// Drops the buffers created `UNKNOWN_TRACK_ALIAS_PERIOD` or longer
+    /// before `now`.
+    fn remove_expired(&mut self, now: Duration) {
+        while let Some(&(created_at, track_alias)) = self.expiries.front()
+            && created_at + UNKNOWN_TRACK_ALIAS_PERIOD <= now
+        {
+            self.expiries.pop_front();
+            if let Entry::Occupied(entry) = self.sinks.entry(track_alias)
+                && entry.get().created_at() == Some(created_at)
+                && let ObjectSink::Buffer { objects, .. } = entry.remove()
+            {
+                self.pending_objects -= objects.len();
+            }
+        }
     }
 
     /// The sink of the subscription `request_id`, with its track alias.
@@ -264,12 +319,17 @@ impl ObjectSinks {
 
     /// Cancels `track_alias` unless a subscription holds it.
     pub(crate) fn cancel_unclaimed(&mut self, track_alias: u64) {
-        if !self
+        if self
             .sinks
             .get(&track_alias)
             .is_some_and(ObjectSink::is_receiver_registered)
         {
-            self.sinks.insert(track_alias, ObjectSink::Cancelled);
+            return;
+        }
+        if let Some(ObjectSink::Buffer { objects, .. }) =
+            self.sinks.insert(track_alias, ObjectSink::Cancelled)
+        {
+            self.pending_objects -= objects.len();
         }
     }
 }
@@ -281,6 +341,8 @@ pub(crate) enum IncomingObjectNotification {
         pending_objects: usize,
         dropped_oldest: bool,
     },
+    /// The connection buffers `MAX_PENDING_OBJECTS` already.
+    BufferFull,
     ReceiverClosed,
     Discarded,
 }
@@ -367,7 +429,7 @@ impl Connection {
         self.object_sinks
             .lock()
             .await
-            .notify(track_alias, incoming_object)
+            .notify(track_alias, incoming_object, executor::now())
     }
 
     /// Installs `receiver` for `track_alias` and hands it the objects that
@@ -445,5 +507,167 @@ impl fmt::Debug for Connection {
         f.debug_struct("Connection")
             .field("generation", &self.generation)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::sync::mpsc;
+
+    use super::{
+        IncomingObjectNotification, MAX_PENDING_OBJECTS, MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
+        ObjectSinks, SinkReceiver, UNKNOWN_TRACK_ALIAS_PERIOD,
+    };
+    use crate::modules::{
+        moqt::{
+            data_plane::stream::open_subgroups::OpenSubgroups,
+            runtime::dispatch::incoming_object::IncomingObject,
+        },
+        test_support::datagram_object,
+    };
+
+    const TRACK_ALIAS: u64 = 5;
+    const OTHER_TRACK_ALIAS: u64 = 7;
+    const START: Duration = Duration::from_secs(1);
+
+    fn notify_datagram(
+        sinks: &mut ObjectSinks,
+        track_alias: u64,
+        now: Duration,
+    ) -> IncomingObjectNotification {
+        sinks.notify(
+            track_alias,
+            IncomingObject::Datagram(datagram_object()),
+            now,
+        )
+    }
+
+    /// Buffers `MAX_PENDING_OBJECTS` datagrams on aliases from 100 up.
+    fn full_sinks() -> ObjectSinks {
+        let mut sinks = ObjectSinks::default();
+        for index in 0..MAX_PENDING_OBJECTS {
+            let track_alias = 100 + (index / MAX_PENDING_OBJECTS_PER_TRACK_ALIAS) as u64;
+            notify_datagram(&mut sinks, track_alias, START);
+        }
+        sinks
+    }
+
+    fn sink_receiver() -> SinkReceiver {
+        SinkReceiver {
+            request_id: 1,
+            sender: mpsc::unbounded_channel().0,
+            logical_alias: 100,
+            newest_group: None,
+            cutover: None,
+            open_subgroups: OpenSubgroups::new(),
+        }
+    }
+
+    #[test]
+    fn a_buffer_is_kept_within_the_unknown_track_alias_period() {
+        // Arrange
+        let mut sinks = ObjectSinks::default();
+        notify_datagram(&mut sinks, TRACK_ALIAS, START);
+
+        // Act
+        notify_datagram(
+            &mut sinks,
+            OTHER_TRACK_ALIAS,
+            START + UNKNOWN_TRACK_ALIAS_PERIOD - Duration::from_millis(1),
+        );
+
+        // Assert
+        assert!(sinks.sinks.contains_key(&TRACK_ALIAS));
+        assert_eq!(sinks.pending_objects, 2);
+    }
+
+    #[test]
+    fn a_buffer_is_dropped_once_the_unknown_track_alias_period_ends() {
+        // Arrange
+        let mut sinks = ObjectSinks::default();
+        notify_datagram(&mut sinks, TRACK_ALIAS, START);
+        notify_datagram(&mut sinks, TRACK_ALIAS, START);
+
+        // Act
+        notify_datagram(
+            &mut sinks,
+            OTHER_TRACK_ALIAS,
+            START + UNKNOWN_TRACK_ALIAS_PERIOD,
+        );
+
+        // Assert
+        assert!(!sinks.sinks.contains_key(&TRACK_ALIAS));
+        assert_eq!(sinks.pending_objects, 1);
+    }
+
+    #[test]
+    fn an_object_of_a_new_track_alias_is_dropped_once_the_connection_buffers_the_limit() {
+        // Arrange
+        let mut sinks = full_sinks();
+
+        // Act
+        let notification = notify_datagram(&mut sinks, TRACK_ALIAS, START);
+
+        // Assert
+        assert!(
+            matches!(notification, IncomingObjectNotification::BufferFull),
+            "{notification:?}"
+        );
+        assert!(!sinks.sinks.contains_key(&TRACK_ALIAS));
+    }
+
+    #[test]
+    fn an_object_of_a_buffered_track_alias_is_dropped_once_the_connection_buffers_the_limit() {
+        // Arrange
+        let mut sinks = full_sinks();
+        sinks.install(100, sink_receiver()).unwrap();
+        notify_datagram(&mut sinks, TRACK_ALIAS, START);
+        for _ in 0..MAX_PENDING_OBJECTS_PER_TRACK_ALIAS - 1 {
+            notify_datagram(&mut sinks, OTHER_TRACK_ALIAS, START);
+        }
+
+        // Act
+        let notification = notify_datagram(&mut sinks, TRACK_ALIAS, START);
+
+        // Assert
+        assert!(
+            matches!(notification, IncomingObjectNotification::BufferFull),
+            "{notification:?}"
+        );
+        assert_eq!(sinks.pending_objects, MAX_PENDING_OBJECTS);
+    }
+
+    #[test]
+    fn installing_a_receiver_makes_room_for_other_track_aliases() {
+        // Arrange
+        let mut sinks = full_sinks();
+
+        // Act
+        sinks.install(100, sink_receiver()).unwrap();
+        let notification = notify_datagram(&mut sinks, TRACK_ALIAS, START);
+
+        // Assert
+        assert!(
+            matches!(notification, IncomingObjectNotification::Buffered { .. }),
+            "{notification:?}"
+        );
+    }
+
+    #[test]
+    fn cancelling_a_buffered_track_alias_makes_room_for_other_track_aliases() {
+        // Arrange
+        let mut sinks = full_sinks();
+
+        // Act
+        sinks.cancel_unclaimed(100);
+        let notification = notify_datagram(&mut sinks, TRACK_ALIAS, START);
+
+        // Assert
+        assert!(
+            matches!(notification, IncomingObjectNotification::Buffered { .. }),
+            "{notification:?}"
+        );
     }
 }
