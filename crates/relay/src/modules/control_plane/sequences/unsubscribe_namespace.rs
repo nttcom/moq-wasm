@@ -48,7 +48,7 @@ impl UnsubscribeNamespace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.unsubscribe_namespace.cleanup_empty_namespace_subscription",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)

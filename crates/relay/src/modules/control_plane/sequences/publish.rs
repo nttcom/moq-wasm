@@ -114,7 +114,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.notify_namespace_subscribers",
         skip_all,
         fields(track_key = %track_key)
@@ -140,7 +140,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.notify_local_namespace_subscribers",
         skip_all,
         fields(track_key = %track_key)
@@ -163,7 +163,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.register_upstream_subscription",
         skip_all,
         fields(session_id = %session_id)
@@ -209,7 +209,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.notify_remote_subscribers",
         skip_all,
         fields(track_key = %track_key)

@@ -60,7 +60,7 @@ impl SessionIntake {
                 return;
             }
         };
-        let session_add_span = tracing::info_span!(
+        let session_add_span = tracing::debug_span!(
             parent: &session_span,
             "relay.session_repository.add",
             session_id = session_id

@@ -37,7 +37,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
 #[async_trait]
 impl Subscriber for moqt::Subscriber {
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.subscriber.send_subscribe",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name, subscriber_priority = option.subscriber_priority, forward = option.forward)
@@ -53,7 +53,7 @@ impl Subscriber for moqt::Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.subscriber.send_unsubscribe",
         skip_all,
         fields(request_id = %subscription.request_id())
@@ -63,7 +63,7 @@ impl Subscriber for moqt::Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.subscriber.send_unsubscribe_namespace",
         skip_all,
         fields(namespace = %namespace)
@@ -73,7 +73,7 @@ impl Subscriber for moqt::Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.subscriber.create_data_receiver",
         skip_all,
         fields(track_alias = subscription.track_alias())
@@ -94,7 +94,7 @@ impl Subscriber for moqt::Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.subscriber.send_fetch",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
@@ -119,7 +119,7 @@ impl Subscriber for moqt::Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.subscriber.create_fetch_receiver",
         skip_all,
         fields(request_id = handle.request_id)
@@ -133,7 +133,7 @@ impl Subscriber for moqt::Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.subscriber.send_fetch_cancel",
         skip_all,
         fields(request_id = %fetch.request_id)

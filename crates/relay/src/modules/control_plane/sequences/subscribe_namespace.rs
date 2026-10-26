@@ -68,7 +68,7 @@ impl SubscribeNameSpace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe_namespace.register_route",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
@@ -106,7 +106,7 @@ impl SubscribeNameSpace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe_namespace.forward_matching_publications",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
@@ -140,7 +140,7 @@ impl SubscribeNameSpace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe_namespace.notify_remote_publish_namespaces",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)

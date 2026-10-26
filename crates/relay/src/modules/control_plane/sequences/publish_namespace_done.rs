@@ -45,7 +45,7 @@ impl PublishNamespaceDone {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish_namespace_done.notify_local_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace)
@@ -77,7 +77,7 @@ impl PublishNamespaceDone {
     /// Unregisters the Redis publisher route and tells remote subscriber relays
     /// that the namespace has been withdrawn, so they can drop their local copy.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish_namespace_done.withdraw_namespace_publication",
         skip_all,
         fields(track_namespace = %track_namespace)

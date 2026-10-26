@@ -224,7 +224,7 @@ impl Subscribe {
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.get_or_create_upstream_subscription",
         skip_all,
         fields(
@@ -296,7 +296,7 @@ impl Subscribe {
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.create_upstream_subscription",
         skip_all,
         fields(
@@ -430,7 +430,7 @@ impl Subscribe {
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.accept_downstream_subscription",
         skip_all,
         fields(
@@ -572,7 +572,7 @@ impl Subscribe {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.response_error",
         skip_all
     )]

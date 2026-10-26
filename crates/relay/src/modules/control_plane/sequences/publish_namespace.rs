@@ -177,7 +177,7 @@ impl PublishNamespace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish_namespace.notify_to_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace)
@@ -198,7 +198,7 @@ impl PublishNamespace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish_namespace.register_route",
         skip_all,
         fields(track_namespace = %track_namespace)
@@ -230,7 +230,7 @@ impl PublishNamespace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish_namespace.notify_remote_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace)
