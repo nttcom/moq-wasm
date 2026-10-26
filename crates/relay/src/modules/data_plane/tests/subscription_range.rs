@@ -232,6 +232,34 @@ async fn a_start_moved_back_over_a_group_an_update_left_out_resumes_it_on_a_new_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_paused_subscription_whose_range_ends_still_sends_publish_done() {
+    // Arrange: the last group of the range is open when Forward turns to 0
+    let harness = RelayHarness::new();
+    let filter_type = FilterType::AbsoluteRange {
+        location: location(1, 0),
+        end_group: 1,
+    };
+    let mut egress = harness.start_egress_with_filter(filter_type, None).await;
+    let last_group = harness.open_upstream_stream();
+    last_group.header(1);
+    last_group.object(0);
+    egress.expect_stream_priority().await;
+    egress.pause();
+    let (_, end) = receive_objects_until_end(&mut egress).await;
+    assert!(matches!(end, Sent::Reset(DataStreamResetCode::Cancelled)));
+
+    // Act: a group past the End Group opens while paused
+    let past_end = harness.open_upstream_stream();
+    past_end.header(2);
+    past_end.object(0);
+
+    // Assert: draft-18 §5.1, control messages are sent regardless of the Forward State
+    let publish_done = egress.expect_publish_done().await;
+    assert_eq!(publish_done.status_code, PublishDoneCode::SubscriptionEnded);
+    assert_eq!(publish_done.stream_count, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn publish_done_follows_the_close_of_the_last_group_in_range() {
     // Arrange
     let harness = RelayHarness::new();
