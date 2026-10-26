@@ -504,6 +504,21 @@ publisher failed is the last error relayed downstream. A
 downstream session that disconnects meanwhile only makes the FETCH_OK send
 fail; egress drops a `StartFetch` for a departed session.
 
+The fill is store-and-forward: egress starts once the upstream response
+ended, from the cache. A draft-18 FETCH's FILL_TIMEOUT (§10.2.5) bounds the
+wait, counted from the FETCH's arrival and cut to
+`MOQT_FETCH_FILL_TIMEOUT_SECS` (`FillBudget`). When it runs out, the
+upstream FETCH is cancelled and the range is served with what arrived, the
+rest reported as unknown. FILL_TIMEOUT 0 forbids waiting: a range the cache
+does not cover is served at once from the cache with the rest unknown,
+going upstream only when the cache holds no object at or after the start,
+so FETCH_OK has an End Location, and then waiting for no object. Without
+FILL_TIMEOUT (always on draft-14) the relay waits up to
+`MOQT_FETCH_FILL_TIMEOUT_SECS` and resets the downstream FETCH with
+INTERNAL_ERROR when that runs out. A response whose upstream marked objects
+unknown is served with the known objects and the unknown ranges reported
+(see Fetch delivery), on either draft.
+
 ### TRACK_STATUS sequence
 A status query is answered from the relay's own state only. For a track with
 an `UpstreamTrack`, TRACK_STATUS_OK carries the newest upstream subscription's
@@ -634,6 +649,16 @@ per-request authorization gate under "Event pipeline".
   latch and terminates subscriptions with PUBLISH_DONE(MALFORMED_TRACK);
   `FetchIngest` bails on the latch and sends upstream FETCH_CANCEL for its
   own fetch.
+- An upstream SUBSCRIBE or FETCH refused with MALFORMED_TRACK latches the
+  track as well (`malformed_track::refused_as_malformed`): moqt refuses a
+  draft-18 SUBSCRIBE_OK or FETCH_OK whose Immutable Properties are malformed
+  (§12.7) that way, and so does a relay peer that detected the track
+  malformed. No other publisher is tried, the downstream request is answered
+  MALFORMED_TRACK, and the track's other upstream subscriptions end through
+  `MalformedTrackCleanup` (called by `UpstreamJoinTask` for a late
+  publisher, raised as `MalformedTrackDetected` by `UpstreamFetchTask`). A
+  PUBLISH with malformed Immutable Properties is refused by moqt itself and
+  never reaches the relay, so it latches nothing.
 
 ### Cache (`modules/data_plane/cache`)
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
@@ -673,13 +698,14 @@ per-request authorization gate under "Event pipeline".
   group keeps the largest object id live ingest has seen (`LiveGroup`), and
   closing the last open stream subgroup registers only the tail after it, so
   an evicted position is never re-claimed as known (§9.2.1.3 "their state
-  becomes unknown") and a skipped id stays undecided. Fetch fills register
-  their requested range only at `Fetch::End` (guarded by the eviction
-  generation counter), and not at all after a `Fetch::UnknownRange`: the
-  objects it fetched stay cached, the range stays unknown so a later FETCH
-  goes upstream again, and the downstream FETCH is reset with
-  UNKNOWN_OBJECT_STATUS (draft-18 §10.12.3). Datagram objects register
-  nothing.
+  becomes unknown") and a skipped id stays undecided. A fetch fill asks for
+  ascending order, so every position up to the last object or marker it
+  received is known except the ranges a `Fetch::UnknownRange` marked; it
+  registers those known ranges when it ends (guarded by the eviction
+  generation counter): through the end of the range at `Fetch::End`, through
+  the last item received when the FETCH's FILL_TIMEOUT ran out. A range with
+  an unknown part stays uncovered, so a later FETCH of it goes upstream
+  again. Datagram objects register nothing.
 - `next_subgroup_object_or_wait(key, generation, from)` (live egress) returns the next object of that
   subgroup, `Finished` once it closed cleanly, or `Aborted` once it closed without
   a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks.
@@ -870,7 +896,15 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   reach the subscriber while a later group in the range is still open. The
   stream is FIN'd when the cursor is exhausted and reset with
   MALFORMED_TRACK / INTERNAL_ERROR when the cursor reports `Malformed` /
-  `Incomplete`.
+  `Incomplete`. A request with `report_unknown` waits for nothing instead:
+  `TrackCache::plan_fetch` (`track_cache/fetch_plan.rs`) lists the cached
+  objects in delivery order with every stretch the cache does not know
+  between them as `PlannedFetch::Unknown { last }`, an expired object
+  counting as unknown, and delivery passes each stretch to
+  `report_unknown_range`. moqt marks it with draft-18's End of Unknown Range
+  and the delivery goes on, or resets the stream with UNKNOWN_OBJECT_STATUS
+  where the draft cannot express it (draft-14, or a range ending in the
+  group of the previous object), which ends the delivery.
 
 ## Cascading relays (`modules/cascading`)
 

@@ -95,13 +95,14 @@ impl RecordedControlMessages {
 #[derive(Clone)]
 enum SubscribeAnswer {
     SubscribeOk(Arc<dyn Fn() -> ContentExists + Send + Sync>),
+    Refuse(RequestErrorCode),
     Never,
 }
 
 #[derive(Clone)]
 pub(crate) enum FetchAnswer {
     Never,
-    Refuse,
+    Refuse(RequestErrorCode),
     FetchOk,
     /// FETCH_OK, then a response stream yielding these, then nothing.
     Respond(Vec<moqt::fetch::Fetch>),
@@ -208,6 +209,13 @@ pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, Recor
     (session, recorded)
 }
 
+pub(crate) fn mock_session_refusing_subscribe(code: RequestErrorCode) -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        answer_subscribe: Some(SubscribeAnswer::Refuse(code)),
+        ..MockUpstreamSession::new(RecordedControlMessages::default())
+    })
+}
+
 pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
         recorded: RecordedControlMessages::default(),
@@ -216,6 +224,17 @@ pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
     })
+}
+
+pub(crate) fn recorded_session_answering_fetch(
+    answer_fetch: FetchAnswer,
+) -> (Box<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        answer_fetch,
+        ..MockUpstreamSession::new(recorded.clone())
+    });
+    (session, recorded)
 }
 
 pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn Session> {
@@ -442,6 +461,13 @@ impl Subscriber for MockUpstreamSubscriber {
     ) -> anyhow::Result<UpstreamSubscription> {
         let answer_subscribe = match &self.answer_subscribe {
             Some(SubscribeAnswer::SubscribeOk(answer_subscribe)) => answer_subscribe,
+            Some(SubscribeAnswer::Refuse(code)) => {
+                return Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
+                    request_id: 1,
+                    code: *code,
+                    reason: "refused".to_string(),
+                }));
+            }
             Some(SubscribeAnswer::Never) => std::future::pending().await,
             None => unimplemented!("not used by MockUpstreamSession tests"),
         };
@@ -492,10 +518,10 @@ impl Subscriber for MockUpstreamSubscriber {
     ) -> anyhow::Result<moqt::fetch::FetchHandle> {
         match self.answer_fetch {
             FetchAnswer::Never => std::future::pending().await,
-            FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
+            FetchAnswer::Refuse(code) => Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
                 request_id: 0,
-                code: RequestErrorCode::TrackDoesNotExist,
-                reason: "no objects".to_string(),
+                code,
+                reason: "refused".to_string(),
             })),
             FetchAnswer::FetchOk | FetchAnswer::Respond(_) => Ok(moqt::fetch::FetchHandle {
                 request_id: 0,
@@ -639,11 +665,16 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 }
 
-/// `joining_rule` stands in for the session draft's Joining FETCH rule.
+/// `joining_rule` stands in for the session draft's Joining FETCH rule;
+/// `errors` records the code of every `error` and `oks` the End Location of
+/// every `ok`.
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
+    pub(crate) fill_timeout: Option<std::time::Duration>,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
+    pub(crate) errors: Arc<Mutex<Vec<RequestErrorCode>>>,
+    pub(crate) oks: Arc<Mutex<Vec<moqt::object::Location>>>,
 }
 
 impl MockFetchHandler {
@@ -651,7 +682,10 @@ impl MockFetchHandler {
     pub(crate) fn fetching(fetch_params: moqt::fetch::FetchParams) -> Self {
         Self {
             fetch_params,
+            fill_timeout: None,
             joining_rule: |_| Ok(()),
+            errors: Arc::default(),
+            oks: Arc::default(),
         }
     }
 }
@@ -687,6 +721,10 @@ impl FetchHandler for MockFetchHandler {
         self.fetch_params.clone()
     }
 
+    fn fill_timeout(&self) -> Option<std::time::Duration> {
+        self.fill_timeout
+    }
+
     fn check_joining(
         &self,
         subscription: moqt::fetch::JoinedSubscription,
@@ -697,17 +735,19 @@ impl FetchHandler for MockFetchHandler {
     async fn ok(
         &self,
         _end_of_track: bool,
-        _end_location: moqt::object::Location,
+        end_location: moqt::object::Location,
         _max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError> {
+        self.oks.lock().unwrap().push(end_location);
         Ok(())
     }
 
     async fn error(
         &self,
-        _code: RequestErrorCode,
+        code: RequestErrorCode,
         _reason: String,
     ) -> Result<(), moqt::TransportSendError> {
+        self.errors.lock().unwrap().push(code);
         Ok(())
     }
 }

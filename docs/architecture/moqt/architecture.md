@@ -262,6 +262,9 @@ call through the adapter; a draft never gets a task of its own (see
   update may move a subscription's Start Location back or its End Group out
   (draft-14 §9.10: no, refused by closing the session; draft-18 §10.9.1:
   yes).
+- A FETCH parameter only one draft defines reaches the application as an
+  `Option`: `Fetch::fill_timeout` / `FetchHandler::fill_timeout()` is
+  draft-18's FILL_TIMEOUT (§10.2.5), always `None` on draft-14.
 - Error codes cross the seam as the typed enums of `error_codes.rs` and
   `constants.rs`. `draft14::error_codes` and `draft18::error_codes` hold each
   draft's values: the drafts use them to encode and decode messages, and
@@ -644,6 +647,13 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     (§11.4.4.2): the objects through `last` were not sent and may exist, so
     `End` after it does not mean the range is complete. draft-14 never
     yields it; draft-18's End of Non-Existent Range yields nothing.
+    The sending side is `FetchDataSender::report_unknown_range(last) ->
+    UnknownRange`: draft-18 writes the marker and the response goes on
+    (`Marked`). A Group ID Delta always moves to another group (§11.4.4.1),
+    so a range ending in the group of the object or marker before it cannot
+    be written; there, and on draft-14, which has no marker, the response is
+    reset with UNKNOWN_OBJECT_STATUS (draft-18 §10.12; draft-14's wire value
+    is INTERNAL_ERROR) and has ended (`Reset`).
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

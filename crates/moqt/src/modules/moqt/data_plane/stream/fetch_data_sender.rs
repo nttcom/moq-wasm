@@ -6,11 +6,22 @@ use std::sync::{
 use crate::modules::executor;
 use crate::modules::moqt::control_plane::error_codes::DataStreamResetCode;
 use crate::modules::moqt::{
+    control_plane::control_messages::messages::parameters::location::Location,
     data_plane::{object::canonical_object::Object, stream::stream_sender::StreamSender},
     domains::connection::Connection,
     version::{FetchEncoder, Version},
 };
 use crate::modules::transport::transport_connection::BoxedSendStream;
+
+/// What `FetchDataSender::report_unknown_range` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnknownRange {
+    /// The response marks the range unknown and goes on.
+    Marked,
+    /// The response was reset with UNKNOWN_OBJECT_STATUS and has ended.
+    Reset,
+}
 
 /// Dropped without `close` or `reset`, the response is incomplete, so it is
 /// reset with INTERNAL_ERROR.
@@ -63,6 +74,27 @@ impl FetchDataSender {
         }
     }
 
+    /// Reports that the objects after the last one sent (or the start of the
+    /// range) through `last` have unknown status, so they may exist
+    /// (draft-18 §11.4.4.2 End of Unknown Range); objects after `last` can
+    /// still be sent. Where the session's draft cannot say so (draft-14, or
+    /// a draft-18 range ending in the group of the last object sent), the
+    /// response is reset with UNKNOWN_OBJECT_STATUS instead (draft-18
+    /// §10.12) and has ended.
+    pub async fn report_unknown_range(&self, last: Location) -> anyhow::Result<UnknownRange> {
+        let marker = self.encoder.lock().await.end_of_unknown_range(last);
+        match marker {
+            Some(bytes) => {
+                self.stream_sender.send(&bytes).await?;
+                Ok(UnknownRange::Marked)
+            }
+            None => {
+                self.reset(DataStreamResetCode::UnknownObjectStatus).await?;
+                Ok(UnknownRange::Reset)
+            }
+        }
+    }
+
     /// Ends the response with FIN: every object of the range this side
     /// knows was sent.
     pub async fn close(&self) -> anyhow::Result<()> {
@@ -107,4 +139,128 @@ async fn response_ended(connection: &Weak<Connection>, request_id: u64) -> anyho
         connection.control.fetch_response_ended(request_id).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bytes::Bytes;
+
+    use super::{FetchDataSender, UnknownRange};
+    use crate::modules::{
+        moqt::{
+            control_plane::control_messages::messages::parameters::location::Location,
+            data_plane::object::{
+                canonical_object::{ForwardingPreference, Object},
+                object_status::ObjectStatus,
+            },
+            version::Version,
+        },
+        test_support::{spawn_connected_draft18_sessions, spawn_connected_dual_sessions},
+        transport::transport_send_stream::MockTransportSendStream,
+    };
+
+    /// A send stream that accepts every write and reports the code it is
+    /// reset with.
+    fn recording_stream() -> (
+        MockTransportSendStream,
+        tokio::sync::mpsc::UnboundedReceiver<u64>,
+    ) {
+        let (reset_sender, reset_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut stream = MockTransportSendStream::new();
+        stream.expect_send().returning(|_| Ok(()));
+        stream.expect_reset().returning(move |code| {
+            let _ = reset_sender.send(code);
+            Ok(())
+        });
+        (stream, reset_receiver)
+    }
+
+    #[tokio::test]
+    async fn a_fetch_sender_dropped_unended_resets_with_internal_error() {
+        for (version, (client, _server)) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-sender-dropped-14").await,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-sender-dropped-18", "moqt").await,
+            ),
+        ] {
+            // Arrange
+            let connection = client.publisher().session.connection();
+            assert_eq!(connection.control.version(), version);
+            let (stream, mut reset_receiver) = recording_stream();
+            let sender = FetchDataSender::new(&connection, Box::new(stream), 1)
+                .await
+                .unwrap();
+
+            // Act
+            drop(sender);
+            let reset = tokio::time::timeout(Duration::from_secs(3), reset_receiver.recv()).await;
+
+            // Assert: INTERNAL_ERROR (0x0) in draft-14 §10.4.3 and draft-18 §3.3.3
+            assert_eq!(reset, Ok(Some(0x0)), "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_range_the_draft_cannot_express_resets_with_unknown_object_status() {
+        // Arrange: draft-14 has no End of Unknown Range; on draft-18 the range
+        // ends in the group of the object sent before it
+        for (version, (client, _server), wire_code) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-sender-unknown-14").await,
+                0x0,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-sender-unknown-18", "moqt").await,
+                0x6,
+            ),
+        ] {
+            let connection = client.publisher().session.connection();
+            let (stream, mut reset_receiver) = recording_stream();
+            let sender = FetchDataSender::new(&connection, Box::new(stream), 1)
+                .await
+                .unwrap();
+            sender
+                .send_object(&Object {
+                    location: Location {
+                        group_id: 1,
+                        object_id: 0,
+                    },
+                    forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+                    publisher_priority: 128,
+                    status: ObjectStatus::Normal,
+                    extension_headers: Default::default(),
+                    payload: Bytes::from_static(b"o"),
+                    ends_group: false,
+                })
+                .await
+                .unwrap();
+
+            // Act
+            let reported = sender
+                .report_unknown_range(Location {
+                    group_id: 1,
+                    object_id: 4,
+                })
+                .await;
+
+            // Assert: draft-18 §10.12, §3.3.3 UNKNOWN_OBJECT_STATUS (0x6);
+            // draft-14 §10.4.3 defines no such code and gets INTERNAL_ERROR (0x0)
+            assert_eq!(reported.unwrap(), UnknownRange::Reset, "{version:?}");
+            assert_eq!(reset_receiver.try_recv(), Ok(wire_code), "{version:?}");
+            drop(sender);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(
+                reset_receiver.try_recv().is_err(),
+                "reset once: {version:?}"
+            );
+        }
+    }
 }

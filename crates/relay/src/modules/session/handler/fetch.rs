@@ -9,6 +9,8 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
     fn request_id(&self) -> u64;
     fn group_order(&self) -> moqt::object::GroupOrder;
     fn fetch_params(&self) -> moqt::fetch::FetchParams;
+    /// See `moqt::fetch::FetchHandler::fill_timeout`.
+    fn fill_timeout(&self) -> Option<std::time::Duration>;
     fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal>;
     async fn ok(
         &self,
@@ -35,6 +37,10 @@ impl FetchHandler for moqt::fetch::FetchHandler {
 
     fn fetch_params(&self) -> moqt::fetch::FetchParams {
         self.fetch.fetch_params.clone()
+    }
+
+    fn fill_timeout(&self) -> Option<std::time::Duration> {
+        moqt::fetch::FetchHandler::fill_timeout(self)
     }
 
     fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal> {
