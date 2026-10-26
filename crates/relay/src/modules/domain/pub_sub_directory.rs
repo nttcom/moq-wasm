@@ -1212,6 +1212,27 @@ mod tests {
     }
 
     #[test]
+    fn a_tuple_suffix_of_a_held_prefix_does_not_overlap_it() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(
+            1,
+            "room/alice".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+
+        // Act
+        let overlaps = table.has_overlapping_namespace_subscription(
+            1,
+            "alice",
+            NamespaceInterest::NamespacesAndTracks,
+        );
+
+        // Assert: draft-14 §9.28 compares prefixes from the first tuple field
+        assert!(!overlaps);
+    }
+
+    #[test]
     fn subscribe_namespace_and_subscribe_tracks_overlap_only_their_own_kind() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
