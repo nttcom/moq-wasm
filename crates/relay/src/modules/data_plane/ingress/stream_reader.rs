@@ -185,6 +185,11 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 ));
                 return;
             }
+            Err(error) => {
+                span.record("end_reason", "receive_error");
+                tracing::error!(%track_key, %error, "failed to receive stream data");
+                return;
+            }
         }
     }
 }
