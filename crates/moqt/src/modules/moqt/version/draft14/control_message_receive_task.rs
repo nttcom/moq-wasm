@@ -142,6 +142,24 @@ impl ControlMessageReceiveTask {
         received_message: ReceivedMessage,
     ) -> DepacketizeResult {
         tracing::debug!(message = ?received_message, "Event: message_type");
+        let channel = ControlChannel::of(connection);
+        if let ReceivedMessage::SubscribeUpdate(subscribe_update) = &received_message
+            && !channel.request_id_has_existed(subscribe_update.subscription_request_id)
+        {
+            tracing::error!(
+                subscription_request_id = subscribe_update.subscription_request_id,
+                "Protocol violation: SUBSCRIBE_UPDATE for a Request ID that never existed"
+            );
+            session.close_connection(
+                connection,
+                TerminationErrorCode::ProtocolViolation,
+                "SUBSCRIBE_UPDATE for a Request ID that never existed",
+            );
+            return DepacketizeResult::SessionClosed;
+        }
+        if let Some(request_id) = peer_request_id(&received_message) {
+            channel.note_peer_request_id(request_id);
+        }
         match received_message {
             ReceivedMessage::Subscribe(subscribe) => {
                 let subscribe_handler =
@@ -334,6 +352,22 @@ impl ControlMessageReceiveTask {
     }
 }
 
+/// The Request ID of a request the peer sent (§9.1), `None` for other
+/// messages.
+fn peer_request_id(message: &ReceivedMessage) -> Option<RequestId> {
+    match message {
+        ReceivedMessage::Subscribe(request) | ReceivedMessage::TrackStatus(request) => {
+            Some(request.request_id)
+        }
+        ReceivedMessage::Publish(request) => Some(request.request_id),
+        ReceivedMessage::PublishNamespace(request) => Some(request.request_id),
+        ReceivedMessage::SubscribeNamespace(request) => Some(request.request_id),
+        ReceivedMessage::Fetch(request) => Some(request.request_id),
+        ReceivedMessage::SubscribeUpdate(request) => Some(request.request_id),
+        _ => None,
+    }
+}
+
 fn error_response(
     error: RequestError,
     kind: RequestKind,
@@ -342,4 +376,88 @@ fn error_response(
     let code = error_codes::request_error_code_from_wire(error.error_code, kind);
     let request_id = error.request_id;
     DepacketizeResult::ResponseMessage(request_id, response(request_id, code, error.reason_phrase))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        SessionEvent,
+        modules::test_support::{
+            DISCONNECT_TIMEOUT, published_track, received_subscribe_update,
+            spawn_connected_dual_sessions, subscribed_track, subscription, within,
+        },
+    };
+
+    /// A Request ID of the client's parity far above any it has used.
+    const NEVER_USED_REQUEST_ID: u64 = 1000;
+
+    #[tokio::test]
+    async fn a_draft14_update_of_a_request_id_that_never_existed_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_dual_sessions("update-never-existed").await;
+
+        // Act
+        client
+            .subscriber()
+            .update_forward(&subscription(NEVER_USED_REQUEST_ID, 0), true)
+            .await
+            .unwrap();
+
+        // Assert: draft-14 §9.10 PROTOCOL_VIOLATION
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+        assert_eq!(close.code, Some(0x3));
+        assert_eq!(
+            close.reason,
+            "SUBSCRIBE_UPDATE for a Request ID that never existed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_update_of_an_ended_subscription_reaches_the_application() {
+        // Arrange
+        let track = subscribed_track("update-ended-subscription").await;
+        track
+            .client
+            .subscriber()
+            .unsubscribe(&track.subscription)
+            .await
+            .unwrap();
+        let event = within(track.server.receive_event()).await.unwrap();
+        assert!(matches!(event, SessionEvent::Unsubscribe(_)), "{event:?}");
+
+        // Act
+        track
+            .client
+            .subscriber()
+            .update_forward(&track.subscription, false)
+            .await
+            .unwrap();
+
+        // Assert: draft-14 §9.10 closes the session only for a Request ID that never existed
+        let event = within(track.server.receive_event()).await.unwrap();
+        let SessionEvent::SubscribeUpdate(update) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        assert_eq!(
+            update.subscription_request_id(),
+            track.subscription.request_id()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_update_of_a_publish_the_session_sent_reaches_the_application() {
+        // Arrange
+        let track = published_track("update-of-own-publish").await;
+
+        // Act
+        let update = received_subscribe_update(&track).await;
+
+        // Assert: draft-14 §9.10 names the PUBLISH's own Request ID
+        assert_eq!(
+            update.subscription_request_id(),
+            track.published.request_id()
+        );
+    }
 }
