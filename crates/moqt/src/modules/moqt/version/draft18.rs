@@ -3431,6 +3431,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_namespace_subscription_update_without_a_prefix_is_accepted() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-no-prefix", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let request_id = client
+            .publisher()
+            .session
+            .connection()
+            .control
+            .next_request_id();
+
+        // Act
+        sender.send(&request_update(request_id, &[])).await.unwrap();
+        let answer = receiver.receive().await.unwrap();
+
+        // Assert: §10.9, a parameter the update leaves out keeps its value
+        assert!(
+            matches!(answer, Some(messages::Message::RequestOk(_))),
+            "{answer:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_publish_namespace_is_accepted() {
         // Arrange
         let (client, server) = spawn_connected_draft18_sessions("draft18-namespace", "moqt").await;

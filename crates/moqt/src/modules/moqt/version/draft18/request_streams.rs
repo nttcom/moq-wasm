@@ -582,7 +582,7 @@ impl IncomingRequestTask {
                     })
                     .last();
                 let Some(new_prefix) = new_prefix else {
-                    send_update_answer(sender, None).await;
+                    send_update_answer(sender, Some(None)).await;
                     return FollowUp::Continue;
                 };
                 let interest = match kind {
