@@ -60,6 +60,7 @@ use crate::{
                     track_status_handler::TrackStatusHandler,
                     unsubscribe_handler::UnsubscribeHandler,
                     unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
+                    update_answer::DueAnswer,
                 },
                 namespace_interest::NamespaceInterest,
             },
@@ -740,9 +741,8 @@ struct UpdateAnswers(FuturesOrdered<BoxFuture<Option<Option<Location>>>>);
 
 impl UpdateAnswers {
     fn push(&mut self, answer_receiver: UpdateAnswerReceiver) {
-        self.0.push_back(Box::pin(
-            answer_receiver.within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT),
-        ));
+        self.0
+            .push_back(Box::pin(subscription_answer(answer_receiver)));
     }
 
     /// The next answer to write; pending while no update awaits one.
@@ -751,6 +751,20 @@ impl UpdateAnswers {
             Some(answer) => answer,
             None => std::future::pending().await,
         }
+    }
+}
+
+/// The LARGEST_OBJECT to answer a subscription update with, `None` inside
+/// when every handler clone was dropped unanswered; `None` for REQUEST_ERROR
+/// TIMEOUT.
+async fn subscription_answer(answer_receiver: UpdateAnswerReceiver) -> Option<Option<Location>> {
+    match answer_receiver
+        .within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT)
+        .await
+    {
+        DueAnswer::Answered(largest) => Some(largest),
+        DueAnswer::Dropped => Some(None),
+        DueAnswer::TimedOut => None,
     }
 }
 
