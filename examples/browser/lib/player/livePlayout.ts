@@ -89,6 +89,18 @@ export class LivePlayout {
     this.video.present(frame, this.playoutTime(captureMicros, nowMs, master))
   }
 
+  /// A frame the relay had cached before the subscription started is shown at
+  /// once and leaves the clock and the buffer alone: it can be minutes old
+  /// when the picture has not changed since, and anchoring on it would hold
+  /// the live frames back by as much.
+  presentCachedVideo(frame: VideoFrame): void {
+    if (this.paused) {
+      frame.close()
+      return
+    }
+    this.video.present(frame, performance.now())
+  }
+
   playAudio(audioData: AudioData, captureMicros: number | undefined): void {
     if (this.paused) {
       audioData.close()
