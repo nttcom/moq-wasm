@@ -3,10 +3,14 @@ use std::time::Duration;
 use moqt::object::{ForwardingPreference, SubgroupStart};
 
 use crate::modules::{
+    domain::single_preference::CONVERTED_DATAGRAM_SUBGROUPS,
     session::data_object::DataObject,
     test_support::relay_harness::{
         EgressRunnerHandle, RelayHarness, Sent, UpstreamTrack,
-        fixtures::{cached_object::datagram_object, data_object::subgroup_start},
+        fixtures::{
+            cached_object::datagram_object,
+            data_object::{make_header_with, make_object_in_subgroup, subgroup_start},
+        },
     },
 };
 
@@ -109,8 +113,7 @@ async fn a_single_preference_subscription_that_began_on_a_stream_gets_datagrams_
         egress.expect_sent().await,
     ];
 
-    // Assert: draft-14 §10.4.4, the datagram goes alone in the subgroup of its
-    // Object ID and its End of Group moves to the header
+    // Assert: draft-14 §10: the datagram goes alone on a converted subgroup and its End of Group moves to the header
     assert!(matches!(
         first,
         [
@@ -129,13 +132,15 @@ async fn a_single_preference_subscription_that_began_on_a_stream_gets_datagrams_
     };
     let expected_header = SubgroupStart {
         ends_group: true,
-        ..subgroup_start(1, 3, false)
+        ..subgroup_start(1, CONVERTED_DATAGRAM_SUBGROUPS + 3, false)
     };
     assert_eq!(*header, expected_header);
     assert_eq!(object.location, ending_datagram.location);
     assert_eq!(
         object.forwarding,
-        ForwardingPreference::Subgroup { subgroup_id: 3 }
+        ForwardingPreference::Subgroup {
+            subgroup_id: CONVERTED_DATAGRAM_SUBGROUPS + 3
+        }
     );
     assert!(!harness.is_track_malformed());
 }
@@ -171,5 +176,58 @@ async fn a_single_preference_subscription_that_began_with_a_datagram_gets_stream
     egress
         .assert_nothing_sent_within(NO_PUBLISH_DONE_WINDOW)
         .await;
+    assert!(!harness.is_track_malformed());
+}
+
+/// The Subgroup IDs of the next `streams` streams sent downstream, each
+/// one header, one object and a FIN.
+async fn subgroup_ids_of_streams(egress: &mut EgressRunnerHandle, streams: usize) -> Vec<u64> {
+    let mut subgroup_ids = Vec::new();
+    for _ in 0..streams {
+        let sent = [
+            egress.expect_sent().await,
+            egress.expect_sent().await,
+            egress.expect_sent().await,
+        ];
+        let [
+            Sent::Object(DataObject::SubgroupHeader(header)),
+            Sent::Object(DataObject::SubgroupObject(object)),
+            Sent::Closed,
+        ] = &sent
+        else {
+            panic!("expected one object on a subgroup stream, got {sent:?}");
+        };
+        assert_eq!(
+            object.forwarding,
+            ForwardingPreference::Subgroup {
+                subgroup_id: header.subgroup_id
+            }
+        );
+        subgroup_ids.push(header.subgroup_id);
+    }
+    subgroup_ids
+}
+
+#[tokio::test]
+async fn a_converted_datagram_goes_on_a_reserved_subgroup_apart_from_the_real_subgroup_of_its_object_id()
+ {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_single_preference_egress().await;
+    let upstream = harness.start_track_ingest();
+    send_group(&upstream, false, 0);
+    let stream = upstream.open_stream();
+    stream.send(make_header_with(1, 3, false));
+    stream.send(make_object_in_subgroup(1, 3, 0));
+    stream.fin();
+    let real = subgroup_ids_of_streams(&mut egress, 2).await;
+
+    // Act
+    upstream.datagram(datagram_object(1, 3).object);
+    let converted = subgroup_ids_of_streams(&mut egress, 1).await;
+
+    // Assert: draft-14 §2.5: a subgroup with two final objects is malformed, so the datagram of Object ID 3 must not close a second subgroup 3
+    assert_eq!(real, vec![0, 3]);
+    assert_eq!(converted, vec![CONVERTED_DATAGRAM_SUBGROUPS + 3]);
     assert!(!harness.is_track_malformed());
 }

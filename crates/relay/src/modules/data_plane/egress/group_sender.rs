@@ -13,7 +13,8 @@ use crate::modules::{
         track_cache::{NextObject, PartialEnd, PartialObject, TrackCache, TrackMalformed},
     },
     domain::{
-        delivery_control::DeliveryControl, delivery_stats::DeliveryStats, track_key::TrackKey,
+        delivery_control::DeliveryControl, delivery_stats::DeliveryStats,
+        single_preference::converted_datagram_subgroup, track_key::TrackKey,
     },
     session::{
         data_object::DataObject,
@@ -521,9 +522,10 @@ impl GroupSender {
         }
     }
 
-    /// Sends each object of a datagram group alone on a subgroup stream whose
-    /// Subgroup ID is its Object ID: a draft-14 FETCH puts a datagram object
-    /// in that subgroup (§10.4.4), so a FETCH of the same object agrees.
+    /// Sends each object of a datagram group alone on a subgroup stream in
+    /// the range reserved for converted datagrams, apart from every real
+    /// subgroup of the group (see `CONVERTED_DATAGRAM_SUBGROUPS`). An Object
+    /// ID past the range is dropped.
     async fn send_datagrams_on_streams(mut task: StreamSendTask) {
         let group_id = task.source.key.group_id();
         let mut cursor = task.object_id;
@@ -543,6 +545,13 @@ impl GroupSender {
             };
             let object_id = object.object.location.object_id;
             cursor = object_id.saturating_add(1);
+            let Some(subgroup_id) = converted_datagram_subgroup(object_id) else {
+                tracing::debug!(
+                    object_id,
+                    "dropping a datagram past the converted subgroups"
+                );
+                continue;
+            };
             let mut loaded = match object.load().await {
                 Ok(loaded) => loaded,
                 Err(error) => {
@@ -550,15 +559,13 @@ impl GroupSender {
                     continue;
                 }
             };
-            loaded.forwarding = ForwardingPreference::Subgroup {
-                subgroup_id: object_id,
-            };
+            loaded.forwarding = ForwardingPreference::Subgroup { subgroup_id };
             let priority = moqt::object::StreamPriority {
                 subscriber_priority: task.subscriber_priority,
                 publisher_priority: loaded.publisher_priority,
                 group_order: task.group_order,
                 group_sequence: task.group_sequence,
-                subgroup_id: object_id,
+                subgroup_id,
             };
             let opened = {
                 let mut factory = task.factory.lock().await;
@@ -574,7 +581,7 @@ impl GroupSender {
             task.delivery_stats.record_stream_opened();
             let start = moqt::object::SubgroupStart {
                 group_id,
-                subgroup_id: object_id,
+                subgroup_id,
                 publisher_priority: loaded.publisher_priority,
                 ends_group: loaded.ends_group,
             };

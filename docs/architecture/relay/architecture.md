@@ -1042,9 +1042,14 @@ holds on each hop.
 - Forwarding preference: `GroupSender` keeps a subscription to a session
   that does not mix preferences in the one of its first scheduled subgroup.
   - Started on a stream: each datagram object goes alone on a subgroup
-    stream whose Subgroup ID is its Object ID, where a draft-14 FETCH puts a
-    datagram object (§10.4.4), so a FETCH of the same object agrees; the
-    datagram's End of Group becomes the header's `ends_group`.
+    stream in a range reserved for converted datagrams: Object ID `n` goes
+    on Subgroup ID 2^61 + `n` (`domain::single_preference`), and an Object
+    ID at or past 2^61 is dropped. A real subgroup of the group never shares
+    it, as it would were the Subgroup ID the Object ID: a second stream of
+    one subgroup with another final object makes the track malformed
+    (draft-14 §2.5). Publishers number subgroups from 0, so none is expected
+    in the range. The datagram's End of Group becomes the header's
+    `ends_group`, and the stream ranks last in its group.
   - Started with a datagram: stream objects go as datagrams, an End of
     Group status object included, and one larger than the session's maximum
     datagram size is dropped as draft-14 §10.3 drops any datagram. A draft-14

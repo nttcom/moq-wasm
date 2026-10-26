@@ -5,10 +5,10 @@
 //!      through a FETCH the relay answers from its cache; then the reverse.
 //!   2. A draft-18 track that mixes subgroup streams and datagrams (§11)
 //!      reaches a draft-14 subscriber in one forwarding preference, the one
-//!      its first object came with: after a stream, datagram objects arrive
-//!      on subgroup streams whose Subgroup ID is the Object ID; after a
-//!      datagram, stream objects arrive as datagrams. A draft-18 subscriber
-//!      gets the track mixed, as published.
+//!      its first object came with: after a stream, each datagram object
+//!      arrives alone on a subgroup stream in the range the relay reserves
+//!      for them; after a datagram, stream objects arrive as datagrams. A
+//!      draft-18 subscriber gets the track mixed, as published.
 //!   3. A draft-18 publisher answers SUBSCRIBE with a Mandatory Track
 //!      Property (draft-18 §2.5.1). The relay understands none, so it
 //!      refuses the track: a draft-18 subscriber gets UNSUPPORTED_EXTENSION
@@ -48,6 +48,9 @@ const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
 const OBJECTS_PER_GROUP: u64 = 2;
 const RECEIVE_TIMEOUT: Duration = Duration::from_secs(5);
+/// The relay sends the datagram of Object ID `n` to a draft-14 subscriber
+/// whose track began on a stream on subgroup `CONVERTED_DATAGRAM_SUBGROUPS + n`.
+const CONVERTED_DATAGRAM_SUBGROUPS: u64 = 1 << 61;
 /// Lets the relay finish answering a SUBSCRIBE before the publisher sends.
 const SETTLE: Duration = Duration::from_millis(300);
 
@@ -318,8 +321,9 @@ async fn relays_a_mixed_track_in_one_preference_to_draft14(
     let as_first =
         |group_id: u64, object_id: u64| match (datagram_first, as_published(group_id, object_id)) {
             (true, _) => ForwardingPreference::Datagram,
-            // draft-14 §10.4.4 puts a datagram object in the subgroup of its Object ID.
-            (false, ForwardingPreference::Datagram) => subgroup(object_id),
+            (false, ForwardingPreference::Datagram) => {
+                subgroup(CONVERTED_DATAGRAM_SUBGROUPS + object_id)
+            }
             (false, forwarding) => forwarding,
         };
     let expected = |forwarding: &dyn Fn(u64, u64) -> ForwardingPreference| {
