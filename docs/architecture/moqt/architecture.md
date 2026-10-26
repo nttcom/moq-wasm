@@ -679,11 +679,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   mixes the two fails with `MalformedTrackError::MixedForwardingPreference`
   (draft-14 §2.5, §10); draft-18 allows the mix (§11).
 - `object_ledger.rs` — `ObjectLedger`, the duplicate rule of draft-14 §8.1 and
-  draft-18 §9.1 for one track: per location it keeps the forwarding
-  preference, priority, status and a 64-bit hash of the payload. No entry is
-  removed while a receiver of the track lives, so the ledger costs about
-  50–60 B for every object the subscription has received: a long-lived
-  subscription at 80 objects/s holds about 400 MB a day. A copy
+  draft-18 §9.1 for one track: per location it keeps the Subgroup ID (or a
+  datagram mark) and one word packing the priority, the status, the
+  draft-14 FETCH mark and a 52-bit hash of the payload. An entry is 32 B
+  with its `Location` key, about 38 B with hashbrown's control byte at its
+  7/8 load. No entry is removed while a receiver of the track lives, so a
+  long-lived subscription at 80 objects/s holds about 260 MB a day. A copy
   that differs in preference, subgroup, priority or payload is
   `MalformedTrackError::ConflictingDuplicate`, and so is, on draft-14
   (§8.1), one whose status moves between Normal, End of Group and End of

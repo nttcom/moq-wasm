@@ -17,7 +17,9 @@ use crate::modules::moqt::{
 
 /// The objects of one track a session has received, kept while a
 /// subscription or FETCH of the track is read. No entry is ever removed, so
-/// the ledger grows by one entry per object for that whole time. An object
+/// the ledger grows by one entry per object for that whole time: 32 bytes
+/// with its key, about 38 with the map's control byte at its 7/8 load, so
+/// about 260 MB a day for a track of 80 objects/s. An object
 /// that arrives again with another forwarding preference, subgroup, priority
 /// or payload makes the track malformed (draft-14 §8.1, draft-18 §9.1), and
 /// so does, on draft-14 only, a status that moves between Normal, End of
@@ -28,16 +30,25 @@ pub(crate) struct ObjectLedger {
     objects: std::sync::Mutex<HashMap<Location, Recorded>>,
 }
 
-/// What a duplicate is compared on; the payload is kept as a hash so the
-/// ledger stays small.
+/// What a duplicate is compared on, in 16 bytes, as the ledger keeps one
+/// per object: the subgroup id exactly, and the priority, status and a
+/// 52-bit hash of the payload packed into one word. A different payload
+/// goes unnoticed only when its hash collides, at odds of 2^-52.
+#[derive(Clone, Copy)]
 struct Recorded {
-    forwarding: ForwardingPreference,
-    /// From a draft-14 FETCH, which carries no forwarding preference.
-    forwarding_inferred: bool,
-    publisher_priority: u8,
-    status: ObjectStatus,
-    payload_hash: u64,
+    /// The Subgroup ID, or `DATAGRAM`; a Subgroup ID is a varint, below 2^62.
+    subgroup: u64,
+    /// `PAYLOAD_HASH` | priority << `PRIORITY_SHIFT` | status <<
+    /// `STATUS_SHIFT` | `FORWARDING_INFERRED`.
+    packed: u64,
 }
+
+const DATAGRAM: u64 = u64::MAX;
+const PAYLOAD_HASH: u64 = (1 << 52) - 1;
+const PRIORITY_SHIFT: u32 = 52;
+const STATUS_SHIFT: u32 = 60;
+/// From a draft-14 FETCH, which carries no forwarding preference.
+const FORWARDING_INFERRED: u64 = 1 << 63;
 
 impl std::fmt::Debug for ObjectLedger {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -78,14 +89,7 @@ impl ObjectLedger {
         payload: PayloadHasher,
         source: CopySource,
     ) -> Result<(), MalformedTrackError> {
-        let forwarding_inferred = source.forwarding_inferred();
-        let received = Recorded {
-            forwarding: object.forwarding,
-            forwarding_inferred,
-            publisher_priority: object.publisher_priority,
-            status: object.status,
-            payload_hash: payload.0.finish(),
-        };
+        let received = Recorded::new(object, payload.0.finish(), source.forwarding_inferred());
         let mut objects = self
             .objects
             .lock()
@@ -96,16 +100,16 @@ impl ObjectLedger {
             }
             Entry::Occupied(mut recorded) => {
                 let recorded = recorded.get_mut();
-                if recorded.conflicts_with(&received, object.location.object_id, source) {
+                if recorded.conflicts_with(received, object.location.object_id, source) {
                     return Err(MalformedTrackError::ConflictingDuplicate {
                         location: object.location,
                     });
                 }
-                if recorded.status == ObjectStatus::DoesNotExist {
+                if recorded.status() == ObjectStatus::DoesNotExist {
                     *recorded = received;
-                } else if recorded.forwarding_inferred && !received.forwarding_inferred {
-                    recorded.forwarding = received.forwarding;
-                    recorded.forwarding_inferred = false;
+                } else if recorded.forwarding_inferred() && !received.forwarding_inferred() {
+                    recorded.subgroup = received.subgroup;
+                    recorded.packed &= !FORWARDING_INFERRED;
                 }
             }
         }
@@ -149,36 +153,58 @@ impl PayloadHasher {
 }
 
 impl Recorded {
+    fn new(object: &Object, payload_hash: u64, forwarding_inferred: bool) -> Self {
+        let subgroup = match object.forwarding {
+            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+            ForwardingPreference::Datagram => DATAGRAM,
+        };
+        let mut packed = (payload_hash & PAYLOAD_HASH)
+            | (u64::from(object.publisher_priority) << PRIORITY_SHIFT)
+            | (u64::from(u8::from(object.status)) << STATUS_SHIFT);
+        if forwarding_inferred {
+            packed |= FORWARDING_INFERRED;
+        }
+        Self { subgroup, packed }
+    }
+
+    fn priority(self) -> u8 {
+        (self.packed >> PRIORITY_SHIFT) as u8
+    }
+
+    fn status(self) -> ObjectStatus {
+        let code = (self.packed >> STATUS_SHIFT) as u8 & 0x7;
+        ObjectStatus::try_from(code).expect("`new` packs a valid status")
+    }
+
+    fn payload_hash(self) -> u64 {
+        self.packed & PAYLOAD_HASH
+    }
+
+    fn forwarding_inferred(self) -> bool {
+        self.packed & FORWARDING_INFERRED != 0
+    }
+
     /// `other` is the copy from `source`, whose draft decides whether the
     /// status is compared.
-    fn conflicts_with(&self, other: &Self, object_id: u64, source: CopySource) -> bool {
-        if self.forwarding_conflicts_with(other, object_id)
-            || self.publisher_priority != other.publisher_priority
-        {
+    fn conflicts_with(self, other: Self, object_id: u64, source: CopySource) -> bool {
+        if self.forwarding_conflicts_with(other, object_id) || self.priority() != other.priority() {
             return true;
         }
-        if self.status == ObjectStatus::DoesNotExist || other.status == ObjectStatus::DoesNotExist {
+        let (status, other_status) = (self.status(), other.status());
+        if status == ObjectStatus::DoesNotExist || other_status == ObjectStatus::DoesNotExist {
             return false;
         }
-        (source.version().compares_duplicate_status() && self.status != other.status)
-            || self.payload_hash != other.payload_hash
+        (source.version().compares_duplicate_status() && status != other_status)
+            || self.payload_hash() != other.payload_hash()
     }
 
     /// A draft-14 FETCH copy in the subgroup of its Object ID is the same
     /// object as a datagram.
-    fn forwarding_conflicts_with(&self, other: &Self, object_id: u64) -> bool {
-        match (self.forwarding, other.forwarding) {
-            (ForwardingPreference::Subgroup { subgroup_id }, ForwardingPreference::Datagram)
-                if self.forwarding_inferred =>
-            {
-                subgroup_id != object_id
-            }
-            (ForwardingPreference::Datagram, ForwardingPreference::Subgroup { subgroup_id })
-                if other.forwarding_inferred =>
-            {
-                subgroup_id != object_id
-            }
-            (forwarding, other_forwarding) => forwarding != other_forwarding,
+    fn forwarding_conflicts_with(self, other: Self, object_id: u64) -> bool {
+        match (self.subgroup, other.subgroup) {
+            (subgroup_id, DATAGRAM) if self.forwarding_inferred() => subgroup_id != object_id,
+            (DATAGRAM, subgroup_id) if other.forwarding_inferred() => subgroup_id != object_id,
+            (subgroup, other_subgroup) => subgroup != other_subgroup,
         }
     }
 }
@@ -187,7 +213,7 @@ impl Recorded {
 mod tests {
     use bytes::Bytes;
 
-    use super::{CopySource, ObjectLedger};
+    use super::{CopySource, ObjectLedger, Recorded};
     use crate::{
         SessionEvent,
         fetch::{Fetch, FetchOption},
@@ -198,7 +224,7 @@ mod tests {
             within,
         },
         object::{
-            DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
+            DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location,
             MalformedTrackError, Object, ObjectStatus, StreamReceiveError, Subgroup, SubgroupPart,
             SubgroupStart, TrackData, VariantType,
         },
@@ -254,6 +280,14 @@ mod tests {
 
         // Assert: the same object, however its payload arrived
         assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn a_ledger_entry_takes_32_bytes() {
+        // Act
+        let entry = std::mem::size_of::<(Location, Recorded)>();
+        // Assert: with hashbrown's control byte and 7/8 load, about 38 B per object
+        assert_eq!(entry, 32);
     }
 
     #[test]
