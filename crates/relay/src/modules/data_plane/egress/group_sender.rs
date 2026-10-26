@@ -13,8 +13,10 @@ use crate::modules::{
         track_cache::{NextObject, PartialEnd, PartialObject, TrackCache, TrackMalformed},
     },
     domain::{
-        delivery_control::DeliveryControl, delivery_stats::DeliveryStats,
-        single_preference::converted_datagram_subgroup, track_key::TrackKey,
+        delivery_control::DeliveryControl,
+        delivery_stats::DeliveryStats,
+        single_preference::{SinglePreference, converted_datagram_subgroup},
+        track_key::TrackKey,
     },
     session::{
         data_object::DataObject,
@@ -215,7 +217,7 @@ impl GroupSender {
         // draft-14 §10 gives a track one forwarding preference; a draft-18
         // upstream may mix them (§11).
         let keeps_one_preference = !self.downstream.publisher.mixes_forwarding_preferences();
-        let mut first_as_datagram: Option<bool> = None;
+        let mut single_preference: Option<SinglePreference> = None;
         let mut schedule_over = false;
 
         loop {
@@ -228,7 +230,16 @@ impl GroupSender {
                     };
                     let arrived_as_datagram = matches!(task.key, SubgroupKey::Datagram { .. });
                     let as_datagram = if keeps_one_preference {
-                        *first_as_datagram.get_or_insert(arrived_as_datagram)
+                        let preference = *single_preference.get_or_insert_with(|| {
+                            let first = if arrived_as_datagram {
+                                SinglePreference::Datagrams
+                            } else {
+                                SinglePreference::Subgroups
+                            };
+                            self.cache
+                                .fix_single_preference(self.downstream.session_id, first)
+                        });
+                        preference == SinglePreference::Datagrams
                     } else {
                         arrived_as_datagram
                     };

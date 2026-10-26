@@ -9,6 +9,7 @@ use crate::modules::{
         delivery_control::DeliveryControl,
         delivery_stats::DeliveryStats,
         pub_sub_directory::{DownstreamRunnerSignals, entry::PublishDoneReason},
+        session_id::SessionId,
         track_key::TrackKey,
     },
     session::{publisher::Publisher, subscription::DownstreamSubscription},
@@ -30,6 +31,7 @@ pub(crate) enum RunnerExit {
 /// The session a runner delivers to, and the subscription it delivers.
 #[derive(Clone)]
 pub(crate) struct Downstream {
+    pub(crate) session_id: SessionId,
     pub(crate) publisher: Arc<dyn Publisher>,
     pub(crate) subscription: DownstreamSubscription,
 }

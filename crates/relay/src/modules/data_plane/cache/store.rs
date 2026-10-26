@@ -7,7 +7,7 @@ use crate::modules::{
         disk_cache::{DiskCache, DiskSink},
         track_cache::TrackCache,
     },
-    domain::track_key::TrackKey,
+    domain::{session_id::SessionId, track_key::TrackKey},
 };
 
 pub(crate) struct TrackCacheStore {
@@ -55,6 +55,13 @@ impl TrackCacheStore {
                 })
             })
             .clone()
+    }
+
+    /// `session_id` ended: no track keeps what it fixed for that session.
+    pub(crate) fn forget_downstream_session(&self, session_id: SessionId) {
+        for cache in self.caches.iter() {
+            cache.forget_downstream_session(session_id);
+        }
     }
 
     /// The track's last publisher left; see `TrackCache::publisher_left`.
@@ -118,8 +125,33 @@ impl TrackCacheStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
+    use crate::modules::{
+        domain::single_preference::SinglePreference,
+        test_support::relay_harness::fixtures::cached_object::insert_closed_group,
+    };
     use std::time::Duration;
+
+    #[test]
+    fn an_ended_session_leaves_no_single_preference_behind() {
+        // Arrange
+        let store = TrackCacheStore::new();
+        let cache = store.get_or_create(&TrackKey::new("ns", "track"));
+        cache.fix_single_preference(2, SinglePreference::Datagrams);
+        cache.fix_single_preference(3, SinglePreference::Datagrams);
+
+        // Act
+        store.forget_downstream_session(2);
+
+        // Assert: session 2's preference is gone; session 3 keeps its own
+        assert_eq!(
+            cache.fix_single_preference(2, SinglePreference::Subgroups),
+            SinglePreference::Subgroups
+        );
+        assert_eq!(
+            cache.fix_single_preference(3, SinglePreference::Subgroups),
+            SinglePreference::Datagrams
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn evict_removes_unreferenced_track() {

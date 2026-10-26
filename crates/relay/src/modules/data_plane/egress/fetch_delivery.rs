@@ -135,7 +135,9 @@ async fn load(
 ) -> Option<moqt::object::Object> {
     match cached.load().await {
         Ok(mut object) => {
-            object.forwarding = request.cache.fetch_forwarding(cached);
+            object.forwarding = request
+                .cache
+                .fetch_forwarding(cached, request.subscriber_session_id);
             Some(object)
         }
         Err(error) => {

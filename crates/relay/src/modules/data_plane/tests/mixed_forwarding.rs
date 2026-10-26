@@ -6,10 +6,11 @@ use crate::modules::{
     domain::single_preference::CONVERTED_DATAGRAM_SUBGROUPS,
     session::data_object::DataObject,
     test_support::relay_harness::{
-        EgressRunnerHandle, RelayHarness, Sent, UpstreamTrack,
+        EgressRunnerHandle, FetchSent, RelayHarness, Sent, UpstreamTrack,
         fixtures::{
             cached_object::datagram_object,
             data_object::{make_header_with, make_object_in_subgroup, subgroup_start},
+            location,
         },
     },
 };
@@ -230,4 +231,112 @@ async fn a_converted_datagram_goes_on_a_reserved_subgroup_apart_from_the_real_su
     assert_eq!(real, vec![0, 3]);
     assert_eq!(converted, vec![CONVERTED_DATAGRAM_SUBGROUPS + 3]);
     assert!(!harness.is_track_malformed());
+}
+
+/// `(group, object, forwarding preference)` of each object live egress sent
+/// downstream, the converted datagrams' subgroup streams included, sorted.
+async fn sent_forwarding(
+    egress: &mut EgressRunnerHandle,
+    count: usize,
+) -> Vec<(u64, u64, ForwardingPreference)> {
+    let mut sent = Vec::new();
+    while sent.len() < count {
+        match egress.expect_sent().await {
+            Sent::Object(DataObject::Datagram(object) | DataObject::SubgroupObject(object)) => {
+                sent.push((
+                    object.location.group_id,
+                    object.location.object_id,
+                    object.forwarding,
+                ));
+            }
+            Sent::Object(DataObject::SubgroupHeader(_)) | Sent::Closed => {}
+            other => panic!("unexpected downstream step {other:?}"),
+        }
+    }
+    sent.sort_by_key(|&(group_id, object_id, _)| (group_id, object_id));
+    sent
+}
+
+/// The same for a FETCH of groups 0 and 1 from the cache to the session of
+/// `harness.start_single_preference_egress`.
+async fn fetched_forwarding(harness: &RelayHarness) -> Vec<(u64, u64, ForwardingPreference)> {
+    let fetch = harness.start_fetch_reporting_unknown(
+        location(0, 0),
+        location(2, 0),
+        moqt::fetch::UnknownRange::Marked,
+    );
+    fetch
+        .finished()
+        .await
+        .into_iter()
+        .filter_map(|sent| match sent {
+            FetchSent::Object(object) => Some((
+                object.location.group_id,
+                object.location.object_id,
+                object.forwarding,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn assert_fetch_matches_the_live_conversion(datagram_first: bool) {
+    // Arrange: group 1 is of the other kind, so live egress converted it
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_single_preference_egress().await;
+    let upstream = harness.start_track_ingest();
+    send_group(&upstream, datagram_first, 0);
+    let mut live = sent_forwarding(&mut egress, 1).await;
+    send_group(&upstream, !datagram_first, 1);
+    live.extend(sent_forwarding(&mut egress, 1).await);
+    harness.wait_largest_location(location(1, 0)).await;
+
+    // Act
+    let fetched = fetched_forwarding(&harness).await;
+
+    // Assert: draft-14 §8.1, a copy with another forwarding preference or subgroup is a conflicting duplicate
+    assert_eq!(fetched, live);
+    let converted = if datagram_first {
+        ForwardingPreference::Datagram
+    } else {
+        ForwardingPreference::Subgroup {
+            subgroup_id: CONVERTED_DATAGRAM_SUBGROUPS,
+        }
+    };
+    assert_eq!(live[1], (1, 0, converted));
+}
+
+#[tokio::test]
+async fn a_fetch_gives_a_session_that_began_with_a_datagram_its_stream_objects_as_datagrams() {
+    assert_fetch_matches_the_live_conversion(true).await;
+}
+
+#[tokio::test]
+async fn a_fetch_gives_a_session_that_began_on_a_stream_its_datagrams_on_their_converted_subgroups()
+{
+    assert_fetch_matches_the_live_conversion(false).await;
+}
+
+#[tokio::test]
+async fn a_later_subscription_of_the_session_keeps_the_preference_its_first_one_fixed() {
+    // Arrange: the first subscription began with a datagram; the later one
+    // begins after a stream group
+    let harness = RelayHarness::new();
+    let upstream = harness.start_track_ingest();
+    let mut first = harness.start_single_preference_egress().await;
+    send_group(&upstream, true, 0);
+    sent_forwarding(&mut first, 1).await;
+    drop(first);
+    send_group(&upstream, false, 1);
+    harness.wait_largest_location(location(1, 0)).await;
+    let mut later = harness
+        .start_single_preference_egress_after(Some(location(1, 0)))
+        .await;
+
+    // Act
+    send_group(&upstream, false, 2);
+    let sent = sent_forwarding(&mut later, 1).await;
+
+    // Assert: draft-14 §8.1, a FETCH copy the session takes must agree with what both subscriptions sent
+    assert_eq!(sent, vec![(2, 0, ForwardingPreference::Datagram)]);
 }

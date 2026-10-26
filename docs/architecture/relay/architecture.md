@@ -736,11 +736,13 @@ per-request authorization gate under "Event pipeline".
   preference is compared exactly. When a live datagram meets such an inferred
   copy that arrived first, the cache takes the forwarding preference and
   `ends_group` from the datagram. A FETCH served from the cache asks
-  `TrackCache::fetch_forwarding` for each object's preference: an inferred
-  copy in the subgroup of its Object ID goes as a datagram while the latest
-  object live ingest inserted is a datagram (a draft-14 track keeps one
-  preference), so a draft-18 FETCH marks it and it matches the live datagram
-  the subscriber may hold; every other object goes as cached.
+  `TrackCache::fetch_forwarding` for each object's preference. To a session
+  the track went to in one preference (see "Relaying across versions") the
+  object goes as live delivery gave it. Otherwise an inferred copy in the
+  subgroup of its Object ID goes as a datagram while the latest object live
+  ingest inserted is a datagram (a draft-14 track keeps one preference), so
+  a draft-18 FETCH marks it and it matches the live datagram the subscriber
+  may hold; every other object goes as cached.
 - `TrackCache` (`track_cache.rs` + `track_cache/{ledger,open_subgroup}.rs`) is one
   track-level ledger behind a `std::sync::RwLock` that is never held across an
   await: `objects: BTreeMap<Location, Arc<CachedObject>>` (stream and datagram
@@ -985,9 +987,9 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   (`Publisher::mixes_forwarding_preferences`, draft-18) gets every
   `SubgroupKey` in the preference its objects arrived with, so a draft-18
   track mixing subgroup streams and datagrams goes downstream mixed. For any
-  other downstream (draft-14 §10) the first task the sender schedules fixes
-  the subscription's preference, and later keys of the other kind are
-  converted (see "Relaying across versions").
+  other downstream (draft-14 §10) the first task the session's first
+  subscription of the track schedules fixes the preference, and later keys
+  of the other kind are converted (see "Relaying across versions").
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscription's subscriber priority, the first object's publisher
   priority, the subscription's group order with a per-subscription
@@ -1039,8 +1041,16 @@ holds on each hop.
   draft-14 subscriber before registering anything
   (`SubscribeHandler::understands`), and moqt's draft-14 FETCH `ok` and
   `publish` would refuse it toward a draft-14 peer.
-- Forwarding preference: `GroupSender` keeps a subscription to a session
-  that does not mix preferences in the one of its first scheduled subgroup.
+- Forwarding preference: `GroupSender` keeps a track to a session that does
+  not mix preferences in one `SinglePreference`, that of the first subgroup
+  the session's first subscription of the track scheduled.
+  `TrackCache::fix_single_preference` keeps it per session until the
+  session ends (`TrackCacheStore::forget_downstream_session` in the session
+  cleanup), so later subscriptions and every FETCH from the cache to that
+  session give each object the preference and Subgroup ID it went live in
+  (`SinglePreference::forwarding`): draft-14 §8.1 makes a copy that differs
+  in either a conflicting duplicate, which moqt's `ObjectLedger` turns into
+  a malformed track.
   - Started on a stream: each datagram object goes alone on a subgroup
     stream in a range reserved for converted datagrams: Object ID `n` goes
     on Subgroup ID 2^61 + `n` (`domain::single_preference`), and an Object
@@ -1052,10 +1062,10 @@ holds on each hop.
     `ends_group`, and the stream ranks last in its group.
   - Started with a datagram: stream objects go as datagrams, an End of
     Group status object included, and one larger than the session's maximum
-    datagram size is dropped as draft-14 §10.3 drops any datagram. A draft-14
-    FETCH still gives such an object its real Subgroup ID, so a subscriber
-    that fetched a location it also received live would see a conflict; this
-    is left open.
+    datagram size is dropped as draft-14 §10.3 drops any datagram. A FETCH
+    gives them as datagrams too, which a draft-14 FETCH sends in the
+    subgroup of their Object ID (§10.4.4), as the live datagram's duplicate
+    check expects.
 - FETCH: a draft-14 FETCH response carries no preference, and an inferred
   datagram copy is served to a draft-18 FETCH as described in the cache
   section.

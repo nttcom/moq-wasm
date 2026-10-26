@@ -18,6 +18,7 @@ pub(super) async fn cleanup_session(session_id: SessionId, deps: &WorkerDeps) {
         was_client
     };
     let removed = deps.local_pub_sub_directory.remove_session(session_id);
+    deps.cache_store.forget_downstream_session(session_id);
     cleanup_removed_session(session_id, was_client, removed, deps).await;
 }
 

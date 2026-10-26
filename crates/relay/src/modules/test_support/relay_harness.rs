@@ -54,6 +54,8 @@ use self::{
 
 pub(crate) const OBJECT_COUNT: usize = 50;
 pub(crate) const PUBLISHER_SESSION_ID: SessionId = 1;
+/// The session egress and FETCH deliveries of the harness serve.
+const DOWNSTREAM_SESSION_ID: SessionId = 2;
 const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct RelayHarness {
@@ -398,10 +400,19 @@ impl RelayHarness {
     /// Egress to a downstream that keeps every track to one forwarding
     /// preference, as a draft-14 session does.
     pub(crate) async fn start_single_preference_egress(&self) -> EgressRunnerHandle {
+        self.start_single_preference_egress_after(None).await
+    }
+
+    /// `start_single_preference_egress` of a subscription whose SUBSCRIBE_OK
+    /// stated `largest_location`.
+    pub(crate) async fn start_single_preference_egress_after(
+        &self,
+        largest_location: Option<moqt::object::Location>,
+    ) -> EgressRunnerHandle {
         self.start_egress_to(
             MockPublisher::channel_mixing(false),
             moqt::subscribe::FilterType::LargestObject,
-            None,
+            largest_location,
         )
         .await
     }
@@ -422,6 +433,7 @@ impl RelayHarness {
             self.ingest.track_key.clone(),
             self.ingest.cache.clone(),
             Downstream {
+                session_id: DOWNSTREAM_SESSION_ID,
                 publisher: Arc::new(publisher),
                 subscription: make_subscription(filter_type),
             },
@@ -508,7 +520,7 @@ impl RelayHarness {
     ) -> FetchDeliveryHandle {
         let (sender, sent) = MockFetchSender::answering_unknown_range(unknown_range);
         let request = EgressFetchRequest {
-            subscriber_session_id: 2,
+            subscriber_session_id: DOWNSTREAM_SESSION_ID,
             request_id: 0,
             cache: self.ingest.cache.clone(),
             start_location: range.start,

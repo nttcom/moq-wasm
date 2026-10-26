@@ -181,6 +181,7 @@ impl EgressCoordinator {
             request.track_key,
             cache,
             Downstream {
+                session_id: request.subscriber_session_id,
                 publisher: Arc::from(publisher),
                 subscription: request.downstream_subscription.clone(),
             },
