@@ -8,6 +8,7 @@ use bytes::Bytes;
 use tracing_subscriber::EnvFilter;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
+use crate::modules::transport::transport_connection::BoxedConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 use crate::{
@@ -94,6 +95,20 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
         server_application_protocols(&config.versions).unwrap(),
     )
     .unwrap()
+}
+
+/// More than quinn's default limit of 100 concurrent bidirectional streams.
+const OPEN_STREAMS: usize = 150;
+
+/// Opens [`OPEN_STREAMS`] bidirectional streams and keeps every one open.
+pub(crate) async fn open_bi_streams(
+    connection: &BoxedConnection,
+) -> anyhow::Result<Vec<impl Sized>> {
+    let mut streams = Vec::with_capacity(OPEN_STREAMS);
+    for _ in 0..OPEN_STREAMS {
+        streams.push(connection.open_bi().await?);
+    }
+    Ok(streams)
 }
 
 /// Starts a DUAL server on a free port whose accept loop resolves the first

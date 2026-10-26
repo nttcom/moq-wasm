@@ -15,7 +15,7 @@ use crate::modules::transport::{
     },
     connect_target::{ClientTransport, ConnectTarget},
     dual_stack_bind::bind_dual_stack,
-    server_transport_config::load_cert_and_key,
+    server_transport_config::quic_server_config,
     transport_connection_creator::TransportConnectionCreator,
 };
 
@@ -101,15 +101,21 @@ impl TransportConnectionCreator for WtConnectionCreator {
         cert_path: &str,
         key_path: &str,
         port_num: u16,
-        _keep_alive_sec: u64,
+        keep_alive_sec: u64,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        let (certs, key) = load_cert_and_key(cert_path, key_path)?;
+        let server_config = quic_server_config(
+            cert_path,
+            key_path,
+            keep_alive_sec,
+            vec![web_transport_quinn::ALPN.as_bytes().to_vec()],
+        )?;
 
         let server = bind_dual_stack(port_num, |address| {
-            Ok(web_transport_quinn::ServerBuilder::new()
-                .with_addr(address)
-                .with_certificate(certs, key)?)
+            Ok(web_transport_quinn::Server::new(quinn::Endpoint::server(
+                server_config,
+                address,
+            )?))
         })?;
 
         tracing::info!("Server ready! for WebTransport port: {}", port_num);
@@ -188,12 +194,14 @@ mod tests {
     use crate::{
         Endpoint, WEBTRANSPORT,
         modules::{
+            moqt::version::{DEFAULT_VERSIONS, application_protocols},
             test_support::{
-                HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config,
+                HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config, open_bi_streams,
                 server_transport_creator, spawn_dual_server,
             },
             transport::{
-                accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
+                accept_error::AcceptError, connect_target::ConnectTarget,
+                transport_connection_creator::TransportConnectionCreator,
             },
         },
     };
@@ -210,6 +218,40 @@ mod tests {
 
         // Assert
         result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn either_side_keeps_more_than_a_hundred_bidirectional_streams_open() {
+        // Arrange
+        let server: WtConnectionCreator = server_transport_creator("wt-bidi-streams");
+        let client =
+            WtConnectionCreator::client(0, false, application_protocols(DEFAULT_VERSIONS).unwrap())
+                .unwrap();
+        let target = ConnectTarget::parse(&format!(
+            "https://127.0.0.1:{}/moq",
+            server.local_port().unwrap()
+        ))
+        .unwrap();
+        let (client_connection, server_connection) = tokio::join!(
+            client.create_new_transport(&target),
+            server.accept_new_transport()
+        );
+        let (client_connection, server_connection) =
+            (client_connection.unwrap(), server_connection.unwrap());
+
+        // Act
+        let opened = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            tokio::join!(
+                open_bi_streams(&client_connection),
+                open_bi_streams(&server_connection)
+            )
+        })
+        .await;
+
+        // Assert
+        let (from_client, from_server) = opened.expect("every stream opens in time");
+        assert!(from_client.is_ok(), "{:?}", from_client.err());
+        assert!(from_server.is_ok(), "{:?}", from_server.err());
     }
 
     #[tokio::test]
