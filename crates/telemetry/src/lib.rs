@@ -7,6 +7,7 @@ use opentelemetry_sdk::logs::{BatchLogProcessor, SdkLoggerProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
@@ -21,10 +22,16 @@ enum OtlpProtocol {
     HttpProtobuf,
 }
 
+/// Where the human-readable log goes; OTLP logs are unaffected.
+pub enum LogOutput {
+    Stdout,
+    Stderr,
+}
+
 pub struct TelemetryConfig<'a> {
     /// `service.name`, unless `OTEL_SERVICE_NAME` overrides it. Also prefixes
     /// the filter variables, each falling back to `RUST_LOG`. For `relay`:
-    /// - `RELAY_STDOUT_FILTER`: the human-readable log
+    /// - `RELAY_STDOUT_FILTER`: the human-readable log, on either `log_output`
     /// - `RELAY_OTEL_FILTER`: OTLP spans
     /// - `RELAY_LOG_FILTER`: OTLP logs
     pub service_name: &'a str,
@@ -32,6 +39,7 @@ pub struct TelemetryConfig<'a> {
     /// Added to every filter that has no directive for the same target.
     pub default_directives: &'a [&'a str],
     pub resource_attributes: Vec<(&'static str, String)>,
+    pub log_output: LogOutput,
 }
 
 /// Hold it until the process exits: dropping it flushes and shuts down the
@@ -184,8 +192,12 @@ fn build_logger_provider(resource: Resource, protocol: OtlpProtocol) -> Result<S
 /// Fails when a subscriber is already installed, `OTEL_EXPORTER_OTLP_PROTOCOL`
 /// is unsupported, or an OTLP exporter cannot be built.
 pub fn init(config: TelemetryConfig) -> Result<TelemetryGuard> {
+    let writer = match config.log_output {
+        LogOutput::Stdout => BoxMakeWriter::new(std::io::stdout),
+        LogOutput::Stderr => BoxMakeWriter::new(std::io::stderr),
+    };
     let stdout_layer = fmt::layer()
-        .with_writer(std::io::stdout)
+        .with_writer(writer)
         .with_ansi(true)
         .with_line_number(true)
         .with_filter(tracing_filter(&config, "STDOUT"));

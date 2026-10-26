@@ -6,15 +6,14 @@ intent, module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
 One `init` that installs the global `tracing` subscriber for a binary of the
-workspace, so every binary writes the same stdout format and exports the same
-OTLP traces and logs. The relay is its first user; what to put in a span stays
-with each crate.
+workspace, so every binary writes the same readable log and exports the same
+OTLP traces and logs. What to put in a span stays with each crate.
 
 ## Outputs
 
 | Output | Filter variable | Content |
 | --- | --- | --- |
-| stdout | `<SERVICE>_STDOUT_FILTER` | `tracing_subscriber::fmt` text with line numbers |
+| stdout, or stderr with `LogOutput::Stderr` | `<SERVICE>_STDOUT_FILTER` | `tracing_subscriber::fmt` text with line numbers |
 | OTLP traces | `<SERVICE>_OTEL_FILTER` | spans only, through `tracing-opentelemetry` |
 | OTLP logs | `<SERVICE>_LOG_FILTER` | events, through `opentelemetry-appender-tracing` |
 
