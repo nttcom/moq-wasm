@@ -54,6 +54,16 @@ impl FillBudget {
         matches!(self.requested, Some((Duration::ZERO, _)))
     }
 
+    /// How long a FETCH served from the cache waits for the objects live
+    /// ingest has yet to deliver.
+    pub(crate) fn delivery_wait(&self) -> FetchWait {
+        match self.requested {
+            Some((Duration::ZERO, _)) => FetchWait::Never,
+            Some((_, deadline)) => FetchWait::Until(deadline),
+            None => FetchWait::Unlimited,
+        }
+    }
+
     /// When a fill starting now has to end.
     fn fill_deadline(&self) -> Instant {
         match self.requested {

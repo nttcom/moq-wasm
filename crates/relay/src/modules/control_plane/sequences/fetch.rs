@@ -19,7 +19,7 @@ use crate::modules::{
             store::TrackCacheStore,
             track_cache::{FetchRangeResolution, TrackCache},
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest, FetchWait},
+        egress::coordinator::{EgressCommand, EgressFetchRequest},
         ingress::fetch_ingest::FillBudget,
     },
     domain::{
@@ -37,7 +37,6 @@ struct CacheTarget {
     cache: Arc<TrackCache>,
     start_location: moqt::object::Location,
     end_location: moqt::object::Location,
-    wait: FetchWait,
 }
 
 struct FetchTarget {
@@ -183,7 +182,6 @@ impl Fetch {
                 cache,
                 start_location,
                 end_location,
-                wait,
             }) => {
                 // The relay does not yet track final End Of Track via PUBLISH_DONE,
                 // so local cache responses cannot assert it.
@@ -202,7 +200,7 @@ impl Fetch {
                     start_location,
                     end_location,
                     group_order: handler.group_order(),
-                    wait,
+                    wait: fill_budget.delivery_wait(),
                 };
                 if let Err(e) = egress_sender
                     .send(EgressCommand::StartFetch(fetch_request))
@@ -476,7 +474,6 @@ impl Fetch {
                 cache,
                 start_location,
                 end_location,
-                wait: FetchWait::Unlimited,
             }),
             FetchRangeResolution::InvalidRange => return Err(FetchError::InvalidRange),
             FetchRangeResolution::NoObjects => return Err(FetchError::NoObjects),
@@ -508,7 +505,6 @@ impl Fetch {
             cache,
             start_location: target.start_location,
             end_location,
-            wait: FetchWait::Never,
         })
     }
 
@@ -575,6 +571,9 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
+    use crate::modules::data_plane::{
+        cache::track_cache::OpenSubgroupGuard, egress::coordinator::FetchWait,
+    };
     use crate::modules::test_support::directory_fixtures::{
         delivery_control, downstream_subscription,
     };
@@ -773,9 +772,10 @@ mod tests {
         handed_over: Option<EgressFetchRequest>,
     }
 
-    /// Handles a FETCH of {0,0}..{2,0} with FILL_TIMEOUT 0 from session 2,
+    /// Handles a FETCH of {0,0}..{2,0} with `fill_timeout` from session 2,
     /// whose only publisher, session 5, answers `upstream`.
-    async fn handle_zero_fill_timeout_fetch(
+    async fn handle_fetch_with_fill_timeout(
+        fill_timeout: Duration,
         cache_store: Arc<TrackCacheStore>,
         upstream: FetchAnswer,
     ) -> HandledFetch {
@@ -788,7 +788,7 @@ mod tests {
         )
         .await;
         let handler = MockFetchHandler {
-            fill_timeout: Some(Duration::ZERO),
+            fill_timeout: Some(fill_timeout),
             ..MockFetchHandler::fetching(standalone_fetch_params(location(0, 0), location(2, 0)))
         };
         let oks = handler.oks.clone();
@@ -831,7 +831,8 @@ mod tests {
         );
 
         // Act
-        let handled = handle_zero_fill_timeout_fetch(cache_store, FetchAnswer::Never).await;
+        let handled =
+            handle_fetch_with_fill_timeout(Duration::ZERO, cache_store, FetchAnswer::Never).await;
 
         // Assert: draft-18 §10.2.5 MUST NOT wait for upstream delivery
         assert_eq!(handled.oks, vec![location(2, 0)]);
@@ -846,9 +847,12 @@ mod tests {
     #[tokio::test]
     async fn a_zero_fill_timeout_without_a_cache_waits_for_no_upstream_object() {
         // Act: the publisher answers FETCH_OK but never sends an object
-        let handled =
-            handle_zero_fill_timeout_fetch(Arc::new(TrackCacheStore::new()), FetchAnswer::FetchOk)
-                .await;
+        let handled = handle_fetch_with_fill_timeout(
+            Duration::ZERO,
+            Arc::new(TrackCacheStore::new()),
+            FetchAnswer::FetchOk,
+        )
+        .await;
 
         // Assert: draft-18 §10.2.5, FETCH_OK alone tells the End Location
         assert_eq!(handled.oks, vec![location(2, 0)]);
@@ -856,6 +860,60 @@ mod tests {
             handled
                 .handed_over
                 .is_some_and(|request| request.wait == FetchWait::Never)
+        );
+    }
+
+    /// Fills `cache` so that a FETCH of {0,0}..{2,0} is served from it,
+    /// waiting for the rest of group 0, which live ingest holds open while
+    /// the guard lives.
+    fn hold_group_0_open(cache: &TrackCache) -> OpenSubgroupGuard<'_> {
+        cache.begin_live_ingest();
+        let group0 = open_group(cache, 0, &[0, 1]);
+        insert_closed_group(cache, 1, &[0]);
+        group0
+    }
+
+    #[tokio::test]
+    async fn a_zero_fill_timeout_serves_an_open_group_without_waiting_for_its_tail() {
+        // Arrange
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
+        let _group0 = hold_group_0_open(&cache);
+
+        // Act
+        let handled =
+            handle_fetch_with_fill_timeout(Duration::ZERO, cache_store, FetchAnswer::Never).await;
+
+        // Assert: draft-18 §10.2.5 MUST NOT wait for upstream delivery
+        assert_eq!(handled.oks, vec![location(1, 1)]);
+        assert!(
+            handled
+                .handed_over
+                .is_some_and(|request| request.wait == FetchWait::Never)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fill_timeout_bounds_the_wait_of_a_fetch_served_from_the_cache() {
+        // Arrange
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
+        let _group0 = hold_group_0_open(&cache);
+        let arrival = tokio::time::Instant::now();
+
+        // Act
+        let handled = handle_fetch_with_fill_timeout(
+            Duration::from_millis(500),
+            cache_store,
+            FetchAnswer::Never,
+        )
+        .await;
+
+        // Assert: draft-18 §10.2.5, the budget counts from the FETCH's arrival
+        assert_eq!(handled.oks, vec![location(1, 1)]);
+        assert_eq!(
+            handled.handed_over.map(|request| request.wait),
+            Some(FetchWait::Until(arrival + Duration::from_millis(500)))
         );
     }
 

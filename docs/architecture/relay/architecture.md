@@ -887,6 +887,12 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   and the delivery goes on, or resets the stream with UNKNOWN_OBJECT_STATUS
   where the draft cannot express it (draft-14, or a range ending in the
   group of the previous object), which ends the delivery.
+  `FetchWait::Until(deadline)` drives the cursor until the deadline and
+  then serves the rest of the plan, the steps after the last object sent.
+  A FETCH served from the cache takes its wait from `FillBudget`: `Never`
+  for FILL_TIMEOUT 0, `Until` the end of a non-zero budget (draft-18
+  §10.2.5), and `Unlimited` without FILL_TIMEOUT, which waits for an open
+  group as long as live ingest keeps it open.
 
 ## Cascading relays (`modules/cascading`)
 

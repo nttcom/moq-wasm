@@ -53,6 +53,8 @@ pub(crate) struct EgressFetchRequest {
 pub(crate) enum FetchWait {
     /// Until they arrive.
     Unlimited,
+    /// Until the instant, after which the rest is reported as unknown.
+    Until(tokio::time::Instant),
     /// Not at all: what the cache holds now is served, each stretch it does
     /// not know reported as unknown.
     Never,

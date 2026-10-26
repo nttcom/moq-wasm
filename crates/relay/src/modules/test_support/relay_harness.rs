@@ -414,7 +414,28 @@ impl RelayHarness {
         start_location: moqt::object::Location,
         end_location: moqt::object::Location,
     ) -> FetchDeliveryHandle {
-        self.spawn_fetch(start_location, end_location, None)
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Unlimited,
+            moqt::fetch::UnknownRange::Marked,
+        )
+    }
+
+    /// A fetch in `group_order` that waits for objects until `deadline`,
+    /// then reports the rest as unknown to a sender that marks it.
+    pub(crate) fn start_fetch_waiting_until(
+        &self,
+        range: std::ops::Range<moqt::object::Location>,
+        group_order: moqt::object::GroupOrder,
+        deadline: tokio::time::Instant,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            range,
+            group_order,
+            FetchWait::Until(deadline),
+            moqt::fetch::UnknownRange::Marked,
+        )
     }
 
     /// A fetch that reports what the cache lacks as unknown, to a sender
@@ -425,29 +446,31 @@ impl RelayHarness {
         end_location: moqt::object::Location,
         unknown_range: moqt::fetch::UnknownRange,
     ) -> FetchDeliveryHandle {
-        self.spawn_fetch(start_location, end_location, Some(unknown_range))
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Never,
+            unknown_range,
+        )
     }
 
+    /// `range.end` is the FETCH_OK End Location.
     fn spawn_fetch(
         &self,
-        start_location: moqt::object::Location,
-        end_location: moqt::object::Location,
-        unknown_range: Option<moqt::fetch::UnknownRange>,
+        range: std::ops::Range<moqt::object::Location>,
+        group_order: moqt::object::GroupOrder,
+        wait: FetchWait,
+        unknown_range: moqt::fetch::UnknownRange,
     ) -> FetchDeliveryHandle {
-        let (sender, sent) = MockFetchSender::answering_unknown_range(
-            unknown_range.unwrap_or(moqt::fetch::UnknownRange::Marked),
-        );
+        let (sender, sent) = MockFetchSender::answering_unknown_range(unknown_range);
         let request = EgressFetchRequest {
             subscriber_session_id: 2,
             request_id: 0,
             cache: self.ingest.cache.clone(),
-            start_location,
-            end_location,
-            group_order: moqt::object::GroupOrder::Ascending,
-            wait: match unknown_range {
-                Some(_) => FetchWait::Never,
-                None => FetchWait::Unlimited,
-            },
+            start_location: range.start,
+            end_location: range.end,
+            group_order,
+            wait,
         };
         let join_handle = tokio::spawn(async move { deliver_fetch(&request, &sender).await });
         FetchDeliveryHandle { sent, join_handle }
