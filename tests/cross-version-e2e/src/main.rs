@@ -13,20 +13,28 @@
 //!      Property (draft-18 §2.5.1). The relay understands none, so it
 //!      refuses the track: a draft-18 subscriber gets UNSUPPORTED_EXTENSION
 //!      and a draft-14 subscriber NOT_SUPPORTED, the closest draft-14 code.
+//!   4. A draft-18 FETCH with FILL_TIMEOUT (draft-18 §10.2.5) of a range
+//!      the relay caches only part of, from a publisher that answers an
+//!      upstream FETCH but sends no object: with 0 the relay serves the
+//!      cached part at once without fetching upstream, and with 300 ms it
+//!      fetches upstream without forwarding the FILL_TIMEOUT and serves the
+//!      same once the budget ran out. Either way the missing group is
+//!      reported as an unknown range.
 //!
 //! Run `tests/cross-version-e2e/run.sh`, or start such a relay and
 //! `MOQT_E2E_RELAY_URL=moqt://127.0.0.1:<port> cargo run -p cross-version-e2e`.
 
 use std::{
     env,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::Mutex,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, bail, ensure};
 use moqt::{
     ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session, SessionEvent,
     Subscription, TrackObject, TrackProperties, TrackReader, Version,
-    fetch::{Fetch, FetchOption},
+    fetch::{Fetch, FetchOption, FetchParams},
     object::{
         ContentExists, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
         ObjectStatus, SubgroupStart, VariantType,
@@ -410,6 +418,155 @@ async fn refuses_a_track_with_a_mandatory_track_property() -> anyhow::Result<()>
     Ok(())
 }
 
+/// What a draft-18 FETCH of groups 0 and 1 with `fill_timeout` returned,
+/// with the relay caching group 1 only.
+struct FilledFetch {
+    /// `g/o` per object, `unknown..g/o` per unknown range, then `end`.
+    steps: Vec<String>,
+    took: Duration,
+    /// The FILL_TIMEOUT of each FETCH the relay sent the publisher.
+    upstream_fill_timeouts: Vec<Option<Duration>>,
+}
+
+async fn fetch_with_fill_timeout(fill_timeout: Duration) -> anyhow::Result<FilledFetch> {
+    let namespace = unique_namespace("fill-timeout");
+    let publication = Publication::start(Version::Draft18, &namespace).await?;
+    let session = connect(Version::Draft18).await?;
+    let mut reader = subscribe(&session, &namespace).await?;
+    tokio::time::sleep(SETTLE).await;
+    publication.send_stream_group(1).await?;
+    receive(&mut reader, OBJECTS_PER_GROUP).await?;
+    let upstream_fill_timeouts = Mutex::new(Vec::new());
+    // The publisher answers FETCH_OK and never opens the response stream.
+    let answer = async {
+        let mut answered = Vec::new();
+        loop {
+            match publication.session.receive_event().await? {
+                SessionEvent::Fetch(handler) => {
+                    upstream_fill_timeouts
+                        .lock()
+                        .unwrap()
+                        .push(handler.fill_timeout());
+                    let FetchParams::Standalone { end_location, .. } =
+                        handler.fetch.fetch_params.clone()
+                    else {
+                        bail!("the relay sent a Joining FETCH upstream");
+                    };
+                    handler.ok(false, end_location).await?;
+                    answered.push(handler);
+                }
+                SessionEvent::Disconnected() => bail!("the publisher was disconnected"),
+                _ => {}
+            }
+        }
+    };
+    let started = Instant::now();
+    let fetched = async {
+        let mut subscriber = session.subscriber();
+        let handle = subscriber
+            .fetch(
+                namespace.clone(),
+                TRACK_NAME.to_string(),
+                Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+                FetchOption {
+                    fill_timeout: Some(fill_timeout),
+                    ..FetchOption::default()
+                },
+            )
+            .await?;
+        let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
+        let mut steps = Vec::new();
+        loop {
+            match tokio::time::timeout(RECEIVE_TIMEOUT, receiver.receive())
+                .await
+                .context("the FETCH stalled")??
+            {
+                Fetch::Object(object) => steps.push(format!(
+                    "{}/{}",
+                    object.location.group_id, object.location.object_id
+                )),
+                Fetch::UnknownRange { last } => {
+                    steps.push(format!("unknown..{}/{}", last.group_id, last.object_id))
+                }
+                Fetch::End => {
+                    steps.push("end".to_string());
+                    return anyhow::Ok(steps);
+                }
+            }
+        }
+    };
+
+    let steps = tokio::select! {
+        result = answer => {
+            result?;
+            unreachable!("the answer loop only ends with an error")
+        }
+        steps = fetched => steps?,
+    };
+    Ok(FilledFetch {
+        steps,
+        took: started.elapsed(),
+        upstream_fill_timeouts: upstream_fill_timeouts.into_inner().unwrap(),
+    })
+}
+
+/// Group 0 unknown, then the cached group 1.
+fn group_0_unknown_then_group_1() -> Vec<String> {
+    vec![
+        format!("unknown..0/{}", u64::MAX),
+        "1/0".to_string(),
+        "1/1".to_string(),
+        "end".to_string(),
+    ]
+}
+
+async fn a_zero_fill_timeout_serves_the_cache_without_waiting() -> anyhow::Result<()> {
+    // Act
+    let fetched = fetch_with_fill_timeout(Duration::ZERO).await?;
+
+    // Assert: draft-18 §10.2.5 MUST NOT wait for upstream delivery
+    ensure!(
+        fetched.steps == group_0_unknown_then_group_1(),
+        "{:?}",
+        fetched.steps
+    );
+    ensure!(
+        fetched.upstream_fill_timeouts.is_empty(),
+        "the relay fetched upstream: {:?}",
+        fetched.upstream_fill_timeouts
+    );
+    tracing::info!(took = ?fetched.took, "OK: FILL_TIMEOUT 0 served from the cache");
+    Ok(())
+}
+
+async fn a_fill_timeout_bounds_the_upstream_wait() -> anyhow::Result<()> {
+    // Act
+    let budget = Duration::from_millis(300);
+    let fetched = fetch_with_fill_timeout(budget).await?;
+
+    // Assert: draft-18 §10.2.5, the rest is unknown once the budget ran out
+    ensure!(
+        fetched.steps == group_0_unknown_then_group_1(),
+        "{:?}",
+        fetched.steps
+    );
+    ensure!(
+        fetched.upstream_fill_timeouts == vec![None],
+        "upstream FETCHes: {:?}",
+        fetched.upstream_fill_timeouts
+    );
+    ensure!(fetched.took >= budget, "served after {:?}", fetched.took);
+    tracing::info!(took = ?fetched.took, "OK: FILL_TIMEOUT bounded the upstream wait");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -423,6 +580,8 @@ async fn main() -> anyhow::Result<()> {
     relays_a_mixed_track_in_one_preference_to_draft14(false).await?;
     relays_a_mixed_track_in_one_preference_to_draft14(true).await?;
     refuses_a_track_with_a_mandatory_track_property().await?;
+    a_zero_fill_timeout_serves_the_cache_without_waiting().await?;
+    a_fill_timeout_bounds_the_upstream_wait().await?;
     tracing::info!("cross-version e2e passed");
     Ok(())
 }
