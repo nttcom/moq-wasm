@@ -1186,10 +1186,8 @@ mod tests {
     #[tokio::test]
     async fn subscribe_ok_carries_the_upstream_track_properties() {
         // Arrange
-        let track_properties = moqt::TrackProperties {
-            max_cache_duration: Some(2_000),
-            ..unknown_track_properties(1)
-        };
+        let mut track_properties = unknown_track_properties(1);
+        track_properties.set_max_cache_duration(Some(2_000));
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_upstream_subscription(
             track_key(),

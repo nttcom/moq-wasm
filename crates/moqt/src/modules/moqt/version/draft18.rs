@@ -963,7 +963,7 @@ mod tests {
     };
 
     use crate::{
-        RequestErrorCode, RequestFailure, SessionEvent, TrackWriter,
+        RequestErrorCode, RequestFailure, SessionEvent, TrackProperties, TrackWriter,
         fetch::{
             Fetch, FetchDataReceiver, FetchDataSender, FetchHandler, FetchOption, FetchParams,
             UnknownRange,
@@ -1107,7 +1107,6 @@ mod tests {
                 expires: 0,
                 group_order: crate::object::GroupOrder::Ascending,
                 content_exists: ContentExists::False,
-                delivery_timeout: None,
                 track_properties: Default::default(),
             }),
         )
@@ -2715,7 +2714,7 @@ mod tests {
 
             // Assert
             assert_eq!(
-                subscription.track_properties().max_cache_duration,
+                subscription.track_properties().max_cache_duration(),
                 Some(50),
                 "{properties:?}"
             );
@@ -2747,36 +2746,31 @@ mod tests {
 
         // Assert
         assert_eq!(
-            subscription.track_properties().other,
-            properties_without_a_field()
+            *subscription.track_properties(),
+            TrackProperties::from_pairs(properties_without_a_field())
         );
     }
 
     #[tokio::test]
-    async fn a_subscribe_ok_carries_the_track_properties_held_as_received() {
+    async fn a_subscribe_ok_carries_the_handlers_track_properties_and_nothing_else() {
         // Arrange
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-send-other-track-properties", "moqt").await;
         let (_sender, mut receiver, mut handler) = raw_subscribe(&client, &server).await;
-        handler.track_properties.other = properties_without_a_field();
+        handler.track_properties = TrackProperties::from_pairs(properties_without_a_field());
 
         // Act
         handler.ok(0, ContentExists::False).await.unwrap();
 
-        // Assert: DEFAULT PUBLISHER GROUP ORDER comes from the model
+        // Assert: §2.5 / §12.5, no DEFAULT PUBLISHER GROUP ORDER is added
         let response = receiver.receive().await.unwrap();
         let Some(messages::Message::SubscribeOk(subscribe_ok)) = response else {
             panic!("expected SUBSCRIBE_OK, got {response:?}");
         };
-        let mut expected = properties_without_a_field();
-        expected.insert(
-            1,
-            KeyValuePair {
-                key: 0x22,
-                value: VariantType::Even(1),
-            },
+        assert_eq!(
+            subscribe_ok.track_properties,
+            TrackProperties::from_pairs(properties_without_a_field())
         );
-        assert_eq!(subscribe_ok.track_properties, expected);
     }
 
     /// §2.5.1.

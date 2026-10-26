@@ -19,11 +19,11 @@ pub struct Publish {
     pub track_namespace_tuple: Vec<String>,
     pub track_name: String,
     pub track_alias: u64,
-    pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
     pub authorization_tokens: Vec<AuthorizationToken>,
-    pub delivery_timeout: Option<u64>,
+    /// Holds the Group Order and the DELIVERY_TIMEOUT and MAX_CACHE_DURATION
+    /// parameters of a draft-14 PUBLISH.
     pub track_properties: TrackProperties,
 }
 
@@ -43,21 +43,18 @@ impl Publish {
         let authorization_tokens = odd_values(&parameters, 0x03)
             .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
-        let delivery_timeout = find_even(&parameters, 0x02);
-        let track_properties = TrackProperties {
-            max_cache_duration: find_even(&parameters, 0x04),
-            other: Vec::new(),
-        };
+        let mut track_properties = TrackProperties::default();
+        track_properties.set_group_order(Some(group_order));
+        track_properties.set_delivery_timeout(find_even(&parameters, 0x02));
+        track_properties.set_max_cache_duration(find_even(&parameters, 0x04));
         Ok(Self {
             request_id,
             track_namespace_tuple,
             track_name,
             track_alias,
-            group_order,
             content_exists,
             forward,
             authorization_tokens,
-            delivery_timeout,
             track_properties,
         })
     }
@@ -68,7 +65,11 @@ impl Publish {
         payload.put_tuple(&self.track_namespace_tuple);
         payload.put_string(&self.track_name);
         payload.put_varint(self.track_alias);
-        payload.put_u8(self.group_order as u8);
+        payload.put_u8(
+            self.track_properties
+                .group_order()
+                .unwrap_or(GroupOrder::Ascending) as u8,
+        );
         payload.unsplit(self.content_exists.encode());
         payload.put_u8(self.forward as u8);
 
@@ -78,10 +79,11 @@ impl Publish {
             .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
             .chain(
                 [
-                    self.delivery_timeout
+                    self.track_properties
+                        .delivery_timeout()
                         .map(|value| KeyValuePair::even(0x02, value)),
                     self.track_properties
-                        .max_cache_duration
+                        .max_cache_duration()
                         .map(|value| KeyValuePair::even(0x04, value)),
                 ]
                 .into_iter()
@@ -107,6 +109,12 @@ mod tests {
             publish::Publish,
         };
 
+        fn ordered(group_order: GroupOrder) -> TrackProperties {
+            let mut properties = TrackProperties::default();
+            properties.set_group_order(Some(group_order));
+            properties
+        }
+
         #[test]
         fn packetize_and_depacketize_with_location_and_params() {
             let publish_message = Publish {
@@ -114,7 +122,6 @@ mod tests {
                 track_namespace_tuple: vec!["moq".to_string(), "news".to_string()],
                 track_name: "video".to_string(),
                 track_alias: 2,
-                group_order: GroupOrder::Ascending, // Ascending
                 content_exists: ContentExists::True {
                     location: Location {
                         group_id: 10,
@@ -123,8 +130,7 @@ mod tests {
                 },
                 forward: true,
                 authorization_tokens: vec![],
-                delivery_timeout: None,
-                track_properties: Default::default(),
+                track_properties: ordered(GroupOrder::Ascending),
             };
 
             let buf = publish_message.encode();
@@ -144,19 +150,11 @@ mod tests {
                 depacketized_message.track_alias
             );
             assert_eq!(
-                publish_message.group_order,
-                depacketized_message.group_order
-            );
-            assert_eq!(
                 publish_message.content_exists,
                 depacketized_message.content_exists
             );
             assert_eq!(publish_message.forward, depacketized_message.forward);
             assert!(publish_message.authorization_tokens.is_empty());
-            assert_eq!(
-                publish_message.delivery_timeout,
-                depacketized_message.delivery_timeout
-            );
             assert_eq!(
                 publish_message.track_properties,
                 depacketized_message.track_properties
@@ -170,12 +168,10 @@ mod tests {
                 track_namespace_tuple: vec!["moq".to_string()],
                 track_name: "audio".to_string(),
                 track_alias: 3,
-                group_order: GroupOrder::Descending, // Descending
                 content_exists: ContentExists::False,
                 forward: false,
                 authorization_tokens: vec![],
-                delivery_timeout: None,
-                track_properties: Default::default(),
+                track_properties: ordered(GroupOrder::Descending),
             };
 
             let buf = publish_message.encode();
@@ -195,19 +191,11 @@ mod tests {
                 depacketized_message.track_alias
             );
             assert_eq!(
-                publish_message.group_order,
-                depacketized_message.group_order
-            );
-            assert_eq!(
                 publish_message.content_exists,
                 depacketized_message.content_exists
             );
             assert_eq!(publish_message.forward, depacketized_message.forward);
             assert!(publish_message.authorization_tokens.is_empty());
-            assert_eq!(
-                publish_message.delivery_timeout,
-                depacketized_message.delivery_timeout
-            );
             assert_eq!(
                 publish_message.track_properties,
                 depacketized_message.track_properties
@@ -221,12 +209,10 @@ mod tests {
                 track_namespace_tuple: vec!["moq".to_string()],
                 track_name: "video".to_string(),
                 track_alias: 2,
-                group_order: GroupOrder::Ascending,
                 content_exists: ContentExists::False,
                 forward: true,
                 authorization_tokens: vec![],
-                delivery_timeout: None,
-                track_properties: Default::default(),
+                track_properties: ordered(GroupOrder::Ascending),
             };
 
             let buf = publish_message.encode();
@@ -244,15 +230,13 @@ mod tests {
                 track_namespace_tuple: vec!["moq".to_string()],
                 track_name: "video".to_string(),
                 track_alias: 2,
-                group_order: GroupOrder::Ascending,
                 content_exists: ContentExists::False,
                 forward: true,
                 authorization_tokens: vec![AuthorizationToken::UseValue {
                     token_type: 0,
                     token_value: Bytes::from_static(b"secret"),
                 }],
-                delivery_timeout: None,
-                track_properties: Default::default(),
+                track_properties: ordered(GroupOrder::Ascending),
             };
 
             let buf = publish_message.encode();
@@ -270,10 +254,6 @@ mod tests {
                 depacketized_message.track_alias
             );
             assert_eq!(
-                publish_message.group_order,
-                depacketized_message.group_order
-            );
-            assert_eq!(
                 publish_message.content_exists,
                 depacketized_message.content_exists
             );
@@ -281,10 +261,6 @@ mod tests {
             assert_eq!(
                 publish_message.authorization_tokens,
                 depacketized_message.authorization_tokens
-            );
-            assert_eq!(
-                publish_message.delivery_timeout,
-                depacketized_message.delivery_timeout
             );
             assert_eq!(
                 publish_message.track_properties,
@@ -300,14 +276,13 @@ mod tests {
                 track_namespace_tuple: vec!["ns".to_string()],
                 track_name: "track".to_string(),
                 track_alias: 2,
-                group_order: GroupOrder::Ascending,
                 content_exists: ContentExists::False,
                 forward: true,
                 authorization_tokens: vec![],
-                delivery_timeout: None,
-                track_properties: TrackProperties {
-                    max_cache_duration: Some(5),
-                    other,
+                track_properties: {
+                    let mut properties = TrackProperties::from_pairs(other);
+                    properties.set_max_cache_duration(Some(5));
+                    properties
                 },
             };
             let with = publish(vec![KeyValuePair::even(0x38, 1)]);

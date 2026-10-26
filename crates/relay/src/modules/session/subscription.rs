@@ -47,7 +47,7 @@ impl UpstreamSubscription {
     pub(crate) fn max_cache_duration(&self) -> Option<Duration> {
         self.inner
             .track_properties()
-            .max_cache_duration
+            .max_cache_duration()
             .map(Duration::from_millis)
     }
 

@@ -71,7 +71,6 @@ impl TrackStatusHandler {
             expires,
             group_order: self.group_order.delivered(),
             content_exists,
-            delivery_timeout: None,
             track_properties: Default::default(),
         };
         self.guard

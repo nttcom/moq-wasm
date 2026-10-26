@@ -260,7 +260,7 @@ impl FetchIngest {
             max_cache_duration: start
                 .fetch_handle
                 .track_properties
-                .max_cache_duration
+                .max_cache_duration()
                 .map(Duration::from_millis),
             persist,
             status_may_change: !receiver.compares_duplicate_status(),

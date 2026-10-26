@@ -96,7 +96,6 @@ pub struct SubscriberInitiatedSubscription {
     pub content_exists: ContentExists,
     pub subscriber_priority: u8,
     pub filter_type: FilterType,
-    pub delivery_timeout: Option<u64>,
     /// What the SUBSCRIBE_OK said about the track.
     pub track_properties: TrackProperties,
 }
@@ -119,7 +118,6 @@ impl SubscriberInitiatedSubscription {
             content_exists: subscribe_ok.content_exists,
             subscriber_priority,
             filter_type,
-            delivery_timeout: None,
             track_properties: subscribe_ok.track_properties,
         }
     }
@@ -135,7 +133,6 @@ impl SubscriberInitiatedSubscription {
             content_exists: ContentExists::False,
             subscriber_priority: handler.subscriber_priority,
             filter_type: handler.filter_type,
-            delivery_timeout: handler.delivery_timeout,
             track_properties: handler.track_properties.clone(),
         }
     }

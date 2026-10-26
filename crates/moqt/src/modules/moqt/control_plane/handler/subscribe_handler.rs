@@ -35,7 +35,6 @@ pub struct SubscribeHandler {
     pub filter_type: FilterType,
     /// Sent in the SUBSCRIBE_OK.
     pub track_properties: TrackProperties,
-    pub delivery_timeout: Option<u64>,
     guard: ResponseGuard,
 }
 
@@ -65,7 +64,6 @@ impl SubscribeHandler {
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
             track_properties: TrackProperties::default(),
-            delivery_timeout: None,
         }
     }
 
@@ -93,9 +91,8 @@ impl SubscribeHandler {
             request_id: self.guard.request_id(),
             track_alias: wire_part(track_alias),
             expires,
-            group_order: self.group_order.delivered(),
+            group_order: delivered_group_order(self.group_order, &self.track_properties),
             content_exists,
-            delivery_timeout: self.delivery_timeout,
             track_properties: self.track_properties.clone(),
         };
         self.guard
@@ -136,6 +133,21 @@ impl SubscribeHandler {
             track_alias,
             self,
         ))
+    }
+}
+
+/// The order a subscription is delivered in, which a draft-14 SUBSCRIBE_OK
+/// or TRACK_STATUS_OK states (§9.10): the one the subscriber asked for, else
+/// the track's DEFAULT PUBLISHER GROUP ORDER, else Ascending.
+pub(crate) fn delivered_group_order(
+    requested: GroupOrder,
+    track_properties: &TrackProperties,
+) -> GroupOrder {
+    match requested {
+        GroupOrder::Publisher => track_properties
+            .group_order()
+            .unwrap_or(GroupOrder::Ascending),
+        requested => requested,
     }
 }
 
@@ -200,7 +212,7 @@ mod tests {
         let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
             panic!("expected SUBSCRIBE from the client");
         };
-        handler.track_properties.max_cache_duration = Some(2_000);
+        handler.track_properties.set_max_cache_duration(Some(2_000));
 
         // Act
         handler.ok(0, ContentExists::False).await.unwrap();
@@ -208,7 +220,7 @@ mod tests {
         // Assert
         let subscription = request.await.unwrap().unwrap();
         assert_eq!(
-            subscription.track_properties().max_cache_duration,
+            subscription.track_properties().max_cache_duration(),
             Some(2_000)
         );
     }

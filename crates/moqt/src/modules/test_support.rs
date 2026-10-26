@@ -577,7 +577,6 @@ pub(crate) fn subscription(request_id: u64, track_alias: u64) -> Subscription {
         content_exists: crate::object::ContentExists::False,
         subscriber_priority: 128,
         filter_type: crate::subscribe::FilterType::LargestObject,
-        delivery_timeout: None,
         track_properties: Default::default(),
     })
 }
