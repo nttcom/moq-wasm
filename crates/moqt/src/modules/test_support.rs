@@ -142,7 +142,15 @@ pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Ses
 
 /// `spawn_dual_server`, offering only draft-18.
 pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, &[Version::Draft18]);
+    spawn_server_offering(name, &[Version::Draft18])
+}
+
+/// `spawn_dual_server`, offering `versions`.
+pub(crate) fn spawn_server_offering(
+    name: &str,
+    versions: &[Version],
+) -> (u16, tokio::task::JoinHandle<Session>) {
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, versions);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
 }
