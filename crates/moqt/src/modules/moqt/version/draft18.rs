@@ -3404,7 +3404,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refused_namespace_prefix_update_ends_the_subscription() {
+    async fn a_refused_prefix_update_of_a_subscribe_tracks_closes_its_stream() {
         // Arrange
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-namespace-update-refused", "moqt").await;
@@ -3434,6 +3434,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_dropped_namespace_prefix_update_handler_is_answered_not_supported() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-dropped", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+
+        // Act
+        drop(handler);
+        let answer = receiver.receive().await.unwrap();
+        let end = receiver.receive().await.unwrap();
+
+        // Assert: §10.6 NOT_SUPPORTED, and §10.9.1 closes the stream
+        let Some(messages::Message::RequestError(error)) = answer else {
+            panic!("expected REQUEST_ERROR, got {answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::NotSupported);
+        assert!(end.is_none(), "{end:?}");
+    }
+
+    #[tokio::test]
     async fn a_namespace_subscription_update_without_a_prefix_is_accepted() {
         // Arrange
         let (client, server) =
@@ -3454,6 +3476,43 @@ mod tests {
         assert!(
             matches!(answer, Some(messages::Message::RequestOk(_))),
             "{answer:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_namespace_done_follows_for_a_namespace_the_new_prefix_leaves_out() {
+        // Arrange: "live/bob" was announced under "live"
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-done", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        server
+            .publisher()
+            .publish_namespace("live/bob".into())
+            .await
+            .unwrap();
+        receiver.receive().await.unwrap();
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        handler.ok().await;
+        receiver.receive().await.unwrap();
+
+        // Act
+        server
+            .publisher()
+            .publish_namespace_done("live/bob".into())
+            .await
+            .unwrap();
+        server
+            .publisher()
+            .publish_namespace("live/room/alice".into())
+            .await
+            .unwrap();
+        let next = receiver.receive().await.unwrap();
+
+        // Assert: §10.9.2, a suffix of the new prefix cannot name "live/bob"
+        assert_eq!(
+            next,
+            Some(messages::Message::Namespace(vec!["alice".to_string()]))
         );
     }
 
