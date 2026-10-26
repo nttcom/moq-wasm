@@ -134,17 +134,12 @@ mod tests {
     use super::QUICConnectionCreator;
     use crate::modules::{
         moqt::version::{DEFAULT_VERSIONS, application_protocols},
-        test_support::{HANDSHAKE_TIMEOUT, server_transport_creator},
+        test_support::{HANDSHAKE_TIMEOUT, open_bi_streams, server_transport_creator},
         transport::{
             accept_error::AcceptError, connect_target::ConnectTarget,
-            transport_connection::BoxedConnection,
             transport_connection_creator::TransportConnectionCreator,
         },
     };
-
-    /// More than quinn's default limit of 100 concurrent bidirectional
-    /// streams.
-    const OPEN_STREAMS: usize = 150;
 
     #[tokio::test]
     async fn accept_on_a_closed_endpoint_reports_endpoint_closing() {
@@ -157,14 +152,6 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Ok(Err(AcceptError::EndpointClosing))));
-    }
-
-    async fn open_bi_streams(connection: &BoxedConnection) -> anyhow::Result<Vec<impl Sized>> {
-        let mut streams = Vec::with_capacity(OPEN_STREAMS);
-        for _ in 0..OPEN_STREAMS {
-            streams.push(connection.open_bi().await?);
-        }
-        Ok(streams)
     }
 
     #[tokio::test]
