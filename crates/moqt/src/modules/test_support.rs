@@ -41,13 +41,10 @@ use crate::{
 
 /// Key 0x4000 is in draft-18's Mandatory Track Property range (§2.5.1).
 pub(crate) fn mandatory_track_properties() -> crate::TrackProperties {
-    crate::TrackProperties {
-        max_cache_duration: None,
-        other: vec![KeyValuePair {
-            key: 0x4000,
-            value: VariantType::Even(1),
-        }],
-    }
+    crate::TrackProperties::from_pairs(vec![KeyValuePair {
+        key: 0x4000,
+        value: VariantType::Even(1),
+    }])
 }
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -596,7 +593,6 @@ pub(crate) fn subscription(request_id: u64, track_alias: u64) -> Subscription {
         content_exists: crate::object::ContentExists::False,
         subscriber_priority: 128,
         filter_type: crate::subscribe::FilterType::LargestObject,
-        delivery_timeout: None,
         track_properties: Default::default(),
     })
 }

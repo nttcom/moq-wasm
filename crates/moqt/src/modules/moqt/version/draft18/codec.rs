@@ -9,7 +9,10 @@ use crate::modules::moqt::control_plane::{
     constants::TerminationErrorCode,
     control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
-        messages::parameters::location::Location,
+        messages::parameters::{
+            location::Location,
+            track_properties::{ReceivedEncoding, TrackProperties, TrackProperty},
+        },
     },
 };
 
@@ -108,25 +111,57 @@ pub(crate) fn get_key_value_pairs(buf: &mut impl Buf) -> Result<Vec<KeyValuePair
     let mut pairs = Vec::new();
     let mut key = 0u64;
     while buf.has_remaining() {
-        key = key
-            .checked_add(get_vi64(buf)?)
-            .ok_or(DecodeError::protocol_violation(
-                "key-value pair type overflows",
-            ))?;
-        let value = if key.is_multiple_of(2) {
-            VariantType::Even(get_vi64(buf)?)
-        } else {
-            let len = get_vi64(buf)?;
-            if len > MAX_KEY_VALUE_LENGTH {
-                return Err(DecodeError::protocol_violation(
-                    "key-value pair value longer than 2^16-1 bytes",
-                ));
-            }
-            VariantType::Odd(take(buf, len as usize)?)
-        };
+        key = next_key(key, get_vi64(buf)?)?;
+        let value = get_value(buf, key)?;
         pairs.push(KeyValuePair { key, value });
     }
     Ok(pairs)
+}
+
+/// `get_key_value_pairs` for Track Properties, keeping the bytes each
+/// arrived in so they can be sent again unchanged (§2.5).
+pub(crate) fn get_track_properties(buf: &mut Bytes) -> Result<TrackProperties, DecodeError> {
+    let mut properties = Vec::new();
+    let mut key = 0u64;
+    while buf.has_remaining() {
+        let start = buf.clone();
+        let delta_type = get_vi64(buf)?;
+        let delta_type_bytes = start.slice(..start.len() - buf.len());
+        key = next_key(key, delta_type)?;
+        let start = buf.clone();
+        let value = get_value(buf, key)?;
+        properties.push(TrackProperty {
+            pair: KeyValuePair { key, value },
+            received: Some(ReceivedEncoding {
+                delta_type,
+                delta_type_bytes,
+                value_bytes: start.slice(..start.len() - buf.len()),
+            }),
+        });
+    }
+    Ok(TrackProperties::received(properties))
+}
+
+fn next_key(previous: u64, delta_type: u64) -> Result<u64, DecodeError> {
+    previous
+        .checked_add(delta_type)
+        .ok_or(DecodeError::protocol_violation(
+            "key-value pair type overflows",
+        ))
+}
+
+fn get_value(buf: &mut impl Buf, key: u64) -> Result<VariantType, DecodeError> {
+    Ok(if key.is_multiple_of(2) {
+        VariantType::Even(get_vi64(buf)?)
+    } else {
+        let len = get_vi64(buf)?;
+        if len > MAX_KEY_VALUE_LENGTH {
+            return Err(DecodeError::protocol_violation(
+                "key-value pair value longer than 2^16-1 bytes",
+            ));
+        }
+        VariantType::Odd(take(buf, len as usize)?)
+    })
 }
 
 /// Fails when the keys are not in ascending order (types are delta-encoded)
@@ -137,24 +172,59 @@ pub(crate) fn put_key_value_pairs(
 ) -> anyhow::Result<()> {
     let mut prev = 0u64;
     for pair in pairs {
-        let delta = pair
-            .key
-            .checked_sub(prev)
-            .ok_or_else(|| anyhow::anyhow!("key-value pair types must ascend: {}", pair.key))?;
-        put_vi64(buf, delta);
-        match (&pair.value, pair.key % 2) {
-            (VariantType::Even(value), 0) => put_vi64(buf, *value),
-            (VariantType::Odd(value), 1) => {
-                anyhow::ensure!(
-                    value.len() as u64 <= MAX_KEY_VALUE_LENGTH,
-                    "key-value pair value longer than 2^16-1 bytes"
-                );
-                put_vi64(buf, value.len() as u64);
-                buf.put_slice(value);
-            }
-            _ => anyhow::bail!("key-value pair {} has a value of the wrong kind", pair.key),
-        }
+        put_vi64(buf, delta_type(prev, pair.key)?);
+        put_value(buf, pair)?;
         prev = pair.key;
+    }
+    Ok(())
+}
+
+/// `put_key_value_pairs` for Track Properties: a received property goes out
+/// in the bytes it arrived in, its Delta Type too while the type before it
+/// is the same (§2.5).
+pub(crate) fn put_track_properties(
+    buf: &mut impl BufMut,
+    properties: &TrackProperties,
+) -> anyhow::Result<()> {
+    let mut prev = 0u64;
+    for property in properties.entries() {
+        let delta = delta_type(prev, property.pair.key)?;
+        match &property.received {
+            Some(received) => {
+                if received.delta_type == delta {
+                    buf.put_slice(&received.delta_type_bytes);
+                } else {
+                    put_vi64(buf, delta);
+                }
+                buf.put_slice(&received.value_bytes);
+            }
+            None => {
+                put_vi64(buf, delta);
+                put_value(buf, &property.pair)?;
+            }
+        }
+        prev = property.pair.key;
+    }
+    Ok(())
+}
+
+fn delta_type(previous: u64, key: u64) -> anyhow::Result<u64> {
+    key.checked_sub(previous)
+        .ok_or_else(|| anyhow::anyhow!("key-value pair types must ascend: {key}"))
+}
+
+fn put_value(buf: &mut impl BufMut, pair: &KeyValuePair) -> anyhow::Result<()> {
+    match (&pair.value, pair.key % 2) {
+        (VariantType::Even(value), 0) => put_vi64(buf, *value),
+        (VariantType::Odd(value), 1) => {
+            anyhow::ensure!(
+                value.len() as u64 <= MAX_KEY_VALUE_LENGTH,
+                "key-value pair value longer than 2^16-1 bytes"
+            );
+            put_vi64(buf, value.len() as u64);
+            buf.put_slice(value);
+        }
+        _ => anyhow::bail!("key-value pair {} has a value of the wrong kind", pair.key),
     }
     Ok(())
 }

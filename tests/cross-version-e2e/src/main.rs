@@ -344,13 +344,10 @@ async fn relays_a_mixed_track_in_one_preference_to_draft14(
 }
 
 fn mandatory_track_properties() -> TrackProperties {
-    TrackProperties {
-        max_cache_duration: None,
-        other: vec![KeyValuePair {
-            key: 0x4000,
-            value: VariantType::Even(1),
-        }],
-    }
+    TrackProperties::from_pairs(vec![KeyValuePair {
+        key: 0x4000,
+        value: VariantType::Even(1),
+    }])
 }
 
 async fn refuses_a_track_with_a_mandatory_track_property() -> anyhow::Result<()> {

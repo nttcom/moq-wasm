@@ -74,7 +74,6 @@ impl Publisher for moqt::Publisher {
             content_exists,
             track_properties,
             forward,
-            ..Default::default()
         };
         let subscription = self.publish(track_namespace, track_name, option).await?;
         Ok(DownstreamSubscription::from(subscription))

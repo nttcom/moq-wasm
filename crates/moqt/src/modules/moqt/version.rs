@@ -190,7 +190,7 @@ impl Version {
     /// Track Property (draft-18 §2.5.1).
     pub(crate) fn understands(self, properties: &TrackProperties) -> bool {
         match self {
-            Self::Draft14 => !draft18::messages::has_mandatory_track_property(&properties.other),
+            Self::Draft14 => !draft18::messages::has_mandatory_track_property(properties),
             Self::Draft18 => true,
         }
     }

@@ -62,7 +62,7 @@ impl PublishHandler for moqt::publish::PublishHandler {
         self.delivery_timeout
     }
     fn _max_cache_duration(&self) -> Option<u64> {
-        self.track_properties.max_cache_duration
+        self.track_properties.max_cache_duration()
     }
 
     fn subscription(
