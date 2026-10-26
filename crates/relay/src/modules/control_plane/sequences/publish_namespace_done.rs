@@ -10,22 +10,13 @@ use crate::modules::{
     },
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
 };
-use tracing::Span;
 
 pub(crate) struct PublishNamespaceDone;
 
 impl PublishNamespaceDone {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish_namespace_done",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
@@ -191,7 +182,6 @@ mod tests {
         PublishNamespaceDone
             .handle(
                 publisher_session_id,
-                &Span::none(),
                 table,
                 &ControlMessageForwarder { repository },
                 CascadingRelayContext {

@@ -13,23 +13,14 @@ use crate::modules::{
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
 use moqt::RequestErrorCode;
-use tracing::Span;
 
 pub(crate) struct SubscribeNameSpace;
 
 impl SubscribeNameSpace {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe_namespace",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         downstream_publish: &DownstreamPublish,
@@ -257,7 +248,6 @@ mod tests {
         SubscribeNameSpace
             .handle(
                 NAMESPACE_SUBSCRIBER_SESSION,
-                &Span::none(),
                 &ctx.table,
                 &ctx.forwarder,
                 &ctx.downstream_publish(),

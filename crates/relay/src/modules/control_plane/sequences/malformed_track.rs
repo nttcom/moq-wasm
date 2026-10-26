@@ -1,26 +1,14 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId, track_key::TrackKey,
-    },
+    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, track_key::TrackKey},
 };
-use tracing::Span;
 
 pub(crate) struct MalformedTrackCleanup;
 
 impl MalformedTrackCleanup {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.malformed_track_cleanup",
-        skip_all,
-        parent = session_span,
-        fields(publisher_session_id = %publisher_session_id, track_key = %track_key)
-    )]
     pub(crate) async fn handle(
         &self,
-        publisher_session_id: SessionId,
-        session_span: &Span,
         track_key: &TrackKey,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
@@ -46,7 +34,7 @@ impl MalformedTrackCleanup {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_id::SessionId},
         test_support::directory_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, active_upstream,
             upstream_release_context,
@@ -56,8 +44,6 @@ mod tests {
     async fn run_cleanup(ctx: &UpstreamReleaseContext) {
         MalformedTrackCleanup
             .handle(
-                PUBLISHER_SESSION,
-                &tracing::Span::none(),
                 &TrackKey::new("ns", "track"),
                 &ctx.table,
                 &ctx.forwarder,

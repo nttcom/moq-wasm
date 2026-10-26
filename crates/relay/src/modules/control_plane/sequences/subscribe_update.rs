@@ -1,5 +1,3 @@
-use tracing::Span;
-
 use crate::modules::domain::{
     delivery_control::{DeliveryControl, UpdateOutcome},
     pub_sub_directory::InMemoryLocalPubSubDirectory,
@@ -13,17 +11,9 @@ impl SubscribeUpdate {
     /// Priority keeps the value of the SUBSCRIBE. An update that widens the
     /// range is not treated as the PROTOCOL_VIOLATION draft-14 §9.10 allows:
     /// its widening part is ignored.
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe_update",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id, subscription_request_id, update = ?update)
-    )]
     pub(crate) fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         subscription_request_id: u64,
         update: DeliveryControl,
@@ -78,7 +68,7 @@ mod tests {
         let (table, signals) = table_with_downstream();
 
         // Act
-        SubscribeUpdate.handle(2, &Span::none(), &table, 100, delivery_control(false));
+        SubscribeUpdate.handle(2, &table, 100, delivery_control(false));
 
         // Assert
         assert!(!signals.delivery_control_receiver.borrow().forward);
@@ -91,7 +81,7 @@ mod tests {
         let update = DeliveryControl::from_subscribe_update(true, location(0, 0), 4);
 
         // Act
-        SubscribeUpdate.handle(2, &Span::none(), &table, 100, update);
+        SubscribeUpdate.handle(2, &table, 100, update);
 
         // Assert
         assert_eq!(
@@ -105,11 +95,11 @@ mod tests {
         // Arrange
         let (table, signals) = table_with_downstream();
         let narrowing = DeliveryControl::from_subscribe_update(true, location(0, 0), 4);
-        SubscribeUpdate.handle(2, &Span::none(), &table, 100, narrowing);
+        SubscribeUpdate.handle(2, &table, 100, narrowing);
         let open_ended = DeliveryControl::from_subscribe_update(true, location(0, 0), 0);
 
         // Act
-        SubscribeUpdate.handle(2, &Span::none(), &table, 100, open_ended);
+        SubscribeUpdate.handle(2, &table, 100, open_ended);
 
         // Assert
         assert_eq!(
@@ -124,7 +114,7 @@ mod tests {
         let (table, signals) = table_with_downstream();
 
         // Act
-        SubscribeUpdate.handle(3, &Span::none(), &table, 100, delivery_control(false));
+        SubscribeUpdate.handle(3, &table, 100, delivery_control(false));
 
         // Assert
         assert!(signals.delivery_control_receiver.borrow().forward);

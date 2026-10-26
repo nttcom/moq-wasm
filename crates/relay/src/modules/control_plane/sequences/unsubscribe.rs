@@ -3,7 +3,6 @@ use crate::modules::{
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
 };
-use tracing::Span;
 
 pub(crate) struct Unsubscribe;
 
@@ -11,17 +10,9 @@ impl Unsubscribe {
     /// Removes the downstream subscription `subscribe_id` and releases the
     /// upstream subscriptions it leaves unneeded; runs for an UNSUBSCRIBE and
     /// for a subscription whose egress runner delivered its whole range.
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.unsubscribe",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
@@ -123,7 +114,6 @@ mod tests {
         Unsubscribe
             .handle(
                 session_id,
-                &tracing::Span::none(),
                 &ctx.upstream.table,
                 &ctx.upstream.forwarder,
                 &ctx.upstream.ingress_sender,

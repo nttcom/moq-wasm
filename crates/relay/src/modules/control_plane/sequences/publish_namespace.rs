@@ -25,23 +25,14 @@ use crate::modules::{
     },
     session::handler::publish_namespace::PublishNamespaceHandler,
 };
-use tracing::Span;
 
 pub(crate) struct PublishNamespace;
 
 impl PublishNamespace {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish_namespace",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
@@ -321,7 +312,6 @@ mod tests {
         PublishNamespace
             .handle(
                 ANNOUNCING_PUBLISHER,
-                &Span::none(),
                 table,
                 &ControlMessageForwarder { repository },
                 &ingress_sender,

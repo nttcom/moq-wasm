@@ -5,27 +5,14 @@ use crate::modules::{
         session_id::SessionId,
     },
 };
-use tracing::Span;
 
 pub(crate) struct UpstreamPublishDone;
 
 impl UpstreamPublishDone {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.upstream_publish_done",
-        skip_all,
-        parent = session_span,
-        fields(
-            publisher_session_id = %publisher_session_id,
-            request_id = upstream_request_id,
-            status_code = ?end.status_code,
-        )
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         publisher_session_id: SessionId,
-        session_span: &Span,
         upstream_request_id: u64,
         end: PublishDoneReason,
         table: &InMemoryLocalPubSubDirectory,
@@ -68,7 +55,6 @@ mod tests {
         UpstreamPublishDone
             .handle(
                 PUBLISHER_SESSION,
-                &Span::none(),
                 upstream_request_id,
                 PublishDoneReason::publisher_session_closed(),
                 &ctx.table,

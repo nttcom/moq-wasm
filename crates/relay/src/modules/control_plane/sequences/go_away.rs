@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
-use tracing::Span;
 
 use crate::modules::{
     control_plane::{
@@ -30,17 +29,9 @@ impl GoAway {
     /// relays still active in the route registry); a publisher that already
     /// feeds the track is left alone. A client sending GOAWAY only announces
     /// that it leaves; nothing is resolved for it.
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.go_away",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
@@ -194,7 +185,6 @@ mod tests {
         GoAway
             .handle(
                 DEPARTING_RELAY,
-                &tracing::Span::none(),
                 &table,
                 &forwarder,
                 &ingress_sender,
@@ -218,7 +208,6 @@ mod tests {
         GoAway
             .handle(
                 DEPARTING_RELAY,
-                &tracing::Span::none(),
                 &table,
                 &forwarder,
                 &ingress_sender,

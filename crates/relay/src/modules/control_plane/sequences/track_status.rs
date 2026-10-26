@@ -1,13 +1,10 @@
 use moqt::RequestErrorCode;
 use moqt::object::ContentExists;
-use tracing::Span;
 
 use crate::modules::{
     control_plane::sequences::subscribe::cached_largest,
     data_plane::cache::store::TrackCacheStore,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId, track_key::TrackKey,
-    },
+    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, track_key::TrackKey},
     session::handler::track_status::TrackStatusHandler,
 };
 
@@ -17,17 +14,8 @@ impl TrackStatus {
     /// draft-14 §9.20 lets a relay without an active subscription forward the
     /// request or subscribe upstream (MAY); this relay does neither and only
     /// reports tracks it is already subscribed to.
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.track_status",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     pub(crate) async fn handle(
         &self,
-        session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         cache_store: &TrackCacheStore,
         handler: &dyn TrackStatusHandler,
@@ -149,9 +137,7 @@ mod tests {
         let handler = MockTrackStatusHandler::default();
 
         // Act
-        TrackStatus
-            .handle(1, &Span::none(), &table, &cache_store, &handler)
-            .await;
+        TrackStatus.handle(&table, &cache_store, &handler).await;
 
         // Assert
         assert_eq!(
@@ -173,7 +159,7 @@ mod tests {
 
         // Act
         TrackStatus
-            .handle(1, &Span::none(), &table, &TrackCacheStore::new(), &handler)
+            .handle(&table, &TrackCacheStore::new(), &handler)
             .await;
 
         // Assert
@@ -194,7 +180,7 @@ mod tests {
 
         // Act
         TrackStatus
-            .handle(1, &Span::none(), &table, &TrackCacheStore::new(), &handler)
+            .handle(&table, &TrackCacheStore::new(), &handler)
             .await;
 
         // Assert

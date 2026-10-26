@@ -120,8 +120,6 @@ impl SessionWorker {
                 );
                 MalformedTrackCleanup {}
                     .handle(
-                        session_id,
-                        &self.session_span,
                         &track_key,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
@@ -152,7 +150,6 @@ impl SessionWorker {
                 Unsubscribe {}
                     .handle(
                         session_id,
-                        &self.session_span,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
                         &self.deps.ingress_sender,
@@ -206,7 +203,6 @@ impl SessionWorker {
                 PublishNamespace {}
                     .handle(
                         session_id,
-                        &session_span,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -221,7 +217,6 @@ impl SessionWorker {
                 PublishNamespaceDone {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         self.cascading_relay_context(),
@@ -234,7 +229,6 @@ impl SessionWorker {
                 SubscribeNameSpace {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &self.downstream_publish(),
@@ -248,7 +242,6 @@ impl SessionWorker {
                 UnsubscribeNamespace {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         self.cascading_relay_context(),
@@ -264,7 +257,6 @@ impl SessionWorker {
                 Publish {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -279,7 +271,6 @@ impl SessionWorker {
                 Subscribe {}
                     .handle(
                         session_id,
-                        &session_span,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -296,7 +287,6 @@ impl SessionWorker {
                 Unsubscribe {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -311,7 +301,6 @@ impl SessionWorker {
                 }
                 .handle(
                     session_id,
-                    &session_span,
                     &deps.local_pub_sub_directory,
                     &deps.cache_store,
                     &deps.egress_sender,
@@ -326,8 +315,6 @@ impl SessionWorker {
             MoqtSessionEvent::TrackStatus(handler) if handler.authorization_tokens().is_empty() => {
                 TrackStatus {}
                     .handle(
-                        session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.cache_store,
                         handler.as_ref(),
@@ -344,7 +331,6 @@ impl SessionWorker {
                 event_span.in_scope(|| {
                     SubscribeUpdate {}.handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         handler.subscription_request_id(),
                         DeliveryControl::from_subscribe_update(
@@ -359,7 +345,6 @@ impl SessionWorker {
                 UpstreamPublishDone
                     .handle(
                         session_id,
-                        &session_span,
                         handler.request_id(),
                         PublishDoneReason {
                             status_code: handler.status_code(),
@@ -376,7 +361,6 @@ impl SessionWorker {
                 GoAway
                     .handle(
                         session_id,
-                        &session_span,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,

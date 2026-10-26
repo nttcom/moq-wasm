@@ -34,18 +34,10 @@ use tracing::Span;
 pub(crate) struct Publish;
 
 impl Publish {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
