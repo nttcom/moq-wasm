@@ -298,9 +298,9 @@ impl TrackCache {
             });
             self.payload_bytes
                 .fetch_sub(freed_payload_bytes, AtomicOrdering::Relaxed);
-            for &at in &removed {
-                ledger.known_ranges.remove_range(at, after(at));
-            }
+            ledger
+                .known_ranges
+                .remove_locations(removed.iter().copied());
             ledger.forget_runs_of_vanished_groups();
             if purge && let Some(disk) = &self.disk {
                 disk.purge();
