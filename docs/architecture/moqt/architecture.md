@@ -684,9 +684,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   removed while a receiver of the track lives, so the ledger costs about
   50–60 B for every object the subscription has received: a long-lived
   subscription at 80 objects/s holds about 400 MB a day. A copy
-  that differs in preference, subgroup, priority or payload, or whose status
-  moves between Normal, End of Group and End of Track, is
-  `MalformedTrackError::ConflictingDuplicate`; extension headers are not
+  that differs in preference, subgroup, priority or payload is
+  `MalformedTrackError::ConflictingDuplicate`, and so is, on draft-14
+  (§8.1), one whose status moves between Normal, End of Group and End of
+  Track; draft-18 §9.1 compares no status. The draft is that of the
+  connection the copy came on (`CopySource`). Extension headers are not
   compared and a move to or from Does Not Exist passes. A draft-14 FETCH
   carries no preference, so its copy in the subgroup of its Object ID matches
   a datagram until a copy with a known preference arrives. Its

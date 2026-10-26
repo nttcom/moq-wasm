@@ -575,7 +575,7 @@ impl Subscriber {
         Ok(DataReceiver::new(
             track_alias,
             channel.receiver,
-            channel.version.mixes_forwarding_preferences(),
+            channel.version,
             self.session
                 .object_ledger(subscription.track_namespace(), subscription.track_name()),
         ))

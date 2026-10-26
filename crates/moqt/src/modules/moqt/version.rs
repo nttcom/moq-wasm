@@ -118,6 +118,17 @@ impl Version {
         }
     }
 
+    /// Whether a duplicate object whose status moves between Normal, End of
+    /// Group and End of Track makes its track malformed: draft-14 §8.1 says
+    /// so; draft-18 §9.1 compares only the forwarding preference, subgroup,
+    /// priority and payload.
+    pub(crate) fn compares_duplicate_status(self) -> bool {
+        match self {
+            Self::Draft14 => true,
+            Self::Draft18 => false,
+        }
+    }
+
     /// draft-18 marks a datagram object in FETCH (§11.4.4); draft-14 does not (§10.4.4).
     pub(crate) fn fetch_carries_forwarding_preference(self) -> bool {
         match self {
@@ -202,6 +213,13 @@ pub(crate) enum SubgroupReader {
 }
 
 impl SubgroupReader {
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
+        }
+    }
+
     /// `None` until the first object arrives, for header types that take the
     /// subgroup id from it.
     pub(crate) fn start(&self) -> Option<SubgroupStart> {

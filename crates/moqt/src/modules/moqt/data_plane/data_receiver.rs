@@ -4,10 +4,13 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::modules::moqt::{
     data_plane::{
-        malformed_track_error::MalformedTrackError, object::canonical_object::Object,
-        object_ledger::ObjectLedger, stream::stream_data_receiver::StreamDataReceiver,
+        malformed_track_error::MalformedTrackError,
+        object::canonical_object::Object,
+        object_ledger::{CopySource, ObjectLedger},
+        stream::stream_data_receiver::StreamDataReceiver,
     },
     runtime::dispatch::incoming_object::IncomingObject,
+    version::Version,
 };
 
 /// What a subscription delivers next.
@@ -23,7 +26,8 @@ pub enum TrackData {
 pub struct DataReceiver {
     pub track_alias: u64,
     receiver: UnboundedReceiver<IncomingObject>,
-    mixing_allowed: bool,
+    /// The draft of the connection the subscription was accepted on.
+    version: Version,
     first_is_datagram: Option<bool>,
     ledger: Arc<ObjectLedger>,
 }
@@ -32,13 +36,13 @@ impl DataReceiver {
     pub(crate) fn new(
         track_alias: u64,
         receiver: UnboundedReceiver<IncomingObject>,
-        mixing_allowed: bool,
+        version: Version,
         ledger: Arc<ObjectLedger>,
     ) -> Self {
         Self {
             track_alias,
             receiver,
-            mixing_allowed,
+            version,
             first_is_datagram: None,
             ledger,
         }
@@ -54,7 +58,8 @@ impl DataReceiver {
             anyhow::bail!("the subscription ended");
         };
         let is_datagram = matches!(incoming, IncomingObject::Datagram(_));
-        if !self.mixing_allowed && *self.first_is_datagram.get_or_insert(is_datagram) != is_datagram
+        if !self.version.mixes_forwarding_preferences()
+            && *self.first_is_datagram.get_or_insert(is_datagram) != is_datagram
         {
             return Err(MalformedTrackError::MixedForwardingPreference.into());
         }
@@ -64,7 +69,8 @@ impl DataReceiver {
                 TrackData::Subgroup(receiver)
             }
             IncomingObject::Datagram(datagram) => {
-                self.ledger.check(&datagram.object, false)?;
+                self.ledger
+                    .check(&datagram.object, CopySource::Subscription(self.version))?;
                 TrackData::Datagram(datagram.object)
             }
         })

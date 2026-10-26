@@ -12,16 +12,17 @@ use crate::modules::moqt::{
             object_status::ObjectStatus,
         },
     },
+    version::Version,
 };
 
 /// The objects of one track a session has received, kept while a
 /// subscription or FETCH of the track is read. No entry is ever removed, so
 /// the ledger grows by one entry per object for that whole time. An object
 /// that arrives again with another forwarding preference, subgroup, priority
-/// or payload, or whose status moves between Normal, End of Group and End of
-/// Track, makes the track malformed (draft-14 §8.1, draft-18 §9.1). Its
-/// extension headers may change, and so may its status to or from Does Not
-/// Exist.
+/// or payload makes the track malformed (draft-14 §8.1, draft-18 §9.1), and
+/// so does, on draft-14 only, a status that moves between Normal, End of
+/// Group and End of Track. Its extension headers may change, and so may its
+/// status to or from Does Not Exist.
 pub(crate) struct ObjectLedger {
     hasher: RandomState,
     objects: std::sync::Mutex<HashMap<Location, Recorded>>,
@@ -57,18 +58,16 @@ impl ObjectLedger {
         PayloadHasher(self.hasher.build_hasher())
     }
 
-    /// Records `object`; fails when an earlier copy of it differs.
-    /// `forwarding_inferred`: the object comes from a draft-14 FETCH, which
-    /// carries no forwarding preference, so a datagram object arrives as a
-    /// subgroup object whose Subgroup ID is its Object ID (§10.4.4).
+    /// Records `object`, a copy from `source`; fails when an earlier copy
+    /// of it differs.
     pub(crate) fn check(
         &self,
         object: &Object,
-        forwarding_inferred: bool,
+        source: CopySource,
     ) -> Result<(), MalformedTrackError> {
         let mut payload = self.payload_hasher();
         payload.update(&object.payload);
-        self.check_hashed(object, payload, forwarding_inferred)
+        self.check_hashed(object, payload, source)
     }
 
     /// `check` for an object whose payload `payload` has hashed; the
@@ -77,8 +76,9 @@ impl ObjectLedger {
         &self,
         object: &Object,
         payload: PayloadHasher,
-        forwarding_inferred: bool,
+        source: CopySource,
     ) -> Result<(), MalformedTrackError> {
+        let forwarding_inferred = source.forwarding_inferred();
         let received = Recorded {
             forwarding: object.forwarding,
             forwarding_inferred,
@@ -96,7 +96,7 @@ impl ObjectLedger {
             }
             Entry::Occupied(mut recorded) => {
                 let recorded = recorded.get_mut();
-                if recorded.conflicts_with(&received, object.location.object_id) {
+                if recorded.conflicts_with(&received, object.location.object_id, source) {
                     return Err(MalformedTrackError::ConflictingDuplicate {
                         location: object.location,
                     });
@@ -113,6 +113,30 @@ impl ObjectLedger {
     }
 }
 
+/// Where a copy of an object came from: its draft decides how the copy is
+/// compared with the earlier ones.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CopySource {
+    /// A subgroup stream or datagram of a subscription.
+    Subscription(Version),
+    Fetch(Version),
+}
+
+impl CopySource {
+    fn version(self) -> Version {
+        match self {
+            Self::Subscription(version) | Self::Fetch(version) => version,
+        }
+    }
+
+    /// A draft-14 FETCH carries no forwarding preference, so a datagram
+    /// object arrives as a subgroup object whose Subgroup ID is its Object
+    /// ID (§10.4.4).
+    fn forwarding_inferred(self) -> bool {
+        matches!(self, Self::Fetch(version) if !version.fetch_carries_forwarding_preference())
+    }
+}
+
 /// The hash of a payload fed in pieces; SipHash, behind `DefaultHasher`,
 /// hashes a byte stream the same however it is split.
 #[derive(Debug)]
@@ -125,7 +149,9 @@ impl PayloadHasher {
 }
 
 impl Recorded {
-    fn conflicts_with(&self, other: &Self, object_id: u64) -> bool {
+    /// `other` is the copy from `source`, whose draft decides whether the
+    /// status is compared.
+    fn conflicts_with(&self, other: &Self, object_id: u64, source: CopySource) -> bool {
         if self.forwarding_conflicts_with(other, object_id)
             || self.publisher_priority != other.publisher_priority
         {
@@ -134,7 +160,8 @@ impl Recorded {
         if self.status == ObjectStatus::DoesNotExist || other.status == ObjectStatus::DoesNotExist {
             return false;
         }
-        self.status != other.status || self.payload_hash != other.payload_hash
+        (source.version().compares_duplicate_status() && self.status != other.status)
+            || self.payload_hash != other.payload_hash
     }
 
     /// A draft-14 FETCH copy in the subgroup of its Object ID is the same
@@ -160,10 +187,11 @@ impl Recorded {
 mod tests {
     use bytes::Bytes;
 
-    use super::ObjectLedger;
+    use super::{CopySource, ObjectLedger};
     use crate::{
         SessionEvent,
         fetch::{Fetch, FetchOption},
+        modules::moqt::version::Version,
         modules::test_support::{
             PublishedTrack, data_receiver, location, next_subgroup, object_with_extensions,
             published_draft18_track, published_track, read_subgroup_objects, send_subgroup_object,
@@ -190,10 +218,24 @@ mod tests {
         }
     }
 
+    /// A subgroup or datagram copy on draft-14.
+    const LIVE: CopySource = CopySource::Subscription(Version::Draft14);
+    const DRAFT18: CopySource = CopySource::Subscription(Version::Draft18);
+    const DRAFT14_FETCH: CopySource = CopySource::Fetch(Version::Draft14);
+    const DRAFT18_FETCH: CopySource = CopySource::Fetch(Version::Draft18);
+
     fn check_both(first: &Object, second: &Object) -> Result<(), MalformedTrackError> {
+        check_both_from(first, second, LIVE)
+    }
+
+    fn check_both_from(
+        first: &Object,
+        second: &Object,
+        source: CopySource,
+    ) -> Result<(), MalformedTrackError> {
         let ledger = ObjectLedger::new();
-        ledger.check(first, false).unwrap();
-        ledger.check(second, false)
+        ledger.check(first, source).unwrap();
+        ledger.check(second, source)
     }
 
     #[test]
@@ -201,14 +243,14 @@ mod tests {
         // Arrange
         let ledger = ObjectLedger::new();
         let object = object_with_extensions();
-        ledger.check(&object, false).unwrap();
+        ledger.check(&object, LIVE).unwrap();
         let mut pieces = ledger.payload_hasher();
         let (first, rest) = object.payload.split_at(1);
         pieces.update(first);
         pieces.update(rest);
 
         // Act
-        let result = ledger.check_hashed(&object, pieces, false);
+        let result = ledger.check_hashed(&object, pieces, LIVE);
 
         // Assert: the same object, however its payload arrived
         assert_eq!(result, Ok(()));
@@ -302,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn a_status_moving_between_normal_end_of_group_and_end_of_track_is_a_conflict() {
+    fn a_draft14_status_moving_between_normal_end_of_group_and_end_of_track_is_a_conflict() {
         let statuses = [
             ObjectStatus::Normal,
             ObjectStatus::EndOfGroup,
@@ -312,7 +354,7 @@ mod tests {
             for second in statuses.into_iter().filter(|second| *second != first) {
                 // Arrange
                 let (first, second) = (status_object(first), status_object(second));
-                // Act / Assert
+                // Act / Assert: draft-14 §8.1 item 1
                 assert_eq!(
                     check_both(&first, &second),
                     conflict(&first),
@@ -325,13 +367,68 @@ mod tests {
     }
 
     #[test]
-    fn a_status_moving_to_or_from_does_not_exist_passes() {
+    fn a_draft14_status_moving_to_or_from_does_not_exist_passes() {
         // Arrange
         let normal = object_with_extensions();
         let missing = status_object(ObjectStatus::DoesNotExist);
-        // Act / Assert: both orders
+        // Act / Assert: draft-14 §8.1 item 1, both orders
         assert_eq!(check_both(&normal, &missing), Ok(()));
         assert_eq!(check_both(&missing, &normal), Ok(()));
+    }
+
+    #[test]
+    fn a_draft18_duplicate_with_another_status_passes() {
+        let statuses = [
+            ObjectStatus::Normal,
+            ObjectStatus::EndOfGroup,
+            ObjectStatus::EndOfTrack,
+        ];
+        for first in statuses {
+            for second in statuses.into_iter().filter(|second| *second != first) {
+                // Arrange
+                let (first, second) = (status_object(first), status_object(second));
+                // Act / Assert: draft-18 §9.1 compares no status
+                assert_eq!(
+                    check_both_from(&first, &second, DRAFT18),
+                    Ok(()),
+                    "{:?} then {:?}",
+                    first.status,
+                    second.status
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_draft18_duplicate_with_another_preference_subgroup_priority_or_payload_is_a_conflict() {
+        // Arrange
+        let first = object_with_extensions();
+        let copies = [
+            Object {
+                forwarding: ForwardingPreference::Datagram,
+                ..first.clone()
+            },
+            Object {
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 9 },
+                ..first.clone()
+            },
+            Object {
+                publisher_priority: first.publisher_priority + 1,
+                ..first.clone()
+            },
+            Object {
+                payload: Bytes::from_static(b"other"),
+                ..first.clone()
+            },
+        ];
+        for copy in copies {
+            // Act / Assert: draft-18 §9.1
+            assert_eq!(
+                check_both_from(&first, &copy, DRAFT18),
+                conflict(&first),
+                "{copy:?}"
+            );
+        }
     }
 
     #[test]
@@ -339,16 +436,16 @@ mod tests {
         // Arrange
         let ledger = ObjectLedger::new();
         let normal = object_with_extensions();
-        ledger.check(&normal, false).unwrap();
+        ledger.check(&normal, LIVE).unwrap();
         ledger
-            .check(&status_object(ObjectStatus::DoesNotExist), false)
+            .check(&status_object(ObjectStatus::DoesNotExist), LIVE)
             .unwrap();
         let other = Object {
             payload: Bytes::from_static(b"other"),
             ..normal.clone()
         };
         // Act / Assert
-        assert_eq!(ledger.check(&other, false), conflict(&normal));
+        assert_eq!(ledger.check(&other, LIVE), conflict(&normal));
     }
 
     fn datagram() -> Object {
@@ -372,11 +469,11 @@ mod tests {
         let live = datagram();
         let fetched = fetched_in(&live, live.location.object_id);
         let (live_first, fetched_first) = (ObjectLedger::new(), ObjectLedger::new());
-        live_first.check(&live, false).unwrap();
-        fetched_first.check(&fetched, true).unwrap();
+        live_first.check(&live, LIVE).unwrap();
+        fetched_first.check(&fetched, DRAFT14_FETCH).unwrap();
         // Act / Assert: both orders
-        assert_eq!(live_first.check(&fetched, true), Ok(()));
-        assert_eq!(fetched_first.check(&live, false), Ok(()));
+        assert_eq!(live_first.check(&fetched, DRAFT14_FETCH), Ok(()));
+        assert_eq!(fetched_first.check(&live, LIVE), Ok(()));
     }
 
     #[test]
@@ -384,10 +481,13 @@ mod tests {
         // Arrange
         let live = datagram();
         let ledger = ObjectLedger::new();
-        ledger.check(&live, false).unwrap();
+        ledger.check(&live, LIVE).unwrap();
         // Act / Assert
         assert_eq!(
-            ledger.check(&fetched_in(&live, live.location.object_id + 1), true),
+            ledger.check(
+                &fetched_in(&live, live.location.object_id + 1),
+                DRAFT14_FETCH
+            ),
             conflict(&live)
         );
     }
@@ -398,10 +498,10 @@ mod tests {
         let live = datagram();
         let fetched = fetched_in(&live, live.location.object_id);
         let ledger = ObjectLedger::new();
-        ledger.check(&fetched, true).unwrap();
-        ledger.check(&live, false).unwrap();
+        ledger.check(&fetched, DRAFT14_FETCH).unwrap();
+        ledger.check(&live, LIVE).unwrap();
         // Act / Assert: a subgroup copy with a known preference
-        assert_eq!(ledger.check(&fetched, false), conflict(&live));
+        assert_eq!(ledger.check(&fetched, LIVE), conflict(&live));
     }
 
     #[test]
@@ -409,10 +509,10 @@ mod tests {
         // Arrange: draft-18 FETCH carries the preference
         let live = datagram();
         let ledger = ObjectLedger::new();
-        ledger.check(&live, false).unwrap();
+        ledger.check(&live, LIVE).unwrap();
         // Act / Assert
         assert_eq!(
-            ledger.check(&fetched_in(&live, live.location.object_id), false),
+            ledger.check(&fetched_in(&live, live.location.object_id), DRAFT18_FETCH),
             conflict(&live)
         );
     }
@@ -505,6 +605,49 @@ mod tests {
     async fn a_draft18_subgroup_object_repeated_with_another_payload_is_a_malformed_track() {
         assert_subgroup_copies(published_draft18_track("ledger-subgroup-copies-draft18").await)
             .await;
+    }
+
+    /// The second copy of a status object arrives with another status.
+    async fn receive_status_change(
+        track: PublishedTrack,
+    ) -> Result<Option<Subgroup>, StreamReceiveError> {
+        let first = status_object(ObjectStatus::EndOfGroup);
+        let second = status_object(ObjectStatus::EndOfTrack);
+        let mut receiver = data_receiver(&track.server, &track.accepted).await;
+        receive_second_copy(&track, &mut receiver, &first, &second).await
+    }
+
+    #[tokio::test]
+    async fn a_status_change_of_a_received_object_is_a_malformed_track_on_draft14() {
+        // Arrange
+        let track = published_track("ledger-status-change").await;
+        let location = status_object(ObjectStatus::EndOfGroup).location;
+        // Act
+        let second_copy = receive_status_change(track).await;
+        // Assert: draft-14 §8.1 item 1
+        assert!(
+            matches!(
+                second_copy,
+                Err(StreamReceiveError::MalformedTrack(
+                    MalformedTrackError::ConflictingDuplicate { location: conflicting }
+                )) if conflicting == location
+            ),
+            "{second_copy:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_status_change_of_a_received_object_is_accepted_on_draft18() {
+        // Arrange
+        let track = published_draft18_track("ledger-status-change-draft18").await;
+        // Act
+        let second_copy = receive_status_change(track).await;
+        // Assert: draft-18 §9.1 compares no status, and the copy is passed on
+        assert!(
+            matches!(&second_copy, Ok(Some(Subgroup::Object(object)))
+                if object.status == ObjectStatus::EndOfTrack),
+            "{second_copy:?}"
+        );
     }
 
     async fn assert_copy_arriving_in_pieces(track: PublishedTrack) {

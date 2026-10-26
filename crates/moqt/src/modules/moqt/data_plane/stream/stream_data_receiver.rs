@@ -5,7 +5,7 @@ use bytes::{Bytes, BytesMut};
 use crate::modules::moqt::{
     data_plane::{
         object::canonical_object::{Object, SubgroupStart},
-        object_ledger::{ObjectLedger, PayloadHasher},
+        object_ledger::{CopySource, ObjectLedger, PayloadHasher},
         stream::{
             open_subgroups::{OpenSubgroup, OpenSubgroups},
             stream_receiver::StreamReceiveError,
@@ -156,8 +156,9 @@ impl StreamDataReceiver {
         let Some(ledger) = &self.ledger else {
             return Ok(received);
         };
+        let source = CopySource::Subscription(self.reader.version());
         let checked = match &received {
-            Some(SubgroupPart::Object(object)) => ledger.check(object, false),
+            Some(SubgroupPart::Object(object)) => ledger.check(object, source),
             Some(SubgroupPart::ObjectStart { object, .. }) => {
                 self.arriving = Some(Box::new((object.clone(), ledger.payload_hasher())));
                 Ok(())
@@ -172,7 +173,7 @@ impl StreamDataReceiver {
                 match self.arriving.take_if(|_| *last) {
                     Some(arrived) => {
                         let (object, hasher) = *arrived;
-                        ledger.check_hashed(&object, hasher, false)
+                        ledger.check_hashed(&object, hasher, source)
                     }
                     None => Ok(()),
                 }
