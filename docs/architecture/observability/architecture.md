@@ -265,9 +265,9 @@ column still needs a hand-written `ALTER TABLE` (or a fresh database).
 
 ClickHouse runs as a `docker-compose.yml` service next to the relays.
 
-The relays' OTLP logs and traces are a separate path: with
-`--profile clickstack` and `OTEL_SDK_DISABLED=false`, the ClickStack
-collector writes them into the `otel` database of the same ClickHouse (7-day
+The relays' OTLP logs and traces are a separate path: the ClickStack
+services start with `observability`, and with `OTEL_SDK_DISABLED=false` the
+ClickStack collector writes them into the `otel` database of the same ClickHouse (7-day
 TTL) and HyperDX serves a search UI on port 8080. The snapshots above stay on
 the MoQT track; OTLP carries no metrics.
 

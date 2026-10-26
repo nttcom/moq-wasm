@@ -141,14 +141,14 @@ services:
         condition: service_started
       relay-b:
         condition: service_started
+      hyperdx:
+        condition: service_started
 
   # ClickStack: relay OTLP logs and traces go through its collector into the
   # `otel` database of the clickhouse service; HyperDX (http://localhost:8080)
-  # searches them. Start with `--profile clickstack` and OTEL_SDK_DISABLED=false.
+  # searches them. They start with observability; relays export with OTEL_SDK_DISABLED=false.
   clickstack-otel-collector:
     image: docker.clickhouse.com/clickhouse/clickstack-otel-collector:2.42.0@sha256:90ca453137798285871190722fcd7c79e7731e9376cf23a922d6f855bf94f3c7
-    profiles:
-      - clickstack
     environment:
       CLICKHOUSE_ENDPOINT: tcp://clickhouse:9000?dial_timeout=10s
       CLICKHOUSE_USER: observability
@@ -162,15 +162,11 @@ services:
 
   clickstack-mongo:
     image: mongo:5.0.32-focal@sha256:3b6c281e1c0825d34b28e503b0bc97174132a283eeb79d402bd3893944cf9fd7
-    profiles:
-      - clickstack
     volumes:
       - clickstack-mongo-data:/data/db
 
   hyperdx:
     image: docker.hyperdx.io/hyperdx/hyperdx:2.42.0@sha256:409af6d989595376507283c7703b04912a2f66042af434e830ca4b410fc5a716
-    profiles:
-      - clickstack
     environment:
       FRONTEND_URL: http://localhost:8080
       HYPERDX_API_PORT: "8000"
