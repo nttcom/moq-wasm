@@ -223,6 +223,17 @@ pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
     })
 }
 
+pub(crate) fn recorded_session_answering_fetch(
+    answer_fetch: FetchAnswer,
+) -> (Box<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        answer_fetch,
+        ..MockUpstreamSession::new(recorded.clone())
+    });
+    (session, recorded)
+}
+
 pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
         recorded: RecordedControlMessages::default(),
@@ -650,12 +661,15 @@ impl SubscribeHandler for MockSubscribeHandler {
 }
 
 /// `joining_rule` stands in for the session draft's Joining FETCH rule;
-/// `errors` records the code of every `error`.
+/// `errors` records the code of every `error` and `oks` the End Location of
+/// every `ok`.
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
+    pub(crate) fill_timeout: Option<std::time::Duration>,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
     pub(crate) errors: Arc<Mutex<Vec<RequestErrorCode>>>,
+    pub(crate) oks: Arc<Mutex<Vec<moqt::object::Location>>>,
 }
 
 impl MockFetchHandler {
@@ -663,8 +677,10 @@ impl MockFetchHandler {
     pub(crate) fn fetching(fetch_params: moqt::fetch::FetchParams) -> Self {
         Self {
             fetch_params,
+            fill_timeout: None,
             joining_rule: |_| Ok(()),
             errors: Arc::default(),
+            oks: Arc::default(),
         }
     }
 }
@@ -700,6 +716,10 @@ impl FetchHandler for MockFetchHandler {
         self.fetch_params.clone()
     }
 
+    fn fill_timeout(&self) -> Option<std::time::Duration> {
+        self.fill_timeout
+    }
+
     fn check_joining(
         &self,
         subscription: moqt::fetch::JoinedSubscription,
@@ -710,9 +730,10 @@ impl FetchHandler for MockFetchHandler {
     async fn ok(
         &self,
         _end_of_track: bool,
-        _end_location: moqt::object::Location,
+        end_location: moqt::object::Location,
         _max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError> {
+        self.oks.lock().unwrap().push(end_location);
         Ok(())
     }
 

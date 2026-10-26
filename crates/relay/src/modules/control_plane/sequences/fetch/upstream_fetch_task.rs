@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use tokio::{
     sync::mpsc::{Sender, UnboundedSender},
@@ -15,7 +15,7 @@ use crate::modules::{
     data_plane::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressFetchRequest},
-        ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
+        ingress::fetch_ingest::{FetchIngest, FetchIngestStart, FillBudget},
     },
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
@@ -31,7 +31,7 @@ pub(super) struct UpstreamFetchStart {
     pub(super) cache_store: Arc<TrackCacheStore>,
     pub(super) egress_sender: Sender<EgressCommand>,
     pub(super) session_event_sender: UnboundedSender<SessionEvent>,
-    pub(super) fill_timeout: Duration,
+    pub(super) fill_budget: FillBudget,
 }
 
 /// Off the session worker so a publisher that never answers FETCH does not stall the session.
@@ -103,6 +103,7 @@ impl UpstreamFetchTask {
             start_location: start.target.start_location,
             end_location: prepared.handle.end_location,
             group_order: start.handler.group_order(),
+            report_unknown: false,
         };
         let _fetch_ingest = FetchIngest::run(
             start.forwarder.repository.clone(),
@@ -113,7 +114,7 @@ impl UpstreamFetchTask {
                 upstream_publisher_session_id: prepared.upstream_publisher_session_id,
                 fetch_handle: prepared.handle,
                 egress_start,
-                fill_timeout: start.fill_timeout,
+                fill_budget: start.fill_budget,
             },
         );
     }
@@ -121,6 +122,8 @@ impl UpstreamFetchTask {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use moqt::RequestErrorCode;
 
     use super::*;
@@ -197,7 +200,7 @@ mod tests {
             cache_store: cache_store.clone(),
             egress_sender,
             session_event_sender,
-            fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
+            fill_budget: FillBudget::new(None, DEFAULT_FETCH_FILL_TIMEOUT),
         });
         tokio::time::timeout(Duration::from_secs(1), task._join_handle)
             .await

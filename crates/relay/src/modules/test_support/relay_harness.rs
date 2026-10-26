@@ -191,6 +191,19 @@ impl FetchDeliveryHandle {
         }
     }
 
+    /// Everything sent, once the delivery has finished.
+    pub(crate) async fn finished(mut self) -> Vec<FetchSent> {
+        tokio::time::timeout(RECV_TIMEOUT, &mut self.join_handle)
+            .await
+            .expect("the fetch delivery should finish")
+            .unwrap();
+        let mut sent = Vec::new();
+        while let Ok(step) = self.sent.try_recv() {
+            sent.push(step);
+        }
+        sent
+    }
+
     pub(crate) async fn assert_nothing_sent_within(&mut self, window: Duration) {
         let sent = tokio::time::timeout(window, self.sent.recv()).await;
         assert!(
@@ -399,7 +412,29 @@ impl RelayHarness {
         start_location: moqt::object::Location,
         end_location: moqt::object::Location,
     ) -> FetchDeliveryHandle {
-        let (sender, sent) = MockFetchSender::channel();
+        self.spawn_fetch(start_location, end_location, None)
+    }
+
+    /// A fetch that reports what the cache lacks as unknown, to a sender
+    /// answering `unknown_range`.
+    pub(crate) fn start_fetch_reporting_unknown(
+        &self,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        unknown_range: moqt::fetch::UnknownRange,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(start_location, end_location, Some(unknown_range))
+    }
+
+    fn spawn_fetch(
+        &self,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        unknown_range: Option<moqt::fetch::UnknownRange>,
+    ) -> FetchDeliveryHandle {
+        let (sender, sent) = MockFetchSender::answering_unknown_range(
+            unknown_range.unwrap_or(moqt::fetch::UnknownRange::Marked),
+        );
         let request = EgressFetchRequest {
             subscriber_session_id: 2,
             request_id: 0,
@@ -407,6 +442,7 @@ impl RelayHarness {
             start_location,
             end_location,
             group_order: moqt::object::GroupOrder::Ascending,
+            report_unknown: unknown_range.is_some(),
         };
         let join_handle = tokio::spawn(async move { deliver_fetch(&request, &sender).await });
         FetchDeliveryHandle { sent, join_handle }
