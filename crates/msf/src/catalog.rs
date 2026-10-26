@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::track::{Track, TrackRef};
+use crate::types::{KnownPackaging, Packaging};
 
 /// draft-ietf-moq-msf-01 §5: the catalog track MUST have this name.
 pub const CATALOG_TRACK_NAME: &str = "catalog";
@@ -56,6 +57,24 @@ impl Catalog {
             tracks: Some(tracks),
             init_data_list: None,
         }
+    }
+
+    pub fn loc_tracks(&self) -> impl Iterator<Item = &Track> {
+        self.tracks
+            .iter()
+            .flatten()
+            .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
+    }
+
+    /// The Base64 `data` of the `initDataList` entry `track`'s `initRef`
+    /// names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13).
+    pub fn init_data(&self, track: &Track) -> Option<&str> {
+        let init_ref = track.init_ref.as_deref()?;
+        self.init_data_list
+            .iter()
+            .flatten()
+            .find(|entry| entry.id == init_ref)
+            .map(|entry| entry.data.as_str())
     }
 }
 

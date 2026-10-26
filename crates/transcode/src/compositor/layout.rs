@@ -238,10 +238,7 @@ struct Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn ms(millis: u64) -> gst::ClockTime {
-        gst::ClockTime::from_mseconds(millis)
-    }
+    use crate::test_support::ms;
 
     fn span(start_ms: u64, end_ms: u64) -> Span {
         (ms(start_ms), ms(end_ms))

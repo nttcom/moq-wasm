@@ -141,29 +141,9 @@ mod tests {
     use super::*;
     use crate::{
         mp4::muxer::tests::boxes,
-        sample::{AudioSample, Timestamp},
-        test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
+        sample::Timestamp,
+        test_support::{audio_event, fixture_record, mono_48k, video_event},
     };
-
-    fn video(dts_ms: u64, is_keyframe: bool) -> MediaEvent {
-        MediaEvent::Video(VideoSample {
-            data: if is_keyframe {
-                keyframe_annexb()
-            } else {
-                delta_frame_annexb()
-            },
-            is_keyframe,
-            pts: Timestamp::from_millis(dts_ms + 40),
-            dts: Timestamp::from_millis(dts_ms),
-        })
-    }
-
-    fn audio(pts_ms: u64) -> MediaEvent {
-        MediaEvent::Audio(AudioSample {
-            data: Bytes::from_static(&[0xDE, 0xAD]),
-            pts: Timestamp::from_millis(pts_ms),
-        })
-    }
 
     fn kinds(data: &[u8]) -> Vec<String> {
         boxes(data).into_iter().map(|(kind, _)| kind).collect()
@@ -199,8 +179,8 @@ mod tests {
         let mut muxer = Fmp4TrackMuxer::video(fixture_record());
 
         // Act
-        let first = muxer.push(&video(0, true)).unwrap();
-        let second = muxer.push(&video(40, false)).unwrap().unwrap();
+        let first = muxer.push(&video_event(0, true)).unwrap();
+        let second = muxer.push(&video_event(40, false)).unwrap().unwrap();
         let flushed = muxer.finish().unwrap().unwrap();
 
         // Assert
@@ -219,7 +199,7 @@ mod tests {
         let mut muxer = Fmp4TrackMuxer::audio(AudioConfig::Aac(mono_48k()));
 
         // Act
-        let fragment = muxer.push(&audio(0)).unwrap().unwrap();
+        let fragment = muxer.push(&audio_event(0)).unwrap().unwrap();
 
         // Assert
         assert!(fragment.is_keyframe);
@@ -236,7 +216,7 @@ mod tests {
         let mut audio_muxer = Fmp4TrackMuxer::audio(AudioConfig::Aac(mono_48k()));
 
         // Act / Assert
-        assert!(video_muxer.push(&audio(0)).is_err());
-        assert!(audio_muxer.push(&video(0, true)).is_err());
+        assert!(video_muxer.push(&audio_event(0)).is_err());
+        assert!(audio_muxer.push(&video_event(0, true)).is_err());
     }
 }
