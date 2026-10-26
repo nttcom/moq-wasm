@@ -211,6 +211,7 @@ impl Subscribe {
                         table: table.clone(),
                         forwarder: forwarder.clone(),
                         ingress_sender: ingress_sender.clone(),
+                        cache_store: cache_store.clone(),
                     },
                 );
             }
@@ -361,6 +362,17 @@ impl Subscribe {
                         answered.publisher_peer,
                         subscription,
                     );
+                }
+                Err(error) if super::malformed_track::refused_as_malformed(&error) => {
+                    tracing::warn!(
+                        %error,
+                        pub_session_id = %answered.publisher_session_id,
+                        track_namespace = %track_namespace,
+                        track_name = %track_name,
+                        "upstream SUBSCRIBE refused the track as malformed; latching it"
+                    );
+                    cache_store.get_or_create(&track_key).mark_malformed();
+                    return Err(UpstreamSubscriptionError::SubscribeFailed(error));
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -624,8 +636,8 @@ mod tests {
     };
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, mock_session_answering_subscribe,
-        mock_session_never_answering_subscribe, session_repository_with_session,
-        session_repository_with_sessions,
+        mock_session_never_answering_subscribe, mock_session_refusing_subscribe,
+        session_repository_with_session, session_repository_with_sessions,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::test_support::relay_harness::fixtures::subscription::unknown_track_properties;
@@ -747,6 +759,7 @@ mod tests {
 
     async fn subscribe_to_publishers(
         publishers: Vec<(SessionId, Box<dyn crate::modules::session::Session>)>,
+        cache_store: &Arc<TrackCacheStore>,
     ) -> (
         Arc<InMemoryLocalPubSubDirectory>,
         Result<UpstreamTrackAccess, UpstreamSubscriptionError>,
@@ -778,7 +791,7 @@ mod tests {
                 &ingress_sender,
                 &resolver,
                 &UpstreamCreationSerializer::default(),
-                &Arc::new(TrackCacheStore::new()),
+                cache_store,
             ),
         )
         .await
@@ -800,6 +813,7 @@ mod tests {
                         table: table.clone(),
                         forwarder,
                         ingress_sender,
+                        cache_store: cache_store.clone(),
                     },
                 );
             }
@@ -842,7 +856,8 @@ mod tests {
         ];
 
         // Act
-        let (table, created) = subscribe_to_publishers(publishers).await;
+        let (table, created) =
+            subscribe_to_publishers(publishers, &Arc::new(TrackCacheStore::new())).await;
 
         // Assert
         assert!(created.is_ok());
@@ -850,6 +865,60 @@ mod tests {
             wait_track_publishers(&table, vec![NEW_PUBLISHER_SESSION]).await,
             vec![NEW_PUBLISHER_SESSION]
         );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_refused_as_malformed_latches_the_track_and_answers_malformed_track() {
+        // Arrange
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let publishers = vec![(
+            DEAD_PUBLISHER_SESSION,
+            mock_session_refusing_subscribe(RequestErrorCode::MalformedTrack),
+        )];
+
+        // Act
+        let (_table, created) = subscribe_to_publishers(publishers, &cache_store).await;
+
+        // Assert: draft-18 §2.4.2, §12.7
+        let Err(error) = created else {
+            panic!("a malformed track must not be subscribed");
+        };
+        assert_eq!(
+            error.subscribe_error_response().0,
+            RequestErrorCode::MalformedTrack
+        );
+        assert!(
+            cache_store
+                .get(&TrackKey::new("ns", "track"))
+                .is_some_and(|cache| cache.is_malformed())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_malformed_refusal_ends_the_subscribe_without_waiting_for_other_publishers() {
+        // Arrange
+        let publishers = vec![
+            (
+                DEAD_PUBLISHER_SESSION,
+                mock_session_refusing_subscribe(RequestErrorCode::MalformedTrack),
+            ),
+            (
+                NEW_PUBLISHER_SESSION,
+                mock_session_never_answering_subscribe(),
+            ),
+        ];
+
+        // Act
+        let (_table, created) =
+            subscribe_to_publishers(publishers, &Arc::new(TrackCacheStore::new())).await;
+
+        // Assert: draft-18 §2.4.2, the track is malformed whoever else publishes it
+        assert!(matches!(
+            created
+                .map(|_| ())
+                .map_err(|error| error.subscribe_error_response().0),
+            Err(RequestErrorCode::MalformedTrack)
+        ));
     }
 
     #[tokio::test]
@@ -867,7 +936,8 @@ mod tests {
         ];
 
         // Act
-        let (table, created) = subscribe_to_publishers(publishers).await;
+        let (table, created) =
+            subscribe_to_publishers(publishers, &Arc::new(TrackCacheStore::new())).await;
 
         // Assert
         assert!(created.is_ok());
