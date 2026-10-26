@@ -298,6 +298,7 @@ mod tests {
                         self.repo.clone(),
                         session_event_sender,
                         "relay-token".to_string(),
+                        moqt::DEFAULT_VERSIONS.to_vec(),
                     )),
                 },
             )

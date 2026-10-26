@@ -13,6 +13,8 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 pub(crate) struct StatsPublishConfig {
     pub(crate) inner_port: u16,
     pub(crate) relay_token: String,
+    /// The drafts offered to the inner transport.
+    pub(crate) versions: Vec<moqt::Version>,
 }
 
 pub struct StatsPublishTask {
@@ -60,7 +62,7 @@ async fn publish_snapshots(
         verify_certificate: false,
         authorization_token: Some(config.relay_token.clone()),
         follow_go_away: false,
-        ..Default::default()
+        versions: config.versions.clone(),
     })?;
     let session = endpoint
         .connect(&format!("moqt://127.0.0.1:{}", config.inner_port))

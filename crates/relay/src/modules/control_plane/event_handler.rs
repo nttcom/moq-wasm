@@ -200,6 +200,7 @@ mod tests {
                 repo.clone(),
                 event_sender.clone(),
                 String::new(),
+                moqt::DEFAULT_VERSIONS.to_vec(),
             ));
             let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
                 route_registry.clone(),

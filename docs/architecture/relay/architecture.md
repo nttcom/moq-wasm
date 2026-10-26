@@ -47,8 +47,9 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    verify. `AUTH_MAX_TOKEN_TTL_SECONDS` (default 86400) and
    `AUTH_CLOCK_LEEWAY_SECONDS` (default 60) form the `ClaimPolicy` the relay
    applies to token times.
-   `RELAY_MOQT_VERSIONS` (`client_versions`, default draft-14 only) lists
-   the drafts the client transport accepts; see "Relaying across versions".
+   `RELAY_MOQT_VERSIONS` (`moqt_versions`, default draft-14 only) lists
+   the drafts both transports accept and the relay offers when it dials an
+   inner transport; see "Relaying across versions".
    `CacheConfig` (`RELAY_CACHE_TTL_SECS`, `RELAY_CACHE_EVICT_INTERVAL_SECS`),
    the disk cache settings and `MOQT_FETCH_FILL_TIMEOUT_SECS` reach the
    eviction job, the disk cache task and FETCH ingest through
@@ -56,10 +57,12 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 4. `RelayServer::new_with_config(...)` then:
    - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port, for the drafts in
-     `client_versions`.
-   - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint,
-     always `moqt::DEFAULT_VERSIONS`: other relays and the stats publisher
-     connect with the default.
+     `moqt_versions`.
+   - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint
+     for the same drafts. `InterRelayConnectionManager` and the stats
+     publisher offer them when they dial an inner endpoint, so two relays
+     that both enable draft-18 cascade in draft-18, and one that does not
+     is reached in draft-14.
    - `spawn_stats_publisher(relay_id, inner_port)` — see "Observability".
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
@@ -1076,9 +1079,11 @@ holds on each hop.
 - FETCH: a draft-14 FETCH response carries no preference, and an inferred
   datagram copy is served to a draft-18 FETCH as described in the cache
   section.
-- Cascading: the inner endpoint accepts draft-14 only, so a draft-18 track
-  cascaded to another relay loses its Track Properties and its mixed
-  forwarding preference on the inter-relay hop.
+- Cascading: the inner endpoint accepts the drafts of `RELAY_MOQT_VERSIONS`
+  and the dialing relay offers the same, so between two relays that enable
+  draft-18 a cascaded draft-18 track keeps its Track Properties and its
+  mixed forwarding preference. A hop to a relay on draft-14 only goes in
+  draft-14, which carries neither.
 
 ## Cascading relays (`modules/cascading`)
 

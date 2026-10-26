@@ -58,6 +58,7 @@ impl RelayRuntime {
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         route_registry: Arc<dyn RelayRouteRegistry>,
         relay_token: String,
+        versions: Vec<moqt::Version>,
         token_verifier: Arc<dyn TokenVerifier>,
         data_plane: DataPlaneConfig,
     ) -> (UnboundedSender<SessionEvent>, Self) {
@@ -70,6 +71,7 @@ impl RelayRuntime {
             repo.clone(),
             sender.clone(),
             relay_token,
+            versions,
         ));
         let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
             route_registry.clone(),
