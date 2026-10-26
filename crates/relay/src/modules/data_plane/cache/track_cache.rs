@@ -337,7 +337,7 @@ impl TrackCache {
             ledger
                 .known_ranges
                 .remove_locations(removed.iter().copied());
-            ledger.forget_runs_of_vanished_groups();
+            ledger.forget_runs_of_vanished_groups(&removed);
             if purge && let Some(disk) = &self.disk {
                 disk.purge();
             }
@@ -946,6 +946,29 @@ mod tests {
         drop(cache.open_subgroup(stream_key(0)));
         let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
         tokio::time::advance(Duration::from_secs(11)).await;
+        // Act
+        cache.evict(ttl);
+        let _open = cache.open_subgroup(stream_key(0));
+        // Assert
+        assert_eq!(
+            subgroup_opened_receiver
+                .try_recv()
+                .map(|run| run.generation),
+            Ok(0)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_forgets_the_runs_of_a_group_that_closes_after_its_objects_left() {
+        // Arrange: the open group's only object was evicted, then the group aborted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        drop(open);
+        drop(cache.open_subgroup(stream_key(0)));
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
         // Act
         cache.evict(ttl);
         let _open = cache.open_subgroup(stream_key(0));
