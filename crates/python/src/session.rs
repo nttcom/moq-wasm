@@ -75,12 +75,7 @@ async fn route_events(
                 watchers.notify(handler.track_namespace_tuple.clone(), true);
             }
             SessionEvent::PublishNamespaceDone(handler) => {
-                let namespace = handler
-                    .track_namespace
-                    .split('/')
-                    .map(str::to_string)
-                    .collect();
-                watchers.notify(namespace, false);
+                watchers.notify(handler.track_namespace_tuple, false);
             }
             SessionEvent::SubscribeNameSpace(handler) => {
                 if let Err(err) = handler.ok().await {

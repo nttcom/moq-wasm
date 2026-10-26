@@ -22,6 +22,7 @@ use crate::{
         domains::{
             connection::{Connection, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
+            namespace_tuple,
             session_context::{CarriedSubscription, SessionContext},
         },
         version::{Notification, OutgoingRequest},
@@ -141,7 +142,7 @@ impl Subscriber {
         authorization_tokens: Vec<AuthorizationToken>,
     ) -> Result<TrackStatusOk, RequestFailure> {
         let connection = self.session.connection();
-        let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
+        let vec_namespace = namespace_tuple(&track_namespace);
         let request_id = connection.control.next_request_id();
         let track_status = Subscribe {
             request_id,
@@ -205,7 +206,7 @@ impl Subscriber {
         };
         let ledger = self.session.object_ledger(&track_namespace, &track_name);
         let fetch_params = FetchParams::Standalone {
-            track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
+            track_namespace: namespace_tuple(&track_namespace),
             track_name,
             start_location,
             end_location,
@@ -578,10 +579,6 @@ impl Subscriber {
     }
 }
 
-fn namespace_tuple(namespace: &str) -> Vec<String> {
-    namespace.split('/').map(|s| s.to_string()).collect()
-}
-
 /// Sends the requests `interest` takes on `connection`'s draft and waits for
 /// all of them; when one fails, those accepted are withdrawn.
 pub(crate) async fn send_subscribe_namespace(
@@ -670,7 +667,7 @@ pub(crate) async fn send_subscribe(
     let request_id = connection.control.next_request_id();
     let subscribe = Subscribe {
         request_id,
-        track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
+        track_namespace: namespace_tuple(track_namespace),
         track_name: track_name.to_string(),
         subscriber_priority: option.subscriber_priority,
         group_order: option.group_order,

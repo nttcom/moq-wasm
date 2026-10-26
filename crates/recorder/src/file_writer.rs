@@ -60,7 +60,7 @@ impl RecordingFile {
             index: self.index,
         };
         self.index += 1;
-        self.path = numbered_path(&self.first_path, self.index);
+        self.path = suffixed_path(&self.first_path, &self.index.to_string());
         self.writer = open(&self.path).await?;
         Ok(closed)
     }
@@ -85,16 +85,16 @@ async fn open(path: &Path) -> Result<BufWriter<File>> {
     Ok(BufWriter::new(file))
 }
 
-fn numbered_path(first: &Path, index: u32) -> PathBuf {
-    let stem = first
+pub(crate) fn suffixed_path(path: &Path, suffix: &str) -> PathBuf {
+    let stem = path
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let name = match first.extension() {
-        Some(extension) => format!("{stem}-{index}.{}", extension.to_string_lossy()),
-        None => format!("{stem}-{index}"),
+    let name = match path.extension() {
+        Some(extension) => format!("{stem}-{suffix}.{}", extension.to_string_lossy()),
+        None => format!("{stem}-{suffix}"),
     };
-    first.with_file_name(name)
+    path.with_file_name(name)
 }
 
 #[cfg(test)]
@@ -108,10 +108,10 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            numbered_path(first, 2),
+            suffixed_path(first, "2"),
             Path::new("out/live-20261013T000000Z-2.mp4")
         );
-        assert_eq!(numbered_path(Path::new("live"), 3), Path::new("live-3"));
+        assert_eq!(suffixed_path(Path::new("live"), "3"), Path::new("live-3"));
     }
 
     #[tokio::test]
