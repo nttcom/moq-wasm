@@ -49,7 +49,11 @@ impl TrackStatus {
                 };
                 tracing::debug!(?content_exists, "answering TRACK_STATUS");
                 handler
-                    .ok(upstream_track.expires().unwrap_or(0), content_exists)
+                    .ok(
+                        upstream_track.expires().unwrap_or(0),
+                        content_exists,
+                        moqt::TrackProperties::default(),
+                    )
                     .await
             }
             None => {
@@ -87,6 +91,7 @@ mod tests {
         Ok {
             expires: u64,
             content_exists: ContentExists,
+            track_properties: moqt::TrackProperties,
         },
         Error(RequestErrorCode),
     }
@@ -128,10 +133,12 @@ mod tests {
             &self,
             expires: u64,
             content_exists: ContentExists,
+            track_properties: moqt::TrackProperties,
         ) -> Result<(), moqt::TransportSendError> {
             self.responses.lock().unwrap().push(Response::Ok {
                 expires,
                 content_exists,
+                track_properties,
             });
             Ok(())
         }
@@ -169,6 +176,7 @@ mod tests {
                 content_exists: ContentExists::True {
                     location: location(5, 0)
                 },
+                track_properties: moqt::TrackProperties::default(),
             }]
         );
     }
@@ -190,6 +198,7 @@ mod tests {
             vec![Response::Ok {
                 expires: 0,
                 content_exists: ContentExists::False,
+                track_properties: moqt::TrackProperties::default(),
             }]
         );
     }

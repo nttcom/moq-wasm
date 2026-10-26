@@ -1082,7 +1082,10 @@ impl MOQTClient {
             .borrow_mut()
             .answer_incoming_track_status(request_id)
             .map_err(anyhow_error)?;
-        handler.ok(0, content_exists).await.map_err(send_error)
+        handler
+            .ok(0, content_exists, moqt::TrackProperties::default())
+            .await
+            .map_err(send_error)
     }
 
     #[wasm_bindgen(js_name = sendTrackStatusError)]
