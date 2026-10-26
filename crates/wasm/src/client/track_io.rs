@@ -7,14 +7,11 @@ use moqt::{
 };
 use wasm_bindgen_futures::spawn_local;
 
-use super::{
-    ClientShared,
-    callbacks::{
-        emit_fetch_object, emit_fetch_stream_end, emit_object_datagram, emit_subgroup_header,
-        emit_subgroup_object,
-    },
+use super::{ClientShared, callbacks::emit};
+use crate::messages::{
+    FetchObjectMessage, FetchStreamEndMessage, ObjectDatagramMessage, ObjectDatagramStatusMessage,
+    SubgroupHeaderMessage, SubgroupObjectMessage,
 };
-use crate::messages::FetchStreamEndMessage;
 
 /// Forwards every object the peer sends on `subscription` to the JavaScript
 /// callbacks until the subscription ends.
@@ -40,7 +37,17 @@ pub(crate) async fn read_track(
         DataReceiver::Datagram(mut receiver) => {
             let track_alias = receiver.track_alias;
             while let Ok(object) = receiver.receive().await {
-                emit_object_datagram(&shared.callbacks, track_alias, object);
+                if object.payload.is_empty() {
+                    let message = ObjectDatagramStatusMessage::new(track_alias, object);
+                    emit(
+                        &shared.callbacks,
+                        |c| &c.object_datagram_status,
+                        &[message.into()],
+                    );
+                } else {
+                    let message = ObjectDatagramMessage::new(track_alias, object);
+                    emit(&shared.callbacks, |c| &c.object_datagram, &[message.into()]);
+                }
             }
         }
     }
@@ -51,10 +58,17 @@ async fn read_subgroup_stream(shared: Rc<ClientShared>, mut stream: StreamDataRe
     loop {
         match stream.receive().await {
             Ok(Some(Subgroup::Header(start))) => {
-                emit_subgroup_header(&shared.callbacks, track_alias, &start);
+                let message = SubgroupHeaderMessage::new(track_alias, &start);
+                emit(&shared.callbacks, |c| &c.subgroup_header, &[message.into()]);
             }
             Ok(Some(Subgroup::Object(object))) => {
-                emit_subgroup_object(&shared.callbacks, track_alias, object);
+                let group_id = object.location.group_id;
+                let args = [
+                    js_sys::BigInt::from(track_alias).into(),
+                    js_sys::BigInt::from(group_id).into(),
+                    SubgroupObjectMessage::new(object).into(),
+                ];
+                emit(&shared.callbacks, |c| &c.subgroup_object, &args);
             }
             Ok(None) | Err(_) => break,
         }
@@ -78,7 +92,8 @@ pub(crate) async fn read_fetch(
         Ok(mut receiver) => loop {
             match receiver.receive().await {
                 Ok(FetchData::Object(object)) => {
-                    emit_fetch_object(&shared.callbacks, request_id, &object);
+                    let message = FetchObjectMessage::new(request_id, &object);
+                    emit(&shared.callbacks, |c| &c.fetch_object, &[message.into()]);
                 }
                 // Only draft-18 has unknown ranges, and the browser offers
                 // draft-14 alone.
@@ -90,5 +105,5 @@ pub(crate) async fn read_fetch(
         Err(_) => FetchStreamEndMessage::reset(request_id, 0),
     };
     shared.fetch_requests.borrow_mut().remove(&request_id);
-    emit_fetch_stream_end(&shared.callbacks, end);
+    emit(&shared.callbacks, |c| &c.fetch_stream_end, &[end.into()]);
 }

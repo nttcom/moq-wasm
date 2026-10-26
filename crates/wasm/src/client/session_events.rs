@@ -32,13 +32,8 @@ pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Ses
         match event {
             SessionEvent::PublishNamespace(handler) => on_publish_namespace(&shared, handler),
             SessionEvent::PublishNamespaceDone(handler) => {
-                let namespace = handler
-                    .track_namespace()
-                    .split('/')
-                    .map(str::to_string)
-                    .collect();
                 let message = PublishNamespaceDoneMessage {
-                    track_namespace: namespace,
+                    track_namespace: handler.track_namespace_tuple,
                 };
                 emit(
                     &shared.callbacks,

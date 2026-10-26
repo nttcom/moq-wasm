@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
 use moqt::{Session, subscribe::FilterType};
-use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
+use msf::{Catalog, KnownTrackRole, Track};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -123,17 +123,14 @@ impl BroadcastReader {
 /// `samplerate` and `channelConfig`, is skipped; fails when neither role has a
 /// track.
 pub fn select_tracks(catalog: &Catalog) -> Result<SelectedTracks> {
-    let loc_tracks = || {
-        catalog
-            .tracks
-            .iter()
-            .flatten()
-            .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
-    };
-    let video = loc_tracks()
-        .find(|track| has_role(track, KnownTrackRole::Video))
+    let video = catalog
+        .loc_tracks()
+        .find(|track| track.has_role(KnownTrackRole::Video))
         .map(|track| track.name.clone());
-    let audio = match loc_tracks().find(|track| has_role(track, KnownTrackRole::Audio)) {
+    let audio = match catalog
+        .loc_tracks()
+        .find(|track| track.has_role(KnownTrackRole::Audio))
+    {
         Some(track) => match audio_config(catalog, track) {
             Ok(config) => Some((track.name.clone(), config)),
             Err(error) => {
@@ -147,10 +144,6 @@ pub fn select_tracks(catalog: &Catalog) -> Result<SelectedTracks> {
         bail!("catalog lists no LOC video or audio track");
     }
     Ok(SelectedTracks { video, audio })
-}
-
-fn has_role(track: &Track, role: KnownTrackRole) -> bool {
-    track.role == Some(TrackRole::Known(role))
 }
 
 /// A-law and Opus tracks carry no initialization data: their catalog entry's
@@ -207,14 +200,9 @@ fn aac_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {
         .as_ref()
         .context("audio track has no initRef")?;
     let init_data = catalog
-        .init_data_list
-        .iter()
-        .flatten()
-        .find(|init_data| &init_data.id == init_ref)
+        .init_data(track)
         .with_context(|| format!("initDataList has no entry {init_ref}"))?;
-    let bytes = BASE64
-        .decode(&init_data.data)
-        .context("decode initData base64")?;
+    let bytes = BASE64.decode(init_data).context("decode initData base64")?;
     AudioSpecificConfig::parse(&bytes)
 }
 
@@ -235,6 +223,7 @@ mod tests {
 
     use super::*;
     use crate::{relay_session::RelaySession, test_support::FakePublisher};
+    use msf::KnownPackaging;
 
     const NAMESPACE: &str = "anon/room/alice";
     const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");

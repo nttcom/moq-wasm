@@ -1,6 +1,6 @@
 use crate::modules::transport::{read_error::ReadError, transport_connection::BoxedReceiveStream};
+use futures::StreamExt;
 use thiserror::Error;
-use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, FramedRead};
 
 use crate::modules::moqt::data_plane::codec::{
