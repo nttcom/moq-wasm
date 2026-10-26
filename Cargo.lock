@@ -2125,10 +2125,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "telemetry",
  "time",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
