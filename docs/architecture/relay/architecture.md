@@ -452,12 +452,15 @@ overlaps another subscription of the session with the same interest, the
 moving one not counted (§10.2.14). Otherwise the new prefix is registered as
 a new subscription would be, the update answered, and the old prefix released
 as an UNSUBSCRIBE_NAMESPACE would release it; then what the new prefix
-matches is offered as above. Tracks the session already receives are not
-PUBLISHed again (an update has no effect on existing subscriptions), and moqt
-sends a namespace once per subscription. An update to the prefix the
+matches and the old prefix did not is offered as above: what the old prefix
+covered was offered when the subscription got it, so no track is PUBLISHed
+and no namespace announced twice (an update has no effect on existing
+subscriptions), whether or not the subscriber accepted the PUBLISH. An update to the prefix the
 subscription already has is accepted and changes nothing. A refused update
 ends the subscription, which moqt reports as UNSUBSCRIBE_NAMESPACE for the old
-prefix.
+prefix. So does one moqt answered TIMEOUT before the relay accepted it: `ok`
+reports `PrefixUpdateAnswer::Failed`, the new prefix is released again and
+nothing is offered.
 
 ### SUBSCRIBE_UPDATE sequence
 Forward State, Start Location and End Group are applied; Subscriber Priority

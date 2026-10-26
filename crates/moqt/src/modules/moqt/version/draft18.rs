@@ -103,6 +103,15 @@ impl RequestStreamKind {
             _ => None,
         }
     }
+
+    /// A namespace subscription moved to `prefix` (§10.9.2).
+    pub(crate) fn with_namespace_prefix(&self, prefix: Vec<String>) -> Self {
+        match self {
+            Self::SubscribeNamespace(_) => Self::SubscribeNamespace(prefix),
+            Self::SubscribeTracks(_) => Self::SubscribeTracks(prefix),
+            _ => unreachable!("only namespace subscriptions take a TRACK_NAMESPACE_PREFIX"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -332,13 +341,7 @@ impl ControlChannel {
         prefix: Vec<String>,
         sender: &StreamSender,
     ) -> RequestStreamKind {
-        let moved = match kind {
-            RequestStreamKind::SubscribeNamespace(_) => {
-                RequestStreamKind::SubscribeNamespace(prefix)
-            }
-            RequestStreamKind::SubscribeTracks(_) => RequestStreamKind::SubscribeTracks(prefix),
-            _ => unreachable!("only namespace subscriptions take a TRACK_NAMESPACE_PREFIX"),
-        };
+        let moved = kind.with_namespace_prefix(prefix);
         let _namespace_writes = self.namespace_writes.lock().await;
         {
             let mut requests = self.requests();
@@ -985,7 +988,7 @@ mod tests {
             },
             transport::transport_send_stream::TransportSendError,
         },
-        namespace::{NamespaceInterest, SubscribeNamespaceHandler},
+        namespace::{NamespaceInterest, PrefixUpdateAnswer, SubscribeNamespaceHandler},
         object::{
             ContentExists, DataReceiver, ForwardingPreference, KeyValuePair, Location, Object,
             ObjectStatus, Subgroup, VariantType,
@@ -1695,6 +1698,39 @@ mod tests {
         );
     }
 
+    /// Notifies `seen` when an event with `message` is logged on the test's
+    /// thread, where a `#[tokio::test]` runs every task the session spawns.
+    struct LoggedMessage {
+        message: &'static str,
+        seen: Arc<tokio::sync::Notify>,
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LoggedMessage {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Message(Option<String>);
+            impl tracing::field::Visit for Message {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = Some(format!("{value:?}"));
+                    }
+                }
+            }
+            let mut message = Message(None);
+            event.record(&mut message);
+            if message.0.as_deref() == Some(self.message) {
+                self.seen.notify_one();
+            }
+        }
+    }
+
     #[tokio::test]
     async fn a_stop_sending_after_the_requester_fin_on_an_ended_fetch_ends_its_reading() {
         // Arrange: taken out of the registry, as a FETCH that has ended is
@@ -1709,9 +1745,21 @@ mod tests {
             .unwrap();
         let client_request_stream = outgoing_stream(&client, receiver.request_id);
 
-        // Act: FIN, then STOP_SENDING on the publisher's half
+        let fin_read = Arc::new(tokio::sync::Notify::new());
+        let _logging =
+            tracing::subscriber::set_default(tracing_subscriber::layer::SubscriberExt::with(
+                tracing_subscriber::registry(),
+                LoggedMessage {
+                    message: "FETCH requester finished its request stream",
+                    seen: fin_read.clone(),
+                },
+            ));
+
+        // Act: FIN, then STOP_SENDING on the publisher's half once it read the FIN
         client_request_stream.sender.close().await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, fin_read.notified())
+            .await
+            .expect("the publisher should read the FIN");
         client_request_stream.reader_stop.notify_one();
         let released = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             while Arc::strong_count(&request_stream.sender) > 1 {
@@ -3519,7 +3567,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refused_namespace_prefix_update_ends_the_subscription() {
+    async fn a_refused_prefix_update_of_a_subscribe_tracks_closes_its_stream() {
         // Arrange
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-namespace-update-refused", "moqt").await;
@@ -3546,6 +3594,164 @@ mod tests {
         };
         assert_eq!(unsubscribed.track_namespace_prefix(), "live");
         assert_eq!(unsubscribed.interest, NamespaceInterest::Tracks);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_namespace_prefix_update_handler_is_answered_not_supported() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-dropped", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+
+        // Act
+        drop(handler);
+        let answer = receiver.receive().await.unwrap();
+        let end = receiver.receive().await.unwrap();
+
+        // Assert: §10.6 NOT_SUPPORTED, and §10.9.1 closes the stream
+        let Some(messages::Message::RequestError(error)) = answer else {
+            panic!("expected REQUEST_ERROR, got {answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::NotSupported);
+        assert!(end.is_none(), "{end:?}");
+    }
+
+    #[tokio::test]
+    async fn a_namespace_subscription_update_without_a_prefix_is_accepted() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-no-prefix", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let request_id = client
+            .publisher()
+            .session
+            .connection()
+            .control
+            .next_request_id();
+
+        // Act
+        sender.send(&request_update(request_id, &[])).await.unwrap();
+        let answer = receiver.receive().await.unwrap();
+
+        // Assert: §10.9, a parameter the update leaves out keeps its value
+        assert!(
+            matches!(answer, Some(messages::Message::RequestOk(_))),
+            "{answer:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_namespace_done_follows_for_a_namespace_the_new_prefix_leaves_out() {
+        // Arrange: "live/bob" was announced under "live"
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-done", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        server
+            .publisher()
+            .publish_namespace("live/bob".into())
+            .await
+            .unwrap();
+        receiver.receive().await.unwrap();
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        handler.ok().await;
+        receiver.receive().await.unwrap();
+
+        // Act
+        server
+            .publisher()
+            .publish_namespace_done("live/bob".into())
+            .await
+            .unwrap();
+        server
+            .publisher()
+            .publish_namespace("live/room/alice".into())
+            .await
+            .unwrap();
+        let next = receiver.receive().await.unwrap();
+
+        // Assert: §10.9.2, a suffix of the new prefix cannot name "live/bob"
+        assert_eq!(
+            next,
+            Some(messages::Message::Namespace(vec!["alice".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_namespace_prefix_update_is_read_while_the_first_is_unanswered() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-read-on", "moqt").await;
+        let (sender, _receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let _first = requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+
+        // Act
+        let second = requested_namespace_update(&client, &server, &sender, &["live", "hall"]).await;
+
+        // Assert: the second moves on from the prefix the first asks for
+        assert_eq!(second.track_namespace_prefix(), "live/room");
+        assert_eq!(second.new_track_namespace_prefix(), "live/hall");
+    }
+
+    #[tokio::test]
+    async fn namespace_prefix_update_answers_go_out_in_the_order_the_updates_arrived() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-order", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let first = requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        let second = requested_namespace_update(&client, &server, &sender, &["live", "hall"]).await;
+
+        // Act: the second is answered first
+        let mut refused =
+            Box::pin(second.error(RequestErrorCode::NamespacePrefixOverlap, String::new()));
+        assert!(futures::poll!(&mut refused).is_pending());
+        first.ok().await;
+        refused.await;
+        let first_answer = receiver.receive().await.unwrap();
+        let second_answer = receiver.receive().await.unwrap();
+
+        // Assert: §10.9, one answer per update in the order they arrived
+        assert!(
+            matches!(first_answer, Some(messages::Message::RequestOk(_))),
+            "{first_answer:?}"
+        );
+        let Some(messages::Message::RequestError(error)) = second_answer else {
+            panic!("expected REQUEST_ERROR, got {second_answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::NamespacePrefixOverlap);
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_namespace_prefix_update_gets_request_error_timeout() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-timeout", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        tokio::time::pause();
+
+        // Act
+        let answer = receiver.receive().await.unwrap();
+        let end = receiver.receive().await.unwrap();
+        tokio::time::resume();
+        let event = next_event(&server).await;
+        let late = handler.ok().await;
+
+        // Assert: §10.6 TIMEOUT; §10.9.1 the failed update closes the stream
+        let Some(messages::Message::RequestError(error)) = answer else {
+            panic!("expected REQUEST_ERROR, got {answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::Timeout);
+        assert!(end.is_none(), "{end:?}");
+        let SessionEvent::UnsubscribeNamespace(unsubscribed) = event else {
+            panic!("expected UnsubscribeNamespace, got {event:?}");
+        };
+        assert_eq!(unsubscribed.track_namespace_prefix(), "live");
+        assert_eq!(late, PrefixUpdateAnswer::Failed);
     }
 
     #[tokio::test]
