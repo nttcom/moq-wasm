@@ -81,7 +81,11 @@ browser); `TransportSendStream::poll_stopped` yields the peer's STOP_SENDING
 code (quinn `SendStream::stopped`, web-transport-quinn `poll_closed`, the
 rejection of `writer.closed` in the browser), keeping its wait inside the
 stream between polls so that `StreamSender::stopped` can wait without
-holding the stream.
+holding the stream. `try_open_bi` opens a bidirectional stream only when the
+peer's stream limit allows one now: QUIC polls quinn's open once, which
+takes no stream ID while pending; WebTransport keeps a pending open for the
+next call, since past the stream ID it still writes the stream header; the
+browser's API cannot tell, so it waits like `open_bi`.
 
 Four zero-sized markers implement it; the first three are native-only:
 
@@ -260,8 +264,14 @@ call through the adapter; a draft never gets a task of its own (see
       `NamespaceInterest::Tracks` and its FORWARD as `forward`;
       SUBSCRIBE_NAMESPACE raises it with `Namespaces`. A SUBSCRIBE_TRACKS
       gets no NAMESPACE: a `publish_namespace` that matches only one goes as a
-      PUBLISH_NAMESPACE request. PUBLISH_BLOCKED on our SUBSCRIBE_TRACKS is
-      logged and the stream read on (§6.1).
+      PUBLISH_NAMESPACE request. PUBLISH_BLOCKED on our SUBSCRIBE_TRACKS
+      raises `PublishBlocked` with that request's prefix and the Full Track
+      Name, and the stream is read on (§6.1); draft-14 never raises it.
+      Sending, a PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers (the
+      longest prefix) opens its stream with `try_open_bi`; when the limit
+      allows none, PUBLISH_BLOCKED goes on that SUBSCRIBE_TRACKS stream and
+      `publish` fails with `RequestFailure::PublishBlocked`. Other requests
+      wait for a stream. draft-14 sends PUBLISH on the control stream.
     - `NamespaceInterest` says what `Subscriber::subscribe_namespace` asks
       for. `version::ControlChannel::namespace_requests` splits it per draft:
       draft-18 sends SUBSCRIBE_NAMESPACE for namespaces and SUBSCRIBE_TRACKS

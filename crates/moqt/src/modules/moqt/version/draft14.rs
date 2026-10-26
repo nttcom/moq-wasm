@@ -536,12 +536,14 @@ mod tests {
                 domains::connection::IncomingObjectNotification,
             },
             test_support::{
-                HANDSHAKE_TIMEOUT, notify_datagram, register_and_take_data_receiver,
-                spawn_connected_dual_sessions,
+                HANDSHAKE_TIMEOUT, accept_publish, notify_datagram,
+                register_and_take_data_receiver, spawn_connected_dual_sessions,
+                use_up_bidi_streams,
             },
         },
+        namespace::NamespaceInterest,
         object::{GroupOrder, Location},
-        publish::PublishDoneCode,
+        publish::{PublishDoneCode, PublishOption},
     };
 
     const REQUEST_ID: u64 = 1;
@@ -726,5 +728,39 @@ mod tests {
             matches!(event, SessionEvent::ProtocolViolation()),
             "{event:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_publish_needs_no_stream_so_it_is_never_blocked() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("draft14-publish-not-blocked").await;
+        let subscriber = client.subscriber();
+        let (subscribed, ()) = tokio::join!(
+            subscriber.subscribe_namespace("live".into(), NamespaceInterest::Tracks),
+            async {
+                let SessionEvent::SubscribeNameSpace(handler) =
+                    server.receive_event().await.unwrap()
+                else {
+                    panic!("expected SUBSCRIBE_NAMESPACE");
+                };
+                handler.ok().await.unwrap();
+            }
+        );
+        subscribed.unwrap();
+        let _streams = use_up_bidi_streams(&server).await;
+
+        // Act
+        let publisher = server.publisher();
+        let (published, _accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            tokio::join!(
+                publisher.publish("live/room".into(), "video".into(), PublishOption::default()),
+                accept_publish(&client)
+            )
+        })
+        .await
+        .expect("the PUBLISH reaches the subscriber");
+
+        // Assert: draft-14 §9.13 sends PUBLISH on the control stream and has no PUBLISH_BLOCKED
+        assert!(published.is_ok(), "{published:?}");
     }
 }

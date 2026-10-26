@@ -37,7 +37,10 @@ use crate::{
             domains::{connection::Connection, session_context::SessionContext},
             version::{self, Notification, OutgoingRequest, OutgoingResponse},
         },
-        transport::transport_send_stream::TransportSendError,
+        transport::{
+            transport_connection::{BoxedReceiveStream, BoxedSendStream},
+            transport_send_stream::TransportSendError,
+        },
     },
 };
 
@@ -462,6 +465,71 @@ impl ControlChannel {
         map.remove(&request_id)
     }
 
+    /// The stream of a PUBLISH. §6.1: one for a track the peer's
+    /// SUBSCRIBE_TRACKS covers does not wait for the peer's stream limit;
+    /// when it allows none, PUBLISH_BLOCKED goes on that SUBSCRIBE_TRACKS
+    /// instead, its suffix relative to the prefix the peer last heard of
+    /// (§10.9.2).
+    async fn open_publish_stream(
+        &self,
+        connection: &Connection,
+        track_namespace: &[String],
+        track_name: &str,
+    ) -> Result<(BoxedSendStream, BoxedReceiveStream), RequestFailure> {
+        let namespace_writes = self.namespace_writes.lock().await;
+        let Some(blocked) = self.publish_blocked_for(track_namespace, track_name) else {
+            drop(namespace_writes);
+            return connection
+                .transport
+                .open_bi()
+                .await
+                .map_err(|_| RequestFailure::SessionClosed);
+        };
+        let (subscribe_tracks, publish_blocked) = blocked.map_err(|error| {
+            tracing::error!(%error, "PUBLISH_BLOCKED could not be encoded");
+            RequestFailure::ProtocolViolation("request could not be encoded")
+        })?;
+        match connection
+            .transport
+            .try_open_bi()
+            .await
+            .map_err(|_| RequestFailure::SessionClosed)?
+        {
+            Some(streams) => Ok(streams),
+            None => {
+                tracing::info!("no stream for a PUBLISH; sending PUBLISH_BLOCKED");
+                subscribe_tracks.send(&publish_blocked).await?;
+                Err(RequestFailure::PublishBlocked)
+            }
+        }
+    }
+
+    /// The PUBLISH_BLOCKED for a track the peer's SUBSCRIBE_TRACKS covers,
+    /// with the stream of that SUBSCRIBE_TRACKS.
+    fn publish_blocked_for(
+        &self,
+        track_namespace: &[String],
+        track_name: &str,
+    ) -> Option<anyhow::Result<(Arc<StreamSender>, BytesMut)>> {
+        let (sender, prefix_len) = self
+            .requests()
+            .incoming
+            .values()
+            .filter_map(|stream| match &stream.kind {
+                RequestStreamKind::SubscribeTracks(prefix)
+                    if track_namespace.starts_with(prefix) =>
+                {
+                    Some((stream.sender.clone(), prefix.len()))
+                }
+                _ => None,
+            })
+            .max_by_key(|(_, prefix_len)| *prefix_len)?;
+        Some(
+            messages::encode_publish_blocked(&track_namespace[prefix_len..], track_name)
+                .map(|message| (sender, message)),
+        )
+    }
+
     // On wasm32 the browser transport is !Send, but the context is shared with
     // the native build, where the tasks run on a multi-threaded executor.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
@@ -484,6 +552,17 @@ impl ControlChannel {
         {
             return Ok(accepted);
         }
+        let publish_stream = match &request {
+            OutgoingRequest::Publish(publish) => Some(
+                self.open_publish_stream(
+                    connection,
+                    &publish.track_namespace_tuple,
+                    &publish.track_name,
+                )
+                .await?,
+            ),
+            _ => None,
+        };
         let (request_id, kind, message, group_order) = match request {
             OutgoingRequest::Subscribe(subscribe) => (
                 subscribe.request_id,
@@ -537,11 +616,14 @@ impl ControlChannel {
                 None,
             ),
         };
-        let (send_stream, receive_stream) = connection
-            .transport
-            .open_bi()
-            .await
-            .map_err(|_| RequestFailure::SessionClosed)?;
+        let (send_stream, receive_stream) = match publish_stream {
+            Some(streams) => streams,
+            None => connection
+                .transport
+                .open_bi()
+                .await
+                .map_err(|_| RequestFailure::SessionClosed)?,
+        };
         let sender = Arc::new(StreamSender::new(send_stream));
         sender.send(&message).await?;
         let stream = RequestStream::new(kind, sender);
@@ -899,7 +981,7 @@ mod tests {
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, data_receiver,
                 datagram_object, mandatory_track_properties, next_datagram, next_subgroup,
                 notify_datagram, published_track_between, read_fetch_objects,
-                spawn_connected_draft18_sessions, subscribed_track_reader,
+                spawn_connected_draft18_sessions, subscribed_track_reader, use_up_bidi_streams,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -2133,15 +2215,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_blocked_on_a_subscribe_tracks_stream_keeps_the_session() {
+    async fn namespaces_and_tracks_subscribed_apart_are_both_withdrawn_by_unsubscribe_namespace() {
         // Arrange
         let (client, server) =
-            spawn_connected_draft18_sessions("draft18-publish-blocked", "moqt").await;
+            spawn_connected_draft18_sessions("draft18-namespaces-then-tracks", "moqt").await;
+        let mut subscribed = Vec::new();
+        for interest in [NamespaceInterest::Namespaces, NamespaceInterest::Tracks] {
+            let (request, handlers) = namespace_requests(&client, &server, interest, 1).await;
+            handlers[0].ok().await.unwrap();
+            request.await.unwrap().unwrap();
+            subscribed.push(handlers[0].interest);
+        }
+
+        // Act
+        client
+            .subscriber()
+            .unsubscribe_namespace("live".into())
+            .await
+            .unwrap();
+        let mut withdrawn = Vec::new();
+        for _ in 0..2 {
+            let event = next_event(&server).await;
+            let SessionEvent::UnsubscribeNamespace(handler) = event else {
+                panic!("expected a namespace subscription withdrawn, got {event:?}");
+            };
+            withdrawn.push(handler.interest);
+        }
+
+        // Assert: §6.1, each kind is its own request on the same prefix
+        let both = interests(&[NamespaceInterest::Namespaces, NamespaceInterest::Tracks]);
+        assert_eq!(interests(&subscribed), both);
+        assert_eq!(interests(&withdrawn), both);
+    }
+
+    /// `server`'s response stream of the SUBSCRIBE_TRACKS for "live" that
+    /// `client` sent and `server` accepted.
+    async fn accepted_subscribe_tracks(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> super::RequestStream {
         let (request, handlers) =
-            namespace_requests(&client, &server, NamespaceInterest::Tracks, 1).await;
+            namespace_requests(client, server, NamespaceInterest::Tracks, 1).await;
         handlers[0].ok().await.unwrap();
         request.await.unwrap().unwrap();
-        let stream = ControlChannel::of(&server.publisher().session.connection())
+        ControlChannel::of(&server.publisher().session.connection())
             .requests()
             .incoming
             .values()
@@ -2149,24 +2266,95 @@ mod tests {
                 stream.kind == super::RequestStreamKind::SubscribeTracks(vec!["live".into()])
             })
             .cloned()
-            .unwrap();
-        let mut payload = BytesMut::new();
-        codec::put_track_namespace(&mut payload, &["room".to_string()]);
-        codec::put_vi64(&mut payload, 5);
-        payload.extend_from_slice(b"video");
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn publish_blocked_reaches_the_subscriber_with_the_full_track_name() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked-event", "moqt").await;
+        let stream = accepted_subscribe_tracks(&client, &server).await;
 
         // Act
         stream
             .sender
-            .send(&messages::frame(messages::PUBLISH_BLOCKED, &payload).unwrap())
+            .send(&messages::encode_publish_blocked(&["room".to_string()], "video").unwrap())
             .await
             .unwrap();
+        let event = next_event(&client).await;
+
+        // Assert: §10.20, the suffix follows the SUBSCRIBE_TRACKS prefix
+        let SessionEvent::PublishBlocked(blocked) = event else {
+            panic!("expected PUBLISH_BLOCKED, got {event:?}");
+        };
+        assert_eq!(blocked.track_namespace_prefix, "live");
+        assert_eq!(blocked.track_namespace, "live/room");
+        assert_eq!(blocked.track_name, "video");
+    }
+
+    #[tokio::test]
+    async fn publish_blocked_on_a_subscribe_tracks_stream_keeps_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked", "moqt").await;
+        let stream = accepted_subscribe_tracks(&client, &server).await;
+
+        // Act
+        stream
+            .sender
+            .send(&messages::encode_publish_blocked(&["room".to_string()], "video").unwrap())
+            .await
+            .unwrap();
+        let _blocked = next_event(&client).await;
         let (request, handlers) =
             namespace_requests(&client, &server, NamespaceInterest::Namespaces, 1).await;
         handlers[0].ok().await.unwrap();
 
         // Assert: the session survives the PUBLISH_BLOCKED (§6.1), so a later request is answered
         assert!(request.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_publish_the_peer_has_no_stream_for_is_blocked_on_its_subscribe_tracks() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-publish-blocked-send-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (request, handlers) =
+                namespace_requests(&client, &server, NamespaceInterest::Tracks, 1).await;
+            handlers[0].ok().await.unwrap();
+            request.await.unwrap().unwrap();
+            let _streams = use_up_bidi_streams(&server).await;
+
+            // Act
+            let published = tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                server.publisher().publish(
+                    "live/room".into(),
+                    "video".into(),
+                    PublishOption::default(),
+                ),
+            )
+            .await
+            .expect("a PUBLISH without a stream must not wait for one");
+            let event = next_event(&client).await;
+
+            // Assert: §6.1, PUBLISH_BLOCKED on the SUBSCRIBE_TRACKS stream instead of the PUBLISH
+            assert!(
+                matches!(published, Err(RequestFailure::PublishBlocked)),
+                "{scheme}: {published:?}"
+            );
+            let SessionEvent::PublishBlocked(blocked) = event else {
+                panic!("{scheme}: expected PUBLISH_BLOCKED, got {event:?}");
+            };
+            assert_eq!(blocked.track_namespace_prefix, "live", "{scheme}");
+            assert_eq!(blocked.track_namespace, "live/room", "{scheme}");
+            assert_eq!(blocked.track_name, "video", "{scheme}");
+        }
     }
 
     #[tokio::test]
@@ -3288,6 +3476,45 @@ mod tests {
         assert_eq!(
             announced,
             Some(messages::Message::Namespace(vec!["alice".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publish_blocked_after_a_prefix_update_names_the_track_under_the_new_prefix() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked-update", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        handler.ok().await;
+        receiver.receive().await.unwrap();
+        let _streams = use_up_bidi_streams(&server).await;
+
+        // Act
+        let published = server
+            .publisher()
+            .publish(
+                "live/room/alice".into(),
+                "video".into(),
+                PublishOption::default(),
+            )
+            .await;
+        let blocked = receiver.receive().await.unwrap();
+
+        // Assert: §10.9.2 / §10.20, the suffix follows the prefix the subscriber last heard of
+        assert!(
+            matches!(published, Err(RequestFailure::PublishBlocked)),
+            "{published:?}"
+        );
+        assert_eq!(
+            blocked,
+            Some(messages::Message::PublishBlocked(
+                messages::PublishBlockedMessage {
+                    track_namespace_suffix: vec!["alice".to_string()],
+                    track_name: "video".to_string(),
+                }
+            ))
         );
     }
 
