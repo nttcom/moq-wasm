@@ -237,8 +237,11 @@ impl SubgroupReader {
     }
 
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
-        let field = match self.stream.receive().await? {
-            Some(UniStreamData::Subgroup(SubgroupFrame::Object(field))) => field,
+        let (field, receive_time) = match self.stream.receive().await? {
+            Some(UniStreamData::Subgroup(SubgroupFrame::Object {
+                field,
+                receive_time,
+            })) => (field, receive_time),
             // The decoder yields the header once, and accept_uni_stream took it.
             Some(UniStreamData::Subgroup(SubgroupFrame::Header(_))) => {
                 unreachable!("a subgroup stream has one header")
@@ -260,6 +263,14 @@ impl SubgroupReader {
                 (status_from_code(code, object_id)?, Bytes::new())
             }
         };
+        tracing::debug!(
+            track_alias = self.header.track_alias,
+            group_id = self.header.group_id,
+            object_id,
+            payload_bytes = payload.len(),
+            receive_us = receive_time.as_micros() as u64,
+            "subgroup object received"
+        );
         Ok(Some(Object {
             location: Location {
                 group_id: self.header.group_id,
