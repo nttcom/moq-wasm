@@ -129,7 +129,7 @@ impl PublishHandler {
             );
             return;
         }
-        tracing::info!(
+        tracing::debug!(
             track_alias = self.track_alias,
             "publish handler registered incoming object receiver"
         );

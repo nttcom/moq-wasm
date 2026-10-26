@@ -93,7 +93,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     None,
                 )
             };
-            tracing::info!("Session established");
+            tracing::info!("session established");
             Ok(session)
         };
         Ok(Connecting {

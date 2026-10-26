@@ -260,14 +260,27 @@ pub(crate) async fn send_publish(
         .await?;
     match response {
         ResponseMessage::PublishOk(message) if message.request_id == request_id => {
-            tracing::info!("Publish ok");
+            tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                track_alias,
+                "PUBLISH_OK received"
+            );
             Ok((message, track_alias))
         }
         ResponseMessage::PublishOk(_) => Err(RequestFailure::ProtocolViolation(
             "response for another request ID",
         )),
         ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
-            tracing::info!("Publish error");
+            tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "PUBLISH_ERROR received"
+            );
             Err(RequestFailure::Rejected {
                 request_id,
                 code: error_code,

@@ -23,7 +23,7 @@ impl WtConnection {
 impl TransportConnection for WtConnection {
     async fn closed(&self) -> TransportClose {
         let error = self.session.closed().await;
-        tracing::info!("WebTransport connection closed: {:?}", error);
+        tracing::info!(reason = %error, "WebTransport connection closed");
         match error {
             web_transport_quinn::SessionError::WebTransportError(
                 web_transport_quinn::WebTransportError::Closed(code, reason),

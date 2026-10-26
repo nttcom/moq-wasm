@@ -213,7 +213,7 @@ impl Origin {
         });
         state.subscriptions.insert(request, key);
         tracing::info!(
-            namespace,
+            track_namespace = namespace,
             track_name,
             track_alias = subscription.track_alias(),
             "track published"
@@ -373,7 +373,7 @@ impl Origin {
         });
         state.subscriptions.insert(request, key);
         tracing::info!(
-            namespace = %handler.track_namespace,
+            track_namespace = %handler.track_namespace,
             track_name = %handler.track_name,
             track_alias,
             "SUBSCRIBE accepted"
@@ -458,7 +458,7 @@ impl Origin {
             }) => {
                 tracing::info!(
                     request_id = handler.request_id,
-                    namespace = %key.0,
+                    track_namespace = %key.0,
                     track_name = %key.1,
                     objects = objects.len(),
                     "FETCH served from the origin cache"
@@ -547,7 +547,7 @@ impl Origin {
                 Ok(false) => {}
                 Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
                     tracing::info!(
-                        namespace = %key.0,
+                        track_namespace = %key.0,
                         track_name = %key.1,
                         "subscriber stopped a subgroup; the track resumes at the next group"
                     );

@@ -24,10 +24,10 @@ impl FetchNotifier {
             .remove(&request_id);
         if let Some(sender) = sender {
             if let Err(e) = sender.send(fetch_data_receiver) {
-                tracing::warn!("Failed to notify fetch stream: {}", e);
+                tracing::warn!(error = %e, "failed to notify a fetch stream");
             }
         } else {
-            tracing::error!("No sender found for request_id: {}", request_id);
+            tracing::error!(request_id, "no fetch stream sender for the request");
         }
     }
 }

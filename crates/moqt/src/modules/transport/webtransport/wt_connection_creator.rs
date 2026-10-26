@@ -112,7 +112,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
                 .with_certificate(certs, key)?)
         })?;
 
-        tracing::info!("Server ready! for WebTransport port: {}", port_num);
+        tracing::info!(port = port_num, "WebTransport server ready");
 
         Ok(WtConnectionCreator {
             quic_endpoint: quinn::Endpoint::clone(&server),
