@@ -309,7 +309,9 @@ call through the adapter; a draft never gets a task of its own (see
   yes).
 - A FETCH parameter only one draft defines reaches the application as an
   `Option`: `Fetch::fill_timeout` / `FetchHandler::fill_timeout()` is
-  draft-18's FILL_TIMEOUT (§10.2.5), always `None` on draft-14.
+  draft-18's FILL_TIMEOUT (§10.2.5), always `None` on draft-14. A sender
+  sets it with `FetchOption::fill_timeout`, which a draft-14 session does
+  not encode.
 - Error codes cross the seam as the typed enums of `error_codes.rs` and
   `constants.rs`. `draft14::error_codes` and `draft18::error_codes` hold each
   draft's values: the drafts use them to encode and decode messages, and

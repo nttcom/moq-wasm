@@ -473,7 +473,7 @@ impl Subscribe {
             let _ = self
                 .response_error(
                     handler,
-                    RequestErrorCode::TrackDoesNotExist,
+                    RequestErrorCode::MalformedTrack,
                     "malformed track".to_string(),
                 )
                 .await;
@@ -1054,6 +1054,7 @@ mod tests {
             table,
             egress_sender,
             handler,
+            &Arc::new(TrackCacheStore::new()),
         )
         .await
     }
@@ -1063,6 +1064,7 @@ mod tests {
         table: &InMemoryLocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &MockSubscribeHandler,
+        cache_store: &Arc<TrackCacheStore>,
     ) -> Acceptance {
         Subscribe
             .accept_downstream_subscription(
@@ -1073,10 +1075,43 @@ mod tests {
                 None,
                 table,
                 egress_sender,
-                &Arc::new(TrackCacheStore::new()),
+                cache_store,
                 handler,
             )
             .await
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_to_a_latched_track_is_answered_malformed_track() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+        );
+        let cache_store = Arc::new(TrackCacheStore::new());
+        cache_store.get_or_create(&track_key()).mark_malformed();
+        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
+        let handler = MockSubscribeHandler::default();
+
+        // Act
+        let acceptance = accept_downstream_of(
+            upstream_track(UpstreamSubscriptionOrigin::Subscribe),
+            &table,
+            &egress_sender,
+            &handler,
+            &cache_store,
+        )
+        .await;
+
+        // Assert: draft-18 §2.4.2, the track is malformed, not missing
+        assert!(matches!(acceptance, Acceptance::Answered));
+        assert_eq!(
+            *handler.subscribe_errors.lock().unwrap(),
+            vec![RequestErrorCode::MalformedTrack]
+        );
+        assert!(egress_receiver.try_recv().is_err());
     }
 
     fn assert_unanswered(handler: &MockSubscribeHandler) {
@@ -1159,6 +1194,7 @@ mod tests {
             &table,
             &egress_sender,
             &handler,
+            &Arc::new(TrackCacheStore::new()),
         )
         .await;
 
