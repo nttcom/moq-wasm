@@ -161,7 +161,8 @@ impl TrackIngestTask {
                     "relay.dataplane.ingress.stream_factory",
                     track_key = %ingest.track_key,
                 );
-                // The track span stays entered when the debug factory span is off.
+                // Also instrument with the track span, so the task stays inside it
+                // when the debug factory span is disabled.
                 accept_streams(ingest, factory, track_span.clone())
                     .instrument(span)
                     .instrument(track_span)

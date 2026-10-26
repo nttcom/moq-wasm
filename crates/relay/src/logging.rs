@@ -76,8 +76,7 @@ fn otel_service_name(default_service_name: &str) -> String {
     non_empty_env("OTEL_SERVICE_NAME").unwrap_or_else(|| default_service_name.to_string())
 }
 
-/// Links `span` to `linked`, for a span that roots its own trace yet starts
-/// from another span's work.
+/// For a span that roots its own trace but starts from another span's work.
 pub(crate) fn link_span(span: &Span, linked: &Span) {
     span.add_link(linked.context().span().span_context().clone());
 }

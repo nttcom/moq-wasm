@@ -64,8 +64,8 @@ impl InterRelayConnectionManager {
             follow_go_away: false,
         })?;
         let relay_hostname = relay_hostname();
-        // A session outlives the request that dials it, so its span roots its
-        // own trace; moqt's session span is created inside it.
+        // A session outlives the request that dials it, so its span roots its own trace.
+        // moqt creates its session span inside this one.
         let session_span = tracing::info_span!(
             parent: None,
             "relay.inter_relay.session",

@@ -49,8 +49,8 @@ impl FetchIngest {
                 if let Err(error) =
                     Self::run_inner(session_repo.clone(), &egress_sender, start).await
                 {
-                    // Expected request-scoped failures (timeout, upstream reset):
-                    // log the chain without anyhow's captured backtrace.
+                    // These failures are request-scoped and expected (timeout, upstream reset).
+                    // Log the chain without anyhow's backtrace.
                     tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                     let error_code = if cache.is_malformed() {
                         let _ = session_event_sender.send(SessionEvent::malformed_track_detected(

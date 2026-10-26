@@ -153,7 +153,8 @@ impl GroupSender {
                                 object_count = tracing::field::Empty,
                                 end_reason = tracing::field::Empty,
                             );
-                            // The track span stays entered when the debug stream span is off.
+                            // Also instrument with the track span, so the task stays inside it
+                            // when the debug stream span is disabled.
                             joinset.spawn(
                                 Self::send_stream_task(
                                     StreamSendTask {

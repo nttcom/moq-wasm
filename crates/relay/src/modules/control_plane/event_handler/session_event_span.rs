@@ -5,9 +5,9 @@ use crate::modules::{
     domain::session_id::SessionId, session::moqt_session_event::MoqtSessionEvent,
 };
 
-/// A request's span roots its own trace, linked to the session's: the
-/// session's trace keeps only its lifecycle, `Disconnected` and
-/// `ProtocolViolation`.
+/// A request's span roots its own trace and links to the session span.
+/// Only the lifecycle events `Disconnected` and `ProtocolViolation` are
+/// children of the session span.
 pub(super) fn session_event_span(
     session_id: SessionId,
     session_span: &Span,

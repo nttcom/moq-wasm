@@ -60,7 +60,8 @@ pub(crate) async fn accept_streams(
                     subgroup_id = tracing::field::Empty,
                     end_reason = tracing::field::Empty,
                 );
-                // The track span stays entered when the debug stream span is off.
+                // Also instrument with the track span, so the task stays inside it
+                // when the debug stream span is disabled.
                 readers.spawn(
                     read_stream(ingest.clone(), receiver, span.clone())
                         .instrument(span)
