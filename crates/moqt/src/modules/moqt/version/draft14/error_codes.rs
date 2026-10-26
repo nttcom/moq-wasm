@@ -48,7 +48,9 @@ fn request_error_table(kind: RequestKind) -> impl Iterator<Item = (RequestErrorC
 
 /// Returns INTERNAL_ERROR (0x0) when `kind`'s `*_ERROR` message does not
 /// define `code`. UNSUPPORTED_EXTENSION (draft-18 §2.5.1), which draft-14
-/// lacks, goes as NOT_SUPPORTED, the closest draft-14 code.
+/// lacks, goes as NOT_SUPPORTED, the closest draft-14 code. MALFORMED_TRACK,
+/// which draft-14 defines for FETCH_ERROR only (§9.18), is expected to go
+/// as INTERNAL_ERROR and is logged at DEBUG; any other code at WARN.
 pub fn request_error_code_to_wire(code: RequestErrorCode, kind: RequestKind) -> u64 {
     let code = match code {
         RequestErrorCode::UnsupportedExtension => RequestErrorCode::NotSupported,
@@ -58,11 +60,18 @@ pub fn request_error_code_to_wire(code: RequestErrorCode, kind: RequestKind) -> 
         .find(|(defined, _)| *defined == code)
         .map(|(_, value)| value)
         .unwrap_or_else(|| {
-            tracing::warn!(
-                ?code,
-                ?kind,
-                "error code undefined for request kind; sending INTERNAL_ERROR"
-            );
+            if code == RequestErrorCode::MalformedTrack {
+                tracing::debug!(
+                    ?kind,
+                    "MALFORMED_TRACK undefined for request kind; sending INTERNAL_ERROR"
+                );
+            } else {
+                tracing::warn!(
+                    ?code,
+                    ?kind,
+                    "error code undefined for request kind; sending INTERNAL_ERROR"
+                );
+            }
             0x0
         })
 }
@@ -160,6 +169,56 @@ mod tests {
         request_error_table,
     };
     use crate::modules::moqt::control_plane::error_codes::{RequestErrorCode, RequestKind};
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::{Layer, layer::SubscriberExt};
+
+    /// Records the level of every event logged inside `f`.
+    struct LoggedLevels(Arc<Mutex<Vec<tracing::Level>>>);
+
+    impl<S: tracing::Subscriber> Layer<S> for LoggedLevels {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            self.0.lock().unwrap().push(*event.metadata().level());
+        }
+    }
+
+    fn logged_levels<T>(f: impl FnOnce() -> T) -> (T, Vec<tracing::Level>) {
+        let levels = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(LoggedLevels(levels.clone()));
+        let value = tracing::subscriber::with_default(subscriber, f);
+        let levels = levels.lock().unwrap().clone();
+        (value, levels)
+    }
+
+    #[test]
+    fn malformed_track_on_a_subscribe_goes_as_internal_error_logged_at_debug() {
+        for kind in [RequestKind::Subscribe, RequestKind::TrackStatus] {
+            // Act
+            let (wire, levels) = logged_levels(|| {
+                request_error_code_to_wire(RequestErrorCode::MalformedTrack, kind)
+            });
+
+            // Assert: draft-14 §9.18 defines MALFORMED_TRACK for FETCH_ERROR
+            // only, so INTERNAL_ERROR (0x0) is its expected stand-in
+            assert_eq!(wire, 0x0, "{kind:?}");
+            assert_eq!(levels, vec![tracing::Level::DEBUG], "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn another_undefined_code_goes_as_internal_error_logged_at_warn() {
+        // Act
+        let (wire, levels) = logged_levels(|| {
+            request_error_code_to_wire(RequestErrorCode::NoObjects, RequestKind::Subscribe)
+        });
+
+        // Assert: draft-14 §13.1
+        assert_eq!(wire, 0x0);
+        assert_eq!(levels, vec![tracing::Level::WARN]);
+    }
 
     const ALL_KINDS: [RequestKind; 6] = [
         RequestKind::Subscribe,

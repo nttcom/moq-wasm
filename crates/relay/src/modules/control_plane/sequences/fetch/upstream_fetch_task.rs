@@ -14,7 +14,7 @@ use crate::modules::{
     },
     data_plane::{
         cache::store::TrackCacheStore,
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::coordinator::{EgressCommand, EgressFetchRequest, FetchWait},
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart, FillBudget},
     },
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
@@ -103,7 +103,7 @@ impl UpstreamFetchTask {
             start_location: start.target.start_location,
             end_location: prepared.handle.end_location,
             group_order: start.handler.group_order(),
-            report_unknown: false,
+            wait: FetchWait::Unlimited,
         };
         let _fetch_ingest = FetchIngest::run(
             start.forwarder.repository.clone(),

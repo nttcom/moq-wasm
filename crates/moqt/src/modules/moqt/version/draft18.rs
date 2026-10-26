@@ -2590,6 +2590,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_publish_with_malformed_immutable_properties_is_refused_before_the_application() {
+        // Arrange: Immutable Properties holding Type 0x04 without its value
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-malformed-publish", "moqt").await;
+        let properties = [KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(Bytes::from_static(&[0x04])),
+        }];
+
+        // Act
+        let (_sender, mut receiver) = raw_publish(&client, 6, &properties).await;
+        let response = receiver.receive().await.unwrap();
+
+        // Assert: §12.7, §2.4.2; the application, e.g. a relay, never sees
+        // the PUBLISH, so it has no track to latch
+        let Some(messages::Message::RequestError(error)) = response else {
+            panic!("expected REQUEST_ERROR, got {response:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::MalformedTrack);
+        let event = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            server.receive_event(),
+        )
+        .await;
+        assert!(event.is_err(), "{event:?}");
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_refused_with_malformed_track_fails_as_malformed_track() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-subscribe-malformed-track", "moqt").await;
+        let (request, handler) =
+            subscribe_requested(&client, &server, SubscribeOption::default()).await;
+
+        // Act: the publisher, e.g. a relay that latched the track, refuses it
+        handler
+            .error(RequestErrorCode::MalformedTrack, "malformed".to_string())
+            .await
+            .unwrap();
+
+        // Assert: §2.4.2, §10.6 MALFORMED_TRACK reaches the subscriber as such
+        let result = request.await.unwrap();
+        assert!(
+            matches!(
+                &result,
+                Err(RequestFailure::Rejected {
+                    code: RequestErrorCode::MalformedTrack,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_subscribe_ok_with_malformed_immutable_properties_fails_the_subscribe() {
         let immutable = |contents: Vec<u8>| KeyValuePair {
             key: 0x0B,

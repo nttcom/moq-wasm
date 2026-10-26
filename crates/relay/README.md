@@ -38,7 +38,7 @@ An empty value counts as unset and selects the default.
 | `RELAY_DISK_CACHE_BYTES` | `10737418240` (10 GiB) | Cap on the disk cache; the oldest segments go first |
 | `RELAY_CACHE_EVICT_INTERVAL_SECS` | `5` | How often expired objects are drained; at least 1 |
 | `RELAY_MOQT_VERSIONS` | `draft-14` | Drafts the client port accepts, comma-separated and most preferred first (`draft-14`, `draft-18`); the relay relays tracks between peers of either draft. With `draft-14` first, every WebTransport session is draft-14. The inner port accepts draft-14 only |
-| `MOQT_FETCH_FILL_TIMEOUT_SECS` | `20` | How long an upstream FETCH may take to complete before the relay resets the downstream FETCH; also the longest a draft-18 FILL_TIMEOUT can make the relay wait before it serves what arrived and reports the rest as unknown |
+| `MOQT_FETCH_FILL_TIMEOUT_SECS` | `20` | The most the relay waits for an upstream FETCH, also when a draft-18 FILL_TIMEOUT asks for longer. Then it serves what arrived and reports the rest as unknown; a draft-14 downstream FETCH is reset instead |
 | `RELAY_STDOUT_FILTER` | `relay=info,moqt=info` | `tracing` filter for stdout |
 | `RELAY_OTEL_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry traces |
 | `RELAY_LOG_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry logs |

@@ -4,7 +4,7 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use crate::modules::test_support::relay_harness::{
-    FetchSent, RelayHarness,
+    FetchSent, RelayHarness, UpstreamSubgroupStream,
     fixtures::{
         cached_object::{datagram_object, fetched_copy_in_subgroup},
         location,
@@ -233,6 +233,83 @@ async fn a_fetch_reporting_unknown_stops_once_the_sender_has_reset() {
             "0/0".to_string(),
             "0/1".to_string(),
             format!("unknown..1/{}", u64::MAX),
+        ]
+    );
+}
+
+/// Group 0 with object 0 closed, group 1 with object 0 open, group 2 with
+/// object 0 closed; returns group 1's stream.
+async fn harness_with_open_group_1() -> (RelayHarness, UpstreamSubgroupStream) {
+    let harness = RelayHarness::new();
+    let group0 = harness.open_upstream_stream();
+    group0.header(0);
+    group0.object(0);
+    group0.fin();
+    harness.wait_group_closed(0).await;
+    let group1 = harness.open_upstream_stream();
+    group1.header(1);
+    group1.object(0);
+    harness.wait_largest_location(location(1, 0)).await;
+    let group2 = harness.open_upstream_stream();
+    group2.header(2);
+    group2.object(0);
+    group2.fin();
+    harness.wait_group_closed(2).await;
+    (harness, group1)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fill_deadline_bounds_the_wait_for_an_open_group() {
+    // Arrange
+    let (harness, group1) = harness_with_open_group_1().await;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+    let mut fetch = harness.start_fetch_waiting_until(
+        location(0, 0)..location(2, 0),
+        moqt::object::GroupOrder::Ascending,
+        deadline,
+    );
+    fetch.expect_objects(&[(0, 0), (1, 0)]).await;
+
+    // Act: one more object arrives within the budget, then the group stalls
+    group1.object(1);
+    fetch.expect_objects(&[(1, 1)]).await;
+
+    // Assert: draft-18 §10.2.5, once the budget runs out the rest of the open
+    // group is reported as unknown and the delivery goes on without resending
+    let steps = sent_steps(fetch.finished().await);
+    assert!(tokio::time::Instant::now() >= deadline);
+    assert_eq!(
+        steps,
+        vec![
+            format!("unknown..1/{}", u64::MAX),
+            "2/0".to_string(),
+            "fin".to_string(),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fill_deadline_in_descending_order_goes_on_with_the_lower_groups() {
+    // Arrange
+    let (harness, _group1) = harness_with_open_group_1().await;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+
+    // Act
+    let mut fetch = harness.start_fetch_waiting_until(
+        location(0, 0)..location(2, 1),
+        moqt::object::GroupOrder::Descending,
+        deadline,
+    );
+    fetch.expect_objects(&[(2, 0), (1, 0)]).await;
+
+    // Assert: draft-18 §10.2.5, the rest of group 1 is unknown and group 0
+    // follows
+    assert_eq!(
+        sent_steps(fetch.finished().await),
+        vec![
+            format!("unknown..1/{}", u64::MAX),
+            "0/0".to_string(),
+            "fin".to_string(),
         ]
     );
 }
