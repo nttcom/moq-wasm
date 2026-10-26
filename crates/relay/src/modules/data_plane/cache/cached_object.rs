@@ -18,6 +18,9 @@ pub(crate) struct CacheStamp {
     /// The upstream is a client publisher; the payload goes to disk when
     /// this relay has a disk cache.
     pub(crate) persist: bool,
+    /// The upstream session does not compare the status of duplicates
+    /// (draft-18 §9.1).
+    pub(crate) status_may_change: bool,
 }
 
 impl CacheStamp {
@@ -26,6 +29,7 @@ impl CacheStamp {
             .max_cache_duration
             .map(|duration| object.received_at + duration.min(RETENTION_LIMIT));
         object.persisted = self.persist;
+        object.status_may_change = self.status_may_change;
         object
     }
 }
@@ -49,6 +53,9 @@ pub(crate) struct CachedObject {
     /// From a draft-14 FETCH, which carries no forwarding preference: a
     /// datagram object is in the subgroup of its Object ID (§10.4.4).
     pub(crate) forwarding_inferred: bool,
+    /// From a session that does not compare the status of duplicates
+    /// (draft-18 §9.1).
+    pub(crate) status_may_change: bool,
 }
 
 impl CachedObject {
@@ -60,6 +67,7 @@ impl CachedObject {
             persisted: false,
             stored: None,
             forwarding_inferred: false,
+            status_may_change: false,
         }
     }
 
@@ -142,6 +150,8 @@ impl CachedObject {
     /// Priority or Payload differ, or whose Status moves between Normal,
     /// End of Group and End of Track, makes the track Malformed. Extension
     /// header changes and transitions involving Does Not Exist are allowed.
+    /// draft-18 §9.1 compares no status, so the status counts only when
+    /// neither copy came from such a session.
     /// A datagram's `ends_group` is not a §10.2.1 property and FETCH cannot
     /// carry it, so it is never compared.
     pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
@@ -155,7 +165,9 @@ impl CachedObject {
         {
             return false;
         }
-        self.object.status != other.object.status || self.payload_differs(other)
+        let compares_status = !self.status_may_change && !other.status_may_change;
+        (compares_status && self.object.status != other.object.status)
+            || self.payload_differs(other)
     }
 
     /// A payload on disk is compared by length only: reading it back for a
@@ -288,6 +300,28 @@ mod tests {
         // Act / Assert: either arrival order is a tolerated duplicate
         assert!(!normal.conflicts_with(&missing));
         assert!(!missing.conflicts_with(&normal));
+    }
+
+    #[test]
+    fn a_status_change_from_a_session_that_does_not_compare_it_is_not_a_conflict() {
+        // Arrange
+        let normal = stream_object_with_payload(0, 0, Bytes::new());
+        let mut end_of_group = status_object(0, 0, ObjectStatus::EndOfGroup);
+        end_of_group.status_may_change = true;
+        // Act / Assert: draft-18 §9.1, whichever copy arrived first
+        assert!(!normal.conflicts_with(&end_of_group));
+        assert!(!end_of_group.conflicts_with(&normal));
+    }
+
+    #[test]
+    fn a_payload_change_from_a_session_that_does_not_compare_the_status_is_a_conflict() {
+        // Arrange
+        let mut first = stream_object_with_payload(0, 0, Bytes::from_static(b"a"));
+        first.status_may_change = true;
+        let mut second = stream_object_with_payload(0, 0, Bytes::from_static(b"b"));
+        second.status_may_change = true;
+        // Act / Assert: draft-18 §9.1 still compares the payload
+        assert!(first.conflicts_with(&second));
     }
 
     #[test]

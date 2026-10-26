@@ -636,6 +636,16 @@ pub(crate) struct FetchedStream {
 
 pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
     let (client, server) = spawn_connected_dual_sessions(name).await;
+    fetched_stream_between(client, server).await
+}
+
+/// `fetched_stream` on a draft-18 session.
+pub(crate) async fn fetched_draft18_stream(name: &str) -> FetchedStream {
+    let (client, server) = spawn_connected_draft18_sessions(name, "moqt").await;
+    fetched_stream_between(client, server).await
+}
+
+async fn fetched_stream_between(client: Session, server: Session) -> FetchedStream {
     let mut subscriber = client.subscriber();
     // Matches the EndOfTrack location in the FETCH round-trip test.
     let end = location(16_385, 0);

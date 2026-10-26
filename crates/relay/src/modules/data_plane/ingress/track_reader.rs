@@ -20,6 +20,7 @@ pub(crate) async fn read_track(
     mut receiver: Box<dyn DataReceiver>,
     track_span: Span,
 ) {
+    ingest.stamp.status_may_change = !receiver.compares_duplicate_status();
     let cache = ingest.cache.clone();
     let mut datagram_group = DatagramGroup::new(&cache);
     let mut readers = JoinSet::new();
