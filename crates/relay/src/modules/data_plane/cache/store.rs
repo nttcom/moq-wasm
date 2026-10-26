@@ -96,19 +96,20 @@ impl TrackCacheStore {
         let mut empty_keys = Vec::new();
         for (key, track) in entries {
             track.evict(ttl);
-            if track.is_empty() {
+            if track.is_removable(ttl) {
                 empty_keys.push(key);
             }
         }
         // Only TTL-drained (empty) tracks may be removed: an unreferenced track
-        // must keep serving FETCH until then. Both guards are re-checked under
+        // must keep serving FETCH until then, and a malformed latch must keep
+        // answering requests for the TTL after it was set. Both guards are re-checked under
         // the shard lock because a session may attach, write, and detach in the
         // gap since the loop above: with strong_count == 1 no other handle can
         // write through, and the emptiness re-check keeps objects written in
         // that gap.
         for key in empty_keys {
             self.caches.remove_if(&key, |_, track| {
-                Arc::strong_count(track) == 1 && track.is_empty()
+                Arc::strong_count(track) == 1 && track.is_removable(ttl)
             });
         }
     }
@@ -173,6 +174,30 @@ mod tests {
                 disk_max_bytes: 0,
             }
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_an_unreferenced_latched_track_for_the_ttl() {
+        // Arrange: a track latched malformed with nothing cached, whose
+        // publisher has left, so only the store holds it
+        let ttl = Duration::from_secs(30);
+        let store = TrackCacheStore::new();
+        let key = TrackKey::new("ns", "track");
+        store.get_or_create(&key).mark_malformed();
+
+        // Act
+        tokio::time::advance(Duration::from_secs(1)).await;
+        store.evict(ttl);
+        let within_the_ttl = store.get(&key).is_some_and(|cache| cache.is_malformed());
+        tokio::time::advance(ttl).await;
+        store.evict(ttl);
+        let past_the_ttl = store.get(&key).is_some();
+
+        // Assert: a later request still finds the latch and is answered
+        // MALFORMED_TRACK (draft-18 §2.4.2); past the TTL the track goes like
+        // any drained one
+        assert!(within_the_ttl);
+        assert!(!past_the_ttl);
     }
 
     #[tokio::test]
