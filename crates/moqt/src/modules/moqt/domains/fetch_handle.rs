@@ -25,6 +25,7 @@ pub struct FetchRemainder {
     pub(crate) track_name: String,
     pub(crate) start: Location,
     pub(crate) subscriber_priority: u8,
+    pub(crate) fill_timeout: Option<std::time::Duration>,
 }
 
 impl FetchHandle {
