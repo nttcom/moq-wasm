@@ -134,7 +134,7 @@ mod tests {
 
     use super::{FetchHandler, JoinedSubscription, JoiningFetchRefusal};
     use crate::{
-        Session, SessionEvent,
+        RequestErrorCode, RequestFailure, Session, SessionEvent,
         fetch::FetchOption,
         modules::moqt::version::Version,
         modules::test_support::{
@@ -249,6 +249,56 @@ mod tests {
 
             // Assert: draft-18 §10.2.5 FILL_TIMEOUT; draft-14 §9.16 has none
             assert_eq!(handler.fill_timeout(), expected, "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fetch_refused_with_malformed_track_fails_as_malformed_track() {
+        for (version, (client, server)) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-malformed-track-14").await,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-malformed-track-18", "moqt").await,
+            ),
+        ] {
+            // Arrange
+            let mut subscriber = client.subscriber();
+            let request = tokio::spawn(async move {
+                subscriber
+                    .fetch(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        START,
+                        END,
+                        FetchOption::default(),
+                    )
+                    .await
+            });
+            let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+                panic!("expected FETCH from the client");
+            };
+
+            // Act: the publisher, e.g. a relay that latched the track, refuses it
+            handler
+                .error(RequestErrorCode::MalformedTrack, "malformed".to_string())
+                .await
+                .unwrap();
+
+            // Assert: draft-14 §9.18 FETCH_ERROR 0x9, draft-18 §10.6 0x12
+            let result = request.await.unwrap();
+            assert!(
+                matches!(
+                    &result,
+                    Err(RequestFailure::Rejected {
+                        code: RequestErrorCode::MalformedTrack,
+                        ..
+                    })
+                ),
+                "{version:?}: {result:?}"
+            );
         }
     }
 

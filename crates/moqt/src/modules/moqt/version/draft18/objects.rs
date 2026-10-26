@@ -1175,6 +1175,39 @@ mod tests {
     }
 
     #[test]
+    fn an_end_of_unknown_range_moves_from_the_prior_group_by_the_delta_plus_one() {
+        for (prior, last) in [
+            // Ascending: group 3 is prior 1 + (delta 1 + 1)
+            (
+                object(1, 0, subgroup(0), b"a"),
+                Location {
+                    group_id: 3,
+                    object_id: 4,
+                },
+            ),
+            // Descending: group 7 is prior 9 - (delta 1 + 1)
+            (
+                object(9, 0, subgroup(0), b"a"),
+                Location {
+                    group_id: 7,
+                    object_id: 4,
+                },
+            ),
+        ] {
+            // Arrange
+            let mut encoder = FetchEncoder::default();
+            encoder.object(&prior).unwrap();
+
+            // Act
+            let marker = encoder.end_of_unknown_range(last).unwrap();
+
+            // Assert: §11.4.4.2 type 0x10C (a 2-byte §1.4.1 integer), then
+            // the §11.4.4.1 Group ID Delta 1 and the Object ID
+            assert_eq!(&marker[..], &[0x81, 0x0C, 0x01, 0x04], "{last:?}");
+        }
+    }
+
+    #[test]
     fn an_end_of_unknown_range_in_the_group_of_the_prior_object_cannot_be_encoded() {
         // Arrange
         let mut encoder = FetchEncoder::default();
