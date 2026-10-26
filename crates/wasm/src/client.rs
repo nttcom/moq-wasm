@@ -74,8 +74,9 @@ pub(crate) struct ClientShared {
     /// Outgoing subscriptions keyed by the request id JavaScript chose.
     subscriptions: RefCell<HashMap<u64, Subscription>>,
     /// Every SUBSCRIBE JavaScript ever issued, keyed by the id JavaScript
-    /// chose; kept after UNSUBSCRIBE so a late SUBSCRIBE_UPDATE still names a
-    /// request the peer has seen.
+    /// chose; kept after UNSUBSCRIBE so SUBSCRIBE_UPDATE is refused by the
+    /// session rather than this map. draft-14 still sends it on the control
+    /// stream; draft-18 fails it because the request stream has closed.
     issued_subscriptions: RefCell<HashMap<u64, Subscription>>,
     /// Outgoing FETCHes answered with FETCH_OK, keyed by the id JavaScript
     /// chose.
