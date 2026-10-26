@@ -514,6 +514,12 @@ then the range. The session worker handles a session's events in order, so
 every update received before the FETCH is applied first, as draft-18
 §10.12.2 requires.
 
+A start after the track's Largest Object gets INVALID_RANGE (draft-14
+§9.16.3, draft-18 §10.12.3) only while live ingest runs, the Largest resolved
+like a SUBSCRIBE's: the greater of the cache's largest location and the
+upstream SUBSCRIBE_OK's. A start up to the upstream Largest that the cache
+has not ingested yet is not refused; it goes upstream.
+
 A range the cache cannot serve goes upstream. The worker hands it to
 `UpstreamFetchTask` (`control_plane/sequences/fetch/upstream_fetch_task.rs`) and moves on to
 the session's next event; the task forwards the FETCH, waits for its
