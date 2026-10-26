@@ -267,7 +267,7 @@ async fn subscription_with_forward_off_opens_no_stream_for_a_new_group() {
     // Arrange
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
-    egress.set_forward(false);
+    egress.pause();
 
     // Act
     let upstream_stream = harness.open_upstream_stream();
@@ -282,33 +282,97 @@ async fn subscription_with_forward_off_opens_no_stream_for_a_new_group() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn subscription_with_forward_back_on_resumes_from_the_next_group() {
+async fn while_forward_is_0_no_object_is_sent_even_on_a_stream_open_before_the_pause() {
     // Arrange
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
-    egress.set_forward(false);
-    let skipped_group = harness.open_upstream_stream();
-    skipped_group.header(0);
-    skipped_group.object(0);
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.object(0);
+    egress.expect_stream_priority().await;
+    egress.expect_sent_object().await;
+    egress.expect_sent_object().await;
+
+    // Act
+    egress.pause();
+    upstream_stream.object(1);
+    upstream_stream.fin();
+
+    // Assert: draft-14 §5.1 / draft-18 §5.1, the open stream is reset (draft-18 §11.4.3)
+    let (objects, end) = receive_objects_until_end(&mut egress).await;
+    assert!(
+        objects.is_empty(),
+        "no object is sent at Forward 0: {objects:?}"
+    );
+    assert!(
+        matches!(end, Sent::Reset(DataStreamResetCode::Cancelled)),
+        "got {end:?}"
+    );
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(200))
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn after_a_resume_an_object_in_a_subgroup_opened_while_paused_is_delivered_once() {
+    // Arrange: group 0 opens while Forward is 0
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    egress.pause();
+    let opened_while_paused = harness.open_upstream_stream();
+    opened_while_paused.header(0);
+    opened_while_paused.object(0);
+    harness.wait_largest_location(location(0, 0)).await;
     egress
         .assert_nothing_sent_within(Duration::from_millis(200))
         .await;
 
-    // Act
-    egress.set_forward(true);
-    skipped_group.object(1);
-    skipped_group.fin();
-    let next_group = harness.open_upstream_stream();
-    next_group.header(1);
-    next_group.object(0);
-    next_group.fin();
+    // Act: the update's answer carries Largest Object {0, 0}
+    egress.resume(Some(location(0, 0)));
+    opened_while_paused.object(1);
+    opened_while_paused.fin();
 
-    // Assert
+    // Assert: draft-18 §11.4.3 lets the publisher reopen the subgroup on a new stream
     let objects = receive_objects_until_close(&mut egress).await;
-    let Some(DataObject::SubgroupHeader(header)) = objects.first() else {
-        panic!("downstream stream should start with a subgroup header");
-    };
-    assert_eq!(header.group_id, 1);
+    assert!(matches!(
+        objects.first(),
+        Some(DataObject::SubgroupHeader(header)) if header.group_id == 0
+    ));
+    assert_eq!(downstream_object_ids(&objects), vec![1]);
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(200))
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn after_a_resume_a_subgroup_open_before_the_pause_continues_on_a_new_stream_without_repeats()
+{
+    // Arrange: object 0 went out before the pause, object 1 arrived during it
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.object(0);
+    egress.expect_stream_priority().await;
+    egress.expect_sent_object().await;
+    egress.expect_sent_object().await;
+    egress.pause();
+    let (_, end) = receive_objects_until_end(&mut egress).await;
+    assert!(matches!(end, Sent::Reset(DataStreamResetCode::Cancelled)));
+    upstream_stream.object(1);
+    harness.wait_largest_location(location(0, 1)).await;
+
+    // Act
+    egress.resume(Some(location(0, 1)));
+    upstream_stream.object(2);
+    upstream_stream.fin();
+
+    // Assert: the objects up to the Largest Object at the resume are left to FETCH
+    let objects = receive_objects_until_close(&mut egress).await;
+    assert_eq!(downstream_object_ids(&objects), vec![2]);
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(200))
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
