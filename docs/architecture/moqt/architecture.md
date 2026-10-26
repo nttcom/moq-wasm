@@ -210,9 +210,16 @@ call through the adapter; a draft never gets a task of its own (see
       relative filter's Start Location is known only to the application, so
       it is not part of that state. Its REQUEST_OK waits for
       `SubscribeUpdateHandler::ok`, which gives the LARGEST_OBJECT (§10.2.11),
-      or for the handler to be dropped, which sends none. The stream reads
-      its next message only after that, so the answers keep the order of the
-      updates.
+      or for the handler to be dropped, which sends none. The stream goes on
+      being read meanwhile, so later updates and the peer's reset or FIN are
+      seen while an answer is pending; the answers are written in the order
+      the updates arrived (§10.9: exactly one per update), a later one
+      waiting behind an earlier one. An update the application leaves
+      unanswered for the 10 s control message timeout, counted from its
+      arrival, is answered REQUEST_ERROR TIMEOUT, and a later `ok` returns
+      `UpdateAnswer::Failed`: §10.9.1 then has the publisher end the
+      subscription with PUBLISH_DONE UPDATE_FAILED, which only the
+      application can do once it has closed the subscription's streams.
 - A rule that differs per draft but applies to state only the application
   holds is asked through the handler, so the version stays inside moqt:
   `FetchHandler::check_joining` tells whether a Joining FETCH may join a

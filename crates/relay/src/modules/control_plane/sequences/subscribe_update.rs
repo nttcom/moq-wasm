@@ -1,3 +1,4 @@
+use moqt::subscribe::UpdateAnswer;
 use tokio::sync::mpsc;
 use tracing::Span;
 
@@ -60,7 +61,10 @@ impl SubscribeUpdate {
             ));
             return;
         }
-        let largest_told = handler.ok(largest);
+        let UpdateAnswer::Accepted { largest_told } = handler.ok(largest) else {
+            tracing::warn!("SUBSCRIBE_UPDATE answered too late; it failed and is not applied");
+            return;
+        };
         if table.update_downstream_delivery(
             session_id,
             subscription_request_id,

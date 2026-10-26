@@ -2,6 +2,7 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::paramet
 pub use crate::modules::moqt::control_plane::handler::subscribe_handler::SubscribeHandler;
 pub use crate::modules::moqt::control_plane::handler::subscribe_update_handler::SubscribeUpdateHandler;
 pub use crate::modules::moqt::control_plane::handler::subscribe_update_handler::SubscriptionUpdateRefusal;
+pub use crate::modules::moqt::control_plane::handler::subscribe_update_handler::UpdateAnswer;
 pub use crate::modules::moqt::control_plane::handler::track_status_handler::TrackStatusHandler;
 pub use crate::modules::moqt::control_plane::handler::unsubscribe_handler::UnsubscribeHandler;
 pub use crate::modules::moqt::control_plane::options::SubscribeOption;

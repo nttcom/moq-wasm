@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use futures::future::select;
+use futures::{StreamExt, future::select, stream::FuturesOrdered};
 use tracing::{Instrument, Span};
 
 use super::{
@@ -21,7 +21,7 @@ use super::{
 use crate::{
     SessionEvent,
     modules::{
-        executor::{self, JoinHandle},
+        executor::{self, BoxFuture, JoinHandle},
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
@@ -61,6 +61,7 @@ use crate::{
                 stream_receiver::StreamReceiveError, stream_sender::StreamSender,
             },
             domains::{connection::Connection, session_context::SessionContext},
+            version,
         },
         transport::read_error::ReadError,
     },
@@ -235,8 +236,15 @@ impl IncomingRequestTask {
             return;
         };
         drop(context);
+        let mut update_answers = UpdateAnswers::default();
         loop {
-            let received = receiver.receive().await;
+            let received = tokio::select! {
+                received = receiver.receive() => received,
+                answer = update_answers.next() => {
+                    send_update_answer(&sender, answer).await;
+                    continue;
+                }
+            };
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
@@ -254,8 +262,7 @@ impl IncomingRequestTask {
                     {
                         FollowUp::Continue => {}
                         FollowUp::AnswerUpdate(answer_receiver) => {
-                            drop(context);
-                            answer_update(&sender, answer_receiver).await;
+                            update_answers.push(answer_receiver);
                         }
                         FollowUp::Done => return,
                     }
@@ -428,7 +435,7 @@ impl IncomingRequestTask {
             }
             (_, Message::RequestUpdate(_)) => {
                 // Only a subscription has a Largest Object.
-                send_update_answer(sender, None).await;
+                send_update_answer(sender, Some(None)).await;
                 FollowUp::Continue
             }
             // Answers to our REQUEST_UPDATE of the subscription the PUBLISH
@@ -504,7 +511,7 @@ impl IncomingRequestTask {
 enum FollowUp {
     Continue,
     /// Answer the REQUEST_UPDATE once its handler is answered or dropped,
-    /// then continue.
+    /// while the stream goes on being read.
     AnswerUpdate(UpdateAnswerReceiver),
     Done,
 }
@@ -520,17 +527,44 @@ fn emit_update(
     answer_receiver
 }
 
-/// §10.9: exactly one REQUEST_OK per REQUEST_UPDATE, written in the order the
-/// updates arrived. The caller holds no Scope while waiting: an unreceived
-/// handler sits in the session's event queue, so only dropping the session
-/// ends the wait.
-async fn answer_update(sender: &StreamSender, answer_receiver: UpdateAnswerReceiver) {
-    let largest = answer_receiver.await.unwrap_or(None);
-    send_update_answer(sender, largest).await;
+/// The answers to the REQUEST_UPDATEs read from one request stream, in the
+/// order the updates arrived: §10.9 requires exactly one REQUEST_OK or
+/// REQUEST_ERROR each. The stream goes on being read meanwhile, so the
+/// peer's later updates and its reset or FIN are seen while an answer is
+/// pending; an answer waits behind the earlier ones. Each update waits for
+/// its handler for at most the control message timeout, counted from its
+/// arrival.
+#[derive(Default)]
+struct UpdateAnswers(FuturesOrdered<BoxFuture<Option<Option<Location>>>>);
+
+impl UpdateAnswers {
+    fn push(&mut self, answer_receiver: UpdateAnswerReceiver) {
+        self.0.push_back(Box::pin(
+            answer_receiver.within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT),
+        ));
+    }
+
+    /// The next answer to write; pending while no update awaits one.
+    async fn next(&mut self) -> Option<Option<Location>> {
+        match self.0.next().await {
+            Some(answer) => answer,
+            None => std::future::pending().await,
+        }
+    }
 }
 
-async fn send_update_answer(sender: &StreamSender, largest: Option<Location>) {
-    if let Ok(message) = messages::encode_request_update_ok(largest)
+/// REQUEST_OK with the LARGEST_OBJECT `answer` carries, or REQUEST_ERROR
+/// TIMEOUT for an update the application did not answer in time (§10.6:
+/// "could not be completed before an implementation specific timeout").
+async fn send_update_answer(sender: &StreamSender, answer: Option<Option<Location>>) {
+    let message = match answer {
+        Some(largest) => messages::encode_request_update_ok(largest),
+        None => {
+            tracing::warn!("REQUEST_UPDATE not answered in time; answering REQUEST_ERROR");
+            messages::encode_request_error(RequestErrorCode::Timeout, "update not answered in time")
+        }
+    };
+    if let Ok(message) = message
         && let Err(error) = sender.send(&message).await
     {
         tracing::debug!(%error, "could not answer REQUEST_UPDATE");
@@ -681,8 +715,15 @@ impl OutgoingRequestTask {
         let mut publish_done = false;
         // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn.
         let mut namespaces: HashSet<Vec<String>> = HashSet::new();
+        let mut update_answers = UpdateAnswers::default();
         loop {
-            let received = receiver.receive().await;
+            let received = tokio::select! {
+                received = receiver.receive() => received,
+                answer = update_answers.next() => {
+                    send_update_answer(&sender, answer).await;
+                    continue;
+                }
+            };
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
@@ -708,9 +749,7 @@ impl OutgoingRequestTask {
                     };
                     let (update, filter) =
                         apply_update(baseline, update.request_id, update.parameters);
-                    let answer_receiver = emit_update(&context, update, filter);
-                    drop(context);
-                    answer_update(&sender, answer_receiver).await;
+                    update_answers.push(emit_update(&context, update, filter));
                 }
                 // Answers to our REQUEST_UPDATE.
                 Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}

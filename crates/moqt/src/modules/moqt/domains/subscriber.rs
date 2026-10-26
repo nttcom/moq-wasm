@@ -1438,7 +1438,12 @@ mod tests {
         let told = update.ok(Some(location(3, 1)));
 
         // Assert: draft-14 SUBSCRIBE_UPDATE has no answer
-        assert!(!told);
+        assert_eq!(
+            told,
+            crate::subscribe::UpdateAnswer::Accepted {
+                largest_told: false
+            }
+        );
     }
 
     #[tokio::test]

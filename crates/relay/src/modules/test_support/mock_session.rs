@@ -778,9 +778,11 @@ impl SubscribeUpdateHandler for MockSubscribeUpdateHandler {
         }
     }
 
-    fn ok(&self, largest: Option<moqt::object::Location>) -> bool {
+    fn ok(&self, largest: Option<moqt::object::Location>) -> moqt::subscribe::UpdateAnswer {
         self.answers.lock().unwrap().push(largest);
-        matches!(self.draft, UpdateDraft::Draft18)
+        moqt::subscribe::UpdateAnswer::Accepted {
+            largest_told: matches!(self.draft, UpdateDraft::Draft18),
+        }
     }
 }
 

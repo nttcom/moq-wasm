@@ -1,6 +1,6 @@
 use moqt::{
     object::Location,
-    subscribe::{FilterType, SubscriptionUpdateRefusal},
+    subscribe::{FilterType, SubscriptionUpdateRefusal, UpdateAnswer},
 };
 
 pub(crate) trait SubscribeUpdateHandler: 'static + Send + Sync {
@@ -10,7 +10,7 @@ pub(crate) trait SubscribeUpdateHandler: 'static + Send + Sync {
     fn forward(&self) -> bool;
     fn filter(&self) -> Option<FilterType>;
     fn check_widening(&self) -> Result<(), SubscriptionUpdateRefusal>;
-    fn ok(&self, largest: Option<Location>) -> bool;
+    fn ok(&self, largest: Option<Location>) -> UpdateAnswer;
 }
 
 impl SubscribeUpdateHandler for moqt::subscribe::SubscribeUpdateHandler {
@@ -38,7 +38,7 @@ impl SubscribeUpdateHandler for moqt::subscribe::SubscribeUpdateHandler {
         self.check_widening()
     }
 
-    fn ok(&self, largest: Option<Location>) -> bool {
+    fn ok(&self, largest: Option<Location>) -> UpdateAnswer {
         self.ok(largest)
     }
 }

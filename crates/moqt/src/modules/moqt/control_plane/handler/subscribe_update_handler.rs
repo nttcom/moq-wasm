@@ -1,25 +1,89 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex, PoisonError, Weak},
+    time::Duration,
+};
 
 use thiserror::Error;
 use tokio::sync::oneshot;
 
 use crate::{
-    modules::moqt::{
-        control_plane::control_messages::messages::{
-            parameters::filter_type::FilterType, subscribe_update::SubscribeUpdate,
+    modules::{
+        executor,
+        moqt::{
+            control_plane::control_messages::messages::{
+                parameters::filter_type::FilterType, subscribe_update::SubscribeUpdate,
+            },
+            domains::connection::Connection,
+            version::Version,
         },
-        domains::connection::Connection,
-        version::Version,
     },
     object::Location,
 };
 
-/// The LARGEST_OBJECT a draft-18 REQUEST_UPDATE is answered with; closed when
-/// every handler clone was dropped unanswered.
-pub(crate) type UpdateAnswerReceiver = oneshot::Receiver<Option<Location>>;
+/// The answer of a draft-18 REQUEST_UPDATE, shared by the handler's clones.
+/// Dropping every clone drops the sender, which answers without a
+/// LARGEST_OBJECT.
+enum AnswerSlot {
+    Waiting(oneshot::Sender<Option<Location>>),
+    Answered,
+    /// Answered REQUEST_ERROR because the application did not answer in time.
+    TimedOut,
+}
 
-/// Shared by the handler's clones; the first answer takes the sender.
-type UpdateAnswerSender = Arc<Mutex<Option<oneshot::Sender<Option<Location>>>>>;
+type SharedAnswerSlot = Arc<Mutex<AnswerSlot>>;
+
+impl std::fmt::Debug for AnswerSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Waiting(_) => "Waiting",
+            Self::Answered => "Answered",
+            Self::TimedOut => "TimedOut",
+        })
+    }
+}
+
+/// The LARGEST_OBJECT a draft-18 REQUEST_UPDATE is answered with.
+pub(crate) struct UpdateAnswerReceiver {
+    receiver: oneshot::Receiver<Option<Location>>,
+    slot: Weak<Mutex<AnswerSlot>>,
+}
+
+impl UpdateAnswerReceiver {
+    /// The LARGEST_OBJECT the application answered with, `None` inside when
+    /// every handler clone was dropped unanswered. `None` when it did not
+    /// answer within `timeout`; a later `ok` then reports
+    /// `UpdateAnswer::Failed`.
+    pub(crate) async fn within(mut self, timeout: Duration) -> Option<Option<Location>> {
+        if let Ok(answer) = executor::timeout(timeout, &mut self.receiver).await {
+            return Some(answer.unwrap_or(None));
+        }
+        if let Some(slot) = self.slot.upgrade() {
+            let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+            if matches!(*slot, AnswerSlot::Waiting(_)) {
+                *slot = AnswerSlot::TimedOut;
+                return None;
+            }
+        }
+        // Answered, or every clone dropped, as the timeout fired.
+        Some(self.receiver.try_recv().unwrap_or(None))
+    }
+}
+
+/// How `SubscribeUpdateHandler::ok` answered the update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UpdateAnswer {
+    /// The update is accepted. `largest_told` is whether the peer was given
+    /// the Largest Object: only one so given by an update that turns Forward
+    /// on becomes the subscription's Joining Location (draft-18 §5.1);
+    /// draft-14 joins at the SUBSCRIBE_OK's Largest Location (§9.16.2).
+    Accepted { largest_told: bool },
+    /// The update was answered REQUEST_ERROR because the application did not
+    /// answer in time. draft-18 §10.9.1: the publisher MUST then end the
+    /// subscription with PUBLISH_DONE UPDATE_FAILED; the update is not
+    /// applied.
+    Failed,
+}
 
 /// Why the session's draft refuses an update that widens its subscription.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -35,7 +99,7 @@ pub enum SubscriptionUpdateRefusal {
 #[derive(Clone, Debug)]
 pub struct SubscribeUpdateHandler {
     /// `None` for draft-14, whose SUBSCRIBE_UPDATE has no answer.
-    answer_sender: Option<UpdateAnswerSender>,
+    answer_slot: Option<SharedAnswerSlot>,
     version: Version,
     request_id: u64,
     subscription_request_id: u64,
@@ -67,9 +131,14 @@ impl SubscribeUpdateHandler {
         subscribe_update: SubscribeUpdate,
         filter: Option<FilterType>,
     ) -> (Self, UpdateAnswerReceiver) {
-        let (answer_sender, answer_receiver) = oneshot::channel();
+        let (answer_sender, receiver) = oneshot::channel();
+        let slot = Arc::new(Mutex::new(AnswerSlot::Waiting(answer_sender)));
+        let answer_receiver = UpdateAnswerReceiver {
+            receiver,
+            slot: Arc::downgrade(&slot),
+        };
         let handler = Self {
-            answer_sender: Some(Arc::new(Mutex::new(Some(answer_sender)))),
+            answer_slot: Some(slot),
             ..Self::with_filter(connection, subscribe_update, filter)
         };
         (handler, answer_receiver)
@@ -81,7 +150,7 @@ impl SubscribeUpdateHandler {
         filter: Option<FilterType>,
     ) -> Self {
         Self {
-            answer_sender: None,
+            answer_slot: None,
             version: connection.control.version(),
             request_id: connection.logical_request_id(subscribe_update.request_id),
             subscription_request_id: connection
@@ -137,23 +206,31 @@ impl SubscribeUpdateHandler {
 
     /// Accepts the update. draft-18 answers it with REQUEST_OK carrying
     /// `largest` as LARGEST_OBJECT (§10.2.11: required once the track has
-    /// objects); dropping every clone unanswered sends it without. The
-    /// subscription's request stream reads nothing else until then. No-op for
-    /// draft-14, whose SUBSCRIBE_UPDATE has no answer.
-    ///
-    /// Returns whether this call gave the peer `largest`. Only a `largest` so
-    /// given by an update that turns Forward on becomes the subscription's
-    /// Joining Location (draft-18 §5.1); draft-14 joins at the SUBSCRIBE_OK's
-    /// Largest Location (§9.16.2).
-    pub fn ok(&self, largest: Option<Location>) -> bool {
-        let Some(answer_sender) = &self.answer_sender else {
-            return false;
+    /// objects); dropping every clone unanswered sends it without. An update
+    /// left unanswered for the control message timeout is answered
+    /// REQUEST_ERROR TIMEOUT instead, and this returns
+    /// `UpdateAnswer::Failed`. Answers go out in the order the updates
+    /// arrived, so a later one waits for this one. No-op for draft-14, whose
+    /// SUBSCRIBE_UPDATE has no answer.
+    pub fn ok(&self, largest: Option<Location>) -> UpdateAnswer {
+        let Some(slot) = &self.answer_slot else {
+            return UpdateAnswer::Accepted {
+                largest_told: false,
+            };
         };
-        let answer_sender = answer_sender
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        answer_sender.is_some_and(|answer_sender| answer_sender.send(largest).is_ok())
+        let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        match std::mem::replace(&mut *slot, AnswerSlot::Answered) {
+            AnswerSlot::Waiting(answer_sender) => UpdateAnswer::Accepted {
+                largest_told: answer_sender.send(largest).is_ok(),
+            },
+            AnswerSlot::Answered => UpdateAnswer::Accepted {
+                largest_told: false,
+            },
+            AnswerSlot::TimedOut => {
+                *slot = AnswerSlot::TimedOut;
+                UpdateAnswer::Failed
+            }
+        }
     }
 }
 
