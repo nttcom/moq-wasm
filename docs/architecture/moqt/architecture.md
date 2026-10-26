@@ -631,6 +631,13 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     (§11.4.4.2): the objects through `last` were not sent and may exist, so
     `End` after it does not mean the range is complete. draft-14 never
     yields it; draft-18's End of Non-Existent Range yields nothing.
+    The sending side is `FetchDataSender::report_unknown_range(last) ->
+    UnknownRange`: draft-18 writes the marker and the response goes on
+    (`Marked`). A Group ID Delta always moves to another group (§11.4.4.1),
+    so a range ending in the group of the object or marker before it cannot
+    be written; there, and on draft-14, which has no marker, the response is
+    reset with UNKNOWN_OBJECT_STATUS (draft-18 §10.12; draft-14's wire value
+    is INTERNAL_ERROR) and has ended (`Reset`).
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

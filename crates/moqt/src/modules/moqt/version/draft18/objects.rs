@@ -802,6 +802,23 @@ pub(crate) struct FetchEncoder {
 }
 
 impl FetchEncoder {
+    /// §11.4.4.2 End of Unknown Range through `last`. `None` when `last` is
+    /// in the group of the previous object or marker: a Group ID Delta always
+    /// moves to another group, so such a range cannot be expressed.
+    pub(crate) fn end_of_unknown_range(&mut self, last: Location) -> Option<BytesMut> {
+        let group_id_delta = match self.location {
+            None => last.group_id,
+            Some(prior) if prior.group_id == last.group_id => return None,
+            Some(prior) => last.group_id.abs_diff(prior.group_id) - 1,
+        };
+        let mut buf = BytesMut::new();
+        put_vi64(&mut buf, END_OF_UNKNOWN_RANGE);
+        put_vi64(&mut buf, group_id_delta);
+        put_vi64(&mut buf, last.object_id);
+        self.location = Some(last);
+        Some(buf)
+    }
+
     /// `Ok(None)` for an object that is not Normal: draft-18 FETCH objects
     /// carry no status (§11.2.1.1).
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<Option<BytesMut>> {
@@ -1094,6 +1111,83 @@ mod tests {
                 other => panic!("unexpected {other:?}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn an_end_of_unknown_range_round_trips_first_and_between_objects_in_either_order() {
+        let location = |group_id, object_id| Location {
+            group_id,
+            object_id,
+        };
+        for (group_order, items) in [
+            (
+                GroupOrder::Ascending,
+                vec![
+                    Fetch::UnknownRange {
+                        last: location(0, 3),
+                    },
+                    Fetch::Object(object(1, 0, subgroup(2), b"a")),
+                    Fetch::UnknownRange {
+                        last: location(3, u64::MAX),
+                    },
+                    Fetch::Object(object(4, 0, subgroup(2), b"b")),
+                    Fetch::Object(object(4, 1, subgroup(2), b"c")),
+                ],
+            ),
+            (
+                GroupOrder::Descending,
+                vec![
+                    Fetch::Object(object(9, 0, subgroup(0), b"x")),
+                    Fetch::UnknownRange {
+                        last: location(7, 4),
+                    },
+                    Fetch::Object(object(7, 5, subgroup(0), b"y")),
+                ],
+            ),
+        ] {
+            // Arrange
+            let mut encoder = FetchEncoder::default();
+            let mut stream = encode_fetch_header(6);
+            for item in &items {
+                let bytes = match item {
+                    Fetch::Object(object) => encoder.object(object).unwrap(),
+                    Fetch::UnknownRange { last } => encoder.end_of_unknown_range(*last),
+                    Fetch::End => unreachable!("not encoded"),
+                };
+                stream.extend_from_slice(&bytes.unwrap());
+            }
+            let mut state = FetchState::new();
+            state.group_order = group_order;
+
+            // Act
+            let decoded: Vec<Fetch> = frames(stream)
+                .into_iter()
+                .skip(1)
+                .filter_map(|frame| match frame {
+                    StreamFrame::FetchField(field) => state.object(field).unwrap(),
+                    other => panic!("unexpected {other:?}"),
+                })
+                .collect();
+
+            // Assert: §11.4.4.2
+            assert_eq!(decoded, items, "{group_order:?}");
+        }
+    }
+
+    #[test]
+    fn an_end_of_unknown_range_in_the_group_of_the_prior_object_cannot_be_encoded() {
+        // Arrange
+        let mut encoder = FetchEncoder::default();
+        encoder.object(&object(1, 0, subgroup(0), b"a")).unwrap();
+
+        // Act
+        let marker = encoder.end_of_unknown_range(Location {
+            group_id: 1,
+            object_id: 4,
+        });
+
+        // Assert: §11.4.4.1, a Group ID Delta moves to another group
+        assert!(marker.is_none());
     }
 
     #[test]

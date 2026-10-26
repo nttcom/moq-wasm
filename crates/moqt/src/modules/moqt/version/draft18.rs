@@ -746,6 +746,7 @@ mod tests {
         RequestErrorCode, RequestFailure, SessionEvent, TrackWriter,
         fetch::{
             Fetch, FetchDataReceiver, FetchDataSender, FetchHandler, FetchOption, FetchParams,
+            UnknownRange,
         },
         modules::{
             moqt::{
@@ -1308,6 +1309,60 @@ mod tests {
             .unwrap();
         let (subscriber, receiver) = request.await.unwrap();
         (subscriber, receiver, handler, sender)
+    }
+
+    #[tokio::test]
+    async fn a_fetch_response_reports_an_unknown_range_and_goes_on() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-unknown-range", "moqt").await;
+        let (_subscriber, mut receiver, _handler, sender) =
+            fetch_with_open_response(&client, &server).await;
+        let object = |group_id| Object {
+            location: Location {
+                group_id,
+                object_id: 0,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: Default::default(),
+            payload: Bytes::from_static(b"o"),
+            ends_group: false,
+        };
+        let unknown_through = Location {
+            group_id: 2,
+            object_id: u64::MAX,
+        };
+
+        // Act
+        sender.send_object(&object(0)).await.unwrap();
+        let reported = sender.report_unknown_range(unknown_through).await.unwrap();
+        sender.send_object(&object(3)).await.unwrap();
+        sender.close().await.unwrap();
+        let mut received = Vec::new();
+        loop {
+            let fetched = receiver.receive().await.unwrap();
+            let end = fetched == Fetch::End;
+            received.push(fetched);
+            if end {
+                break;
+            }
+        }
+
+        // Assert: §11.4.4.2
+        assert_eq!(reported, UnknownRange::Marked);
+        assert_eq!(
+            received,
+            vec![
+                Fetch::Object(object(0)),
+                Fetch::UnknownRange {
+                    last: unknown_through
+                },
+                Fetch::Object(object(3)),
+                Fetch::End,
+            ]
+        );
     }
 
     #[tokio::test]
