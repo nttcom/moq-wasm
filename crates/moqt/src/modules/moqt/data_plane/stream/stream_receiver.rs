@@ -144,6 +144,11 @@ mod tests {
             .await
             .unwrap()
             .expect("the subgroup header");
+        receiver
+            .receive()
+            .await
+            .unwrap()
+            .expect("the object's head");
 
         // Act
         let result = receiver.receive().await;

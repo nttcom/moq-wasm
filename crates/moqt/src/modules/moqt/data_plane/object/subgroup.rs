@@ -238,10 +238,7 @@ pub struct SubgroupObjectField {
 
 impl SubgroupObjectField {
     pub fn resolve_object_id(&self, prev: Option<u64>) -> u64 {
-        match prev {
-            None => self.object_id_delta,
-            Some(prev) => prev + 1 + self.object_id_delta,
-        }
+        object_id_from_delta(self.object_id_delta, prev)
     }
 
     pub fn encode(&self) -> BytesMut {
@@ -266,6 +263,13 @@ impl SubgroupObjectField {
         let mut buf = head.encode(self.message_type);
         buf.extend_from_slice(payload);
         buf
+    }
+}
+
+fn object_id_from_delta(object_id_delta: u64, prev: Option<u64>) -> u64 {
+    match prev {
+        None => object_id_delta,
+        Some(prev) => prev + 1 + object_id_delta,
     }
 }
 
@@ -350,6 +354,10 @@ impl SubgroupObjectHead {
             }
         }
         buf
+    }
+
+    pub(crate) fn resolve_object_id(&self, prev: Option<u64>) -> u64 {
+        object_id_from_delta(self.object_id_delta, prev)
     }
 
     pub(crate) fn payload_len(&self) -> usize {
