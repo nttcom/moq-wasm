@@ -878,7 +878,7 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   reach the subscriber while a later group in the range is still open. The
   stream is FIN'd when the cursor is exhausted and reset with
   MALFORMED_TRACK / INTERNAL_ERROR when the cursor reports `Malformed` /
-  `Incomplete`. A request with `report_unknown` waits for nothing instead:
+  `Incomplete`. A request with `FetchWait::Never` waits for nothing instead:
   `TrackCache::plan_fetch` (`track_cache/fetch_plan.rs`) lists the cached
   objects in delivery order with every stretch the cache does not know
   between them as `PlannedFetch::Unknown { last }`, an expired object

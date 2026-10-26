@@ -4,14 +4,14 @@ use crate::modules::{
             cached_object::CachedObject,
             track_cache::{FetchCursor, FetchInterrupted, PlannedFetch},
         },
-        egress::coordinator::EgressFetchRequest,
+        egress::coordinator::{EgressFetchRequest, FetchWait},
     },
     session::data_sender::fetch_sender::FetchSender,
 };
 use moqt::{fetch::UnknownRange, object::DataStreamResetCode};
 
 pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn FetchSender) {
-    if request.report_unknown {
+    if request.wait == FetchWait::Never {
         return deliver_reporting_unknown(request, sender).await;
     }
     let mut objects = FetchCursor::new(

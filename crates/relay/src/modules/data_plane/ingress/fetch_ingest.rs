@@ -10,7 +10,7 @@ use crate::modules::{
             known_ranges::{KnownRanges, following},
             track_cache::TrackCache,
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::coordinator::{EgressCommand, EgressFetchRequest, FetchWait},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
@@ -205,7 +205,9 @@ impl FetchIngest {
             anyhow::bail!("fetch fill crossed cache eviction");
         }
         let mut egress_start = start.egress_start;
-        egress_start.report_unknown = end.is_none() || progress.unknown_seen;
+        if end.is_none() || progress.unknown_seen {
+            egress_start.wait = FetchWait::Never;
+        }
         for known in progress.into_known(end) {
             cache.insert_known_until(known.start, known.end);
         }
@@ -396,7 +398,7 @@ mod tests {
                 start_location: location(0, 0),
                 end_location: location(0, 1),
                 group_order: moqt::object::GroupOrder::Ascending,
-                report_unknown: false,
+                wait: FetchWait::Unlimited,
             },
             fill_budget: FillBudget::new(None, DEFAULT_FETCH_FILL_TIMEOUT),
         };
@@ -540,7 +542,7 @@ mod tests {
                 start_location: location(0, 0),
                 end_location: location(0, 3),
                 group_order: moqt::object::GroupOrder::Ascending,
-                report_unknown: false,
+                wait: FetchWait::Unlimited,
             },
             fill_budget,
         };
@@ -583,7 +585,7 @@ mod tests {
         assert!(
             ingested
                 .handed_over()
-                .is_some_and(|request| !request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Unlimited)
         );
     }
 
@@ -615,7 +617,7 @@ mod tests {
         assert!(
             ingested
                 .handed_over()
-                .is_some_and(|request| request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Never)
         );
         assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 1)), Ok((0, 2))]);
     }
@@ -634,7 +636,7 @@ mod tests {
         assert!(
             ingested
                 .handed_over()
-                .is_some_and(|request| request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Never)
         );
         assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 2))]);
         assert_eq!(
@@ -663,7 +665,7 @@ mod tests {
         assert!(
             ingested
                 .handed_over()
-                .is_some_and(|request| request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Never)
         );
         assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 2))]);
         assert_eq!(

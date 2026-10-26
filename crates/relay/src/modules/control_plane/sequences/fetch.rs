@@ -19,7 +19,7 @@ use crate::modules::{
             store::TrackCacheStore,
             track_cache::{FetchRangeResolution, TrackCache},
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::coordinator::{EgressCommand, EgressFetchRequest, FetchWait},
         ingress::fetch_ingest::FillBudget,
     },
     domain::{
@@ -37,7 +37,7 @@ struct CacheTarget {
     cache: Arc<TrackCache>,
     start_location: moqt::object::Location,
     end_location: moqt::object::Location,
-    report_unknown: bool,
+    wait: FetchWait,
 }
 
 struct FetchTarget {
@@ -183,7 +183,7 @@ impl Fetch {
                 cache,
                 start_location,
                 end_location,
-                report_unknown,
+                wait,
             }) => {
                 // The relay does not yet track final End Of Track via PUBLISH_DONE,
                 // so local cache responses cannot assert it.
@@ -202,7 +202,7 @@ impl Fetch {
                     start_location,
                     end_location,
                     group_order: handler.group_order(),
-                    report_unknown,
+                    wait,
                 };
                 if let Err(e) = egress_sender
                     .send(EgressCommand::StartFetch(fetch_request))
@@ -476,7 +476,7 @@ impl Fetch {
                 cache,
                 start_location,
                 end_location,
-                report_unknown: false,
+                wait: FetchWait::Unlimited,
             }),
             FetchRangeResolution::InvalidRange => return Err(FetchError::InvalidRange),
             FetchRangeResolution::NoObjects => return Err(FetchError::NoObjects),
@@ -508,7 +508,7 @@ impl Fetch {
             cache,
             start_location: target.start_location,
             end_location,
-            report_unknown: true,
+            wait: FetchWait::Never,
         })
     }
 
@@ -838,7 +838,7 @@ mod tests {
         assert!(
             handled
                 .handed_over
-                .is_some_and(|request| request.report_unknown),
+                .is_some_and(|request| request.wait == FetchWait::Never),
             "the cached objects are served at once, the rest reported unknown"
         );
     }
@@ -855,7 +855,7 @@ mod tests {
         assert!(
             handled
                 .handed_over
-                .is_some_and(|request| request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Never)
         );
     }
 

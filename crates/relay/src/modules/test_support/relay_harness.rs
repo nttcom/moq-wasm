@@ -13,7 +13,9 @@ use crate::modules::{
             track_cache::{NextObject, SubgroupRun, TrackCache},
         },
         egress::{
-            coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
+            coordinator::{EgressFetchRequest, FetchWait},
+            fetch_delivery::deliver_fetch,
+            runner::EgressRunner,
         },
         ingress::{
             datagram_reader::read_datagrams,
@@ -442,7 +444,10 @@ impl RelayHarness {
             start_location,
             end_location,
             group_order: moqt::object::GroupOrder::Ascending,
-            report_unknown: unknown_range.is_some(),
+            wait: match unknown_range {
+                Some(_) => FetchWait::Never,
+                None => FetchWait::Unlimited,
+            },
         };
         let join_handle = tokio::spawn(async move { deliver_fetch(&request, &sender).await });
         FetchDeliveryHandle { sent, join_handle }
