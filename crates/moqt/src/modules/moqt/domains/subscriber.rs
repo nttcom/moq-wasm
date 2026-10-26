@@ -721,7 +721,7 @@ mod tests {
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
                 location, next_subgroup, object_with_extensions, read_fetch_objects,
                 read_subgroup_objects, send_subgroup_object, spawn_connected_dual_sessions,
-                subscription, within,
+                subscribed_track, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -1541,7 +1541,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_update_sends_the_given_fields_for_the_given_subscription() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-subscribe-update").await;
+        let track = subscribed_track("subscriber-subscribe-update").await;
         let option = SubscribeUpdateOption {
             start_location: Location {
                 group_id: 4,
@@ -1553,17 +1553,22 @@ mod tests {
         };
 
         // Act
-        client
+        track
+            .client
             .subscriber()
-            .subscribe_update(&subscription(6, 0), option)
+            .subscribe_update(&track.subscription, option)
             .await
             .unwrap();
 
         // Assert
-        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
+        let SessionEvent::SubscribeUpdate(update) = track.server.receive_event().await.unwrap()
+        else {
             panic!("expected SUBSCRIBE_UPDATE from the client");
         };
-        assert_eq!(update.subscription_request_id(), 6);
+        assert_eq!(
+            update.subscription_request_id(),
+            track.subscription.request_id()
+        );
         assert_eq!(
             update.filter(),
             Some(FilterType::AbsoluteRange {
