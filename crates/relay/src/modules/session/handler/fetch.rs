@@ -13,6 +13,8 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
     fn fill_timeout(&self) -> Option<std::time::Duration>;
     /// See `moqt::fetch::FetchHandler::marks_unknown_ranges`.
     fn marks_unknown_ranges(&self) -> bool;
+    /// See `moqt::fetch::FetchHandler::understands`.
+    fn understands(&self, track_properties: &TrackProperties) -> bool;
     fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal>;
     async fn ok(
         &self,
@@ -47,6 +49,10 @@ impl FetchHandler for moqt::fetch::FetchHandler {
 
     fn marks_unknown_ranges(&self) -> bool {
         moqt::fetch::FetchHandler::marks_unknown_ranges(self)
+    }
+
+    fn understands(&self, track_properties: &TrackProperties) -> bool {
+        moqt::fetch::FetchHandler::understands(self, track_properties)
     }
 
     fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal> {

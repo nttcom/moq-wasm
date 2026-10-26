@@ -1042,7 +1042,9 @@ holds on each hop.
   draft-14 has no such code, so a draft-14 subscriber gets NOT_SUPPORTED.
   Were a cached track to carry one, the subscribe sequence would refuse a
   draft-14 subscriber before registering anything
-  (`SubscribeHandler::understands`), and moqt's draft-14 FETCH `ok` and
+  (`SubscribeHandler::understands`), the FETCH sequence would refuse a FETCH
+  it serves from the cache before FETCH_OK (`FetchHandler::understands`),
+  both logged at WARN as the error response they send, and moqt's draft-14
   `publish` would refuse it toward a draft-14 peer.
 - Forwarding preference: `GroupSender` keeps a track to a session that does
   not mix preferences in one `SinglePreference`, that of the first subgroup
