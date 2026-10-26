@@ -35,16 +35,19 @@ pub(crate) struct FillBudget {
     /// MOQT_FETCH_FILL_TIMEOUT_SECS: without FILL_TIMEOUT, the most a fill
     /// waits before the objects not filled are reported as unknown.
     relay_limit: Duration,
+    /// When `relay_limit` runs out, counted from the FETCH's arrival.
+    relay_deadline: Instant,
 }
 
 impl FillBudget {
     /// The relay waits at most `relay_limit`, even for a longer FILL_TIMEOUT
     /// (§10.2.5 MAY).
     pub(crate) fn new(requested: Option<Duration>, relay_limit: Duration) -> Self {
+        let arrival = Instant::now();
         Self {
-            requested: requested
-                .map(|requested| (requested, Instant::now() + requested.min(relay_limit))),
+            requested: requested.map(|requested| (requested, arrival + requested.min(relay_limit))),
             relay_limit,
+            relay_deadline: arrival + relay_limit,
         }
     }
 
@@ -55,11 +58,15 @@ impl FillBudget {
     }
 
     /// How long a FETCH served from the cache waits for the objects live
-    /// ingest has yet to deliver.
-    pub(crate) fn delivery_wait(&self) -> FetchWait {
+    /// ingest has yet to deliver. Without FILL_TIMEOUT the relay limit
+    /// applies only when the response can report the rest as unknown
+    /// (`marks_unknown_ranges`); otherwise stopping would reset it, so the
+    /// delivery waits for them.
+    pub(crate) fn delivery_wait(&self, marks_unknown_ranges: bool) -> FetchWait {
         match self.requested {
             Some((Duration::ZERO, _)) => FetchWait::Never,
             Some((_, deadline)) => FetchWait::Until(deadline),
+            None if marks_unknown_ranges => FetchWait::Until(self.relay_deadline),
             None => FetchWait::Unlimited,
         }
     }
