@@ -6,7 +6,8 @@ use crate::modules::moqt::control_plane::{
     handler::{
         fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
         go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
-        publish_done_handler::PublishDoneHandler, publish_handler::PublishHandler,
+        publish_blocked_handler::PublishBlockedHandler, publish_done_handler::PublishDoneHandler,
+        publish_handler::PublishHandler,
         publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
         publish_namespace_done_handler::PublishNamespaceDoneHandler,
         publish_namespace_handler::PublishNamespaceHandler,
@@ -33,6 +34,7 @@ pub enum SessionEvent {
     PublishNamespaceCancel(PublishNamespaceCancelHandler),
     SubscribeNameSpace(SubscribeNamespaceHandler),
     UnsubscribeNamespace(UnsubscribeNamespaceHandler),
+    PublishBlocked(PublishBlockedHandler),
     Publish(PublishHandler),
     PublishDone(PublishDoneHandler),
     Subscribe(SubscribeHandler),

@@ -409,6 +409,13 @@ impl SessionWorker {
                     .instrument(event_span)
                     .await;
             }
+            MoqtSessionEvent::PublishBlocked(..) => {
+                // §6.1: a downstream SUBSCRIBE for the track still reaches it
+                // through an upstream SUBSCRIBE.
+                event_span.in_scope(|| {
+                    tracing::info!("upstream peer sends no PUBLISH for the track");
+                });
+            }
             MoqtSessionEvent::MaxRequestId(..)
             | MoqtSessionEvent::RequestsBlocked(..)
             | MoqtSessionEvent::PublishNamespaceCancel(..)

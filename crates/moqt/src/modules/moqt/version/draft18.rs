@@ -1821,16 +1821,17 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn publish_blocked_on_a_subscribe_tracks_stream_keeps_the_session() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_draft18_sessions("draft18-publish-blocked", "moqt").await;
+    /// `server`'s response stream of the SUBSCRIBE_TRACKS for "live" that
+    /// `client` sent and `server` accepted.
+    async fn accepted_subscribe_tracks(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> super::RequestStream {
         let (request, handlers) =
-            namespace_requests(&client, &server, NamespaceInterest::Tracks, 1).await;
+            namespace_requests(client, server, NamespaceInterest::Tracks, 1).await;
         handlers[0].ok().await.unwrap();
         request.await.unwrap().unwrap();
-        let stream = ControlChannel::of(&server.publisher().session.connection())
+        ControlChannel::of(&server.publisher().session.connection())
             .requests()
             .incoming
             .values()
@@ -1838,18 +1839,47 @@ mod tests {
                 stream.kind == super::RequestStreamKind::SubscribeTracks(vec!["live".into()])
             })
             .cloned()
-            .unwrap();
-        let mut payload = BytesMut::new();
-        codec::put_track_namespace(&mut payload, &["room".to_string()]);
-        codec::put_vi64(&mut payload, 5);
-        payload.extend_from_slice(b"video");
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn publish_blocked_reaches_the_subscriber_with_the_full_track_name() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked-event", "moqt").await;
+        let stream = accepted_subscribe_tracks(&client, &server).await;
 
         // Act
         stream
             .sender
-            .send(&messages::frame(messages::PUBLISH_BLOCKED, &payload).unwrap())
+            .send(&messages::encode_publish_blocked(&["room".to_string()], "video").unwrap())
             .await
             .unwrap();
+        let event = next_event(&client).await;
+
+        // Assert: §10.20, the suffix follows the SUBSCRIBE_TRACKS prefix
+        let SessionEvent::PublishBlocked(blocked) = event else {
+            panic!("expected PUBLISH_BLOCKED, got {event:?}");
+        };
+        assert_eq!(blocked.track_namespace_prefix, "live");
+        assert_eq!(blocked.track_namespace, "live/room");
+        assert_eq!(blocked.track_name, "video");
+    }
+
+    #[tokio::test]
+    async fn publish_blocked_on_a_subscribe_tracks_stream_keeps_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked", "moqt").await;
+        let stream = accepted_subscribe_tracks(&client, &server).await;
+
+        // Act
+        stream
+            .sender
+            .send(&messages::encode_publish_blocked(&["room".to_string()], "video").unwrap())
+            .await
+            .unwrap();
+        let _blocked = next_event(&client).await;
         let (request, handlers) =
             namespace_requests(&client, &server, NamespaceInterest::Namespaces, 1).await;
         handlers[0].ok().await.unwrap();

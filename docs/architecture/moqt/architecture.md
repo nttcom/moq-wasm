@@ -222,8 +222,9 @@ call through the adapter; a draft never gets a task of its own (see
       `NamespaceInterest::Tracks` and its FORWARD as `forward`;
       SUBSCRIBE_NAMESPACE raises it with `Namespaces`. A SUBSCRIBE_TRACKS
       gets no NAMESPACE: a `publish_namespace` that matches only one goes as a
-      PUBLISH_NAMESPACE request. PUBLISH_BLOCKED on our SUBSCRIBE_TRACKS is
-      logged and the stream read on (§6.1).
+      PUBLISH_NAMESPACE request. PUBLISH_BLOCKED on our SUBSCRIBE_TRACKS
+      raises `PublishBlocked` with that request's prefix and the Full Track
+      Name, and the stream is read on (§6.1); draft-14 never raises it.
     - `NamespaceInterest` says what `Subscriber::subscribe_namespace` asks
       for. `version::ControlChannel::namespace_requests` splits it per draft:
       draft-18 sends SUBSCRIBE_NAMESPACE for namespaces and SUBSCRIBE_TRACKS
