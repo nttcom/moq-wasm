@@ -1,7 +1,6 @@
-use opentelemetry::trace::TraceContextExt as _;
 use tracing::Span;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::logging::link_span;
 use crate::modules::{
     domain::session_id::SessionId, session::moqt_session_event::MoqtSessionEvent,
 };
@@ -171,11 +170,7 @@ pub(super) fn session_event_span(
         event,
         MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
     ) {
-        link_to_session(&span, session_span);
+        link_span(&span, session_span);
     }
     span
-}
-
-pub(super) fn link_to_session(span: &Span, session_span: &Span) {
-    span.add_link(session_span.context().span().span_context().clone());
 }

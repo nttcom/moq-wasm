@@ -5,11 +5,8 @@ use moqt::object::ContentExists;
 use tokio::sync::mpsc;
 use tracing::{Instrument, Span};
 
-use super::{
-    WorkerDeps,
-    session_cleanup::cleanup_session,
-    session_event_span::{link_to_session, session_event_span},
-};
+use super::{WorkerDeps, session_cleanup::cleanup_session, session_event_span::session_event_span};
+use crate::logging::link_span;
 use crate::modules::{
     auth::{
         anonymous_root::{scope_anonymous_root_prefix, scope_anonymous_root_subscription},
@@ -121,7 +118,7 @@ impl SessionWorker {
                     session_id = %session_id,
                     track_key = %track_key,
                 );
-                link_to_session(&event_span, &self.session_span);
+                link_span(&event_span, &self.session_span);
                 MalformedTrackCleanup {}
                     .handle(
                         &track_key,
@@ -150,7 +147,7 @@ impl SessionWorker {
                     session_id = %session_id,
                     request_id,
                 );
-                link_to_session(&event_span, &self.session_span);
+                link_span(&event_span, &self.session_span);
                 Unsubscribe {}
                     .handle(
                         session_id,

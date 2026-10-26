@@ -1,10 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use opentelemetry::trace::TraceContextExt as _;
 use tokio::sync::{mpsc, watch};
 use tracing::{Instrument, Span};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::logging::link_span;
 use crate::modules::{
     data_plane::{
         cache::{cached_object::CacheStamp, store::TrackCacheStore},
@@ -105,13 +104,7 @@ impl IngressCoordinator {
                             track_namespace = %track_key.track_namespace,
                             track_name = %track_key.track_name,
                         );
-                        create_receiver_span.add_link(
-                            publisher_session_span
-                                .context()
-                                .span()
-                                .span_context()
-                                .clone(),
-                        );
+                        link_span(&create_receiver_span, &publisher_session_span);
                         join_set.spawn(async move {
                             let subscription = command.subscription;
                             let mut subscriber = subscriber;
@@ -140,14 +133,7 @@ impl IngressCoordinator {
                                         track_namespace = %track_key.track_namespace,
                                         track_name = %track_key.track_name,
                                     );
-                                    dataplane_track_span.add_link(
-                                        command
-                                            .parent_span
-                                            .context()
-                                            .span()
-                                            .span_context()
-                                            .clone(),
-                                    );
+                                    link_span(&dataplane_track_span, &command.parent_span);
                                     IngestSource::Stream { factory, track_span: dataplane_track_span }
                                 }
                                 DataReceiver::Datagram(datagram_receiver) => IngestSource::Datagram(datagram_receiver),

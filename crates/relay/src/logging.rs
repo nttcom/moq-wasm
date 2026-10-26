@@ -1,11 +1,13 @@
 use anyhow::{Context, Result};
 use opentelemetry::global;
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::logs::{BatchLogProcessor, SdkLoggerProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use tracing::Span;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -72,6 +74,12 @@ fn otel_protocol_name(protocol: OtlpProtocol) -> &'static str {
 
 fn otel_service_name(default_service_name: &str) -> String {
     non_empty_env("OTEL_SERVICE_NAME").unwrap_or_else(|| default_service_name.to_string())
+}
+
+/// Links `span` to `linked`, for a span that roots its own trace yet starts
+/// from another span's work.
+pub(crate) fn link_span(span: &Span, linked: &Span) {
+    span.add_link(linked.context().span().span_context().clone());
 }
 
 pub(crate) fn relay_hostname() -> String {
