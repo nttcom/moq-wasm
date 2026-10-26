@@ -332,7 +332,9 @@ returned; requests the peer sends, on any connection, carry logical ids. A
 FETCH response stream a migration cuts off is FETCHed again on the current
 connection from the first object not delivered up to the FETCH_OK's End
 Location, and the `FetchDataReceiver` reads on from it; a descending FETCH
-is not sent again. While both
+is not sent again. The FETCH sent again carries the FILL_TIMEOUT left of the
+first one (draft-18 §10.2.5), counted from when the first was sent and 0
+once it ran out. While both
 connections deliver a subscription, the sinks of both share a `GroupCutover`
 (see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
 carried subscription is dropped; GOAWAY is never returned; `Disconnected`

@@ -186,14 +186,20 @@ pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Sessi
         .unwrap()
 }
 
+/// `spawn_dual_server`, offering only draft-18.
+pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
+    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    (port, accept)
+}
+
 /// Connects a DUAL client and server that offer only draft-18, over raw
 /// QUIC for `moqt` or WebTransport for `https`.
 pub(crate) async fn spawn_connected_draft18_sessions(
     name: &str,
     scheme: &str,
 ) -> (Session, Session) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
-    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    let (port, accept) = spawn_draft18_server(name);
     let client =
         Endpoint::<DUAL>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
             .unwrap();

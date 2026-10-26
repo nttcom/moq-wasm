@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use crate::{
-    modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk,
+    fetch::FetchOption,
+    modules::{executor, moqt::control_plane::control_messages::messages::fetch_ok::FetchOk},
     object::{GroupOrder, Location},
 };
 
@@ -25,7 +28,35 @@ pub struct FetchRemainder {
     pub(crate) track_name: String,
     pub(crate) start: Location,
     pub(crate) subscriber_priority: u8,
-    pub(crate) fill_timeout: Option<std::time::Duration>,
+    /// When the FILL_TIMEOUT of the first FETCH runs out, as
+    /// `executor::now()`: a FETCH sent again asks only for what is left.
+    pub(crate) fill_deadline: Option<Duration>,
+}
+
+impl FetchRemainder {
+    /// For a FETCH sent now with `option`.
+    pub(crate) fn new(
+        track_namespace: String,
+        track_name: String,
+        start: Location,
+        option: &FetchOption,
+    ) -> Self {
+        Self {
+            track_namespace,
+            track_name,
+            start,
+            subscriber_priority: option.subscriber_priority,
+            fill_deadline: option
+                .fill_timeout
+                .map(|fill_timeout| executor::now() + fill_timeout),
+        }
+    }
+
+    /// The FILL_TIMEOUT left for a FETCH sent again now, 0 once it ran out.
+    pub(crate) fn fill_timeout_left(&self) -> Option<Duration> {
+        self.fill_deadline
+            .map(|deadline| deadline.saturating_sub(executor::now()))
+    }
 }
 
 impl FetchHandle {
