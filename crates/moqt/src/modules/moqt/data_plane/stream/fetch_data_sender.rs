@@ -108,3 +108,60 @@ async fn response_ended(connection: &Weak<Connection>, request_id: u64) -> anyho
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::FetchDataSender;
+    use crate::modules::{
+        moqt::version::Version,
+        test_support::{spawn_connected_draft18_sessions, spawn_connected_dual_sessions},
+        transport::transport_send_stream::MockTransportSendStream,
+    };
+
+    /// A send stream that accepts every write and reports the code it is
+    /// reset with.
+    fn recording_stream() -> (
+        MockTransportSendStream,
+        tokio::sync::mpsc::UnboundedReceiver<u64>,
+    ) {
+        let (reset_sender, reset_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut stream = MockTransportSendStream::new();
+        stream.expect_send().returning(|_| Ok(()));
+        stream.expect_reset().returning(move |code| {
+            let _ = reset_sender.send(code);
+            Ok(())
+        });
+        (stream, reset_receiver)
+    }
+
+    #[tokio::test]
+    async fn a_fetch_sender_dropped_unended_resets_with_internal_error() {
+        for (version, (client, _server)) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-sender-dropped-14").await,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-sender-dropped-18", "moqt").await,
+            ),
+        ] {
+            // Arrange
+            let connection = client.publisher().session.connection();
+            assert_eq!(connection.control.version(), version);
+            let (stream, mut reset_receiver) = recording_stream();
+            let sender = FetchDataSender::new(&connection, Box::new(stream), 1)
+                .await
+                .unwrap();
+
+            // Act
+            drop(sender);
+            let reset = tokio::time::timeout(Duration::from_secs(3), reset_receiver.recv()).await;
+
+            // Assert: INTERNAL_ERROR (0x0) in draft-14 §10.4.3 and draft-18 §3.3.3
+            assert_eq!(reset, Ok(Some(0x0)), "{version:?}");
+        }
+    }
+}
