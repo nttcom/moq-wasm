@@ -1,10 +1,13 @@
 use std::time::Duration;
 
-use bytes::BytesMut;
+use bytes::{Buf, Bytes, BytesMut};
 use tokio_util::codec::Decoder;
 
 use crate::{
-    modules::{executor, moqt::data_plane::object::decode_error::DecodeError},
+    modules::{
+        executor,
+        moqt::data_plane::object::{decode_error::DecodeError, subgroup::SubgroupObjectHead},
+    },
     wire::{SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
 };
 
@@ -22,6 +25,10 @@ pub(crate) enum SubgroupFrame {
 #[derive(Debug)]
 pub(crate) struct SubgroupDecoder {
     subgroup_header_type: Option<SubgroupHeaderType>,
+    /// The consumed head of an object whose payload is not fully buffered.
+    /// Boxed: it is set only while a payload spans reads, and inline it would
+    /// grow every stream receiver.
+    pending_head: Option<Box<SubgroupObjectHead>>,
     /// When the first byte of the next object was buffered, on the
     /// `executor::now` clock.
     object_buffered_at: Option<Duration>,
@@ -44,12 +51,23 @@ impl Decoder for SubgroupDecoder {
             self.decode_object_field(src)
         }
     }
+
+    /// A stream that ends inside an object is an error, also when the
+    /// object's head was already consumed.
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        match self.decode(src)? {
+            Some(frame) => Ok(Some(frame)),
+            None if src.is_empty() && self.pending_head.is_none() => Ok(None),
+            None => Err(std::io::Error::other("bytes remaining on stream")),
+        }
+    }
 }
 
 impl SubgroupDecoder {
     pub(crate) fn new() -> Self {
         Self {
             subgroup_header_type: None,
+            pending_head: None,
             object_buffered_at: None,
         }
     }
@@ -88,24 +106,21 @@ impl SubgroupDecoder {
             return Ok(None);
         }
         let buffered_at = *self.object_buffered_at.get_or_insert_with(executor::now);
-        let subgroup_object_field =
-            match SubgroupObjectField::decode(self.subgroup_header_type.unwrap(), src) {
-                Ok(field) => field,
-                Err(e) => {
-                    match e {
-                        DecodeError::NeedMoreData => {
-                            // Not enough data to decode the object field, wait for more data.
-                            return Ok(None);
-                        }
-                        _ => {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!("Failed to decode subgroup object field: {:?}", e),
-                            ));
-                        }
-                    }
-                }
-            };
+        let message_type = self.subgroup_header_type.unwrap();
+        let head = match self.pending_head.take() {
+            Some(head) => *head,
+            None => match Self::decode_head(message_type, src)? {
+                Some(head) => head,
+                None => return Ok(None),
+            },
+        };
+        if src.len() < head.payload_len() {
+            self.pending_head = Some(Box::new(head));
+            return Ok(None);
+        }
+        let payload = Bytes::copy_from_slice(&src[..head.payload_len()]);
+        src.advance(head.payload_len());
+        let subgroup_object_field = head.with_payload(message_type, payload);
         let decoded_at = executor::now();
         // Bytes left over arrived with this object's last bytes.
         self.object_buffered_at = (!src.is_empty()).then_some(decoded_at);
@@ -113,6 +128,24 @@ impl SubgroupDecoder {
             field: subgroup_object_field,
             receive_time: decoded_at.saturating_sub(buffered_at),
         }))
+    }
+
+    fn decode_head(
+        message_type: SubgroupHeaderType,
+        src: &mut BytesMut,
+    ) -> Result<Option<SubgroupObjectHead>, std::io::Error> {
+        let mut cursor = std::io::Cursor::new(&src[..]);
+        match SubgroupObjectHead::decode(message_type, &mut cursor) {
+            Ok(head) => {
+                src.advance(cursor.position() as usize);
+                Ok(Some(head))
+            }
+            Err(DecodeError::NeedMoreData) => Ok(None),
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to decode subgroup object field: {:?}", e),
+            )),
+        }
     }
 }
 
@@ -143,6 +176,10 @@ mod tests {
             subgroup_object: SubgroupObject::new_payload(Bytes::from_static(payload)),
         }
         .encode()
+    }
+
+    fn head_len(object: &BytesMut, payload: &[u8]) -> usize {
+        object.len() - payload.len()
     }
 
     fn decode_object(decoder: &mut SubgroupDecoder, src: &mut BytesMut) -> Option<Duration> {
@@ -190,5 +227,48 @@ mod tests {
 
         // Assert
         assert!(receive_time.unwrap() >= GAP, "{receive_time:?}");
+    }
+
+    #[test]
+    fn an_object_whose_payload_arrives_after_its_head_is_decoded_whole() {
+        // Arrange: the header and the object's head arrive before its payload
+        let mut decoder = SubgroupDecoder::new();
+        let mut src = header().encode();
+        let encoded = object(b"keyframe");
+        let head_len = head_len(&encoded, b"keyframe");
+        src.extend_from_slice(&encoded[..head_len]);
+        decoder.decode(&mut src).unwrap();
+        assert!(decoder.decode(&mut src).unwrap().is_none());
+        src.extend_from_slice(&encoded[head_len..]);
+
+        // Act
+        let frame = decoder.decode(&mut src).unwrap();
+
+        // Assert
+        let Some(SubgroupFrame::Object { field, .. }) = frame else {
+            panic!("expected an object, got {frame:?}");
+        };
+        assert_eq!(
+            field.subgroup_object,
+            SubgroupObject::new_payload(Bytes::from_static(b"keyframe"))
+        );
+        assert!(src.is_empty());
+    }
+
+    #[test]
+    fn a_stream_ending_after_an_object_head_is_an_error() {
+        // Arrange: the head is consumed while the payload never arrives
+        let mut decoder = SubgroupDecoder::new();
+        let mut src = header().encode();
+        let encoded = object(b"keyframe");
+        src.extend_from_slice(&encoded[..head_len(&encoded, b"keyframe")]);
+        decoder.decode(&mut src).unwrap();
+        assert!(decoder.decode(&mut src).unwrap().is_none());
+
+        // Act
+        let result = decoder.decode_eof(&mut src);
+
+        // Assert
+        assert!(result.is_err(), "{result:?}");
     }
 }
