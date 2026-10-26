@@ -6,18 +6,16 @@ use tokio::{
     net::TcpListener,
     signal::unix::{SignalKind, signal},
 };
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use vts::{Registry, VtsServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
+    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+        service_name: "vts",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &["vts=info"],
+        resource_attributes: Vec::new(),
+    })?;
 
     let port: u16 = std::env::var("VTS_PORT")
         .ok()
