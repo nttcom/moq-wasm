@@ -1696,9 +1696,9 @@ dependencies = [
  "moqt",
  "msf",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
