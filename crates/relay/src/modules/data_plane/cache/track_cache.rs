@@ -2,7 +2,7 @@ use std::{
     collections::btree_map::Entry,
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
+        atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
     },
     time::Duration,
 };
@@ -55,7 +55,8 @@ pub(crate) struct TrackCache {
     notify: Notify,
     live_ingest_count: AtomicUsize,
     eviction_generation: AtomicU64,
-    malformed: AtomicBool,
+    /// When the track was found malformed; the latch is never cleared.
+    malformed_at: std::sync::OnceLock<Instant>,
     malformed_notify: Notify,
     subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
     ingress_stats: IngressStats,
@@ -81,7 +82,7 @@ impl TrackCache {
             notify: Notify::new(),
             live_ingest_count: AtomicUsize::new(0),
             eviction_generation: AtomicU64::new(0),
-            malformed: AtomicBool::new(false),
+            malformed_at: std::sync::OnceLock::new(),
             malformed_notify: Notify::new(),
             subgroup_opened_sender: broadcast::channel(256).0,
             ingress_stats: IngressStats::default(),
@@ -117,11 +118,11 @@ impl TrackCache {
     }
 
     pub(crate) fn is_malformed(&self) -> bool {
-        self.malformed.load(AtomicOrdering::Acquire)
+        self.malformed_at.get().is_some()
     }
 
     pub(crate) fn mark_malformed(&self) {
-        self.malformed.store(true, AtomicOrdering::Release);
+        let _ = self.malformed_at.set(Instant::now());
         self.malformed_notify.notify_waiters();
     }
 
@@ -246,6 +247,17 @@ impl TrackCache {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.read().objects.is_empty()
+    }
+
+    /// Empty, and not latched malformed within `ttl`: a request for a
+    /// latched track is answered MALFORMED_TRACK (draft-18 §2.4.2) for the
+    /// TTL even when nothing of it was cached.
+    pub(crate) fn is_removable(&self, ttl: Duration) -> bool {
+        self.is_empty()
+            && self
+                .malformed_at
+                .get()
+                .is_none_or(|malformed_at| malformed_at.elapsed() >= ttl)
     }
 
     pub(crate) fn evict(&self, ttl: Duration) {
