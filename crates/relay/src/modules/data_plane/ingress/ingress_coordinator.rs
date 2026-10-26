@@ -155,6 +155,7 @@ impl IngressCoordinator {
                                     stamp: CacheStamp {
                                         max_cache_duration: subscription.max_cache_duration(),
                                         persist,
+                                        ..CacheStamp::default()
                                     },
                                     track_properties: subscription.as_moqt().track_properties().clone(),
                                 }))

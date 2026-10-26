@@ -49,6 +49,13 @@ impl DataReceiver {
         }
     }
 
+    /// Whether a duplicate object whose status differs from an earlier copy
+    /// makes the track malformed on this session: draft-14 §8.1 compares the
+    /// status, draft-18 §9.1 does not.
+    pub fn compares_duplicate_status(&self) -> bool {
+        self.version.compares_duplicate_status()
+    }
+
     /// Waits for the next subgroup stream or datagram. Fails with a
     /// `MalformedTrackError` when a draft-14 track mixes the two (§2.5) or a
     /// datagram conflicts with an earlier copy of its object, and with another
@@ -315,5 +322,27 @@ mod tests {
 
         // Assert: true marks a datagram; the subscription goes on after the mix
         assert_eq!([first, second, third], [(false, 0), (true, 1), (false, 2)]);
+    }
+
+    #[tokio::test]
+    async fn a_draft14_subscription_compares_the_status_of_duplicates() {
+        // Arrange
+        let track = published_track("data-receiver-draft14-duplicate-status").await;
+        // Act
+        let receiver = data_receiver(&track.server, &track.accepted).await;
+        // Assert: draft-14 §8.1
+        assert!(receiver.compares_duplicate_status());
+    }
+
+    #[tokio::test]
+    async fn a_draft18_subscription_does_not_compare_the_status_of_duplicates() {
+        // Arrange
+        let track =
+            published_track_over("data-receiver-draft18-duplicate-status", Version::Draft18).await;
+        // Act
+        let receiver = data_receiver(&track.server, &track.accepted).await;
+        // Assert: draft-18 §9.1 compares only the forwarding preference,
+        // subgroup, priority and payload
+        assert!(!receiver.compares_duplicate_status());
     }
 }
