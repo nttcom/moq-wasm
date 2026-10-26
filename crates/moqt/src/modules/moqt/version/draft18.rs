@@ -1874,6 +1874,40 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn namespaces_and_tracks_subscribed_apart_are_both_withdrawn_by_unsubscribe_namespace() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespaces-then-tracks", "moqt").await;
+        let mut subscribed = Vec::new();
+        for interest in [NamespaceInterest::Namespaces, NamespaceInterest::Tracks] {
+            let (request, handlers) = namespace_requests(&client, &server, interest, 1).await;
+            handlers[0].ok().await.unwrap();
+            request.await.unwrap().unwrap();
+            subscribed.push(handlers[0].interest);
+        }
+
+        // Act
+        client
+            .subscriber()
+            .unsubscribe_namespace("live".into())
+            .await
+            .unwrap();
+        let mut withdrawn = Vec::new();
+        for _ in 0..2 {
+            let event = next_event(&server).await;
+            let SessionEvent::UnsubscribeNamespace(handler) = event else {
+                panic!("expected a namespace subscription withdrawn, got {event:?}");
+            };
+            withdrawn.push(handler.interest);
+        }
+
+        // Assert: §6.1, each kind is its own request on the same prefix
+        let both = interests(&[NamespaceInterest::Namespaces, NamespaceInterest::Tracks]);
+        assert_eq!(interests(&subscribed), both);
+        assert_eq!(interests(&withdrawn), both);
+    }
+
     /// `server`'s response stream of the SUBSCRIBE_TRACKS for "live" that
     /// `client` sent and `server` accepted.
     async fn accepted_subscribe_tracks(
