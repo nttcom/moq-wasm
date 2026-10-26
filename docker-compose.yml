@@ -144,9 +144,10 @@ services:
       hyperdx:
         condition: service_started
 
-  # ClickStack: relay OTLP logs and traces go through its collector into the
-  # `otel` database of the clickhouse service; HyperDX (http://localhost:8080)
-  # searches them. They start with observability; relays export with OTEL_SDK_DISABLED=false.
+  # ClickStack: its collector writes relay OTLP logs and traces into the
+  # `otel` database of the clickhouse service. HyperDX (http://localhost:8080)
+  # searches them. Both start with observability.
+  # Relays export only with OTEL_SDK_DISABLED=false.
   clickstack-otel-collector:
     image: docker.clickhouse.com/clickhouse/clickstack-otel-collector:2.42.0@sha256:90ca453137798285871190722fcd7c79e7731e9376cf23a922d6f855bf94f3c7
     environment:
