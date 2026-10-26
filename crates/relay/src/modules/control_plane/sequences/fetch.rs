@@ -11,6 +11,7 @@ use tracing::Span;
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
+        sequences::malformed_track::refused_as_malformed,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::{
@@ -19,6 +20,7 @@ use crate::modules::{
             track_cache::{FetchRangeResolution, TrackCache},
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
+        ingress::fetch_ingest::FillBudget,
     },
     domain::{
         pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
@@ -35,6 +37,7 @@ struct CacheTarget {
     cache: Arc<TrackCache>,
     start_location: moqt::object::Location,
     end_location: moqt::object::Location,
+    report_unknown: bool,
 }
 
 struct FetchTarget {
@@ -53,6 +56,14 @@ struct PreparedUpstreamFetch {
 enum FetchSource {
     Cache(CacheTarget),
     Upstream,
+}
+
+/// Why no upstream FETCH was made; the downstream FETCH is already answered.
+#[derive(Debug, PartialEq)]
+enum NoUpstreamFetch {
+    Refused,
+    /// The publisher refused the track as malformed.
+    MalformedTrack(SessionId),
 }
 
 #[derive(Debug)]
@@ -135,6 +146,7 @@ impl Fetch {
         handler: Box<dyn FetchHandler>,
     ) {
         let request_id = handler.request_id();
+        let fill_budget = FillBudget::new(handler.fill_timeout(), self.fill_timeout);
 
         let (target, source) = match self.resolve_target_and_source(
             session_id,
@@ -158,12 +170,20 @@ impl Fetch {
                 return;
             }
         };
+        let source = match source {
+            FetchSource::Upstream if fill_budget.forbids_waiting() => {
+                Self::serve_at_hand(&target, cache_store)
+                    .map_or(FetchSource::Upstream, FetchSource::Cache)
+            }
+            source => source,
+        };
 
         match source {
             FetchSource::Cache(CacheTarget {
                 cache,
                 start_location,
                 end_location,
+                report_unknown,
             }) => {
                 // The relay does not yet track final End Of Track via PUBLISH_DONE,
                 // so local cache responses cannot assert it.
@@ -182,6 +202,7 @@ impl Fetch {
                     start_location,
                     end_location,
                     group_order: handler.group_order(),
+                    report_unknown,
                 };
                 if let Err(e) = egress_sender
                     .send(EgressCommand::StartFetch(fetch_request))
@@ -204,7 +225,7 @@ impl Fetch {
                     cache_store: cache_store.clone(),
                     egress_sender: egress_sender.clone(),
                     session_event_sender: session_event_sender.clone(),
-                    fill_timeout: self.fill_timeout,
+                    fill_budget,
                 });
             }
         }
@@ -221,13 +242,16 @@ impl Fetch {
         requester: SessionPeer,
         handler: &dyn FetchHandler,
         target: &FetchTarget,
-    ) -> Option<PreparedUpstreamFetch> {
+    ) -> Result<PreparedUpstreamFetch, NoUpstreamFetch> {
         let mut tried = Vec::new();
         let mut last_error = None;
         for publisher_session_id in Self::subscribed_publishers(table, requester, target) {
             tried.push(publisher_session_id);
-            match Self::fetch_from(forwarder, publisher_session_id, handler, target).await {
-                Ok(prepared) => return Some(prepared),
+            match Self::fetch_from(forwarder, publisher_session_id, target).await {
+                Ok(prepared) => return Ok(prepared),
+                Err(err) if refused_as_malformed(&err) => {
+                    return Err(Self::malformed_refusal(handler, publisher_session_id, &err).await);
+                }
                 Err(err) => last_error = Some(err),
             }
         }
@@ -249,8 +273,11 @@ impl Fetch {
                 continue;
             }
             tried.push(publisher_session_id);
-            match Self::fetch_from(forwarder, publisher_session_id, handler, target).await {
-                Ok(prepared) => return Some(prepared),
+            match Self::fetch_from(forwarder, publisher_session_id, target).await {
+                Ok(prepared) => return Ok(prepared),
+                Err(err) if refused_as_malformed(&err) => {
+                    return Err(Self::malformed_refusal(handler, publisher_session_id, &err).await);
+                }
                 Err(err) => last_error = Some(err),
             }
         }
@@ -270,7 +297,19 @@ impl Fetch {
             }
         };
         let _ = handler.error(error_code, reason).await;
-        None
+        Err(NoUpstreamFetch::Refused)
+    }
+
+    /// draft-18 §2.4.2: the track is malformed whoever else publishes it, so
+    /// no other publisher is tried.
+    async fn malformed_refusal(
+        handler: &dyn FetchHandler,
+        publisher_session_id: SessionId,
+        error: &anyhow::Error,
+    ) -> NoUpstreamFetch {
+        let (error_code, reason) = Self::upstream_fetch_error_response(error);
+        let _ = handler.error(error_code, reason).await;
+        NoUpstreamFetch::MalformedTrack(publisher_session_id)
     }
 
     fn subscribed_publishers(
@@ -298,7 +337,6 @@ impl Fetch {
     async fn fetch_from(
         forwarder: &ControlMessageForwarder,
         publisher_session_id: SessionId,
-        handler: &dyn FetchHandler,
         target: &FetchTarget,
     ) -> anyhow::Result<PreparedUpstreamFetch> {
         let fetched = forwarder
@@ -308,9 +346,11 @@ impl Fetch {
                 target.track_name.clone(),
                 target.start_location,
                 target.end_location,
+                // The fill proves positions known in Location order; egress
+                // serves the downstream's order.
                 moqt::fetch::FetchOption {
                     subscriber_priority: moqt::fetch::FetchOption::default().subscriber_priority,
-                    group_order: handler.group_order(),
+                    group_order: moqt::object::GroupOrder::Ascending,
                 },
             )
             .await;
@@ -436,6 +476,7 @@ impl Fetch {
                 cache,
                 start_location,
                 end_location,
+                report_unknown: false,
             }),
             FetchRangeResolution::InvalidRange => return Err(FetchError::InvalidRange),
             FetchRangeResolution::NoObjects => return Err(FetchError::NoObjects),
@@ -453,6 +494,22 @@ impl Fetch {
             }
         };
         Ok(source)
+    }
+
+    /// A FETCH with FILL_TIMEOUT 0 whose range the cache does not cover is
+    /// served with the cached objects and the rest reported as unknown
+    /// (draft-18 §10.2.5 MUST NOT wait). Only a cache holding an object at
+    /// or after the start knows the FETCH_OK End Location; otherwise the
+    /// upstream FETCH_OK gives it and no object is waited for.
+    fn serve_at_hand(target: &FetchTarget, cache_store: &TrackCacheStore) -> Option<CacheTarget> {
+        let cache = cache_store.get(&target.track_key)?;
+        let end_location = cache.known_end_location(target.start_location, target.end_location)?;
+        Some(CacheTarget {
+            cache,
+            start_location: target.start_location,
+            end_location,
+            report_unknown: true,
+        })
     }
 
     /// Checks a Joining FETCH in the order the drafts state: the joined
@@ -612,7 +669,9 @@ mod tests {
             vec![
                 (
                     SUBSCRIBED_PUBLISHER,
-                    mock_session_answering_fetch(FetchAnswer::Refuse),
+                    mock_session_answering_fetch(FetchAnswer::Refuse(
+                        RequestErrorCode::TrackDoesNotExist,
+                    )),
                 ),
                 (
                     OTHER_PUBLISHER,
@@ -647,7 +706,7 @@ mod tests {
         // Assert
         assert_eq!(
             prepared.map(|prepared| prepared.upstream_publisher_session_id),
-            Some(OTHER_PUBLISHER)
+            Ok(OTHER_PUBLISHER)
         );
     }
 
@@ -668,7 +727,9 @@ mod tests {
             vec![
                 (
                     REFUSING_PUBLISHER,
-                    mock_session_answering_fetch(FetchAnswer::Refuse),
+                    mock_session_answering_fetch(FetchAnswer::Refuse(
+                        RequestErrorCode::TrackDoesNotExist,
+                    )),
                 ),
                 (
                     ANSWERING_PUBLISHER,
@@ -703,7 +764,98 @@ mod tests {
         // Assert
         assert_eq!(
             prepared.map(|prepared| prepared.upstream_publisher_session_id),
-            Some(ANSWERING_PUBLISHER)
+            Ok(ANSWERING_PUBLISHER)
+        );
+    }
+
+    struct HandledFetch {
+        oks: Vec<moqt::object::Location>,
+        handed_over: Option<EgressFetchRequest>,
+    }
+
+    /// Handles a FETCH of {0,0}..{2,0} with FILL_TIMEOUT 0 from session 2,
+    /// whose only publisher, session 5, answers `upstream`.
+    async fn handle_zero_fill_timeout_fetch(
+        cache_store: Arc<TrackCacheStore>,
+        upstream: FetchAnswer,
+    ) -> HandledFetch {
+        const PUBLISHER: SessionId = 5;
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(PUBLISHER, "ns".to_string(), SessionPeer::Client);
+        let repository = session_repository_with_sessions(
+            vec![(PUBLISHER, mock_session_answering_fetch(upstream))],
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let handler = MockFetchHandler {
+            fill_timeout: Some(Duration::ZERO),
+            ..MockFetchHandler::fetching(standalone_fetch_params(location(0, 0), location(2, 0)))
+        };
+        let oks = handler.oks.clone();
+        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(1);
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        FETCH
+            .handle(
+                2,
+                &Span::none(),
+                &table,
+                &cache_store,
+                &egress_sender,
+                &session_event_sender,
+                &ControlMessageForwarder { repository },
+                &Arc::new(local_publisher_resolver()),
+                Box::new(handler),
+            )
+            .await;
+        let handed_over = tokio::time::timeout(Duration::from_secs(1), egress_receiver.recv())
+            .await
+            .ok()
+            .flatten()
+            .map(|command| match command {
+                EgressCommand::StartFetch(request) => request,
+                EgressCommand::StartReader(_) => panic!("expected a fetch"),
+            });
+        let oks = oks.lock().unwrap().clone();
+        HandledFetch { oks, handed_over }
+    }
+
+    #[tokio::test]
+    async fn a_zero_fill_timeout_serves_the_cache_without_an_upstream_fetch() {
+        // Arrange: only group 2 is cached; the publisher never answers FETCH
+        let cache_store = Arc::new(TrackCacheStore::new());
+        insert_closed_group(
+            &cache_store.get_or_create(&TrackKey::new("ns", "track")),
+            2,
+            &[0],
+        );
+
+        // Act
+        let handled = handle_zero_fill_timeout_fetch(cache_store, FetchAnswer::Never).await;
+
+        // Assert: draft-18 §10.2.5 MUST NOT wait for upstream delivery
+        assert_eq!(handled.oks, vec![location(2, 0)]);
+        assert!(
+            handled
+                .handed_over
+                .is_some_and(|request| request.report_unknown),
+            "the cached objects are served at once, the rest reported unknown"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_zero_fill_timeout_without_a_cache_waits_for_no_upstream_object() {
+        // Act: the publisher answers FETCH_OK but never sends an object
+        let handled =
+            handle_zero_fill_timeout_fetch(Arc::new(TrackCacheStore::new()), FetchAnswer::FetchOk)
+                .await;
+
+        // Assert: draft-18 §10.2.5, FETCH_OK alone tells the End Location
+        assert_eq!(handled.oks, vec![location(2, 0)]);
+        assert!(
+            handled
+                .handed_over
+                .is_some_and(|request| request.report_unknown)
         );
     }
 

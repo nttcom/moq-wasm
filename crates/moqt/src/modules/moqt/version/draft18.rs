@@ -881,6 +881,7 @@ mod tests {
         RequestErrorCode, RequestFailure, SessionEvent, TrackWriter,
         fetch::{
             Fetch, FetchDataReceiver, FetchDataSender, FetchHandler, FetchOption, FetchParams,
+            UnknownRange,
         },
         modules::{
             moqt::{
@@ -1447,6 +1448,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_fetch_response_reports_an_unknown_range_and_goes_on() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-unknown-range", "moqt").await;
+        let (_subscriber, mut receiver, _handler, sender) =
+            fetch_with_open_response(&client, &server).await;
+        let object = |group_id| Object {
+            location: Location {
+                group_id,
+                object_id: 0,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: Default::default(),
+            payload: Bytes::from_static(b"o"),
+            ends_group: false,
+        };
+        let unknown_through = Location {
+            group_id: 2,
+            object_id: u64::MAX,
+        };
+
+        // Act
+        sender.send_object(&object(0)).await.unwrap();
+        let reported = sender.report_unknown_range(unknown_through).await.unwrap();
+        sender.send_object(&object(3)).await.unwrap();
+        sender.close().await.unwrap();
+        let mut received = Vec::new();
+        loop {
+            let fetched = receiver.receive().await.unwrap();
+            let end = fetched == Fetch::End;
+            received.push(fetched);
+            if end {
+                break;
+            }
+        }
+
+        // Assert: §11.4.4.2
+        assert_eq!(reported, UnknownRange::Marked);
+        assert_eq!(
+            received,
+            vec![
+                Fetch::Object(object(0)),
+                Fetch::UnknownRange {
+                    last: unknown_through
+                },
+                Fetch::Object(object(3)),
+                Fetch::End,
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn dropping_a_fetch_receiver_before_the_end_cancels_the_fetch() {
         // Arrange
         let (client, server) =
@@ -1763,6 +1818,7 @@ mod tests {
                 },
             },
             authorization_tokens: vec![],
+            fill_timeout: None,
         })
         .unwrap();
         sender.send(&fetch).await.unwrap();
@@ -1790,6 +1846,44 @@ mod tests {
         // Assert: §3.3.2 cancels by reset, not by FIN
         assert!(later.is_err(), "{later:?}");
         assert!(answered.is_ok(), "{answered:?}");
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_hands_its_fill_timeout_to_the_handler() {
+        // Arrange: a FETCH with FILL_TIMEOUT 0, which no FetchOption sets
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-fill-timeout", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
+        let fetch = messages::encode_fetch(&FetchMessage {
+            request_id: connection.control.next_request_id(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            fetch_params: FetchParams::Standalone {
+                track_namespace: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                start_location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                end_location: Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            },
+            authorization_tokens: vec![],
+            fill_timeout: Some(0),
+        })
+        .unwrap();
+
+        // Act
+        StreamSender::new(send_stream).send(&fetch).await.unwrap();
+        let SessionEvent::Fetch(handler) = next_event(&server).await else {
+            panic!("expected FETCH");
+        };
+
+        // Assert: §10.2.5
+        assert_eq!(handler.fill_timeout(), Some(std::time::Duration::ZERO));
     }
 
     #[tokio::test]

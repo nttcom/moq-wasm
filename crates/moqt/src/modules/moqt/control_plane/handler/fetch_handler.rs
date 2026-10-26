@@ -1,5 +1,5 @@
 use crate::modules::moqt::version::OutgoingResponse;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use thiserror::Error;
 
@@ -73,6 +73,14 @@ impl FetchHandler {
             max_cache_duration: None,
             guard,
         }
+    }
+
+    /// The longest a relay should wait for objects it must fetch upstream
+    /// before it reports them as unknown, `ZERO` meaning not at all
+    /// (draft-18 §10.2.5 FILL_TIMEOUT). `None` when the FETCH sets none,
+    /// which is always the case on draft-14.
+    pub fn fill_timeout(&self) -> Option<Duration> {
+        self.fetch.fill_timeout.map(Duration::from_millis)
     }
 
     /// Whether this Joining FETCH may join `subscription` under the session's
@@ -194,6 +202,18 @@ mod tests {
             panic!("expected FETCH from the client");
         };
         handler
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetch_has_no_fill_timeout() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("fetch-handler-fill-14").await;
+
+        // Act
+        let handler = received_fetch(&client, &server).await;
+
+        // Assert: draft-14 §9.16 defines no FILL_TIMEOUT
+        assert_eq!(handler.fill_timeout(), None);
     }
 
     #[tokio::test]
