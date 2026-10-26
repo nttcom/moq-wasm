@@ -1036,7 +1036,6 @@ async fn connect(url: &str) -> anyhow::Result<Session> {
             .get()
             .cloned()
             .unwrap_or_else(|| moqt::DEFAULT_VERSIONS.to_vec()),
-        ..Default::default()
     })?;
     tracing::info!(url, "connecting to relay");
     let connecting = endpoint.connect(url).await?;
