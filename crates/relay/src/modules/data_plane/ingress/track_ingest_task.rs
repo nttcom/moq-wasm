@@ -198,6 +198,35 @@ mod tests {
         TrackKey::new("ns", "track")
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn the_cache_ttl_counts_from_each_object_arrival_not_from_the_ingest_start() {
+        // Arrange: the ingest starts with the subscription, two TTLs before
+        // the first object arrives
+        const TTL: std::time::Duration = std::time::Duration::from_secs(5);
+        let context = IngestContext::new();
+        let upstream = context.start(FIRST_PUBLISHER).await;
+        tokio::time::advance(TTL * 2).await;
+        let stream = upstream.open_stream();
+        stream.header(0);
+        stream.object(0);
+        stream.object(1);
+        context.wait_largest_location(location(0, 1)).await;
+        let cache = context.cache_store.get_or_create(&track_key());
+
+        // Act
+        tokio::time::advance(TTL - std::time::Duration::from_secs(1)).await;
+        cache.evict(TTL);
+        let within_ttl = cache.occupancy().objects;
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        cache.evict(TTL);
+        let past_ttl = cache.occupancy().objects;
+
+        // Assert: both objects stay for the TTL after they arrived; past it
+        // only the newest object of the live track does
+        assert_eq!(within_ttl, 2);
+        assert_eq!(past_ttl, 1);
+    }
+
     #[tokio::test]
     async fn a_second_publisher_of_an_active_track_is_ingested() {
         // Arrange
