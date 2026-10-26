@@ -5,7 +5,10 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::{sync::Arc, time::Duration};
 
-use moqt::fetch::{FetchParams, JoinedSubscription, JoiningFetchRefusal};
+use moqt::{
+    fetch::{FetchParams, JoinedSubscription, JoiningFetchRefusal},
+    object::ContentExists,
+};
 use tracing::Span;
 
 use crate::modules::{
@@ -414,7 +417,14 @@ impl Fetch {
         {
             return Err(FetchError::MalformedTrack);
         }
-        let source = self.resolve_fetch_source(&target, cache_store)?;
+        let upstream_largest =
+            table
+                .get_upstream_track(&target.track_key)
+                .and_then(|upstream_track| match upstream_track.content_exists() {
+                    ContentExists::True { location } => Some(location),
+                    ContentExists::False => None,
+                });
+        let source = self.resolve_fetch_source(&target, cache_store, upstream_largest)?;
         Ok((target, source))
     }
 
@@ -465,6 +475,7 @@ impl Fetch {
         &self,
         target: &FetchTarget,
         cache_store: &TrackCacheStore,
+        upstream_largest: Option<moqt::object::Location>,
     ) -> Result<FetchSource, FetchError> {
         let start_location = target.start_location;
         let end_location = target.end_location;
@@ -476,7 +487,8 @@ impl Fetch {
             );
             return Ok(FetchSource::Upstream);
         };
-        let source = match cache.resolve_fetch_range(start_location, end_location) {
+        let source = match cache.resolve_fetch_range(start_location, end_location, upstream_largest)
+        {
             FetchRangeResolution::Serve { end_location } => FetchSource::Cache(CacheTarget {
                 cache,
                 start_location,
@@ -590,12 +602,15 @@ mod tests {
             verified_token::VerifiedToken,
         },
         domain::{
-            pub_sub_directory::entry::{DownstreamSubscription, UpstreamSubscriptionOrigin},
+            pub_sub_directory::entry::{
+                ActiveUpstreamSubscription, DownstreamSubscription, UpstreamSubscriptionOrigin,
+            },
             session_peer::SessionPeer,
         },
         test_support::{
             directory_fixtures::{
-                active_upstream, local_publisher_resolver, table_with_upstream, upstream_carrying,
+                PUBLISHER_SESSION, active_upstream, local_publisher_resolver, table_with_upstream,
+                track_key, upstream_carrying,
             },
             mock_session::{
                 FetchAnswer, MockFetchHandler, RecordedControlMessages,
@@ -1246,6 +1261,38 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(FetchError::InvalidRange)));
+    }
+
+    #[test]
+    fn a_fetch_of_the_upstream_largest_group_not_yet_cached_goes_upstream() {
+        // Arrange: the upstream SUBSCRIBE_OK reported Largest {1, 3}; live
+        // ingest runs, but the cache holds only group 0
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            ActiveUpstreamSubscription {
+                content_exists: ContentExists::True {
+                    location: location(1, 3),
+                },
+                ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
+            },
+        );
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let cache = cache_store.get_or_create(&track_key());
+        insert_closed_group(&cache, 0, &[0]);
+        cache.begin_live_ingest();
+
+        // Act
+        let result = FETCH.resolve_target_and_source(
+            2,
+            &MockFetchHandler::fetching(standalone_fetch_params(location(1, 0), location(1, 4))),
+            &table,
+            &cache_store,
+        );
+
+        // Assert: the start is not after the Largest Object, so no INVALID_RANGE (draft-14 §9.16.3, draft-18 §10.12.3)
+        assert!(matches!(result, Ok((_, FetchSource::Upstream))));
     }
 
     #[test]
