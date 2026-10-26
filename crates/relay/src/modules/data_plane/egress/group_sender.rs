@@ -37,6 +37,8 @@ pub(crate) struct GroupSender {
     delivery_stats: Arc<DeliveryStats>,
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
     group_sequence: GroupSequence,
+    /// Set once the scheduler has scheduled its last task.
+    schedule_over_sender: watch::Sender<bool>,
 }
 
 /// Where a send task reads its subgroup from: the cache, while the
@@ -48,6 +50,7 @@ struct SubgroupSource {
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
     /// `DeliveryControl::resumes` the task last delivered under.
     resumes: u64,
+    schedule_over_receiver: watch::Receiver<bool>,
 }
 
 enum SubgroupNext {
@@ -108,7 +111,9 @@ impl SubgroupSource {
     /// update, as for a new subscription (see
     /// `DeliveryControl::resume_object_id`). `None` when nothing is left to
     /// send: the subgroup ended meanwhile, its group lies past the End Group
-    /// or at or before that Largest Object, or the registration is gone.
+    /// or at or before that Largest Object, the registration is gone, or the
+    /// scheduler is done. A done scheduler restarts nothing any more, and the
+    /// runner sends PUBLISH_DONE only once every task has ended.
     async fn held(&mut self, unsent: u64) -> Option<u64> {
         let group_id = self.key.group_id();
         let (key, generation, cache) = (self.key, self.generation, self.cache.clone());
@@ -121,6 +126,7 @@ impl SubgroupSource {
                 cursor = object.object.location.object_id.saturating_add(1);
             }
         };
+        let schedule_over = self.schedule_over_receiver.wait_for(|over| *over);
         let control = {
             let released = self.delivery_control_receiver.wait_for(|control| {
                 control.is_past_end(group_id)
@@ -130,6 +136,7 @@ impl SubgroupSource {
                 biased;
                 released = released => *released.ok()?,
                 () = subgroup_ended => return None,
+                _ = schedule_over => return None,
             }
         };
         if control.is_past_end(group_id) {
@@ -169,6 +176,7 @@ impl GroupSender {
             delivery_stats,
             delivery_control_receiver,
             group_sequence: GroupSequence::new(),
+            schedule_over_sender: watch::channel(false).0,
         }
     }
 
@@ -179,6 +187,7 @@ impl GroupSender {
             cache: self.cache.clone(),
             delivery_control_receiver: self.delivery_control_receiver.clone(),
             resumes: task.resumes,
+            schedule_over_receiver: self.schedule_over_sender.subscribe(),
         }
     }
 
@@ -188,10 +197,16 @@ impl GroupSender {
         let track_alias = self.downstream_subscription.track_alias();
         let subscriber_priority = self.downstream_subscription.subscriber_priority();
         let group_order = self.downstream_subscription.group_order();
+        let mut schedule_over = false;
 
         loop {
             tokio::select! {
-                Some(task) = self.receiver.recv() => {
+                task = self.receiver.recv(), if !schedule_over => {
+                    let Some(task) = task else {
+                        schedule_over = true;
+                        self.schedule_over_sender.send_replace(true);
+                        continue;
+                    };
                     match task.key {
                         SubgroupKey::Stream { group_id, subgroup_id } => {
                             let factory = stream_factory
