@@ -26,7 +26,9 @@ use crate::{
     modules::{
         executor::JoinHandle,
         moqt::{
-            control_plane::control_messages::messages::parameters::group_order::GroupOrder,
+            control_plane::control_messages::messages::parameters::{
+                group_order::GroupOrder, location::Location,
+            },
             control_plane::{
                 constants::TerminationErrorCode,
                 control_messages::messages::{
@@ -388,6 +390,15 @@ impl FetchEncoder {
         match self {
             Self::Draft14 => Ok(Some(draft14::objects::encode_fetch_object(object))),
             Self::Draft18(encoder) => encoder.object(object),
+        }
+    }
+
+    /// The marker saying the objects through `last` have unknown status;
+    /// `None` where the draft cannot express it (draft-14 has no marker).
+    pub(crate) fn end_of_unknown_range(&mut self, last: Location) -> Option<BytesMut> {
+        match self {
+            Self::Draft14 => None,
+            Self::Draft18(encoder) => encoder.end_of_unknown_range(last),
         }
     }
 }

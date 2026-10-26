@@ -44,6 +44,9 @@ pub(crate) struct EgressFetchRequest {
     pub(crate) start_location: moqt::object::Location,
     pub(crate) end_location: moqt::object::Location,
     pub(crate) group_order: moqt::object::GroupOrder,
+    /// Serve what the cache holds and report the objects it lacks as
+    /// unknown, instead of waiting for them (draft-18 §10.2.5).
+    pub(crate) report_unknown: bool,
 }
 
 pub(crate) enum EgressCommand {

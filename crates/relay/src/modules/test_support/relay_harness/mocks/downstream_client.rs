@@ -1,3 +1,4 @@
+use moqt::fetch::UnknownRange;
 use moqt::object::DataStreamResetCode;
 use moqt::publish::PublishDoneCode;
 use tokio::sync::mpsc;
@@ -185,18 +186,30 @@ impl Publisher for MockPublisher {
 #[derive(Debug)]
 pub(crate) enum FetchSent {
     Object(moqt::object::Object),
+    UnknownRange(moqt::object::Location),
     Closed,
     Reset(DataStreamResetCode),
 }
 
+/// `unknown_range` is what every `report_unknown_range` returns: `Marked`
+/// as on draft-18, `Reset` as on draft-14.
 pub(crate) struct MockFetchSender {
     sent: mpsc::UnboundedSender<FetchSent>,
+    unknown_range: UnknownRange,
 }
 
 impl MockFetchSender {
-    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<FetchSent>) {
+    pub(crate) fn answering_unknown_range(
+        unknown_range: UnknownRange,
+    ) -> (Self, mpsc::UnboundedReceiver<FetchSent>) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        (Self { sent: sender }, receiver)
+        (
+            Self {
+                sent: sender,
+                unknown_range,
+            },
+            receiver,
+        )
     }
 }
 
@@ -206,6 +219,16 @@ impl FetchSender for MockFetchSender {
         self.sent
             .send(FetchSent::Object(object))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+
+    async fn report_unknown_range(
+        &self,
+        last: moqt::object::Location,
+    ) -> anyhow::Result<UnknownRange> {
+        self.sent
+            .send(FetchSent::UnknownRange(last))
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))?;
+        Ok(self.unknown_range)
     }
 
     async fn close(&self) -> anyhow::Result<()> {

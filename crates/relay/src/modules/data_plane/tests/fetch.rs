@@ -158,3 +158,81 @@ async fn aborted_upstream_stream_resets_the_fetch_stream() {
         FetchSent::Reset(code) if code == DataStreamResetCode::InternalError
     ));
 }
+
+/// Groups 0 and 2 closed, group 1 never received.
+async fn harness_missing_group_1() -> RelayHarness {
+    let harness = RelayHarness::new();
+    for (group_id, object_count) in [(0, 2), (2, 1)] {
+        let stream = harness.open_upstream_stream();
+        stream.header(group_id);
+        for index in 0..object_count {
+            stream.object(index);
+        }
+        stream.fin();
+        harness.wait_group_closed(group_id).await;
+    }
+    harness
+}
+
+fn sent_steps(sent: Vec<FetchSent>) -> Vec<String> {
+    sent.into_iter()
+        .map(|step| match step {
+            FetchSent::Object(object) => {
+                format!("{}/{}", object.location.group_id, object.location.object_id)
+            }
+            FetchSent::UnknownRange(last) => {
+                format!("unknown..{}/{}", last.group_id, last.object_id)
+            }
+            FetchSent::Closed => "fin".to_string(),
+            FetchSent::Reset(code) => format!("reset {code:?}"),
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fetch_reporting_unknown_marks_what_the_cache_lacks_and_ends_with_fin() {
+    // Arrange
+    let harness = harness_missing_group_1().await;
+
+    // Act
+    let fetch = harness.start_fetch_reporting_unknown(
+        location(0, 0),
+        location(2, 0),
+        moqt::fetch::UnknownRange::Marked,
+    );
+
+    // Assert: draft-18 §10.12, the known objects around the unknown group are served
+    assert_eq!(
+        sent_steps(fetch.finished().await),
+        vec![
+            "0/0".to_string(),
+            "0/1".to_string(),
+            format!("unknown..1/{}", u64::MAX),
+            "2/0".to_string(),
+            "fin".to_string(),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fetch_reporting_unknown_stops_once_the_sender_has_reset() {
+    // Arrange
+    let harness = harness_missing_group_1().await;
+
+    // Act: the sender cannot express the range, as on draft-14
+    let fetch = harness.start_fetch_reporting_unknown(
+        location(0, 0),
+        location(2, 0),
+        moqt::fetch::UnknownRange::Reset,
+    );
+
+    // Assert: draft-18 §10.12, the reset ends the response
+    assert_eq!(
+        sent_steps(fetch.finished().await),
+        vec![
+            "0/0".to_string(),
+            "0/1".to_string(),
+            format!("unknown..1/{}", u64::MAX),
+        ]
+    );
+}

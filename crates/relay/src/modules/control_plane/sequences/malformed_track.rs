@@ -9,6 +9,20 @@ use tracing::Span;
 
 pub(crate) struct MalformedTrackCleanup;
 
+/// Whether `error` failed a request because its track is malformed
+/// (draft-18 §2.4.2): moqt refuses a SUBSCRIBE_OK or FETCH_OK whose
+/// Immutable Properties are malformed (§12.7) with MALFORMED_TRACK, as does a
+/// relay that detected the track malformed.
+pub(crate) fn refused_as_malformed(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<moqt::RequestFailure>(),
+        Some(moqt::RequestFailure::Rejected {
+            code: moqt::RequestErrorCode::MalformedTrack,
+            ..
+        })
+    )
+}
+
 impl MalformedTrackCleanup {
     #[tracing::instrument(
         level = "info",
