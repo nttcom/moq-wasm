@@ -258,11 +258,21 @@ call through the adapter; a draft never gets a task of its own (see
       Session URI sent to a server, closes the session with
       PROTOCOL_VIOLATION (§10.4).
     - REQUEST_UPDATE is applied as a delta to the request's current state
-      (§10.9), then raised as `SubscribeUpdate`. Its REQUEST_OK waits for
+      (§10.9), then raised as `SubscribeUpdate`, whose `filter()` is the
+      SUBSCRIPTION_FILTER it carries or `None` to keep the current one: a
+      relative filter's Start Location is known only to the application, so
+      it is not part of that state. Its REQUEST_OK waits for
       `SubscribeUpdateHandler::ok`, which gives the LARGEST_OBJECT (§10.2.11),
-      or for the handler to be dropped, which sends none. The stream reads
-      its next message only after that, so the answers keep the order of the
-      updates.
+      or for the handler to be dropped, which sends none. The stream goes on
+      being read meanwhile, so later updates and the peer's reset or FIN are
+      seen while an answer is pending; the answers are written in the order
+      the updates arrived (§10.9: exactly one per update), a later one
+      waiting behind an earlier one. An update the application leaves
+      unanswered for the 10 s control message timeout, counted from its
+      arrival, is answered REQUEST_ERROR TIMEOUT, and a later `ok` returns
+      `UpdateAnswer::Failed`: §10.9.1 then has the publisher end the
+      subscription with PUBLISH_DONE UPDATE_FAILED, which only the
+      application can do once it has closed the subscription's streams.
     - A REQUEST_UPDATE with TRACK_NAMESPACE_PREFIX on the peer's
       SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS raises
       `SubscribeNamespaceUpdate` (§10.9.2), which draft-14 never raises; the
@@ -280,7 +290,10 @@ call through the adapter; a draft never gets a task of its own (see
   `FetchHandler::check_joining` tells whether a Joining FETCH may join a
   subscription (draft-14 §9.16.2: Largest Object filter only, refused by
   closing the session; draft-18 §10.12.2: Forward State 1 only, refused with
-  INVALID_RANGE).
+  INVALID_RANGE), and `SubscribeUpdateHandler::check_widening` whether an
+  update may move a subscription's Start Location back or its End Group out
+  (draft-14 §9.10: no, refused by closing the session; draft-18 §10.9.1:
+  yes).
 - Error codes cross the seam as the typed enums of `error_codes.rs` and
   `constants.rs`. `draft14::error_codes` and `draft18::error_codes` hold each
   draft's values: the drafts use them to encode and decode messages, and
