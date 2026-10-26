@@ -4,7 +4,8 @@ use moqt::object::{ObjectStatus, SubgroupStart};
 use crate::modules::{
     session::data_object::DataObject,
     test_support::relay_harness::fixtures::cached_object::{
-        FIXTURE_PRIORITY, status_object, stream_object_in_subgroup, stream_object_with_payload,
+        FIXTURE_PRIORITY, arriving_object, status_object, stream_object_in_subgroup,
+        stream_object_with_payload,
     },
 };
 
@@ -56,4 +57,20 @@ pub(crate) fn make_status_object(
     status: ObjectStatus,
 ) -> DataObject {
     DataObject::SubgroupObject(status_object(group_id, object_id, status).object.clone())
+}
+
+/// The start of object `object_id` of subgroup 0 whose `payload_len` bytes
+/// follow as `make_payload_piece`s.
+pub(crate) fn make_object_start(group_id: u64, object_id: u64, payload_len: usize) -> DataObject {
+    DataObject::SubgroupObjectStart {
+        object: arriving_object(group_id, object_id),
+        payload_len,
+    }
+}
+
+pub(crate) fn make_payload_piece(data: &'static [u8], last: bool) -> DataObject {
+    DataObject::SubgroupPayload {
+        data: Bytes::from_static(data),
+        last,
+    }
 }
