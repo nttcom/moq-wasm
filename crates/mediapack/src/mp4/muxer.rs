@@ -148,10 +148,10 @@ pub(crate) mod tests {
         aac::AudioSpecificConfig,
         loc,
         mp4::isobmff::{NON_SYNC_SAMPLE_FLAGS, SYNC_SAMPLE_FLAGS},
-        sample::{AudioConfig, AudioSample, Timestamp},
+        sample::AudioConfig,
         test_support::{
-            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, delta_frame_annexb,
-            fixture_video_config, ivf_events, ivf_frames, keyframe_annexb, mono_48k,
+            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_event, fixture_video_config,
+            h264_aac_configs, ivf_events, ivf_frames, mono_48k, video_event,
         },
     };
 
@@ -176,40 +176,11 @@ pub(crate) mod tests {
             .1
     }
 
-    fn video(dts_ms: u64, is_keyframe: bool) -> MediaEvent {
-        MediaEvent::Video(VideoSample {
-            data: if is_keyframe {
-                keyframe_annexb()
-            } else {
-                delta_frame_annexb()
-            },
-            is_keyframe,
-            pts: Timestamp::from_millis(dts_ms + 40),
-            dts: Timestamp::from_millis(dts_ms),
-        })
-    }
-
-    fn audio(pts_ms: u64) -> MediaEvent {
-        MediaEvent::Audio(AudioSample {
-            data: Bytes::from_static(&[0xDE, 0xAD]),
-            pts: Timestamp::from_millis(pts_ms),
-        })
-    }
-
     fn muxer_with_both_tracks() -> Fmp4Muxer {
         let mut muxer = Fmp4Muxer::new();
-        muxer
-            .push(&MediaEvent::Streams(StreamSet {
-                has_video: true,
-                has_audio: true,
-            }))
-            .unwrap();
-        muxer
-            .push(&MediaEvent::VideoConfig(fixture_video_config()))
-            .unwrap();
-        muxer
-            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
-            .unwrap();
+        for event in h264_aac_configs() {
+            muxer.push(&event).unwrap();
+        }
         muxer
     }
 
@@ -219,7 +190,7 @@ pub(crate) mod tests {
         let mut muxer = muxer_with_both_tracks();
 
         // Act
-        let out = muxer.push(&audio(0)).unwrap();
+        let out = muxer.push(&audio_event(0)).unwrap();
 
         // Assert
         let top = boxes(&out);
@@ -238,8 +209,8 @@ pub(crate) mod tests {
         let mut muxer = muxer_with_both_tracks();
 
         // Act
-        let first = muxer.push(&video(0, true)).unwrap();
-        let second = muxer.push(&video(40, false)).unwrap();
+        let first = muxer.push(&video_event(0, true)).unwrap();
+        let second = muxer.push(&video_event(40, false)).unwrap();
         let flushed = muxer.finish().unwrap();
 
         // Assert
@@ -265,10 +236,10 @@ pub(crate) mod tests {
     fn strips_parameter_sets_from_video_sample_data() {
         // Arrange
         let mut muxer = muxer_with_both_tracks();
-        muxer.push(&video(0, true)).unwrap();
+        muxer.push(&video_event(0, true)).unwrap();
 
         // Act
-        let out = muxer.push(&video(40, false)).unwrap();
+        let out = muxer.push(&video_event(40, false)).unwrap();
 
         // Assert
         let mdat = find(&boxes(&out), "mdat");
@@ -281,7 +252,7 @@ pub(crate) mod tests {
         let mut muxer = muxer_with_both_tracks();
 
         // Act
-        let out = muxer.push(&audio(0)).unwrap();
+        let out = muxer.push(&audio_event(0)).unwrap();
 
         // Assert
         let top = boxes(&out);
@@ -308,11 +279,11 @@ pub(crate) mod tests {
             .unwrap();
 
         // Act
-        let before_audio_config = muxer.push(&video(0, true)).unwrap();
+        let before_audio_config = muxer.push(&video_event(0, true)).unwrap();
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
             .unwrap();
-        let after = muxer.push(&audio(0)).unwrap();
+        let after = muxer.push(&audio_event(0)).unwrap();
 
         // Assert
         assert!(before_audio_config.is_empty());
@@ -324,7 +295,7 @@ pub(crate) mod tests {
     fn rejects_configuration_change_after_init() {
         // Arrange
         let mut muxer = muxer_with_both_tracks();
-        muxer.push(&audio(0)).unwrap();
+        muxer.push(&audio_event(0)).unwrap();
         let changed = AudioSpecificConfig::new(2, 48_000, 2);
 
         // Act
