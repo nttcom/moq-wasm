@@ -665,6 +665,14 @@ per-request authorization gate under "Event pipeline".
   object, so a sparse track such as a catalog stays joinable; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
   ingress/egress holds it — avoiding races with new joiners.
+  A pass never walks the track (the disk cache keeps ~10^5 objects per
+  track-hour, and the pass holds the write lock): `EvictionQueues`
+  (`track_cache/eviction_queues.rs`) orders the objects by `received_at`
+  until their memory TTL is applied and by `CachedObject::expiry`, and lists
+  the stored objects per disk segment, so a pass visits only what came due or
+  lost its segment. The same queues answer `resolve_fetch_range`'s "does the
+  range hold an expired object" from the expired-but-not-yet-evicted entries.
+  Only the end-of-broadcast purge walks every object, once.
 - MAX_CACHE_DURATION (draft-14 §9.2.1.3): ingress stamps every object with
   `expires_at` = this relay's receipt time + the value its upstream
   SUBSCRIBE_OK, PUBLISH or FETCH_OK carried. From that instant

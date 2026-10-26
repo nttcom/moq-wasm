@@ -10,7 +10,9 @@ use crate::modules::data_plane::{
     cache::{cached_object::CachedObject, known_ranges::KnownRanges},
 };
 
-use super::{SubgroupRun, after, location, partial_object::PartialObject};
+use super::{
+    SubgroupRun, after, eviction_queues::EvictionQueues, location, partial_object::PartialObject,
+};
 
 /// `epoch` tells a guard opened before the subgroup last closed apart from one
 /// of the current opening.
@@ -46,6 +48,7 @@ pub(super) struct Ledger {
     pub(super) finished_subgroups: HashSet<SubgroupKey>,
     reopened_run_first_object_ids: HashMap<SubgroupKey, Vec<u64>>,
     pub(super) known_ranges: KnownRanges,
+    pub(super) eviction_queues: EvictionQueues,
     pub(super) next_open_epoch: u64,
     /// When the track's last publisher left; cleared when an ingest begins or
     /// eviction purges the track.
@@ -240,8 +243,15 @@ impl Ledger {
         end: moqt::object::Location,
         now: Instant,
     ) -> bool {
-        self.objects_in(start, end)
-            .any(|object| object.is_expired(now))
+        let range = start..KnownRanges::exclusive_end(end);
+        self.eviction_queues
+            .expired_candidates(now)
+            .filter(|at| range.contains(at))
+            .any(|at| {
+                self.objects
+                    .get(&at)
+                    .is_some_and(|object| object.is_expired(now))
+            })
     }
 
     fn objects_in(
