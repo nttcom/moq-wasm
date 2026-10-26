@@ -216,13 +216,12 @@ mod tests {
 
     use super::{CopySource, ObjectLedger, Recorded};
     use crate::{
-        SessionEvent,
-        fetch::{Fetch, FetchOption},
+        fetch::Fetch,
         modules::moqt::version::Version,
         modules::test_support::{
-            PublishedTrack, data_receiver, location, next_subgroup, object_with_extensions,
-            published_draft18_track, published_track, read_subgroup_objects, send_subgroup_object,
-            within,
+            PublishedTrack, data_receiver, fetch_answered_with, location, next_subgroup,
+            object_with_extensions, published_draft18_track, published_track,
+            read_subgroup_objects, send_subgroup_object, within,
         },
         object::{
             DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location,
@@ -823,45 +822,6 @@ mod tests {
 
     /// The server FETCHes from the client publishing `track` and reads the
     /// first object the client answers with `answer`.
-    async fn fetch_answered_with(track: &PublishedTrack, answer: &Object) -> anyhow::Result<Fetch> {
-        let mut subscriber = track.server.subscriber();
-        let end = location(answer.location.group_id + 1, 0);
-        let (handle, sender) = within(async {
-            tokio::join!(
-                subscriber.fetch(
-                    "ns".into(),
-                    "track".into(),
-                    location(0, 0),
-                    end,
-                    FetchOption::default(),
-                ),
-                async {
-                    // An earlier FETCH whose receiver is gone may be cancelled first.
-                    let handler = loop {
-                        match track.client.receive_event().await.unwrap() {
-                            SessionEvent::Fetch(handler) => break handler,
-                            SessionEvent::FetchCancel(_) => continue,
-                            _ => panic!("expected FETCH from the server"),
-                        }
-                    };
-                    handler.ok(false, end).await.unwrap();
-                    track
-                        .client
-                        .publisher()
-                        .create_fetch_stream(handler.request_id)
-                        .await
-                        .unwrap()
-                }
-            )
-        })
-        .await;
-        sender.send_object(answer).await.unwrap();
-        let mut receiver = within(subscriber.accept_fetch_receiver(&handle.unwrap()))
-            .await
-            .unwrap();
-        within(receiver.receive()).await
-    }
-
     async fn assert_fetched_copy_of_a_subscribed_object(track: PublishedTrack) {
         // Arrange
         let delivered = object_with_extensions();
