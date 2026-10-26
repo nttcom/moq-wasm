@@ -225,6 +225,13 @@ pub(crate) struct SubscribeTracksMessage {
     pub(crate) forward: bool,
 }
 
+/// §10.20 PUBLISH_BLOCKED.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PublishBlockedMessage {
+    pub(crate) track_namespace_suffix: Vec<String>,
+    pub(crate) track_name: String,
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) enum Message {
     Setup(SetupMessage),
@@ -247,7 +254,7 @@ pub(crate) enum Message {
     NamespaceDone(Vec<String>),
     SubscribeNamespace(SubscribeNamespace),
     SubscribeTracks(SubscribeTracksMessage),
-    PublishBlocked,
+    PublishBlocked(PublishBlockedMessage),
     RequestOk(RequestOkMessage),
     RequestError(RequestErrorMessage),
 }
@@ -352,8 +359,11 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
         NAMESPACE => Message::Namespace(get_track_namespace(buf)?),
         NAMESPACE_DONE => Message::NamespaceDone(get_track_namespace(buf)?),
         PUBLISH_BLOCKED => {
-            get_full_track_name(buf)?;
-            Message::PublishBlocked
+            let (track_namespace_suffix, track_name) = get_full_track_name(buf)?;
+            Message::PublishBlocked(PublishBlockedMessage {
+                track_namespace_suffix,
+                track_name,
+            })
         }
         REQUEST_OK | PUBLISH_OK => Message::RequestOk(RequestOkMessage {
             parameters: get_parameters(buf, REQUEST_OK_PARAMETERS)?,
@@ -943,6 +953,17 @@ pub(crate) fn encode_subscribe_tracks(
 
 /// NAMESPACE or NAMESPACE_DONE, which carry the namespace without the
 /// subscription's prefix (§10.16, §10.17).
+/// §10.20: `suffix` follows the Track Namespace Prefix of the
+/// SUBSCRIBE_TRACKS whose stream carries it.
+pub(crate) fn encode_publish_blocked(
+    suffix: &[String],
+    track_name: &str,
+) -> anyhow::Result<BytesMut> {
+    let mut payload = BytesMut::new();
+    put_full_track_name(&mut payload, suffix, track_name);
+    frame(PUBLISH_BLOCKED, &payload)
+}
+
 pub(crate) fn encode_namespace(message_type: u64, suffix: &[String]) -> anyhow::Result<BytesMut> {
     let mut payload = BytesMut::new();
     put_track_namespace(&mut payload, suffix);
@@ -1356,6 +1377,21 @@ mod tests {
         assert_eq!(
             decode(encode_subscribe_namespace(&subscribe_namespace).unwrap()),
             Message::SubscribeNamespace(subscribe_namespace)
+        );
+    }
+
+    #[test]
+    fn publish_blocked_round_trips_with_its_full_track_name() {
+        // Act
+        let decoded = decode(encode_publish_blocked(&["room".to_string()], "video").unwrap());
+
+        // Assert: §10.20
+        assert_eq!(
+            decoded,
+            Message::PublishBlocked(PublishBlockedMessage {
+                track_namespace_suffix: vec!["room".to_string()],
+                track_name: "video".to_string(),
+            })
         );
     }
 

@@ -1,6 +1,7 @@
 use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use async_trait::async_trait;
 use bytes::BytesMut;
+use futures::FutureExt;
 
 use crate::modules::transport::application_protocol::NegotiatedProtocol;
 use crate::modules::transport::quic::quic_receive_stream::QUICReceiveStream;
@@ -30,6 +31,18 @@ pub(crate) fn negotiated_alpn(connection: &quinn::Connection) -> Option<String> 
         .map(|alpn| String::from_utf8_lossy(&alpn).into_owned())
 }
 
+fn boxed_bi(
+    sender: quinn::SendStream,
+    receiver: quinn::RecvStream,
+) -> (BoxedSendStream, BoxedReceiveStream) {
+    (
+        Box::new(QUICSendStream::new(sender)),
+        Box::new(QUICReceiveStream {
+            recv_stream: receiver,
+        }),
+    )
+}
+
 #[async_trait]
 impl TransportConnection for QUICConnection {
     async fn closed(&self) -> TransportClose {
@@ -55,12 +68,19 @@ impl TransportConnection for QUICConnection {
 
     async fn open_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let (sender, receiver) = self.connection.open_bi().await?;
-        Ok((
-            Box::new(QUICSendStream::new(sender)),
-            Box::new(QUICReceiveStream {
-                recv_stream: receiver,
-            }),
-        ))
+        Ok(boxed_bi(sender, receiver))
+    }
+
+    async fn try_open_bi(&self) -> anyhow::Result<Option<(BoxedSendStream, BoxedReceiveStream)>> {
+        // quinn takes a stream ID only when one is free, so a pending open
+        // has done nothing and can be dropped.
+        match self.connection.open_bi().now_or_never() {
+            Some(opened) => {
+                let (sender, receiver) = opened?;
+                Ok(Some(boxed_bi(sender, receiver)))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {

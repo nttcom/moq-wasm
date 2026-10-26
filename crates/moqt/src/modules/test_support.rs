@@ -8,7 +8,10 @@ use bytes::Bytes;
 use tracing_subscriber::EnvFilter;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
-use crate::modules::transport::transport_connection::BoxedConnection;
+use crate::modules::transport::server_transport_config::MAX_CONCURRENT_BIDI_STREAMS;
+use crate::modules::transport::transport_connection::{
+    BoxedConnection, BoxedReceiveStream, BoxedSendStream,
+};
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 use crate::{
@@ -233,6 +236,20 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     )
     .await
     .unwrap()
+}
+
+/// Opens on `session` every bidirectional stream the peer allows, so that
+/// the peer's stream limit is reached; the streams stay open while the
+/// returned value lives.
+pub(crate) async fn use_up_bidi_streams(
+    session: &Session,
+) -> Vec<(BoxedSendStream, BoxedReceiveStream)> {
+    let connection = session.publisher().session.connection();
+    let mut streams = Vec::new();
+    for _ in 0..MAX_CONCURRENT_BIDI_STREAMS {
+        streams.push(connection.transport.open_bi().await.unwrap());
+    }
+    streams
 }
 
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
