@@ -540,8 +540,8 @@ A status query is answered from the relay's own state only. For a track with
 an `UpstreamTrack`, TRACK_STATUS_OK carries the newest upstream subscription's
 Expires and the Largest Location resolved as on the SUBSCRIBE fast path (the
 cache's largest location, else the largest Content Exists of its upstream
-subscriptions). Any other track
-is answered TRACK_STATUS_ERROR `NOT_SUPPORTED (0x3)`: draft-14 §9.20 lets a
+subscriptions). A latched malformed track is answered MALFORMED_TRACK. Any
+other track is answered TRACK_STATUS_ERROR `NOT_SUPPORTED (0x3)`: draft-14 §9.20 lets a
 relay without an active subscription forward the request or subscribe
 upstream (MAY), and this relay does neither.
 
@@ -674,9 +674,11 @@ per-request authorization gate under "Event pipeline".
   `MalformedTrackCleanup` (called by `UpstreamJoinTask` for a late
   publisher, raised as `MalformedTrackDetected` by `UpstreamFetchTask`). A
   PUBLISH with malformed Immutable Properties is refused by moqt itself and
-  never reaches the relay, so it latches nothing. A SUBSCRIBE or FETCH for a
-  latched track is answered MALFORMED_TRACK; draft-14 defines that code for
-  FETCH_ERROR only, so a draft-14 SUBSCRIBE_ERROR carries INTERNAL_ERROR.
+  never reaches the relay, so it latches nothing. A SUBSCRIBE, FETCH or
+  TRACK_STATUS for a latched track is answered MALFORMED_TRACK before any
+  upstream request is sent; draft-14 defines that code for FETCH_ERROR
+  only, so a draft-14 SUBSCRIBE_ERROR or TRACK_STATUS_ERROR carries
+  INTERNAL_ERROR.
 
 ### Cache (`modules/data_plane/cache`)
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
@@ -927,8 +929,11 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   then serves the rest of the plan, the steps after the last object sent.
   A FETCH served from the cache takes its wait from `FillBudget`: `Never`
   for FILL_TIMEOUT 0, `Until` the end of a non-zero budget (draft-18
-  §10.2.5), and `Unlimited` without FILL_TIMEOUT, which waits for an open
-  group as long as live ingest keeps it open.
+  §10.2.5). Without FILL_TIMEOUT it is `Until` the end of
+  `MOQT_FETCH_FILL_TIMEOUT_SECS` when the downstream response can mark the
+  rest unknown (`FetchHandler::marks_unknown_ranges`, draft-18), and
+  `Unlimited` otherwise (draft-14), which waits for an open group as long
+  as live ingest keeps it open.
 
 ## Cascading relays (`modules/cascading`)
 
