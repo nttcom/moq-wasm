@@ -13,9 +13,7 @@ use crate::{
         data_plane::stream::{
             fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
         },
-        domains::connection::{
-            Connection, ObjectSink, SinkReceiver, generation_of, logical_id, wire_part,
-        },
+        domains::connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
         runtime::dispatch::incoming_object::IncomingObject,
     },
     publish::PublishOption,
@@ -337,14 +335,7 @@ impl SessionContext {
 
     pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
         let mut sinks = connection.object_sinks.lock().await;
-        let found = sinks.iter().find_map(|(track_alias, sink)| match sink {
-            ObjectSink::Receiver(receiver) if receiver.request_id == request_id => {
-                Some((*track_alias, receiver.logical_alias))
-            }
-            _ => None,
-        });
-        if let Some((track_alias, logical_alias)) = found {
-            sinks.insert(track_alias, ObjectSink::Cancelled);
+        if let Some(logical_alias) = sinks.cancel_subscription(request_id) {
             self.receiver_map.lock().await.remove(&logical_alias);
         }
     }
@@ -354,13 +345,11 @@ impl SessionContext {
         connection: &Connection,
         track_alias: u64,
     ) {
-        let mut sinks = connection.object_sinks.lock().await;
-        if !sinks
-            .get(&track_alias)
-            .is_some_and(ObjectSink::is_receiver_registered)
-        {
-            sinks.insert(track_alias, ObjectSink::Cancelled);
-        }
+        connection
+            .object_sinks
+            .lock()
+            .await
+            .cancel_unclaimed(track_alias);
     }
 
     /// Call before sending the FETCH on `connection`: its data stream can

@@ -64,7 +64,7 @@ pub(crate) struct Connection {
     /// accepted and neither side has ended. A session that follows GOAWAY
     /// closes a previous connection only once this set is empty.
     served: std::sync::Mutex<HashSet<u64>>,
-    pub(crate) object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
+    pub(crate) object_sinks: tokio::sync::Mutex<ObjectSinks>,
     pub(crate) fetch_notification_map:
         std::sync::Mutex<HashMap<RequestId, mpsc::UnboundedSender<FetchDataReceiver>>>,
 }
@@ -75,7 +75,7 @@ struct CarriedIds {
     logical_by_wire: HashMap<u64, u64>,
 }
 
-pub(crate) enum ObjectSink {
+enum ObjectSink {
     /// Buffers objects that arrive before the receiver is registered.
     Buffer(VecDeque<IncomingObject>),
     Receiver(SinkReceiver),
@@ -174,8 +174,103 @@ impl SinkReceiver {
 }
 
 impl ObjectSink {
-    pub(crate) fn is_receiver_registered(&self) -> bool {
+    fn is_receiver_registered(&self) -> bool {
         matches!(self, ObjectSink::Receiver(_))
+    }
+}
+
+/// The sink of each track alias on a connection.
+#[derive(Default)]
+pub(crate) struct ObjectSinks {
+    sinks: HashMap<u64, ObjectSink>,
+}
+
+impl ObjectSinks {
+    fn notify(
+        &mut self,
+        track_alias: u64,
+        incoming_object: IncomingObject,
+    ) -> IncomingObjectNotification {
+        match self.sinks.entry(track_alias) {
+            Entry::Vacant(entry) => {
+                let mut objects = VecDeque::new();
+                objects.push_back(incoming_object);
+                entry.insert(ObjectSink::Buffer(objects));
+                IncomingObjectNotification::Buffered {
+                    pending_objects: 1,
+                    dropped_oldest: false,
+                }
+            }
+            Entry::Occupied(mut entry) => match entry.get_mut() {
+                ObjectSink::Receiver(receiver) => receiver.deliver(incoming_object),
+                ObjectSink::Buffer(objects) => {
+                    let dropped_oldest = objects.len() >= MAX_PENDING_OBJECTS_PER_TRACK_ALIAS;
+                    if dropped_oldest {
+                        objects.pop_front();
+                    }
+                    objects.push_back(incoming_object);
+                    IncomingObjectNotification::Buffered {
+                        pending_objects: objects.len(),
+                        dropped_oldest,
+                    }
+                }
+                ObjectSink::Cancelled => IncomingObjectNotification::Discarded,
+            },
+        }
+    }
+
+    fn install(
+        &mut self,
+        track_alias: u64,
+        mut receiver: SinkReceiver,
+    ) -> Result<(), TerminationErrorCode> {
+        if self
+            .sinks
+            .get(&track_alias)
+            .is_some_and(ObjectSink::is_receiver_registered)
+        {
+            return Err(TerminationErrorCode::DuplicateTrackAlias);
+        }
+        if let Some(ObjectSink::Buffer(pending_objects)) = self.sinks.remove(&track_alias) {
+            for incoming_object in pending_objects {
+                receiver.deliver(incoming_object);
+            }
+        }
+        self.sinks
+            .insert(track_alias, ObjectSink::Receiver(receiver));
+        Ok(())
+    }
+
+    /// The sink of the subscription `request_id`, with its track alias.
+    fn receiver_mut(&mut self, request_id: RequestId) -> Option<(u64, &mut SinkReceiver)> {
+        self.sinks
+            .iter_mut()
+            .find_map(|(track_alias, sink)| match sink {
+                ObjectSink::Receiver(receiver) if receiver.request_id == request_id => {
+                    Some((*track_alias, receiver))
+                }
+                _ => None,
+            })
+    }
+
+    /// Cancels the sink of the subscription `request_id` and returns its
+    /// logical track alias. `None` when no such sink is installed.
+    pub(crate) fn cancel_subscription(&mut self, request_id: RequestId) -> Option<u64> {
+        let (track_alias, receiver) = self.receiver_mut(request_id)?;
+        let logical_alias = receiver.logical_alias;
+        self.sinks.insert(track_alias, ObjectSink::Cancelled);
+        Some(logical_alias)
+    }
+
+    /// Cancels `track_alias` unless a subscription holds it.
+    pub(crate) fn cancel_unclaimed(&mut self, track_alias: u64) {
+        if !self
+            .sinks
+            .get(&track_alias)
+            .is_some_and(ObjectSink::is_receiver_registered)
+        {
+            self.sinks.insert(track_alias, ObjectSink::Cancelled);
+        }
     }
 }
 
@@ -208,7 +303,7 @@ impl Connection {
             track_alias: AtomicU64::new(0),
             carried: std::sync::Mutex::default(),
             served: std::sync::Mutex::default(),
-            object_sinks: tokio::sync::Mutex::new(HashMap::new()),
+            object_sinks: tokio::sync::Mutex::default(),
             fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -269,33 +364,10 @@ impl Connection {
         track_alias: u64,
         incoming_object: IncomingObject,
     ) -> IncomingObjectNotification {
-        let mut sinks = self.object_sinks.lock().await;
-        match sinks.entry(track_alias) {
-            Entry::Vacant(entry) => {
-                let mut objects = VecDeque::new();
-                objects.push_back(incoming_object);
-                entry.insert(ObjectSink::Buffer(objects));
-                IncomingObjectNotification::Buffered {
-                    pending_objects: 1,
-                    dropped_oldest: false,
-                }
-            }
-            Entry::Occupied(mut entry) => match entry.get_mut() {
-                ObjectSink::Receiver(receiver) => receiver.deliver(incoming_object),
-                ObjectSink::Buffer(objects) => {
-                    let dropped_oldest = objects.len() >= MAX_PENDING_OBJECTS_PER_TRACK_ALIAS;
-                    if dropped_oldest {
-                        objects.pop_front();
-                    }
-                    objects.push_back(incoming_object);
-                    IncomingObjectNotification::Buffered {
-                        pending_objects: objects.len(),
-                        dropped_oldest,
-                    }
-                }
-                ObjectSink::Cancelled => IncomingObjectNotification::Discarded,
-            },
-        }
+        self.object_sinks
+            .lock()
+            .await
+            .notify(track_alias, incoming_object)
     }
 
     /// Installs `receiver` for `track_alias` and hands it the objects that
@@ -304,21 +376,10 @@ impl Connection {
     pub(crate) async fn install_receiver(
         &self,
         track_alias: u64,
-        mut receiver: SinkReceiver,
-    ) -> Result<tokio::sync::MutexGuard<'_, HashMap<u64, ObjectSink>>, TerminationErrorCode> {
+        receiver: SinkReceiver,
+    ) -> Result<tokio::sync::MutexGuard<'_, ObjectSinks>, TerminationErrorCode> {
         let mut sinks = self.object_sinks.lock().await;
-        if sinks
-            .get(&track_alias)
-            .is_some_and(ObjectSink::is_receiver_registered)
-        {
-            return Err(TerminationErrorCode::DuplicateTrackAlias);
-        }
-        if let Some(ObjectSink::Buffer(pending_objects)) = sinks.remove(&track_alias) {
-            for incoming_object in pending_objects {
-                receiver.deliver(incoming_object);
-            }
-        }
-        sinks.insert(track_alias, ObjectSink::Receiver(receiver));
+        sinks.install(track_alias, receiver)?;
         Ok(sinks)
     }
 
@@ -331,12 +392,7 @@ impl Connection {
         cut_over: oneshot::Sender<()>,
     ) -> Option<CutoverStart> {
         let mut sinks = self.object_sinks.lock().await;
-        let receiver = sinks.values_mut().find_map(|sink| match sink {
-            ObjectSink::Receiver(receiver) if receiver.request_id == wire_request_id => {
-                Some(receiver)
-            }
-            _ => None,
-        })?;
+        let (_, receiver) = sinks.receiver_mut(wire_request_id)?;
         let shared = Arc::new(std::sync::Mutex::new(SharedCutover {
             cutover: GroupCutover::waiting_after(receiver.newest_group),
             cut_over: Some(cut_over),

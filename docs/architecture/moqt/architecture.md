@@ -394,7 +394,7 @@ transport connection:
   sees, is `generation << 56 | wire id`, so the first connection's ids are
   their own logical ids and no two connections' ids meet in the session's
   maps.
-- `object_sinks: HashMap<track_alias, ObjectSink>` — the objects arriving on
+- `object_sinks: ObjectSinks` — the sink of each track alias: the objects arriving on
   this connection, keyed by wire alias; a sink sets the logical alias on
   every stream it hands out; see buffering invariant below.
 - `fetch_notification_map` — keyed by request id; `FetchNotifier` removes the
