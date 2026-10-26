@@ -29,7 +29,8 @@ use crate::modules::{
         track_key::TrackKey,
     },
     session::{
-        data_object::DataObject, session_event::SessionEvent, session_repository::SessionRepository,
+        data_object::DataObject, data_receiver::receiver::DataReceiver,
+        session_event::SessionEvent, session_repository::SessionRepository,
     },
     test_support::mock_session::session_repository_with_session,
 };
@@ -239,6 +240,7 @@ impl RelayHarness {
             CacheStamp {
                 max_cache_duration,
                 persist: false,
+                ..CacheStamp::default()
             },
         )
     }
@@ -284,7 +286,18 @@ impl RelayHarness {
 
     /// Ingests an upstream subscription until the returned track is dropped.
     pub(crate) fn start_track_ingest(&self) -> UpstreamTrack {
-        let (upstream, receiver) = UpstreamTrack::channel();
+        self.start_ingest_of(UpstreamTrack::channel())
+    }
+
+    /// `start_track_ingest` of a draft-18 subscription.
+    pub(crate) fn start_draft18_track_ingest(&self) -> UpstreamTrack {
+        self.start_ingest_of(UpstreamTrack::draft18_channel())
+    }
+
+    fn start_ingest_of(
+        &self,
+        (upstream, receiver): (UpstreamTrack, Box<dyn DataReceiver>),
+    ) -> UpstreamTrack {
         tokio::spawn(read_track(
             self.ingest.clone(),
             receiver,

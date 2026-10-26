@@ -261,6 +261,7 @@ impl FetchIngest {
                 .max_cache_duration
                 .map(Duration::from_millis),
             persist,
+            status_may_change: !receiver.compares_duplicate_status(),
         };
 
         loop {
@@ -763,6 +764,43 @@ mod tests {
         let cache = fill_over_a_datagram(FetchAnswer::RespondWithPreference).await;
         // Assert
         assert!(cache.is_malformed());
+    }
+
+    /// A cache filled from a response that holds {0,0} as an empty Normal
+    /// object, then as End of Group.
+    async fn fill_with_a_status_only_duplicate(
+        respond: fn(Vec<moqt::fetch::Fetch>) -> FetchAnswer,
+    ) -> Arc<TrackCache> {
+        let copy = |status| moqt::fetch::Fetch::Object(status_object(0, 0, status).object);
+        let ingested = ingest_into(
+            Arc::new(TrackCache::new()),
+            respond(vec![
+                copy(ObjectStatus::Normal),
+                copy(ObjectStatus::EndOfGroup),
+                moqt::fetch::Fetch::End,
+            ]),
+            unlimited(),
+        )
+        .await;
+        ingested.cache
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetch_copy_that_changes_only_its_status_latches_the_track() {
+        // Act
+        let cache = fill_with_a_status_only_duplicate(FetchAnswer::Respond).await;
+        // Assert: draft-14 §8.1, a move between Normal and End of Group is malformed
+        assert!(cache.is_malformed());
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_copy_that_changes_only_its_status_does_not_latch_the_track() {
+        // Act
+        let cache = fill_with_a_status_only_duplicate(FetchAnswer::RespondWithPreference).await;
+        // Assert: draft-18 §9.1 compares only the forwarding preference,
+        // subgroup, priority and payload
+        assert!(!cache.is_malformed());
+        assert_eq!(cache.occupancy().objects, 1);
     }
 
     #[tokio::test]

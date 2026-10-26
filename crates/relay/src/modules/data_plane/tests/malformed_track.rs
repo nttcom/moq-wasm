@@ -1,12 +1,31 @@
-use moqt::{object::MalformedTrackError, publish::PublishDoneCode};
+use moqt::{
+    object::{ForwardingPreference, MalformedTrackError, Object, ObjectStatus},
+    publish::PublishDoneCode,
+};
 
 use crate::modules::{
     session::session_event::EventKind,
     test_support::relay_harness::{
-        PUBLISHER_SESSION_ID, RelayHarness, fixtures::location, ordered_payload, payloads_of,
-        receive_objects_until_close,
+        PUBLISHER_SESSION_ID, RelayHarness, UpstreamTrack,
+        fixtures::{cached_object::status_object, location},
+        ordered_payload, payloads_of, receive_objects_until_close,
     },
 };
+
+fn empty_datagram(object_id: u64, status: ObjectStatus) -> Object {
+    Object {
+        forwarding: ForwardingPreference::Datagram,
+        ..status_object(0, object_id, status).object
+    }
+}
+
+/// Sends datagram {0,0} as an empty Normal object, then as End of Group,
+/// then datagram {0,1}.
+async fn send_a_status_only_duplicate(upstream: &UpstreamTrack) {
+    upstream.datagram(empty_datagram(0, ObjectStatus::Normal));
+    upstream.datagram(empty_datagram(0, ObjectStatus::EndOfGroup));
+    upstream.datagram(empty_datagram(1, ObjectStatus::Normal));
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn duplicate_object_with_different_payload_terminates_subscription() {
@@ -104,4 +123,33 @@ async fn an_object_with_malformed_immutable_properties_terminates_the_subscripti
     assert_eq!(publish_done.status_code, PublishDoneCode::MalformedTrack);
     assert!(harness.is_track_malformed());
     assert_eq!(harness.cache().occupancy().objects, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_draft14_duplicate_that_changes_only_its_status_latches_the_track() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let upstream = harness.start_track_ingest();
+
+    // Act
+    send_a_status_only_duplicate(&upstream).await;
+
+    // Assert: draft-14 §8.1, a move between Normal and End of Group is malformed
+    harness.wait_track_malformed().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_draft18_duplicate_that_changes_only_its_status_does_not_latch_the_track() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let upstream = harness.start_draft18_track_ingest();
+
+    // Act
+    send_a_status_only_duplicate(&upstream).await;
+    harness.wait_largest_location(location(0, 1)).await;
+
+    // Assert: draft-18 §9.1 compares only the forwarding preference, subgroup,
+    // priority and payload; the first copy stays cached
+    assert!(!harness.is_track_malformed());
+    assert_eq!(harness.cache().occupancy().objects, 2);
 }

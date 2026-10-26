@@ -608,6 +608,10 @@ impl UpstreamFetchReceiver for MalformedFetchReceiver {
     fn carries_forwarding_preference(&self) -> bool {
         false
     }
+
+    fn compares_duplicate_status(&self) -> bool {
+        true
+    }
 }
 
 struct ScriptedFetchReceiver {
@@ -627,6 +631,11 @@ impl UpstreamFetchReceiver for ScriptedFetchReceiver {
     fn carries_forwarding_preference(&self) -> bool {
         self.carries_forwarding_preference
     }
+
+    /// `RespondWithPreference` stands for a draft-18 response.
+    fn compares_duplicate_status(&self) -> bool {
+        !self.carries_forwarding_preference
+    }
 }
 
 #[async_trait::async_trait]
@@ -637,6 +646,10 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 
     fn carries_forwarding_preference(&self) -> bool {
         false
+    }
+
+    fn compares_duplicate_status(&self) -> bool {
+        true
     }
 }
 
