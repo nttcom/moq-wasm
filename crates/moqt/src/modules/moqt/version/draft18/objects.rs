@@ -2,16 +2,19 @@
 //! (§11.3.1) and FETCH responses (§11.4.4), and the Padding it discards
 //! (§11.5).
 
+use std::time::Duration;
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::Decoder;
 
 use super::{
     codec::{
         DecodeError, get_key_value_pairs, get_length_prefixed, get_u8, get_vi64,
-        put_key_value_pairs, put_vi64, take,
+        put_key_value_pairs, put_vi64,
     },
     messages::DEFAULT_PUBLISHER_PRIORITY,
 };
+use crate::modules::executor;
 use crate::modules::moqt::{
     control_plane::control_messages::messages::parameters::{
         group_order::GroupOrder, location::Location,
@@ -24,7 +27,7 @@ use crate::modules::moqt::{
         },
         stream::{
             fetch_data_receiver::{Fetch, FetchDataReceiver},
-            stream_data_receiver::StreamDataReceiver,
+            stream_data_receiver::{StreamDataReceiver, SubgroupPart},
             stream_receiver::{StreamReceiveError, StreamReceiver},
         },
     },
@@ -136,10 +139,12 @@ pub(crate) struct SubgroupObjectField {
     pub(crate) status: Option<u64>,
 }
 
-fn get_subgroup_object(
+/// The fields before an object's payload, with an empty `payload`, and the
+/// payload's length.
+fn get_subgroup_object_head(
     properties: bool,
     buf: &mut impl Buf,
-) -> Result<SubgroupObjectField, DecodeError> {
+) -> Result<(SubgroupObjectField, usize), DecodeError> {
     let object_id_delta = get_vi64(buf)?;
     let properties = if properties {
         get_properties(buf)?
@@ -147,17 +152,14 @@ fn get_subgroup_object(
         ExtensionHeaders::default()
     };
     let len = get_vi64(buf)? as usize;
-    let (payload, status) = if len == 0 {
-        (Bytes::new(), Some(get_vi64(buf)?))
-    } else {
-        (take(buf, len)?, None)
-    };
-    Ok(SubgroupObjectField {
+    let status = (len == 0).then(|| get_vi64(buf)).transpose()?;
+    let head = SubgroupObjectField {
         object_id_delta,
         properties,
-        payload,
+        payload: Bytes::new(),
         status,
-    })
+    };
+    Ok((head, len))
 }
 
 const FETCH_SUBGROUP_MASK: u64 = 0x03;
@@ -238,7 +240,25 @@ fn get_fetch_field(buf: &mut impl Buf) -> Result<FetchField, DecodeError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StreamFrame {
     SubgroupHeader(SubgroupHeader),
-    SubgroupObject(SubgroupObjectField),
+    /// An object whose payload was buffered with its head, or a status object.
+    SubgroupObject {
+        field: SubgroupObjectField,
+        /// From the first byte of the object being buffered to its last.
+        receive_time: Duration,
+    },
+    /// The head of an object whose payload follows as `Payload` frames;
+    /// `field.payload` is empty.
+    SubgroupObjectHead {
+        field: SubgroupObjectField,
+        payload_len: usize,
+    },
+    Payload {
+        /// Shares the read buffer.
+        data: Bytes,
+        /// Set on the last piece of the payload: from the first byte of the
+        /// object being buffered to its last.
+        completed_in: Option<Duration>,
+    },
     FetchHeader {
         request_id: u64,
     },
@@ -251,10 +271,62 @@ pub(crate) enum StreamFrame {
 enum DecoderState {
     #[default]
     Start,
-    Subgroup {
-        properties: bool,
-    },
+    Subgroup(SubgroupDecoder),
     Fetch,
+}
+
+/// Splits the objects of a subgroup stream into heads and payload pieces
+/// when the payload has not been buffered with the head.
+#[derive(Debug)]
+struct SubgroupDecoder {
+    properties: bool,
+    /// Payload bytes of the current object not yet handed out.
+    payload_remaining: usize,
+    /// When the first byte of the next object was buffered, on the
+    /// `executor::now` clock.
+    object_buffered_at: Option<Duration>,
+}
+
+impl SubgroupDecoder {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<StreamFrame>, DecodeError> {
+        if src.is_empty() {
+            return Ok(None);
+        }
+        let buffered_at = *self.object_buffered_at.get_or_insert_with(executor::now);
+        if self.payload_remaining > 0 {
+            let data = src.split_to(self.payload_remaining.min(src.len())).freeze();
+            self.payload_remaining -= data.len();
+            let completed_in =
+                (self.payload_remaining == 0).then(|| self.complete_object(buffered_at, src));
+            return Ok(Some(StreamFrame::Payload { data, completed_in }));
+        }
+        let mut buf = &src[..];
+        let (mut field, payload_len) = match get_subgroup_object_head(self.properties, &mut buf) {
+            Ok(head) => head,
+            Err(DecodeError::NeedMoreData) => return Ok(None),
+            Err(violation) => return Err(violation),
+        };
+        let consumed = src.len() - buf.len();
+        src.advance(consumed);
+        if src.len() < payload_len {
+            self.payload_remaining = payload_len;
+            return Ok(Some(StreamFrame::SubgroupObjectHead { field, payload_len }));
+        }
+        field.payload = Bytes::copy_from_slice(&src[..payload_len]);
+        src.advance(payload_len);
+        Ok(Some(StreamFrame::SubgroupObject {
+            field,
+            receive_time: self.complete_object(buffered_at, src),
+        }))
+    }
+
+    /// Returns how long the object took to arrive.
+    fn complete_object(&mut self, buffered_at: Duration, src: &BytesMut) -> Duration {
+        let decoded_at = executor::now();
+        // Bytes left over arrived with this object's last bytes.
+        self.object_buffered_at = (!src.is_empty()).then_some(decoded_at);
+        decoded_at.saturating_sub(buffered_at)
+    }
 }
 
 /// Decodes a draft-18 unidirectional stream: its header, then the objects
@@ -283,14 +355,14 @@ impl StreamDecoder {
                     ));
                 }
                 let header = get_subgroup_header(stream_type, buf)?;
-                self.state = DecoderState::Subgroup {
+                self.state = DecoderState::Subgroup(SubgroupDecoder {
                     properties: header.properties,
-                };
+                    payload_remaining: 0,
+                    object_buffered_at: None,
+                });
                 Ok(StreamFrame::SubgroupHeader(header))
             }
-            DecoderState::Subgroup { properties } => Ok(StreamFrame::SubgroupObject(
-                get_subgroup_object(properties, buf)?,
-            )),
+            DecoderState::Subgroup(_) => unreachable!("decode reads subgroup objects itself"),
             DecoderState::Fetch => Ok(StreamFrame::FetchField(get_fetch_field(buf)?)),
         }
     }
@@ -301,16 +373,40 @@ impl Decoder for StreamDecoder {
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if let DecoderState::Subgroup(subgroup) = &mut self.state {
+            return Ok(subgroup.decode(src)?);
+        }
         let mut buf = &src[..];
         match self.parse(&mut buf) {
             Ok(frame) => {
                 let consumed = src.len() - buf.len();
                 src.advance(consumed);
+                if let (StreamFrame::SubgroupHeader(_), DecoderState::Subgroup(subgroup)) =
+                    (&frame, &mut self.state)
+                {
+                    subgroup.object_buffered_at = (!src.is_empty()).then(executor::now);
+                }
                 Ok(Some(frame))
             }
             Err(DecodeError::NeedMoreData) => Ok(None),
             Err(violation) => Err(violation.into()),
         }
+    }
+
+    /// A stream that ends inside an object is an error, also when its head
+    /// and part of its payload were already handed out.
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        match self.decode(src)? {
+            Some(frame) => Ok(Some(frame)),
+            None if src.is_empty() && !self.inside_payload() => Ok(None),
+            None => Err(std::io::Error::other("bytes remaining on stream")),
+        }
+    }
+}
+
+impl StreamDecoder {
+    fn inside_payload(&self) -> bool {
+        matches!(&self.state, DecoderState::Subgroup(subgroup) if subgroup.payload_remaining > 0)
     }
 }
 
@@ -540,6 +636,7 @@ pub(crate) async fn accept_uni_stream(
                 version::SubgroupReader::Draft18(SubgroupReader {
                     stream,
                     state: SubgroupState::new(header),
+                    streaming_payload_len: 0,
                 }),
             ))))
         }
@@ -552,7 +649,12 @@ pub(crate) async fn accept_uni_stream(
                 }),
             ))))
         }
-        Some(StreamFrame::SubgroupObject(_) | StreamFrame::FetchField(_)) => {
+        Some(
+            StreamFrame::SubgroupObject { .. }
+            | StreamFrame::SubgroupObjectHead { .. }
+            | StreamFrame::Payload { .. }
+            | StreamFrame::FetchField(_),
+        ) => {
             unreachable!("the decoder yields a header first")
         }
     }
@@ -562,6 +664,7 @@ pub(crate) async fn accept_uni_stream(
 pub(crate) struct SubgroupReader {
     stream: UniStreamReceiver,
     state: SubgroupState,
+    streaming_payload_len: usize,
 }
 
 impl SubgroupReader {
@@ -577,14 +680,59 @@ impl SubgroupReader {
         self.state.default_priority = default_publisher_priority;
     }
 
-    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
-        match self.stream.receive().await? {
-            Some(StreamFrame::SubgroupObject(field)) => {
-                Ok(Some(self.state.object(field).map_err(violation)?))
+    /// Returns objects and the payload parts of objects whose payload had
+    /// not arrived with their head; never a header.
+    pub(crate) async fn next_part(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
+        let part = match self.stream.receive().await? {
+            Some(StreamFrame::SubgroupObject {
+                field,
+                receive_time,
+            }) => {
+                let object = self.state.object(field).map_err(violation)?;
+                self.log_received(&object, object.payload.len(), receive_time);
+                SubgroupPart::Object(object)
+            }
+            Some(StreamFrame::SubgroupObjectHead { field, payload_len }) => {
+                let object = self.state.object(field).map_err(violation)?;
+                self.streaming_payload_len = payload_len;
+                SubgroupPart::ObjectStart {
+                    object,
+                    payload_len,
+                }
+            }
+            Some(StreamFrame::Payload { data, completed_in }) => {
+                if let (Some(receive_time), Some(object_id)) =
+                    (completed_in, self.state.prev_object_id)
+                {
+                    tracing::debug!(
+                        track_alias = self.state.header.track_alias,
+                        group_id = self.state.header.group_id,
+                        object_id,
+                        payload_bytes = self.streaming_payload_len,
+                        receive_us = receive_time.as_micros() as u64,
+                        "subgroup object received"
+                    );
+                }
+                SubgroupPart::Payload {
+                    data,
+                    last: completed_in.is_some(),
+                }
             }
             Some(_) => unreachable!("a subgroup stream has one header"),
-            None => Ok(None),
-        }
+            None => return Ok(None),
+        };
+        Ok(Some(part))
+    }
+
+    fn log_received(&self, object: &Object, payload_bytes: usize, receive_time: Duration) {
+        tracing::debug!(
+            track_alias = self.state.header.track_alias,
+            group_id = object.location.group_id,
+            object_id = object.location.object_id,
+            payload_bytes,
+            receive_us = receive_time.as_micros() as u64,
+            "subgroup object received"
+        );
     }
 }
 
@@ -652,20 +800,30 @@ impl SubgroupEncoder {
     /// Fails when the object id is not greater than the previous object's
     /// or the status does not exist in draft-18.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
+        let mut buf = self.object_head(object, object.payload.len())?;
+        buf.put_slice(&object.payload);
+        Ok(buf)
+    }
+
+    /// The bytes of `object` before a payload of `payload_len` bytes, or its
+    /// status when `payload_len` is zero. Fails like `object`.
+    pub(crate) fn object_head(
+        &mut self,
+        object: &Object,
+        payload_len: usize,
+    ) -> anyhow::Result<BytesMut> {
         let object_id = object.location.object_id;
         let delta = version::object_id_delta(self.prev_object_id, object_id)?;
         let mut buf = BytesMut::new();
         put_vi64(&mut buf, delta);
-        if object.payload.is_empty() && object.status != ObjectStatus::Normal {
+        if payload_len == 0 && object.status != ObjectStatus::Normal {
             put_properties(&mut buf, &ExtensionHeaders::default())?;
         } else {
             put_properties(&mut buf, &object.extension_headers)?;
         }
-        put_vi64(&mut buf, object.payload.len() as u64);
-        if object.payload.is_empty() {
+        put_vi64(&mut buf, payload_len as u64);
+        if payload_len == 0 {
             put_vi64(&mut buf, status_code(object.status)?);
-        } else {
-            buf.put_slice(&object.payload);
         }
         self.prev_object_id = Some(object_id);
         Ok(buf)
@@ -990,7 +1148,7 @@ mod tests {
         let start = state.start();
         let objects: Vec<Object> = frames
             .map(|frame| match frame {
-                StreamFrame::SubgroupObject(field) => state.object(field).unwrap(),
+                StreamFrame::SubgroupObject { field, .. } => state.object(field).unwrap(),
                 other => panic!("unexpected {other:?}"),
             })
             .collect();
@@ -1012,6 +1170,80 @@ mod tests {
             objects,
             vec![sorted, object(3, 1, subgroup(2), b"b"), end_of_group]
         );
+    }
+
+    #[test]
+    fn an_object_split_across_reads_is_its_head_then_its_payload_as_it_arrives() {
+        // Arrange: the header, the object's head and two payload bytes first
+        let mut encoder = SubgroupEncoder::new(9);
+        let mut stream = encoder.header(SubgroupStart {
+            group_id: 3,
+            subgroup_id: 0,
+            publisher_priority: 128,
+            ends_group: false,
+        });
+        let object = encoder
+            .object(&object(3, 0, subgroup(0), b"keyframe"))
+            .unwrap();
+        let head_len = object.len() - b"keyframe".len();
+        stream.extend_from_slice(&object[..head_len + 2]);
+        let mut decoder = StreamDecoder::default();
+
+        // Act
+        let mut first = Vec::new();
+        while let Some(frame) = decoder.decode(&mut stream).unwrap() {
+            first.push(frame);
+        }
+        stream.extend_from_slice(&object[head_len + 2..]);
+        let rest = decoder.decode(&mut stream).unwrap();
+
+        // Assert: draft-18 §11.4.2 puts the payload after its length
+        let [
+            StreamFrame::SubgroupHeader(_),
+            StreamFrame::SubgroupObjectHead { payload_len: 8, .. },
+            StreamFrame::Payload {
+                data,
+                completed_in: None,
+            },
+        ] = &first[..]
+        else {
+            panic!("expected the header, a head and a first piece, got {first:?}");
+        };
+        assert_eq!(&data[..], b"ke");
+        let Some(StreamFrame::Payload {
+            data,
+            completed_in: Some(_),
+        }) = rest
+        else {
+            panic!("expected the last piece, got {rest:?}");
+        };
+        assert_eq!(&data[..], b"yframe");
+    }
+
+    #[test]
+    fn a_stream_ending_inside_a_payload_is_an_error() {
+        // Arrange: the object's head announces 8 payload bytes, then FIN
+        let mut encoder = SubgroupEncoder::new(9);
+        let mut stream = encoder.header(SubgroupStart {
+            group_id: 3,
+            subgroup_id: 0,
+            publisher_priority: 128,
+            ends_group: false,
+        });
+        stream.extend_from_slice(
+            &encoder
+                .object_head(&object(3, 0, subgroup(0), b""), 8)
+                .unwrap(),
+        );
+        let mut decoder = StreamDecoder::default();
+        decoder.decode(&mut stream).unwrap();
+        decoder.decode(&mut stream).unwrap();
+
+        // Act
+        let result = decoder.decode_eof(&mut stream);
+
+        // Assert
+        assert!(result.is_err(), "{result:?}");
     }
 
     #[test]

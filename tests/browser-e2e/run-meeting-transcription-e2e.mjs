@@ -44,7 +44,19 @@ function synthesizeSpeech() {
   if (process.platform === "darwin") {
     execFileSync("say", ["-v", "Kyoko", "-o", file, "--data-format=LEI16@48000", speechText]);
   } else {
-    execFileSync("espeak-ng", ["-v", "ja", "-w", file, speechText]);
+    // Open JTalk reads kanji; espeak-ng's ja voice spells each one out as "Chinese letter".
+    execFileSync(
+      "open_jtalk",
+      [
+        "-x",
+        "/var/lib/mecab/dic/open-jtalk/naist-jdic",
+        "-m",
+        "/usr/share/hts-voice/nitech-jp-atr503-m001/nitech_jp_atr503_m001.htsvoice",
+        "-ow",
+        file,
+      ],
+      { input: speechText },
+    );
   }
   return file;
 }

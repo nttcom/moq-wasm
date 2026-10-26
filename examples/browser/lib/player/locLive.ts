@@ -13,6 +13,10 @@ const PRESENTATION_MARGIN_MS = 200
 const ARRIVAL_GAP_WINDOW_MS = 10_000
 
 export type DecodedFrameIds = { groupId: bigint; objectId: bigint }
+export type LocObject = Pick<
+  SubgroupObjectMessageWithLoc,
+  'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus' | 'locHeader'
+>
 
 export type LocLiveCallbacks = {
   onPresented(picture: HTMLElement): void
@@ -51,6 +55,7 @@ export class LocLive {
     type: 'module'
   })
   private readonly decodedFrameIds = new Map<number, DecodedFrameIds>()
+  private readonly cachedFrameKeys = new Set<string>()
   private readonly arrivalsMs: Record<MediaKind, number[]> = { video: [], audio: [] }
   receivedKbps = 0
   receivedAudioKbps = 0
@@ -81,8 +86,13 @@ export class LocLive {
       }
       if (event.data.type === 'frame') {
         const frame = event.data.frame as VideoFrame
-        this.decodedFrameIds.set(frame.timestamp, { groupId: event.data.groupId, objectId: event.data.objectId })
-        this.playout.presentVideo(frame, event.data.receivedAtUnixMs - performance.timeOrigin)
+        const { groupId, objectId } = event.data as DecodedFrameIds
+        this.decodedFrameIds.set(frame.timestamp, { groupId, objectId })
+        if (this.cachedFrameKeys.delete(frameKey(groupId, objectId))) {
+          this.playout.presentCachedVideo(frame)
+        } else {
+          this.playout.presentVideo(frame, event.data.receivedAtUnixMs - performance.timeOrigin)
+        }
       }
     }
     this.audioWorker.onmessage = (event) => {
@@ -113,11 +123,18 @@ export class LocLive {
     })
   }
 
-  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectMessageWithLoc): void {
-    const arrivals = this.arrivalsMs[kind]
-    arrivals.push(performance.now())
-    while (arrivals[0] < arrivals[arrivals.length - 1] - ARRIVAL_GAP_WINDOW_MS) {
-      arrivals.shift()
+  /// `cached` marks a video object that predates the subscription, such as one
+  /// from a joining FETCH: it is shown as soon as it decodes, and its arrival
+  /// does not count toward the delivery stats.
+  push(kind: MediaKind, groupId: bigint, object: LocObject, cached = false): void {
+    if (cached) {
+      this.cachedFrameKeys.add(frameKey(groupId, object.objectId))
+    } else {
+      const arrivals = this.arrivalsMs[kind]
+      arrivals.push(performance.now())
+      while (arrivals[0] < arrivals[arrivals.length - 1] - ARRIVAL_GAP_WINDOW_MS) {
+        arrivals.shift()
+      }
     }
     const objectPayload = new Uint8Array(object.objectPayload)
     const message: SubgroupWorkerMessage = {
@@ -219,6 +236,10 @@ export function formatLiveStats(stats: LiveStats): string {
     ` · shed ${Math.round(stats.shedMs)} ms` +
     ` · arrival gap A ${formatGap(stats.maxArrivalGapMs.audio)} / V ${formatGap(stats.maxArrivalGapMs.video)} ms`
   )
+}
+
+function frameKey(groupId: bigint, objectId: bigint): string {
+  return `${groupId}:${objectId}`
 }
 
 function longestGapMs(arrivalsMs: number[]): number | undefined {

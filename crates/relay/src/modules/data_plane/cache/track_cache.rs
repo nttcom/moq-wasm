@@ -44,12 +44,14 @@ mod fetch_plan;
 mod ingress_stats;
 mod ledger;
 mod open_subgroup;
+mod partial_object;
 
 pub(crate) use fetch_cursor::FetchCursor;
 pub(crate) use fetch_plan::PlannedFetch;
 pub(crate) use ingress_stats::{IngressCounters, IngressStats};
 use ledger::Ledger;
-pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, SubgroupRun};
+pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, PartialObjectWriter, SubgroupRun};
+pub(crate) use partial_object::{PartialEnd, PartialObject};
 
 pub(crate) struct TrackCache {
     ledger: RwLock<Ledger>,
