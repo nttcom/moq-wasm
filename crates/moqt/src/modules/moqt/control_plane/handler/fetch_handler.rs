@@ -93,6 +93,17 @@ impl FetchHandler {
         }
     }
 
+    /// Whether the fetcher's draft can be sent a track with
+    /// `track_properties`; `ok` refuses the FETCH when it cannot (draft-18
+    /// §2.5.1).
+    pub fn understands(&self, track_properties: &TrackProperties) -> bool {
+        self.guard
+            .connection()
+            .control
+            .version()
+            .understands(track_properties)
+    }
+
     /// Whether this Joining FETCH may join `subscription` under the session's
     /// draft (draft-14 §9.16.2, draft-18 §10.12.2); each refusal names the
     /// answer its draft requires. Not meaningful for a Standalone FETCH.
