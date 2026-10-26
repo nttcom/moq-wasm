@@ -406,7 +406,7 @@ mod tests {
     use super::*;
     use crate::{
         sample::{AudioConfig, AudioSample, Timestamp, VideoSample},
-        test_support::{fixture_video_config, keyframe_annexb, mono_48k},
+        test_support::{fixture_video_config, h264_aac_configs, keyframe_annexb, mono_48k},
     };
 
     const DESTINATION: Destination = Destination {
@@ -497,18 +497,9 @@ mod tests {
             video_ssrc: Some(2_222),
             audio_ssrc: None,
         });
-        muxer
-            .push(&MediaEvent::Streams(StreamSet {
-                has_video: true,
-                has_audio: true,
-            }))
-            .unwrap();
-        muxer
-            .push(&MediaEvent::VideoConfig(fixture_video_config()))
-            .unwrap();
-        muxer
-            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
-            .unwrap();
+        for event in h264_aac_configs() {
+            muxer.push(&event).unwrap();
+        }
 
         // Act
         let video = headers(

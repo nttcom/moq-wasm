@@ -88,7 +88,7 @@ async fn handle_results(
                 .await
                 .context("send RTMP packet")?,
             ServerSessionResult::RaisedEvent(event) => {
-                handle_event(session, &mut queue, event, label, state).await?;
+                handle_event(session, &mut queue, event, label, state)?;
             }
             ServerSessionResult::UnhandleableMessageReceived(payload) => {
                 tracing::warn!(peer = %label, type_id = payload.type_id, size = payload.data.len(), "unhandled RTMP message");

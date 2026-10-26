@@ -26,7 +26,7 @@ use crate::{
     token_refresh_task::{TokenRefreshTask, read_token_file},
     track_list::track_table,
     track_selection::{
-        AudioChoice, Selection, VideoChoice, loc_tracks, select_audio, select_tracks, select_video,
+        AudioChoice, Selection, VideoChoice, select_audio, select_tracks, select_video,
     },
     upload_task::{UploadQueue, UploadTask},
 };
@@ -450,7 +450,7 @@ async fn follow_catalog(
 
 fn lists(catalog: &Catalog, track: &Track) -> bool {
     let name = track.subscription.track_name();
-    loc_tracks(catalog).any(|listed| listed.name == name)
+    catalog.loc_tracks().any(|listed| listed.name == name)
 }
 
 async fn add_listed_video(

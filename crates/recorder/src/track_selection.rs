@@ -3,7 +3,7 @@ use std::cmp::Reverse;
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose};
 use mediapack::{AudioConfig, aac::AudioSpecificConfig, loc::VideoCodec};
-use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
+use msf::{Catalog, KnownTrackRole, Track};
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Selection {
@@ -72,7 +72,7 @@ pub(crate) fn select_tracks(
 pub(crate) fn select_video(catalog: &Catalog, choice: VideoChoice) -> Result<Option<VideoTrack>> {
     let (max_height, screen_share) = match choice {
         VideoChoice::Named(name) => {
-            return match loc_tracks(catalog).find(|track| track.name == name) {
+            return match catalog.loc_tracks().find(|track| track.name == name) {
                 Some(track) => video_track(track).map(Some),
                 None => Ok(None),
             };
@@ -80,9 +80,10 @@ pub(crate) fn select_video(catalog: &Catalog, choice: VideoChoice) -> Result<Opt
         VideoChoice::MaxHeight(max_height) => (max_height, false),
         VideoChoice::ScreenShare => (SCREEN_SHARE_MAX_HEIGHT, true),
     };
-    let listed: Vec<&Track> = loc_tracks(catalog)
+    let listed: Vec<&Track> = catalog
+        .loc_tracks()
         .filter(|track| {
-            has_role(track, KnownTrackRole::Video)
+            track.has_role(KnownTrackRole::Video)
                 && track.name.starts_with(SCREEN_SHARE_PREFIX) == screen_share
         })
         .collect();
@@ -136,7 +137,9 @@ pub(crate) fn select_audio(catalog: &Catalog, choice: AudioChoice) -> Result<Opt
         AudioChoice::None => return Ok(None),
         AudioChoice::HighestBitrate => {
             let mut decodable = Vec::new();
-            for track in loc_tracks(catalog).filter(|track| has_role(track, KnownTrackRole::Audio))
+            for track in catalog
+                .loc_tracks()
+                .filter(|track| track.has_role(KnownTrackRole::Audio))
             {
                 if let Some(config) = audio_config(catalog, track)? {
                     let audio = AudioTrack {
@@ -153,7 +156,7 @@ pub(crate) fn select_audio(catalog: &Catalog, choice: AudioChoice) -> Result<Opt
                 .map(|(_, audio)| audio));
         }
     };
-    let Some(track) = loc_tracks(catalog).find(|track| track.name == name) else {
+    let Some(track) = catalog.loc_tracks().find(|track| track.name == name) else {
         return Ok(None);
     };
     Ok(audio_config(catalog, track)?.map(|config| AudioTrack {
@@ -162,25 +165,13 @@ pub(crate) fn select_audio(catalog: &Catalog, choice: AudioChoice) -> Result<Opt
     }))
 }
 
-pub(crate) fn loc_tracks(catalog: &Catalog) -> impl Iterator<Item = &Track> {
-    catalog
-        .tracks
-        .iter()
-        .flatten()
-        .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
-}
-
-fn has_role(track: &Track, role: KnownTrackRole) -> bool {
-    track.role == Some(TrackRole::Known(role))
-}
-
 /// `Ok(None)` for an AAC track without a resolvable `initRef` and for codecs
 /// other than AAC, Opus, G.711 A-law and MP3; `Err` for an entry that is
 /// present but broken.
 fn audio_config(catalog: &Catalog, track: &Track) -> Result<Option<AudioConfig>> {
     let codec = track.codec.as_deref().unwrap_or_default();
     if codec.starts_with("mp4a.40.") {
-        let Some(data) = init_data(catalog, track) else {
+        let Some(data) = catalog.init_data(track) else {
             return Ok(None);
         };
         let bytes = general_purpose::STANDARD
@@ -211,16 +202,6 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<Option<AudioConfig>>
     }))
 }
 
-fn init_data<'a>(catalog: &'a Catalog, track: &Track) -> Option<&'a str> {
-    let init_ref = track.init_ref.as_deref()?;
-    catalog
-        .init_data_list
-        .as_deref()?
-        .iter()
-        .find(|entry| entry.id == init_ref)
-        .map(|entry| entry.data.as_str())
-}
-
 /// The labels `broadcast` writes: `mono`, `stereo` or `<n>ch`.
 fn channel_count(label: &str) -> Result<u8> {
     match label {
@@ -236,6 +217,7 @@ fn channel_count(label: &str) -> Result<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use msf::{KnownPackaging, Packaging};
 
     fn aac_config() -> AudioSpecificConfig {
         AudioSpecificConfig::new(2, 48_000, 2)
