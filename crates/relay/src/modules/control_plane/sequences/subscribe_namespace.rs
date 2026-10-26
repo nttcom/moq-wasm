@@ -411,6 +411,47 @@ mod tests {
         assert!(ctx.subscriber.publishes().is_empty());
     }
 
+    #[tokio::test]
+    async fn a_draft14_namespace_subscription_is_echoed_a_track_its_session_publishes() {
+        // Arrange
+        let mut ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_publish(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            SessionPeer::Client,
+            Arc::new(MockPublishHandler::new("ns", "track", 1)),
+        );
+        let handler = MockSubscribeNamespaceHandler::new("ns");
+
+        // Act
+        subscribe_namespace(&ctx, handler).await;
+        tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
+            .await
+            .expect("the accepted PUBLISH should start an egress reader");
+
+        // Assert: draft-14 §6.1 echoes back the tracks published to the relay
+        assert_eq!(ctx.subscriber.publishes().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_tracks_subscription_is_sent_only_tracks_that_arrived_by_publish() {
+        // Arrange: the track is known from an upstream SUBSCRIBE to a PUBLISH_NAMESPACE publisher
+        let table = Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Subscribe).0);
+        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        let mut ctx = downstream_publish_context(table, || Ok(true)).await;
+        let handler = MockSubscribeNamespaceHandler {
+            interest: NamespaceInterest::Tracks,
+            ..MockSubscribeNamespaceHandler::new("ns")
+        };
+
+        // Act
+        subscribe_namespace(&ctx, handler).await;
+        let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
+
+        // Assert: draft-22 §7, a relay sends PUBLISH for the tracks published to it
+        assert!(egress.is_err());
+        assert!(ctx.subscriber.publishes().is_empty());
+    }
+
     async fn context_holding_namespace_subscription(prefix: &str) -> DownstreamPublishContext {
         let ctx = context_with_published_track(SentMessages::default()).await;
         ctx.table.register_subscribe_namespace(
