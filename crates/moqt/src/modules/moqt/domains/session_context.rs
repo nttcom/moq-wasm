@@ -16,7 +16,7 @@ use crate::{
                 fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
             },
             domains::connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
-            runtime::dispatch::incoming_object::IncomingObject,
+            runtime::dispatch::incoming_object::{IncomingObjectReceiver, incoming_object_channel},
         },
     },
     publish::PublishOption,
@@ -30,8 +30,7 @@ use crate::{
 pub(crate) struct SessionContext {
     connections: std::sync::Mutex<Connections>,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    pub(crate) receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
+    pub(crate) receiver_map: tokio::sync::Mutex<HashMap<u64, IncomingObjectReceiver>>,
     pub(crate) fetch_receiver_map:
         std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
     /// `None` for a session that does not follow GOAWAY. Held while a
@@ -314,7 +313,7 @@ impl SessionContext {
         request_id: RequestId,
         track_alias: u64,
     ) -> Result<u64, TerminationErrorCode> {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
+        let (sender, receiver) = incoming_object_channel();
         let logical_alias = logical_id(connection.generation, track_alias);
         let _sinks = connection
             .install_receiver(

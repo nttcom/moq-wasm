@@ -45,6 +45,12 @@ impl SubscriptionNotifier {
                     "pending incoming object buffer of the connection is full; dropping object"
                 );
             }
+            IncomingObjectNotification::ReceiverFull => {
+                tracing::warn!(
+                    track_alias,
+                    "datagrams queued for the subscription are not read; dropping datagram"
+                );
+            }
             IncomingObjectNotification::ReceiverClosed => {
                 tracing::debug!(
                     track_alias,

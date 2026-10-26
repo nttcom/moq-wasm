@@ -20,7 +20,9 @@ use crate::{
                 fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
             },
             domains::group_cutover::GroupCutover,
-            runtime::dispatch::incoming_object::IncomingObject,
+            runtime::dispatch::incoming_object::{
+                IncomingObject, IncomingObjectSendError, IncomingObjectSender,
+            },
             version::ControlChannel,
         },
         transport::transport_connection::BoxedConnection,
@@ -106,7 +108,7 @@ enum ObjectSink {
 pub(crate) struct SinkReceiver {
     /// The subscription's wire request id on this connection.
     pub(crate) request_id: RequestId,
-    pub(crate) sender: mpsc::UnboundedSender<IncomingObject>,
+    pub(crate) sender: IncomingObjectSender,
     /// The track alias the application knows; set on every stream it gets.
     pub(crate) logical_alias: u64,
     /// The newest group handed to the application, where a cutover starts.
@@ -121,7 +123,7 @@ pub(crate) struct SinkReceiver {
 pub(crate) struct CutoverStart {
     /// The track alias the application knows.
     pub(crate) logical_alias: u64,
-    pub(crate) sender: mpsc::UnboundedSender<IncomingObject>,
+    pub(crate) sender: IncomingObjectSender,
     pub(crate) shared: Arc<std::sync::Mutex<SharedCutover>>,
     pub(crate) previous_open_subgroups: OpenSubgroups,
 }
@@ -183,10 +185,10 @@ impl SinkReceiver {
             receiver.track_alias = self.logical_alias;
             receiver.count_in(&self.open_subgroups);
         }
-        if self.sender.send(object).is_err() {
-            IncomingObjectNotification::ReceiverClosed
-        } else {
-            IncomingObjectNotification::Notified
+        match self.sender.send(object) {
+            Ok(()) => IncomingObjectNotification::Notified,
+            Err(IncomingObjectSendError::Full) => IncomingObjectNotification::ReceiverFull,
+            Err(IncomingObjectSendError::Closed) => IncomingObjectNotification::ReceiverClosed,
         }
     }
 }
@@ -361,6 +363,8 @@ pub(crate) enum IncomingObjectNotification {
     },
     /// The connection buffers `MAX_PENDING_OBJECTS` already.
     BufferFull,
+    /// `MAX_QUEUED_DATAGRAMS` datagrams queued for the receiver are unread.
+    ReceiverFull,
     ReceiverClosed,
     Discarded,
 }
@@ -532,8 +536,6 @@ impl fmt::Debug for Connection {
 mod tests {
     use std::time::Duration;
 
-    use tokio::sync::mpsc;
-
     use super::{
         IncomingObjectNotification, MAX_PENDING_OBJECTS, MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
         ObjectSinks, SinkReceiver, UNKNOWN_TRACK_ALIAS_PERIOD,
@@ -541,7 +543,7 @@ mod tests {
     use crate::modules::{
         moqt::{
             data_plane::stream::open_subgroups::OpenSubgroups,
-            runtime::dispatch::incoming_object::IncomingObject,
+            runtime::dispatch::incoming_object::{IncomingObject, incoming_object_channel},
         },
         test_support::datagram_object,
     };
@@ -575,7 +577,7 @@ mod tests {
     fn sink_receiver() -> SinkReceiver {
         SinkReceiver {
             request_id: 1,
-            sender: mpsc::unbounded_channel().0,
+            sender: incoming_object_channel().0,
             logical_alias: 100,
             newest_group: None,
             cutover: None,

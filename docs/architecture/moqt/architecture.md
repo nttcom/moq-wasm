@@ -614,6 +614,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   leaves an application time to accept a PUBLISH.
   `register_data_receiver` drains the buffer into the new channel atomically
   under the sinks lock.
+- **Unread datagrams are bounded**: a subscription's channel queues at most
+  1024 datagrams its application has not read (`MAX_QUEUED_DATAGRAMS` in
+  `incoming_object.rs`) and drops a later one, since datagrams take no flow
+  control. Subgroup streams are not counted: an unread stream holds its QUIC
+  stream credit, so the peer's stream limit bounds them.
 - **Cancelled subscriptions discard late objects** (draft-14 §10.1):
   `Subscriber::unsubscribe`, the UNSUBSCRIBE sent for a late SUBSCRIBE_OK and
   `PublishHandler::error` (a PUBLISH with Forward=1 sends objects before its
