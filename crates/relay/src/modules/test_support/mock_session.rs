@@ -123,9 +123,9 @@ pub(crate) enum FetchAnswer {
     /// Like `Respond`, with objects that carry their forwarding preference
     /// (draft-18).
     RespondWithPreference(Vec<moqt::fetch::Fetch>),
-    /// FETCH_OK, then a response stream whose first object conflicts with
-    /// one the session received before.
-    Malformed,
+    /// FETCH_OK, then a response stream on which moqt finds the track
+    /// malformed this way.
+    Malformed(moqt::object::MalformedTrackError),
 }
 
 type PublishAnswer = Arc<dyn Fn() -> anyhow::Result<bool> + Send + Sync>;
@@ -560,7 +560,7 @@ impl Subscriber for MockUpstreamSubscriber {
             FetchAnswer::FetchOk
             | FetchAnswer::Respond(_)
             | FetchAnswer::RespondWithPreference(_)
-            | FetchAnswer::Malformed => Ok(moqt::fetch::FetchHandle {
+            | FetchAnswer::Malformed(_) => Ok(moqt::fetch::FetchHandle {
                 request_id: 0,
                 group_order: GroupOrder::Ascending,
                 end_of_track: false,
@@ -584,7 +584,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 response: response.clone().into(),
                 carries_forwarding_preference: true,
             })),
-            FetchAnswer::Malformed => Ok(Box::new(MalformedFetchReceiver)),
+            FetchAnswer::Malformed(error) => Ok(Box::new(MalformedFetchReceiver(error.clone()))),
             _ => Ok(Box::new(PendingFetchReceiver)),
         }
     }
@@ -601,18 +601,12 @@ impl Subscriber for MockUpstreamSubscriber {
 
 struct PendingFetchReceiver;
 
-struct MalformedFetchReceiver;
+struct MalformedFetchReceiver(moqt::object::MalformedTrackError);
 
 #[async_trait::async_trait]
 impl UpstreamFetchReceiver for MalformedFetchReceiver {
     async fn receive(&mut self) -> anyhow::Result<moqt::fetch::Fetch> {
-        Err(moqt::object::MalformedTrackError::ConflictingDuplicate {
-            location: moqt::object::Location {
-                group_id: 0,
-                object_id: 0,
-            },
-        }
-        .into())
+        Err(self.0.clone().into())
     }
 
     fn carries_forwarding_preference(&self) -> bool {

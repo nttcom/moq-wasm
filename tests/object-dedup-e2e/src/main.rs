@@ -7,6 +7,10 @@
 //! Without dedup the relay appends the second group 0 after the first, so the
 //! fetch returns 10 objects (each object id 0..4 twice) and the assertion fails.
 //!
+//! Then a republish with other payloads, and on a second track an object whose
+//! Immutable Extensions hold Immutable Extensions, must each make the relay
+//! answer a FETCH with MALFORMED_TRACK.
+//!
 //! Run a relay on localhost:4433, then `cargo run -p object-dedup-e2e`.
 
 use std::env;
@@ -126,6 +130,66 @@ async fn publish_once(
     Ok(())
 }
 
+/// Publishes one object whose Immutable Extensions hold another Immutable
+/// Extensions header (draft-14 §11.2, draft-18 §12.7), then disconnects.
+async fn publish_malformed_immutable_extensions(track_name: &str) -> anyhow::Result<()> {
+    let session = new_session().await?;
+    let publisher = session.publisher();
+    let subscription = publisher
+        .publish(
+            NAMESPACE.to_string(),
+            track_name.to_string(),
+            PublishOption::default(),
+        )
+        .await?;
+    let factory = publisher.create_stream(&subscription);
+    let mut stream = factory
+        .next()
+        .await?
+        .start(subgroup_zero(GROUP_ID, PUBLISHER_PRIORITY))
+        .await?;
+    let mut object = payload_object(GROUP_ID, 0, PUBLISHER_PRIORITY, object_payload(0));
+    // Type 0xB, length 0: Immutable Extensions inside Immutable Extensions.
+    object
+        .extension_headers
+        .push_immutable_extension(vec![0x0B, 0x00].into());
+    stream.send_object(&object).await?;
+    stream.close().await?;
+    tracing::info!("[alice:immutable] sent g{}:o0", GROUP_ID);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(())
+}
+
+/// Fails unless a FETCH of the whole of group 0 is refused with
+/// MALFORMED_TRACK.
+async fn expect_malformed_fetch(track_name: &str) -> anyhow::Result<()> {
+    let session = new_session().await?;
+    let mut subscriber = session.subscriber();
+    let whole_group = Location {
+        group_id: GROUP_ID,
+        object_id: 0,
+    };
+    let error = match run_fetch(&mut subscriber, track_name, whole_group, whole_group).await {
+        Err(error) => error,
+        Ok(received) => anyhow::bail!(
+            "fetch on a malformed track must fail, but returned {} objects: {:?}",
+            received.len(),
+            received
+        ),
+    };
+    anyhow::ensure!(
+        matches!(
+            error.downcast_ref::<RequestFailure>(),
+            Some(RequestFailure::Rejected {
+                code: RequestErrorCode::MalformedTrack,
+                ..
+            })
+        ),
+        "fetch on a malformed track must fail with MALFORMED_TRACK; got: {error:#}"
+    );
+    Ok(())
+}
+
 /// Runs one standalone FETCH and returns the received (group_id, object_id,
 /// payload) in delivery order.
 async fn run_fetch(
@@ -233,40 +297,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("[alice:conflict] publish ended early (expected): {error:#}");
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let session = new_session().await?;
-    let mut subscriber = session.subscriber();
-    let fetch_result = run_fetch(
-        &mut subscriber,
-        &track_name,
-        Location {
-            group_id: GROUP_ID,
-            object_id: 0,
-        },
-        Location {
-            group_id: GROUP_ID,
-            object_id: 0,
-        },
-    )
-    .await;
-    let error = match fetch_result {
-        Err(error) => error,
-        Ok(received) => anyhow::bail!(
-            "fetch on a malformed track must fail, but returned {} objects: {:?}",
-            received.len(),
-            received
-        ),
-    };
-    assert!(
-        matches!(
-            error.downcast_ref::<RequestFailure>(),
-            Some(RequestFailure::Rejected {
-                code: RequestErrorCode::MalformedTrack,
-                ..
-            })
-        ),
-        "fetch on a malformed track must fail with MALFORMED_TRACK; got: {error:#}"
-    );
+    expect_malformed_fetch(&track_name).await?;
     tracing::info!("[bob] OK: conflicting republish is rejected as a malformed track");
+
+    let immutable_track = unique_track_name();
+    publish_malformed_immutable_extensions(&immutable_track).await?;
+    expect_malformed_fetch(&immutable_track).await?;
+    tracing::info!("[bob] OK: malformed Immutable Extensions make the track malformed");
     Ok(())
 }

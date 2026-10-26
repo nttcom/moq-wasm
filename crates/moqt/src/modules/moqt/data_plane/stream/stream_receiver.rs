@@ -15,6 +15,7 @@ pub(crate) type BiStreamReceiver = StreamReceiver<1024, ControlMessageDecoder>;
 pub(crate) type UniStreamReceiver = StreamReceiver<{ 64 * 1024 }, UniStreamDecoder>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum StreamReceiveError {
     #[error("stream closed: {0}")]
     Closed(ReadError),
