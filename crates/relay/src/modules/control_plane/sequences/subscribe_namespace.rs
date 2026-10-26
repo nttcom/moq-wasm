@@ -17,6 +17,7 @@ use crate::modules::{
         },
         session_id::SessionId,
         session_peer::SessionPeer,
+        track_key::is_namespace_prefix,
     },
     session::handler::{
         subscribe_namespace::SubscribeNamespaceHandler,
@@ -27,6 +28,23 @@ use moqt::RequestErrorCode;
 use tracing::Span;
 
 pub(crate) struct SubscribeNameSpace;
+
+/// What a namespace subscription is offered: the tracks and namespaces under
+/// `prefix`, less those under `already_offered`, the prefix it was moved
+/// from, which were offered when it got that prefix. draft-18 §10.9.2:
+/// updating the prefix has no effect on existing subscriptions.
+#[derive(Clone, Copy)]
+struct Offer<'a> {
+    prefix: &'a str,
+    already_offered: Option<&'a str>,
+}
+
+impl Offer<'_> {
+    fn was_offered(&self, track_namespace: &str) -> bool {
+        self.already_offered
+            .is_some_and(|prefix| is_namespace_prefix(prefix, track_namespace))
+    }
+}
 
 impl SubscribeNameSpace {
     #[tracing::instrument(
@@ -116,29 +134,28 @@ impl SubscribeNameSpace {
             tracing::error!("Subscribe Namespace Error: {:?}", e);
             return;
         }
+        let offer = Offer {
+            prefix: track_namespace_prefix,
+            already_offered: None,
+        };
         self.forward_matching_publications(
             session_id,
-            track_namespace_prefix,
+            offer,
             subscription,
             forwarder,
             downstream_publish,
         )
         .await;
         if subscription.interest.includes_namespaces() {
-            self.notify_remote_publish_namespaces(
-                session_id,
-                track_namespace_prefix,
-                forwarder,
-                route_registry,
-            )
-            .await;
+            self.notify_remote_publish_namespaces(session_id, offer, forwarder, route_registry)
+                .await;
         }
     }
 
     /// draft-18 §10.9.2: moves the session's subscription of the handler's
     /// interest to the new prefix, or refuses it with PREFIX_OVERLAP
-    /// (§10.2.14). Tracks the session already receives are not PUBLISHed
-    /// again, and moqt announces each namespace once per subscription. A
+    /// (§10.2.14). Only what the new prefix covers and the old one did not
+    /// is offered, so no track is PUBLISHed nor namespace announced twice. A
     /// refused update ends the subscription, which moqt reports as
     /// UNSUBSCRIBE_NAMESPACE.
     #[tracing::instrument(
@@ -241,9 +258,13 @@ impl SubscribeNameSpace {
             )
             .await;
         }
+        let offer = Offer {
+            prefix: new_track_namespace_prefix,
+            already_offered: Some(track_namespace_prefix),
+        };
         self.forward_matching_publications(
             session_id,
-            new_track_namespace_prefix,
+            offer,
             subscription,
             forwarder,
             downstream_publish,
@@ -252,7 +273,7 @@ impl SubscribeNameSpace {
         if interest.includes_namespaces() {
             self.notify_remote_publish_namespaces(
                 session_id,
-                new_track_namespace_prefix,
+                offer,
                 forwarder,
                 cascading_relay_context.route_registry,
             )
@@ -290,20 +311,25 @@ impl SubscribeNameSpace {
         level = "info",
         name = "relay.sequence.subscribe_namespace.forward_matching_publications",
         skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+        fields(session_id = %session_id, track_namespace_prefix = %offer.prefix)
     )]
     async fn forward_matching_publications(
         &self,
         session_id: SessionId,
-        track_namespace_prefix: &str,
+        offer: Offer<'_>,
         subscription: NamespaceSubscription,
         forwarder: &ControlMessageForwarder,
         downstream_publish: &DownstreamPublish,
     ) {
-        let publications = downstream_publish
-            .table
-            .matching_publications(track_namespace_prefix);
+        let publications = downstream_publish.table.matching_publications(offer.prefix);
         for publication in publications {
+            let track_namespace = match &publication {
+                MatchingPublication::Track(track_key) => &track_key.track_namespace,
+                MatchingPublication::Namespace(track_namespace) => track_namespace,
+            };
+            if offer.was_offered(track_namespace) {
+                continue;
+            }
             match publication {
                 MatchingPublication::Track(track_key)
                     if downstream_publish.table.offers_track(
@@ -335,17 +361,17 @@ impl SubscribeNameSpace {
         level = "info",
         name = "relay.sequence.subscribe_namespace.notify_remote_publish_namespaces",
         skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+        fields(session_id = %session_id, track_namespace_prefix = %offer.prefix)
     )]
     async fn notify_remote_publish_namespaces(
         &self,
         session_id: SessionId,
-        track_namespace_prefix: &str,
+        offer: Offer<'_>,
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
     ) {
         let routes = match route_registry
-            .find_namespace_publishers_by_prefix(track_namespace_prefix)
+            .find_namespace_publishers_by_prefix(offer.prefix)
             .await
         {
             Ok(routes) => routes,
@@ -353,7 +379,7 @@ impl SubscribeNameSpace {
                 tracing::warn!(
                     ?err,
                     session_id = session_id,
-                    track_namespace_prefix = %track_namespace_prefix,
+                    track_namespace_prefix = %offer.prefix,
                     "failed to find remote namespace routes"
                 );
                 return;
@@ -361,6 +387,9 @@ impl SubscribeNameSpace {
         };
 
         for route in routes {
+            if offer.was_offered(&route.track_namespace) {
+                continue;
+            }
             forwarder
                 .publish_namespace(session_id, route.track_namespace.clone())
                 .await;
@@ -380,13 +409,16 @@ mod tests {
             inter_relay_connection_manager::InterRelayConnectionManager,
             route_registry::NoopRelayRouteRegistry,
         },
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
+        domain::{
+            pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer,
+            track_key::TrackKey,
+        },
         session::session_repository::SessionRepository,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                client_subscription, downstream_publish_context, namespaces_and_tracks,
-                table_with_upstream, track_key,
+                active_upstream, client_subscription, downstream_publish_context,
+                namespaces_and_tracks, table_with_upstream, track_key,
             },
             mock_session::{
                 MockPublishHandler, MockSubscribeNamespaceHandler,
@@ -761,6 +793,74 @@ mod tests {
             ),
             Some(client_subscription(NamespaceInterest::Namespaces))
         );
+    }
+
+    /// A session that refuses every PUBLISH, so no subscription records that
+    /// it was offered a track, holding `interest` on "room", under which
+    /// "room/alice" publishes the track "video" and its namespace.
+    async fn context_subscribed_to_room(interest: NamespaceInterest) -> DownstreamPublishContext {
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let track_key = TrackKey::new("room/alice", "video");
+        table.register_upstream_subscription(
+            track_key,
+            PUBLISHER_SESSION,
+            active_upstream(UpstreamSubscriptionOrigin::Publish),
+        );
+        table.register_publish(
+            PUBLISHER_SESSION,
+            SessionPeer::Client,
+            Arc::new(MockPublishHandler::new("room/alice", "video", 0)),
+        );
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            "room/alice".to_string(),
+            SessionPeer::Client,
+        );
+        let ctx = downstream_publish_context(table, || anyhow::bail!("PUBLISH refused")).await;
+        let handler = MockSubscribeNamespaceHandler {
+            interest,
+            ..MockSubscribeNamespaceHandler::new("room")
+        };
+        subscribe_namespace(&ctx, handler).await;
+        tokio::time::sleep(NO_PUBLISH_TIMEOUT).await;
+        ctx
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_narrowed_prefix_does_not_publish_again_a_track_the_old_prefix_covered() {
+        // Arrange
+        let ctx = context_subscribed_to_room(NamespaceInterest::Tracks).await;
+        let handler = MockSubscribeNamespaceUpdateHandler::new(
+            "room",
+            "room/alice",
+            NamespaceInterest::Tracks,
+        );
+
+        // Act
+        update_namespace_subscription(&ctx, &handler).await;
+        tokio::time::sleep(NO_PUBLISH_TIMEOUT).await;
+
+        // Assert: draft-18 §10.9.2, updating a SUBSCRIBE_TRACKS prefix has no effect on existing subscriptions
+        assert_eq!(handler.answers(), [None]);
+        assert_eq!(ctx.subscriber.publishes().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_narrowed_prefix_does_not_announce_again_a_namespace_the_old_prefix_covered() {
+        // Arrange
+        let ctx = context_subscribed_to_room(NamespaceInterest::Namespaces).await;
+        let handler = MockSubscribeNamespaceUpdateHandler::new(
+            "room",
+            "room/alice",
+            NamespaceInterest::Namespaces,
+        );
+
+        // Act
+        update_namespace_subscription(&ctx, &handler).await;
+
+        // Assert: draft-18 §10.9.2, the subscriber already heard of the namespace
+        assert_eq!(handler.answers(), [None]);
+        assert_eq!(ctx.subscriber.publish_namespaces(), ["room/alice"]);
     }
 
     #[tokio::test]
