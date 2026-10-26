@@ -203,6 +203,7 @@ impl Subscriber {
             track_name: track_name.clone(),
             start: start_location,
             subscriber_priority: option.subscriber_priority,
+            fill_timeout: option.fill_timeout,
         };
         let ledger = self.session.object_ledger(&track_namespace, &track_name);
         let fetch_params = FetchParams::Standalone {
@@ -266,6 +267,7 @@ impl Subscriber {
                     object_id: 0,
                 },
                 subscriber_priority: option.subscriber_priority,
+                fill_timeout: option.fill_timeout,
             }),
             ContentExists::False => None,
         };
@@ -306,7 +308,9 @@ impl Subscriber {
             group_order: option.group_order,
             fetch_params,
             authorization_tokens: vec![],
-            fill_timeout: None,
+            fill_timeout: option
+                .fill_timeout
+                .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
         };
         let response = connection
             .send_request(OutgoingRequest::Fetch(fetch))

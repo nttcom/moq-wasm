@@ -44,9 +44,20 @@ pub(crate) struct EgressFetchRequest {
     pub(crate) start_location: moqt::object::Location,
     pub(crate) end_location: moqt::object::Location,
     pub(crate) group_order: moqt::object::GroupOrder,
-    /// Serve what the cache holds and report the objects it lacks as
-    /// unknown, instead of waiting for them (draft-18 §10.2.5).
-    pub(crate) report_unknown: bool,
+    pub(crate) wait: FetchWait,
+}
+
+/// How long a FETCH's delivery waits for objects of its range the cache
+/// does not hold yet (draft-18 §10.2.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FetchWait {
+    /// Until they arrive.
+    Unlimited,
+    /// Until the instant, after which the rest is reported as unknown.
+    Until(tokio::time::Instant),
+    /// Not at all: what the cache holds now is served, each stretch it does
+    /// not know reported as unknown.
+    Never,
 }
 
 pub(crate) enum EgressCommand {

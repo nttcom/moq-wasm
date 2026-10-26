@@ -54,6 +54,7 @@ pub(crate) struct SentPublish {
 pub(crate) struct RecordedControlMessages {
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
+    fetch_fill_timeouts: Arc<Mutex<Vec<Option<std::time::Duration>>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
     go_aways: Arc<Mutex<Vec<String>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
@@ -65,6 +66,11 @@ pub(crate) struct RecordedControlMessages {
 impl RecordedControlMessages {
     pub(crate) fn unsubscribed_request_ids(&self) -> Vec<u64> {
         self.unsubscribed_request_ids.lock().unwrap().clone()
+    }
+
+    /// The FILL_TIMEOUT of each FETCH sent on the session.
+    pub(crate) fn fetch_fill_timeouts(&self) -> Vec<Option<std::time::Duration>> {
+        self.fetch_fill_timeouts.lock().unwrap().clone()
     }
 
     pub(crate) fn closes(&self) -> Vec<(TerminationErrorCode, String)> {
@@ -526,8 +532,13 @@ impl Subscriber for MockUpstreamSubscriber {
         _track_name: String,
         _start_location: moqt::object::Location,
         end_location: moqt::object::Location,
-        _option: moqt::fetch::FetchOption,
+        option: moqt::fetch::FetchOption,
     ) -> anyhow::Result<moqt::fetch::FetchHandle> {
+        self.recorded
+            .fetch_fill_timeouts
+            .lock()
+            .unwrap()
+            .push(option.fill_timeout);
         match self.answer_fetch {
             FetchAnswer::Never => std::future::pending().await,
             FetchAnswer::Refuse(code) => Err(anyhow::Error::new(moqt::RequestFailure::Rejected {

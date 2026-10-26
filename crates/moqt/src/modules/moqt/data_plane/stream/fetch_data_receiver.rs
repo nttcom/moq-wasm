@@ -93,6 +93,7 @@ impl FetchCarry {
                 FetchOption {
                     subscriber_priority: self.remainder.subscriber_priority,
                     group_order: GroupOrder::Ascending,
+                    fill_timeout: self.remainder.fill_timeout,
                 },
             )
             .await?;

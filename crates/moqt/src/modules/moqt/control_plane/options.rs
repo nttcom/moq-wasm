@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::{
     TrackProperties,
     modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists,
@@ -27,6 +29,11 @@ impl Default for PublishOption {
 pub struct FetchOption {
     pub subscriber_priority: u8,
     pub group_order: GroupOrder,
+    /// Sent as FILL_TIMEOUT (draft-18 §10.2.5): the most a relay should wait
+    /// for objects it must fetch upstream before it reports them as unknown,
+    /// `ZERO` asking for only what it holds. Millisecond precision; draft-14
+    /// has no such parameter and sends none.
+    pub fill_timeout: Option<Duration>,
 }
 
 impl Default for FetchOption {
@@ -34,6 +41,7 @@ impl Default for FetchOption {
         Self {
             subscriber_priority: 128,
             group_order: GroupOrder::Ascending,
+            fill_timeout: None,
         }
     }
 }

@@ -4,32 +4,44 @@ use crate::modules::{
             cached_object::CachedObject,
             track_cache::{FetchCursor, FetchInterrupted, PlannedFetch},
         },
-        egress::coordinator::EgressFetchRequest,
+        egress::coordinator::{EgressFetchRequest, FetchWait},
     },
     session::data_sender::fetch_sender::FetchSender,
 };
 use moqt::{fetch::UnknownRange, object::DataStreamResetCode};
 
 pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn FetchSender) {
-    if request.report_unknown {
-        return deliver_reporting_unknown(request, sender).await;
-    }
+    let deadline = match request.wait {
+        FetchWait::Never => return deliver_reporting_unknown(request, sender, None).await,
+        FetchWait::Until(deadline) => Some(deadline),
+        FetchWait::Unlimited => None,
+    };
     let mut objects = FetchCursor::new(
         &request.cache,
         request.start_location,
         request.end_location,
         request.group_order,
     );
+    let mut last_sent = None;
     loop {
-        match objects.next().await {
+        let next = match deadline {
+            Some(deadline) => match tokio::time::timeout_at(deadline, objects.next()).await {
+                Ok(next) => next,
+                Err(_) => return deliver_reporting_unknown(request, sender, last_sent).await,
+            },
+            None => objects.next().await,
+        };
+        match next {
             Ok(Some(object)) => {
                 let Some(object) = load(request, sender, &object).await else {
                     return;
                 };
+                let at = object.location;
                 if let Err(e) = sender.send(object).await {
                     tracing::error!(?e, "failed to send fetch object");
                     return;
                 }
+                last_sent = Some(at);
             }
             Ok(None) => break,
             Err(interrupted) => {
@@ -52,15 +64,28 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
     finish(request, sender).await;
 }
 
-/// Sends what the cache holds now, each stretch it does not know reported
-/// as unknown; a sender that cannot express that has reset the response.
-async fn deliver_reporting_unknown(request: &EgressFetchRequest, sender: &dyn FetchSender) {
+/// Sends what the cache holds now after `sent`, the last object already
+/// sent, each stretch it does not know reported as unknown; a sender that
+/// cannot express that has reset the response.
+async fn deliver_reporting_unknown(
+    request: &EgressFetchRequest,
+    sender: &dyn FetchSender,
+    sent: Option<moqt::object::Location>,
+) {
     let plan = request.cache.plan_fetch(
         request.start_location,
         request.end_location,
         request.group_order,
     );
-    for step in plan {
+    let delivered = |at: moqt::object::Location| {
+        sent.is_some_and(|sent| {
+            delivery_order(request.group_order, at) <= delivery_order(request.group_order, sent)
+        })
+    };
+    for step in plan.into_iter().skip_while(|step| match step {
+        PlannedFetch::Object(object) => delivered(object.object.location),
+        PlannedFetch::Unknown { last } => delivered(*last),
+    }) {
         match step {
             PlannedFetch::Object(object) => {
                 let Some(object) = load(request, sender, &object).await else {
@@ -89,6 +114,16 @@ async fn deliver_reporting_unknown(request: &EgressFetchRequest, sender: &dyn Fe
         }
     }
     finish(request, sender).await;
+}
+
+/// A key that sorts locations as a FETCH in `group_order` delivers them:
+/// groups in that order, the objects of a group ascending.
+fn delivery_order(group_order: moqt::object::GroupOrder, at: moqt::object::Location) -> (u64, u64) {
+    let group = match group_order {
+        moqt::object::GroupOrder::Descending => u64::MAX - at.group_id,
+        _ => at.group_id,
+    };
+    (group, at.object_id)
 }
 
 /// The object in the form a FETCH from the cache gives it, or `None` once
