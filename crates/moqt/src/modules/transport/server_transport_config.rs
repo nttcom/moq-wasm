@@ -26,7 +26,7 @@ pub(crate) fn server_transport_config(keep_alive_sec: u64) -> TransportConfig {
     transport_config
 }
 
-pub(crate) fn load_cert_and_key(
+fn load_cert_and_key(
     cert_path: &str,
     key_path: &str,
 ) -> anyhow::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
