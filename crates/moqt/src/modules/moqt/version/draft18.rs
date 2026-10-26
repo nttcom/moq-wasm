@@ -37,7 +37,10 @@ use crate::{
             domains::{connection::Connection, session_context::SessionContext},
             version::{self, Notification, OutgoingRequest, OutgoingResponse},
         },
-        transport::transport_send_stream::TransportSendError,
+        transport::{
+            transport_connection::{BoxedReceiveStream, BoxedSendStream},
+            transport_send_stream::TransportSendError,
+        },
     },
 };
 
@@ -462,9 +465,47 @@ impl ControlChannel {
         map.remove(&request_id)
     }
 
-    /// §6.1: a PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers does
-    /// not wait for a stream; the PUBLISH_BLOCKED to send on that
-    /// SUBSCRIBE_TRACKS's stream when there is none.
+    /// The stream of a PUBLISH. §6.1: one for a track the peer's
+    /// SUBSCRIBE_TRACKS covers does not wait for the peer's stream limit;
+    /// when it allows none, PUBLISH_BLOCKED goes on that SUBSCRIBE_TRACKS
+    /// instead, its suffix relative to the prefix the peer last heard of
+    /// (§10.9.2).
+    async fn open_publish_stream(
+        &self,
+        connection: &Connection,
+        track_namespace: &[String],
+        track_name: &str,
+    ) -> Result<(BoxedSendStream, BoxedReceiveStream), RequestFailure> {
+        let namespace_writes = self.namespace_writes.lock().await;
+        let Some(blocked) = self.publish_blocked_for(track_namespace, track_name) else {
+            drop(namespace_writes);
+            return connection
+                .transport
+                .open_bi()
+                .await
+                .map_err(|_| RequestFailure::SessionClosed);
+        };
+        let (subscribe_tracks, publish_blocked) = blocked.map_err(|error| {
+            tracing::error!(%error, "PUBLISH_BLOCKED could not be encoded");
+            RequestFailure::ProtocolViolation("request could not be encoded")
+        })?;
+        match connection
+            .transport
+            .try_open_bi()
+            .await
+            .map_err(|_| RequestFailure::SessionClosed)?
+        {
+            Some(streams) => Ok(streams),
+            None => {
+                tracing::info!("no stream for a PUBLISH; sending PUBLISH_BLOCKED");
+                subscribe_tracks.send(&publish_blocked).await?;
+                Err(RequestFailure::PublishBlocked)
+            }
+        }
+    }
+
+    /// The PUBLISH_BLOCKED for a track the peer's SUBSCRIBE_TRACKS covers,
+    /// with the stream of that SUBSCRIBE_TRACKS.
     fn publish_blocked_for(
         &self,
         track_namespace: &[String],
@@ -511,11 +552,15 @@ impl ControlChannel {
         {
             return Ok(accepted);
         }
-        let blocked = match &request {
-            OutgoingRequest::Publish(publish) => self
-                .publish_blocked_for(&publish.track_namespace_tuple, &publish.track_name)
-                .transpose()
-                .map_err(encoding_failed)?,
+        let publish_stream = match &request {
+            OutgoingRequest::Publish(publish) => Some(
+                self.open_publish_stream(
+                    connection,
+                    &publish.track_namespace_tuple,
+                    &publish.track_name,
+                )
+                .await?,
+            ),
             _ => None,
         };
         let (request_id, kind, message, group_order) = match request {
@@ -571,28 +616,13 @@ impl ControlChannel {
                 None,
             ),
         };
-        let (send_stream, receive_stream) = match blocked {
+        let (send_stream, receive_stream) = match publish_stream {
+            Some(streams) => streams,
             None => connection
                 .transport
                 .open_bi()
                 .await
                 .map_err(|_| RequestFailure::SessionClosed)?,
-            Some((subscribe_tracks, publish_blocked)) => match connection
-                .transport
-                .try_open_bi()
-                .await
-                .map_err(|_| RequestFailure::SessionClosed)?
-            {
-                Some(streams) => streams,
-                None => {
-                    tracing::info!(
-                        request_id,
-                        "no stream for a PUBLISH; sending PUBLISH_BLOCKED"
-                    );
-                    subscribe_tracks.send(&publish_blocked).await?;
-                    return Err(RequestFailure::PublishBlocked);
-                }
-            },
         };
         let sender = Arc::new(StreamSender::new(send_stream));
         sender.send(&message).await?;
@@ -3328,6 +3358,45 @@ mod tests {
         assert_eq!(
             announced,
             Some(messages::Message::Namespace(vec!["alice".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publish_blocked_after_a_prefix_update_names_the_track_under_the_new_prefix() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked-update", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        handler.ok().await;
+        receiver.receive().await.unwrap();
+        let _streams = use_up_bidi_streams(&server).await;
+
+        // Act
+        let published = server
+            .publisher()
+            .publish(
+                "live/room/alice".into(),
+                "video".into(),
+                PublishOption::default(),
+            )
+            .await;
+        let blocked = receiver.receive().await.unwrap();
+
+        // Assert: §10.9.2 / §10.20, the suffix follows the prefix the subscriber last heard of
+        assert!(
+            matches!(published, Err(RequestFailure::PublishBlocked)),
+            "{published:?}"
+        );
+        assert_eq!(
+            blocked,
+            Some(messages::Message::PublishBlocked(
+                messages::PublishBlockedMessage {
+                    track_namespace_suffix: vec!["alice".to_string()],
+                    track_name: "video".to_string(),
+                }
+            ))
         );
     }
 
