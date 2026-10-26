@@ -18,7 +18,7 @@ use crate::modules::{
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
-    data_plane::ingress::ingress_coordinator::IngressCommand,
+    data_plane::{cache::store::TrackCacheStore, ingress::ingress_coordinator::IngressCommand},
     domain::{
         pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
         session_peer::SessionPeer,
@@ -46,6 +46,7 @@ impl PublishNamespace {
         forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
+        cache_store: &Arc<TrackCacheStore>,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &dyn PublishNamespaceHandler,
     ) {
@@ -85,6 +86,7 @@ impl PublishNamespace {
             table: table.clone(),
             forwarder: forwarder.clone(),
             ingress_sender: ingress_sender.clone(),
+            cache_store: cache_store.clone(),
         };
         if is_origin {
             Self::join_tracks_wanting_publishers(
@@ -326,6 +328,7 @@ mod tests {
                 &ControlMessageForwarder { repository },
                 &ingress_sender,
                 &Arc::new(local_publisher_resolver()),
+                &Arc::new(TrackCacheStore::new()),
                 CascadingRelayContext {
                     route_registry: &NoopRelayRouteRegistry,
                     inter_relay_connection_manager: &inter_relay_connection_manager,

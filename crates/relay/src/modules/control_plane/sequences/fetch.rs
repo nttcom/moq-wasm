@@ -11,6 +11,7 @@ use tracing::Span;
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
+        sequences::malformed_track::refused_as_malformed,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::{
@@ -53,6 +54,14 @@ struct PreparedUpstreamFetch {
 enum FetchSource {
     Cache(CacheTarget),
     Upstream,
+}
+
+/// Why no upstream FETCH was made; the downstream FETCH is already answered.
+#[derive(Debug, PartialEq)]
+enum NoUpstreamFetch {
+    Refused,
+    /// The publisher refused the track as malformed.
+    MalformedTrack(SessionId),
 }
 
 #[derive(Debug)]
@@ -221,13 +230,16 @@ impl Fetch {
         requester: SessionPeer,
         handler: &dyn FetchHandler,
         target: &FetchTarget,
-    ) -> Option<PreparedUpstreamFetch> {
+    ) -> Result<PreparedUpstreamFetch, NoUpstreamFetch> {
         let mut tried = Vec::new();
         let mut last_error = None;
         for publisher_session_id in Self::subscribed_publishers(table, requester, target) {
             tried.push(publisher_session_id);
             match Self::fetch_from(forwarder, publisher_session_id, handler, target).await {
-                Ok(prepared) => return Some(prepared),
+                Ok(prepared) => return Ok(prepared),
+                Err(err) if refused_as_malformed(&err) => {
+                    return Err(Self::malformed_refusal(handler, publisher_session_id, &err).await);
+                }
                 Err(err) => last_error = Some(err),
             }
         }
@@ -250,7 +262,10 @@ impl Fetch {
             }
             tried.push(publisher_session_id);
             match Self::fetch_from(forwarder, publisher_session_id, handler, target).await {
-                Ok(prepared) => return Some(prepared),
+                Ok(prepared) => return Ok(prepared),
+                Err(err) if refused_as_malformed(&err) => {
+                    return Err(Self::malformed_refusal(handler, publisher_session_id, &err).await);
+                }
                 Err(err) => last_error = Some(err),
             }
         }
@@ -270,7 +285,19 @@ impl Fetch {
             }
         };
         let _ = handler.error(error_code, reason).await;
-        None
+        Err(NoUpstreamFetch::Refused)
+    }
+
+    /// draft-18 §2.4.2: the track is malformed whoever else publishes it, so
+    /// no other publisher is tried.
+    async fn malformed_refusal(
+        handler: &dyn FetchHandler,
+        publisher_session_id: SessionId,
+        error: &anyhow::Error,
+    ) -> NoUpstreamFetch {
+        let (error_code, reason) = Self::upstream_fetch_error_response(error);
+        let _ = handler.error(error_code, reason).await;
+        NoUpstreamFetch::MalformedTrack(publisher_session_id)
     }
 
     fn subscribed_publishers(
@@ -612,7 +639,9 @@ mod tests {
             vec![
                 (
                     SUBSCRIBED_PUBLISHER,
-                    mock_session_answering_fetch(FetchAnswer::Refuse),
+                    mock_session_answering_fetch(FetchAnswer::Refuse(
+                        RequestErrorCode::TrackDoesNotExist,
+                    )),
                 ),
                 (
                     OTHER_PUBLISHER,
@@ -647,7 +676,7 @@ mod tests {
         // Assert
         assert_eq!(
             prepared.map(|prepared| prepared.upstream_publisher_session_id),
-            Some(OTHER_PUBLISHER)
+            Ok(OTHER_PUBLISHER)
         );
     }
 
@@ -668,7 +697,9 @@ mod tests {
             vec![
                 (
                     REFUSING_PUBLISHER,
-                    mock_session_answering_fetch(FetchAnswer::Refuse),
+                    mock_session_answering_fetch(FetchAnswer::Refuse(
+                        RequestErrorCode::TrackDoesNotExist,
+                    )),
                 ),
                 (
                     ANSWERING_PUBLISHER,
@@ -703,7 +734,7 @@ mod tests {
         // Assert
         assert_eq!(
             prepared.map(|prepared| prepared.upstream_publisher_session_id),
-            Some(ANSWERING_PUBLISHER)
+            Ok(ANSWERING_PUBLISHER)
         );
     }
 

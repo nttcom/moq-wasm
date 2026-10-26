@@ -614,6 +614,16 @@ per-request authorization gate under "Event pipeline".
   latch and terminates subscriptions with PUBLISH_DONE(MALFORMED_TRACK);
   `FetchIngest` bails on the latch and sends upstream FETCH_CANCEL for its
   own fetch.
+- An upstream SUBSCRIBE or FETCH refused with MALFORMED_TRACK latches the
+  track as well (`malformed_track::refused_as_malformed`): moqt refuses a
+  draft-18 SUBSCRIBE_OK or FETCH_OK whose Immutable Properties are malformed
+  (§12.7) that way, and so does a relay peer that detected the track
+  malformed. No other publisher is tried, the downstream request is answered
+  MALFORMED_TRACK, and the track's other upstream subscriptions end through
+  `MalformedTrackCleanup` (called by `UpstreamJoinTask` for a late
+  publisher, raised as `MalformedTrackDetected` by `UpstreamFetchTask`). A
+  PUBLISH with malformed Immutable Properties is refused by moqt itself and
+  never reaches the relay, so it latches nothing.
 
 ### Cache (`modules/data_plane/cache`)
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:

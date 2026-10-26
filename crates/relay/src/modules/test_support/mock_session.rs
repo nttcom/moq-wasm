@@ -92,13 +92,14 @@ impl RecordedControlMessages {
 #[derive(Clone)]
 enum SubscribeAnswer {
     SubscribeOk(Arc<dyn Fn() -> ContentExists + Send + Sync>),
+    Refuse(RequestErrorCode),
     Never,
 }
 
 #[derive(Clone)]
 pub(crate) enum FetchAnswer {
     Never,
-    Refuse,
+    Refuse(RequestErrorCode),
     FetchOk,
     /// FETCH_OK, then a response stream yielding these, then nothing.
     Respond(Vec<moqt::fetch::Fetch>),
@@ -203,6 +204,13 @@ pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, Recor
         answer_publish: None,
     });
     (session, recorded)
+}
+
+pub(crate) fn mock_session_refusing_subscribe(code: RequestErrorCode) -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        answer_subscribe: Some(SubscribeAnswer::Refuse(code)),
+        ..MockUpstreamSession::new(RecordedControlMessages::default())
+    })
 }
 
 pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
@@ -437,6 +445,13 @@ impl Subscriber for MockUpstreamSubscriber {
     ) -> anyhow::Result<UpstreamSubscription> {
         let answer_subscribe = match &self.answer_subscribe {
             Some(SubscribeAnswer::SubscribeOk(answer_subscribe)) => answer_subscribe,
+            Some(SubscribeAnswer::Refuse(code)) => {
+                return Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
+                    request_id: 1,
+                    code: *code,
+                    reason: "refused".to_string(),
+                }));
+            }
             Some(SubscribeAnswer::Never) => std::future::pending().await,
             None => unimplemented!("not used by MockUpstreamSession tests"),
         };
@@ -487,10 +502,10 @@ impl Subscriber for MockUpstreamSubscriber {
     ) -> anyhow::Result<moqt::fetch::FetchHandle> {
         match self.answer_fetch {
             FetchAnswer::Never => std::future::pending().await,
-            FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
+            FetchAnswer::Refuse(code) => Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
                 request_id: 0,
-                code: RequestErrorCode::TrackDoesNotExist,
-                reason: "no objects".to_string(),
+                code,
+                reason: "refused".to_string(),
             })),
             FetchAnswer::FetchOk | FetchAnswer::Respond(_) => Ok(moqt::fetch::FetchHandle {
                 request_id: 0,
@@ -634,11 +649,13 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 }
 
-/// `joining_rule` stands in for the session draft's Joining FETCH rule.
+/// `joining_rule` stands in for the session draft's Joining FETCH rule;
+/// `errors` records the code of every `error`.
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
+    pub(crate) errors: Arc<Mutex<Vec<RequestErrorCode>>>,
 }
 
 impl MockFetchHandler {
@@ -647,6 +664,7 @@ impl MockFetchHandler {
         Self {
             fetch_params,
             joining_rule: |_| Ok(()),
+            errors: Arc::default(),
         }
     }
 }
@@ -700,9 +718,10 @@ impl FetchHandler for MockFetchHandler {
 
     async fn error(
         &self,
-        _code: RequestErrorCode,
+        code: RequestErrorCode,
         _reason: String,
     ) -> Result<(), moqt::TransportSendError> {
+        self.errors.lock().unwrap().push(code);
         Ok(())
     }
 }

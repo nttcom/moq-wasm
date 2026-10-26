@@ -9,10 +9,16 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::{session_peer, start_ingress, stop_ingress},
+        sequences::{
+            malformed_track::{MalformedTrackCleanup, refused_as_malformed},
+            session_peer, start_ingress, stop_ingress,
+        },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
-    data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
+    data_plane::{
+        cache::store::TrackCacheStore,
+        ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
+    },
     domain::{
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
@@ -104,6 +110,7 @@ pub(crate) struct UpstreamJoinDeps {
     pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) forwarder: ControlMessageForwarder,
     pub(crate) ingress_sender: mpsc::Sender<IngressCommand>,
+    pub(crate) cache_store: Arc<TrackCacheStore>,
 }
 
 /// Adds every publisher that answers a pending upstream SUBSCRIBE to the
@@ -134,6 +141,30 @@ impl UpstreamJoinTask {
                         subscription,
                     )
                     .await;
+                }
+                Err(error) if refused_as_malformed(&error) => {
+                    tracing::warn!(
+                        %error,
+                        pub_session_id = %answered.publisher_session_id,
+                        track_key = %join.track_key,
+                        "an additional publisher refused the track as malformed; latching it"
+                    );
+                    // draft-18 §2.4.2: the latch ends every downstream
+                    // subscription with PUBLISH_DONE MALFORMED_TRACK.
+                    deps.cache_store
+                        .get_or_create(&join.track_key)
+                        .mark_malformed();
+                    MalformedTrackCleanup
+                        .handle(
+                            answered.publisher_session_id,
+                            &Span::current(),
+                            &join.track_key,
+                            &deps.table,
+                            &deps.forwarder,
+                            &deps.ingress_sender,
+                        )
+                        .await;
+                    return;
                 }
                 Err(error) => tracing::warn!(
                     %error,
@@ -240,7 +271,7 @@ mod tests {
             },
             mock_session::{
                 RecordedControlMessages, recorded_session_answering_subscribe,
-                session_repository_with_session,
+                session_repository_with_session, session_repository_with_upstream_session,
             },
         },
     };
@@ -277,6 +308,7 @@ mod tests {
                 table,
                 forwarder,
                 ingress_sender,
+                cache_store: Arc::new(TrackCacheStore::new()),
             },
         );
         tokio::time::timeout(Duration::from_secs(1), task._join_handle)
@@ -284,6 +316,63 @@ mod tests {
             .expect("the join should end once every publisher answered")
             .unwrap();
         (recorded, ingress_receiver)
+    }
+
+    #[tokio::test]
+    async fn a_late_publisher_refusing_as_malformed_latches_the_track_and_ends_it() {
+        // Arrange: PUBLISHER_SESSION feeds the track; a late publisher's
+        // SUBSCRIBE_OK is refused as malformed
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let table = Arc::new(table);
+        let (repository, recorded) =
+            session_repository_with_upstream_session(PUBLISHER_SESSION).await;
+        let (ingress_sender, _ingress_receiver) = mpsc::channel(8);
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let mut pending = JoinSet::new();
+        pending.spawn(async {
+            Some(AnsweredUpstreamSubscribe {
+                publisher_session_id: LATE_PUBLISHER_SESSION,
+                publisher_peer: SessionPeer::Client,
+                subscribed: Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
+                    request_id: LATE_UPSTREAM_REQUEST_ID,
+                    code: moqt::RequestErrorCode::MalformedTrack,
+                    reason: "malformed Immutable Properties".to_string(),
+                })),
+            })
+        });
+
+        // Act
+        let task = UpstreamJoinTask::run(
+            UpstreamJoin {
+                track_key: track_key.clone(),
+                subscriber_session_id: 2,
+                pending,
+            },
+            UpstreamJoinDeps {
+                table: table.clone(),
+                forwarder: ControlMessageForwarder { repository },
+                ingress_sender,
+                cache_store: cache_store.clone(),
+            },
+        );
+        tokio::time::timeout(Duration::from_secs(1), task._join_handle)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert: draft-18 §2.4.2, the cache latch ends every downstream
+        // subscription with PUBLISH_DONE MALFORMED_TRACK, and the other
+        // publisher's subscription is ended
+        assert!(
+            cache_store
+                .get(&track_key)
+                .is_some_and(|cache| cache.is_malformed())
+        );
+        assert_eq!(
+            recorded.unsubscribed_request_ids(),
+            vec![UPSTREAM_REQUEST_ID]
+        );
+        assert!(table.upstream_tracks.is_empty());
     }
 
     #[tokio::test]
@@ -438,6 +527,7 @@ mod tests {
                 table: table.clone(),
                 forwarder,
                 ingress_sender,
+                cache_store: Arc::new(TrackCacheStore::new()),
             },
         );
         tokio::time::timeout(Duration::from_secs(1), task._join_handle)
