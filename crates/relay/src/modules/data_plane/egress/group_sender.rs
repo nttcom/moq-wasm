@@ -143,7 +143,7 @@ impl GroupSender {
                                 })
                                 .clone();
                             let group_sequence = self.group_sequence.sequence_of(group_id);
-                            let span = tracing::info_span!(
+                            let span = tracing::debug_span!(
                                 "relay.dataplane.egress.stream",
                                 track_key = %self.track_key,
                                 track_alias = track_alias,
@@ -153,17 +153,22 @@ impl GroupSender {
                                 object_count = tracing::field::Empty,
                                 end_reason = tracing::field::Empty,
                             );
+                            // The track span stays entered when the debug stream span is off.
                             joinset.spawn(
-                                Self::send_stream_task(StreamSendTask {
-                                    source: self.source(&task),
-                                    object_id: task.object_id,
-                                    factory,
-                                    delivery_stats: self.delivery_stats.clone(),
-                                    subscriber_priority,
-                                    group_order,
-                                    group_sequence,
-                                })
-                                .instrument(span),
+                                Self::send_stream_task(
+                                    StreamSendTask {
+                                        source: self.source(&task),
+                                        object_id: task.object_id,
+                                        factory,
+                                        delivery_stats: self.delivery_stats.clone(),
+                                        subscriber_priority,
+                                        group_order,
+                                        group_sequence,
+                                    },
+                                    span.clone(),
+                                )
+                                .instrument(span)
+                                .instrument(Span::current()),
                             );
                         }
                         SubgroupKey::Datagram { .. } => {
@@ -188,9 +193,8 @@ impl GroupSender {
         }
     }
 
-    async fn send_stream_task(task: StreamSendTask) {
+    async fn send_stream_task(task: StreamSendTask, span: Span) {
         let (object_count, end_reason) = Self::send_stream(task).await;
-        let span = Span::current();
         span.record("object_count", object_count);
         span.record("end_reason", end_reason);
     }

@@ -52,7 +52,7 @@ pub(crate) async fn accept_streams(
                         break;
                     }
                 };
-                let span = tracing::info_span!(
+                let span = tracing::debug_span!(
                     parent: &track_span,
                     "relay.dataplane.ingress.stream",
                     track_key = %ingest.track_key,
@@ -60,7 +60,12 @@ pub(crate) async fn accept_streams(
                     subgroup_id = tracing::field::Empty,
                     end_reason = tracing::field::Empty,
                 );
-                readers.spawn(read_stream(ingest.clone(), receiver).instrument(span));
+                // The track span stays entered when the debug stream span is off.
+                readers.spawn(
+                    read_stream(ingest.clone(), receiver, span.clone())
+                        .instrument(span)
+                        .instrument(track_span.clone()),
+                );
             }
             Some(result) = readers.join_next() => {
                 if let Err(e) = result {
@@ -72,7 +77,12 @@ pub(crate) async fn accept_streams(
     readers.detach_all();
 }
 
-pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn StreamReceiver>) {
+/// Records the stream's fields and end reason on `span`.
+pub(crate) async fn read_stream(
+    ingest: TrackIngest,
+    mut receiver: Box<dyn StreamReceiver>,
+    span: Span,
+) {
     let TrackIngest {
         track_key,
         publisher_session_id,
@@ -81,7 +91,6 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
         mut stop_receiver,
         stamp,
     } = ingest;
-    let span = Span::current();
     let mut header: Option<ReceivedHeader> = None;
     let mut ingest: Option<OpenSubgroupGuard<'_>> = None;
     let mut partial: Option<PartialObjectWriter<'_>> = None;

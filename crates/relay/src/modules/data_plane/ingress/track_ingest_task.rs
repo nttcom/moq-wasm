@@ -161,8 +161,10 @@ impl TrackIngestTask {
                     "relay.dataplane.ingress.stream_factory",
                     track_key = %ingest.track_key,
                 );
-                accept_streams(ingest, factory, track_span)
+                // The track span stays entered when the debug factory span is off.
+                accept_streams(ingest, factory, track_span.clone())
                     .instrument(span)
+                    .instrument(track_span)
                     .await;
             }
             IngestSource::Datagram(receiver) => read_datagrams(ingest, receiver).await,
