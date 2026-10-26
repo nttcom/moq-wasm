@@ -907,7 +907,6 @@ pub(crate) fn encode_subscribe_tracks(
 /// subscription's prefix (§10.16, §10.17).
 /// §10.20: `suffix` follows the Track Namespace Prefix of the
 /// SUBSCRIBE_TRACKS whose stream carries it.
-#[cfg(test)]
 pub(crate) fn encode_publish_blocked(
     suffix: &[String],
     track_name: &str,

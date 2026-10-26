@@ -349,6 +349,33 @@ impl ControlChannel {
         map.remove(&request_id)
     }
 
+    /// §6.1: a PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers does
+    /// not wait for a stream; the PUBLISH_BLOCKED to send on that
+    /// SUBSCRIBE_TRACKS's stream when there is none.
+    fn publish_blocked_for(
+        &self,
+        track_namespace: &[String],
+        track_name: &str,
+    ) -> Option<anyhow::Result<(Arc<StreamSender>, BytesMut)>> {
+        let (sender, prefix_len) = self
+            .requests()
+            .incoming
+            .values()
+            .filter_map(|stream| match &stream.kind {
+                RequestStreamKind::SubscribeTracks(prefix)
+                    if track_namespace.starts_with(prefix) =>
+                {
+                    Some((stream.sender.clone(), prefix.len()))
+                }
+                _ => None,
+            })
+            .max_by_key(|(_, prefix_len)| *prefix_len)?;
+        Some(
+            messages::encode_publish_blocked(&track_namespace[prefix_len..], track_name)
+                .map(|message| (sender, message)),
+        )
+    }
+
     // On wasm32 the browser transport is !Send, but the context is shared with
     // the native build, where the tasks run on a multi-threaded executor.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
@@ -371,6 +398,13 @@ impl ControlChannel {
         {
             return Ok(accepted);
         }
+        let blocked = match &request {
+            OutgoingRequest::Publish(publish) => self
+                .publish_blocked_for(&publish.track_namespace_tuple, &publish.track_name)
+                .transpose()
+                .map_err(encoding_failed)?,
+            _ => None,
+        };
         let (request_id, kind, message, group_order) = match request {
             OutgoingRequest::Subscribe(subscribe) => (
                 subscribe.request_id,
@@ -424,11 +458,29 @@ impl ControlChannel {
                 None,
             ),
         };
-        let (send_stream, receive_stream) = connection
-            .transport
-            .open_bi()
-            .await
-            .map_err(|_| RequestFailure::SessionClosed)?;
+        let (send_stream, receive_stream) = match blocked {
+            None => connection
+                .transport
+                .open_bi()
+                .await
+                .map_err(|_| RequestFailure::SessionClosed)?,
+            Some((subscribe_tracks, publish_blocked)) => match connection
+                .transport
+                .try_open_bi()
+                .await
+                .map_err(|_| RequestFailure::SessionClosed)?
+            {
+                Some(streams) => streams,
+                None => {
+                    tracing::info!(
+                        request_id,
+                        "no stream for a PUBLISH; sending PUBLISH_BLOCKED"
+                    );
+                    subscribe_tracks.send(&publish_blocked).await?;
+                    return Err(RequestFailure::PublishBlocked);
+                }
+            },
+        };
         let sender = Arc::new(StreamSender::new(send_stream));
         sender.send(&message).await?;
         self.requests().outgoing.insert(
@@ -791,6 +843,7 @@ mod tests {
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, datagram_object,
                 datagram_receiver, notify_datagram, published_track_between, read_fetch_objects,
                 spawn_connected_draft18_sessions, subgroup_receiver, subscribed_track_reader,
+                use_up_bidi_streams,
             },
         },
         namespace::{NamespaceInterest, SubscribeNamespaceHandler},
@@ -1886,6 +1939,48 @@ mod tests {
 
         // Assert: the session survives the PUBLISH_BLOCKED (§6.1), so a later request is answered
         assert!(request.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_publish_the_peer_has_no_stream_for_is_blocked_on_its_subscribe_tracks() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-publish-blocked-send-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (request, handlers) =
+                namespace_requests(&client, &server, NamespaceInterest::Tracks, 1).await;
+            handlers[0].ok().await.unwrap();
+            request.await.unwrap().unwrap();
+            let _streams = use_up_bidi_streams(&server).await;
+
+            // Act
+            let published = tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                server.publisher().publish(
+                    "live/room".into(),
+                    "video".into(),
+                    PublishOption::default(),
+                ),
+            )
+            .await
+            .expect("a PUBLISH without a stream must not wait for one");
+            let event = next_event(&client).await;
+
+            // Assert: §6.1, PUBLISH_BLOCKED on the SUBSCRIBE_TRACKS stream instead of the PUBLISH
+            assert!(
+                matches!(published, Err(RequestFailure::PublishBlocked)),
+                "{scheme}: {published:?}"
+            );
+            let SessionEvent::PublishBlocked(blocked) = event else {
+                panic!("{scheme}: expected PUBLISH_BLOCKED, got {event:?}");
+            };
+            assert_eq!(blocked.track_namespace_prefix, "live", "{scheme}");
+            assert_eq!(blocked.track_namespace, "live/room", "{scheme}");
+            assert_eq!(blocked.track_name, "video", "{scheme}");
+        }
     }
 
     #[tokio::test]
