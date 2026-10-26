@@ -25,7 +25,11 @@ pub type RequestId = u64;
 
 pub(crate) type ErrorPhrase = String;
 
+/// What the peer asked of the session. Dropping an event's handler
+/// unanswered gives the answer that handler documents, so an application
+/// may drop the events it does not handle.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum SessionEvent {
     GoAway(GoAwayHandler),
     MaxRequestId(MaxRequestIdHandler),

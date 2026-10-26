@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use moqt::{RequestErrorCode, namespace::NamespaceInterest};
+use moqt::{
+    RequestErrorCode,
+    namespace::{NamespaceInterest, PrefixUpdateAnswer},
+};
 
 /// A draft-18 update moving the prefix of a namespace subscription the
 /// session holds (draft-18 §10.9.2); see
@@ -10,7 +13,7 @@ pub(crate) trait SubscribeNamespaceUpdateHandler: 'static + Send + Sync {
     fn new_track_namespace_prefix(&self) -> &str;
     fn new_track_namespace_prefix_tuple(&self) -> &[String];
     fn interest(&self) -> NamespaceInterest;
-    async fn ok(&self);
+    async fn ok(&self) -> PrefixUpdateAnswer;
     async fn error(&self, code: RequestErrorCode, reason_phrase: String);
 }
 
@@ -32,7 +35,7 @@ impl SubscribeNamespaceUpdateHandler for moqt::namespace::SubscribeNamespaceUpda
         self.interest()
     }
 
-    async fn ok(&self) {
+    async fn ok(&self) -> PrefixUpdateAnswer {
         self.ok().await
     }
 
