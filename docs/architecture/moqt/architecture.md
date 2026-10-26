@@ -561,13 +561,16 @@ state name the connection:
   takes per logical track alias and per logical FETCH request id. A
   subscription's entry keeps the version of the connection it was accepted
   on, which decides whether its track may mix forwarding preferences; a
-  FETCH's entry holds its track's `ObjectLedger`. Registering a FETCH returns
+  FETCH's entry names its track, whose `ObjectLedger` the receiver joins
+  when the application takes it. Registering a FETCH returns
   a `PendingFetch` drop-guard that removes both FETCH entries unless FETCH_OK
   arrived.
 - `ledgers` — a `Weak<ObjectLedger>` per full track name. `object_ledger`
   hands the live one to every subscription and FETCH of the track it
   receives, or starts a new one; the receivers hold it, so it ends with the
-  last of them, and a migration keeps it.
+  last of them, and a migration keeps it. A FETCH receiver lets go of it
+  when the response ends (FIN, or an error the session cannot carry over),
+  and a response the application never takes holds none.
 - `carried` — for a session that follows GOAWAY, the namespace (with their
   `NamespaceInterest`) and track subscriptions and the published namespaces a
   migration sends again.

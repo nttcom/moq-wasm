@@ -15,10 +15,7 @@ use crate::{
             enums::ResponseMessage,
             namespace_interest::NamespaceInterest,
         },
-        data_plane::{
-            data_receiver::DataReceiver, object_ledger::ObjectLedger,
-            stream::fetch_data_receiver::FetchDataReceiver,
-        },
+        data_plane::{data_receiver::DataReceiver, stream::fetch_data_receiver::FetchDataReceiver},
         domains::{
             connection::{Connection, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
@@ -204,10 +201,9 @@ impl Subscriber {
             start_location,
             &option,
         );
-        let ledger = self.session.object_ledger(&track_namespace, &track_name);
         let fetch_params = FetchParams::Standalone {
             track_namespace: namespace_tuple(&track_namespace),
-            track_name,
+            track_name: track_name.clone(),
             start_location,
             end_location,
         };
@@ -216,7 +212,7 @@ impl Subscriber {
             fetch_params,
             option,
             Some(remainder),
-            ledger,
+            (track_namespace, track_name),
         )
         .await
     }
@@ -273,10 +269,11 @@ impl Subscriber {
             joining_request_id,
             joining_start,
         };
-        let ledger = self
-            .session
-            .object_ledger(subscription.track_namespace(), subscription.track_name());
-        self.send_fetch(connection, fetch_params, option, remainder, ledger)
+        let track = (
+            subscription.track_namespace().to_string(),
+            subscription.track_name().to_string(),
+        );
+        self.send_fetch(connection, fetch_params, option, remainder, track)
             .await
     }
 
@@ -289,16 +286,19 @@ impl Subscriber {
         fetch_params: FetchParams,
         option: FetchOption,
         remainder: Option<FetchRemainder>,
-        ledger: Arc<ObjectLedger>,
+        (track_namespace, track_name): (String, String),
     ) -> Result<FetchHandle, RequestFailure> {
         let remainder = remainder.filter(|_| {
             self.session.follows_go_away() && option.group_order != GroupOrder::Descending
         });
         let request_id = connection.control.next_request_id();
 
-        let pending_fetch = self
-            .session
-            .register_pending_fetch(&connection, request_id, ledger);
+        let pending_fetch = self.session.register_pending_fetch(
+            &connection,
+            request_id,
+            track_namespace,
+            track_name,
+        );
 
         let fetch = Fetch {
             request_id,
@@ -540,7 +540,10 @@ impl Subscriber {
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
         receiver.set_group_order(fetch_handle.group_order);
-        receiver.check_with(channel.ledger);
+        receiver.check_with(
+            self.session
+                .object_ledger(&channel.track_namespace, &channel.track_name),
+        );
         if let Some(remainder) = fetch_handle.remainder.clone() {
             receiver.carry_with(
                 self.session.clone(),
@@ -723,8 +726,8 @@ mod tests {
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
                 location, next_subgroup, object_with_extensions, read_fetch_objects,
-                read_subgroup_objects, send_subgroup_object, spawn_connected_dual_sessions,
-                subscribed_track, within,
+                read_subgroup_objects, send_subgroup_object, spawn_connected_draft18_sessions,
+                spawn_connected_dual_sessions, subscribed_track, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -896,6 +899,65 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
+    }
+
+    fn holds_ledger(client: &Session) -> bool {
+        client.subscriber().session.holds_ledger("ns", TRACK)
+    }
+
+    async fn fetch_never_taken_keeps_no_ledger(client: Session, server: Session) {
+        // Arrange
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
+        // Act: the response ends while the application never takes it
+        serve_fetch(&server, &handler, END, &[fetch_object(START, b"object")]).await;
+        let _handle = request.await.unwrap().unwrap();
+        // Assert
+        assert!(!holds_ledger(&client));
+    }
+
+    #[tokio::test]
+    async fn a_fetch_whose_response_is_never_taken_keeps_no_ledger() {
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-ledger-untaken").await;
+        fetch_never_taken_keeps_no_ledger(client, server).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_whose_response_is_never_taken_keeps_no_ledger() {
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-fetch-ledger-untaken-d18", "moqt").await;
+        fetch_never_taken_keeps_no_ledger(client, server).await;
+    }
+
+    async fn fetch_releases_the_ledger_at_its_end(client: Session, server: Session) {
+        // Arrange
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
+        serve_fetch(&server, &handler, END, &[fetch_object(START, b"object")]).await;
+        let handle = request.await.unwrap().unwrap();
+        let mut receiver = client
+            .subscriber()
+            .accept_fetch_receiver(&handle)
+            .await
+            .unwrap();
+        let held_while_read = holds_ledger(&client);
+        // Act: read up to the FIN, keeping the receiver
+        within(read_fetch_objects(&mut receiver)).await;
+        // Assert: draft-18 §5.2, the FETCH state ends with the FIN
+        assert!(held_while_read);
+        assert!(!holds_ledger(&client));
+    }
+
+    #[tokio::test]
+    async fn a_fetch_response_read_to_its_end_releases_the_ledger() {
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-ledger-end").await;
+        fetch_releases_the_ledger_at_its_end(client, server).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_response_read_to_its_end_releases_the_ledger() {
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-fetch-ledger-end-d18", "moqt").await;
+        fetch_releases_the_ledger_at_its_end(client, server).await;
     }
 
     #[tokio::test]

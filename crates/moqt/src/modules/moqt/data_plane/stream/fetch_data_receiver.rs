@@ -41,8 +41,8 @@ pub struct FetchDataReceiver {
     carry: Option<FetchCarry>,
     /// `None` on draft-14, whose FETCH has no request stream.
     request_end: Option<FetchRequestEnd>,
-    /// The fetched track's ledger once the stream is handed to the
-    /// application.
+    /// The fetched track's ledger from when the stream is handed to the
+    /// application until the response ends.
     ledger: Option<Arc<ObjectLedger>>,
 }
 
@@ -163,7 +163,10 @@ impl FetchDataReceiver {
                     }
                     match (&fetched, &mut self.carry) {
                         (Fetch::Object(object), Some(carry)) => carry.delivered(object.location),
-                        (Fetch::End, _) => self.response_ended(),
+                        (Fetch::End, _) => {
+                            self.response_ended();
+                            self.ledger = None;
+                        }
                         _ => {}
                     }
                     return Ok(fetched);
@@ -198,6 +201,7 @@ impl FetchDataReceiver {
                     }
                 }
             }
+            self.ledger = None;
             anyhow::bail!("Failed to receive data from fetch stream: {error}")
         }
     }

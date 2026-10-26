@@ -16,7 +16,8 @@ use crate::modules::moqt::{
 };
 
 /// The objects of one track a session has received, kept while a
-/// subscription or FETCH of the track is read. No entry is ever removed, so
+/// subscription of the track is read or a FETCH response the application
+/// took has not ended. No entry is ever removed, so
 /// the ledger grows by one entry per object for that whole time: 32 bytes
 /// with its key, about 38 with the map's control byte at its 7/8 load, so
 /// about 260 MB a day for a track of 80 objects/s. An object
