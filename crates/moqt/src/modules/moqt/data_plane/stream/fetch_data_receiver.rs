@@ -5,6 +5,7 @@ use crate::{
     fetch::FetchOption,
     modules::moqt::{
         data_plane::{
+            immutable_properties,
             object::canonical_object::Object,
             object_ledger::{CopySource, ObjectLedger},
             stream::stream_receiver::StreamReceiveError,
@@ -158,8 +159,12 @@ impl FetchDataReceiver {
         loop {
             let error = match self.reader.next().await {
                 Ok(fetched) => {
-                    if let (Fetch::Object(object), Some(ledger)) = (&fetched, &self.ledger) {
-                        ledger.check(object, CopySource::Fetch(self.reader.version()))?;
+                    if let Fetch::Object(object) = &fetched {
+                        let version = self.reader.version();
+                        immutable_properties::check(version, object)?;
+                        if let Some(ledger) = &self.ledger {
+                            ledger.check(object, CopySource::Fetch(version))?;
+                        }
                     }
                     match (&fetched, &mut self.carry) {
                         (Fetch::Object(object), Some(carry)) => carry.delivered(object.location),

@@ -4,6 +4,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::modules::moqt::{
     data_plane::{
+        immutable_properties,
         malformed_track_error::MalformedTrackError,
         object::canonical_object::Object,
         object_ledger::{CopySource, ObjectLedger},
@@ -69,6 +70,7 @@ impl DataReceiver {
                 TrackData::Subgroup(receiver)
             }
             IncomingObject::Datagram(datagram) => {
+                immutable_properties::check(self.version, &datagram.object)?;
                 self.ledger
                     .check(&datagram.object, CopySource::Subscription(self.version))?;
                 TrackData::Datagram(datagram.object)

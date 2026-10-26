@@ -681,6 +681,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   or `TrackData::Datagram(Object)` in arrival order. A draft-14 track that
   mixes the two fails with `MalformedTrackError::MixedForwardingPreference`
   (draft-14 §2.5, §10); draft-18 allows the mix (§11).
+- `immutable_properties.rs` — the object rule of draft-14 §11.2 and draft-18
+  §12.7: Immutable Properties that hold Immutable Properties, or a
+  Key-Value-Pair that does not parse in the form of the connection's draft,
+  are `MalformedTrackError::MalformedImmutableProperties`. Subgroup streams
+  (at an object's head), datagrams and FETCH responses check every object
+  before the ledger does.
 - `object_ledger.rs` — `ObjectLedger`, the duplicate rule of draft-14 §8.1 and
   draft-18 §9.1 for one track: per location it keeps the Subgroup ID (or a
   datagram mark) and one word packing the priority, the status, the

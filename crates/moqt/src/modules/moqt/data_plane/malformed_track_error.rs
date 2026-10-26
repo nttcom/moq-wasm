@@ -21,4 +21,12 @@ pub enum MalformedTrackError {
         location.object_id
     )]
     ConflictingDuplicate { location: Location },
+    /// The object's Immutable Properties hold Immutable Properties or a
+    /// Key-Value-Pair that does not parse (draft-14 §11.2, draft-18 §12.7).
+    #[error(
+        "malformed track: object {{{}, {}}} has malformed Immutable Properties",
+        location.group_id,
+        location.object_id
+    )]
+    MalformedImmutableProperties { location: Location },
 }

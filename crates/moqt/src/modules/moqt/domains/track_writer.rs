@@ -87,6 +87,9 @@ impl TrackWriter {
         Ok(())
     }
 
+    /// Each of `immutable_extensions` is the Key-Value-Pairs of one
+    /// Immutable Extensions header; a receiver treats a track whose header
+    /// holds anything else as malformed (draft-14 §11.2, draft-18 §12.7).
     pub async fn write(
         &mut self,
         payload: Bytes,
@@ -286,7 +289,7 @@ mod tests {
         writer
             .write(
                 Bytes::from_static(b"with"),
-                vec![Bytes::from_static(b"ext")],
+                vec![Bytes::from_static(b"\x02\x05")],
             )
             .await
             .unwrap();
@@ -317,7 +320,7 @@ mod tests {
         assert_eq!(first.payload, Bytes::from_static(b"with"));
         assert_eq!(
             first.extension_headers.immutable_extensions(),
-            vec![Bytes::from_static(b"ext")]
+            vec![Bytes::from_static(b"\x02\x05")]
         );
         assert_eq!((second.group_id, second.object_id), (7, 1));
         assert_eq!(second.payload, Bytes::from_static(b"without"));
