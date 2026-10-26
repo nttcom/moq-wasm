@@ -26,7 +26,6 @@ pub enum TransportSendError {
 }
 
 impl TransportSendError {
-    /// The transport failure behind a send error, through any context layers.
     pub fn in_chain(error: &anyhow::Error) -> Option<&TransportSendError> {
         error
             .chain()

@@ -372,9 +372,9 @@ impl GroupSender {
     }
 }
 
-/// Logs a failed egress write and returns the stream's end reason. The
-/// subscriber stopping the stream or its connection ending is routine; any
-/// other failure is a relay fault, ending the stream with `fault_reason`.
+/// Logs a failed egress write and returns the stream's end reason.
+/// A subscriber that stops the stream or loses its connection is routine.
+/// Any other failure is a relay fault and ends the stream with `fault_reason`.
 fn send_failure_reason(
     error: &anyhow::Error,
     object_id: Option<u64>,
