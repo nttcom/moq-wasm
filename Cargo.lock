@@ -1715,9 +1715,9 @@ dependencies = [
  "rml_rtmp",
  "socket2 0.6.5",
  "srt-tokio",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "transcode",
 ]
 
