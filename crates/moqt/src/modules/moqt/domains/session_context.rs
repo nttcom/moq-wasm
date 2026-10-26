@@ -58,10 +58,13 @@ pub(crate) struct DataChannel {
     pub(crate) version: Version,
 }
 
-/// The response stream of a FETCH, until the application takes it.
+/// The response stream of a FETCH, until the application takes it. It
+/// holds no ledger, so a response never taken keeps none alive; taking it
+/// joins the track's ledger.
 pub(crate) struct FetchChannel {
     pub(crate) receiver: tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>,
-    pub(crate) ledger: Arc<ObjectLedger>,
+    pub(crate) track_namespace: String,
+    pub(crate) track_name: String,
 }
 
 pub(crate) struct Publication {
@@ -175,6 +178,16 @@ impl SessionContext {
         let ledger = Arc::new(ObjectLedger::new());
         ledgers.insert(key, Arc::downgrade(&ledger));
         ledger
+    }
+
+    /// Whether a receiver still holds the ledger of the track.
+    #[cfg(test)]
+    pub(crate) fn holds_ledger(&self, track_namespace: &str, track_name: &str) -> bool {
+        self.ledgers
+            .lock()
+            .unwrap()
+            .get(&(track_namespace.to_string(), track_name.to_string()))
+            .is_some_and(|ledger| ledger.strong_count() > 0)
     }
 
     pub(crate) fn follows_go_away(&self) -> bool {
@@ -416,7 +429,8 @@ impl SessionContext {
         self: &Arc<Self>,
         connection: &Arc<Connection>,
         request_id: RequestId,
-        ledger: Arc<ObjectLedger>,
+        track_namespace: String,
+        track_name: String,
     ) -> PendingFetch {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
         connection
@@ -429,7 +443,11 @@ impl SessionContext {
             .expect("fetch_receiver_map poisoned")
             .insert(
                 logical_id(connection.generation, request_id),
-                FetchChannel { receiver, ledger },
+                FetchChannel {
+                    receiver,
+                    track_namespace,
+                    track_name,
+                },
             );
         PendingFetch {
             session: self.clone(),

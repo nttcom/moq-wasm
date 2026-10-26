@@ -49,7 +49,10 @@ use crate::{
                 namespace_interest::NamespaceInterest,
             },
             data_plane::{
-                object::canonical_object::{Object, SubgroupStart},
+                object::{
+                    canonical_object::{Object, SubgroupStart},
+                    extension_headers::ExtensionHeaders,
+                },
                 stream::{
                     fetch_data_receiver::{self, FetchDataReceiver},
                     stream_data_receiver::{StreamDataReceiver, SubgroupPart},
@@ -115,6 +118,29 @@ impl Version {
         match self {
             Self::Draft14 => false,
             Self::Draft18 => true,
+        }
+    }
+
+    /// Whether a duplicate object whose status moves between Normal, End of
+    /// Group and End of Track makes its track malformed: draft-14 §8.1 says
+    /// so; draft-18 §9.1 compares only the forwarding preference, subgroup,
+    /// priority and payload.
+    pub(crate) fn compares_duplicate_status(self) -> bool {
+        match self {
+            Self::Draft14 => true,
+            Self::Draft18 => false,
+        }
+    }
+
+    /// Whether `properties` hold Immutable Properties that hold Immutable
+    /// Properties or a Key-Value-Pair that does not parse, in the
+    /// Key-Value-Pair form of the draft (draft-14 §11.2, draft-18 §12.7).
+    pub(crate) fn has_malformed_immutable_properties(self, properties: &ExtensionHeaders) -> bool {
+        match self {
+            Self::Draft14 => draft14::objects::has_malformed_immutable_extensions(properties),
+            Self::Draft18 => {
+                draft18::messages::has_malformed_immutable_properties(&properties.key_value_pairs)
+            }
         }
     }
 
@@ -202,6 +228,13 @@ pub(crate) enum SubgroupReader {
 }
 
 impl SubgroupReader {
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
+        }
+    }
+
     /// `None` until the first object arrives, for header types that take the
     /// subgroup id from it.
     pub(crate) fn start(&self) -> Option<SubgroupStart> {

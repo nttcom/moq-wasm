@@ -185,6 +185,11 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 ));
                 return;
             }
+            Err(error) => {
+                span.record("end_reason", "receive_error");
+                tracing::error!(%track_key, %error, "failed to receive stream data");
+                return;
+            }
         }
     }
 }
@@ -220,7 +225,7 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use moqt::object::ObjectStatus;
+    use moqt::object::{MalformedTrackError, ObjectStatus};
 
     use super::*;
     use crate::modules::{
@@ -419,7 +424,9 @@ mod tests {
         let mut upstream_stream = harness.open_upstream_stream();
         send_all(&upstream_stream, vec![make_header(0), payload(0)]);
         // Act
-        upstream_stream.malformed_track();
+        upstream_stream.malformed_track(MalformedTrackError::ConflictingDuplicate {
+            location: location(0, 0),
+        });
         upstream_stream.wait_reader_end().await;
         // Assert
         harness.wait_track_malformed().await;

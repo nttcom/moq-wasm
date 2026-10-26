@@ -13,11 +13,20 @@ pub enum MalformedTrackError {
     #[error("malformed track: objects arrived on subgroup streams and in datagrams")]
     MixedForwardingPreference,
     /// The object arrived again with another forwarding preference,
-    /// subgroup, priority, status or payload (draft-14 §8.1, draft-18 §9.1).
+    /// subgroup, priority or payload (draft-14 §8.1, draft-18 §9.1), or on
+    /// draft-14 with another status.
     #[error(
         "malformed track: object {{{}, {}}} arrived again with other properties",
         location.group_id,
         location.object_id
     )]
     ConflictingDuplicate { location: Location },
+    /// The object's Immutable Properties hold Immutable Properties or a
+    /// Key-Value-Pair that does not parse (draft-14 §11.2, draft-18 §12.7).
+    #[error(
+        "malformed track: object {{{}, {}}} has malformed Immutable Properties",
+        location.group_id,
+        location.object_id
+    )]
+    MalformedImmutableProperties { location: Location },
 }
