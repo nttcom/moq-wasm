@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use gstreamer::{self as gst, prelude::*};
-use mediapack::{MediaEvent, mpegts};
+use mediapack::{MediaEvent, Timestamp, mpegts};
+
+use crate::compositor::EventSource;
 
 const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
 pub(crate) const FIXTURE_VP8_IVF: &[u8] =
@@ -42,4 +44,37 @@ pub(crate) fn decode_in_software() {
             decoder.set_rank(gst::Rank::NONE);
         }
     }
+}
+
+pub(crate) fn source(events: Vec<MediaEvent>) -> Option<EventSource> {
+    Some(Box::new(events.into_iter().map(Ok)))
+}
+
+pub(crate) fn audio_events() -> Vec<MediaEvent> {
+    fixture_events()
+        .into_iter()
+        .filter(|event| matches!(event, MediaEvent::AudioConfig(_) | MediaEvent::Audio(_)))
+        .collect()
+}
+
+pub(crate) fn shifted(events: Vec<MediaEvent>, shift: Timestamp) -> Vec<MediaEvent> {
+    events
+        .into_iter()
+        .map(|event| match event {
+            MediaEvent::Video(mut sample) => {
+                sample.pts = sample.pts.saturating_add(shift);
+                sample.dts = sample.dts.saturating_add(shift);
+                MediaEvent::Video(sample)
+            }
+            MediaEvent::Audio(mut sample) => {
+                sample.pts = sample.pts.saturating_add(shift);
+                MediaEvent::Audio(sample)
+            }
+            other => other,
+        })
+        .collect()
+}
+
+pub(crate) fn ms(millis: u64) -> gst::ClockTime {
+    gst::ClockTime::from_mseconds(millis)
 }
