@@ -762,11 +762,11 @@ jobs:
           checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
           save-cache: ${{ github.ref == 'refs/heads/master' }}
 
-      - name: Install espeak-ng
+      - name: Install Open JTalk
         # The E2E runner synthesizes the fake microphone's speech with it.
         uses: ./.github/actions/install-apt-packages
         with:
-          packages: espeak-ng
+          packages: open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001
 
       - name: Cache Whisper model
         # actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
