@@ -348,11 +348,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.cache_store,
                         handler.subscription_request_id(),
-                        DeliveryControl::from_subscribe_update(
-                            handler.forward(),
-                            handler.start_location(),
-                            handler.end_group(),
-                        ),
+                        DeliveryControl::from_update(handler.forward(), handler.filter()),
                         |largest| handler.ok(largest),
                     )
                 });

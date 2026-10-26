@@ -45,6 +45,23 @@ impl DeliveryControl {
         }
     }
 
+    /// The range of an update's filter; `None`, an unchanged filter, asks
+    /// for no narrowing.
+    pub(crate) fn from_update(forward: bool, filter: Option<FilterType>) -> Self {
+        match filter {
+            Some(FilterType::AbsoluteRange {
+                location,
+                end_group,
+            }) => Self::from_subscribe_update(forward, location, end_group.saturating_add(1)),
+            Some(filter) => Self::from_subscribe_update(forward, filter.start_location(None), 0),
+            None => Self::from_subscribe_update(
+                forward,
+                FilterType::LargestObject.start_location(None),
+                0,
+            ),
+        }
+    }
+
     pub(crate) fn contains_group(&self, group_id: u64) -> bool {
         group_id >= self.start.group_id && !self.is_past_end(group_id)
     }

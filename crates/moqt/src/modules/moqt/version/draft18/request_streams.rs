@@ -418,8 +418,8 @@ impl IncomingRequestTask {
                 let Some(baseline) = baseline else {
                     unreachable!("a SUBSCRIBE stream keeps its baseline")
                 };
-                let update = apply_update(baseline, update.request_id, update.parameters);
-                FollowUp::AnswerUpdate(emit_update(scope, update))
+                let (update, filter) = apply_update(baseline, update.request_id, update.parameters);
+                FollowUp::AnswerUpdate(emit_update(scope, update, filter))
             }
             // §10.14: the subscriber cannot update a TRACK_STATUS.
             (RequestStreamKind::TrackStatus, Message::RequestUpdate(_)) => {
@@ -509,8 +509,13 @@ enum FollowUp {
     Done,
 }
 
-fn emit_update(scope: &Scope, update: SubscribeUpdate) -> UpdateAnswerReceiver {
-    let (handler, answer_receiver) = SubscribeUpdateHandler::answered(&scope.connection, update);
+fn emit_update(
+    scope: &Scope,
+    update: SubscribeUpdate,
+    filter: Option<FilterType>,
+) -> UpdateAnswerReceiver {
+    let (handler, answer_receiver) =
+        SubscribeUpdateHandler::answered(&scope.connection, update, filter);
     emit(scope, SessionEvent::SubscribeUpdate(handler));
     answer_receiver
 }
@@ -574,14 +579,16 @@ fn filter_range(filter: FilterType) -> (Location, u64) {
 
 /// §10.9: a REQUEST_UPDATE carries only the parameters that change, while
 /// draft-14's SUBSCRIBE_UPDATE carries the whole state, so the update is
-/// applied to `baseline`.
+/// applied to `baseline`. Also returns the SUBSCRIPTION_FILTER the update
+/// carries: the baseline cannot hold a relative filter's Start Location.
 fn apply_update(
     baseline: &mut SubscribeUpdate,
     request_id: RequestId,
     parameters: Vec<Parameter>,
-) -> SubscribeUpdate {
+) -> (SubscribeUpdate, Option<FilterType>) {
     baseline.request_id = request_id;
     baseline.authorization_tokens.clear();
+    let mut updated_filter = None;
     for parameter in parameters {
         match parameter {
             Parameter::SubscriberPriority(priority) => baseline.subscriber_priority = priority,
@@ -589,12 +596,13 @@ fn apply_update(
             Parameter::AuthorizationToken(token) => baseline.authorization_tokens.push(token),
             Parameter::ObjectDeliveryTimeout(timeout) => baseline.delivery_timeout = Some(timeout),
             Parameter::SubscriptionFilter(filter) => {
-                (baseline.start_location, baseline.end_group) = filter_range(filter)
+                (baseline.start_location, baseline.end_group) = filter_range(filter);
+                updated_filter = Some(filter);
             }
             _ => {}
         }
     }
-    baseline.clone()
+    (baseline.clone(), updated_filter)
 }
 
 pub(crate) struct OutgoingRequestTask {
@@ -698,8 +706,9 @@ impl OutgoingRequestTask {
                     let Some(baseline) = &mut baseline else {
                         unreachable!("an accepted PUBLISH keeps its baseline")
                     };
-                    let update = apply_update(baseline, update.request_id, update.parameters);
-                    let answer_receiver = emit_update(&context, update);
+                    let (update, filter) =
+                        apply_update(baseline, update.request_id, update.parameters);
+                    let answer_receiver = emit_update(&context, update, filter);
                     drop(context);
                     answer_update(&sender, answer_receiver).await;
                 }

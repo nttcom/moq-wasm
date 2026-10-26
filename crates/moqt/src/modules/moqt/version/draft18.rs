@@ -1232,12 +1232,7 @@ mod tests {
         let (client, server) = spawn_connected_draft18_sessions("draft18-update", "moqt").await;
         let option = SubscribeOption {
             subscriber_priority: 7,
-            filter_type: FilterType::AbsoluteStart {
-                location: Location {
-                    group_id: 5,
-                    object_id: 0,
-                },
-            },
+            filter_type: FilterType::LargestObject,
             ..SubscribeOption::default()
         };
         let subscription = subscribed(&client, &server, option).await;
@@ -1256,20 +1251,44 @@ mod tests {
         stream.sender.send(&update).await.unwrap();
         let event = next_event(&server).await;
 
-        // Assert
+        // Assert: §10.2.9 an omitted SUBSCRIPTION_FILTER leaves the filter unchanged
         let SessionEvent::SubscribeUpdate(update) = event else {
             panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
         };
         assert_eq!(update.subscription_request_id(), subscription.request_id());
         assert!(!update.forward());
         assert_eq!(update.subscriber_priority(), 7);
-        assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 5,
-                object_id: 0,
-            }
+        assert_eq!(update.filter(), None);
+    }
+
+    #[tokio::test]
+    async fn a_request_update_hands_over_the_filter_it_carries() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-filter", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+        let update = request_update(
+            client
+                .publisher()
+                .session
+                .connection()
+                .control
+                .next_request_id(),
+            &[parameters::Parameter::SubscriptionFilter(
+                FilterType::NextGroupStart,
+            )],
         );
+
+        // Act
+        stream.sender.send(&update).await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert: a relative filter is left for the publisher to resolve
+        let SessionEvent::SubscribeUpdate(update) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        assert_eq!(update.filter(), Some(FilterType::NextGroupStart));
     }
 
     /// A SUBSCRIBE `client` sends on a stream it reads itself, answered by
