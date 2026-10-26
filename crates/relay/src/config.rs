@@ -124,7 +124,10 @@ impl CacheConfig {
 
 pub(crate) const DEFAULT_FETCH_FILL_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// `RELAY_MOQT_VERSIONS`, most preferred first.
+/// `RELAY_MOQT_VERSIONS`, most preferred first. `draft-18,draft-14` is the
+/// order that enables draft-18: the endpoint picks the first draft it shares
+/// with the peer, so with `draft-14` first a peer offering both stays on
+/// draft-14.
 fn moqt_versions(value: Option<String>) -> anyhow::Result<Vec<moqt::Version>> {
     let Some(text) = value else {
         return Ok(moqt::DEFAULT_VERSIONS.to_vec());

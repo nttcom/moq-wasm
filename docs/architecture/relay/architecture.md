@@ -49,7 +49,8 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    applies to token times.
    `RELAY_MOQT_VERSIONS` (`moqt_versions`, default draft-14 only) lists
    the drafts both transports accept and the relay offers when it dials an
-   inner transport; see "Relaying across versions".
+   inner transport, most preferred first; `draft-18,draft-14` is the order
+   that enables draft-18. See "Relaying across versions".
    `CacheConfig` (`RELAY_CACHE_TTL_SECS`, `RELAY_CACHE_EVICT_INTERVAL_SECS`),
    the disk cache settings and `MOQT_FETCH_FILL_TIMEOUT_SECS` reach the
    eviction job, the disk cache task and FETCH ingest through
