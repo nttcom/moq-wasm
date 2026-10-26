@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use dashmap::DashMap;
+use tracing::Instrument;
 
 use crate::{
     logging::relay_hostname,
@@ -62,16 +63,11 @@ impl InterRelayConnectionManager {
             authorization_token: Some(self.relay_token.clone()),
             follow_go_away: false,
         })?;
-        let session = tokio::time::timeout(CONNECT_TIMEOUT, async {
-            endpoint
-                .connect(&format!("moqt://{}:{}", relay.host, relay.port))
-                .await?
-                .await
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("timed out connecting relay {}", relay.relay_id))??;
         let relay_hostname = relay_hostname();
+        // A session outlives the request that dials it, so its span roots its
+        // own trace; moqt's session span is created inside it.
         let session_span = tracing::info_span!(
+            parent: None,
             "relay.inter_relay.session",
             relay_id = %relay.relay_id,
             session_id = session_id,
@@ -81,6 +77,15 @@ impl InterRelayConnectionManager {
             relay_host = %relay.host,
             relay_port = relay.port,
         );
+        let session = tokio::time::timeout(CONNECT_TIMEOUT, async {
+            endpoint
+                .connect(&format!("moqt://{}:{}", relay.host, relay.port))
+                .await?
+                .await
+        })
+        .instrument(session_span.clone())
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out connecting relay {}", relay.relay_id))??;
 
         self.repo
             .lock()

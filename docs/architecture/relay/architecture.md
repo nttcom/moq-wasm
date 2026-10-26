@@ -207,8 +207,12 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   span roots its own trace, carries `session_id` and `app_id`, and links to
   the `relay.session` span, so a session's trace holds only its lifecycle
   (`relay.session.disconnected` or `relay.session.protocol_violation` ends
-  it) and a request's trace holds only that request's work (a SUBSCRIBE's
-  includes its `relay.dataplane.egress.track` span). Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
+  it) and a request's trace holds only that request's work. A span that
+  outlives its request (`relay.dataplane.egress.track`,
+  `relay.inter_relay.session`) roots its own trace too, linked to the
+  request: a tracing span closes only after its children, so a long-lived
+  child would hold the request's trace open, unexported, for as long as it
+  lives. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
   `VerifiedToken` (looked up once when the worker starts and replaced when a
   TRACK_STATUS token refresh succeeds). PUBLISH and
   PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,
