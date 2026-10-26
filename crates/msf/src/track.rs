@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::InitData;
-use crate::types::{KnownPackaging, Packaging, TrackRole};
+use crate::types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +66,10 @@ pub struct Track {
 }
 
 impl Track {
+    pub fn has_role(&self, role: KnownTrackRole) -> bool {
+        self.role == Some(TrackRole::Known(role))
+    }
+
     /// The fields draft-ietf-moq-msf-01 §5.2 requires of every track object.
     pub fn new(name: &str, packaging: impl Into<Packaging>, is_live: bool) -> Self {
         Self {

@@ -6,7 +6,8 @@ use bytes::{Bytes, BytesMut};
 use crate::{
     mp4::{
         atom::{
-            HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find, full_atom, peek, read_u32, read_u64,
+            HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find_full_atom, full_atom, peek, read_u32,
+            read_u64,
         },
         track::{Media, Track, annexb_access_unit, read_track},
     },
@@ -197,8 +198,7 @@ fn read_fragment(payload: &[u8], moof_size: usize) -> Result<Fragment> {
 }
 
 fn read_track_fragment(payload: &[u8]) -> Result<Vec<Run>> {
-    let tfhd = find(payload, b"tfhd").context("traf has no tfhd")?;
-    let header = full_atom(tfhd.payload, "tfhd")?;
+    let header = find_full_atom(payload, "tfhd")?.context("traf has no tfhd")?;
     let track_id = read_u32(header.body, 0)?;
     let mut offset = 4;
     ensure!(
@@ -227,9 +227,8 @@ fn read_track_fragment(payload: &[u8]) -> Result<Vec<Run>> {
         TFHD_DEFAULT_SAMPLE_FLAGS,
     )?;
 
-    let decode_time = match find(payload, b"tfdt") {
-        Some(tfdt) => {
-            let header = full_atom(tfdt.payload, "tfdt")?;
+    let decode_time = match find_full_atom(payload, "tfdt")? {
+        Some(header) => {
             if header.is_version_one() {
                 read_u64(header.body, 0)?
             } else {
