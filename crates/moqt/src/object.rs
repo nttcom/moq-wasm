@@ -14,6 +14,8 @@ pub use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHe
 pub use crate::modules::moqt::data_plane::object::object_status::ObjectStatus;
 pub use crate::modules::moqt::data_plane::stream::stream_data_receiver::StreamDataReceiver;
 pub use crate::modules::moqt::data_plane::stream::stream_data_receiver::Subgroup;
+pub use crate::modules::moqt::data_plane::stream::stream_data_receiver::SubgroupPart;
+pub use crate::modules::moqt::data_plane::stream::stream_data_receiver::SubgroupPartReceiver;
 pub use crate::modules::moqt::data_plane::stream::stream_data_receiver_factory::StreamDataReceiverFactory;
 pub use crate::modules::moqt::data_plane::stream::stream_data_sender::HeaderSent;
 pub use crate::modules::moqt::data_plane::stream::stream_data_sender::StreamDataSender;

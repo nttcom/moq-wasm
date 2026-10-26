@@ -102,6 +102,9 @@ impl<'a> FetchCursor<'a> {
                     return Ok(Some(object));
                 }
                 NextObject::Aborted => return Err(FetchInterrupted::Incomplete),
+                // Group reads return only cached objects: FETCH never serves
+                // an object whose payload is still arriving.
+                NextObject::Partial(_) => unreachable!("a group read returned a partial object"),
                 NextObject::Finished if group.fully_known => self.current = None,
                 NextObject::Finished if in_known => {
                     group.next_object_id = group.frontier.unwrap_or(group.next_object_id);
