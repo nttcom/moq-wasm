@@ -1035,6 +1035,19 @@ mod tests {
     }
 
     #[test]
+    fn a_tuple_suffix_of_a_held_prefix_does_not_overlap_it() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(1, "room/alice".to_string(), SessionPeer::Client);
+
+        // Act
+        let overlaps = table.has_overlapping_namespace_subscription(1, "alice");
+
+        // Assert: draft-14 §9.28 compares prefixes from the first tuple field
+        assert!(!overlaps);
+    }
+
+    #[test]
     fn register_subscribe_namespace_reports_only_the_first_client() {
         // Arrange: Start with a relay subscriber, which never owns the route.
         let table = InMemoryLocalPubSubDirectory::new();
