@@ -640,6 +640,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     be written; there, and on draft-14, which has no marker, the response is
     reset with UNKNOWN_OBJECT_STATUS (draft-18 §10.12; draft-14's wire value
     is INTERNAL_ERROR) and has ended (`Reset`).
+    `FetchHandler::marks_unknown_ranges()` tells beforehand whether the
+    response can do the former, so a relay can choose how long to wait for
+    objects without knowing the draft.
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:
