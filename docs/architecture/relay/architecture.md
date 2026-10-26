@@ -883,7 +883,9 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   beyond it), the open stream is reset with CANCELLED (draft-14 §10.4.3). Past
   the End Group the task ends. Before the Start Location, and at Forward 0 or
   after a resume it did not see, it is held: it sends nothing and ends once
-  its subgroup ends, unless a later update moves the start back over the group
+  its subgroup ends or the scheduler has returned (no update can restart
+  delivery any more, and the runner sends PUBLISH_DONE only after every task
+  ended), unless a later update moves the start back over the group
   or turns Forward to 1, after which the subgroup continues on a new stream
   from just past the Largest Object at that update. Every object the
   task sent lies at or before that location, so none is sent twice. Groups
