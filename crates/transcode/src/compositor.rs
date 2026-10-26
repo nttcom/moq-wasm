@@ -458,8 +458,8 @@ mod tests {
     use crate::{
         Rendition, Transcoder,
         test_support::{
-            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, decode_in_software, fixture_events,
-            ivf_frames,
+            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_events, decode_in_software,
+            fixture_events, ivf_frames, shifted, source,
         },
     };
 
@@ -472,39 +472,10 @@ mod tests {
     };
     const TIMEOUT: Duration = Duration::from_secs(60);
 
-    fn source(events: Vec<MediaEvent>) -> Option<EventSource> {
-        Some(Box::new(events.into_iter().map(Ok)))
-    }
-
     fn video_events() -> Vec<MediaEvent> {
         fixture_events()
             .into_iter()
             .filter(|event| matches!(event, MediaEvent::VideoConfig(_) | MediaEvent::Video(_)))
-            .collect()
-    }
-
-    fn audio_events() -> Vec<MediaEvent> {
-        fixture_events()
-            .into_iter()
-            .filter(|event| matches!(event, MediaEvent::AudioConfig(_) | MediaEvent::Audio(_)))
-            .collect()
-    }
-
-    fn shifted(events: Vec<MediaEvent>, shift: Timestamp) -> Vec<MediaEvent> {
-        events
-            .into_iter()
-            .map(|event| match event {
-                MediaEvent::Video(mut sample) => {
-                    sample.pts = sample.pts.saturating_add(shift);
-                    sample.dts = sample.dts.saturating_add(shift);
-                    MediaEvent::Video(sample)
-                }
-                MediaEvent::Audio(mut sample) => {
-                    sample.pts = sample.pts.saturating_add(shift);
-                    MediaEvent::Audio(sample)
-                }
-                other => other,
-            })
             .collect()
     }
 
@@ -582,6 +553,16 @@ mod tests {
         );
     }
 
+    fn assert_output_size(index: &Mp4Index) {
+        let sps = index
+            .video
+            .as_ref()
+            .unwrap()
+            .sequence_parameter_set()
+            .unwrap();
+        assert_eq!((sps.width, sps.height), (SETTINGS.width, SETTINGS.height));
+    }
+
     #[tokio::test]
     async fn composites_two_participants_into_one_mp4() {
         // Arrange: the second participant joins 2 s later; both speak
@@ -613,13 +594,7 @@ mod tests {
 
         // Assert
         let index = read_index(&output);
-        let sps = index
-            .video
-            .as_ref()
-            .unwrap()
-            .sequence_parameter_set()
-            .unwrap();
-        assert_eq!((sps.width, sps.height), (SETTINGS.width, SETTINGS.height));
+        assert_output_size(&index);
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
         assert_duration(&index, expected_end);
         std::fs::remove_file(output).unwrap();
@@ -710,13 +685,7 @@ mod tests {
 
         // Assert
         let index = read_index(&output);
-        let sps = index
-            .video
-            .as_ref()
-            .unwrap()
-            .sequence_parameter_set()
-            .unwrap();
-        assert_eq!((sps.width, sps.height), (SETTINGS.width, SETTINGS.height));
+        assert_output_size(&index);
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
         std::fs::remove_file(output).unwrap();
     }
@@ -791,13 +760,7 @@ mod tests {
 
         // Assert
         let index = read_index(&output);
-        let sps = index
-            .video
-            .as_ref()
-            .unwrap()
-            .sequence_parameter_set()
-            .unwrap();
-        assert_eq!((sps.width, sps.height), (SETTINGS.width, SETTINGS.height));
+        assert_output_size(&index);
         std::fs::remove_file(output).unwrap();
     }
 

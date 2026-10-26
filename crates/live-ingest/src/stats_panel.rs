@@ -36,13 +36,6 @@ struct RegisteredConnection {
     connection: RelayConnection,
 }
 
-struct ConnectionSnapshot {
-    id: u64,
-    label: String,
-    stats: Option<TransportStats>,
-    streams: Vec<StreamRecord>,
-}
-
 pub struct Registration {
     registry: ConnectionRegistry,
     id: u64,
@@ -62,16 +55,19 @@ impl ConnectionRegistry {
         }
     }
 
-    fn snapshot(&self) -> Vec<ConnectionSnapshot> {
+    fn snapshot(&self) -> Vec<(u64, StatsRow)> {
         self.connections
             .lock()
             .unwrap()
             .iter()
-            .map(|c| ConnectionSnapshot {
-                id: c.id,
-                label: c.label.clone(),
-                stats: c.connection.transport_stats(),
-                streams: c.connection.streams(),
+            .map(|c| {
+                let row = StatsRow {
+                    label: c.label.clone(),
+                    stats: c.connection.transport_stats(),
+                    previous: None,
+                    streams: c.connection.streams(),
+                };
+                (c.id, row)
             })
             .collect()
     }
@@ -106,20 +102,15 @@ impl StatsPanel {
                     let rows = registry
                         .snapshot()
                         .into_iter()
-                        .map(|connection| {
+                        .map(|(id, mut row)| {
                             let now = Instant::now();
-                            let checkpoint = checkpoints.get(&connection.id).copied();
-                            let row = StatsRow {
-                                label: connection.label,
-                                stats: connection.stats,
-                                previous: checkpoint.map(|(_, stats)| stats),
-                                streams: connection.streams,
-                            };
-                            if let Some(stats) = connection.stats
+                            let checkpoint = checkpoints.get(&id).copied();
+                            row.previous = checkpoint.map(|(_, stats)| stats);
+                            if let Some(stats) = row.stats
                                 && checkpoint
                                     .is_none_or(|(at, _)| now.duration_since(at) >= DELTA_INTERVAL)
                             {
-                                checkpoints.insert(connection.id, (now, stats));
+                                checkpoints.insert(id, (now, stats));
                             }
                             row
                         })
