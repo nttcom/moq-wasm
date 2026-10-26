@@ -121,7 +121,11 @@ impl RelayServer {
         port: u16,
         accepted_peer: SessionPeer,
     ) -> anyhow::Result<SessionHandler> {
-        tracing::info!(port = port, peer = ?accepted_peer, "Spawning transport handler");
+        tracing::debug!(
+            port,
+            session_peer = accepted_peer.kind(),
+            "spawning transport handler"
+        );
         let server_config = ServerConfig {
             port,
             cert_path: self.cert_path.clone(),

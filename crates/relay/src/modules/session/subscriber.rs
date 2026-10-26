@@ -66,7 +66,7 @@ impl Subscriber for moqt::Subscriber {
         level = "debug",
         name = "relay.subscriber.send_unsubscribe_namespace",
         skip_all,
-        fields(namespace = %namespace)
+        fields(track_namespace_prefix = %namespace)
     )]
     async fn send_unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         self.unsubscribe_namespace(namespace).await

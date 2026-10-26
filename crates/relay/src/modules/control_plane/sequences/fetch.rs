@@ -289,7 +289,7 @@ impl Fetch {
         match fetched {
             Ok(handle) => {
                 tracing::info!(
-                    pub_session_id = publisher_session_id,
+                    publisher_session_id,
                     track_namespace = %target.track_namespace,
                     track_name = %target.track_name,
                     upstream_request_id = handle.request_id,
@@ -302,8 +302,8 @@ impl Fetch {
             }
             Err(err) => {
                 tracing::warn!(
-                    err = %format!("{err:#}"),
-                    pub_session_id = publisher_session_id,
+                    error = %format!("{err:#}"),
+                    publisher_session_id = publisher_session_id,
                     track_namespace = %target.track_namespace,
                     track_name = %target.track_name,
                     "Upstream FETCH failed"

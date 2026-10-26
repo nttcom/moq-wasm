@@ -54,7 +54,7 @@ impl ControlMessageForwarder {
         match publisher.send_publish_namespace(track_namespace).await {
             Ok(response) => {
                 let _response_task = PublishNamespaceResponseTask::run(response);
-                tracing::info!("Sent publish namespace");
+                tracing::debug!("forwarded PUBLISH_NAMESPACE");
             }
             Err(error) => tracing::error!(?error, "Failed to send publish namespace"),
         }
@@ -75,7 +75,7 @@ impl ControlMessageForwarder {
             return;
         };
         match publisher.send_publish_namespace_done(track_namespace).await {
-            Ok(()) => tracing::info!("Sent publish namespace done"),
+            Ok(()) => tracing::debug!("forwarded PUBLISH_NAMESPACE_DONE"),
             Err(error) => tracing::error!(?error, "Failed to send publish namespace done"),
         }
     }
@@ -142,11 +142,7 @@ impl ControlMessageForwarder {
             forward: true,
             filter_type: FilterType::LargestObject,
         };
-        tracing::info!(
-            "Forwarded SUBSCRIBE '{}' to session:{}",
-            track_namespace,
-            session_id
-        );
+        tracing::debug!("forwarding SUBSCRIBE");
         subscriber
             .send_subscribe(track_namespace, track_name, option)
             .await
@@ -168,12 +164,7 @@ impl ControlMessageForwarder {
         option: moqt::fetch::FetchOption,
     ) -> anyhow::Result<moqt::fetch::FetchHandle> {
         let mut subscriber = self.subscriber(session_id).await?;
-        tracing::info!(
-            "Forwarding FETCH '{}/{}' to session:{}",
-            track_namespace,
-            track_name,
-            session_id
-        );
+        tracing::debug!("forwarding FETCH");
         let handle = subscriber
             .send_fetch(
                 track_namespace,
@@ -198,11 +189,7 @@ impl ControlMessageForwarder {
         subscription: &UpstreamSubscription,
     ) -> anyhow::Result<()> {
         let subscriber = self.subscriber(session_id).await?;
-        tracing::info!(
-            "Forwarded UNSUBSCRIBE request_id={} to session:{}",
-            subscription.request_id(),
-            session_id
-        );
+        tracing::debug!("forwarding UNSUBSCRIBE");
         subscriber.send_unsubscribe(subscription).await
     }
 
@@ -218,11 +205,7 @@ impl ControlMessageForwarder {
         track_namespace_prefix: String,
     ) -> anyhow::Result<()> {
         let subscriber = self.subscriber(session_id).await?;
-        tracing::info!(
-            "Forwarded UNSUBSCRIBE_NAMESPACE '{}' to session:{}",
-            track_namespace_prefix,
-            session_id
-        );
+        tracing::debug!("forwarding UNSUBSCRIBE_NAMESPACE");
         subscriber
             .send_unsubscribe_namespace(track_namespace_prefix)
             .await

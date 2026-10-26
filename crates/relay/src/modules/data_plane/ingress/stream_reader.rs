@@ -33,7 +33,7 @@ pub(crate) async fn accept_streams(
     loop {
         tokio::select! {
             _ = ingest.stop_receiver.changed() => {
-                tracing::info!(track_key = %ingest.track_key, "stream ingress factory stopped");
+                tracing::debug!("stream ingress factory stopped");
                 break;
             }
             receiver = factory.next() => {
@@ -55,7 +55,7 @@ pub(crate) async fn accept_streams(
                 let span = tracing::debug_span!(
                     parent: &track_span,
                     "relay.dataplane.ingress.stream",
-                    track_key = %ingest.track_key,
+                    track_namespace = %ingest.track_key.track_namespace, track_name = %ingest.track_key.track_name,
                     group_id = tracing::field::Empty,
                     subgroup_id = tracing::field::Empty,
                     end_reason = tracing::field::Empty,
@@ -70,7 +70,7 @@ pub(crate) async fn accept_streams(
             }
             Some(result) = readers.join_next() => {
                 if let Err(e) = result {
-                    tracing::error!("stream read task panicked: {:?}", e);
+                    tracing::error!(error = ?e, "stream read task panicked");
                 }
             }
         }
@@ -99,7 +99,7 @@ pub(crate) async fn read_stream(
         let receive_result = tokio::select! {
             _ = stop_receiver.changed() => {
                 span.record("end_reason", "stopped");
-                tracing::info!(%track_key, "stream reader stopped");
+                tracing::debug!("stream reader stopped");
                 return;
             }
             result = receiver.receive_object() => result,
@@ -117,7 +117,7 @@ pub(crate) async fn read_stream(
             Ok(Some(DataObject::SubgroupObject(object))) => {
                 let (Some(header), Some(current)) = (header.as_mut(), ingest.as_mut()) else {
                     span.record("end_reason", "object_before_header");
-                    tracing::error!(%track_key, "subgroup object received before its header");
+                    tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "subgroup object received before its header");
                     return;
                 };
                 header.prev_object_id = Some(object.location.object_id);
@@ -150,7 +150,7 @@ pub(crate) async fn read_stream(
             })) => {
                 let (Some(header), Some(current)) = (header.as_mut(), ingest.as_ref()) else {
                     span.record("end_reason", "object_before_header");
-                    tracing::error!(%track_key, "subgroup object received before its header");
+                    tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "subgroup object received before its header");
                     return;
                 };
                 header.prev_object_id = Some(object.location.object_id);
@@ -159,7 +159,7 @@ pub(crate) async fn read_stream(
             Ok(Some(DataObject::SubgroupPayload { data, last })) => {
                 let (Some(writer), Some(current)) = (partial.as_ref(), ingest.as_ref()) else {
                     span.record("end_reason", "payload_outside_object");
-                    tracing::error!(%track_key, "payload received outside an object");
+                    tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "payload received outside an object");
                     return;
                 };
                 writer.append(data);
@@ -182,12 +182,12 @@ pub(crate) async fn read_stream(
             }
             Ok(Some(DataObject::Datagram(_))) => {
                 span.record("end_reason", "unexpected_datagram");
-                tracing::error!(%track_key, "datagram received on a subgroup stream");
+                tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "datagram received on a subgroup stream");
                 return;
             }
             Ok(None) if partial.is_some() => {
                 span.record("end_reason", "fin_inside_payload");
-                tracing::error!(%track_key, "stream finished inside an object's payload");
+                tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "stream finished inside an object's payload");
                 return;
             }
             Ok(None) => {
@@ -211,22 +211,22 @@ pub(crate) async fn read_stream(
                 if let Some(ingest) = ingest.take() {
                     ingest.finish();
                 }
-                tracing::debug!(%track_key, "stream finished");
+                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "stream finished");
                 return;
             }
             Err(moqt::object::StreamReceiveError::Closed(error)) => {
                 span.record("end_reason", "transport_closed");
-                tracing::info!(%track_key, %error, "stream transport closed");
+                tracing::debug!(%error, "stream transport closed");
                 return;
             }
             Err(moqt::object::StreamReceiveError::Decode(error)) => {
                 span.record("end_reason", "decode_error");
-                tracing::error!(%track_key, %error, "failed to decode stream data");
+                tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, %error, "failed to decode stream data");
                 return;
             }
             Err(moqt::object::StreamReceiveError::ProtocolViolation(error)) => {
                 span.record("end_reason", "protocol_violation");
-                tracing::error!(%track_key, %error, "protocol violation on the stream");
+                tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, %error, "protocol violation on the stream");
                 let _ = session_event_sender.send(SessionEvent::protocol_violation_detected(
                     publisher_session_id,
                     error,
@@ -244,7 +244,7 @@ fn report_malformed_track(
     track_key: &TrackKey,
 ) {
     span.record("end_reason", "malformed_track");
-    tracing::warn!(%track_key, "malformed track detected; stopping stream ingest");
+    tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "malformed track detected; stopping stream ingest");
     let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
         publisher_session_id,
         track_key.clone(),

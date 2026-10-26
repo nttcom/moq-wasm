@@ -101,7 +101,7 @@ impl DiskSink {
     pub(crate) fn purge(&self) {
         let command = DiskCommand::PurgeTrack(self.track_key.clone());
         if self.disk.command_sender.try_send(command).is_err() {
-            tracing::warn!(track_key = %self.track_key, "disk cache queue full; the track's segments wait for their expiry");
+            tracing::warn!(track_namespace = %self.track_key.track_namespace, track_name = %self.track_key.track_name, "disk cache queue full; the track's segments wait for their expiry");
         }
     }
 }

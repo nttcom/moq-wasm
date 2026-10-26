@@ -159,8 +159,8 @@ impl EgressCoordinator {
             parent: None,
             "relay.dataplane.egress.track",
             subscriber_session_id = %request.subscriber_session_id,
-            downstream_subscribe_id = request.downstream_subscribe_id,
-            track_key = %request.track_key,
+            request_id = request.downstream_subscribe_id,
+
             track_alias = track_alias,
             track_namespace = %request.track_key.track_namespace,
             track_name = %request.track_key.track_name,

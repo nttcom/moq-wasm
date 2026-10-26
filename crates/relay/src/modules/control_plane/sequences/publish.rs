@@ -47,12 +47,12 @@ impl Publish {
     ) {
         let handler: Arc<dyn PublishHandler> = Arc::from(handler);
         let upstream_subscription = handler.subscription(0, FilterType::LargestObject);
-        tracing::info!(
+        tracing::debug!(
             session_id = %session_id,
             track_namespace = %upstream_subscription.track_namespace(),
             track_name = %upstream_subscription.track_name(),
             track_alias = %upstream_subscription.track_alias(),
-            "SequenceHandler::publish"
+            "PUBLISH received"
         );
         let publisher_peer = super::session_peer(session_id, forwarder).await;
         let is_origin_client = publisher_peer == SessionPeer::Client;
@@ -109,7 +109,7 @@ impl Publish {
             track_namespace = %upstream_subscription.track_namespace(),
             track_name = %upstream_subscription.track_name(),
             track_alias = %upstream_subscription.track_alias(),
-            "SequenceHandler::publish DONE"
+            "PUBLISH handled"
         );
     }
 
@@ -117,7 +117,7 @@ impl Publish {
         level = "debug",
         name = "relay.sequence.publish.notify_namespace_subscribers",
         skip_all,
-        fields(track_key = %track_key)
+        fields(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
     )]
     async fn notify_namespace_subscribers(
         &self,
@@ -143,7 +143,7 @@ impl Publish {
         level = "debug",
         name = "relay.sequence.publish.notify_local_namespace_subscribers",
         skip_all,
-        fields(track_key = %track_key)
+        fields(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
     )]
     fn notify_local_namespace_subscribers(
         &self,
@@ -212,7 +212,7 @@ impl Publish {
         level = "debug",
         name = "relay.sequence.publish.notify_remote_subscribers",
         skip_all,
-        fields(track_key = %track_key)
+        fields(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
     )]
     async fn notify_remote_subscribers(
         &self,
@@ -239,7 +239,7 @@ impl Publish {
                 continue;
             };
 
-            tracing::info!(
+            tracing::debug!(
                 relay_id = %relay.relay_id,
                 session_id = session_id,
                 "forwarding PUBLISH to remote relay"

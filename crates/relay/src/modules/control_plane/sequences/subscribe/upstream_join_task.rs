@@ -137,8 +137,8 @@ impl UpstreamJoinTask {
                 }
                 Err(error) => tracing::warn!(
                     %error,
-                    pub_session_id = %answered.publisher_session_id,
-                    track_key = %join.track_key,
+                    publisher_session_id = %answered.publisher_session_id,
+                    track_namespace = %join.track_key.track_namespace, track_name = %join.track_key.track_name,
                     "upstream SUBSCRIBE of an additional publisher failed"
                 ),
             }
@@ -165,8 +165,9 @@ async fn join_track(
     );
     if !joined {
         tracing::info!(
-            pub_session_id = %publisher_session_id,
-            %track_key,
+            publisher_session_id = %publisher_session_id,
+            track_namespace = %track_key.track_namespace,
+            track_name = %track_key.track_name,
             "unsubscribing a publisher the track does not take"
         );
         if let Err(error) = deps
@@ -218,8 +219,9 @@ async fn join_track(
         return;
     }
     tracing::info!(
-        pub_session_id = %publisher_session_id,
-        %track_key,
+        publisher_session_id = %publisher_session_id,
+        track_namespace = %track_key.track_namespace,
+        track_name = %track_key.track_name,
         "additional upstream publisher joined the track"
     );
 }

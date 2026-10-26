@@ -26,7 +26,7 @@ impl PublishNamespaceDone {
         tracing::info!(
             session_id = %session_id,
             track_namespace = %track_namespace,
-            "SequenceHandler::PublishNamespaceDone"
+            "PUBLISH_NAMESPACE_DONE received"
         );
 
         let no_clients_remain = table.unregister_publish_namespace(session_id, track_namespace);

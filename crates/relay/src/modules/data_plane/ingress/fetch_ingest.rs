@@ -192,7 +192,7 @@ impl FetchIngest {
                 "failed to send upstream FETCH_CANCEL"
             );
         } else {
-            tracing::info!(upstream_request_id, "sent upstream FETCH_CANCEL");
+            tracing::debug!(upstream_request_id, "sent upstream FETCH_CANCEL");
         }
     }
 

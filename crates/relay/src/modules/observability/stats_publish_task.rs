@@ -76,7 +76,7 @@ async fn publish_snapshots(
         )
         .await
         .context("PUBLISH of the stats track was refused")?;
-    tracing::info!(%namespace, track_name = relay_stats::TRACK_NAME, "publishing relay stats");
+    tracing::info!(track_namespace = %namespace, track_name = relay_stats::TRACK_NAME, "publishing relay stats");
     let mut writer = TrackWriter::new(publisher.create_stream(&subscription), unix_millis_now());
     let mut ticker = tokio::time::interval(SNAPSHOT_INTERVAL);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);

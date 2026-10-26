@@ -116,7 +116,7 @@ impl SessionWorker {
                     parent: None,
                     "relay.malformed_track_detected",
                     session_id = %session_id,
-                    track_key = %track_key,
+                    track_namespace = %track_key.track_namespace, track_name = %track_key.track_name,
                 );
                 link_span(&event_span, &self.session_span);
                 MalformedTrackCleanup {}
@@ -187,7 +187,7 @@ impl SessionWorker {
         let event_span = session_event_span(session_id, &session_span, app_id, &event);
         event_span.in_scope(|| match event {
             MoqtSessionEvent::ProtocolViolation() => tracing::error!("Received session event"),
-            _ => tracing::info!("Received session event"),
+            _ => tracing::debug!("Received session event"),
         });
         if let Err(denied) = authorize_request(self.verified_token.as_deref(), &event) {
             let reject_span = tracing::info_span!(

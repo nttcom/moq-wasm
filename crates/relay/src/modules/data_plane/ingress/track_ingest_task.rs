@@ -99,7 +99,7 @@ impl TrackIngestTask {
                         IngestCommand::Start(start) => {
                             let ingest_key = (start.track_key.clone(), start.publisher_session_id, start.source.kind());
                             if stop_senders.contains_key(&ingest_key) {
-                                tracing::warn!(track_key = %start.track_key, publisher_session_id = start.publisher_session_id, "ignoring a second ingest of the same publisher for an active track");
+                                tracing::warn!(track_namespace = %start.track_key.track_namespace, track_name = %start.track_key.track_name, publisher_session_id = start.publisher_session_id, "ignoring a second ingest of the same publisher for an active track");
                                 continue;
                             }
                             next_ingest_id += 1;
@@ -124,7 +124,7 @@ impl TrackIngestTask {
                                 let ingest_key = (track_key.clone(), publisher_session_id, kind);
                                 if let Some((_, stop_sender)) = stop_senders.remove(&ingest_key) {
                                     let _ = stop_sender.send(true);
-                                    tracing::info!(%track_key, publisher_session_id, "{} ingress track stop requested", kind.label());
+                                    tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, kind = kind.label(), "track ingress stopped");
                                 }
                             }
                         }
@@ -135,10 +135,10 @@ impl TrackIngestTask {
                                 stop_senders.remove(&ingest_key);
                             }
                             let (track_key, _, kind) = ingest_key;
-                            tracing::debug!(%track_key, "{} ingress track ended", kind.label());
+                            tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "{} ingress track ended", kind.label());
                         }
                         Err(e) => {
-                            tracing::error!("ingress track task panicked: {:?}", e);
+                            tracing::error!(error = ?e, "ingress track task panicked");
                         }
                     },
                     else => break,
@@ -159,7 +159,7 @@ impl TrackIngestTask {
                 let span = tracing::debug_span!(
                     parent: &track_span,
                     "relay.dataplane.ingress.stream_factory",
-                    track_key = %ingest.track_key,
+                    track_namespace = %ingest.track_key.track_namespace, track_name = %ingest.track_key.track_name,
                 );
                 // Also instrument with the track span, so the task stays inside it
                 // when the debug factory span is disabled.

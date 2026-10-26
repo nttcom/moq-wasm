@@ -203,7 +203,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   therefore never resurrects a worker.
 - Each session worker opens the event's span (`relay.subscribe`,
   `relay.publish`, …), the one place that lists the event's fields, and logs
-  `Received session event` in it; the sequence runs in that span. A request's
+  `Received session event` at debug in it; the sequence runs in that span. A request's
   span roots its own trace, carries `session_id` and `app_id`, and links to
   the `relay.session` span, so a session's trace holds only its lifecycle
   (`relay.session.disconnected` or `relay.session.protocol_violation` ends

@@ -75,10 +75,15 @@ impl GoAway {
                 })
                 .collect();
             if publishers.is_empty() {
-                tracing::warn!(%track_key, "no other publisher for a track of the departing relay");
+                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "no other publisher for a track of the departing relay");
                 continue;
             }
-            tracing::info!(%track_key, publishers = publishers.len(), "subscribing other publishers");
+            tracing::debug!(
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                publishers = publishers.len(),
+                "subscribing other publishers"
+            );
             let pending = send_upstream_subscribes(
                 upstream_publisher_resolver,
                 &join_deps.forwarder,

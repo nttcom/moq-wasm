@@ -39,7 +39,7 @@ async fn cleanup_removed_session(
             {
                 tracing::debug!(
                     ?err,
-                    upstream_session_id = released.publisher_session_id,
+                    publisher_session_id = released.publisher_session_id,
                     request_id = released.subscription.request_id(),
                     "failed to forward upstream unsubscribe during session cleanup"
                 );

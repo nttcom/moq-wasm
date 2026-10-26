@@ -66,7 +66,7 @@ impl SessionIntake {
             session_id = session_id
         );
         async {
-            tracing::info!("Session accepted");
+            tracing::debug!("session accepted");
             self.repo
                 .lock()
                 .await
@@ -133,7 +133,7 @@ impl SessionHandler {
                     let connecting = tokio::select! {
                         biased;
                         _ = &mut stop_receiver => {
-                            tracing::info!(peer = session_peer, "stopped accepting sessions; refusing new connections");
+                            tracing::info!(session_peer, "stopped accepting sessions; refusing new connections");
                             endpoint.refuse_new_connections();
                             break;
                         }
@@ -189,7 +189,7 @@ impl SessionHandler {
 
 impl Drop for SessionHandler {
     fn drop(&mut self) {
-        tracing::info!("Handle dropped.");
+        tracing::debug!("session handler dropped");
         self.join_handle.abort();
     }
 }

@@ -42,7 +42,7 @@ impl DownstreamPublish {
         level = "info",
         name = "relay.sequence.downstream_publish",
         skip_all,
-        fields(subscriber_session_id = %subscriber_session_id, track_key = %track_key)
+        fields(subscriber_session_id = %subscriber_session_id, track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
     )]
     pub(crate) async fn send(
         &self,

@@ -84,7 +84,7 @@ impl EventHandler {
                         // Cross-session deadlock is structurally impossible.
                         event = receiver.recv() => {
                             let Some(event) = event else {
-                                tracing::info!("Session event channel closed; shutting down reader");
+                                tracing::debug!("session event channel closed; shutting down reader");
                                 break;
                             };
 
@@ -123,7 +123,7 @@ impl EventHandler {
 
 impl Drop for EventHandler {
     fn drop(&mut self) {
-        tracing::info!("Manager dropped.");
+        tracing::debug!("event handler dropped");
         self.relay_session_event_handler.abort();
     }
 }

@@ -137,11 +137,11 @@ impl Subscribe {
     ) {
         let track_namespace = handler.track_namespace();
         let track_name = handler.track_name();
-        tracing::info!(
+        tracing::debug!(
             session_id = %session_id,
             track_namespace = %track_namespace,
             track_name = %track_name,
-            "SequenceHandler::subscribe"
+            "SUBSCRIBE received"
         );
         let requester = super::session_peer(session_id, forwarder).await;
 
@@ -175,7 +175,7 @@ impl Subscribe {
                         .await
                     {
                         tracing::error!(
-                            subscribe_id = handler.subscribe_id(),
+                            request_id = handler.subscribe_id(),
                             track_namespace = %track_namespace,
                             track_name = %track_name,
                             error = ?send_error,
@@ -213,7 +213,7 @@ impl Subscribe {
                 return;
             }
             tracing::info!(
-                subscribe_id = handler.subscribe_id(),
+                request_id = handler.subscribe_id(),
                 track_namespace = %track_namespace,
                 track_name = %track_name,
                 "upstream subscription ended before the downstream subscription was accepted; retrying"
@@ -360,7 +360,7 @@ impl Subscribe {
                 Err(error) => {
                     tracing::warn!(
                         %error,
-                        pub_session_id = %answered.publisher_session_id,
+                        publisher_session_id = %answered.publisher_session_id,
                         track_namespace = %track_namespace,
                         track_name = %track_name,
                         "upstream SUBSCRIBE failed"
@@ -369,13 +369,13 @@ impl Subscribe {
                 }
             }
         };
-        tracing::info!(
-            pub_session_id = %pub_session_id,
+        tracing::debug!(
+            publisher_session_id = %pub_session_id,
             track_namespace = %track_namespace,
             track_name = %track_name,
             track_alias = subscription.track_alias(),
             expires = subscription.expires().unwrap_or(0),
-            "upstream subscribe ok received"
+            "upstream SUBSCRIBE_OK received"
         );
 
         let active_upstream = subscribe_initiated(&subscription, publisher_peer);
@@ -399,8 +399,8 @@ impl Subscribe {
             pub_session_id,
             active_upstream.clone(),
         );
-        tracing::info!(
-            pub_session_id = %pub_session_id,
+        tracing::debug!(
+            publisher_session_id = %pub_session_id,
             track_namespace = %track_namespace,
             track_name = %track_name,
             "upstream subscription registered"
@@ -481,7 +481,7 @@ impl Subscribe {
             DeliveryControl::new(INITIAL_FORWARD, &filter_type, largest_location),
         ) else {
             tracing::debug!(
-                subscribe_id = handler.subscribe_id(),
+                request_id = handler.subscribe_id(),
                 track_namespace = %track_key.track_namespace,
                 track_name = %track_key.track_name,
                 "upstream subscription removed before the downstream subscription was registered"
@@ -507,7 +507,7 @@ impl Subscribe {
             .is_err()
         {
             tracing::error!(
-                subscribe_id = handler.subscribe_id(),
+                request_id = handler.subscribe_id(),
                 track_namespace = %track_key.track_namespace,
                 track_name = %track_key.track_name,
                 "failed to send EgressStartRequest"
@@ -519,14 +519,14 @@ impl Subscribe {
             Ok(Err(error)) => {
                 tracing::error!(
                     ?error,
-                    subscribe_id = handler.subscribe_id(),
+                    request_id = handler.subscribe_id(),
                     "failed to start egress runner"
                 );
                 return Acceptance::Answered;
             }
             Err(_) => {
                 tracing::debug!(
-                    subscribe_id = handler.subscribe_id(),
+                    request_id = handler.subscribe_id(),
                     "downstream subscription removed before its egress runner became ready"
                 );
                 return Acceptance::UpstreamGone;
@@ -544,8 +544,8 @@ impl Subscribe {
             .is_err()
         {
             tracing::error!(
-                subscribe_id = handler.subscribe_id(),
-                subscriber_track_alias = subscriber_track_alias,
+                request_id = handler.subscribe_id(),
+                track_alias = subscriber_track_alias,
                 "failed to send SUBSCRIBE_OK"
             );
             return Acceptance::Answered;
@@ -553,10 +553,11 @@ impl Subscribe {
         let _ = subscribe_ok_sender.send(());
         tracing::info!(
             session_id = %session_id,
+            request_id = handler.subscribe_id(),
             track_namespace = %track_key.track_namespace,
             track_name = %track_key.track_name,
-            subscriber_track_alias = subscriber_track_alias,
-            "downstream subscribe ok sent"
+            track_alias = subscriber_track_alias,
+            "SUBSCRIBE accepted"
         );
         Acceptance::Answered
     }
@@ -585,7 +586,7 @@ impl Subscribe {
         let track_namespace = handler.track_namespace();
         let track_name = handler.track_name();
         tracing::warn!(
-            subscribe_id = handler.subscribe_id(),
+            request_id = handler.subscribe_id(),
             track_namespace = %track_namespace,
             track_name = %track_name,
             error_code = ?code,

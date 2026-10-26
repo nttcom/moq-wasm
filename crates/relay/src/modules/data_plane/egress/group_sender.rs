@@ -145,7 +145,7 @@ impl GroupSender {
                             let group_sequence = self.group_sequence.sequence_of(group_id);
                             let span = tracing::debug_span!(
                                 "relay.dataplane.egress.stream",
-                                track_key = %self.track_key,
+                                track_namespace = %self.track_key.track_namespace, track_name = %self.track_key.track_name,
                                 track_alias = track_alias,
                                 group_id = group_id,
                                 subgroup_id = subgroup_id,
@@ -186,7 +186,7 @@ impl GroupSender {
                 }
                 Some(result) = joinset.join_next() => {
                     if let Err(e) = result {
-                        tracing::error!("egress send task panicked: {:?}", e);
+                        tracing::error!(error = ?e, "egress send task panicked");
                     }
                 }
                 else => break,

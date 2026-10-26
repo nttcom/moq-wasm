@@ -94,10 +94,9 @@ impl SessionRepository {
         let session: Arc<dyn Session> = Arc::from(session);
         tracing::info!(
             session_id = %session_id,
-            peer = ?peer,
+            session_peer = peer.kind(),
             app_id = %verified_token.app_id,
-            is_relay = verified_token.is_relay,
-            "session peer classified"
+            "session started"
         );
         let expiry_task = expiry_task(&session, &verified_token);
         if relay_session_event_sender
@@ -132,7 +131,7 @@ impl SessionRepository {
     pub(crate) fn remove(&mut self, session_id: SessionId) {
         let session_removed = self.sessions.remove(&session_id).is_some();
         self.update_client_session_count();
-        tracing::info!(
+        tracing::debug!(
             session_id = %session_id,
             session_removed,
             remaining_sessions = self.sessions.len(),
@@ -243,7 +242,7 @@ impl SessionEventForwardTask {
                             let event = match session.receive_moqt_session_event().await {
                                 Ok(event) => event,
                                 Err(e) => {
-                                    tracing::error!("Failed to receive moqt session event: {}", e);
+                                    tracing::error!(error = %e, "failed to receive a moqt session event");
                                     break;
                                 }
                             };
@@ -258,11 +257,11 @@ impl SessionEventForwardTask {
                                 kind: EventKind::FromSession(event),
                             };
                             if let Err(err) = relay_session_event_sender.send(relay_event) {
-                                tracing::error!("Failed to forward session event: {}", err);
+                                tracing::error!(error = %err, "failed to forward a session event");
                                 break;
                             }
                             if should_stop {
-                                tracing::info!("Stopping session event forwarder");
+                                tracing::debug!("stopping session event forwarder");
                                 break;
                             }
                         } else {

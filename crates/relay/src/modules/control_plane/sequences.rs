@@ -80,15 +80,15 @@ pub(crate) async fn release_upstream(
     {
         tracing::warn!(
             ?err,
-            upstream_session_id = %publisher_session_id,
+            publisher_session_id = %publisher_session_id,
             request_id = %upstream_request_id,
             "failed to forward upstream unsubscribe"
         );
     } else {
-        tracing::info!(
-            upstream_session_id = %publisher_session_id,
+        tracing::debug!(
+            publisher_session_id = %publisher_session_id,
             request_id = %upstream_request_id,
-            "forwarded upstream unsubscribe"
+            "forwarded upstream UNSUBSCRIBE"
         );
     }
 
@@ -106,7 +106,7 @@ pub(crate) async fn start_ingress(
         .await
         .is_ok();
     if !started {
-        tracing::error!(%track_key, publisher_session_id, "failed to send ingress start request");
+        tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to send ingress start request");
     }
     started
 }
@@ -124,6 +124,6 @@ pub(crate) async fn stop_ingress(
         .await
         .is_err()
     {
-        tracing::error!(track_key = %track_key, "failed to send ingress stop request");
+        tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "failed to send ingress stop request");
     }
 }
