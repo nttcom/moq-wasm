@@ -677,6 +677,8 @@ impl SubscribeHandler for MockSubscribeHandler {
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
     pub(crate) fill_timeout: Option<std::time::Duration>,
+    /// Stands in for the session draft: true for draft-18.
+    pub(crate) marks_unknown_ranges: bool,
     pub(crate) joining_rule:
         fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
     pub(crate) errors: Arc<Mutex<Vec<RequestErrorCode>>>,
@@ -689,6 +691,7 @@ impl MockFetchHandler {
         Self {
             fetch_params,
             fill_timeout: None,
+            marks_unknown_ranges: false,
             joining_rule: |_| Ok(()),
             errors: Arc::default(),
             oks: Arc::default(),
@@ -729,6 +732,10 @@ impl FetchHandler for MockFetchHandler {
 
     fn fill_timeout(&self) -> Option<std::time::Duration> {
         self.fill_timeout
+    }
+
+    fn marks_unknown_ranges(&self) -> bool {
+        self.marks_unknown_ranges
     }
 
     fn check_joining(

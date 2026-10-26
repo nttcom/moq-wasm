@@ -893,8 +893,11 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   then serves the rest of the plan, the steps after the last object sent.
   A FETCH served from the cache takes its wait from `FillBudget`: `Never`
   for FILL_TIMEOUT 0, `Until` the end of a non-zero budget (draft-18
-  §10.2.5), and `Unlimited` without FILL_TIMEOUT, which waits for an open
-  group as long as live ingest keeps it open.
+  §10.2.5). Without FILL_TIMEOUT it is `Until` the end of
+  `MOQT_FETCH_FILL_TIMEOUT_SECS` when the downstream response can mark the
+  rest unknown (`FetchHandler::marks_unknown_ranges`, draft-18), and
+  `Unlimited` otherwise (draft-14), which waits for an open group as long
+  as live ingest keeps it open.
 
 ## Cascading relays (`modules/cascading`)
 

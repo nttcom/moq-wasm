@@ -200,7 +200,7 @@ impl Fetch {
                     start_location,
                     end_location,
                     group_order: handler.group_order(),
-                    wait: fill_budget.delivery_wait(),
+                    wait: fill_budget.delivery_wait(handler.marks_unknown_ranges()),
                 };
                 if let Err(e) = egress_sender
                     .send(EgressCommand::StartFetch(fetch_request))
@@ -782,6 +782,20 @@ mod tests {
         cache_store: Arc<TrackCacheStore>,
         upstream: FetchAnswer,
     ) -> HandledFetch {
+        let handler = MockFetchHandler {
+            fill_timeout: Some(fill_timeout),
+            ..MockFetchHandler::fetching(standalone_fetch_params(location(0, 0), location(2, 0)))
+        };
+        handle_fetch(handler, cache_store, upstream).await
+    }
+
+    /// Handles `handler`'s FETCH from session 2, whose only publisher,
+    /// session 5, answers `upstream`.
+    async fn handle_fetch(
+        handler: MockFetchHandler,
+        cache_store: Arc<TrackCacheStore>,
+        upstream: FetchAnswer,
+    ) -> HandledFetch {
         const PUBLISHER: SessionId = 5;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(PUBLISHER, "ns".to_string(), SessionPeer::Client);
@@ -791,10 +805,6 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        let handler = MockFetchHandler {
-            fill_timeout: Some(fill_timeout),
-            ..MockFetchHandler::fetching(standalone_fetch_params(location(0, 0), location(2, 0)))
-        };
         let oks = handler.oks.clone();
         let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(1);
         let (session_event_sender, _session_event_receiver) =
@@ -922,6 +932,62 @@ mod tests {
         assert_eq!(
             handled.handed_over.map(|request| request.wait),
             Some(FetchWait::Until(arrival + Duration::from_millis(500)))
+        );
+    }
+
+    /// A FETCH of {0,0}..{2,0} without FILL_TIMEOUT from a session whose
+    /// response can mark objects unknown or not.
+    fn fetch_without_fill_timeout(marks_unknown_ranges: bool) -> MockFetchHandler {
+        MockFetchHandler {
+            marks_unknown_ranges,
+            ..MockFetchHandler::fetching(standalone_fetch_params(location(0, 0), location(2, 0)))
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_draft18_fetch_without_fill_timeout_waits_for_the_cache_up_to_the_relay_limit() {
+        // Arrange
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
+        let _group0 = hold_group_0_open(&cache);
+        let arrival = tokio::time::Instant::now();
+
+        // Act
+        let handled = handle_fetch(
+            fetch_without_fill_timeout(true),
+            cache_store,
+            FetchAnswer::Never,
+        )
+        .await;
+
+        // Assert: draft-18 §10.2.5, the relay waits an implementation specific duration, then reports unknown
+        assert_eq!(handled.oks, vec![location(1, 1)]);
+        assert_eq!(
+            handled.handed_over.map(|request| request.wait),
+            Some(FetchWait::Until(arrival + DEFAULT_FETCH_FILL_TIMEOUT))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetch_waits_for_the_cache_until_its_objects_arrive() {
+        // Arrange
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
+        let _group0 = hold_group_0_open(&cache);
+
+        // Act
+        let handled = handle_fetch(
+            fetch_without_fill_timeout(false),
+            cache_store,
+            FetchAnswer::Never,
+        )
+        .await;
+
+        // Assert: draft-14 §9.16 cannot report objects unknown, so the delivery waits for them
+        assert_eq!(handled.oks, vec![location(1, 1)]);
+        assert_eq!(
+            handled.handed_over.map(|request| request.wait),
+            Some(FetchWait::Unlimited)
         );
     }
 
