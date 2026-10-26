@@ -187,10 +187,7 @@ impl SessionWorker {
             .as_ref()
             .map(|token| token.app_id.as_str());
         let event_span = session_event_span(session_id, &session_span, app_id, &event);
-        event_span.in_scope(|| match event {
-            MoqtSessionEvent::ProtocolViolation() => tracing::error!("Received session event"),
-            _ => tracing::debug!("Received session event"),
-        });
+        event_span.in_scope(|| tracing::debug!("Received session event"));
         if let Err(denied) = authorize_request(self.verified_token.as_deref(), &event) {
             let reject_span = tracing::info_span!(
                 parent: &event_span,
