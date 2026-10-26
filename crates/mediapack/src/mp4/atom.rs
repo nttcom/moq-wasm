@@ -63,6 +63,12 @@ pub(crate) fn full_atom<'a>(payload: &'a [u8], kind: &str) -> Result<FullAtom<'a
     })
 }
 
+pub(crate) fn find_full_atom<'a>(payload: &'a [u8], kind: &str) -> Result<Option<FullAtom<'a>>> {
+    find(payload, kind.as_bytes())
+        .map(|atom| full_atom(atom.payload, kind))
+        .transpose()
+}
+
 pub(crate) fn read_u32(data: &[u8], offset: usize) -> Result<u32> {
     let bytes = data
         .get(offset..offset + 4)

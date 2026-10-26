@@ -149,29 +149,14 @@ mod tests {
     use mediapack::{MediaEvent, Timestamp};
 
     use super::*;
-    use crate::test_support::fixture_events;
-
-    fn audio_events(shift: Timestamp) -> EventSource {
-        let events: Vec<MediaEvent> = fixture_events()
-            .into_iter()
-            .filter_map(|event| match event {
-                MediaEvent::AudioConfig(_) => Some(event),
-                MediaEvent::Audio(mut sample) => {
-                    sample.pts = sample.pts.saturating_add(shift);
-                    Some(MediaEvent::Audio(sample))
-                }
-                _ => None,
-            })
-            .collect();
-        Box::new(events.into_iter().map(Ok))
-    }
+    use crate::test_support::{audio_events, fixture_events, shifted, source};
 
     #[test]
     fn measures_each_window_on_the_composition_timeline() {
         // Arrange: the same tone, once 1 s later on the composition's timeline
         let (on_time, later) = (
-            audio_events(Timestamp::default()),
-            audio_events(Timestamp::from_millis(1_000)),
+            source(audio_events()).unwrap(),
+            source(shifted(audio_events(), Timestamp::from_millis(1_000))).unwrap(),
         );
 
         // Act

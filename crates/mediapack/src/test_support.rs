@@ -5,7 +5,9 @@ use crate::{
     h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
     loc,
     mpegts::parser::{PACKET_SIZE, SYNC_BYTE},
-    sample::{AudioSample, MediaEvent, VideoConfig, VideoSample},
+    sample::{
+        AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample,
+    },
 };
 
 pub(crate) const FIXTURE_TS: &[u8] = include_bytes!("../fixtures/testsrc.ts");
@@ -50,6 +52,37 @@ pub(crate) fn delta_frame_annexb() -> Bytes {
 
 pub(crate) fn mono_48k() -> AudioSpecificConfig {
     AudioSpecificConfig::new(2, 48_000, 1)
+}
+
+pub(crate) fn h264_aac_configs() -> Vec<MediaEvent> {
+    vec![
+        MediaEvent::Streams(StreamSet {
+            has_video: true,
+            has_audio: true,
+        }),
+        MediaEvent::VideoConfig(fixture_video_config()),
+        MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
+    ]
+}
+
+pub(crate) fn video_event(dts_ms: u64, is_keyframe: bool) -> MediaEvent {
+    MediaEvent::Video(VideoSample {
+        data: if is_keyframe {
+            keyframe_annexb()
+        } else {
+            delta_frame_annexb()
+        },
+        is_keyframe,
+        pts: Timestamp::from_millis(dts_ms + 40),
+        dts: Timestamp::from_millis(dts_ms),
+    })
+}
+
+pub(crate) fn audio_event(pts_ms: u64) -> MediaEvent {
+    MediaEvent::Audio(AudioSample {
+        data: Bytes::from_static(&[0xDE, 0xAD]),
+        pts: Timestamp::from_millis(pts_ms),
+    })
 }
 
 pub(crate) fn adts_frame(payload: &[u8]) -> Vec<u8> {

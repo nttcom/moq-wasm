@@ -1,12 +1,10 @@
 use msf::{Catalog, Track, TrackRole};
 
-use crate::track_selection::loc_tracks;
-
 const HEADER: [&str; 6] = ["NAME", "ROLE", "CODEC", "SIZE", "BITRATE", "SAMPLE RATE"];
 
 pub(crate) fn track_table(catalog: &Catalog) -> String {
     let rows: Vec<[String; 6]> = std::iter::once(HEADER.map(String::from))
-        .chain(loc_tracks(catalog).map(row))
+        .chain(catalog.loc_tracks().map(row))
         .collect();
     let widths: [usize; 6] = std::array::from_fn(|column| {
         rows.iter()

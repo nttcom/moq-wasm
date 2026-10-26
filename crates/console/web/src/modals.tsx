@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 
 import { api, describeError, formatUnixTime, type AppWithSecret, type ConsoleApp, type IssuedToken } from './api'
 import { Checkbox, type TokenSummary } from './pages'
@@ -101,33 +101,13 @@ export function SecretModal({ app, secret, rotated, onClose }: SecretModalProps)
 type ConfirmProps = { app: ConsoleApp; onDone: (result: AppWithSecret) => void; onClose: () => void }
 
 export function RotateSecretModal({ app, onDone, onClose }: ConfirmProps) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const rotate = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      onDone(await api.rotateSecret(app.appId))
-    } catch (caught) {
-      setError(describeError(caught))
-      setBusy(false)
-    }
-  }
   return (
-    <Modal
+    <ConfirmModal
       title="secret を作り直しますか？"
       width="max-w-[480px]"
+      confirmLabel="作り直す"
+      onConfirm={async () => onDone(await api.rotateSecret(app.appId))}
       onClose={onClose}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            キャンセル
-          </Button>
-          <Button variant="danger" onClick={rotate} disabled={busy}>
-            作り直す
-          </Button>
-        </>
-      }
     >
       <Alert tone="danger" title="すべてのトークンが使えなくなります">
         サーバーで署名したトークンも、コンソールで発行したトークンも使えなくなります。接続中のクライアントは、次の接続かトークンの更新で断られます。
@@ -135,8 +115,7 @@ export function RotateSecretModal({ app, onDone, onClose }: ConfirmProps) {
       <p className="text-sm text-body">
         新しい secret は、この後一度だけ表示されます。サーバーの設定を更新する準備ができてから実行してください。
       </p>
-      <ErrorText message={error} />
-    </Modal>
+    </ConfirmModal>
   )
 }
 
@@ -149,14 +128,47 @@ export function DeleteAppModal({
   onDeleted: () => void
   onClose: () => void
 }) {
+  return (
+    <ConfirmModal
+      title="app を削除しますか？"
+      width="max-w-[460px]"
+      confirmLabel="削除する"
+      onConfirm={async () => {
+        await api.deleteApp(app.appId)
+        onDeleted()
+      }}
+      onClose={onClose}
+    >
+      <p className="text-sm leading-relaxed text-body">
+        <span className="font-mono">{displayName(app)}</span> の secret
+        と発行済みのトークンは使えなくなり、接続中のクライアントは次の接続かトークンの更新で断られます。この操作は元に戻せません。
+      </p>
+    </ConfirmModal>
+  )
+}
+
+function ConfirmModal({
+  title,
+  width,
+  confirmLabel,
+  onConfirm,
+  onClose,
+  children
+}: {
+  title: string
+  width: string
+  confirmLabel: string
+  onConfirm: () => Promise<void>
+  onClose: () => void
+  children: ReactNode
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const remove = async () => {
+  const confirm = async () => {
     setBusy(true)
     setError(null)
     try {
-      await api.deleteApp(app.appId)
-      onDeleted()
+      await onConfirm()
     } catch (caught) {
       setError(describeError(caught))
       setBusy(false)
@@ -164,24 +176,21 @@ export function DeleteAppModal({
   }
   return (
     <Modal
-      title="app を削除しますか？"
-      width="max-w-[460px]"
+      title={title}
+      width={width}
       onClose={onClose}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             キャンセル
           </Button>
-          <Button variant="danger" onClick={remove} disabled={busy}>
-            削除する
+          <Button variant="danger" onClick={confirm} disabled={busy}>
+            {confirmLabel}
           </Button>
         </>
       }
     >
-      <p className="text-sm leading-relaxed text-body">
-        <span className="font-mono">{displayName(app)}</span> の secret
-        と発行済みのトークンは使えなくなり、接続中のクライアントは次の接続かトークンの更新で断られます。この操作は元に戻せません。
-      </p>
+      {children}
       <ErrorText message={error} />
     </Modal>
   )
