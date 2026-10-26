@@ -234,11 +234,6 @@ impl SessionEventForwardTask {
         relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         session_span: &Span,
     ) -> Self {
-        let session_event_forwarder_span = tracing::info_span!(
-            parent: session_span,
-            "relay.session.event_forwarder",
-            session_id = session_id
-        );
         let join_handle = tokio::task::Builder::new()
             .name("Session Event Forwarder")
             .spawn(
@@ -276,7 +271,7 @@ impl SessionEventForwardTask {
                         }
                     }
                 }
-                .instrument(session_event_forwarder_span),
+                .instrument(session_span.clone()),
             )
             .unwrap();
         Self { join_handle }
