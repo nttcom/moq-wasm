@@ -406,6 +406,7 @@ mod tests {
             group_order,
             fetch_params,
             authorization_tokens: vec![],
+            fill_timeout: None,
         }
     }
 
