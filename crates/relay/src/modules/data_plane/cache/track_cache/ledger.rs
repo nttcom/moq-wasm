@@ -10,7 +10,7 @@ use crate::modules::data_plane::{
     cache::{cached_object::CachedObject, known_ranges::KnownRanges},
 };
 
-use super::{SubgroupRun, after, location};
+use super::{SubgroupRun, after, location, partial_object::PartialObject};
 
 /// `epoch` tells a guard opened before the subgroup last closed apart from one
 /// of the current opening.
@@ -38,6 +38,9 @@ impl LiveGroup {
 #[derive(Default)]
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::object::Location, Arc<CachedObject>>,
+    /// Objects whose payload is still arriving. A location `objects` already
+    /// held when the object started never gets an entry.
+    pub(super) partial_objects: BTreeMap<moqt::object::Location, Arc<PartialObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
     pub(super) aborted_subgroups: HashSet<SubgroupKey>,
     pub(super) finished_subgroups: HashSet<SubgroupKey>,
@@ -164,6 +167,19 @@ impl Ledger {
     ) -> Option<Arc<CachedObject>> {
         self.group_objects(key.group_id(), from_object_id)
             .find(|object| object.subgroup_key() == key && !object.is_expired(now))
+            .cloned()
+    }
+
+    pub(super) fn next_subgroup_partial(
+        &self,
+        key: SubgroupKey,
+        from_object_id: u64,
+    ) -> Option<Arc<PartialObject>> {
+        let group_id = key.group_id();
+        self.partial_objects
+            .range(location(group_id, from_object_id)..=location(group_id, u64::MAX))
+            .map(|(_, partial)| partial)
+            .find(|partial| SubgroupKey::of(&partial.object) == key)
             .cloned()
     }
 

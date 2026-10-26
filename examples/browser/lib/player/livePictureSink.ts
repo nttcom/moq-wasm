@@ -19,6 +19,8 @@ function trackGeneratorConstructor(): TrackGeneratorConstructor | undefined {
 class TrackGeneratorSink implements LivePictureSink {
   private readonly track: InstanceType<TrackGeneratorConstructor>
   private readonly writer: WritableStreamDefaultWriter<VideoFrame>
+  private loading = false
+  private waitingFrame: VideoFrame | undefined
 
   constructor(
     readonly element: HTMLVideoElement,
@@ -30,11 +32,39 @@ class TrackGeneratorSink implements LivePictureSink {
 
   /// A video element whose stream has not produced a frame yet never reaches
   /// loadedmetadata and keeps the tab in its loading state, so the stream is
-  /// attached with the first frame.
+  /// attached with the first frame. A frame written before the element starts
+  /// loading the stream never reaches it, which leaves a still screen blank, so
+  /// the newest frame waits for loadstart.
   present(frame: VideoFrame): void {
     if (this.element.srcObject === null) {
       this.element.srcObject = new MediaStream([this.track])
+      this.element.addEventListener('loadstart', () => this.startLoading(), { once: true })
     }
+    if (!this.loading) {
+      this.waitingFrame?.close()
+      this.waitingFrame = frame
+      return
+    }
+    this.write(frame)
+  }
+
+  detach(): void {
+    this.element.srcObject = null
+    this.loading = false
+    this.waitingFrame?.close()
+    this.waitingFrame = undefined
+  }
+
+  private startLoading(): void {
+    this.loading = true
+    const frame = this.waitingFrame
+    this.waitingFrame = undefined
+    if (frame) {
+      this.write(frame)
+    }
+  }
+
+  private write(frame: VideoFrame): void {
     if (this.writer.desiredSize === null || this.writer.desiredSize <= 0) {
       frame.close()
       return
@@ -43,10 +73,6 @@ class TrackGeneratorSink implements LivePictureSink {
       .write(frame)
       .catch(() => undefined)
       .finally(() => frame.close())
-  }
-
-  detach(): void {
-    this.element.srcObject = null
   }
 }
 
