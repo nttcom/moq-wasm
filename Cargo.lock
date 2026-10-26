@@ -3491,6 +3491,7 @@ name = "telemetry"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "http",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
