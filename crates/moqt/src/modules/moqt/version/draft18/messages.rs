@@ -779,12 +779,14 @@ fn decode_fetch(buf: &mut Bytes) -> Result<Fetch, DecodeError> {
         group_order: GroupOrder::Ascending,
         fetch_params,
         authorization_tokens: vec![],
+        fill_timeout: None,
     };
     for parameter in get_parameters(buf, FETCH_PARAMETERS)? {
         match parameter {
             Parameter::SubscriberPriority(priority) => fetch.subscriber_priority = priority,
             Parameter::GroupOrder(order) => fetch.group_order = order,
             Parameter::AuthorizationToken(token) => fetch.authorization_tokens.push(token),
+            Parameter::FillTimeout(milliseconds) => fetch.fill_timeout = Some(milliseconds),
             _ => {}
         }
     }
@@ -827,6 +829,7 @@ pub(crate) fn encode_fetch(fetch: &Fetch) -> anyhow::Result<BytesMut> {
     if fetch.group_order != GroupOrder::Publisher {
         parameters.push(Parameter::GroupOrder(fetch.group_order));
     }
+    parameters.extend(fetch.fill_timeout.map(Parameter::FillTimeout));
     parameters.extend(token_parameters(&fetch.authorization_tokens));
     put_parameters(&mut payload, &parameters)?;
     frame(FETCH, &payload)
@@ -1219,6 +1222,7 @@ mod tests {
                 end_location: location(4, 0),
             },
             authorization_tokens: vec![],
+            fill_timeout: None,
         };
         let joining = Fetch {
             fetch_params: FetchParams::RelativeJoining {
@@ -1264,6 +1268,32 @@ mod tests {
             decode(encode_subscribe_namespace(&subscribe_namespace).unwrap()),
             Message::SubscribeNamespace(subscribe_namespace)
         );
+    }
+
+    #[test]
+    fn a_fetch_carries_its_fill_timeout() {
+        for fill_timeout in [Some(0), Some(1500), None] {
+            // Arrange
+            let fetch = Fetch {
+                request_id: 6,
+                subscriber_priority: 9,
+                group_order: GroupOrder::Ascending,
+                fetch_params: FetchParams::Standalone {
+                    track_namespace: vec!["live".to_string()],
+                    track_name: "video".to_string(),
+                    start_location: location(1, 0),
+                    end_location: location(4, 0),
+                },
+                authorization_tokens: vec![],
+                fill_timeout,
+            };
+
+            // Act
+            let decoded = decode(encode_fetch(&fetch).unwrap());
+
+            // Assert: §10.2.5
+            assert_eq!(decoded, Message::Fetch(fetch), "{fill_timeout:?}");
+        }
     }
 
     #[test]

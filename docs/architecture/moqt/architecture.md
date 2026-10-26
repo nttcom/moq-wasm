@@ -248,6 +248,9 @@ call through the adapter; a draft never gets a task of its own (see
   update may move a subscription's Start Location back or its End Group out
   (draft-14 §9.10: no, refused by closing the session; draft-18 §10.9.1:
   yes).
+- A FETCH parameter only one draft defines reaches the application as an
+  `Option`: `Fetch::fill_timeout` / `FetchHandler::fill_timeout()` is
+  draft-18's FILL_TIMEOUT (§10.2.5), always `None` on draft-14.
 - Error codes cross the seam as the typed enums of `error_codes.rs` and
   `constants.rs`. `draft14::error_codes` and `draft18::error_codes` hold each
   draft's values: the drafts use them to encode and decode messages, and

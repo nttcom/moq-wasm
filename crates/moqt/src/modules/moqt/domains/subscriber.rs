@@ -298,6 +298,7 @@ impl Subscriber {
             group_order: option.group_order,
             fetch_params,
             authorization_tokens: vec![],
+            fill_timeout: None,
         };
         let response = connection
             .send_request(OutgoingRequest::Fetch(fetch))

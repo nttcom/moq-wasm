@@ -1417,6 +1417,7 @@ mod tests {
                 },
             },
             authorization_tokens: vec![],
+            fill_timeout: None,
         })
         .unwrap();
         sender.send(&fetch).await.unwrap();
@@ -1444,6 +1445,44 @@ mod tests {
         // Assert: §3.3.2 cancels by reset, not by FIN
         assert!(later.is_err(), "{later:?}");
         assert!(answered.is_ok(), "{answered:?}");
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_hands_its_fill_timeout_to_the_handler() {
+        // Arrange: a FETCH with FILL_TIMEOUT 0, which no FetchOption sets
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-fill-timeout", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
+        let fetch = messages::encode_fetch(&FetchMessage {
+            request_id: connection.control.next_request_id(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            fetch_params: FetchParams::Standalone {
+                track_namespace: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                start_location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                end_location: Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            },
+            authorization_tokens: vec![],
+            fill_timeout: Some(0),
+        })
+        .unwrap();
+
+        // Act
+        StreamSender::new(send_stream).send(&fetch).await.unwrap();
+        let SessionEvent::Fetch(handler) = next_event(&server).await else {
+            panic!("expected FETCH");
+        };
+
+        // Assert: §10.2.5
+        assert_eq!(handler.fill_timeout(), Some(std::time::Duration::ZERO));
     }
 
     #[tokio::test]
