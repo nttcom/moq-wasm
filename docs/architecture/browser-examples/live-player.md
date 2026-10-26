@@ -666,10 +666,14 @@ named `live-player-*`.
   one `LocLive` for the camera and the audio and another for a screen share;
   the pipeline is replaced when its video track is unsubscribed, so the next
   video track starts on fresh decoders, and audio joining a running picture
-  warms the playout up again. The buffer policy and catch-up are set per
-  member, and the per-member stats line and charts show `LiveStats`. The
-  worker pacing presets, the jitter-buffer visualizer and the worker-telemetry
-  charts are gone with it, as in `examples/onvif`.
+  warms the playout up again. A video track that starts a picture fetches
+  its current group with a joining FETCH, since a still screen share may not
+  send another keyframe for minutes; `LocLive` shows those cached frames as
+  they decode without anchoring the clock or sizing the buffer on them, and
+  the live objects wait until the FETCH ends. The buffer policy and catch-up
+  are set per member, and the per-member stats line and charts show
+  `LiveStats`. The worker pacing presets, the jitter-buffer visualizer and the
+  worker-telemetry charts are gone with it, as in `examples/onvif`.
 - `examples/media/subscriber`: one `LocLive` on the page's own `<video>` and a
   hidden `<canvas>`, configured from the MSF catalog tracks the page selects
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter

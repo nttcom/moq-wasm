@@ -200,9 +200,10 @@ export class LocalSession {
     this.assertReady('subscribe')
     const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO, {
       subscriberPriority: role === 'video' || role === 'screenshare' ? VIDEO_SUBSCRIBER_PRIORITY : 0,
-      // Audio objects decode independently, but a single-stream publisher never starts a new group, so
-      // NextGroupStart would never deliver its audio (draft-14 §9.7).
-      filterType: role === 'audio' ? FilterType.LargestObject : FilterType.NextGroupStart,
+      // NextGroupStart would never deliver the audio of a single-stream publisher, which never starts a
+      // new group (draft-14 §9.7), and would keep a new picture waiting for the next keyframe, which a
+      // still screen share may not send for minutes; video fetches its current group instead.
+      filterType: role === 'chat' ? FilterType.NextGroupStart : FilterType.LargestObject,
       onPublishDone: ({ requestId }) => {
         this.forgetSubscription(requestId)
         onEnded(requestId)
@@ -236,19 +237,38 @@ export class LocalSession {
     } else if (role === 'audio') {
       this.mediaController.subscriber.registerAudioTrack(remoteUser, trackName, trackAlias, config)
     } else {
-      this.mediaController.subscriber.registerVideoTrack(
+      const joining = this.mediaController.subscriber.registerVideoTrack(
         remoteUser,
         trackName,
         trackAlias,
         config,
+        subscribeOk.contentExists,
         () => {
           this.unsubscribe(requestId).catch((error) => console.error('Failed to unsubscribe a replaced track:', error))
         },
         adaptation
       )
+      if (joining) {
+        this.fetchCurrentVideoGroup(requestId, trackAlias)
+      }
     }
 
     return requestId
+  }
+
+  /// draft-14 §9.16.2: a joining FETCH with offset 0 starts at the current
+  /// group's first object and ends at the largest object the SUBSCRIBE starts after.
+  private fetchCurrentVideoGroup(requestId: bigint, trackAlias: bigint): void {
+    const subscriber = this.mediaController.subscriber
+    this.client
+      .relativeJoiningFetch(requestId, 0n, {
+        onObject: (object) => subscriber.pushJoiningVideo(trackAlias, object),
+        onStreamEnd: () => subscriber.endJoining(trackAlias)
+      })
+      .catch((error) => {
+        console.warn('[meeting][moqt] joining FETCH failed', error)
+        subscriber.endJoining(trackAlias)
+      })
   }
 
   /// Moves a subscribed media role to `trackName`. A track of the same codec
