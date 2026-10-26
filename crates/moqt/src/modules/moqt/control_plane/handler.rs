@@ -10,7 +10,6 @@ pub mod publish_namespace_done_handler;
 pub mod publish_namespace_handler;
 pub mod requests_blocked_handler;
 pub(crate) mod response_guard;
-pub(crate) mod shared_answer;
 pub mod subscribe_handler;
 pub mod subscribe_namespace_handler;
 pub mod subscribe_namespace_update_handler;

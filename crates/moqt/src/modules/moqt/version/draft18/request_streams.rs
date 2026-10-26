@@ -9,7 +9,8 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use futures::{StreamExt, future::select, stream::FuturesOrdered};
+use futures::{FutureExt, StreamExt, future::select, stream::FuturesOrdered};
+use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 
 use super::{
@@ -54,7 +55,8 @@ use crate::{
                     subscribe_handler::SubscribeHandler,
                     subscribe_namespace_handler::SubscribeNamespaceHandler,
                     subscribe_namespace_update_handler::{
-                        NamespaceUpdateAnswerReceiver, SubscribeNamespaceUpdateHandler,
+                        NamespaceUpdateAnswerReceiver, PrefixUpdateDecision,
+                        SubscribeNamespaceUpdateHandler,
                     },
                     subscribe_update_handler::{SubscribeUpdateHandler, UpdateAnswerReceiver},
                     track_status_handler::TrackStatusHandler,
@@ -293,13 +295,17 @@ impl IncomingRequestTask {
             return;
         };
         let mut kind = stream.kind;
+        // The kind once every update awaiting its answer is applied: a later
+        // update of a namespace prefix moves on from the prefix an earlier
+        // one asks for.
+        let mut updated_kind = kind.clone();
         drop(context);
         let mut go_away_received = false;
         // A FIN on a FETCH ends only the reading (§3.3.2).
         let mut reading = true;
         // §5.2: a FETCH requester cancels with STOP_SENDING on this side's half.
         let mut watching_stop = kind == RequestStreamKind::Fetch;
-        let mut update_answers = UpdateAnswers::default();
+        let mut update_answers = UpdateAnswers::<DueUpdate>::default();
         loop {
             let next = tokio::select! {
                 received = receiver.receive(), if reading => Next::Received(received),
@@ -312,9 +318,30 @@ impl IncomingRequestTask {
             };
             let received = match next {
                 Next::Received(received) => received,
-                Next::UpdateAnswer(answer) => {
+                Next::UpdateAnswer(DueUpdate::Subscription(answer)) => {
                     send_update_answer(&sender, answer).await;
                     continue;
+                }
+                Next::UpdateAnswer(DueUpdate::NamespacePrefix {
+                    prefix,
+                    decision,
+                    moved_sender,
+                }) => {
+                    let Err((code, reason)) = decision else {
+                        kind = context
+                            .channel()
+                            .move_namespace_subscription(request_id, &kind, prefix, &sender)
+                            .await;
+                        if let Some(moved_sender) = moved_sender {
+                            let _ = moved_sender.send(());
+                        }
+                        continue;
+                    };
+                    // §10.9.1: a failed update closes the stream, which ends
+                    // the subscription as the peer's withdrawal would.
+                    Self::reject(&sender, code, &reason).await;
+                    Self::peer_ended(&context, request_id, kind).await;
+                    return;
                 }
                 Next::Stopped(stopped) => {
                     watching_stop = false;
@@ -346,46 +373,26 @@ impl IncomingRequestTask {
                 Ok(Some(message)) => {
                     match Self::follow_up(
                         &context,
-                        &sender,
                         request_id,
-                        &kind,
+                        &updated_kind,
                         &mut baseline,
                         message,
-                    )
-                    .await
-                    {
+                    ) {
                         FollowUp::Continue => {}
+                        FollowUp::AcceptUpdate => {
+                            update_answers.push(Box::pin(std::future::ready(
+                                DueUpdate::Subscription(Some(None)),
+                            )));
+                        }
                         FollowUp::AnswerUpdate(answer_receiver) => {
-                            update_answers.push(answer_receiver);
+                            update_answers.push(Box::pin(
+                                subscription_answer(answer_receiver).map(DueUpdate::Subscription),
+                            ));
                         }
                         FollowUp::AnswerNamespaceUpdate(answer_receiver, prefix) => {
-                            drop(context);
-                            // `_sent` is dropped once the answer is on the stream.
-                            let (answer, _sent) = match answer_receiver.await {
-                                Ok((answer, sent)) => (answer, Some(sent)),
-                                Err(_) => (
-                                    Err((
-                                        RequestErrorCode::NotSupported,
-                                        "namespace prefix update not handled".to_string(),
-                                    )),
-                                    None,
-                                ),
-                            };
-                            let Some(context) = Scope::of(&connection) else {
-                                return;
-                            };
-                            let Err((code, reason)) = answer else {
-                                kind = context
-                                    .channel()
-                                    .move_namespace_subscription(request_id, &kind, prefix, &sender)
-                                    .await;
-                                continue;
-                            };
-                            // §10.9.1: a failed update closes the stream, which
-                            // ends the subscription as the peer's withdrawal would.
-                            Self::reject(&sender, code, &reason).await;
-                            Self::peer_ended(&context, request_id, kind).await;
-                            return;
+                            updated_kind = updated_kind.with_namespace_prefix(prefix.clone());
+                            update_answers
+                                .push(Box::pin(namespace_prefix_answer(answer_receiver, prefix)));
                         }
                         FollowUp::Done => return,
                     }
@@ -548,9 +555,8 @@ impl IncomingRequestTask {
         }
     }
 
-    async fn follow_up(
+    fn follow_up(
         scope: &Scope,
-        sender: &StreamSender,
         request_id: RequestId,
         kind: &RequestStreamKind,
         baseline: &mut Option<SubscribeUpdate>,
@@ -583,8 +589,7 @@ impl IncomingRequestTask {
                     })
                     .last();
                 let Some(new_prefix) = new_prefix else {
-                    send_update_answer(sender, Some(None)).await;
-                    return FollowUp::Continue;
+                    return FollowUp::AcceptUpdate;
                 };
                 let interest = match kind {
                     RequestStreamKind::SubscribeNamespace(_) => NamespaceInterest::Namespaces,
@@ -600,11 +605,8 @@ impl IncomingRequestTask {
                 close_on_violation(scope, "REQUEST_UPDATE on a TRACK_STATUS stream");
                 FollowUp::Done
             }
-            (_, Message::RequestUpdate(_)) => {
-                // Only a subscription has a Largest Object.
-                send_update_answer(sender, Some(None)).await;
-                FollowUp::Continue
-            }
+            // Only a subscription has a Largest Object.
+            (_, Message::RequestUpdate(_)) => FollowUp::AcceptUpdate,
             // Answers to our REQUEST_UPDATE of the subscription the PUBLISH
             // started (§10.9); a failed one is followed by PUBLISH_DONE.
             (RequestStreamKind::Publish, Message::RequestOk(_) | Message::RequestError(_)) => {
@@ -703,17 +705,20 @@ enum Next {
     /// This side cancelled the request.
     Cancelled,
     /// The next answer to a REQUEST_UPDATE is due (see `UpdateAnswers`).
-    UpdateAnswer(Option<Option<Location>>),
+    UpdateAnswer(DueUpdate),
 }
 
 /// What reading the next message of a peer's request stream leads to.
 enum FollowUp {
     Continue,
+    /// Answer the REQUEST_UPDATE with REQUEST_OK, in its turn.
+    AcceptUpdate,
     /// Answer the REQUEST_UPDATE once its handler is answered or dropped,
     /// while the stream goes on being read.
     AnswerUpdate(UpdateAnswerReceiver),
     /// Move the namespace subscription to the prefix once the handler
-    /// accepts, or end it when the handler refuses or is dropped (§10.9).
+    /// accepts, or end it when the handler refuses, is dropped or does not
+    /// answer in time (§10.9.1), while the stream goes on being read.
     AnswerNamespaceUpdate(NamespaceUpdateAnswerReceiver, Vec<String>),
     Done,
 }
@@ -736,22 +741,39 @@ fn emit_update(
 /// pending; an answer waits behind the earlier ones. Each update waits for
 /// its handler for at most the control message timeout, counted from its
 /// arrival.
-#[derive(Default)]
-struct UpdateAnswers(FuturesOrdered<BoxFuture<Option<Option<Location>>>>);
+struct UpdateAnswers<T>(FuturesOrdered<BoxFuture<T>>);
 
-impl UpdateAnswers {
-    fn push(&mut self, answer_receiver: UpdateAnswerReceiver) {
-        self.0
-            .push_back(Box::pin(subscription_answer(answer_receiver)));
+impl<T> Default for UpdateAnswers<T> {
+    fn default() -> Self {
+        Self(FuturesOrdered::new())
+    }
+}
+
+impl<T> UpdateAnswers<T> {
+    fn push(&mut self, answer: BoxFuture<T>) {
+        self.0.push_back(answer);
     }
 
     /// The next answer to write; pending while no update awaits one.
-    async fn next(&mut self) -> Option<Option<Location>> {
+    async fn next(&mut self) -> T {
         match self.0.next().await {
             Some(answer) => answer,
             None => std::future::pending().await,
         }
     }
+}
+
+/// An answer due on a peer's request stream.
+enum DueUpdate {
+    /// See `subscription_answer`.
+    Subscription(Option<Option<Location>>),
+    /// Move the namespace subscription to `prefix` and signal `moved_sender`,
+    /// or refuse the update and end the subscription.
+    NamespacePrefix {
+        prefix: Vec<String>,
+        decision: PrefixUpdateDecision,
+        moved_sender: Option<oneshot::Sender<()>>,
+    },
 }
 
 /// The LARGEST_OBJECT to answer a subscription update with, `None` inside
@@ -765,6 +787,40 @@ async fn subscription_answer(answer_receiver: UpdateAnswerReceiver) -> Option<Op
         DueAnswer::Answered(largest) => Some(largest),
         DueAnswer::Dropped => Some(None),
         DueAnswer::TimedOut => None,
+    }
+}
+
+async fn namespace_prefix_answer(
+    answer_receiver: NamespaceUpdateAnswerReceiver,
+    prefix: Vec<String>,
+) -> DueUpdate {
+    let (decision, moved_sender) = match answer_receiver
+        .within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT)
+        .await
+    {
+        DueAnswer::Answered((decision, moved_sender)) => (decision, Some(moved_sender)),
+        DueAnswer::Dropped => (
+            Err((
+                RequestErrorCode::NotSupported,
+                "namespace prefix update not handled".to_string(),
+            )),
+            None,
+        ),
+        DueAnswer::TimedOut => {
+            tracing::warn!("namespace prefix update not answered in time; answering REQUEST_ERROR");
+            (
+                Err((
+                    RequestErrorCode::Timeout,
+                    "update not answered in time".to_string(),
+                )),
+                None,
+            )
+        }
+    };
+    DueUpdate::NamespacePrefix {
+        prefix,
+        decision,
+        moved_sender,
     }
 }
 
@@ -980,7 +1036,9 @@ impl OutgoingRequestTask {
                     };
                     let (update, filter) =
                         apply_update(baseline, update.request_id, update.parameters);
-                    update_answers.push(emit_update(&context, update, filter));
+                    update_answers.push(Box::pin(subscription_answer(emit_update(
+                        &context, update, filter,
+                    ))));
                 }
                 // Answers to our REQUEST_UPDATE.
                 Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}

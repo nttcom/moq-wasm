@@ -33,7 +33,7 @@ impl SubscribeNamespaceUpdateHandler for moqt::namespace::SubscribeNamespaceUpda
     }
 
     async fn ok(&self) {
-        self.ok().await
+        self.ok().await;
     }
 
     async fn error(&self, code: RequestErrorCode, reason_phrase: String) {

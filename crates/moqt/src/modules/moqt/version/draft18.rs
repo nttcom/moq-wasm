@@ -103,6 +103,15 @@ impl RequestStreamKind {
             _ => None,
         }
     }
+
+    /// A namespace subscription moved to `prefix` (§10.9.2).
+    pub(crate) fn with_namespace_prefix(&self, prefix: Vec<String>) -> Self {
+        match self {
+            Self::SubscribeNamespace(_) => Self::SubscribeNamespace(prefix),
+            Self::SubscribeTracks(_) => Self::SubscribeTracks(prefix),
+            _ => unreachable!("only namespace subscriptions take a TRACK_NAMESPACE_PREFIX"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -332,13 +341,7 @@ impl ControlChannel {
         prefix: Vec<String>,
         sender: &StreamSender,
     ) -> RequestStreamKind {
-        let moved = match kind {
-            RequestStreamKind::SubscribeNamespace(_) => {
-                RequestStreamKind::SubscribeNamespace(prefix)
-            }
-            RequestStreamKind::SubscribeTracks(_) => RequestStreamKind::SubscribeTracks(prefix),
-            _ => unreachable!("only namespace subscriptions take a TRACK_NAMESPACE_PREFIX"),
-        };
+        let moved = kind.with_namespace_prefix(prefix);
         let _namespace_writes = self.namespace_writes.lock().await;
         {
             let mut requests = self.requests();
@@ -985,7 +988,7 @@ mod tests {
             },
             transport::transport_send_stream::TransportSendError,
         },
-        namespace::{NamespaceInterest, SubscribeNamespaceHandler},
+        namespace::{NamespaceInterest, PrefixUpdateAnswer, SubscribeNamespaceHandler},
         object::{
             ContentExists, DataReceiver, ForwardingPreference, KeyValuePair, Location, Object,
             ObjectStatus, Subgroup, VariantType,
@@ -3452,6 +3455,81 @@ mod tests {
             matches!(answer, Some(messages::Message::RequestOk(_))),
             "{answer:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_second_namespace_prefix_update_is_read_while_the_first_is_unanswered() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-read-on", "moqt").await;
+        let (sender, _receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let _first = requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+
+        // Act
+        let second = requested_namespace_update(&client, &server, &sender, &["live", "hall"]).await;
+
+        // Assert: the second moves on from the prefix the first asks for
+        assert_eq!(second.track_namespace_prefix(), "live/room");
+        assert_eq!(second.new_track_namespace_prefix(), "live/hall");
+    }
+
+    #[tokio::test]
+    async fn namespace_prefix_update_answers_go_out_in_the_order_the_updates_arrived() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-order", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, false).await;
+        let first = requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        let second = requested_namespace_update(&client, &server, &sender, &["live", "hall"]).await;
+
+        // Act: the second is answered first
+        let mut refused =
+            Box::pin(second.error(RequestErrorCode::NamespacePrefixOverlap, String::new()));
+        assert!(futures::poll!(&mut refused).is_pending());
+        first.ok().await;
+        refused.await;
+        let first_answer = receiver.receive().await.unwrap();
+        let second_answer = receiver.receive().await.unwrap();
+
+        // Assert: §10.9, one answer per update in the order they arrived
+        assert!(
+            matches!(first_answer, Some(messages::Message::RequestOk(_))),
+            "{first_answer:?}"
+        );
+        let Some(messages::Message::RequestError(error)) = second_answer else {
+            panic!("expected REQUEST_ERROR, got {second_answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::NamespacePrefixOverlap);
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_namespace_prefix_update_gets_request_error_timeout() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update-timeout", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let handler =
+            requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
+        tokio::time::pause();
+
+        // Act
+        let answer = receiver.receive().await.unwrap();
+        let end = receiver.receive().await.unwrap();
+        tokio::time::resume();
+        let event = next_event(&server).await;
+        let late = handler.ok().await;
+
+        // Assert: §10.6 TIMEOUT; §10.9.1 the failed update closes the stream
+        let Some(messages::Message::RequestError(error)) = answer else {
+            panic!("expected REQUEST_ERROR, got {answer:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::Timeout);
+        assert!(end.is_none(), "{end:?}");
+        let SessionEvent::UnsubscribeNamespace(unsubscribed) = event else {
+            panic!("expected UnsubscribeNamespace, got {event:?}");
+        };
+        assert_eq!(unsubscribed.track_namespace_prefix(), "live");
+        assert_eq!(late, PrefixUpdateAnswer::Failed);
     }
 
     #[tokio::test]

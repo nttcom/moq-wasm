@@ -290,11 +290,18 @@ call through the adapter; a draft never gets a task of its own (see
       the stream's prefix and answers REQUEST_OK under the channel's
       `namespace_writes` lock, which every NAMESPACE / NAMESPACE_DONE also
       takes, so later suffixes are relative to the new prefix; namespaces
-      the new prefix leaves out are forgotten. Refusing, or dropping the
-      handler (NOT_SUPPORTED), answers REQUEST_ERROR, ends the stream with
-      FIN (§10.9.1) and raises `UnsubscribeNamespace` for the old prefix.
-      Without TRACK_NAMESPACE_PREFIX a namespace stream's REQUEST_UPDATE gets
-      an empty REQUEST_OK.
+      the new prefix leaves out are forgotten. Refusing, dropping the
+      handler (NOT_SUPPORTED) or leaving it unanswered for the control
+      message timeout (TIMEOUT) answers REQUEST_ERROR, ends the stream with
+      FIN (§10.9.1) and raises `UnsubscribeNamespace` for the old prefix;
+      a later `ok` returns `PrefixUpdateAnswer::Failed`, as it does when the
+      subscription ended before the answer. These answers share the reading
+      model of a subscription's updates (`UpdateAnswerSlot` and the stream's
+      ordered answer queue): the stream goes on being read, a later update
+      moving on from the prefix an earlier pending one asks for, and the
+      answers go out in arrival order. Without TRACK_NAMESPACE_PREFIX a
+      namespace stream's REQUEST_UPDATE gets an empty REQUEST_OK in its
+      turn.
 - A rule that differs per draft but applies to state only the application
   holds is asked through the handler, so the version stays inside moqt:
   `FetchHandler::check_joining` tells whether a Joining FETCH may join a
