@@ -10,7 +10,7 @@ use crate::modules::{
             known_ranges::{KnownRanges, following},
             track_cache::TrackCache,
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::coordinator::{EgressCommand, EgressFetchRequest, FetchWait},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
@@ -32,8 +32,8 @@ pub(crate) struct FillBudget {
     /// FETCH's arrival. The objects not filled by then are reported as
     /// unknown.
     requested: Option<(Duration, Instant)>,
-    /// MOQT_FETCH_FILL_TIMEOUT_SECS: without FILL_TIMEOUT, a fill that takes
-    /// longer fails.
+    /// MOQT_FETCH_FILL_TIMEOUT_SECS: without FILL_TIMEOUT, the most a fill
+    /// waits before the objects not filled are reported as unknown.
     relay_limit: Duration,
 }
 
@@ -52,6 +52,16 @@ impl FillBudget {
     /// wait).
     pub(crate) fn forbids_waiting(&self) -> bool {
         matches!(self.requested, Some((Duration::ZERO, _)))
+    }
+
+    /// How long a FETCH served from the cache waits for the objects live
+    /// ingest has yet to deliver.
+    pub(crate) fn delivery_wait(&self) -> FetchWait {
+        match self.requested {
+            Some((Duration::ZERO, _)) => FetchWait::Never,
+            Some((_, deadline)) => FetchWait::Until(deadline),
+            None => FetchWait::Unlimited,
+        }
     }
 
     /// When a fill starting now has to end.
@@ -164,7 +174,7 @@ impl FetchIngest {
 
     /// Hands the range to egress once the fill ended: as filled when the
     /// response covered all of it, or reporting the rest as unknown when it
-    /// marked objects unknown or the FETCH's FILL_TIMEOUT ran out.
+    /// marked objects unknown or the fill budget ran out.
     async fn run_inner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
@@ -183,7 +193,7 @@ impl FetchIngest {
                 result?;
                 Some(KnownRanges::exclusive_end(start.egress_start.end_location))
             }
-            Err(_) if start.fill_budget.requested.is_some() => {
+            Err(_) => {
                 tracing::info!(
                     request_id = start.egress_start.request_id,
                     "fill timeout ran out; serving the fetch with what arrived"
@@ -196,10 +206,6 @@ impl FetchIngest {
                 .await;
                 None
             }
-            Err(_) => anyhow::bail!(
-                "fetch ingest timed out after {:?}",
-                start.fill_budget.relay_limit
-            ),
         };
         if cache.eviction_generation() != start_eviction_generation {
             tracing::warn!(
@@ -209,7 +215,9 @@ impl FetchIngest {
             anyhow::bail!("fetch fill crossed cache eviction");
         }
         let mut egress_start = start.egress_start;
-        egress_start.report_unknown = end.is_none() || progress.unknown_seen;
+        if end.is_none() || progress.unknown_seen {
+            egress_start.wait = FetchWait::Never;
+        }
         for known in progress.into_known(end) {
             cache.insert_known_until(known.start, known.end);
         }
@@ -400,7 +408,7 @@ mod tests {
                 start_location: location(0, 0),
                 end_location: location(0, 1),
                 group_order: moqt::object::GroupOrder::Ascending,
-                report_unknown: false,
+                wait: FetchWait::Unlimited,
             },
             fill_budget: FillBudget::new(None, DEFAULT_FETCH_FILL_TIMEOUT),
         };
@@ -544,7 +552,7 @@ mod tests {
                 start_location: location(0, 0),
                 end_location: location(0, 3),
                 group_order: moqt::object::GroupOrder::Ascending,
-                report_unknown: false,
+                wait: FetchWait::Unlimited,
             },
             fill_budget,
         };
@@ -587,7 +595,7 @@ mod tests {
         assert!(
             ingested
                 .handed_over()
-                .is_some_and(|request| !request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Unlimited)
         );
     }
 
@@ -619,7 +627,7 @@ mod tests {
         assert!(
             ingested
                 .handed_over()
-                .is_some_and(|request| request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Never)
         );
         assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 1)), Ok((0, 2))]);
     }
@@ -638,7 +646,7 @@ mod tests {
         assert!(
             ingested
                 .handed_over()
-                .is_some_and(|request| request.report_unknown)
+                .is_some_and(|request| request.wait == FetchWait::Never)
         );
         assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 2))]);
         assert_eq!(
@@ -652,18 +660,32 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_fill_without_fill_timeout_fails_when_the_relay_limit_runs_out() {
-        // Act
+    async fn a_fill_without_fill_timeout_serves_what_arrived_when_the_relay_limit_runs_out() {
+        // Act: object {0,0} arrives, then the upstream stalls past the relay limit
         let mut ingested = ingest(
             vec![fetched(0)],
             FillBudget::new(None, Duration::from_millis(50)),
         )
         .await;
 
-        // Assert: draft-18 §10.2.5 leaves an absent Fill Timeout to the relay,
-        // which fails the fill as it does on draft-14
-        assert!(ingested.result.is_err());
-        assert!(ingested.handed_over().is_none());
+        // Assert: draft-18 §10.2.5, without a Fill Timeout the relay waits its
+        // own duration before reporting the rest as unknown; a draft-14 sender
+        // resets there instead
+        assert!(ingested.result.is_ok(), "{:?}", ingested.result);
+        assert!(
+            ingested
+                .handed_over()
+                .is_some_and(|request| request.wait == FetchWait::Never)
+        );
+        assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 2))]);
+        assert_eq!(
+            *ingested
+                .recorded
+                .fetch_cancelled_request_ids
+                .lock()
+                .unwrap(),
+            vec![7]
+        );
     }
 
     #[test]

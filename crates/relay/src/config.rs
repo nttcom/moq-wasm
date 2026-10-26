@@ -161,8 +161,9 @@ pub struct RelayConfig {
     pub auth: AuthConfig,
     pub cache: CacheConfig,
     pub disk_cache: Option<DiskCacheConfig>,
-    /// How long the relay waits for an upstream FETCH to complete before it
-    /// resets the downstream FETCH.
+    /// The most the relay waits for an upstream FETCH to complete before it
+    /// serves the downstream FETCH with what arrived, the rest reported as
+    /// unknown.
     pub fetch_fill_timeout: Duration,
 }
 
