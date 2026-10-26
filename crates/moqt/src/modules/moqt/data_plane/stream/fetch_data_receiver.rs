@@ -152,6 +152,13 @@ impl FetchDataReceiver {
         self.reader.version().fetch_carries_forwarding_preference()
     }
 
+    /// Whether a duplicate object whose status differs from an earlier copy
+    /// makes the track malformed on this session: draft-14 §8.1 compares the
+    /// status, draft-18 §9.1 does not.
+    pub fn compares_duplicate_status(&self) -> bool {
+        self.reader.version().compares_duplicate_status()
+    }
+
     /// The next object or range of the response. An object that repeats one
     /// the session received before with other properties fails with a
     /// `MalformedTrackError` and is not returned.
@@ -228,8 +235,8 @@ mod tests {
         modules::{
             moqt::control_plane::error_codes::DataStreamResetCode,
             test_support::{
-                HANDSHAKE_TIMEOUT, fetched_stream, location, object_with_extensions,
-                read_fetch_objects,
+                HANDSHAKE_TIMEOUT, fetched_draft18_stream, fetched_stream, location,
+                object_with_extensions, read_fetch_objects,
             },
         },
         object::{ExtensionHeaders, Object, ObjectStatus, ReadError, StreamReceiveError},
@@ -321,5 +328,22 @@ mod tests {
             matches!(&result, Err(error) if error.to_string().contains(&reset_error)),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetch_compares_the_status_of_duplicates() {
+        // Act
+        let stream = fetched_stream("fetch-draft14-duplicate-status").await;
+        // Assert: draft-14 §8.1
+        assert!(stream.receiver.compares_duplicate_status());
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_does_not_compare_the_status_of_duplicates() {
+        // Act
+        let stream = fetched_draft18_stream("fetch-draft18-duplicate-status").await;
+        // Assert: draft-18 §9.1 compares only the forwarding preference,
+        // subgroup, priority and payload
+        assert!(!stream.receiver.compares_duplicate_status());
     }
 }
