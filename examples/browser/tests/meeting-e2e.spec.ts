@@ -487,6 +487,67 @@ test('a viewer decodes a shared tab at the aspect ratio it was captured at', asy
   }
 })
 
+test('a viewer draws a still screen share from the one keyframe it is sent', async ({ browser }) => {
+  // Arrange: without a camera alice's tab does not repaint, so the capture sends a frame only when the encoder starts
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-still-screen-share-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page, { camera: false })
+    await startScreenShare(alice.page)
+
+    // Act
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await expectTrackStatus(bob.page.page, 'screenshare', 'alice', 'Subscribed', 60_000)
+
+    // Assert
+    const shared = getMemberScreenShareVideo(bob.page.page, 'alice')
+    await expect
+      .poll(async () => shared.evaluate((el) => (el as HTMLVideoElement).readyState), { timeout: 5_000 })
+      .toBeGreaterThanOrEqual(2)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
+test('a viewer who joins a still screen share later draws it from the relay cache', async ({ browser }) => {
+  // Arrange: relay a already receives alice's still share for bob, so carol's SUBSCRIBE does not reach alice
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-still-screen-share-join-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page, { camera: false })
+    await startScreenShare(alice.page)
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await expectTrackStatus(bob.page.page, 'screenshare', 'alice', 'Subscribed', 60_000)
+    await expect
+      .poll(async () =>
+        getMemberScreenShareVideo(bob.page.page, 'alice').evaluate((el) => (el as HTMLVideoElement).readyState)
+      )
+      .toBeGreaterThanOrEqual(2)
+
+    // Act
+    await joinRoom(carol.page, roomName, 'carol', 'a')
+    await expectTrackStatus(carol.page.page, 'screenshare', 'alice', 'Subscribed', 60_000)
+
+    // Assert: the next keyframe of a still screen would never come
+    const shared = getMemberScreenShareVideo(carol.page.page, 'alice')
+    await expect
+      .poll(async () => shared.evaluate((el) => (el as HTMLVideoElement).readyState), { timeout: 2_000 })
+      .toBeGreaterThanOrEqual(2)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
+  }
+})
+
 test('a viewer shows the pub to sub delay of a member who only has the microphone on', async ({ browser }) => {
   // Arrange
   const alice = await arrangeMeetingClient(browser)

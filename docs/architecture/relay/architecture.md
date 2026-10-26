@@ -624,7 +624,8 @@ per-request authorization gate under "Event pipeline".
   signalled or dropped.
 - Readers convert every object moqt hands them (`moqt::object::Object`, ids
   already resolved) into a canonical `CachedObject` and insert it into
-  `TrackCache`. A subgroup header (`SubgroupStart`) is not cached: the reader
+  `TrackCache`; an object whose payload arrives in pieces is published as an
+  arriving object first (see "Arriving objects" under Cache). A subgroup header (`SubgroupStart`) is not cached: the reader
   keeps its group id, subgroup id and priority as the per-stream context, opens the
   subgroup in the cache (`open_subgroup`, returning an `OpenSubgroupGuard`),
   which also announces the `SubgroupKey` to egress. Only a FIN or an End of Group / End of Track
@@ -703,6 +704,21 @@ per-request authorization gate under "Event pipeline".
   semantics). One `Notify` per track wakes every waiter on insert, open and
   close; waiters re-check the ledger under a single read guard, so there is no
   check-order race between "object present" and "subgroup closed".
+- Arriving objects (`track_cache/partial_object.rs`): a subgroup stream reader
+  gets each object whose payload had not arrived with it as an object start
+  and payload pieces (`moqt::object::SubgroupPartReceiver`). The reader calls
+  `OpenSubgroupGuard::begin_object`, which publishes a `PartialObject` in the
+  ledger's `partial_objects` unless `objects` holds that location or another
+  stream already publishes it, appends each piece, and on the last one inserts
+  the assembled object like any other (§8.1 checks included) before
+  `finish`ing the writer. A writer dropped earlier (reset, stop, decode error)
+  marks the object aborted. Either way it leaves `partial_objects`, so FETCH,
+  eviction, the disk cache and the largest location only ever see complete
+  objects. `next_subgroup_object_or_wait` returns `NextObject::Partial` when
+  the next object of the subgroup is arriving and no cached object precedes
+  it. A partial object wakes the track's `Notify` only when it is published
+  and withdrawn; its pieces go through its own `watch` channel, so only the
+  egress streams forwarding it wake per piece.
 - Subgroup-opened channel: each `TrackCache` owns a
   `broadcast::Sender<SubgroupRun>` (capacity 256; key, generation, first object
   id). `open_subgroup` sends the run
@@ -882,7 +898,12 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   properties (explicit subgroup id, priority; extensions always declared
   present so no object can lose its extension headers), and streams objects
   until `next_subgroup_object_or_wait` reports the subgroup finished (FIN
-  downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). Each task
+  downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). An object
+  still arriving is forwarded as it arrives: its start, then each piece the
+  upstream delivered (cut-through), so the next hop does not wait for the
+  last byte to reach the relay. When the upstream stream ends inside that
+  payload, the downstream stream is reset with INTERNAL_ERROR, even if another
+  publisher's stream later completes the object. Each task
   also watches the registration's `DeliveryControl`: when a SUBSCRIBE_UPDATE
   moves the range past its group (End Group at or below it, Start Location
   beyond it), the open stream is reset with CANCELLED (draft-14 §10.4.3). Past
