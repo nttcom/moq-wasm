@@ -35,6 +35,8 @@ pub(crate) struct GroupSendTask {
     pub(crate) key: SubgroupKey,
     pub(crate) generation: usize,
     pub(crate) object_id: u64,
+    /// `DeliveryControl::resumes` when the task was scheduled.
+    pub(crate) resumes: u64,
 }
 
 struct StartLocationProgress {
@@ -113,6 +115,7 @@ impl EgressScheduler {
                 .await;
         }
         let mut progress = StartLocationProgress::new(start);
+        let mut restarts = (control.restarts, control.resumes);
         let _ = ready_sender.send(Ok(()));
         if self.range_ended(&progress, &control) {
             return SchedulerExit::EndGroupReached;
@@ -135,7 +138,7 @@ impl EgressScheduler {
                         }
                         progress.raise(control.start);
                         if let Some(object_id) = progress.accept(group_id) {
-                            let _ = self.schedule(run, object_id, &mut scheduled).await;
+                            let _ = self.schedule(run, object_id, &control, &mut scheduled).await;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -165,7 +168,27 @@ impl EgressScheduler {
                         continue;
                     }
                     let control = *delivery_control_receiver.borrow_and_update();
-                    progress.raise(control.start);
+                    if (control.restarts, control.resumes) != restarts {
+                        // A Start Location moved back (draft-18 §10.9.1) and
+                        // Forward turned on are served like a new
+                        // subscription, from just past the Largest Object at
+                        // the update. A subgroup still open delivers the
+                        // objects after it on a new stream (draft-18
+                        // §11.4.3).
+                        restarts = (control.restarts, control.resumes);
+                        let start =
+                            resolve_start_location(control.start, &control.largest_at_update);
+                        progress = StartLocationProgress::new(start);
+                        // A subgroup already scheduled continues in its own
+                        // task (see `GroupSender`); this schedules those that
+                        // opened meanwhile or lay outside the range.
+                        if control.forward {
+                            self.schedule_cached_objects(&start, &control, &mut scheduled)
+                                .await;
+                        }
+                    } else {
+                        progress.raise(control.start);
+                    }
                     if self.range_ended(&progress, &control) {
                         return SchedulerExit::EndGroupReached;
                     }
@@ -223,25 +246,41 @@ impl EgressScheduler {
         control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
+        for (run, object_id) in self.cache_scan(start, control) {
+            let _ = self.schedule(run, object_id, control, scheduled).await;
+        }
+    }
+
+    /// The subgroup runs `schedule_cached_objects` schedules, each with the
+    /// object id its task starts at, in the subscription's Group Order.
+    fn cache_scan(
+        &self,
+        start: &moqt::object::Location,
+        control: &DeliveryControl,
+    ) -> Vec<(SubgroupRun, u64)> {
         let mut group_ids = self.cache.groups_at_or_after(start.group_id);
         group_ids.retain(|&group_id| !control.is_past_end(group_id));
         // §7.1: Descending sends groups with higher group IDs first.
         if matches!(self.group_order, GroupOrder::Descending) {
             group_ids.reverse();
         }
-        for group_id in group_ids {
-            let object_id = if group_id == start.group_id {
-                start.object_id
-            } else {
-                0
-            };
-            // Skip a closed subgroup with nothing at or after the start, such as one
-            // only a FETCH filled. Its task would end at once, and its live stream's
-            // open event would then be dropped as a duplicate.
-            for run in self.cache.subgroup_runs_in_group(group_id, object_id) {
-                let _ = self.schedule(run, object_id, scheduled).await;
-            }
-        }
+        group_ids
+            .into_iter()
+            .flat_map(|group_id| {
+                let object_id = if group_id == start.group_id {
+                    start.object_id
+                } else {
+                    0
+                };
+                // Skip a closed subgroup with nothing at or after the start, such as one
+                // only a FETCH filled. Its task would end at once, and its live stream's
+                // open event would then be dropped as a duplicate.
+                self.cache
+                    .subgroup_runs_in_group(group_id, object_id)
+                    .into_iter()
+                    .map(move |run| (run, object_id))
+            })
+            .collect()
     }
 
     /// A reopened run resumes from where the key's previous task started, so the
@@ -250,6 +289,7 @@ impl EgressScheduler {
         &self,
         run: SubgroupRun,
         object_id: u64,
+        control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) -> Option<()> {
         let object_id = match scheduled.get(&run.key) {
@@ -261,6 +301,7 @@ impl EgressScheduler {
             key: run.key,
             generation: run.generation,
             object_id: object_id.max(run.first_object_id),
+            resumes: control.resumes,
         };
         scheduled.insert(run.key, task);
         self.sender.send(task).await.ok()?;
@@ -374,7 +415,8 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 1
+                object_id: 1,
+                resumes: 0
             }
         );
     }
@@ -401,7 +443,8 @@ mod tests {
             Some(GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 1
+                object_id: 1,
+                resumes: 0
             })
         );
     }
@@ -461,7 +504,8 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(2),
-                object_id: 1
+                object_id: 1,
+                resumes: 0
             }
         );
         assert!(
@@ -511,7 +555,8 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(5),
-                object_id: 0
+                object_id: 0,
+                resumes: 0
             }
         );
     }
@@ -638,7 +683,8 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(7),
-                object_id: 0
+                object_id: 0,
+                resumes: 0
             }
         );
     }
@@ -748,7 +794,8 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 0
+                object_id: 0,
+                resumes: 0
             }
         );
     }
@@ -772,7 +819,8 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 1
+                object_id: 1,
+                resumes: 0
             }
         );
     }

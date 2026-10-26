@@ -111,7 +111,7 @@ impl Session for moqt::Session {
                 MoqtSessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler)
             }
             moqt::SessionEvent::SubscribeUpdate(subscribe_update_handler) => {
-                MoqtSessionEvent::SubscribeUpdate(subscribe_update_handler)
+                MoqtSessionEvent::SubscribeUpdate(Box::new(subscribe_update_handler))
             }
             moqt::SessionEvent::TrackStatus(track_status_handler) => {
                 MoqtSessionEvent::TrackStatus(Box::new(track_status_handler))

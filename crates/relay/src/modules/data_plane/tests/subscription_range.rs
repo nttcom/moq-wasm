@@ -131,7 +131,7 @@ async fn update_moving_start_past_an_open_group_resets_its_stream() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn widening_update_leaves_the_end_group_in_force() {
+async fn an_update_moving_the_end_out_keeps_delivering_past_the_old_end() {
     // Arrange
     let harness = RelayHarness::new();
     let filter_type = FilterType::AbsoluteRange {
@@ -140,21 +140,95 @@ async fn widening_update_leaves_the_end_group_in_force() {
     };
     let mut egress = harness.start_egress_with_filter(filter_type, None).await;
 
-    // Act
+    // Act: draft-18 §10.9.1 lets the update widen the range
     egress.apply_subscribe_update(end_group_update(0));
-    let past_end = harness.open_upstream_stream();
-    past_end.header(2);
-    past_end.object(0);
-    past_end.fin();
+    let past_old_end = harness.open_upstream_stream();
+    past_old_end.header(2);
+    past_old_end.object(0);
+    past_old_end.fin();
 
     // Assert
-    let publish_done = egress.expect_publish_done().await;
-    assert_eq!(publish_done.status_code, PublishDoneCode::SubscriptionEnded);
-    assert_eq!(
-        publish_done.stream_count, 0,
-        "group 2 lies past the End Group"
-    );
-    egress.assert_nothing_more_sent();
+    let objects = receive_objects_until_close(&mut egress).await;
+    assert!(matches!(
+        objects.first(),
+        Some(DataObject::SubgroupHeader(header)) if header.group_id == 2
+    ));
+    egress.assert_no_publish_done();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_update_moving_the_start_back_delivers_from_the_new_start() {
+    // Arrange: group 4 opens below the subscription's start
+    let harness = RelayHarness::new();
+    let filter_type = FilterType::AbsoluteStart {
+        location: location(5, 0),
+    };
+    let mut egress = harness.start_egress_with_filter(filter_type, None).await;
+    let below_start = harness.open_upstream_stream();
+    below_start.header(4);
+    below_start.object(0);
+    harness.wait_largest_location(location(4, 0)).await;
+    egress.assert_nothing_sent_within(NOTHING_SENT_WINDOW).await;
+
+    // Act: draft-18 §10.9.1, served like a new SUBSCRIBE with that start
+    let earlier_start = FilterType::AbsoluteStart {
+        location: location(4, 0),
+    };
+    egress.apply_subscribe_update(DeliveryControl::new(
+        true,
+        &earlier_start,
+        Some(location(4, 0)),
+    ));
+    below_start.object(1);
+    below_start.fin();
+
+    // Assert: objects after the Largest Object at the update; FETCH serves the rest
+    let objects = receive_objects_until_close(&mut egress).await;
+    assert!(matches!(
+        objects.first(),
+        Some(DataObject::SubgroupHeader(header)) if header.group_id == 4
+    ));
+    assert_eq!(downstream_object_ids(&objects), vec![1]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_moved_back_over_a_group_an_update_left_out_resumes_it_on_a_new_stream() {
+    // Arrange: group 3 is sent until an update moves the start past it
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(3);
+    upstream_stream.object(0);
+    upstream_stream.object(1);
+    egress.expect_stream_priority().await;
+    egress.apply_subscribe_update(DeliveryControl::from_subscribe_update(
+        true,
+        location(4, 0),
+        0,
+    ));
+    let (sent_before, end) = receive_objects_until_end(&mut egress).await;
+    assert!(matches!(end, Sent::Reset(DataStreamResetCode::Cancelled)));
+
+    // Act: draft-18 §10.9.1
+    let back_to_three = FilterType::AbsoluteStart {
+        location: location(3, 0),
+    };
+    egress.apply_subscribe_update(DeliveryControl::new(
+        true,
+        &back_to_three,
+        Some(location(3, 1)),
+    ));
+    upstream_stream.object(2);
+    upstream_stream.fin();
+
+    // Assert: the new stream starts after the Largest Object, so nothing is sent twice
+    let sent_after = receive_objects_until_close(&mut egress).await;
+    let mut object_ids = downstream_object_ids(&sent_before);
+    object_ids.extend(downstream_object_ids(&sent_after));
+    assert_eq!(*object_ids.last().unwrap(), 2);
+    let mut deduplicated = object_ids.clone();
+    deduplicated.dedup();
+    assert_eq!(object_ids, deduplicated);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

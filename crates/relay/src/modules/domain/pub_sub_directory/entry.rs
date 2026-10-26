@@ -107,6 +107,14 @@ impl PublishDoneReason {
             error_reason: "malformed track".to_string(),
         }
     }
+
+    /// draft-18 §10.9.1: a REQUEST_UPDATE that failed ends its subscription.
+    pub(crate) fn update_failed() -> Self {
+        Self {
+            status_code: PublishDoneCode::UpdateFailed,
+            error_reason: "subscription update failed".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
