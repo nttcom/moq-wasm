@@ -24,6 +24,7 @@ use crate::{
         domains::{
             connection::{Connection, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
+            namespace_tuple,
             session_context::{CarriedSubscription, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
@@ -141,7 +142,7 @@ impl Subscriber {
         authorization_tokens: Vec<AuthorizationToken>,
     ) -> Result<TrackStatusOk, RequestFailure> {
         let connection = self.session.connection();
-        let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
+        let vec_namespace = namespace_tuple(&track_namespace);
         let request_id = connection.control.next_request_id();
         let track_status = Subscribe {
             request_id,
@@ -204,7 +205,7 @@ impl Subscriber {
             subscriber_priority: option.subscriber_priority,
         };
         let fetch_params = FetchParams::Standalone {
-            track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
+            track_namespace: namespace_tuple(&track_namespace),
             track_name,
             start_location,
             end_location,
@@ -454,7 +455,7 @@ impl Subscriber {
         if let Some(carried) = self.session.lock_carried().await.as_mut() {
             carried.namespaces.retain(|carried| *carried != namespace);
         }
-        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+        let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
             connection
                 .control
@@ -594,7 +595,7 @@ pub(crate) async fn send_subscribe_namespace(
     connection: &Arc<Connection>,
     namespace: String,
 ) -> Result<(), RequestFailure> {
-    let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
+    let vec_namespace = namespace_tuple(&namespace);
     let request_id = connection.control.next_request_id();
     let pending = connection
         .send_request(OutgoingRequest::SubscribeNamespace(
@@ -638,7 +639,7 @@ pub(crate) async fn send_subscribe(
     let request_id = connection.control.next_request_id();
     let subscribe = Subscribe {
         request_id,
-        track_namespace: track_namespace.split('/').map(|s| s.to_string()).collect(),
+        track_namespace: namespace_tuple(track_namespace),
         track_name: track_name.to_string(),
         subscriber_priority: option.subscriber_priority,
         group_order: option.group_order,
