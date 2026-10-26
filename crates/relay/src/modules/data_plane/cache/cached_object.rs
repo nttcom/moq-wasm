@@ -131,15 +131,7 @@ impl CachedObject {
     }
 
     pub(crate) fn subgroup_key(&self) -> SubgroupKey {
-        match self.object.forwarding {
-            ForwardingPreference::Subgroup { subgroup_id } => SubgroupKey::Stream {
-                group_id: self.object.location.group_id,
-                subgroup_id,
-            },
-            ForwardingPreference::Datagram => SubgroupKey::Datagram {
-                group_id: self.object.location.group_id,
-            },
-        }
+        SubgroupKey::of(&self.object)
     }
 
     /// draft-14 §8.1: a duplicate whose Forwarding Preference, Subgroup ID,
