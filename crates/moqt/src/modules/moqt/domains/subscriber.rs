@@ -98,7 +98,7 @@ impl Subscriber {
                 ));
             }
         };
-        tracing::info!(
+        tracing::debug!(
             track_alias = message.track_alias,
             "subscriber registered incoming object receiver after SUBSCRIBE_OK"
         );
@@ -168,11 +168,16 @@ impl Subscriber {
                         "response for another request ID",
                     ));
                 }
-                tracing::info!("Track status ok");
+                tracing::info!(request_id, "TRACK_STATUS_OK received");
                 Ok(message)
             }
             ResponseMessage::TrackStatusError(request_id, error_code, reason_phrase) => {
-                tracing::info!("Track status error");
+                tracing::info!(
+                    request_id,
+                    ?error_code,
+                    %reason_phrase,
+                    "TRACK_STATUS_ERROR received"
+                );
                 Err(RequestFailure::Rejected {
                     request_id,
                     code: error_code,
@@ -604,7 +609,7 @@ pub(crate) async fn send_subscribe_namespace(
             SubscribeNamespace::new(request_id, vec_namespace, vec![]),
         ))
         .await?;
-    tracing::info!("Subscribe namespace");
+    tracing::debug!(request_id, track_namespace_prefix = %namespace, "SUBSCRIBE_NAMESPACE sent");
     let response = pending.response().await?;
     match response {
         ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
@@ -613,12 +618,22 @@ pub(crate) async fn send_subscribe_namespace(
                     "response for another request ID",
                 ))
             } else {
-                tracing::info!("Subscribe namespace ok");
+                tracing::info!(
+                    request_id,
+                    track_namespace_prefix = %namespace,
+                    "SUBSCRIBE_NAMESPACE_OK received"
+                );
                 Ok(())
             }
         }
         ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
-            tracing::info!("Subscribe namespace error");
+            tracing::info!(
+                request_id,
+                track_namespace_prefix = %namespace,
+                ?error_code,
+                %reason_phrase,
+                "SUBSCRIBE_NAMESPACE_ERROR received"
+            );
             Err(RequestFailure::Rejected {
                 request_id,
                 code: error_code,
@@ -658,14 +673,27 @@ pub(crate) async fn send_subscribe(
         .await?;
     match response {
         ResponseMessage::SubscribeOk(message) if message.request_id == request_id => {
-            tracing::info!("Subscribe ok");
+            tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                track_alias = message.track_alias,
+                "SUBSCRIBE_OK received"
+            );
             Ok(message)
         }
         ResponseMessage::SubscribeOk(_) => Err(RequestFailure::ProtocolViolation(
             "response for another request ID",
         )),
         ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
-            tracing::info!("Subscribe error");
+            tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "SUBSCRIBE_ERROR received"
+            );
             Err(RequestFailure::Rejected {
                 request_id,
                 code: error_code,

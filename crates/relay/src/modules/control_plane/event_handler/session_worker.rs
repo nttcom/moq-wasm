@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tracing::{Instrument, Span};
 
 use super::{WorkerDeps, session_cleanup::cleanup_session, session_event_span::session_event_span};
-use crate::logging::link_span;
+use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
     auth::{
         anonymous_root::{scope_anonymous_root_prefix, scope_anonymous_root_subscription},
@@ -116,7 +116,8 @@ impl SessionWorker {
                     parent: None,
                     "relay.malformed_track_detected",
                     session_id = %session_id,
-                    track_key = %track_key,
+                    relay_hostname = relay_hostname(),
+                    track_namespace = %track_key.track_namespace, track_name = %track_key.track_name,
                 );
                 link_span(&event_span, &self.session_span);
                 MalformedTrackCleanup {}
@@ -145,6 +146,7 @@ impl SessionWorker {
                     parent: None,
                     "relay.downstream_subscription_ended",
                     session_id = %session_id,
+                    relay_hostname = relay_hostname(),
                     request_id,
                 );
                 link_span(&event_span, &self.session_span);
@@ -185,10 +187,7 @@ impl SessionWorker {
             .as_ref()
             .map(|token| token.app_id.as_str());
         let event_span = session_event_span(session_id, &session_span, app_id, &event);
-        event_span.in_scope(|| match event {
-            MoqtSessionEvent::ProtocolViolation() => tracing::error!("Received session event"),
-            _ => tracing::info!("Received session event"),
-        });
+        event_span.in_scope(|| tracing::debug!("Received session event"));
         if let Err(denied) = authorize_request(self.verified_token.as_deref(), &event) {
             let reject_span = tracing::info_span!(
                 parent: &event_span,

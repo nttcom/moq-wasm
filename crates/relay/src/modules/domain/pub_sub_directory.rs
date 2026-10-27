@@ -260,7 +260,7 @@ impl InMemoryLocalPubSubDirectory {
         level = "debug",
         name = "relay.local_pub_sub_directory.register_publish_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace, peer = ?peer)
+        fields(session_id = %session_id, track_namespace = %track_namespace, session_peer = peer.kind())
     )]
     pub(crate) fn register_publish_namespace(
         &self,
@@ -349,7 +349,7 @@ impl InMemoryLocalPubSubDirectory {
         level = "debug",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, peer = ?peer)
+        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, session_peer = peer.kind())
     )]
     pub(crate) fn register_subscribe_namespace(
         &self,
@@ -361,10 +361,10 @@ impl InMemoryLocalPubSubDirectory {
             .subscriber_namespaces
             .entry(track_namespace_prefix.clone())
             .or_insert_with(|| {
-                tracing::info!(
+                tracing::debug!(
                     session_id = %session_id,
                     track_namespace_prefix = %track_namespace_prefix,
-                    "New namespace prefix is subscribed."
+                    "namespace prefix subscribed"
                 );
                 DashMap::new()
             });

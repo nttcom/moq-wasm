@@ -60,8 +60,7 @@ impl IngressCoordinator {
                         match command {
                         IngressCommand::Start(command) => {
                         let track_key = command.track_key.clone();
-                        tracing::info!(
-                            track_key = %track_key,
+                        tracing::debug!(
                             subscriber_session_id = %command.subscriber_session_id,
                             publisher_session_id = %command.publisher_session_id,
                             track_alias = command.subscription.track_alias(),
@@ -72,7 +71,7 @@ impl IngressCoordinator {
                         let (subscriber, publisher_session_span, persist) = {
                             let session_repo = session_repo.lock().await;
                             let Some(subscriber) = session_repo.subscriber(command.publisher_session_id) else {
-                                tracing::info!(%track_key, "publisher session not found for subscription");
+                                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "publisher session not found for subscription");
                                 continue;
                             };
                             let publisher_session_span = session_repo
@@ -83,7 +82,7 @@ impl IngressCoordinator {
                             let persist = session_repo.is_client_session(command.publisher_session_id);
                             (subscriber, publisher_session_span, persist)
                         };
-                        tracing::info!(%track_key, "upstream subscriber found; spawning data receiver task");
+                        tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "upstream subscriber found; spawning data receiver task");
                         let ingest_tx = ingest_tx.clone();
                         let publisher_session_id = command.publisher_session_id;
                         let create_key = (track_key.clone(), publisher_session_id);
@@ -99,7 +98,7 @@ impl IngressCoordinator {
                             "relay.upstream.ingress",
                             subscriber_session_id = command.subscriber_session_id,
                             publisher_session_id = command.publisher_session_id,
-                            track_key = %track_key,
+
                             track_alias = command.subscription.track_alias(),
                             track_namespace = %track_key.track_namespace,
                             track_name = %track_key.track_name,
@@ -108,19 +107,19 @@ impl IngressCoordinator {
                         join_set.spawn(async move {
                             let subscription = command.subscription;
                             let mut subscriber = subscriber;
-                            tracing::info!(%track_key, "creating upstream data receiver");
+                            tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "creating upstream data receiver");
                             let receiver_result = tokio::select! {
                                 _ = create_stop_receiver.changed() => {
-                                    tracing::info!(%track_key, "upstream ingress stopped");
+                                    tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "upstream ingress stopped before it started");
                                     return (track_key, publisher_session_id, create_id);
                                 }
                                 receiver = subscriber.create_data_receiver(&subscription) => receiver,
                             };
                             let Ok(receiver) = receiver_result else {
-                                tracing::info!(%track_key, "failed to start upstream ingress");
+                                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to start upstream ingress");
                                 return (track_key, publisher_session_id, create_id);
                             };
-                            tracing::info!(%track_key, "upstream data receiver created");
+                            tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "track ingress started");
                             let source = match receiver {
                                 DataReceiver::Stream(factory) => {
                                     let dataplane_track_span = tracing::info_span!(
@@ -128,7 +127,7 @@ impl IngressCoordinator {
                                         "relay.dataplane.ingress.track",
                                         subscriber_session_id = command.subscriber_session_id,
                                         publisher_session_id = command.publisher_session_id,
-                                        track_key = %track_key,
+
                                         track_alias = subscription.track_alias(),
                                         track_namespace = %track_key.track_namespace,
                                         track_name = %track_key.track_name,
@@ -152,9 +151,9 @@ impl IngressCoordinator {
                                 .await
                                 .is_ok()
                             {
-                                tracing::info!(%track_key, "{kind} ingress start command sent");
+                                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, kind, "ingress start command sent");
                             } else {
-                                tracing::info!(%track_key, "failed to send {kind} ingress start command");
+                                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, kind, "failed to send the ingress start command");
                             }
                             (track_key, publisher_session_id, create_id)
                         }.instrument(create_receiver_span));
@@ -162,7 +161,7 @@ impl IngressCoordinator {
                         IngressCommand::StopTrack { track_key, publisher_session_id } => {
                             if let Some((_, stop_sender)) = create_stop_senders.remove(&(track_key.clone(), publisher_session_id)) {
                                 let _ = stop_sender.send(true);
-                                tracing::info!(%track_key, "upstream ingress stop requested");
+                                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "upstream ingress stop requested");
                             }
                             if ingest_tx
                                 .send(IngestCommand::Stop {
@@ -172,7 +171,7 @@ impl IngressCoordinator {
                                 .await
                                 .is_err()
                             {
-                                tracing::debug!(%track_key, "failed to send ingress stop request");
+                                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "failed to send ingress stop request");
                             }
                         }
                         }
@@ -184,7 +183,7 @@ impl IngressCoordinator {
                                 if create_stop_senders.get(&create_key).is_some_and(|(id, _)| *id == create_id) {
                                     create_stop_senders.remove(&create_key);
                                 }
-                                tracing::debug!(%track_key, "upstream ingress task ended");
+                                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "upstream ingress task ended");
                             }
                             Err(error) => {
                                 tracing::debug!(?error, "a task in ingress coordinator failed");

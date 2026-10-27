@@ -43,7 +43,7 @@ impl Handshake {
             event_sender,
             false,
         );
-        tracing::info!("Session established");
+        tracing::debug!("session established");
         Ok(Session::new(
             control_receiver,
             context,

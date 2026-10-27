@@ -172,14 +172,14 @@ impl Router {
                 signal = previous_signal(previous.as_mut()) => match signal {
                     PreviousSignal::Released => {
                         if let Some(previous) = previous.take() {
-                            tracing::info!("closing the previous connection");
+                            tracing::debug!("closing the previous connection");
                             self.retire(previous);
                         }
                     }
                     PreviousSignal::Event(Some(SessionEvent::GoAway(_) | SessionEvent::ProtocolViolation())) => {}
                     PreviousSignal::Event(Some(SessionEvent::Disconnected()) | None) => {
                         if let Some(previous) = previous.take() {
-                            tracing::info!("the previous connection was closed");
+                            tracing::debug!("the previous connection was closed");
                             self.retire(previous);
                         }
                     }

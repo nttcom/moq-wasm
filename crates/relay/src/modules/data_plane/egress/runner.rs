@@ -117,7 +117,7 @@ impl EgressRunner {
         exit
     }
     fn malformed(track_key: &TrackKey) -> PublishDoneReason {
-        tracing::warn!(%track_key, "malformed track detected; terminating downstream subscription");
+        tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "malformed track detected; terminating downstream subscription");
         PublishDoneReason::malformed_track()
     }
 
@@ -139,7 +139,7 @@ impl EgressRunner {
         {
             tracing::error!(
                 ?error,
-                %track_key,
+                track_namespace = %track_key.track_namespace, track_name = %track_key.track_name,
                 request_id = subscription.request_id(),
                 "failed to send PUBLISH_DONE"
             );

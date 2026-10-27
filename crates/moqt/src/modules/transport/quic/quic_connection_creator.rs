@@ -75,7 +75,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         )?;
         let endpoint = bind_dual_stack(port_num, |address| {
             let endpoint = quinn::Endpoint::server(server_config, address)?;
-            tracing::info!("Server ready! for QUIC: {:?}", address);
+            tracing::info!(%address, "QUIC server ready");
             Ok(endpoint)
         })?;
         Ok(QUICConnectionCreator {

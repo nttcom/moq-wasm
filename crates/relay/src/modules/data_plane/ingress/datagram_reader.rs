@@ -23,7 +23,7 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
     loop {
         let receive_result = tokio::select! {
             _ = stop_receiver.changed() => {
-                tracing::info!(%track_key, "datagram reader stopped");
+                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "datagram reader stopped");
                 break;
             }
             result = receiver.receive_object() => result,
@@ -55,7 +55,7 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
                 break;
             }
             Err(_) => {
-                tracing::debug!(%track_key, "datagram receiver ended");
+                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "datagram receiver ended");
                 break;
             }
         }
@@ -67,7 +67,7 @@ fn report_malformed_track(
     publisher_session_id: SessionId,
     track_key: &TrackKey,
 ) {
-    tracing::warn!(%track_key, "malformed track detected; stopping datagram ingest");
+    tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "malformed track detected; stopping datagram ingest");
     let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
         publisher_session_id,
         track_key.clone(),

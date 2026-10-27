@@ -25,7 +25,7 @@ impl UnsubscribeNamespace {
         tracing::info!(
             session_id = %session_id,
             track_namespace_prefix = %track_namespace_prefix,
-            "SequenceHandler::UnsubscribeNamespace"
+            "UNSUBSCRIBE_NAMESPACE received"
         );
 
         let no_clients_remain =

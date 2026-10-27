@@ -31,7 +31,7 @@ impl Decoder for ControlMessageDecoder {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let (message_type, payload) = match take_control_message(src).map_err(|error| {
-            tracing::error!("Failed to decode control message frame: {:?}", error);
+            tracing::error!(?error, "failed to decode a control message frame");
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Failed to decode control message frame",

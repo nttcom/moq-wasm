@@ -18,16 +18,16 @@ impl Unsubscribe {
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         subscribe_id: u64,
     ) {
-        tracing::info!(
+        tracing::debug!(
             session_id = %session_id,
-            subscribe_id = %subscribe_id,
-            "SequenceHandler::unsubscribe"
+            request_id = %subscribe_id,
+            "UNSUBSCRIBE received"
         );
 
         let Some(removed) = table.remove_downstream_subscription(session_id, subscribe_id) else {
             tracing::warn!(
                 session_id = %session_id,
-                subscribe_id = %subscribe_id,
+                request_id = %subscribe_id,
                 "active downstream subscription not found"
             );
             return;
@@ -35,11 +35,11 @@ impl Unsubscribe {
 
         tracing::info!(
             session_id = %session_id,
-            subscribe_id = %subscribe_id,
+            request_id = %subscribe_id,
             track_namespace = %removed.track_key.track_namespace,
             track_name = %removed.track_key.track_name,
             released_upstream_subscriptions = removed.released_upstream_subscriptions.len(),
-            "downstream unsubscribe processed"
+            "UNSUBSCRIBE handled"
         );
 
         for released in removed.released_upstream_subscriptions {

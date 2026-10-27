@@ -204,7 +204,7 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.session_span.in_scope(|| {
-            tracing::info!("Session dropped.");
+            tracing::debug!("session dropped");
         });
     }
 }

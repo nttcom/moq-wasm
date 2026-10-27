@@ -72,7 +72,6 @@ impl InterRelayConnectionManager {
             relay_id = %relay.relay_id,
             session_id = session_id,
             session_peer = "relay",
-            session_peer_relay_id = %relay.relay_id,
             relay_hostname = %relay_hostname,
             relay_host = %relay.host,
             relay_port = relay.port,

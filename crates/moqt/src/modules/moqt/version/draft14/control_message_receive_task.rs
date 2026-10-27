@@ -60,11 +60,11 @@ impl ControlMessageReceiveTask {
                             let received_message = match receive_stream.receive().await {
                                 Ok(Some(received_message)) => received_message,
                                 Ok(None) => {
-                                    tracing::info!("Stream ended.");
+                                    tracing::debug!("control stream ended");
                                     break;
                                 }
                                 Err(error) => {
-                                    tracing::info!(%error, "Stream closed.");
+                                    tracing::debug!(%error, "control stream closed");
                                     break;
                                 }
                             };
@@ -75,7 +75,7 @@ impl ControlMessageReceiveTask {
                                         let _ = publish_done_sender.send(handler.request_id());
                                     }
                                     if let Err(error) = connection.event_sender.send(event) {
-                                        tracing::error!("failed to send message: {:?}", error);
+                                        tracing::error!(?error, "failed to send a control message");
                                     }
                                 }
                                 DepacketizeResult::SessionClosed => break,
@@ -274,7 +274,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::GoAway(go_away) => {
                 if let Err(reason) = connection.note_go_away_received(&go_away.new_session_uri) {
-                    tracing::error!("Protocol violation: {reason}");
+                    tracing::error!(%reason, "protocol violation");
                     session.close_connection(
                         connection,
                         TerminationErrorCode::ProtocolViolation,

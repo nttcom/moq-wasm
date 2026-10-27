@@ -44,7 +44,7 @@ impl PublishNamespace {
         tracing::info!(
             session_id = %session_id,
             track_namespace = %track_namespace,
-            "SequenceHandler::PublishNamespace"
+            "PUBLISH_NAMESPACE received"
         );
 
         let peer = super::session_peer(session_id, forwarder).await;
@@ -65,7 +65,7 @@ impl PublishNamespace {
         table.register_publish_namespace(session_id, track_namespace.to_string(), peer);
 
         if let Err(e) = handler.ok().await {
-            tracing::error!("Publish Namespace Error: {:?}", e);
+            tracing::error!(error = ?e, "PUBLISH_NAMESPACE failed");
             return;
         }
 
@@ -158,7 +158,11 @@ impl PublishNamespace {
             publisher_peer,
             publisher_session_id,
         ) {
-            tracing::info!(%track_key, "subscribing newly announced publishers to an active track");
+            tracing::debug!(
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                "subscribing newly announced publishers to an active track"
+            );
             let pending = send_upstream_subscribes(
                 upstream_publisher_resolver,
                 &join_deps.forwarder,

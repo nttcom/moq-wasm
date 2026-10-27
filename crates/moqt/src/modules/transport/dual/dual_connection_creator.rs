@@ -108,7 +108,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
         let endpoint = bind_dual_stack(port_num, |address| {
             let endpoint = quinn::Endpoint::server(server_config, address)?;
-            tracing::info!("Server ready! for Dual Protocol: {:?}", address);
+            tracing::info!(%address, "QUIC and WebTransport server ready");
             Ok(endpoint)
         })?;
 

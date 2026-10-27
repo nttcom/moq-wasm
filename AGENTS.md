@@ -95,6 +95,28 @@ Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::
 | WARN | Recoverable issues that require attention. | · Retrying after a transient connection error<br>· Received an unexpected but non-fatal message type<br>· Stream closed by peer earlier than expected |
 | ERROR | Fatal failures requiring intervention. | · Connection failed after maximum retries<br>· Received a malformed or unrecognized MOQT message<br>· Authentication or TLS handshake failure |
 
+Logs and spans are exported over OTLP, where a log does not inherit its span's fields. For each INFO or higher log:
+- One event gets one INFO line. A step inside a request, a cleanup or a `Drop` is DEBUG.
+- The message is a fixed string; every value is a field (`tracing::info!(%error, request_id, "SUBSCRIBE_ERROR received")`, not `"... {}"`).
+- It carries the fields that identify what it is about, so it can be found without its span.
+
+Name fields from this vocabulary and add a name to it before using a new one:
+
+| Field | Meaning |
+| --- | --- |
+| `session_id` | The session the event is about |
+| `publisher_session_id` / `subscriber_session_id` | The two sessions of a track, when both are involved |
+| `session_peer` | `client` or `relay` |
+| `app_id` | The application of the session's token |
+| `request_id` | The draft's Request ID (not `subscribe_id`) |
+| `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
+| `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
+| `track_alias` | The track alias on the session the log is about |
+| `error` | The failure, as `%error` or `?error` |
+| `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
+
+A span that lives longer than the request that starts it (a track, a session) roots its own trace and links to the request's span: a span closes only after its children, so a long-lived child would hold its parent's trace unexported.
+
 ## 8. Git Conventions
 - Commit messages must be written in English.
 - Follow Conventional Commits: `type(scope): description`

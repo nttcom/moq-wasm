@@ -31,7 +31,7 @@ impl SubscribeNameSpace {
         tracing::info!(
             session_id = %session_id,
             track_namespace_prefix = %track_namespace_prefix,
-            "SequenceHandler::SubscribeNamespace"
+            "SUBSCRIBE_NAMESPACE received"
         );
         let peer = super::session_peer(session_id, forwarder).await;
         let is_first_client = table.register_subscribe_namespace(
@@ -48,7 +48,7 @@ impl SubscribeNameSpace {
             return;
         }
         if let Err(e) = handler.ok().await {
-            tracing::error!("Subscribe Namespace Error: {:?}", e);
+            tracing::error!(error = ?e, "SUBSCRIBE_NAMESPACE failed");
             return;
         }
         self.forward_matching_publications(
@@ -93,7 +93,7 @@ impl SubscribeNameSpace {
                     )
                     .await
                 {
-                    Ok(_) => tracing::info!("sent `SUBSCRIBE_NAMESPACE_ERROR` ok"),
+                    Ok(_) => tracing::debug!("sent SUBSCRIBE_NAMESPACE_ERROR"),
                     Err(_) => tracing::error!("failed to send `SUBSCRIBE_NAMESPACE_ERROR`"),
                 }
                 false

@@ -30,9 +30,9 @@ fn cert_dir() -> PathBuf {
 
 fn create_certs_for_test_if_needed(cert_dir: &Path) -> anyhow::Result<()> {
     unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
-    tracing::info!("relay cert dir: {}", cert_dir.to_string_lossy());
+    tracing::debug!(cert_dir = %cert_dir.display(), "relay certificate directory");
     if cert_dir.join("cert.pem").exists() && cert_dir.join("key.pem").exists() {
-        tracing::info!("Certificates already exist");
+        tracing::debug!("certificates already exist");
     } else {
         write_self_signed_cert(cert_dir, &["localhost", "127.0.0.1", "relay-a", "relay-b"])?;
     }
@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
         inner_port = config.inner_port,
         "Relay server started with external QUIC + WebTransport and inner QUIC"
     );
-    tracing::info!("Ctrl+C or SIGTERM to shutdown");
+    tracing::debug!("Ctrl+C or SIGTERM to shut down");
 
     shutdown_signal().await?;
     tracing::info!(
