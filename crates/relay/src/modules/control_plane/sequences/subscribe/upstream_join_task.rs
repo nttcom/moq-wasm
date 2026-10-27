@@ -143,13 +143,18 @@ impl UpstreamJoinTask {
                     )
                     .await;
                 }
-                Err(error) if refused_as_malformed(&error) => {
+                Err(error) => {
+                    let malformed = refused_as_malformed(&error);
                     tracing::warn!(
                         %error,
+                        malformed,
                         pub_session_id = %answered.publisher_session_id,
                         track_key = %join.track_key,
-                        "an additional publisher refused the track as malformed; latching it"
+                        "upstream SUBSCRIBE of an additional publisher failed"
                     );
+                    if !malformed {
+                        continue;
+                    }
                     // draft-18 §2.4.2: the latch ends every downstream
                     // subscription with PUBLISH_DONE MALFORMED_TRACK.
                     deps.cache_store
@@ -166,12 +171,6 @@ impl UpstreamJoinTask {
                         )
                         .await;
                 }
-                Err(error) => tracing::warn!(
-                    %error,
-                    pub_session_id = %answered.publisher_session_id,
-                    track_key = %join.track_key,
-                    "upstream SUBSCRIBE of an additional publisher failed"
-                ),
             }
         }
     }

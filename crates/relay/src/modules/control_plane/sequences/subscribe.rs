@@ -370,14 +370,20 @@ impl Subscribe {
                         subscription,
                     );
                 }
-                Err(error) if super::malformed_track::refused_as_malformed(&error) => {
+                Err(error) => {
+                    let malformed = super::malformed_track::refused_as_malformed(&error);
                     tracing::warn!(
                         %error,
+                        malformed,
                         pub_session_id = %answered.publisher_session_id,
                         track_namespace = %track_namespace,
                         track_name = %track_name,
-                        "upstream SUBSCRIBE refused the track as malformed; latching it"
+                        "upstream SUBSCRIBE failed"
                     );
+                    if !malformed {
+                        last_error = Some(error);
+                        continue;
+                    }
                     cache_store.get_or_create(&track_key).mark_malformed();
                     // The latched track takes no publisher, so each one that
                     // answers SUBSCRIBE_OK later is unsubscribed.
@@ -395,16 +401,6 @@ impl Subscribe {
                         },
                     );
                     return Err(UpstreamSubscriptionError::SubscribeFailed(error));
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        pub_session_id = %answered.publisher_session_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "upstream SUBSCRIBE failed"
-                    );
-                    last_error = Some(error);
                 }
             }
         };
