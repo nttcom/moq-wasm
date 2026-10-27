@@ -111,18 +111,7 @@ impl SubgroupEncoder {
         payload_len: usize,
     ) -> anyhow::Result<BytesMut> {
         let object_id = object.location.object_id;
-        let object_id_delta = match self.prev_object_id {
-            None => Some(object_id),
-            Some(prev) => prev
-                .checked_add(1)
-                .and_then(|next| object_id.checked_sub(next)),
-        }
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "object {object_id} does not follow object {:?} in its subgroup",
-                self.prev_object_id
-            )
-        })?;
+        let object_id_delta = version::object_id_delta(self.prev_object_id, object_id)?;
         let extension_headers = object.extension_headers.clone();
         let head = if payload_len == 0 {
             SubgroupObjectHead::status(

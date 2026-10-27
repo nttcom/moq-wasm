@@ -45,9 +45,13 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>> {
         let creator = self.clone();
         Box::pin(async move {
-            let transport_conn = creator.open_transport(&url).await?;
+            let target = ConnectTarget::parse(&url)?;
+            let transport_conn = creator
+                .transport_creator
+                .create_new_transport(&target)
+                .await?;
             let (connection, control_receiver, _) = creator
-                .set_up(transport_conn, generation, event_sender)
+                .set_up(transport_conn, &target, generation, event_sender)
                 .await?;
             Ok((connection, control_receiver))
         })
@@ -59,7 +63,8 @@ impl<T: TransportProtocol> SessionCreator<T> {
         self: &Arc<Self>,
         url: &str,
     ) -> anyhow::Result<Connecting> {
-        let transport_conn = self.open_transport(url).await?;
+        let target = ConnectTarget::parse(url)?;
+        let transport_conn = self.transport_creator.create_new_transport(&target).await?;
         let creator = self.clone();
         let url = url.to_string();
         let handshake = async move {
@@ -68,7 +73,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 let (connection_event_sender, connection_events) =
                     tokio::sync::mpsc::unbounded_channel();
                 let (connection, control_receiver, server_setup) = creator
-                    .set_up(transport_conn, 0, connection_event_sender)
+                    .set_up(transport_conn, &target, 0, connection_event_sender)
                     .await?;
                 Session::new(
                     control_receiver,
@@ -83,7 +88,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 )
             } else {
                 let (connection, control_receiver, server_setup) = creator
-                    .set_up(transport_conn, 0, event_sender.clone())
+                    .set_up(transport_conn, &target, 0, event_sender.clone())
                     .await?;
                 Session::new(
                     control_receiver,
@@ -101,20 +106,18 @@ impl<T: TransportProtocol> SessionCreator<T> {
         })
     }
 
-    async fn open_transport(&self, url: &str) -> anyhow::Result<BoxedConnection> {
-        let target = ConnectTarget::parse(url)?;
-        self.transport_creator.create_new_transport(&target).await
-    }
-
     /// The CLIENT_SETUP / SERVER_SETUP exchange on a new transport.
     async fn set_up(
         &self,
         transport_conn: BoxedConnection,
+        target: &ConnectTarget,
         generation: u64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
         let (control, control_receiver, server_setup) =
-            match version::connect(&transport_conn, self.authorization_token.as_deref()).await {
+            match version::connect(&transport_conn, self.authorization_token.as_deref(), target)
+                .await
+            {
                 Ok(established) => established,
                 Err(error) => {
                     return Err(Self::explain_rejected_setup(&transport_conn, error).await);

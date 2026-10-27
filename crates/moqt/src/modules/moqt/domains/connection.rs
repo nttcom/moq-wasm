@@ -10,7 +10,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    SessionEvent,
+    RequestFailure, SessionEvent,
     modules::{
         moqt::{
             control_plane::{constants::TerminationErrorCode, enums::RequestId},
@@ -19,7 +19,7 @@ use crate::{
             },
             domains::group_cutover::GroupCutover,
             runtime::dispatch::incoming_object::IncomingObject,
-            version::ControlChannel,
+            version::{ControlChannel, OutgoingRequest, PendingResponse},
         },
         transport::transport_connection::BoxedConnection,
     },
@@ -191,6 +191,13 @@ pub(crate) enum IncomingObjectNotification {
 }
 
 impl Connection {
+    pub(crate) async fn send_request(
+        self: &Arc<Self>,
+        request: OutgoingRequest,
+    ) -> Result<PendingResponse, RequestFailure> {
+        self.control.send_request(self, request).await
+    }
+
     pub(crate) fn new(
         transport: BoxedConnection,
         control: ControlChannel,
