@@ -347,7 +347,7 @@ mod tests {
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
-        data_plane::cache::track_cache::{FetchRangeResolution, PlannedFetch},
+        data_plane::cache::track_cache::FetchRangeResolution,
         session::session_event::EventKind,
         test_support::{
             mock_session::{
@@ -356,7 +356,7 @@ mod tests {
             },
             relay_harness::fixtures::{
                 cached_object::{status_object, stream_object, stream_object_with_payload},
-                location,
+                location, planned_steps,
             },
         },
     };
@@ -504,21 +504,11 @@ mod tests {
         }
 
         fn served(&self) -> Vec<Result<(u64, u64), (u64, u64)>> {
-            self.cache
-                .plan_fetch(
-                    location(0, 0),
-                    location(0, 3),
-                    moqt::object::GroupOrder::Ascending,
-                )
-                .into_iter()
-                .map(|step| match step {
-                    PlannedFetch::Object(object) => Ok((
-                        object.object.location.group_id,
-                        object.object.location.object_id,
-                    )),
-                    PlannedFetch::Unknown { last } => Err((last.group_id, last.object_id)),
-                })
-                .collect()
+            planned_steps(self.cache.plan_fetch(
+                location(0, 0),
+                location(0, 3),
+                moqt::object::GroupOrder::Ascending,
+            ))
         }
     }
 
