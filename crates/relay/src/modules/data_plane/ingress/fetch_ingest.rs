@@ -495,7 +495,6 @@ mod tests {
     }
 
     impl Ingested {
-        /// The egress request the fill handed over, if any.
         fn handed_over(&mut self) -> Option<EgressFetchRequest> {
             match self.egress_receiver.try_recv() {
                 Ok(EgressCommand::StartFetch(request)) => Some(request),

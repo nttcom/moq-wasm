@@ -331,7 +331,8 @@ impl FetchEncoder {
     }
 
     /// The marker saying the objects through `last` have unknown status;
-    /// `None` where the draft cannot express it (draft-14 has no marker).
+    /// `None` where the draft cannot express it: draft-14 has no marker, and
+    /// draft-18 cannot end a range in the group of the prior object.
     pub(crate) fn end_of_unknown_range(&mut self, last: Location) -> Option<BytesMut> {
         match self {
             Self::Draft14 => None,

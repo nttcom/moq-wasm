@@ -100,13 +100,13 @@ impl TrackCacheStore {
                 empty_keys.push(key);
             }
         }
-        // Only TTL-drained (empty) tracks may be removed: an unreferenced track
-        // must keep serving FETCH until then, and a malformed latch must keep
-        // answering requests for the TTL after it was set. Both guards are re-checked under
-        // the shard lock because a session may attach, write, and detach in the
-        // gap since the loop above: with strong_count == 1 no other handle can
-        // write through, and the emptiness re-check keeps objects written in
-        // that gap.
+        // Remove only tracks that are drained and not latched within the TTL
+        // (is_removable): an unreferenced track must keep serving FETCH until
+        // then, and a latch must keep answering MALFORMED_TRACK. Both guards
+        // are re-checked under the shard lock because a session may attach,
+        // write, and detach in the gap since the loop above: with
+        // strong_count == 1 no other handle can write through, and the
+        // is_removable re-check keeps objects written in that gap.
         for key in empty_keys {
             self.caches.remove_if(&key, |_, track| {
                 Arc::strong_count(track) == 1 && track.is_removable(ttl)

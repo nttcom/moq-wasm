@@ -700,9 +700,7 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 }
 
-/// `joining_rule` stands in for the session draft's Joining FETCH rule;
-/// `errors` records the code of every `error` and `oks` the End Location of
-/// every `ok`.
+/// `joining_rule` stands in for the session draft's Joining FETCH rule.
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
     pub(crate) fill_timeout: Option<std::time::Duration>,

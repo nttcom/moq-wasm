@@ -61,7 +61,7 @@ enum FetchSource {
 #[derive(Debug, PartialEq)]
 enum NoUpstreamFetch {
     Refused,
-    /// The publisher refused the track as malformed.
+    /// Carries the publisher that refused.
     MalformedTrack(SessionId),
 }
 
@@ -942,8 +942,8 @@ mod tests {
         );
     }
 
-    /// A FETCH of {0,0}..{2,0} without FILL_TIMEOUT from a session whose
-    /// response can mark objects unknown or not.
+    /// A FETCH of {0,0}..{2,0} without FILL_TIMEOUT; `marks_unknown_ranges`
+    /// stands in for the draft.
     fn fetch_without_fill_timeout(marks_unknown_ranges: bool) -> MockFetchHandler {
         MockFetchHandler {
             marks_unknown_ranges,
