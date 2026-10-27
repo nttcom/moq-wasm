@@ -113,6 +113,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
 | `track_alias` | The track alias on the session the log is about |
 | `error` | The failure, as `%error` or `?error` |
+| `outcome` | How a call the relay makes to another service ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`) |
 | `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
 | `url` | The URL a client connects to |
 | `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |
