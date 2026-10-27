@@ -272,7 +272,11 @@ established request take its handle, not its request id:
 `fetch_relative_joining` take the `Subscription`, `Subscriber::fetch_cancel`
 the `FetchHandle`, and `Publisher::publish_done` the `Subscription` it
 publishes on. The request id stays readable as an identifier, but how a
-request is cancelled or updated on the wire is left to moqt. Application
+request is cancelled or updated on the wire is left to moqt.
+`update_forward` and `end_before_group` take the fields they do not set
+from the last SUBSCRIBE_UPDATE sent for the `Subscription`, which its
+clones share, so neither widens a range an earlier update narrowed
+(§9.10). Application
 code consumes inbound control messages through
 `Session::receive_event() -> SessionEvent`. `Session::closed()` awaits the
 transport close itself (the signal `DisconnectWatchTask` turns into

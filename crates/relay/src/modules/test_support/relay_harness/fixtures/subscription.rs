@@ -16,6 +16,7 @@ fn subscriber_initiated(
         filter_type,
         delivery_timeout: None,
         max_cache_duration: None,
+        last_update: moqt::LastSubscribeUpdate::default(),
     })
 }
 

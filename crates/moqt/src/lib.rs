@@ -25,6 +25,7 @@ pub use crate::modules::moqt::domains::publisher::Publisher;
 pub use crate::modules::moqt::domains::request_failure::RequestFailure;
 pub use crate::modules::moqt::domains::session::Session;
 pub use crate::modules::moqt::domains::subscriber::Subscriber;
+pub use crate::modules::moqt::domains::subscription::LastSubscribeUpdate;
 pub use crate::modules::moqt::domains::subscription::PublisherInitiatedSubscription;
 pub use crate::modules::moqt::domains::subscription::SubscriberInitiatedSubscription;
 pub use crate::modules::moqt::domains::subscription::Subscription;
