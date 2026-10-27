@@ -23,10 +23,12 @@ impl ServerSetup {
 impl ServerSetup {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let selected_version = buf.try_get_varint().context("selected version")?;
+        let selected_version = u32::try_from(selected_version)
+            .with_context(|| format!("selected version {selected_version:#x} exceeds 32 bits"))?;
         let setup_parameters = SetupParameter::decode(buf)?;
 
         let server_setup_message = ServerSetup {
-            selected_version: selected_version as u32,
+            selected_version,
             setup_parameters,
         };
         Ok(server_setup_message)
@@ -104,6 +106,27 @@ mod tests {
                     .moq_implementation,
                 Some("MOQ-WASM".to_string())
             );
+        }
+    }
+
+    mod failure {
+        use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
+
+        #[test]
+        fn decode_version_above_u32_is_rejected() {
+            // Arrange: the version's low 32 bits are draft-14
+            let bytes_array = [
+                192, // Selected Version (i): Length(11 of 2MSB)
+                0, 0, 1, 255, 0, 0, 14, // Selected Version (i): Value(0x1_ff00000e) in 62bit
+                0,  // Number of Parameters (i)
+            ];
+            let mut cursor = std::io::Cursor::new(&bytes_array[..]);
+
+            // Act
+            let result = ServerSetup::decode(&mut cursor);
+
+            // Assert
+            assert!(result.is_err());
         }
     }
 }

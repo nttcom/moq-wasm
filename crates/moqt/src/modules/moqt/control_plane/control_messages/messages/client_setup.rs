@@ -29,7 +29,9 @@ impl ClientSetup {
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
             let supported_version = buf.try_get_varint().context("supported_version")?;
-            supported_versions.push(supported_version as u32);
+            supported_versions.push(u32::try_from(supported_version).with_context(|| {
+                format!("supported version {supported_version:#x} exceeds 32 bits")
+            })?);
         }
         let setup_parameters = SetupParameter::decode(buf)?;
 
@@ -122,6 +124,28 @@ mod test {
                     .moq_implementation,
                 Some("MOQ-WASM".to_string())
             );
+        }
+    }
+
+    mod failure {
+        use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
+
+        #[test]
+        fn decode_version_above_u32_is_rejected() {
+            // Arrange: the version's low 32 bits are draft-14
+            let bytes_array = [
+                1,   // Number of Supported Versions (i)
+                192, // Supported Version (i): Length(11 of 2MSB)
+                0, 0, 1, 255, 0, 0, 14, // Supported Version (i): Value(0x1_ff00000e) in 62bit
+                0,  // Number of Parameters (i)
+            ];
+            let mut buf = std::io::Cursor::new(&bytes_array[..]);
+
+            // Act
+            let result = ClientSetup::decode(&mut buf);
+
+            // Assert
+            assert!(result.is_err());
         }
     }
 }

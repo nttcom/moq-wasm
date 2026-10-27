@@ -82,8 +82,10 @@ pub fn take_control_message(
         return Ok(None);
     }
 
-    let message_type = ControlMessageType::try_from(message_type as u8)
-        .map_err(|_| anyhow!("invalid control message type: {message_type}"))?;
+    let message_type = u8::try_from(message_type)
+        .ok()
+        .and_then(|value| ControlMessageType::try_from(value).ok())
+        .ok_or_else(|| anyhow!("invalid control message type: {message_type:#x}"))?;
     buf.advance(header_length);
     let payload = buf.split_to(payload_length);
     Ok(Some((message_type, payload)))
@@ -130,5 +132,17 @@ mod tests {
 
         let result = take_control_message(&mut partial).expect("partial decode should not fail");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn control_message_type_above_u8_is_rejected() {
+        // Arrange: Message Type 0x103 as a 2-byte varint; its low byte is SUBSCRIBE (0x03)
+        let mut framed = BytesMut::from(&[0x41_u8, 0x03, 0x00, 0x00][..]);
+
+        // Act
+        let result = take_control_message(&mut framed);
+
+        // Assert
+        assert!(result.is_err());
     }
 }
