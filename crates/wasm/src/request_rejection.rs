@@ -11,8 +11,6 @@ pub(crate) fn rejection_reason(code: RequestErrorCode) -> &'static str {
     }
 }
 
-/// The code and reason JavaScript sees for a request the peer or the session
-/// failed.
 pub(crate) fn request_failure_code(error: &RequestFailure) -> (RequestErrorCode, String) {
     match error {
         RequestFailure::Rejected { code, reason, .. } => (*code, reason.clone()),

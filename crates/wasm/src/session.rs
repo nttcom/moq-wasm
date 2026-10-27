@@ -22,9 +22,8 @@ use crate::{
     session_routes::SessionRoutes,
 };
 
-/// A MoQT session to a relay for the browser SDK. Each request resolves to a
-/// handle; objects are read with the handle's `next()`, which resolves to
-/// `undefined` once the track ends.
+/// Requests reject with an `Error` whose `code` is the draft-14 request error
+/// code.
 #[wasm_bindgen]
 pub struct Session {
     session: Rc<MoqtSession>,
@@ -83,7 +82,6 @@ impl Session {
     }
 
     /// `filter` is `"largestObject"` (the default) or `"nextGroupStart"`.
-    /// Rejects with an `Error` whose `code` is the draft-14 request error code.
     pub async fn subscribe(
         &self,
         namespace: Vec<String>,
@@ -122,7 +120,8 @@ impl Session {
         Ok(Subscription::new(self, subscription, reader))
     }
 
-    /// A Standalone FETCH of `[start, end)` (draft-14 §9.16.1).
+    /// A Standalone FETCH (draft-14 §9.16.1). `end_object` is the End
+    /// Location's Object: the last object plus 1, and 0 means the whole group.
     #[allow(clippy::too_many_arguments)]
     pub async fn fetch(
         &self,
@@ -159,8 +158,8 @@ impl Session {
         })
     }
 
-    /// Resolves to the track's largest location, or `undefined` while it has
-    /// none (TRACK_STATUS, draft-14 §9.18).
+    /// TRACK_STATUS (draft-14 §9.20). Resolves to the track's largest
+    /// location, or `undefined` while it has none.
     #[wasm_bindgen(js_name = trackStatus)]
     pub async fn track_status(
         &self,
@@ -176,8 +175,6 @@ impl Session {
         Ok(largest(status.content_exists))
     }
 
-    /// Sends SUBSCRIBE_NAMESPACE for `prefix` and reports the namespaces the
-    /// relay publishes and withdraws under it.
     #[wasm_bindgen(js_name = watchNamespaces)]
     pub async fn watch_namespaces(&self, prefix: Vec<String>) -> Result<NamespaceWatch, JsValue> {
         let events = self.routes.watch(prefix.clone());
@@ -233,7 +230,7 @@ impl Subscription {
 
 #[wasm_bindgen]
 impl Subscription {
-    /// The largest location SUBSCRIBE_OK reported, `undefined` without one.
+    /// The largest location SUBSCRIBE_OK reported.
     #[wasm_bindgen(getter)]
     pub fn largest(&self) -> Option<MoqLocation> {
         largest(self.subscription.content_exists())
@@ -265,7 +262,7 @@ impl Subscription {
             .map_err(anyhow_error)
     }
 
-    /// SUBSCRIBE_UPDATE that ends the subscription before `group_id`.
+    /// SUBSCRIBE_UPDATE (draft-14 §9.10).
     #[wasm_bindgen(js_name = endBeforeGroup)]
     pub async fn end_before_group(&self, group_id: u64, forward: bool) -> Result<(), JsValue> {
         self.session
@@ -275,7 +272,6 @@ impl Subscription {
             .map_err(anyhow_error)
     }
 
-    /// UNSUBSCRIBE.
     pub async fn close(&self) -> Result<(), JsValue> {
         self.routes.forget(self.subscription.request_id());
         self.session
@@ -286,7 +282,6 @@ impl Subscription {
     }
 }
 
-/// The objects of one FETCH response, in the order it delivers them.
 #[wasm_bindgen]
 pub struct FetchStream {
     receiver: Rc<Mutex<FetchDataReceiver>>,
@@ -333,7 +328,6 @@ impl NamespaceWatch {
         })
     }
 
-    /// UNSUBSCRIBE_NAMESPACE.
     pub async fn close(&self) -> Result<(), JsValue> {
         self.events.lock().await.close();
         self.session
@@ -476,7 +470,6 @@ fn largest(content_exists: ContentExists) -> Option<MoqLocation> {
     }
 }
 
-/// An `Error` whose `code` is the draft-14 request error code.
 fn request_error(kind: RequestKind, error: &RequestFailure) -> JsValue {
     let (code, reason) = request_failure_code(error);
     let js_error = js_sys::Error::new(&reason);

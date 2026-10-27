@@ -7,16 +7,14 @@ use moqt::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-/// How a publisher ended a subscription (PUBLISH_DONE, draft-14 §9.12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PublishDone {
     pub(crate) code: u64,
     pub(crate) reason: String,
 }
 
-/// Hands each event of a session to the handle that waits for it. The
-/// session publishes nothing, so the peer's SUBSCRIBE, FETCH, TRACK_STATUS
-/// and PUBLISH are rejected.
+/// The session publishes nothing, so the peer's SUBSCRIBE, FETCH,
+/// TRACK_STATUS and PUBLISH are rejected.
 #[derive(Default)]
 pub(crate) struct SessionRoutes {
     watchers: NamespaceWatchers,
@@ -28,8 +26,7 @@ impl SessionRoutes {
         self.watchers.watch(prefix)
     }
 
-    /// The receiver resolves with the subscription's PUBLISH_DONE, and fails
-    /// once the session ends or `forget` drops it.
+    /// Fails once the session ends or `forget` drops it.
     pub(crate) fn publish_done(&self, request_id: u64) -> oneshot::Receiver<PublishDone> {
         let (sender, receiver) = oneshot::channel();
         self.publish_done.borrow_mut().insert(request_id, sender);
@@ -116,7 +113,6 @@ mod tests {
 
     const TIMEOUT: Duration = Duration::from_secs(5);
 
-    /// The client and server sessions, with the endpoints that keep them open.
     struct Connected {
         client: Session,
         server: Session,

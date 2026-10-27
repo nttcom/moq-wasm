@@ -26,8 +26,7 @@ pub struct TrackObject {
 }
 
 impl TrackObject {
-    /// `None` for a status object, which carries no payload. An object
-    /// forwarded in a datagram takes subgroup 0.
+    /// `None` for a status object or an empty payload.
     pub fn from_object(object: Object) -> Option<Self> {
         if object.status != ObjectStatus::Normal || object.payload.is_empty() {
             return None;
