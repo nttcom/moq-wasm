@@ -7,7 +7,7 @@ use crate::modules::moqt::domains::connection::Connection;
 use crate::modules::moqt::domains::session::{Follow, Session};
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
-use crate::modules::moqt::version::{self, ControlReceiver};
+use crate::modules::moqt::version::{self, ControlReceiver, Version};
 use crate::modules::transport::accept_error::AcceptError;
 use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::BoxedConnection;
@@ -23,6 +23,8 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) transport_creator: T::ConnectionCreator,
     pub(crate) authorization_token: Option<String>,
     pub(crate) follow_go_away: bool,
+    /// The drafts the endpoint offers (a client) or accepts (a server).
+    pub(crate) versions: Vec<Version>,
 }
 
 /// Opens another connection of a session that follows GOAWAY, on the same
@@ -114,15 +116,19 @@ impl<T: TransportProtocol> SessionCreator<T> {
         generation: u64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
-        let (control, control_receiver, server_setup) =
-            match version::connect(&transport_conn, self.authorization_token.as_deref(), target)
-                .await
-            {
-                Ok(established) => established,
-                Err(error) => {
-                    return Err(Self::explain_rejected_setup(&transport_conn, error).await);
-                }
-            };
+        let (control, control_receiver, server_setup) = match version::connect(
+            &transport_conn,
+            &self.versions,
+            self.authorization_token.as_deref(),
+            target,
+        )
+        .await
+        {
+            Ok(established) => established,
+            Err(error) => {
+                return Err(Self::explain_rejected_setup(&transport_conn, error).await);
+            }
+        };
         Ok((
             Connection::new(transport_conn, control, false, generation, event_sender),
             control_receiver,
@@ -150,8 +156,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
 
     pub(crate) async fn accept_new_connection(&self) -> Result<Accepting, AcceptError> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
+        let versions = self.versions.clone();
         let handshake = async move {
-            let setup = version::accept(&transport_conn).await?;
+            let setup = version::accept(&transport_conn, &versions).await?;
             Ok(Handshake {
                 transport_connection: transport_conn,
                 setup,
@@ -187,6 +194,7 @@ mod tests {
                 verify_certificate: false,
                 authorization_token: Some("jwt".to_string()),
                 follow_go_away: false,
+                ..Default::default()
             })
             .connect(&url)
             .await?

@@ -30,6 +30,7 @@ impl RelayConnection {
             verify_certificate,
             authorization_token,
             follow_go_away: true,
+            ..Default::default()
         })?;
         tracing::info!(relay = url, "connecting to relay");
         let connecting = endpoint

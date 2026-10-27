@@ -93,6 +93,17 @@ impl FetchHandler {
         }
     }
 
+    /// Whether the fetcher's draft can be sent a track with
+    /// `track_properties`; `ok` refuses the FETCH when it cannot (draft-18
+    /// §2.5.1).
+    pub fn understands(&self, track_properties: &TrackProperties) -> bool {
+        self.guard
+            .connection()
+            .control
+            .version()
+            .understands(track_properties)
+    }
+
     /// Whether this Joining FETCH may join `subscription` under the session's
     /// draft (draft-14 §9.16.2, draft-18 §10.12.2); each refusal names the
     /// answer its draft requires. Not meaningful for a Standalone FETCH.
@@ -109,11 +120,14 @@ impl FetchHandler {
         }
     }
 
-    pub async fn ok(
-        &self,
-        end_of_track: bool,
-        end_location: Location,
-    ) -> Result<(), TransportSendError> {
+    /// Fails when FETCH_OK cannot be sent, or when `track_properties` hold a
+    /// Mandatory Track Property the peer's draft does not understand: the
+    /// FETCH is then refused with UNSUPPORTED_EXTENSION, NOT_SUPPORTED on
+    /// draft-14 (draft-18 §2.5.1).
+    pub async fn ok(&self, end_of_track: bool, end_location: Location) -> anyhow::Result<()> {
+        self.guard
+            .refuse_unless_understood(&self.track_properties)
+            .await?;
         self.guard.mark_responded();
         let fetch_ok = FetchOk {
             request_id: self.guard.request_id(),
@@ -126,7 +140,8 @@ impl FetchHandler {
             .connection()
             .control
             .respond(OutgoingResponse::FetchOk(fetch_ok))
-            .await
+            .await?;
+        Ok(())
     }
 
     pub async fn error(
@@ -148,8 +163,8 @@ mod tests {
         fetch::FetchOption,
         modules::moqt::version::Version,
         modules::test_support::{
-            connect_sessions, spawn_connected_draft18_sessions, spawn_connected_dual_sessions,
-            spawn_dual_server,
+            connect_sessions, mandatory_track_properties, spawn_connected_draft18_sessions,
+            spawn_connected_dual_sessions, spawn_dual_server,
         },
         object::{GroupOrder, Location},
         subscribe::FilterType,
@@ -217,6 +232,41 @@ mod tests {
             panic!("expected FETCH from the client");
         };
         handler
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetch_ok_with_a_mandatory_track_property_is_sent_as_a_refusal() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("fetch-handler-mandatory").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .fetch(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    START,
+                    END,
+                    FetchOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Fetch(mut handler) = server.receive_event().await.unwrap() else {
+            panic!("expected FETCH from the client");
+        };
+        handler.track_properties = mandatory_track_properties();
+
+        // Act
+        let answered = handler.ok(false, END).await;
+
+        // Assert: draft-18 §2.5.1; draft-14 refuses with NOT_SUPPORTED
+        assert!(answered.is_err());
+        assert!(matches!(
+            request.await.unwrap(),
+            Err(RequestFailure::Rejected {
+                code: RequestErrorCode::NotSupported,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]

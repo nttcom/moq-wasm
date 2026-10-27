@@ -15,7 +15,7 @@ use crate::modules::{
         egress::{
             coordinator::{EgressFetchRequest, FetchWait},
             fetch_delivery::deliver_fetch,
-            runner::EgressRunner,
+            runner::{Downstream, EgressRunner},
         },
         ingress::{
             stream_reader::read_stream, track_ingest_task::TrackIngest, track_reader::read_track,
@@ -56,6 +56,8 @@ use self::{
 
 pub(crate) const OBJECT_COUNT: usize = 50;
 pub(crate) const PUBLISHER_SESSION_ID: SessionId = 1;
+/// The session egress and FETCH deliveries of the harness serve.
+const DOWNSTREAM_SESSION_ID: SessionId = 2;
 const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct RelayHarness {
@@ -393,7 +395,50 @@ impl RelayHarness {
         filter_type: moqt::subscribe::FilterType,
         largest_location: Option<moqt::object::Location>,
     ) -> EgressRunnerHandle {
-        let (publisher, observers) = MockPublisher::channel();
+        self.start_egress_to(MockPublisher::channel(), filter_type, largest_location)
+            .await
+    }
+
+    /// Egress to a downstream that drops a datagram of more than `limit`
+    /// bytes of payload as too large.
+    pub(crate) async fn start_egress_taking_datagrams_up_to(
+        &self,
+        limit: usize,
+    ) -> EgressRunnerHandle {
+        self.start_egress_to(
+            MockPublisher::channel_taking_datagrams_up_to(limit),
+            moqt::subscribe::FilterType::LargestObject,
+            None,
+        )
+        .await
+    }
+
+    /// Egress to a downstream that keeps every track to one forwarding
+    /// preference, as a draft-14 session does.
+    pub(crate) async fn start_single_preference_egress(&self) -> EgressRunnerHandle {
+        self.start_single_preference_egress_after(None).await
+    }
+
+    /// `start_single_preference_egress` of a subscription whose SUBSCRIBE_OK
+    /// stated `largest_location`.
+    pub(crate) async fn start_single_preference_egress_after(
+        &self,
+        largest_location: Option<moqt::object::Location>,
+    ) -> EgressRunnerHandle {
+        self.start_egress_to(
+            MockPublisher::channel_mixing(false),
+            moqt::subscribe::FilterType::LargestObject,
+            largest_location,
+        )
+        .await
+    }
+
+    async fn start_egress_to(
+        &self,
+        (publisher, observers): (MockPublisher, MockPublisherObservers),
+        filter_type: moqt::subscribe::FilterType,
+        largest_location: Option<moqt::object::Location>,
+    ) -> EgressRunnerHandle {
         let (ready_sender, ready_receiver) = oneshot::channel();
         let (delivery_control_sender, delivery_control_receiver) =
             watch::channel(DeliveryControl::new(true, &filter_type, largest_location));
@@ -403,8 +448,11 @@ impl RelayHarness {
         let runner = EgressRunner::new(
             self.ingest.track_key.clone(),
             self.ingest.cache.clone(),
-            Box::new(publisher),
-            make_subscription(filter_type),
+            Downstream {
+                session_id: DOWNSTREAM_SESSION_ID,
+                publisher: Arc::new(publisher),
+                subscription: make_subscription(filter_type),
+            },
             ready_sender,
             largest_location,
             DownstreamRunnerSignals {
@@ -488,7 +536,7 @@ impl RelayHarness {
     ) -> FetchDeliveryHandle {
         let (sender, sent) = MockFetchSender::new(draft);
         let request = EgressFetchRequest {
-            subscriber_session_id: 2,
+            subscriber_session_id: DOWNSTREAM_SESSION_ID,
             request_id: 0,
             cache: self.ingest.cache.clone(),
             start_location: range.start,

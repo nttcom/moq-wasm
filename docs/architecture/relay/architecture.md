@@ -47,14 +47,23 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    verify. `AUTH_MAX_TOKEN_TTL_SECONDS` (default 86400) and
    `AUTH_CLOCK_LEEWAY_SECONDS` (default 60) form the `ClaimPolicy` the relay
    applies to token times.
+   `RELAY_MOQT_VERSIONS` (`moqt_versions`, default draft-14 only) lists
+   the drafts both transports accept and the relay offers when it dials an
+   inner transport, most preferred first; `draft-18,draft-14` is the order
+   that enables draft-18. See "Relaying across versions".
    `CacheConfig` (`RELAY_CACHE_TTL_SECS`, `RELAY_CACHE_EVICT_INTERVAL_SECS`),
    the disk cache settings and `MOQT_FETCH_FILL_TIMEOUT_SECS` reach the
    eviction job, the disk cache task and FETCH ingest through
    `DataPlaneConfig`; the data plane reads no environment variable itself.
 4. `RelayServer::new_with_config(...)` then:
    - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
-     accepting both WebTransport and raw QUIC on one port.
-   - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint.
+     accepting both WebTransport and raw QUIC on one port, for the drafts in
+     `moqt_versions`.
+   - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint
+     for the same drafts. `InterRelayConnectionManager` and the stats
+     publisher offer them when they dial an inner endpoint, so two relays
+     that both enable draft-18 cascade in draft-18, and one that does not
+     is reached in draft-14.
    - `spawn_stats_publisher(relay_id, inner_port)` — see "Observability".
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
@@ -729,9 +738,19 @@ per-request authorization gate under "Event pipeline".
   copy (from a draft-14 FETCH, §10.4.4) in the subgroup of its Object ID is
   the same object as a datagram; a draft-18 track may send an object in that
   subgroup and a datagram FETCH copy says so (§11.4.4), so elsewhere the
-  preference is compared exactly. When a live datagram meets such an inferred
-  copy that arrived first, the cache takes the forwarding preference and
-  `ends_group` from the datagram.
+  preference is compared exactly. When a copy that carries its preference
+  (live, or from a draft-18 FETCH) meets such an inferred copy that arrived
+  first, the cache takes the forwarding preference from it, and from a
+  datagram its `ends_group` too, so only an object no such copy has reached
+  is left to the guess below. A FETCH served from the cache asks
+  `TrackCache::fetch_forwarding` for each object's preference. To a session
+  the track went to in one preference (see "Relaying across versions") the
+  object goes as live delivery gave it. Otherwise an inferred copy in the
+  subgroup of its Object ID, which no live copy has reached, goes as a
+  datagram while the latest object live
+  ingest inserted is a datagram (a draft-14 track keeps one preference), so
+  a draft-18 FETCH marks it and it matches the live datagram the subscriber
+  may hold; every other object goes as cached.
 - `TrackCache` (`track_cache.rs` + `track_cache/{ledger,open_subgroup}.rs`) is one
   track-level ledger behind a `std::sync::RwLock` that is never held across an
   await: `objects: BTreeMap<Location, Arc<CachedObject>>` (stream and datagram
@@ -840,7 +859,8 @@ per-request authorization gate under "Event pipeline".
     publisher's set, and the served set is the newest live publisher's, so
     when the newest leaves first the older publisher's set takes over. An
     upstream FETCH_OK's set is served only while no publisher is live.
-  - A draft-14 session sends none of the draft-18 properties.
+  - A draft-14 session sends none of the draft-18 properties (see
+    "Relaying across versions" for Mandatory Track Properties).
 - Disk cache (`disk_cache.rs`, on when `RELAY_DISK_CACHE_DIR` is set): the
   relay a client publisher sends to keeps the payloads for up to
   `RETENTION_LIMIT`; a downstream relay keeps its memory cache only and
@@ -979,10 +999,13 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   task sent lies at or before that location, so none is sent twice. Groups
   still in the range are delivered to their end. Datagram groups are
   re-emitted with the downstream track alias, and stop at the same range
-  change. Every `SubgroupKey` is sent by the preference its objects arrived
-  with, so a draft-18 track mixing subgroup streams and datagrams goes
-  downstream mixed, and a draft-14 downstream treats it as malformed
-  (draft-14 §2.5).
+  change. A downstream whose session mixes forwarding preferences
+  (`Publisher::mixes_forwarding_preferences`, draft-18) gets every
+  `SubgroupKey` in the preference its objects arrived with, so a draft-18
+  track mixing subgroup streams and datagrams goes downstream mixed. For any
+  other downstream (draft-14 §10) the first task the session's first
+  subscription of the track schedules fixes the preference, and later keys
+  of the other kind are converted (see "Relaying across versions").
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscription's subscriber priority, the first object's publisher
   priority, the subscription's group order with a per-subscription
@@ -1023,6 +1046,60 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   rest unknown (`FetchHandler::marks_unknown_ranges`, draft-18), and
   `Unlimited` otherwise (draft-14), which waits for an open group as long
   as live ingest keeps it open.
+
+### Relaying across versions
+
+With `RELAY_MOQT_VERSIONS=draft-14,draft-18` draft-14 and draft-18 peers
+share tracks. The relay never reads a session's draft: moqt holds the
+per-draft rules and answers neutral questions, and every MUST of both drafts
+holds on each hop.
+- Track properties: a draft-14 session sends none of the draft-18 ones.
+  moqt understands no Mandatory Track Property (draft-18 §2.5.1), so it
+  refuses a PUBLISH, SUBSCRIBE_OK or FETCH_OK carrying one at receipt, and
+  the relay never holds such a track. The relay passes the upstream
+  UNSUPPORTED_EXTENSION to the downstream subscribers, as §2.5.1 requires;
+  draft-14 has no such code, so a draft-14 subscriber gets NOT_SUPPORTED.
+  Were a cached track to carry one, the subscribe sequence would refuse a
+  draft-14 subscriber before registering anything
+  (`SubscribeHandler::understands`), the FETCH sequence would refuse a FETCH
+  it serves from the cache before FETCH_OK (`FetchHandler::understands`),
+  both logged at WARN as the error response they send, and moqt's draft-14
+  `publish` would refuse it toward a draft-14 peer.
+- Forwarding preference: `GroupSender` keeps a track to a session that does
+  not mix preferences in one `SinglePreference`, that of the first subgroup
+  the session's first subscription of the track scheduled.
+  `TrackCache::fix_single_preference` keeps it per session until the
+  session ends (`TrackCacheStore::forget_downstream_session` in the session
+  cleanup), so later subscriptions and every FETCH from the cache to that
+  session give each object the preference and Subgroup ID it went live in
+  (`SinglePreference::forwarding`): draft-14 §8.1 makes a copy that differs
+  in either a conflicting duplicate, which moqt's `ObjectLedger` turns into
+  a malformed track.
+  - Started on a stream: each datagram object goes alone on a subgroup
+    stream in a range reserved for converted datagrams: Object ID `n` goes
+    on Subgroup ID 2^61 + `n` (`domain::single_preference`), and an Object
+    ID at or past 2^61 is dropped. A real subgroup of the group never shares
+    it, as it would were the Subgroup ID the Object ID: a second stream of
+    one subgroup with another final object makes the track malformed
+    (draft-14 §2.5). Publishers number subgroups from 0, so none is expected
+    in the range. The datagram's End of Group becomes the header's
+    `ends_group`, and the stream ranks last in its group.
+  - Started with a datagram: stream objects go as datagrams, an End of
+    Group status object included, and one larger than the session's maximum
+    datagram size is dropped as draft-14 §10.3 drops any datagram: moqt
+    logs it at DEBUG and reports it (`DatagramDelivery::TooLarge`), and the
+    subscription's `datagrams_dropped` stat counts it. A FETCH
+    gives them as datagrams too, which a draft-14 FETCH sends in the
+    subgroup of their Object ID (§10.4.4), as the live datagram's duplicate
+    check expects.
+- FETCH: a draft-14 FETCH response carries no preference, and an inferred
+  datagram copy is served to a draft-18 FETCH as described in the cache
+  section.
+- Cascading: the inner endpoint accepts the drafts of `RELAY_MOQT_VERSIONS`
+  and the dialing relay offers the same, so between two relays that enable
+  draft-18 a cascaded draft-18 track keeps its Track Properties and its
+  mixed forwarding preference. A hop to a relay on draft-14 only goes in
+  draft-14, which carries neither.
 
 ## Cascading relays (`modules/cascading`)
 

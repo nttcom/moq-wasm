@@ -27,6 +27,8 @@ pub(crate) struct RelayServerDeps {
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) authenticator: SessionAuthenticator,
     pub(crate) relay_token: String,
+    /// See `RelayConfig::moqt_versions`.
+    pub(crate) versions: Vec<moqt::Version>,
     pub(crate) data_plane: DataPlaneConfig,
 }
 
@@ -39,6 +41,7 @@ pub struct RelayServer {
     runtime: RelayRuntime,
     key_path: String,
     cert_path: String,
+    versions: Vec<moqt::Version>,
 }
 
 impl RelayServer {
@@ -70,7 +73,7 @@ impl RelayServer {
             prepare_directory(&disk_cache.dir).await?;
             tracing::info!(dir = %disk_cache.dir.display(), max_bytes = disk_cache.max_bytes, "disk cache enabled");
         }
-        Ok(Self::new_with_deps(
+        let server = Self::new_with_deps(
             key_path,
             cert_path,
             RelayServerDeps {
@@ -78,13 +81,15 @@ impl RelayServer {
                 route_registry,
                 authenticator,
                 relay_token: config.auth.relay_token,
+                versions: config.moqt_versions,
                 data_plane: DataPlaneConfig {
                     cache: config.cache,
                     disk_cache: config.disk_cache,
                     fetch_fill_timeout: config.fetch_fill_timeout,
                 },
             },
-        ))
+        );
+        Ok(server)
     }
 
     pub(crate) fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
@@ -93,6 +98,7 @@ impl RelayServer {
             route_registry,
             authenticator,
             relay_token,
+            versions,
             data_plane,
         } = deps;
         let repo = Arc::new(tokio::sync::Mutex::new(repo));
@@ -100,6 +106,7 @@ impl RelayServer {
             repo.clone(),
             route_registry.clone(),
             relay_token.clone(),
+            versions.clone(),
             authenticator.verifier.clone(),
             data_plane,
         );
@@ -113,6 +120,7 @@ impl RelayServer {
             runtime,
             key_path: key_path.to_string(),
             cert_path: cert_path.to_string(),
+            versions,
         }
     }
 
@@ -120,13 +128,15 @@ impl RelayServer {
         &self,
         port: u16,
         accepted_peer: SessionPeer,
+        versions: Vec<moqt::Version>,
     ) -> anyhow::Result<SessionHandler> {
-        tracing::info!(port = port, peer = ?accepted_peer, "Spawning transport handler");
+        tracing::info!(port = port, peer = ?accepted_peer, ?versions, "Spawning transport handler");
         let server_config = ServerConfig {
             port,
             cert_path: self.cert_path.clone(),
             key_path: self.key_path.clone(),
             keep_alive_interval_sec: 15,
+            versions,
         };
 
         SessionHandler::run::<T>(
@@ -145,7 +155,7 @@ impl RelayServer {
         &self,
         port: u16,
     ) -> anyhow::Result<SessionHandler> {
-        self.spawn_transport::<T>(port, SessionPeer::Client)
+        self.spawn_transport::<T>(port, SessionPeer::Client, self.versions.clone())
     }
 
     /// Fails when the endpoint cannot bind `port` or load the certificate.
@@ -153,7 +163,7 @@ impl RelayServer {
         &self,
         port: u16,
     ) -> anyhow::Result<SessionHandler> {
-        self.spawn_transport::<T>(port, SessionPeer::Relay)
+        self.spawn_transport::<T>(port, SessionPeer::Relay, self.versions.clone())
     }
 
     /// Sends GOAWAY to every client session and resolves once they have all
@@ -177,6 +187,7 @@ impl RelayServer {
             StatsPublishConfig {
                 inner_port,
                 relay_token: self.relay_token.clone(),
+                versions: self.versions.clone(),
             },
         )
     }
@@ -189,10 +200,39 @@ mod tests {
     use moqt::{SessionEvent, TerminationErrorCode};
 
     use crate::modules::auth::{
-        test_support::spawn_relay_and_connect_client, verified_token::VerifiedToken,
+        test_support::{relay_server_offering, spawn_relay_and_connect_client},
+        verified_token::VerifiedToken,
     };
 
     const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn the_inner_transport_accepts_the_drafts_relay_moqt_versions_names() {
+        // Arrange
+        let (server, _cert_dir) =
+            relay_server_offering(VerifiedToken::full_access(), &[moqt::Version::Draft18]);
+        let inner = server.spawn_inner_transport::<moqt::QUIC>(0).unwrap();
+        let other_relay = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
+            verify_certificate: false,
+            authorization_token: Some("relay-token".to_string()),
+            versions: vec![moqt::Version::Draft18],
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Act
+        let connected = tokio::time::timeout(EVENT_TIMEOUT, async {
+            other_relay
+                .connect(&format!("moqt://127.0.0.1:{}", inner.local_port))
+                .await?
+                .await
+        })
+        .await
+        .expect("the handshake should end");
+
+        // Assert: a draft-18-only relay can cascade to it
+        assert!(connected.is_ok(), "{:?}", connected.err());
+    }
 
     async fn receive_go_away(client: &moqt::Session) -> String {
         tokio::time::timeout(EVENT_TIMEOUT, async {

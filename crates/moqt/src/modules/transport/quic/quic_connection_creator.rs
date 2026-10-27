@@ -133,7 +133,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 mod tests {
     use super::QUICConnectionCreator;
     use crate::modules::{
-        moqt::version::APPLICATION_PROTOCOLS,
+        moqt::version::{DEFAULT_VERSIONS, application_protocols},
         test_support::{
             HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, server_transport_creator,
         },
@@ -160,7 +160,12 @@ mod tests {
     async fn either_side_keeps_more_than_a_hundred_bidirectional_streams_open() {
         // Arrange
         let server: QUICConnectionCreator = server_transport_creator("quic-bidi-streams");
-        let client = QUICConnectionCreator::client(0, false, APPLICATION_PROTOCOLS).unwrap();
+        let client = QUICConnectionCreator::client(
+            0,
+            false,
+            application_protocols(DEFAULT_VERSIONS).unwrap(),
+        )
+        .unwrap();
         let target = ConnectTarget::parse(&format!(
             "moqt://127.0.0.1:{}",
             server.local_port().unwrap()

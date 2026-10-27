@@ -20,13 +20,14 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn _max_cache_duration(&self) -> Option<u64>;
     fn _delivery_timeout(&self) -> Option<u64>;
     fn allocate_track_alias(&self) -> u64;
+    fn understands(&self, track_properties: &TrackProperties) -> bool;
     async fn ok_with_track_alias(
         &self,
         track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
         track_properties: TrackProperties,
-    ) -> Result<(), moqt::TransportSendError>;
+    ) -> anyhow::Result<()>;
     async fn error(
         &self,
         code: RequestErrorCode,
@@ -70,6 +71,9 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
     fn allocate_track_alias(&self) -> u64 {
         moqt::subscribe::SubscribeHandler::allocate_track_alias(self)
     }
+    fn understands(&self, track_properties: &TrackProperties) -> bool {
+        moqt::subscribe::SubscribeHandler::understands(self, track_properties)
+    }
 
     async fn ok_with_track_alias(
         &self,
@@ -77,7 +81,7 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
         expires: u64,
         content_exists: ContentExists,
         track_properties: TrackProperties,
-    ) -> Result<(), moqt::TransportSendError> {
+    ) -> anyhow::Result<()> {
         // moqt sends the handler's `track_properties` field; the clone shares
         // the original's response guard.
         let mut handler = self.clone();

@@ -126,14 +126,20 @@ fn delivery_order(group_order: moqt::object::GroupOrder, at: moqt::object::Locat
     (group, at.object_id)
 }
 
-/// `None` once the response has been reset because the payload is lost.
+/// The object in the form a FETCH from the cache gives it, or `None` once
+/// the response has been reset because the payload is lost.
 async fn load(
     request: &EgressFetchRequest,
     sender: &dyn FetchSender,
-    object: &CachedObject,
+    cached: &CachedObject,
 ) -> Option<moqt::object::Object> {
-    match object.load().await {
-        Ok(object) => Some(object),
+    match cached.load().await {
+        Ok(mut object) => {
+            object.forwarding = request
+                .cache
+                .fetch_forwarding(cached, request.subscriber_session_id);
+            Some(object)
+        }
         Err(error) => {
             tracing::warn!(
                 request_id = request.request_id,

@@ -6,7 +6,8 @@ use moqt::{TrackProperties, object::ContentExists};
 
 use crate::modules::session::{
     data_sender::{
-        DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
+        datagram_sender::DatagramSender, fetch_sender::FetchSender,
+        stream_sender_factory::StreamSenderFactory,
     },
     subscription::DownstreamSubscription,
 };
@@ -35,12 +36,18 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()>;
+    /// Whether one track may reach this session on subgroup streams and in
+    /// datagrams alike; when not, egress keeps each subscription to one
+    /// forwarding preference.
+    fn mixes_forwarding_preferences(&self) -> bool;
     fn new_stream_factory(
         &self,
         downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory>;
-    fn new_datagram(&self, downstream_subscription: &DownstreamSubscription)
-    -> Box<dyn DataSender>;
+    fn new_datagram(
+        &self,
+        downstream_subscription: &DownstreamSubscription,
+    ) -> Box<dyn DatagramSender>;
     async fn new_fetch_sender(&self, request_id: u64) -> anyhow::Result<Box<dyn FetchSender>>;
 }
 
@@ -91,6 +98,10 @@ impl Publisher for moqt::Publisher {
         .await
     }
 
+    fn mixes_forwarding_preferences(&self) -> bool {
+        moqt::Publisher::mixes_forwarding_preferences(self)
+    }
+
     fn new_stream_factory(
         &self,
         downstream_subscription: &DownstreamSubscription,
@@ -101,7 +112,7 @@ impl Publisher for moqt::Publisher {
     fn new_datagram(
         &self,
         downstream_subscription: &DownstreamSubscription,
-    ) -> Box<dyn DataSender> {
+    ) -> Box<dyn DatagramSender> {
         Box::new(self.create_datagram(downstream_subscription.as_moqt()))
     }
 

@@ -2,20 +2,21 @@ use std::{
     future::Future,
     net::{SocketAddr, ToSocketAddrs},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime},
 };
 
 use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
+    ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription, TrackProperties, Version,
     fetch::{Fetch, FetchOption},
     namespace::NamespaceInterest,
     object::{
-        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectStatus, Subgroup, SubgroupStart, TrackData,
+        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, KeyValuePair, Location,
+        Object, ObjectStatus, Subgroup, SubgroupStart, TrackData, VariantType,
     },
+    publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
 };
 use redis::AsyncCommands;
@@ -30,6 +31,9 @@ const CATALOG_TRACK_NAME: &str = "catalog";
 const CATALOG_PAYLOAD: &[u8] = b"cascading relay e2e catalog payload";
 const ORDERED_OBJECT_COUNT: usize = 50;
 
+/// The drafts every client offers, from `--moqt-versions`.
+static CLIENT_VERSIONS: OnceLock<Vec<Version>> = OnceLock::new();
+
 #[derive(Debug)]
 struct Config {
     relay_a_url: String,
@@ -37,6 +41,8 @@ struct Config {
     redis_url: String,
     track_namespace: String,
     track_name: String,
+    /// The drafts the clients offer, most preferred first.
+    versions: Vec<Version>,
 }
 
 struct PubSubResult {
@@ -67,6 +73,7 @@ impl Config {
             redis_url: DEFAULT_REDIS_URL.to_string(),
             track_namespace: DEFAULT_TRACK_NAMESPACE.to_string(),
             track_name: DEFAULT_TRACK_NAME.to_string(),
+            versions: moqt::DEFAULT_VERSIONS.to_vec(),
         };
 
         let mut args = std::env::args().skip(1);
@@ -80,6 +87,7 @@ impl Config {
                 "--redis-url" => config.redis_url = value,
                 "--track-namespace" => config.track_namespace = value,
                 "--track-name" => config.track_name = value,
+                "--moqt-versions" => config.versions = moqt_versions(&value)?,
                 _ => bail!("unknown argument: {arg}"),
             }
         }
@@ -114,6 +122,9 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_args()?;
     config.validate_distinct_relays()?;
+    CLIENT_VERSIONS
+        .set(config.versions.clone())
+        .expect("main sets the client drafts once");
     tracing::info!(?config, "starting cascading relay e2e");
 
     tokio::time::timeout(Duration::from_secs(90), run(config))
@@ -196,6 +207,17 @@ async fn run(config: Config) -> anyhow::Result<()> {
     )
     .await?;
 
+    if config.versions.contains(&Version::Draft18) {
+        run_track_properties_scenario(
+            "dual relay draft-18 track properties relay-a to relay-b",
+            &config.relay_a_url,
+            &config.relay_b_url,
+            &scenario_namespace(&config.track_namespace, &run_id, "track-properties"),
+            &config.track_name,
+        )
+        .await?;
+    }
+
     run_namespace_cleanup_scenario(
         &config.redis_url,
         "relay-b",
@@ -216,6 +238,89 @@ async fn run(config: Config) -> anyhow::Result<()> {
 
     tracing::info!("cascading relay e2e passed");
     println!("cascading relay e2e passed");
+    Ok(())
+}
+
+/// `draft-18,draft-14` style, most preferred first.
+fn moqt_versions(text: &str) -> anyhow::Result<Vec<Version>> {
+    text.split(',')
+        .map(|name| match name.trim() {
+            "draft-14" => Ok(Version::Draft14),
+            "draft-18" => Ok(Version::Draft18),
+            other => bail!("--moqt-versions lists draft-14 and draft-18 only, got {other:?}"),
+        })
+        .collect()
+}
+
+/// Track Properties the relays understand none of, an even and an odd one.
+fn unknown_track_properties() -> TrackProperties {
+    TrackProperties::from_pairs(vec![
+        KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(Bytes::from_static(&[0x38, 0x80, 0x05])),
+        },
+        KeyValuePair {
+            key: 0x38,
+            value: VariantType::Even(7),
+        },
+    ])
+}
+
+/// A draft-18 track published on relay-a reaches a subscriber of relay-b
+/// with the Track Properties of its PUBLISH, unchanged (draft-18 §2.5): the
+/// relays cascade in draft-18 when both accept it.
+async fn run_track_properties_scenario(
+    name: &str,
+    publisher_url: &str,
+    subscriber_url: &str,
+    track_namespace: &str,
+    track_name: &str,
+) -> anyhow::Result<()> {
+    tracing::info!(scenario = name, %track_namespace, "running track properties scenario");
+    let publisher_session = connect_with_retry(publisher_url).await?;
+    let publisher = publisher_session.publisher();
+    publisher
+        .publish_namespace(track_namespace.to_string())
+        .await
+        .context("publisher failed to publish namespace")?;
+    let _published = publisher
+        .publish(
+            track_namespace.to_string(),
+            track_name.to_string(),
+            PublishOption {
+                track_properties: unknown_track_properties(),
+                ..PublishOption::default()
+            },
+        )
+        .await
+        .context("publisher failed to publish track")?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let subscriber_session = connect_with_retry(subscriber_url).await?;
+    let subscription = tokio::time::timeout(
+        Duration::from_secs(15),
+        subscriber_session.subscriber().subscribe(
+            track_namespace.to_string(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        ),
+    )
+    .await
+    .context("timed out waiting for SUBSCRIBE_OK")?
+    .context("subscriber failed to subscribe")?;
+
+    if subscription.track_properties() != &unknown_track_properties() {
+        bail!(
+            "{name}: the subscriber got {:?}, not the published track properties",
+            subscription.track_properties()
+        );
+    }
+    tracing::info!(scenario = name, "track properties scenario passed");
     Ok(())
 }
 
@@ -927,6 +1032,10 @@ async fn connect(url: &str) -> anyhow::Result<Session> {
         verify_certificate: false,
         authorization_token: None,
         follow_go_away: true,
+        versions: CLIENT_VERSIONS
+            .get()
+            .cloned()
+            .unwrap_or_else(|| moqt::DEFAULT_VERSIONS.to_vec()),
     })?;
     tracing::info!(url, "connecting to relay");
     let connecting = endpoint.connect(url).await?;

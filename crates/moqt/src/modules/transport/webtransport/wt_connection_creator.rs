@@ -53,7 +53,7 @@ impl WtConnectionCreator {
 pub(crate) async fn connect_session(
     connection: quinn::Connection,
     target: &ConnectTarget,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<web_transport_quinn::Session> {
     let request = ConnectRequest::new(target.url.clone()).with_protocols(
         protocols
@@ -66,7 +66,7 @@ pub(crate) async fn connect_session(
 
 pub(crate) async fn accept_session(
     request: web_transport_quinn::Request,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<web_transport_quinn::Session> {
     let mut response = ConnectResponse::OK;
     response.protocol = protocols
@@ -147,7 +147,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let connection = target
             .connect_quic(&self.quic_endpoint, client_config.clone())
             .await?;
-        let session = connect_session(connection, target, self.protocols).await?;
+        let session = connect_session(connection, target, &self.protocols).await?;
 
         Ok(Box::new(WtConnection::new(session)))
     }
@@ -170,7 +170,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
                     .await;
                 continue;
             }
-            let session = accept_session(request, self.protocols).await?;
+            let session = accept_session(request, &self.protocols).await?;
             return Ok(Box::new(WtConnection::new(session)));
         }
     }
@@ -194,7 +194,7 @@ mod tests {
     use crate::{
         Endpoint, WEBTRANSPORT,
         modules::{
-            moqt::version::APPLICATION_PROTOCOLS,
+            moqt::version::{DEFAULT_VERSIONS, application_protocols},
             test_support::{
                 HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions_from,
                 insecure_client_config, server_transport_creator, spawn_dual_server,
@@ -224,7 +224,9 @@ mod tests {
     async fn either_side_keeps_more_than_a_hundred_bidirectional_streams_open() {
         // Arrange
         let server: WtConnectionCreator = server_transport_creator("wt-bidi-streams");
-        let client = WtConnectionCreator::client(0, false, APPLICATION_PROTOCOLS).unwrap();
+        let client =
+            WtConnectionCreator::client(0, false, application_protocols(DEFAULT_VERSIONS).unwrap())
+                .unwrap();
         let target = ConnectTarget::parse(&format!(
             "https://127.0.0.1:{}/moq",
             server.local_port().unwrap()

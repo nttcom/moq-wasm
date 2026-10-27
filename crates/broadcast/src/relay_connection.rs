@@ -182,6 +182,7 @@ impl ConnectedRelay {
             verify_certificate: target.verify_certificate,
             authorization_token: target.auth_token.clone(),
             follow_go_away: true,
+            ..Default::default()
         })?;
         let connecting = endpoint
             .connect(&target.url)
@@ -562,6 +563,7 @@ mod tests {
             cert_path,
             key_path,
             keep_alive_interval_sec: 5,
+            versions: moqt::DEFAULT_VERSIONS.to_vec(),
         }
     }
 

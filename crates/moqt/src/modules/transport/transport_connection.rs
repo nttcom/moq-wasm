@@ -10,6 +10,17 @@ use crate::modules::{
 };
 use async_trait::async_trait;
 
+/// What became of an object `DatagramSender::send_object` sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DatagramDelivery {
+    /// A connection took the datagram.
+    Sent,
+    /// The datagram exceeds the maximum datagram size of every connection,
+    /// so it was dropped without notice (draft-14 §10.3, draft-18 §11.3).
+    TooLarge,
+}
+
 /// How the transport ended: `code` is the peer's termination code when the
 /// connection was closed by the application layer (draft-14 §3.4), `None` for
 /// transport-level failures.
@@ -44,7 +55,7 @@ pub(crate) trait TransportConnection: MaybeSend + MaybeSync + Debug {
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)>;
     async fn open_uni(&self) -> anyhow::Result<BoxedSendStream>;
     async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream>;
-    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()>;
+    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<DatagramDelivery>;
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut>;
     fn stats(&self) -> TransportStats;
     fn addresses(&self) -> TransportAddresses;

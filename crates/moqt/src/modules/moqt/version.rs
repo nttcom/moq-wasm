@@ -4,8 +4,8 @@
 //! hold control messages, how a response finds its request, how a request
 //! is cancelled.
 //!
-//! draft-14 and draft-18 are implemented. `APPLICATION_PROTOCOLS` offers
-//! only draft-14 because draft-18 has not been checked against other
+//! draft-14 and draft-18 are implemented. `DEFAULT_VERSIONS` offers only
+//! draft-14 because draft-18 has not been checked against other
 //! implementations.
 
 pub(crate) mod draft14;
@@ -22,7 +22,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
 
 use crate::{
-    RequestFailure,
+    RequestFailure, TrackProperties,
     modules::{
         executor::JoinHandle,
         moqt::{
@@ -81,30 +81,63 @@ const DRAFT18_PROTOCOL: &str = "moqt-18";
 
 const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Offers only draft-18, for tests.
-#[cfg(test)]
-pub(crate) const DRAFT18_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
-    quic_alpns: &[DRAFT18_PROTOCOL],
-    web_transport: &[DRAFT18_PROTOCOL],
-};
+/// The drafts `ClientConfig::default()` offers.
+pub const DEFAULT_VERSIONS: &[Version] = &[Version::Draft14];
 
-/// The ALPN and WebTransport subprotocol of every draft offered to peers.
-pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
-    quic_alpns: &[DRAFT14_ALPN],
-    // draft-14 defines no WebTransport subprotocol (§3.1.1).
-    web_transport: &[],
-};
-
-/// The MoQT draft a session speaks, chosen when it is established.
+/// A MoQT draft a session can speak; the one both ends offer is chosen when
+/// the session is established.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Version {
+#[non_exhaustive]
+pub enum Version {
     /// draft-ietf-moq-transport-14.
     Draft14,
     /// draft-ietf-moq-transport-18.
     Draft18,
 }
 
+/// The ALPNs and WebTransport subprotocols that offer `versions`, in their order.
+pub(crate) fn application_protocols(versions: &[Version]) -> anyhow::Result<ApplicationProtocols> {
+    anyhow::ensure!(!versions.is_empty(), "no MoQT version to offer");
+    Ok(ApplicationProtocols {
+        quic_alpns: versions.iter().map(|version| version.alpn()).collect(),
+        web_transport: versions
+            .iter()
+            .filter_map(|version| version.web_transport_protocol())
+            .collect(),
+    })
+}
+
+/// What a server accepting `versions` selects from. A WebTransport session
+/// without a subprotocol is draft-14, so the subprotocols listed after
+/// draft-14 are left out: the server's order decides there too.
+pub(crate) fn server_application_protocols(
+    versions: &[Version],
+) -> anyhow::Result<ApplicationProtocols> {
+    let mut protocols = application_protocols(versions)?;
+    protocols.web_transport = versions
+        .iter()
+        .take_while(|version| **version != Version::Draft14)
+        .filter_map(|version| version.web_transport_protocol())
+        .collect();
+    Ok(protocols)
+}
+
 impl Version {
+    fn alpn(self) -> &'static str {
+        match self {
+            Self::Draft14 => DRAFT14_ALPN,
+            Self::Draft18 => DRAFT18_PROTOCOL,
+        }
+    }
+
+    fn web_transport_protocol(self) -> Option<&'static str> {
+        match self {
+            // draft-14 defines no WebTransport subprotocol (§3.1.1).
+            Self::Draft14 => None,
+            Self::Draft18 => Some(DRAFT18_PROTOCOL),
+        }
+    }
+
     pub(crate) fn termination_code(self, code: TerminationErrorCode) -> u32 {
         match self {
             Self::Draft14 => draft14::error_codes::termination_code_to_wire(code),
@@ -152,6 +185,16 @@ impl Version {
         }
     }
 
+    /// Whether a peer of this draft may be sent a track with `properties`:
+    /// draft-14 has no Track Properties, so it understands no Mandatory
+    /// Track Property (draft-18 §2.5.1).
+    pub(crate) fn understands(self, properties: &TrackProperties) -> bool {
+        match self {
+            Self::Draft14 => !draft18::messages::has_mandatory_track_property(properties),
+            Self::Draft18 => true,
+        }
+    }
+
     pub(crate) fn data_stream_reset_code(self, code: DataStreamResetCode) -> u64 {
         match self {
             Self::Draft14 => draft14::error_codes::data_stream_reset_code_to_wire(code),
@@ -159,16 +202,24 @@ impl Version {
         }
     }
 
-    fn negotiated(protocol: &NegotiatedProtocol) -> anyhow::Result<Self> {
-        match protocol {
-            NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Ok(Self::Draft14),
-            NegotiatedProtocol::WebTransport { protocol: None } => Ok(Self::Draft14),
-            NegotiatedProtocol::Quic { alpn } if alpn == DRAFT18_PROTOCOL => Ok(Self::Draft18),
+    /// The draft `protocol` selects, when it is one of `accepted`. A
+    /// WebTransport session without a subprotocol selects draft-14, which
+    /// defines none, so an endpoint that does not accept draft-14 refuses it.
+    fn negotiated(protocol: &NegotiatedProtocol, accepted: &[Self]) -> anyhow::Result<Self> {
+        let version = match protocol {
+            NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Self::Draft14,
+            NegotiatedProtocol::WebTransport { protocol: None } => Self::Draft14,
+            NegotiatedProtocol::Quic { alpn } if alpn == DRAFT18_PROTOCOL => Self::Draft18,
             NegotiatedProtocol::WebTransport {
                 protocol: Some(protocol),
-            } if protocol == DRAFT18_PROTOCOL => Ok(Self::Draft18),
+            } if protocol == DRAFT18_PROTOCOL => Self::Draft18,
             other => anyhow::bail!("no supported MoQT version negotiated: {other:?}"),
-        }
+        };
+        anyhow::ensure!(
+            accepted.contains(&version),
+            "{protocol:?} selects {version:?}, which this endpoint does not accept"
+        );
+        Ok(version)
     }
 
     pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> BytesMut {
@@ -626,20 +677,25 @@ impl ControlReceiver {
     }
 }
 
-fn negotiated_version(transport_connection: &BoxedConnection) -> anyhow::Result<Version> {
+fn negotiated_version(
+    transport_connection: &BoxedConnection,
+    accepted: &[Version],
+) -> anyhow::Result<Version> {
     let protocol = transport_connection.negotiated_protocol();
-    let version = Version::negotiated(&protocol)?;
+    let version = Version::negotiated(&protocol, accepted)?;
     tracing::debug!(?protocol, ?version, "MoQT version negotiated");
     Ok(version)
 }
 
-/// Opens a client session's control stream and runs the setup exchange.
+/// Opens a client session's control stream and runs the setup exchange in
+/// the negotiated draft, which must be one of `offered`.
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
+    offered: &[Version],
     authorization_token: Option<&str>,
     target: &ConnectTarget,
 ) -> anyhow::Result<(ControlChannel, ControlReceiver, ServerSetup)> {
-    match negotiated_version(transport_connection)? {
+    match negotiated_version(transport_connection, offered)? {
         Version::Draft14 => {
             let (channel, receiver, server_setup) =
                 draft14::setup::connect(transport_connection, authorization_token).await?;
@@ -662,11 +718,13 @@ pub(crate) async fn connect(
 }
 
 /// Reads the client's setup so the server can decide before calling
-/// `ServerHandshake::accept`.
+/// `ServerHandshake::accept`. Fails when the negotiated draft is not one of
+/// `accepted`.
 pub(crate) async fn accept(
     transport_connection: &BoxedConnection,
+    accepted: &[Version],
 ) -> anyhow::Result<ServerHandshake> {
-    match negotiated_version(transport_connection)? {
+    match negotiated_version(transport_connection, accepted)? {
         Version::Draft14 => Ok(ServerHandshake::Draft14(
             draft14::setup::accept(transport_connection).await?,
         )),
@@ -742,15 +800,36 @@ impl PendingResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::Version;
+    use super::{Version, application_protocols};
     use crate::modules::transport::application_protocol::NegotiatedProtocol;
+
+    const BOTH: &[Version] = &[Version::Draft14, Version::Draft18];
+
+    #[test]
+    fn both_drafts_are_offered_in_the_order_given() {
+        // Act
+        let protocols = application_protocols(&[Version::Draft18, Version::Draft14]).unwrap();
+
+        // Assert
+        assert_eq!(protocols.quic_alpns, ["moqt-18", "moq-00"]);
+        assert_eq!(protocols.web_transport, ["moqt-18"]);
+    }
+
+    #[test]
+    fn offering_no_version_fails() {
+        // Act / Assert
+        assert!(application_protocols(&[]).is_err());
+    }
 
     #[test]
     fn the_draft14_alpn_selects_draft14() {
         // Act
-        let version = Version::negotiated(&NegotiatedProtocol::Quic {
-            alpn: "moq-00".to_string(),
-        });
+        let version = Version::negotiated(
+            &NegotiatedProtocol::Quic {
+                alpn: "moq-00".to_string(),
+            },
+            BOTH,
+        );
 
         // Assert
         assert_eq!(version.unwrap(), Version::Draft14);
@@ -759,21 +838,40 @@ mod tests {
     #[test]
     fn a_web_transport_session_without_a_subprotocol_selects_draft14() {
         // Act
-        let version = Version::negotiated(&NegotiatedProtocol::WebTransport { protocol: None });
+        let version =
+            Version::negotiated(&NegotiatedProtocol::WebTransport { protocol: None }, BOTH);
 
         // Assert
         assert_eq!(version.unwrap(), Version::Draft14);
     }
 
     #[test]
+    fn an_endpoint_without_draft14_refuses_a_web_transport_session_without_a_subprotocol() {
+        // Act
+        let version = Version::negotiated(
+            &NegotiatedProtocol::WebTransport { protocol: None },
+            &[Version::Draft18],
+        );
+
+        // Assert
+        assert!(version.is_err());
+    }
+
+    #[test]
     fn the_draft18_alpn_and_subprotocol_select_draft18() {
         // Act
-        let over_quic = Version::negotiated(&NegotiatedProtocol::Quic {
-            alpn: "moqt-18".to_string(),
-        });
-        let over_web_transport = Version::negotiated(&NegotiatedProtocol::WebTransport {
-            protocol: Some("moqt-18".to_string()),
-        });
+        let over_quic = Version::negotiated(
+            &NegotiatedProtocol::Quic {
+                alpn: "moqt-18".to_string(),
+            },
+            BOTH,
+        );
+        let over_web_transport = Version::negotiated(
+            &NegotiatedProtocol::WebTransport {
+                protocol: Some("moqt-18".to_string()),
+            },
+            BOTH,
+        );
 
         // Assert
         assert_eq!(over_quic.unwrap(), Version::Draft18);
@@ -783,9 +881,12 @@ mod tests {
     #[test]
     fn an_unsupported_alpn_selects_no_version() {
         // Act
-        let version = Version::negotiated(&NegotiatedProtocol::Quic {
-            alpn: "moqt-99".to_string(),
-        });
+        let version = Version::negotiated(
+            &NegotiatedProtocol::Quic {
+                alpn: "moqt-99".to_string(),
+            },
+            BOTH,
+        );
 
         // Assert
         assert!(version.is_err());

@@ -9,9 +9,10 @@ down.
 | `./tests/auth-e2e/run.sh` | JWT acceptance, expiry and token refresh against two relays and the VTS |
 | `./tests/fetch-e2e/run.sh` | FETCH range resolution against the relay cache |
 | `./tests/cache-eviction-e2e/run.sh` | Objects leave the cache after the TTL and idle tracks are reclaimed |
-| `./tests/cascading-relay-e2e/run.sh` | Publish on `relay-a`, subscribe and fetch through `relay-b`; a second subscriber's joining FETCH returns an object relay-b never cached |
+| `./tests/cascading-relay-e2e/run.sh` | Publish on `relay-a`, subscribe and fetch through `relay-b`; a second subscriber's joining FETCH returns an object relay-b never cached. Runs twice: as is, then with `RELAY_MOQT_VERSIONS=draft-18,draft-14` and draft-18 clients, where a track's Track Properties must survive the inter-relay hop |
 | `./tests/multiple-publishers-e2e/run.sh` | A second publisher of the same track is ignored |
 | `./tests/object-dedup-e2e/run.sh` | Republishing a group does not duplicate objects for FETCH |
+| `./tests/cross-version-e2e/run.sh` | A relay accepting draft-14 and draft-18 relays tracks both ways, keeps a mixed draft-18 track to one forwarding preference for a draft-14 subscriber, refuses a track with a Mandatory Track Property, and bounds a draft-18 FETCH's wait by its FILL_TIMEOUT; starts a local VTS and relay (no Docker) on `CROSS_VERSION_E2E_VTS_PORT` (8081) and `CROSS_VERSION_E2E_RELAY_PORT` (4633, and the next port) |
 | `./tests/moqtsink-e2e/run.sh` | The GStreamer `moqtsink` publishes the expected tracks |
 
 Browser E2E: the Playwright specs live in `examples/browser/tests`, and the

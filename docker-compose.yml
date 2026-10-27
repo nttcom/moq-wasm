@@ -51,6 +51,7 @@ services:
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
       RELAY_CACHE_TTL_SECS: ${RELAY_CACHE_TTL_SECS:-}
       RELAY_CACHE_EVICT_INTERVAL_SECS: ${RELAY_CACHE_EVICT_INTERVAL_SECS:-}
+      RELAY_MOQT_VERSIONS: ${RELAY_MOQT_VERSIONS:-}
     ports:
       - "4433:443/udp"
     # Lets AUTH_VTS_URL name a VTS running on the host, as the E2E runners do.
@@ -86,6 +87,7 @@ services:
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
       RELAY_CACHE_TTL_SECS: ${RELAY_CACHE_TTL_SECS:-}
       RELAY_CACHE_EVICT_INTERVAL_SECS: ${RELAY_CACHE_EVICT_INTERVAL_SECS:-}
+      RELAY_MOQT_VERSIONS: ${RELAY_MOQT_VERSIONS:-}
     ports:
       - "4434:443/udp"
     extra_hosts:

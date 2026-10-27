@@ -40,6 +40,7 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
         verify_certificate: !relay.insecure,
         authorization_token: auth_token.clone(),
         follow_go_away: true,
+        ..Default::default()
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
     info!(relay = %relay.url, "connecting to relay");

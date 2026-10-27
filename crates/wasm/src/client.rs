@@ -309,6 +309,7 @@ impl MOQTClient {
             verify_certificate: true,
             authorization_token: auth_token,
             follow_go_away: true,
+            ..Default::default()
         })
         .map_err(anyhow_error)?;
         let session = endpoint
@@ -822,7 +823,7 @@ impl MOQTClient {
         handler
             .ok_with_track_alias(track_alias, expires, content_exists)
             .await
-            .map_err(send_error)?;
+            .map_err(anyhow_error)?;
         self.shared
             .track_subscriptions
             .borrow_mut()
@@ -1131,7 +1132,7 @@ impl MOQTClient {
             .borrow()
             .incoming_fetch_end(request_id)
             .map_err(anyhow_error)?;
-        handler.ok(false, end_location).await.map_err(send_error)
+        handler.ok(false, end_location).await.map_err(anyhow_error)
     }
 
     #[wasm_bindgen(js_name = sendFetchError)]

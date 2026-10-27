@@ -47,6 +47,7 @@ on:
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
       - "tests/object-dedup-e2e/**"
+      - "tests/cross-version-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain"
@@ -101,6 +102,7 @@ on:
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
       - "tests/object-dedup-e2e/**"
+      - "tests/cross-version-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain"
@@ -135,6 +137,7 @@ jobs:
       meeting: ${{ steps.filter.outputs.meeting }}
       console: ${{ steps.filter.outputs.console }}
       compose_suites: ${{ steps.filter.outputs.compose_suites }}
+      cross_version: ${{ steps.filter.outputs.cross_version }}
       relay_image: ${{ steps.relay_image.outputs.image }}
       relay_image_source: ${{ steps.relay_image.outputs.source || 'none' }}
     steps:
@@ -162,6 +165,7 @@ jobs:
             meeting=true
             console=true
             compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup)
+            cross_version=true
           else
             base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
 
@@ -181,6 +185,7 @@ jobs:
             meeting=false
             console=false
             compose_suites=()
+            cross_version=false
 
             while IFS= read -r path; do
               [[ "$path" == *.md ]] && continue
@@ -289,6 +294,12 @@ jobs:
                   compose_suites+=(auth)
                   ;;
               esac
+              # Builds the relay and VTS from source, so no relay image is needed.
+              case "$path" in
+                .github/workflows/e2e.yml|.cargo/config.toml|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/vts/*|crates/app-registry/*|tests/cross-version-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  cross_version=true
+                  ;;
+              esac
               case "$path" in
                 .github/workflows/e2e.yml|.github/actions/install-playwright-chromium/*|tests/browser-e2e/run-console-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|examples/browser/package.json|examples/browser/package-lock.json|examples/browser/playwright.console.config.ts|examples/browser/tests/console-e2e*|crates/console/*|crates/app-registry/*|crates/auth-token/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   console=true
@@ -311,6 +322,7 @@ jobs:
             echo "meeting=$meeting"
             echo "console=$console"
             echo "compose_suites=$(jq -cn '$ARGS.positional | unique' --args "${compose_suites[@]}")"
+            echo "cross_version=$cross_version"
             echo "relay=$relay"
           } >> "$GITHUB_OUTPUT"
 
@@ -1091,3 +1103,34 @@ jobs:
         env:
           CI: "true"
         run: ./tests/${{ matrix.suite }}-e2e/run.sh
+
+  cross_version_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.cross_version == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.99.1
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Run cross-version E2E
+        env:
+          CI: "true"
+        run: ./tests/cross-version-e2e/run.sh

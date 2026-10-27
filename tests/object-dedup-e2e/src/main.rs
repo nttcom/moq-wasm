@@ -40,6 +40,7 @@ async fn new_session() -> anyhow::Result<Session> {
         verify_certificate: false,
         authorization_token: None,
         follow_go_away: true,
+        ..Default::default()
     })?;
     let connecting = endpoint.connect(&relay_url).await?;
     connecting.await
