@@ -17,6 +17,7 @@ use super::{
     console_log,
 };
 use crate::{
+    client_state::FetchRejection,
     messages::{
         FetchMessage, PublishDoneMessage, PublishMessage, PublishNamespaceDoneMessage,
         PublishNamespaceMessage, SubscribeMessage,
@@ -216,7 +217,10 @@ fn on_fetch(shared: &ClientShared, handler: FetchHandler) {
                 .insert(handler.request_id, handler);
             emit(&shared.callbacks, |c| &c.fetch, &[message.into()]);
         }
-        Err(rejection) => reject_fetch(handler, rejection),
+        Err(FetchRejection::Error(code)) => reject_fetch(handler, code),
+        Err(FetchRejection::ProtocolViolation(error)) => {
+            handler.close_for_protocol_violation(&error.to_string())
+        }
     }
 }
 
