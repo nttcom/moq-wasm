@@ -98,8 +98,15 @@ ids.
 
 ### Subscribing side
 
-A subscription carried over is re-sent with `NextGroupStart` (or with its
-Forward state and its original range for a finite one). Its incoming streams
+A subscription carried over is re-sent with its Forward state and
+`NextGroupStart`, or, for an AbsoluteRange, a range that starts after the
+newest group the previous connection handed out and keeps its End Group. An
+AbsoluteRange whose End Group the previous connection has started is not
+re-sent: it ends there, and the previous connection is kept until its
+streams end (10 s limit). A subscription only delivers objects after the
+Largest Object of its SUBSCRIBE_OK (draft-14 §9.7), so a range that starts
+at or below it joins that group mid-way; `GroupCutover` leaves such a group
+to the previous connection. Its incoming streams
 of both connections feed the same `StreamDataReceiverFactory`. A subgroup
 stream carries one group, so the group cutover of `GroupCutover` becomes a
 per-stream decision: the factory hands out the streams of groups before the

@@ -24,6 +24,7 @@ use crate::{
         },
         transport::transport_connection::TransportClose,
     },
+    object::{ContentExists, Location},
     subscribe::UnsubscribeHandler,
     subscribe::{FilterType, SubscribeOption},
 };
@@ -101,9 +102,12 @@ struct Live {
 
 struct Previous {
     live: Live,
-    /// Resolves once no carried subscription has a subgroup stream open on
-    /// this connection, or `PREVIOUS_CONNECTION_GRACE` after every one cut
-    /// over (waiting at most `CUTOVER_LIMIT`).
+    /// Resolves once both hold:
+    /// - no moved subscription has a subgroup stream open on this
+    ///   connection, or `PREVIOUS_CONNECTION_GRACE` has passed after every
+    ///   one cut over (waiting at most `CUTOVER_LIMIT`);
+    /// - no subscription that ends on this connection has a stream open, or
+    ///   `CUTOVER_LIMIT` has passed.
     released: BoxFuture<()>,
     cutovers: Vec<Arc<std::sync::Mutex<SharedCutover>>>,
 }
@@ -375,6 +379,7 @@ async fn migrate(
     let mut cut_overs = Vec::new();
     let mut cutovers = Vec::new();
     let mut previous_open_subgroups = Vec::new();
+    let mut ending_open_subgroups = Vec::new();
     for (request_id, outcome) in carried_over {
         match outcome {
             Carried::Moved {
@@ -386,6 +391,7 @@ async fn migrate(
                 previous_open_subgroups.push((cutover.clone(), previous_open));
                 cutovers.push(cutover);
             }
+            Carried::Ends { previous_open } => ending_open_subgroups.push(previous_open),
             Carried::Stays => {}
             Carried::Gone => {
                 carried.subscriptions.remove(&request_id);
@@ -413,10 +419,17 @@ async fn migrate(
                     .iter()
                     .map(|(cutover, open)| release_when_idle(&moved_from, cutover, open)),
             );
-            tokio::select! {
-                () = grace => {}
-                _ = idle => {}
-            }
+            let moving = async {
+                tokio::select! {
+                    () = grace => {}
+                    _ = idle => {}
+                }
+            };
+            let ending = executor::timeout(
+                CUTOVER_LIMIT,
+                join_all(ending_open_subgroups.iter().map(OpenSubgroups::all_ended)),
+            );
+            let _ = tokio::join!(moving, ending);
             session.unserved(&moved_from).await;
         }),
         cutovers,
@@ -454,6 +467,9 @@ enum Carried {
         cutover: Arc<std::sync::Mutex<SharedCutover>>,
         previous_open: OpenSubgroups,
     },
+    /// The previous connection has started the subscription's End Group;
+    /// the subscription is not sent again and ends on the previous connection.
+    Ends { previous_open: OpenSubgroups },
     /// The new server did not accept it; it stays on the previous connection.
     Stays,
     /// It no longer has a receiver.
@@ -470,8 +486,16 @@ async fn carry_subscription(
     let Some(previous_request_id) = moved_from.wire_request_id(request_id) else {
         return (request_id, Carried::Gone);
     };
+    let Some((newest_group, previous_open)) =
+        moved_from.receiver_progress(previous_request_id).await
+    else {
+        return (request_id, Carried::Gone);
+    };
+    let Some(filter_type) = resumed_filter(subscription.option.filter_type, newest_group) else {
+        return (request_id, Carried::Ends { previous_open });
+    };
     let option = SubscribeOption {
-        filter_type: FilterType::NextGroupStart,
+        filter_type,
         ..subscription.option.clone()
     };
     let subscribed = retry_until(deadline, || {
@@ -502,7 +526,11 @@ async fn carry_subscription(
         shared: cutover,
         previous_open_subgroups,
     }) = moved_from
-        .start_cutover(previous_request_id, cut_over)
+        .start_cutover(
+            previous_request_id,
+            cut_over,
+            first_whole_group(&filter_type, &subscribe_ok.content_exists),
+        )
         .await
     else {
         let _ = connection
@@ -545,6 +573,50 @@ async fn carry_subscription(
             previous_open: previous_open_subgroups,
         },
     )
+}
+
+/// The filter a subscription is sent again with, after the previous
+/// connection handed out groups up to `newest` (draft-14 §9.7):
+/// - an AbsoluteRange starts at the group after `newest`, or at its own
+///   start if later, and keeps its End Group;
+/// - any other filter becomes NextGroupStart.
+///
+/// `None` once the previous connection has started the End Group.
+fn resumed_filter(filter_type: FilterType, newest: Option<u64>) -> Option<FilterType> {
+    match filter_type {
+        FilterType::AbsoluteRange { end_group, .. }
+            if newest.is_some_and(|newest| newest >= end_group) =>
+        {
+            None
+        }
+        FilterType::AbsoluteRange {
+            location,
+            end_group,
+        } => Some(FilterType::AbsoluteRange {
+            location: newest.map_or(location, |newest| {
+                location.max(Location {
+                    group_id: newest + 1,
+                    object_id: 0,
+                })
+            }),
+            end_group,
+        }),
+        _ => Some(FilterType::NextGroupStart),
+    }
+}
+
+/// The first group a subscription delivers from object 0. It starts at
+/// its filter start, but not before the object after the Largest Object
+/// of its SUBSCRIBE_OK (draft-14 §9.7); a group it starts inside is
+/// joined mid-way.
+fn first_whole_group(filter_type: &FilterType, content_exists: &ContentExists) -> u64 {
+    let largest = match content_exists {
+        ContentExists::True { location } => Some(*location),
+        ContentExists::False => None,
+    };
+    let start = filter_type.start_location(largest);
+    let first = largest.map_or(start, |largest| start.max(largest.next()));
+    first.group_id + u64::from(first.object_id != 0)
 }
 
 async fn retry_until<T, F, R>(deadline: Duration, mut request: F) -> Result<T, RequestFailure>
@@ -626,12 +698,33 @@ mod tests {
         client: &Session,
         server: &Session,
     ) -> (Subscription, StreamDataSenderFactory, Subscription) {
+        subscribe_with(client, server, SubscribeOption::default()).await
+    }
+
+    async fn subscribe_with(
+        client: &Session,
+        server: &Session,
+        option: SubscribeOption,
+    ) -> (Subscription, StreamDataSenderFactory, Subscription) {
         let mut subscriber = client.subscriber();
         let (subscription, (sender, _, served)) = tokio::join!(
-            subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            subscriber.subscribe("ns".into(), "track".into(), option),
             serve_subscribe(server)
         );
         (subscription.unwrap(), sender, served)
+    }
+
+    fn absolute_range(start_group: u64, end_group: u64) -> SubscribeOption {
+        SubscribeOption {
+            filter_type: FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: start_group,
+                    object_id: 0,
+                },
+                end_group,
+            },
+            ..SubscribeOption::default()
+        }
     }
 
     async fn next_payload(reader: &mut TrackReader) -> (u64, Bytes) {
@@ -692,6 +785,73 @@ mod tests {
             previous_close.expect("previous connection closed").code,
             Some(0)
         );
+    }
+
+    #[tokio::test]
+    async fn go_away_moves_an_absolute_range_from_the_cutover_group_to_its_end_group() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-range-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-range-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) =
+            subscribe_with(&client, &server_a, absolute_range(1, 3)).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let (_, filter_b, _) = serve_subscribe(&server_b).await;
+
+        // Assert: B starts after the group A delivered and keeps the End Group
+        assert_eq!(
+            filter_b,
+            FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 2,
+                    object_id: 0
+                },
+                end_group: 3
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_absolute_range_whose_end_group_arrives_on_the_old_server_stays_there() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-range-end-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-range-end-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) =
+            subscribe_with(&client, &server_a, absolute_range(1, 1)).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let subscribe_on_b = tokio::time::timeout(NO_EVENT_TIMEOUT, server_b.receive_event()).await;
+        send_payload(&mut group_1_a, b"a1-1").await;
+        let previous_tail = next_payload(&mut reader).await;
+        group_1_a.close().await.unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+
+        // Assert: B gets no SUBSCRIBE; A delivers the rest of the End Group, then closes
+        assert!(subscribe_on_b.is_err(), "{subscribe_on_b:?}");
+        assert_eq!(previous_tail, payload(1, b"a1-1"));
+        assert_eq!(close.expect("A closed once group 1 ended").code, Some(0));
     }
 
     #[tokio::test]

@@ -467,18 +467,31 @@ impl Connection {
         Ok(sinks)
     }
 
+    /// The newest group the sink of the subscription `wire_request_id`
+    /// handed to the application, and its subgroup streams still open.
+    /// `None` when no such sink is installed.
+    pub(crate) async fn receiver_progress(
+        &self,
+        wire_request_id: RequestId,
+    ) -> Option<(Option<u64>, OpenSubgroups)> {
+        let mut sinks = self.object_sinks.lock().await;
+        let (_, receiver) = sinks.receiver_mut(wire_request_id)?;
+        Some((receiver.newest_group, receiver.open_subgroups.clone()))
+    }
+
     /// Starts a cutover for the sink of the subscription `wire_request_id`,
-    /// which becomes its previous side. `None` when no such sink is
-    /// installed.
+    /// which becomes its previous side; the current side delivers whole
+    /// groups from `current_start`. `None` when no such sink is installed.
     pub(crate) async fn start_cutover(
         &self,
         wire_request_id: RequestId,
         cut_over: oneshot::Sender<()>,
+        current_start: u64,
     ) -> Option<CutoverStart> {
         let mut sinks = self.object_sinks.lock().await;
         let (_, receiver) = sinks.receiver_mut(wire_request_id)?;
         let shared = Arc::new(std::sync::Mutex::new(SharedCutover {
-            cutover: GroupCutover::waiting_after(receiver.newest_group),
+            cutover: GroupCutover::waiting_after(receiver.newest_group, current_start),
             cut_over: Some(cut_over),
         }));
         receiver.cutover = Some(SinkCutover {
