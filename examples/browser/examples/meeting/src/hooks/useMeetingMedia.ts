@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import type { RemotePictures } from '../media/mediaSubscriber'
 import type { PlayoutSettings } from '../types/playout'
@@ -36,7 +36,7 @@ import {
   trackVideoEncoding
 } from '../media/meetingCatalog'
 import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
-import type { VideoSendTiming } from '../types/stats'
+import { type LocalSendStats, NO_LOCAL_SEND_STATS } from '../types/stats'
 import { DominantSpeaker } from '../media/dominantSpeaker'
 
 const SPEAKER_UPDATE_INTERVAL_MS = 250
@@ -58,11 +58,8 @@ interface UseMeetingMediaResult {
   localVideoStream: MediaStream | null
   localScreenShareStream: MediaStream | null
   localAudioStream: MediaStream | null
-  localCameraBitrate: number | null
-  localScreenShareBitrate: number | null
-  localAudioBitrate: number | null
-  localCameraVideoSendTiming: VideoSendTiming | null
-  localScreenShareVideoSendTiming: VideoSendTiming | null
+  /// Updated per encoded chunk outside React state; the stats sampler reads it.
+  localSendStats: RefObject<LocalSendStats>
   remotePictures: Map<string, RemotePictures>
   toggleCamera: () => Promise<boolean>
   toggleScreenShare: () => Promise<boolean>
@@ -129,11 +126,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null)
   const [localScreenShareStream, setLocalScreenShareStream] = useState<MediaStream | null>(null)
   const [localAudioStream, setLocalAudioStream] = useState<MediaStream | null>(null)
-  const [localCameraBitrate, setLocalCameraBitrate] = useState<number | null>(null)
-  const [localScreenShareBitrate, setLocalScreenShareBitrate] = useState<number | null>(null)
-  const [localAudioBitrate, setLocalAudioBitrate] = useState<number | null>(null)
-  const [localCameraVideoSendTiming, setLocalCameraVideoSendTiming] = useState<VideoSendTiming | null>(null)
-  const [localScreenShareVideoSendTiming, setLocalScreenShareVideoSendTiming] = useState<VideoSendTiming | null>(null)
+  const localSendStats = useRef<LocalSendStats>(NO_LOCAL_SEND_STATS)
   const [remotePictures, setRemotePictures] = useState<Map<string, RemotePictures>>(new Map())
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | undefined>(undefined)
   const [speakingMemberIds, setSpeakingMemberIds] = useState<Set<string>>(new Set())
@@ -191,8 +184,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
-      setLocalCameraVideoSendTiming(null)
-      setLocalScreenShareVideoSendTiming(null)
+      localSendStats.current = NO_LOCAL_SEND_STATS
       setRemotePictures(new Map())
       setCameraEnabled(false)
       setMicrophoneEnabled(false)
@@ -242,19 +234,15 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         setMicrophoneEnabled(!!stream)
       },
       onEncodedVideoBitrate: (kbps, source) => {
-        if (source === 'screenshare') {
-          setLocalScreenShareBitrate(kbps)
-          return
-        }
-        setLocalCameraBitrate(kbps)
+        const key = source === 'screenshare' ? 'screenShareBitrateKbps' : 'cameraBitrateKbps'
+        localSendStats.current = { ...localSendStats.current, [key]: kbps }
       },
-      onEncodedAudioBitrate: (kbps) => setLocalAudioBitrate(kbps),
+      onEncodedAudioBitrate: (kbps) => {
+        localSendStats.current = { ...localSendStats.current, audioBitrateKbps: kbps }
+      },
       onLocalVideoSendTiming: (timing, source) => {
-        if (source === 'screenshare') {
-          setLocalScreenShareVideoSendTiming(timing)
-          return
-        }
-        setLocalCameraVideoSendTiming(timing)
+        const key = source === 'screenshare' ? 'screenShareSend' : 'cameraSend'
+        localSendStats.current = { ...localSendStats.current, [key]: timing }
       },
       onVideoEncodeError: (message) => setVideoEncoderError(message),
       onAudioEncodeError: (message) => setAudioEncoderError(message),
@@ -303,11 +291,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       publisher.setHandlers({})
       subscriber.setHandlers({})
       setRemotePictures(new Map())
-      setLocalCameraBitrate(null)
-      setLocalScreenShareBitrate(null)
-      setLocalAudioBitrate(null)
-      setLocalCameraVideoSendTiming(null)
-      setLocalScreenShareVideoSendTiming(null)
+      localSendStats.current = NO_LOCAL_SEND_STATS
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
@@ -689,11 +673,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     localVideoStream,
     localScreenShareStream,
     localAudioStream,
-    localCameraBitrate,
-    localScreenShareBitrate,
-    localAudioBitrate,
-    localCameraVideoSendTiming,
-    localScreenShareVideoSendTiming,
+    localSendStats,
     remotePictures,
     toggleCamera,
     toggleScreenShare,
