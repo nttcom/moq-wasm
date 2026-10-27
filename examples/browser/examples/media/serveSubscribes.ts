@@ -1,4 +1,4 @@
-import type { MoqtClientWrapper } from '@moqt/moqtClient'
+import { type MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { SubgroupWriter } from '@moqt/subgroupWriter'
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 import { timeSeededGroupId } from '../../utils/media/clock'
@@ -17,20 +17,13 @@ export function getTrackAliases(client: MoqtClientWrapper, trackNamespace: strin
 
 export function serveSubscribes(moqtClient: MoqtClientWrapper, publication: MediaPublication): void {
   let nextCatalogGroupId = timeSeededGroupId()
-  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
+  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
     console.log({ subscribeMessage: subscribe })
-    if (!isSuccess) {
-      const reasonPhrase = `subscribe error: code=${code}`
-      publication.onStatus(reasonPhrase)
-      await respondError(BigInt(code), reasonPhrase)
-      return
-    }
-
     const trackNamespace = publication.trackNamespace()
     const requestedNamespace = subscribe.trackNamespace.join('/')
     if (requestedNamespace !== trackNamespace.join('/')) {
       publication.onStatus(`Rejected subscribe: unknown namespace ${requestedNamespace}`)
-      await respondError(404n, 'unknown namespace')
+      await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown namespace')
       return
     }
 
@@ -49,6 +42,6 @@ export function serveSubscribes(moqtClient: MoqtClientWrapper, publication: Medi
       return
     }
     publication.onStatus(`Rejected subscribe: unknown track ${trackName}`)
-    await respondError(404n, 'unknown track')
+    await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
   })
 }

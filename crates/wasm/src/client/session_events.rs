@@ -9,7 +9,6 @@ use moqt::{
     subscribe::{SubscribeHandler, TrackStatusHandler},
     wire::{Publish, Subscribe, TrackStatus, publish_done_code_to_wire},
 };
-use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
 
 use super::{
@@ -132,29 +131,29 @@ fn on_subscribe(shared: &ClientShared, handler: SubscribeHandler) {
         authorization_tokens: vec![],
         delivery_timeout: handler.delivery_timeout,
     };
-    let validation_code = {
-        let mut state = shared.state.borrow_mut();
-        let validation_code = state.validate_incoming_subscribe(&subscribe);
-        if validation_code == 0 {
-            state.register_incoming_subscribe(&subscribe);
-        }
-        validation_code
-    };
+    let accepted = shared
+        .state
+        .borrow()
+        .validate_incoming_subscribe(&subscribe);
+    if let Err(rejection) = accepted {
+        spawn_local(async move {
+            let _ = handler
+                .error(rejection, rejection_reason(rejection).to_string())
+                .await;
+        });
+        return;
+    }
+    shared
+        .state
+        .borrow_mut()
+        .register_incoming_subscribe(&subscribe);
     shared
         .incoming
         .borrow_mut()
         .subscribes
         .insert(subscribe.request_id, handler);
     let message = SubscribeMessage::from(&subscribe);
-    emit(
-        &shared.callbacks,
-        |c| &c.subscribe,
-        &[
-            message.into(),
-            JsValue::from_bool(validation_code == 0),
-            JsValue::from_f64(validation_code as f64),
-        ],
-    );
+    emit(&shared.callbacks, |c| &c.subscribe, &[message.into()]);
 }
 
 fn on_track_status(shared: &ClientShared, handler: TrackStatusHandler) {

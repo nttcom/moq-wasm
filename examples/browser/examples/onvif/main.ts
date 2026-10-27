@@ -1,4 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { LivePlayer } from '@player/livePlayer'
 import { formatLiveStats } from '@player/locLive'
 import { PlayerControls } from '@player/ui/playerControls'
@@ -188,14 +188,9 @@ async function connect(): Promise<void> {
     updateStatus('disconnected', false)
   })
 
-  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
-    if (!isSuccess) {
-      await respondError(BigInt(code), 'subscribe rejected')
-      return
-    }
-
+  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
     if (subscribe.trackName !== commandTrack || subscribe.trackNamespace.join('/') !== publishNamespaceLabel) {
-      await respondError(404n, 'unknown track')
+      await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
       return
     }
 
