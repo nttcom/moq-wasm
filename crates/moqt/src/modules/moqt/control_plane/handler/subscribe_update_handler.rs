@@ -196,17 +196,18 @@ impl SubscribeUpdateHandler {
             };
         };
         let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
-        match std::mem::replace(&mut *slot, AnswerSlot::Answered) {
-            AnswerSlot::Waiting(answer_sender) => UpdateAnswer::Accepted {
-                largest_told: answer_sender.send(largest).is_ok(),
-            },
-            AnswerSlot::Answered => UpdateAnswer::Accepted {
+        if matches!(*slot, AnswerSlot::TimedOut) {
+            return UpdateAnswer::Failed;
+        }
+        let AnswerSlot::Waiting(answer_sender) =
+            std::mem::replace(&mut *slot, AnswerSlot::Answered)
+        else {
+            return UpdateAnswer::Accepted {
                 largest_told: false,
-            },
-            AnswerSlot::TimedOut => {
-                *slot = AnswerSlot::TimedOut;
-                UpdateAnswer::Failed
-            }
+            };
+        };
+        UpdateAnswer::Accepted {
+            largest_told: answer_sender.send(largest).is_ok(),
         }
     }
 }
