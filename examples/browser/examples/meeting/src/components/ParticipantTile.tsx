@@ -14,8 +14,11 @@ interface ParticipantTileProps {
   /// The member's newest transcribed utterance, while it is fresh.
   caption?: string
   footer?: ReactNode
+  /// Echoed back to `onHeight` so the parent can pass one stable callback to
+  /// every tile; a new callback per render would reconnect the ResizeObserver.
+  heightKey?: string
   /// Called with the shown height in device pixels whenever it changes.
-  onHeight?: (heightPx: number) => void
+  onHeight?: (heightKey: string, heightPx: number) => void
   onOpenDetails: () => void
   menuTestId?: string
 }
@@ -29,6 +32,7 @@ export function ParticipantTile({
   speaking,
   caption,
   footer,
+  heightKey,
   onHeight,
   onOpenDetails,
   menuTestId
@@ -37,15 +41,15 @@ export function ParticipantTile({
   const rootRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const root = rootRef.current
-    if (!root || !onHeight) {
+    if (!root || heightKey === undefined || !onHeight) {
       return
     }
     const observer = new ResizeObserver(([entry]) => {
-      onHeight(Math.round(entry.contentRect.height * window.devicePixelRatio))
+      onHeight(heightKey, Math.round(entry.contentRect.height * window.devicePixelRatio))
     })
     observer.observe(root)
     return () => observer.disconnect()
-  }, [onHeight])
+  }, [heightKey, onHeight])
   return (
     <div
       ref={rootRef}

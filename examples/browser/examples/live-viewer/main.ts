@@ -20,6 +20,9 @@ import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMed
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 
 const AUTH_INFO = 'secret'
+/// Each draw rebuilds every stream monitor's SVG through innerHTML, too costly
+/// to run on every frame.
+const STREAM_RENDER_INTERVAL_MS = 100
 
 const moqtClient = new MoqtClientWrapper()
 const streamMonitor = new StreamMonitor()
@@ -75,8 +78,12 @@ element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
   streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
 })
-requestAnimationFrame(function renderStreamsEachFrame() {
-  renderStreams()
+let streamsRenderedAt = Number.NEGATIVE_INFINITY
+requestAnimationFrame(function renderStreamsEachFrame(now) {
+  if (now - streamsRenderedAt >= STREAM_RENDER_INTERVAL_MS) {
+    streamsRenderedAt = now
+    renderStreams()
+  }
   requestAnimationFrame(renderStreamsEachFrame)
 })
 
