@@ -14,9 +14,9 @@ pub(crate) struct PublishDone {
     pub(crate) reason: String,
 }
 
-/// `origin` answers the peer's SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL
-/// and TRACK_STATUS for the tracks this session publishes; a SUBSCRIBE for
-/// any other track, and every PUBLISH, is rejected.
+/// `origin` answers the peer's SUBSCRIBE, FETCH and TRACK_STATUS for the
+/// tracks this session publishes; a SUBSCRIBE for any other track, and
+/// every PUBLISH, is rejected.
 #[derive(Default)]
 pub(crate) struct SessionRoutes {
     pub(crate) origin: Origin,

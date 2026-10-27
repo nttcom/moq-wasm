@@ -211,12 +211,10 @@ impl Session {
         })
     }
 
-    /// A track this session publishes: the session numbers, caches and sends
-    /// what the `TrackWriter` writes and answers the track's SUBSCRIBE and
-    /// FETCH. The cache keeps objects for `retention_ms` (60 s by default),
-    /// or only the newest one when it is 0. With `publish`, the track is also
-    /// sent with PUBLISH (draft-14 §9.13), so the relay takes it before any
-    /// subscriber asks; announce the namespace first.
+    /// Registers a track to publish. The cache keeps objects for `retention_ms`
+    /// (60 s by default), or only the newest one when it is 0. With `publish`,
+    /// the track is also sent with PUBLISH (draft-14 §9.13); announce the
+    /// namespace first.
     #[wasm_bindgen(js_name = publishTrack)]
     pub async fn publish_track(
         &self,
@@ -286,11 +284,9 @@ pub struct TrackWriter {
 
 #[wasm_bindgen]
 impl TrackWriter {
-    /// Appends an object to the open group, or starts the next group with it
-    /// when `new_group` is set; `loc_header` is the object's LOC properties
-    /// (draft-ietf-moq-loc-04). Resolves to whether a subscriber took the
-    /// object; it is cached either way. An object within a group that was
-    /// never started is dropped.
+    /// `loc_header` is the object's LOC properties (draft-ietf-moq-loc-04).
+    /// Resolves to whether a subscriber took the object; it is cached either
+    /// way. An object within a group that was never started is dropped.
     pub async fn write(
         &self,
         payload: Vec<u8>,
