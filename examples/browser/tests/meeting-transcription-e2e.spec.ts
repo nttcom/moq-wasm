@@ -46,7 +46,7 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
 
   // Assert: everyone sees that the room is transcribed, and bob reads alice
   await expect(bob.page.page.getByTestId('transcriber-badge')).toBeVisible({ timeout: BOT_JOIN_TIMEOUT_MS })
-  await expect(alice.page.page.getByTestId('transcriber-badge')).toHaveText('CC · Whisper (CPU)', {
+  await expect(alice.page.page.getByTestId('transcriber-badge')).toHaveText('CC', {
     timeout: BOT_JOIN_TIMEOUT_MS
   })
   await expect(getMemberCard(bob.page.page, 'alice').getByTestId('tile-caption')).toHaveText(/\S/, {
@@ -141,12 +141,12 @@ test('a GPU recognizer that is starting is announced, then its text reaches the 
   await alice.page.page.getByTestId('captions-granite-speech-5-2b').click()
 
   // Assert: the badge and one transcript record say the recognizer is starting
-  await expect(badge).toHaveText('CC · Granite 2b (GPU) · starting', { timeout: BOT_JOIN_TIMEOUT_MS })
+  await expect(badge).toHaveText('CC starting', { timeout: BOT_JOIN_TIMEOUT_MS })
   const aliceRecords = await openTranscript(alice.page)
   await expect(aliceRecords).toHaveCount(1)
   await expect(aliceRecords.first()).toContainText('transcriber')
   await expect(aliceRecords.first()).toContainText('granite-speech-5-2b を起動しています')
-  await expect(badge).toHaveText('CC · Granite 2b (GPU)', { timeout: 30_000 })
+  await expect(badge).toHaveText('CC', { timeout: 30_000 })
   await expect(aliceRecords).toHaveCount(1)
 
   // Act

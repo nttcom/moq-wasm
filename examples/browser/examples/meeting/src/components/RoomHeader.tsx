@@ -1,5 +1,3 @@
-import { asrLabel } from '../hooks/useCaptions'
-import type { TranscriberStatus } from '../media/transcript'
 import type { RecordingState } from '../recording/recorderApi'
 
 export type HeaderMember = { id: string; name: string; speaking: boolean; states: Record<string, string> }
@@ -11,12 +9,12 @@ interface RoomHeaderProps {
   recording: RecordingState | undefined
   /// Whether the transcriber bot is in the room.
   transcribing: boolean
-  /// What the transcriber in the room runs, once its status has arrived.
-  transcriberStatus: TranscriberStatus | undefined
+  /// Whether the transcriber's recognizer is still starting.
+  transcriberStarting: boolean
 }
 
 /// Every remote member appears here, on the stage or not.
-export function RoomHeader({ roomName, members, recording, transcribing, transcriberStatus }: RoomHeaderProps) {
+export function RoomHeader({ roomName, members, recording, transcribing, transcriberStarting }: RoomHeaderProps) {
   return (
     <header className="flex items-center gap-3 px-4 py-2 text-sm">
       <h1 className="font-semibold" data-testid="room-name">
@@ -45,9 +43,7 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
           title="Speech in this room is transcribed"
           className="rounded bg-slate-700 px-2 py-0.5 text-xs font-semibold text-slate-200"
         >
-          {transcriberStatus
-            ? `CC · ${asrLabel(transcriberStatus.asr)}${transcriberStatus.state === 'starting' ? ' · starting' : ''}`
-            : 'CC'}
+          {transcriberStarting ? 'CC starting' : 'CC'}
         </span>
       )}
       <span className="text-slate-400">{members.length + 1} participants</span>
