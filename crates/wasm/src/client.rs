@@ -10,8 +10,8 @@ use std::{
 
 use bytes::Bytes;
 use moqt::{
-    AuthorizationToken, BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session,
-    Subscription, TerminationErrorCode, TransportSendError, WebSocketFallback,
+    AuthorizationToken, BROWSER, ClientConfig, Endpoint, RequestFailure, Session, Subscription,
+    TerminationErrorCode, TransportSendError, WebSocketFallback,
     fetch::{FetchDataSender, FetchHandle, FetchHandler, FetchOption},
     namespace::PublishNamespaceHandler,
     object::DataStreamResetCode,
@@ -40,6 +40,7 @@ use crate::{
         FetchOkMessage, NamespaceOkMessage, PublishOkMessage, RequestErrorMessage,
         ServerSetupMessage, SubgroupState, SubscribeOkMessage,
     },
+    request_rejection::request_failure_code,
 };
 
 #[wasm_bindgen]
@@ -1510,11 +1511,7 @@ fn request_error_message(
     request_id: u64,
     error: &RequestFailure,
 ) -> RequestErrorMessage {
-    let (code, reason_phrase) = match error {
-        RequestFailure::Rejected { code, reason, .. } => (*code, reason.clone()),
-        RequestFailure::Timeout => (RequestErrorCode::Timeout, error.to_string()),
-        _ => (RequestErrorCode::InternalError, error.to_string()),
-    };
+    let (code, reason_phrase) = request_failure_code(error);
     let error_code = request_error_code_to_wire(code, kind);
     RequestErrorMessage {
         request_id,
