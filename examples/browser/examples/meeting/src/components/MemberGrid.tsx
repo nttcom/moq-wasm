@@ -974,10 +974,6 @@ function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableMe
     framerate: 30,
     hardwareAcceleration: 'prefer-software',
     keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
-    samplerate: undefined,
-    channelConfig: undefined,
-    audioStreamUpdateMode: undefined,
-    audioStreamUpdateIntervalSeconds: undefined,
     isLive: true
   }
 }
@@ -997,10 +993,6 @@ function createScreenShareTrackDraft(options: VideoEncodingOptionSet): Omit<Edit
     framerate: 30,
     hardwareAcceleration: 'prefer-software',
     keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
-    samplerate: undefined,
-    channelConfig: undefined,
-    audioStreamUpdateMode: undefined,
-    audioStreamUpdateIntervalSeconds: undefined,
     isLive: true
   }
 }
@@ -1015,11 +1007,6 @@ function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableMe
     role: 'audio',
     codec,
     bitrate,
-    width: undefined,
-    height: undefined,
-    framerate: undefined,
-    hardwareAcceleration: undefined,
-    keyframeInterval: undefined,
     samplerate: 48_000,
     channelConfig: formatAudioChannelConfig(channels),
     audioStreamUpdateMode: DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode,

@@ -692,14 +692,7 @@ function copyChunkData(chunk: EncodedVideoChunk): Uint8Array {
 }
 
 function buildDecoderConfigKey(config: VideoDecoderConfig): string {
-  const descriptionLength =
-    config.description instanceof Uint8Array
-      ? config.description.byteLength
-      : config.description instanceof ArrayBuffer
-        ? config.description.byteLength
-        : config.description
-          ? (config.description as ArrayBufferView).byteLength
-          : 0
+  const descriptionLength = config.description?.byteLength ?? 0
   return JSON.stringify({
     codec: config.codec,
     avc: (config as any).avc?.format,

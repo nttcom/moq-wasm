@@ -37,12 +37,12 @@ const RELAY_URL_PARAM_NAMES = ['relayUrl', 'moqtUrl', 'url', 'relay']
 
 function getLocalRelayUrls(): { relayAUrl: string; relayBUrl: string } {
   return {
-    relayAUrl: readRelayUrlSearchParam(['relayAUrl']) ?? DEFAULT_LOCAL_RELAY_A_URL,
-    relayBUrl: readRelayUrlSearchParam(['relayBUrl']) ?? DEFAULT_LOCAL_RELAY_B_URL
+    relayAUrl: firstSearchParam(['relayAUrl']) ?? DEFAULT_LOCAL_RELAY_A_URL,
+    relayBUrl: firstSearchParam(['relayBUrl']) ?? DEFAULT_LOCAL_RELAY_B_URL
   }
 }
 
-function readRelayUrlSearchParam(paramNames: string[]): string | null {
+export function firstSearchParam(paramNames: string[]): string | null {
   const params = new URLSearchParams(window.location.search)
   for (const name of paramNames) {
     const value = params.get(name)?.trim()
@@ -76,7 +76,7 @@ export function buildRelayPresets(): RelayPreset[] {
 }
 
 export function setUpRelayUrlControls(input: HTMLInputElement, presets: HTMLElement): void {
-  input.value = readRelayUrlSearchParam(RELAY_URL_PARAM_NAMES) ?? (input.value.trim() || DEFAULT_CLOUD_RELAY_URL)
+  input.value = firstSearchParam(RELAY_URL_PARAM_NAMES) ?? (input.value.trim() || DEFAULT_CLOUD_RELAY_URL)
   const { relayAUrl, relayBUrl } = getLocalRelayUrls()
   const buttons = [
     ...[LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS].map((preset) => ({

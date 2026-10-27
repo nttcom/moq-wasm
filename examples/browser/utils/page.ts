@@ -1,4 +1,4 @@
-import { setUpRelayUrlControls } from './relayPresets'
+import { firstSearchParam, setUpRelayUrlControls } from './relayPresets'
 
 export type StatusState = 'idle' | 'ok' | 'review' | 'error'
 
@@ -61,23 +61,12 @@ function applyNamespaceOverride(namespaceInputId: string): void {
     return
   }
 
-  const params = new URLSearchParams(window.location.search)
   input.value =
-    firstNonEmptyValue(params, ['trackNamespace', 'namespace']) ?? (input.value.trim() || buildDefaultTrackNamespace())
+    firstSearchParam(['trackNamespace', 'namespace']) ?? (input.value.trim() || buildDefaultTrackNamespace())
 }
 
 export function buildDefaultTrackNamespace(date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, '0')
   const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
   return `anon/nttcom/${day}/${pad(date.getHours())}${pad(date.getMinutes())}`
-}
-
-function firstNonEmptyValue(params: URLSearchParams, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = params.get(key)?.trim()
-    if (value) {
-      return value
-    }
-  }
-  return null
 }

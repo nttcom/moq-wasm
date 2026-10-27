@@ -74,7 +74,7 @@ fn run_worker(target: Target, rx: Receiver<Command>) {
                 let cmd = onvif_requests::absolute_move(
                     onvif.profile_token(),
                     movement,
-                    absolute_spaces(&range),
+                    range.absolute_spaces(),
                 );
                 send_ptz_command(&runtime, &onvif, cmd)
             }
@@ -96,7 +96,7 @@ fn run_worker(target: Target, rx: Receiver<Command>) {
                 let cmd = onvif_requests::relative_move(
                     onvif.profile_token(),
                     movement,
-                    relative_spaces(&range),
+                    range.relative_spaces(),
                 );
                 send_ptz_command(&runtime, &onvif, cmd)
             }
@@ -116,7 +116,7 @@ fn run_worker(target: Target, rx: Receiver<Command>) {
                 let cmd = onvif_requests::continuous_move(
                     onvif.profile_token(),
                     velocity,
-                    continuous_spaces(&range),
+                    range.continuous_spaces(),
                 );
                 send_ptz_command(&runtime, &onvif, cmd)
             }
@@ -136,7 +136,7 @@ fn run_worker(target: Target, rx: Receiver<Command>) {
                 let cmd = onvif_requests::absolute_move(
                     onvif.profile_token(),
                     movement,
-                    absolute_spaces(&range),
+                    range.absolute_spaces(),
                 );
                 send_ptz_command(&runtime, &onvif, cmd)
             }
@@ -165,30 +165,6 @@ struct Position {
     zoom: f32,
 }
 
-fn absolute_spaces<'a>(range: &'a PtzRange) -> onvif_requests::PtzMoveSpaces<'a> {
-    onvif_requests::PtzMoveSpaces {
-        pan_tilt: range.absolute_pan_tilt_space(),
-        zoom: range.absolute_zoom_space(),
-        pan_tilt_speed: range.speed_pan_tilt_space(),
-        zoom_speed: range.speed_zoom_space(),
-    }
-}
-
-fn relative_spaces<'a>(range: &'a PtzRange) -> onvif_requests::PtzMoveSpaces<'a> {
-    onvif_requests::PtzMoveSpaces {
-        pan_tilt: range.relative_pan_tilt_space(),
-        zoom: range.relative_zoom_space(),
-        pan_tilt_speed: range.speed_pan_tilt_space(),
-        zoom_speed: range.speed_zoom_space(),
-    }
-}
-
-fn continuous_spaces<'a>(range: &'a PtzRange) -> onvif_requests::PtzVelocitySpaces<'a> {
-    onvif_requests::PtzVelocitySpaces {
-        pan_tilt: range.continuous_pan_tilt_space(),
-        zoom: range.continuous_zoom_space(),
-    }
-}
 impl Position {
     fn new(range: &PtzRange) -> Self {
         let (pan_range, tilt_range) = range.absolute_pan_tilt_range();

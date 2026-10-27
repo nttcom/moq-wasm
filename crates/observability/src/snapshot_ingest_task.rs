@@ -66,12 +66,15 @@ impl Drop for SnapshotIngestTask {
 
 #[cfg(test)]
 mod tests {
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-        sync::mpsc,
-        time,
+    use http_body_util::{BodyExt, Empty};
+    use hyper::{
+        Request, Response,
+        body::{Bytes, Incoming},
+        server::conn::http1,
+        service::service_fn,
     };
+    use hyper_util::rt::TokioIo;
+    use tokio::{net::TcpListener, sync::mpsc, time};
 
     use super::{FLUSH_INTERVAL, SnapshotIngestTask};
     use crate::{
@@ -85,43 +88,19 @@ mod tests {
         let (insert_sender, insert_receiver) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             loop {
-                let (mut stream, _) = listener.accept().await.unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
                 let insert_sender = insert_sender.clone();
-                tokio::spawn(async move {
-                    let mut request = Vec::new();
-                    let (head_end, content_length) = loop {
-                        let mut chunk = [0; 4096];
-                        let read = stream.read(&mut chunk).await.unwrap();
-                        request.extend_from_slice(&chunk[..read]);
-                        let text = String::from_utf8_lossy(&request).to_string();
-                        if let Some(head_end) = text.find("\r\n\r\n") {
-                            let length = text[..head_end]
-                                .to_ascii_lowercase()
-                                .lines()
-                                .find_map(|line| {
-                                    line.strip_prefix("content-length: ").map(str::to_string)
-                                })
-                                .map_or(0, |length| length.parse::<usize>().unwrap());
-                            break (head_end + 4, length);
-                        }
-                    };
-                    while request.len() < head_end + content_length {
-                        let mut chunk = [0; 4096];
-                        let read = stream.read(&mut chunk).await.unwrap();
-                        request.extend_from_slice(&chunk[..read]);
+                let service = service_fn(move |request: Request<Incoming>| {
+                    let insert_sender = insert_sender.clone();
+                    async move {
+                        let uri = request.uri().to_string();
+                        let body = request.into_body().collect().await?.to_bytes();
+                        let body = String::from_utf8(body.to_vec()).unwrap();
+                        insert_sender.send((uri, body)).unwrap();
+                        Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::new()))
                     }
-                    let text = String::from_utf8_lossy(&request).to_string();
-                    let request_line = text.lines().next().unwrap().to_string();
-                    insert_sender
-                        .send((request_line, text[head_end..].to_string()))
-                        .unwrap();
-                    stream
-                        .write_all(
-                            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
-                        )
-                        .await
-                        .unwrap();
                 });
+                tokio::spawn(http1::Builder::new().serve_connection(TokioIo::new(stream), service));
             }
         });
         let clickhouse = ClickHouse::new(ClickHouseConfig {
@@ -151,10 +130,10 @@ mod tests {
 
         // Act
         time::advance(FLUSH_INTERVAL).await;
-        let (request_line, body) = insert_receiver.recv().await.unwrap();
+        let (uri, body) = insert_receiver.recv().await.unwrap();
 
         // Assert: both snapshots arrive in one INSERT
-        assert!(request_line.contains("INSERT"), "{request_line}");
+        assert!(uri.contains("INSERT"), "{uri}");
         assert_eq!(body.lines().count(), 2, "{body}");
     }
 }

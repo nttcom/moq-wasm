@@ -1,15 +1,13 @@
 use std::{
     hash::{BuildHasher, RandomState},
-    path::PathBuf,
     time::Duration,
 };
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use url::Url;
 
 use crate::{
-    LauncherArgs, RoomArgs,
+    ServeArgs,
     launcher::{Job, Launcher},
     recording::Layout,
     room_state::{CompositeState, MemberStatus, RoomRecord, RoomState},
@@ -20,18 +18,6 @@ use crate::{
 /// A recording job that has not written its state for this long is treated
 /// as dead.
 const STALE_AFTER: Duration = HEARTBEAT_INTERVAL.saturating_mul(3);
-
-/// What the server checks requests against and passes on to the jobs.
-pub(crate) struct ServeConfig {
-    /// The first element every recorded namespace prefix must have.
-    pub(crate) namespace_root: String,
-    pub(crate) max_recordings: usize,
-    pub(crate) composite: bool,
-    pub(crate) store_url: Url,
-    pub(crate) output_dir: PathBuf,
-    pub(crate) room: RoomArgs,
-    pub(crate) launcher: LauncherArgs,
-}
 
 #[derive(Debug)]
 pub(crate) enum StartRejection {
@@ -54,13 +40,13 @@ impl From<anyhow::Error> for StartRejection {
 /// number of instances answer alike and none has to outlive a recording. A
 /// recording runs as a `recorder record` job, which writes its state back.
 pub(crate) struct Recordings {
-    config: ServeConfig,
+    config: ServeArgs,
     store: RecordingStore,
     launcher: Launcher,
 }
 
 impl Recordings {
-    pub(crate) fn new(config: ServeConfig, store: RecordingStore, launcher: Launcher) -> Self {
+    pub(crate) fn new(config: ServeArgs, store: RecordingStore, launcher: Launcher) -> Self {
         Self {
             config,
             store,
@@ -197,7 +183,7 @@ impl Recordings {
             "--id".to_string(),
             id.to_string(),
             "--store".to_string(),
-            self.config.store_url.to_string(),
+            self.config.store.to_string(),
             "--output-dir".to_string(),
             self.config.output_dir.display().to_string(),
         ];

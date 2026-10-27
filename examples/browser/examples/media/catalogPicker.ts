@@ -1,6 +1,6 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt'
-import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../../lib/msf/catalog'
+import { extractCatalogTracks, type MediaCatalogTrack } from '../../lib/msf/catalog'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
 import type { MediaKind } from '../../lib/player/trackContext'
 
@@ -106,8 +106,8 @@ export function setUpCatalogPicker(
       }
       try {
         const catalog = parse_msf_catalog_json(new TextDecoder().decode(object.objectPayload))
-        pick.video.tracks = extractCatalogVideoTracks(catalog)
-        pick.audio.tracks = extractCatalogAudioTracks(catalog)
+        pick.video.tracks = extractCatalogTracks(catalog, 'video')
+        pick.audio.tracks = extractCatalogTracks(catalog, 'audio')
         render()
       } catch (error) {
         console.error('[CatalogPicker] failed to parse catalog', error)
