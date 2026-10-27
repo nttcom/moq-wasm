@@ -46,7 +46,8 @@ An empty value counts as unset and selects the default.
 ## OpenTelemetry
 
 OTLP trace and log exporters are configured from the standard OpenTelemetry
-variables. Example for an OTLP/HTTP backend:
+variables and run only once `OTEL_EXPORTER_OTLP_ENDPOINT` is set (and
+`OTEL_SDK_DISABLED` is not). Example for an OTLP/HTTP backend:
 
 ```shell
 OTEL_SERVICE_NAME=moqt-relay

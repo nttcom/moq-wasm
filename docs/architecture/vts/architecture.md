@@ -73,7 +73,12 @@ sequenceDiagram
 
 ## Operational notes
 
-- Logging goes through `tracing`: `verify ok` / `verify rejected` at INFO,
-  per-connection HTTP errors at DEBUG. `RUST_LOG` filters.
+- Logging goes through `tracing`, set up by `crates/telemetry`: `verify ok` /
+  `verify rejected` at INFO, per-connection HTTP errors at DEBUG.
+  `VTS_STDOUT_FILTER`, `VTS_OTEL_FILTER` and `VTS_LOG_FILTER` filter, each
+  falling back to `RUST_LOG`.
+- Every request runs in a `vts.request` span that continues the caller's
+  trace from its W3C `traceparent` header, so a verification shows up under
+  the relay's `relay.vts.verify` span.
 - The Docker image (`crates/vts/Dockerfile`) is a `cargo-chef` build onto
   `distroless/cc`, the same base as the relay, and ships `vts`.

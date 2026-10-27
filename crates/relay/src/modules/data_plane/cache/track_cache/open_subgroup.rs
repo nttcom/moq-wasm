@@ -282,6 +282,7 @@ impl TrackCache {
             let knowledge_frontier = live.knowledge_frontier;
             if live.open_subgroups.is_empty() {
                 ledger.live_groups.remove(&group_id);
+                ledger.groups_closed_since_eviction.push(group_id);
             }
             if finishes_every_stream {
                 ledger.finished_subgroups.insert(key);

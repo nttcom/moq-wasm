@@ -8,15 +8,16 @@ use tokio::sync::watch;
 
 use crate::{
     SessionEvent,
-    modules::moqt::{
-        control_plane::{constants::TerminationErrorCode, enums::RequestId},
-        data_plane::stream::{
-            fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+    modules::{
+        executor,
+        moqt::{
+            control_plane::{constants::TerminationErrorCode, enums::RequestId},
+            data_plane::stream::{
+                fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+            },
+            domains::connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
+            runtime::dispatch::incoming_object::{IncomingObjectReceiver, incoming_object_channel},
         },
-        domains::connection::{
-            Connection, ObjectSink, SinkReceiver, generation_of, logical_id, wire_part,
-        },
-        runtime::dispatch::incoming_object::IncomingObject,
     },
     publish::PublishOption,
     subscribe::SubscribeOption,
@@ -29,8 +30,7 @@ use crate::{
 pub(crate) struct SessionContext {
     connections: std::sync::Mutex<Connections>,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    pub(crate) receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
+    pub(crate) receiver_map: tokio::sync::Mutex<HashMap<u64, IncomingObjectReceiver>>,
     pub(crate) fetch_receiver_map:
         std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
     /// `None` for a session that does not follow GOAWAY. Held while a
@@ -313,7 +313,7 @@ impl SessionContext {
         request_id: RequestId,
         track_alias: u64,
     ) -> Result<u64, TerminationErrorCode> {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
+        let (sender, receiver) = incoming_object_channel();
         let logical_alias = logical_id(connection.generation, track_alias);
         let _sinks = connection
             .install_receiver(
@@ -337,14 +337,7 @@ impl SessionContext {
 
     pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
         let mut sinks = connection.object_sinks.lock().await;
-        let found = sinks.iter().find_map(|(track_alias, sink)| match sink {
-            ObjectSink::Receiver(receiver) if receiver.request_id == request_id => {
-                Some((*track_alias, receiver.logical_alias))
-            }
-            _ => None,
-        });
-        if let Some((track_alias, logical_alias)) = found {
-            sinks.insert(track_alias, ObjectSink::Cancelled);
+        if let Some(logical_alias) = sinks.cancel_subscription(request_id, executor::now()) {
             self.receiver_map.lock().await.remove(&logical_alias);
         }
     }
@@ -354,13 +347,11 @@ impl SessionContext {
         connection: &Connection,
         track_alias: u64,
     ) {
-        let mut sinks = connection.object_sinks.lock().await;
-        if !sinks
-            .get(&track_alias)
-            .is_some_and(ObjectSink::is_receiver_registered)
-        {
-            sinks.insert(track_alias, ObjectSink::Cancelled);
-        }
+        connection
+            .object_sinks
+            .lock()
+            .await
+            .cancel_unclaimed(track_alias, executor::now());
     }
 
     /// Call before sending the FETCH on `connection`: its data stream can
