@@ -22,6 +22,7 @@ use crate::{
 /// The answer of a draft-18 REQUEST_UPDATE, shared by the handler's clones.
 /// Dropping every clone drops the sender, which answers without a
 /// LARGEST_OBJECT.
+#[derive(Debug)]
 enum AnswerSlot {
     Waiting(oneshot::Sender<Option<Location>>),
     Answered,
@@ -30,16 +31,6 @@ enum AnswerSlot {
 }
 
 type SharedAnswerSlot = Arc<Mutex<AnswerSlot>>;
-
-impl std::fmt::Debug for AnswerSlot {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Waiting(_) => "Waiting",
-            Self::Answered => "Answered",
-            Self::TimedOut => "TimedOut",
-        })
-    }
-}
 
 /// The LARGEST_OBJECT a draft-18 REQUEST_UPDATE is answered with.
 pub(crate) struct UpdateAnswerReceiver {
