@@ -48,6 +48,10 @@ impl StoredPayload {
         self.segment.is_deleted()
     }
 
+    pub(crate) fn is_in_segment_of(&self, other: &StoredPayload) -> bool {
+        Arc::ptr_eq(&self.segment, &other.segment)
+    }
+
     pub(crate) async fn read(&self) -> anyhow::Result<Bytes> {
         if self.is_lost() {
             anyhow::bail!("segment {} was deleted", self.segment.path.display());

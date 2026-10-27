@@ -531,9 +531,9 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1696,9 +1696,9 @@ dependencies = [
  "moqt",
  "msf",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1715,9 +1715,9 @@ dependencies = [
  "rml_rtmp",
  "socket2 0.6.5",
  "srt-tokio",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "transcode",
 ]
 
@@ -2080,9 +2080,9 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2125,10 +2125,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "telemetry",
  "time",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2738,9 +2738,9 @@ dependencies = [
  "object_store",
  "reqwest",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "transcode",
  "url",
 ]
@@ -2842,19 +2842,16 @@ dependencies = [
  "dashmap",
  "moqt",
  "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "redis",
  "relay-stats",
  "reqwest",
  "serde",
  "serde_json",
+ "telemetry",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -3490,6 +3487,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
+name = "telemetry"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "termtree"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3972,9 +3984,9 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

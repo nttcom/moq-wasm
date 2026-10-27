@@ -40,7 +40,13 @@ any algorithm other than HS256).
 | `VTS_REGISTRY_OBJECT`   | `registry.json`      | Object in `VTS_REGISTRY_BUCKET`                                 |
 | `STORAGE_EMULATOR_HOST` | unset                | Cloud Storage emulator URL, e.g. `http://localhost:4443`        |
 | `VTS_PORT`              | `8081`               | Listen port                                                     |
-| `RUST_LOG`              | `info`               | `tracing` filter                                                |
+| `VTS_STDOUT_FILTER`     | `vts=info`           | `tracing` filter for stdout; falls back to `RUST_LOG`           |
+| `VTS_OTEL_FILTER`       | `vts=info`           | `tracing` filter for OpenTelemetry traces                       |
+| `VTS_LOG_FILTER`        | `vts=info`           | `tracing` filter for OpenTelemetry logs                         |
+
+OTLP export follows the standard `OTEL_*` variables (`OTEL_SDK_DISABLED`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, …), as described in
+`docs/architecture/telemetry/architecture.md`.
 
 Set `VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET`, not both. Either way the VTS
 reads the registered apps at startup and again on every `/verify`, so a new

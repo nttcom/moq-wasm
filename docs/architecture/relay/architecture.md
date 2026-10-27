@@ -34,7 +34,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 ## Startup path
 
 `main.rs`:
-1. `init_logging` (tracing + OpenTelemetry OTLP export).
+1. `init_logging` (tracing + OpenTelemetry OTLP export, set up by `crates/telemetry`).
 2. Generate self-signed certs under `RELAY_CERT_DIR` (default `crates/relay/keys/`) if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PUBLIC_HOST` (the `host[:port]` clients connect to, default
@@ -506,7 +506,9 @@ per-request authorization gate under "Event pipeline".
   with `{"token"}`. The VTS only vouches for the signature and the appId; 200
   carries `{ appId, isRelay, claims }` with the raw JWT payload, which is
   handed to `build_verified_token`. 401 → `Unauthorized`, anything else or a
-  transport error → `Unavailable`. 3 s timeout.
+  transport error → `Unavailable`. 3 s timeout. The call runs in a
+  `relay.vts.verify` span whose context goes out as a W3C `traceparent`
+  header, so the VTS's spans join the relay's trace.
 - `session_authenticator.rs` — `SessionAuthenticator`, built from
   `AuthConfig` around a `TokenVerifier`; combines the pieces above into the
   CLIENT_SETUP decision described under "Session intake".
@@ -673,6 +675,21 @@ per-request authorization gate under "Event pipeline".
   object, so a sparse track such as a catalog stays joinable; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
   ingress/egress holds it — avoiding races with new joiners.
+  A pass never walks the whole track: the disk cache keeps ~10^5 objects per
+  track-hour, and the pass holds the write lock. The one exception is the
+  end-of-broadcast purge, which walks every object once.
+  `EvictionQueues` (`track_cache/eviction_queues.rs`) keeps three indexes:
+  - objects by `received_at`, until their memory TTL is applied;
+  - objects by `CachedObject::expiry`;
+  - stored objects per disk segment.
+
+  A pass visits only the objects these indexes mark as past the memory TTL,
+  expired, or on a deleted segment. `resolve_fetch_range` uses the same
+  indexes to ask whether a range holds an expired object that eviction has
+  not removed yet. A group's aborted / finished marks and reopened runs are
+  dropped once the group has neither objects nor open subgroups; a pass
+  checks only the groups it removed objects from and the groups whose last
+  subgroup closed since the last pass.
 - MAX_CACHE_DURATION (draft-14 §9.2.1.3): ingress stamps every object with
   `expires_at` = this relay's receipt time + the value its upstream
   SUBSCRIBE_OK, PUBLISH or FETCH_OK carried. From that instant
