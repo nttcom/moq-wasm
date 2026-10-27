@@ -354,11 +354,12 @@ impl Connection {
     }
 
     /// Starts a cutover for the sink of the subscription `wire_request_id`,
-    /// which becomes its previous side. `None` when no such sink is
-    /// installed.
+    /// which becomes its previous side, toward a subscription starting in
+    /// group `current_start`. `None` when no such sink is installed.
     pub(crate) async fn start_cutover(
         &self,
         wire_request_id: RequestId,
+        current_start: u64,
         cut_over: oneshot::Sender<()>,
     ) -> Option<CutoverStart> {
         let mut sinks = self.object_sinks.lock().await;
@@ -369,7 +370,7 @@ impl Connection {
             _ => None,
         })?;
         let shared = Arc::new(std::sync::Mutex::new(SharedCutover {
-            cutover: GroupCutover::waiting_after(receiver.newest_group),
+            cutover: GroupCutover::waiting_after(receiver.newest_group, current_start),
             cut_over: Some(cut_over),
         }));
         receiver.cutover = Some(SinkCutover {

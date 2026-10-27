@@ -426,8 +426,9 @@ async fn migrate(
 }
 
 /// Resolves once `moved_from` has no subgroup stream open for the
-/// subscription `open` counts, and releases the previous side of `cutover`:
-/// the publisher sends every later group to the new connection too.
+/// subscription `open` counts and owes no group before the new
+/// subscription's start, and releases the previous side of `cutover`: the
+/// publisher sends every later group to the new connection too.
 async fn release_when_idle(
     moved_from: &Connection,
     cutover: &std::sync::Mutex<SharedCutover>,
@@ -435,17 +436,25 @@ async fn release_when_idle(
 ) {
     loop {
         open.all_ended().await;
-        // Sinks count a new stream under this lock, so none opens between the
-        // check and the release.
-        let _sinks = moved_from.object_sinks.lock().await;
-        if open.is_empty() {
+        let mut changes = {
+            // Sinks count a new stream under this lock, so none opens between
+            // the check and the release.
+            let _sinks = moved_from.object_sinks.lock().await;
+            if !open.is_empty() {
+                continue;
+            }
             let mut shared = cutover
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            shared.cutover.release_previous();
-            shared.cut_over = None;
-            return;
-        }
+            if shared.cutover.release_previous() {
+                shared.cut_over = None;
+                return;
+            }
+            // Subscribed under the lock, so the owed group's stream is seen
+            // even if it ends before this task runs again.
+            open.changes()
+        };
+        let _ = changes.changed().await;
     }
 }
 
@@ -497,6 +506,11 @@ async fn carry_subscription(
             return (request_id, Carried::Stays);
         }
     };
+    let largest = match subscribe_ok.content_exists {
+        ContentExists::True { location } => Some(location),
+        ContentExists::False => None,
+    };
+    let start = option.filter_type.start_location(largest);
     let (cut_over, cut_over_receiver) = oneshot::channel();
     let Some(CutoverStart {
         logical_alias,
@@ -504,7 +518,7 @@ async fn carry_subscription(
         shared: cutover,
         previous_open_subgroups,
     }) = moved_from
-        .start_cutover(previous_request_id, cut_over)
+        .start_cutover(previous_request_id, start.group_id, cut_over)
         .await
     else {
         let _ = connection
@@ -515,15 +529,7 @@ async fn carry_subscription(
             .await;
         return (request_id, Carried::Gone);
     };
-    let largest = match subscribe_ok.content_exists {
-        ContentExists::True { location } => Some(location),
-        ContentExists::False => None,
-    };
-    connection.carry_subscription(
-        request_id,
-        subscribe_ok.request_id,
-        option.filter_type.start_location(largest),
-    );
+    connection.carry_subscription(request_id, subscribe_ok.request_id, start);
     if let Err(code) = connection
         .install_receiver(
             subscribe_ok.track_alias,
@@ -858,6 +864,52 @@ mod tests {
         );
         assert_eq!(previous_tail, payload(1, b"a1-1"));
         assert_eq!(close.expect("A closed once group 1 ended").code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn the_old_server_is_kept_for_the_groups_before_the_new_servers_start() {
+        // Arrange: group 1 has ended on A; B already holds group 2, so its
+        // SUBSCRIBE starts at group 3 and group 2 can only come from A
+        let (port_a, accept_a) = spawn_dual_server("session-migration-owed-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-owed-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        group_1_a.close().await.unwrap();
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let largest_on_b = ContentExists::True {
+            location: Location {
+                group_id: 2,
+                object_id: 0,
+            },
+        };
+        let (sender_b, _, _) = serve_subscribe_with(&server_b, largest_on_b).await;
+        let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, server_a.closed()).await;
+        let mut group_2_a = open_subgroup(&sender_a, 2, SubgroupId::None).await;
+        send_payload(&mut group_2_a, b"a2-0").await;
+        group_2_a.close().await.unwrap();
+        let owed = next_payload(&mut reader).await;
+        let mut group_3_b = open_subgroup(&sender_b, 3, SubgroupId::None).await;
+        send_payload(&mut group_3_b, b"b3-0").await;
+        let after_cutover = next_payload(&mut reader).await;
+
+        // Assert: no group is skipped between the connections
+        assert!(
+            still_open.is_err(),
+            "A must stay open while it owes group 2"
+        );
+        assert_eq!(owed, payload(2, b"a2-0"));
+        assert_eq!(after_cutover, payload(3, b"b3-0"));
     }
 
     #[tokio::test]
