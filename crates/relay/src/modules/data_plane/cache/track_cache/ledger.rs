@@ -1,5 +1,6 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
+    ops::RangeInclusive,
     sync::Arc,
 };
 
@@ -10,7 +11,9 @@ use crate::modules::data_plane::{
     cache::{cached_object::CachedObject, known_ranges::KnownRanges},
 };
 
-use super::{SubgroupRun, after, location, partial_object::PartialObject};
+use super::{
+    SubgroupRun, after, eviction_queues::EvictionQueues, location, partial_object::PartialObject,
+};
 
 /// `epoch` tells a guard opened before the subgroup last closed apart from one
 /// of the current opening.
@@ -35,6 +38,19 @@ impl LiveGroup {
     }
 }
 
+fn subgroup_keys_of(group_id: u64) -> [RangeInclusive<SubgroupKey>; 2] {
+    [
+        SubgroupKey::Stream {
+            group_id,
+            subgroup_id: 0,
+        }..=SubgroupKey::Stream {
+            group_id,
+            subgroup_id: u64::MAX,
+        },
+        SubgroupKey::Datagram { group_id }..=SubgroupKey::Datagram { group_id },
+    ]
+}
+
 #[derive(Default)]
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::object::Location, Arc<CachedObject>>,
@@ -42,10 +58,13 @@ pub(super) struct Ledger {
     /// held when the object started never gets an entry.
     pub(super) partial_objects: BTreeMap<moqt::object::Location, Arc<PartialObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
-    pub(super) aborted_subgroups: HashSet<SubgroupKey>,
-    pub(super) finished_subgroups: HashSet<SubgroupKey>,
-    reopened_run_first_object_ids: HashMap<SubgroupKey, Vec<u64>>,
+    pub(super) aborted_subgroups: BTreeSet<SubgroupKey>,
+    pub(super) finished_subgroups: BTreeSet<SubgroupKey>,
+    reopened_run_first_object_ids: BTreeMap<SubgroupKey, Vec<u64>>,
+    /// Groups whose last open subgroup closed since the last eviction.
+    pub(super) groups_closed_since_eviction: Vec<u64>,
     pub(super) known_ranges: KnownRanges,
+    pub(super) eviction_queues: EvictionQueues,
     pub(super) next_open_epoch: u64,
     /// When the track's last publisher left; cleared when an ingest begins or
     /// eviction purges the track.
@@ -59,20 +78,32 @@ impl Ledger {
             .any(|key| key.group_id() == group_id)
     }
 
-    pub(super) fn forget_runs_of_vanished_groups(&mut self) {
-        let (objects, live_groups) = (&self.objects, &self.live_groups);
-        let is_present = |key: &SubgroupKey| {
-            let group_id = key.group_id();
-            objects
-                .range(location(group_id, 0)..=location(group_id, u64::MAX))
-                .next()
-                .is_some()
-                || live_groups.contains_key(&group_id)
-        };
-        self.aborted_subgroups.retain(is_present);
-        self.finished_subgroups.retain(is_present);
-        self.reopened_run_first_object_ids
-            .retain(|key, _| is_present(key));
+    /// Checks only the groups of `removed` and the ones closed since the last
+    /// call: a group vanishes only when its last object leaves or its last
+    /// open subgroup closes.
+    pub(super) fn forget_runs_of_vanished_groups(&mut self, removed: &[moqt::object::Location]) {
+        let mut group_ids: Vec<u64> = removed.iter().map(|at| at.group_id).collect();
+        group_ids.append(&mut self.groups_closed_since_eviction);
+        group_ids.sort_unstable();
+        group_ids.dedup();
+        for group_id in group_ids {
+            if self.group_objects(group_id, 0).next().is_some()
+                || self.live_groups.contains_key(&group_id)
+            {
+                continue;
+            }
+            for keys in subgroup_keys_of(group_id) {
+                self.aborted_subgroups
+                    .extract_if(keys.clone(), |_| true)
+                    .for_each(drop);
+                self.finished_subgroups
+                    .extract_if(keys.clone(), |_| true)
+                    .for_each(drop);
+                self.reopened_run_first_object_ids
+                    .extract_if(keys, |_, _| true)
+                    .for_each(drop);
+            }
+        }
     }
 
     /// The run a reopened stream starts begins past every cached object of the
@@ -240,8 +271,15 @@ impl Ledger {
         end: moqt::object::Location,
         now: Instant,
     ) -> bool {
-        self.objects_in(start, end)
-            .any(|object| object.is_expired(now))
+        let range = start..KnownRanges::exclusive_end(end);
+        self.eviction_queues
+            .expired_candidates(now)
+            .filter(|at| range.contains(at))
+            .any(|at| {
+                self.objects
+                    .get(&at)
+                    .is_some_and(|object| object.is_expired(now))
+            })
     }
 
     fn objects_in(

@@ -101,15 +101,22 @@ impl CachedObject {
             .unwrap_or(self.received_at + RETENTION_LIMIT)
     }
 
+    /// When the object expires unless its disk copy is deleted first:
+    /// MAX_CACHE_DURATION, or the retention limit of a disk copy.
+    pub(crate) fn expiry(&self) -> Option<Instant> {
+        if self.stored.is_some() {
+            Some(self.retained_until())
+        } else {
+            self.expires_at
+        }
+    }
+
     /// Past MAX_CACHE_DURATION, or a disk copy past the retention limit or
     /// already deleted: such an object is never handed out again, and a
     /// FETCH over it goes upstream.
     pub(crate) fn is_expired(&self, now: Instant) -> bool {
-        self.expires_at.is_some_and(|expires_at| now >= expires_at)
-            || self
-                .stored
-                .as_ref()
-                .is_some_and(|stored| stored.is_lost() || now >= self.received_at + RETENTION_LIMIT)
+        self.expiry().is_some_and(|expiry| now >= expiry)
+            || self.stored.as_ref().is_some_and(StoredPayload::is_lost)
     }
 
     /// The End of Group status object a FIN implies for `start`'s subgroup.
