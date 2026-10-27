@@ -93,12 +93,6 @@ impl Session for moqt::Session {
             moqt::SessionEvent::GoAway(go_away_handler) => {
                 MoqtSessionEvent::GoAway(go_away_handler)
             }
-            moqt::SessionEvent::MaxRequestId(max_request_id_handler) => {
-                MoqtSessionEvent::MaxRequestId(max_request_id_handler)
-            }
-            moqt::SessionEvent::RequestsBlocked(requests_blocked_handler) => {
-                MoqtSessionEvent::RequestsBlocked(requests_blocked_handler)
-            }
             moqt::SessionEvent::PublishDone(publish_done_handler) => {
                 MoqtSessionEvent::PublishDone(publish_done_handler)
             }

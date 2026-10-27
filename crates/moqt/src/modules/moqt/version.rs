@@ -277,7 +277,7 @@ pub(crate) enum Notification {
 }
 
 /// The Request ID of this side's next request (draft-14 §9.1).
-pub(crate) struct RequestIdReservation<'a>(tokio::sync::MutexGuard<'a, RequestId>);
+pub(crate) struct RequestIdReservation<'a>(tokio::sync::MappedMutexGuard<'a, RequestId>);
 
 impl RequestIdReservation<'_> {
     pub(crate) fn request_id(&self) -> RequestId {

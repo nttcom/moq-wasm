@@ -34,7 +34,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
 
   | Path | Contents |
   | --- | --- |
-  | `moqt::` | `Endpoint`, `Session`, `SessionEvent`, `Publisher`, `Subscriber`, `Subscription`, `TrackWriter` / `TrackReader`, the transport markers, session-wide handlers (GOAWAY, MAX_REQUEST_ID, REQUESTS_BLOCKED) and errors not tied to one operation |
+  | `moqt::` | `Endpoint`, `Session`, `SessionEvent`, `Publisher`, `Subscriber`, `Subscription`, `TrackWriter` / `TrackReader`, the transport markers, session-wide handlers (GOAWAY) and errors not tied to one operation |
   | `moqt::subscribe` | SUBSCRIBE, SUBSCRIBE_UPDATE, UNSUBSCRIBE and TRACK_STATUS: options, `FilterType`, handlers |
   | `moqt::publish` | PUBLISH and PUBLISH_DONE: `PublishOption`, handlers |
   | `moqt::fetch` | FETCH and FETCH_CANCEL: options, `FetchParams`, handlers, fetch stream sender/receiver |
@@ -505,8 +505,7 @@ one of three paths:
    stop the task.
 
 Messages `Session` decodes but does not act on (GOAWAY, unless the session
-follows it, MAX_REQUEST_ID,
-REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
+follows it, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
 PUBLISH_NAMESPACE_CANCEL) still take path 1, so the application sees them
 instead of the session dying.
 
@@ -623,8 +622,19 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   control stream. A dropped reservation leaves the ID unused.
   `ControlMessageReceiveTask` closes the session with INVALID_REQUEST_ID when
   a peer's new request has this side's parity or is not larger than the
-  peer's previous one. Skipped IDs are accepted. MAX_REQUEST_ID is neither
-  enforced on receipt nor respected when sending.
+  peer's previous one. Skipped IDs are accepted.
+
+- **Request IDs stay below the peer's Maximum Request ID** (draft-14 §9.5).
+  `reserve_request_id` waits while the next ID reaches the limit from the
+  peer's SETUP or MAX_REQUEST_ID, sending one REQUESTS_BLOCKED per limit. A
+  MAX_REQUEST_ID that does not raise the limit closes the session with
+  PROTOCOL_VIOLATION. A received request at or above the advertised limit
+  closes it with TOO_MANY_REQUESTS. The advertised limit follows
+  use, not completion: once the peer has used half of the 1000-ID window,
+  `ControlMessageReceiveTask` sends MAX_REQUEST_ID for a full window past the
+  peer's next ID, so a long-lived session never runs out and the number of
+  concurrent requests is not capped. MAX_REQUEST_ID and REQUESTS_BLOCKED never
+  reach the application.
 
 - **A carried subscription cuts over at a group boundary.** The first object
   the new connection delivers fixes the cutover group: the group after the

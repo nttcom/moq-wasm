@@ -6,8 +6,6 @@ use crate::modules::session::handler::{
 
 pub(crate) enum MoqtSessionEvent {
     GoAway(moqt::GoAwayHandler),
-    MaxRequestId(moqt::MaxRequestIdHandler),
-    RequestsBlocked(moqt::RequestsBlockedHandler),
     PublishNamespace(Box<dyn PublishNamespaceHandler>),
     PublishNamespaceDone(moqt::namespace::PublishNamespaceDoneHandler),
     PublishNamespaceCancel(moqt::namespace::PublishNamespaceCancelHandler),
@@ -29,8 +27,6 @@ impl std::fmt::Debug for MoqtSessionEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
             MoqtSessionEvent::GoAway(_) => "GoAway",
-            MoqtSessionEvent::MaxRequestId(_) => "MaxRequestId",
-            MoqtSessionEvent::RequestsBlocked(_) => "RequestsBlocked",
             MoqtSessionEvent::PublishNamespace(_) => "PublishNamespace",
             MoqtSessionEvent::PublishNamespaceDone(_) => "PublishNamespaceDone",
             MoqtSessionEvent::PublishNamespaceCancel(_) => "PublishNamespaceCancel",

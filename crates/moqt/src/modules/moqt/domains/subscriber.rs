@@ -802,9 +802,7 @@ mod tests {
     };
     const TRACK: &str = "track";
     /// Exceeds quinn's default limit of 100 open streams per type, so a FETCH
-    /// stream that is never finished or stopped stalls a later round. Client
-    /// request ids step by 2, so 150 FETCHes stay below the MAX_REQUEST_ID of
-    /// 1000 both sessions are set up with.
+    /// stream that is never finished or stopped stalls a later round.
     const REPEATED_FETCHES: usize = 150;
 
     fn fetch_object(location: Location, payload: &'static [u8]) -> Object {
