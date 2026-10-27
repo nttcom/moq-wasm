@@ -500,6 +500,31 @@ impl Subscriber {
         )
     }
 
+    /// Subscribes with the Largest Object filter and reads the group that
+    /// object is in from its first object, through a Relative Joining FETCH
+    /// with offset 0 (draft-14 §9.16.2), so the FETCH and the subscription
+    /// meet without a gap or a repeat. The reader yields the fetched objects
+    /// before the live ones. A track without content, or a FETCH that fails,
+    /// yields the live objects only.
+    pub async fn subscribe_current_group(
+        &mut self,
+        track_namespace: String,
+        track_name: String,
+    ) -> Result<(Subscription, TrackReader), RequestFailure> {
+        let option = SubscribeOption {
+            filter_type: FilterType::LargestObject,
+            ..SubscribeOption::default()
+        };
+        let subscription = self.subscribe(track_namespace, track_name, option).await?;
+        let reader = TrackReader::joining_current_group(
+            Subscriber {
+                session: self.session.clone(),
+            },
+            subscription.clone(),
+        );
+        Ok((subscription, reader))
+    }
+
     /// Each live connection that carries the request `logical_id`, with its
     /// wire id there.
     fn on_live_connections(&self, logical_id: u64) -> Vec<(Arc<Connection>, u64)> {
@@ -731,10 +756,10 @@ mod tests {
 
     use crate::{
         RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription,
-        TerminationErrorCode,
+        TerminationErrorCode, TrackReader,
         fetch::{
             Fetch, FetchCancelHandler, FetchDataReceiver, FetchDataSender, FetchHandle,
-            FetchHandler, FetchOption,
+            FetchHandler, FetchOption, FetchParams,
         },
         modules::{
             moqt::domains::connection::IncomingObjectNotification,
@@ -1659,5 +1684,122 @@ mod tests {
 
         // Assert
         assert!(subscribed.unwrap().unwrap().is_err());
+    }
+
+    async fn start_subscribe_current_group(
+        client: &Session,
+        server: &Session,
+        content_exists: ContentExists,
+    ) -> (TrackReader, Subscription) {
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_current_group("ns".to_string(), TRACK.to_string())
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        let alias = handler.ok(0, content_exists).await.unwrap();
+        let (_, reader) = request.await.unwrap().unwrap();
+        (reader, handler.into_subscription(alias))
+    }
+
+    async fn read_payloads(reader: &mut TrackReader, count: usize) -> Vec<Bytes> {
+        within(async {
+            let mut payloads = Vec::new();
+            while payloads.len() < count {
+                payloads.push(reader.next_object().await.unwrap().unwrap().payload);
+            }
+            payloads
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn subscribe_current_group_yields_the_fetched_group_before_a_live_object_that_arrived_first()
+     {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-current-group").await;
+        let (mut reader, served) = start_subscribe_current_group(
+            &client,
+            &server,
+            ContentExists::True {
+                location: location(3, 1),
+            },
+        )
+        .await;
+        send_subgroup_object(&server, &served, &fetch_object(location(3, 2), b"live")).await;
+
+        // Act
+        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected the joining FETCH");
+        };
+        serve_fetch(
+            &server,
+            &fetch,
+            location(3, 2),
+            &[
+                fetch_object(location(3, 0), b"fetched-0"),
+                fetch_object(location(3, 1), b"fetched-1"),
+            ],
+        )
+        .await;
+        let payloads = read_payloads(&mut reader, 3).await;
+
+        // Assert
+        assert!(matches!(
+            fetch.fetch.fetch_params,
+            FetchParams::RelativeJoining {
+                joining_start: 0,
+                ..
+            }
+        ));
+        assert_eq!(payloads, ["fetched-0", "fetched-1", "live"]);
+    }
+
+    #[tokio::test]
+    async fn subscribe_current_group_yields_live_objects_when_the_joining_fetch_is_refused() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-current-refused").await;
+        let (mut reader, served) = start_subscribe_current_group(
+            &client,
+            &server,
+            ContentExists::True {
+                location: location(3, 1),
+            },
+        )
+        .await;
+        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected the joining FETCH");
+        };
+
+        // Act
+        fetch
+            .error(RequestErrorCode::NotSupported, String::new())
+            .await
+            .unwrap();
+        send_subgroup_object(&server, &served, &fetch_object(location(3, 2), b"live")).await;
+        let payloads = read_payloads(&mut reader, 1).await;
+
+        // Assert
+        assert_eq!(payloads, ["live"]);
+    }
+
+    #[tokio::test]
+    async fn subscribe_current_group_sends_no_fetch_for_a_track_without_content() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-current-empty").await;
+        let (mut reader, served) =
+            start_subscribe_current_group(&client, &server, ContentExists::False).await;
+
+        // Act
+        send_subgroup_object(&server, &served, &fetch_object(location(0, 0), b"live")).await;
+        let payloads = read_payloads(&mut reader, 1).await;
+        let event = server.receive_event().now_or_never();
+
+        // Assert
+        assert_eq!(payloads, ["live"]);
+        assert!(event.is_none(), "{event:?}");
     }
 }
