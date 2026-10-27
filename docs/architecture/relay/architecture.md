@@ -287,7 +287,9 @@ Each sequence owns the relay-side protocol logic for one message
   subscriptions. Each namespace entry carries its sessions' `SessionPeer`:
   client-owned Redis routes are cleaned up when the last *client* leaves, while
   local namespace subscribers get PUBLISH_NAMESPACE_DONE only once no client or
-  relay session publishes the namespace. An `UpstreamTrack` holds one
+  relay session publishes the namespace. A prefix matches a namespace field
+  by field on their `/`-joined forms (`track_key::is_namespace_prefix`):
+  `room` covers `room/alice` but not `room1/alice`. An `UpstreamTrack` holds one
   `ActiveUpstreamSubscription` per publisher session feeding the track
   (draft-14 §8.2) and the count of its downstream subscribers; downstream
   subscriptions refer to the track, not to a publisher. The track lives while
