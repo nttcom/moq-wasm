@@ -299,7 +299,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     })
 
     try {
-      const tracks = await session.subscribeCatalog(
+      await session.subscribeCatalog(
         trackNamespace,
         (updatedTracks) => applyRemoteCatalogTracks(memberId, updatedTracks),
         () =>
@@ -309,7 +309,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             return next
           })
       )
-      applyRemoteCatalogTracks(memberId, tracks)
       setCatalogSubscribedMemberIds((prev) => {
         const next = new Set(prev)
         next.add(memberId)
