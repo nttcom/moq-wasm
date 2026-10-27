@@ -64,16 +64,16 @@ impl<T> UpdateAnswerSlot<T> {
 
     pub(crate) fn answer(&self, answer: T) -> SlotOutcome {
         let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        match std::mem::replace(&mut *slot, AnswerSlot::Answered) {
-            AnswerSlot::Waiting(sender) => match sender.send(answer) {
-                Ok(()) => SlotOutcome::Delivered,
-                Err(_) => SlotOutcome::Undelivered,
-            },
-            AnswerSlot::Answered => SlotOutcome::AlreadyAnswered,
-            AnswerSlot::TimedOut => {
-                *slot = AnswerSlot::TimedOut;
-                SlotOutcome::TimedOut
-            }
+        if matches!(*slot, AnswerSlot::TimedOut) {
+            return SlotOutcome::TimedOut;
+        }
+        let AnswerSlot::Waiting(sender) = std::mem::replace(&mut *slot, AnswerSlot::Answered)
+        else {
+            return SlotOutcome::AlreadyAnswered;
+        };
+        match sender.send(answer) {
+            Ok(()) => SlotOutcome::Delivered,
+            Err(_) => SlotOutcome::Undelivered,
         }
     }
 }
