@@ -26,10 +26,6 @@ export const ASR_CHOICES = [
   { asr: 'granite-speech-5-2b', label: 'Granite 2b (GPU)' }
 ] as const
 
-export function asrLabel(asr: string): string {
-  return ASR_CHOICES.find((choice) => choice.asr === asr)?.label ?? asr
-}
-
 export type CaptionsControls = {
   /// Whether the transcriber is in the room or this page has asked it in.
   active: boolean

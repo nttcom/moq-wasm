@@ -653,7 +653,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         roomName={roomName}
         recording={recording?.active?.state}
         transcribing={transcriberPresent}
-        transcriberStatus={captions?.status}
+        transcriberStarting={captions?.status?.state === 'starting'}
         members={Array.from(room.remoteMembers.values()).map((member) => ({
           id: member.id,
           name: member.name,
@@ -743,7 +743,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onMessageChange={setChatMessage}
             onSend={handleSendChatMessage}
             onToggle={() => setIsSidebarOpen(false)}
-            transcript={captions && transcriberPresent ? captions.records : undefined}
+            captions={captions}
+            transcribing={transcriberPresent}
           />
         )}
       </div>
