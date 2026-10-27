@@ -1,6 +1,7 @@
 use crate::modules::session::handler::{
     fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
     subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
+    subscribe_namespace_update::SubscribeNamespaceUpdateHandler,
     subscribe_update::SubscribeUpdateHandler, track_status::TrackStatusHandler,
 };
 
@@ -12,6 +13,7 @@ pub(crate) enum MoqtSessionEvent {
     PublishNamespaceDone(moqt::namespace::PublishNamespaceDoneHandler),
     PublishNamespaceCancel(moqt::namespace::PublishNamespaceCancelHandler),
     SubscribeNamespace(Box<dyn SubscribeNamespaceHandler>),
+    SubscribeNamespaceUpdate(Box<dyn SubscribeNamespaceUpdateHandler>),
     UnsubscribeNamespace(moqt::namespace::UnsubscribeNamespaceHandler),
     PublishBlocked(moqt::namespace::PublishBlockedHandler),
     Publish(Box<dyn PublishHandler>),
@@ -36,6 +38,7 @@ impl std::fmt::Debug for MoqtSessionEvent {
             MoqtSessionEvent::PublishNamespaceDone(_) => "PublishNamespaceDone",
             MoqtSessionEvent::PublishNamespaceCancel(_) => "PublishNamespaceCancel",
             MoqtSessionEvent::SubscribeNamespace(_) => "SubscribeNamespace",
+            MoqtSessionEvent::SubscribeNamespaceUpdate(_) => "SubscribeNamespaceUpdate",
             MoqtSessionEvent::UnsubscribeNamespace(_) => "UnsubscribeNamespace",
             MoqtSessionEvent::PublishBlocked(_) => "PublishBlocked",
             MoqtSessionEvent::Publish(_) => "Publish",

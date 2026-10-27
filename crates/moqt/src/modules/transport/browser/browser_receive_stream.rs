@@ -9,10 +9,10 @@ use bytes::{Buf, BytesMut};
 use js_sys::Uint8Array;
 use tokio::io::ReadBuf;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{ReadableStream, ReadableStreamDefaultReader, ReadableStreamReadResult};
 
-use super::js_value::{is_session_error, js_error, stream_error_code};
+use super::js_value::{is_session_error, js_error, stream_error_code, web_transport_error};
 use crate::modules::transport::{
     read_error::ReadError, transport_receive_stream::TransportReceiveStream,
 };
@@ -78,6 +78,25 @@ impl TransportReceiveStream for BrowserReceiveStream {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(read_error(&error))),
             }
         }
+    }
+
+    /// Cancelling the readable with a `WebTransportError` sends its code.
+    fn stop(&mut self, error_code: u64) {
+        let reason = match web_transport_error(error_code) {
+            Ok(reason) => reason,
+            Err(error) => {
+                tracing::debug!(?error, "could not build the STOP_SENDING reason");
+                return;
+            }
+        };
+        self.pending_read = None;
+        self.unread.clear();
+        let cancel = self.reader.cancel_with_reason(&reason);
+        spawn_local(async move {
+            if let Err(error) = JsFuture::from(cancel).await {
+                tracing::debug!(?error, "failed to stop receive stream");
+            }
+        });
     }
 }
 

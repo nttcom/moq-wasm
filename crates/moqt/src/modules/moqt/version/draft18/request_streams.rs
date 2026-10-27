@@ -9,7 +9,8 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use futures::{StreamExt, future::select, stream::FuturesOrdered};
+use futures::{FutureExt, StreamExt, future::select, stream::FuturesOrdered};
+use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 
 use super::{
@@ -53,10 +54,15 @@ use crate::{
                     publish_namespace_handler::PublishNamespaceHandler,
                     subscribe_handler::SubscribeHandler,
                     subscribe_namespace_handler::SubscribeNamespaceHandler,
+                    subscribe_namespace_update_handler::{
+                        NamespaceUpdateAnswerReceiver, PrefixUpdateDecision,
+                        SubscribeNamespaceUpdateHandler,
+                    },
                     subscribe_update_handler::{SubscribeUpdateHandler, UpdateAnswerReceiver},
                     track_status_handler::TrackStatusHandler,
                     unsubscribe_handler::UnsubscribeHandler,
                     unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
+                    update_answer::DueAnswer,
                 },
                 namespace_interest::NamespaceInterest,
             },
@@ -125,6 +131,39 @@ fn refused_track(properties: &[KeyValuePair]) -> Option<(RequestErrorCode, &'sta
         ))
     } else {
         None
+    }
+}
+
+/// §10.4: a request stream carries at most one GOAWAY, and one sent to a
+/// server carries no New Session URI. `false` after closing the session when
+/// this GOAWAY breaks either rule.
+fn accept_request_go_away(scope: &Scope, received_before: bool, new_session_uri: &str) -> bool {
+    let checked = if received_before {
+        Err("received a second GOAWAY on a request stream")
+    } else {
+        scope.connection.check_go_away_uri(new_session_uri)
+    };
+    match checked {
+        Ok(()) => true,
+        Err(reason) => {
+            close_on_violation(scope, reason);
+            false
+        }
+    }
+}
+
+/// The next message on a request stream, or `None` once this side cancelled
+/// the request; the peer's half is then stopped with STOP_SENDING (§3.3.2).
+async fn receive_unless_cancelled(
+    receiver: &mut MessageReceiver,
+    reader_stop: &tokio::sync::Notify,
+) -> Option<Result<Option<Message>, StreamReceiveError>> {
+    tokio::select! {
+        received = receiver.receive() => Some(received),
+        () = reader_stop.notified() => {
+            receiver.stop(super::cancelled());
+            None
+        }
     }
 }
 
@@ -250,39 +289,110 @@ impl IncomingRequestTask {
             }
             Ok(None) | Err(StreamReceiveError::Closed(_)) => return,
         };
-        let Some((request_id, kind, mut baseline)) =
+        let Some((request_id, stream, mut baseline)) =
             Self::accept_request(&context, &sender, message).await
         else {
             return;
         };
+        let mut kind = stream.kind;
+        // The kind once every update awaiting its answer is applied: a later
+        // update of a namespace prefix moves on from the prefix an earlier
+        // one asks for.
+        let mut updated_kind = kind.clone();
         drop(context);
-        let mut update_answers = UpdateAnswers::default();
+        let mut go_away_received = false;
+        // A FIN on a FETCH ends only the reading (§3.3.2).
+        let mut reading = true;
+        // §5.2: a FETCH requester cancels with STOP_SENDING on this side's half.
+        let mut watching_stop = kind == RequestStreamKind::Fetch;
+        let mut update_answers = UpdateAnswers::<DueUpdate>::default();
         loop {
-            let received = tokio::select! {
-                received = receiver.receive() => received,
-                answer = update_answers.next() => {
-                    send_update_answer(&sender, answer).await;
-                    continue;
-                }
+            let next = tokio::select! {
+                received = receiver.receive(), if reading => Next::Received(received),
+                stopped = sender.stopped(), if watching_stop => Next::Stopped(stopped),
+                () = stream.reader_stop.notified() => Next::Cancelled,
+                answer = update_answers.next() => Next::UpdateAnswer(answer),
             };
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
+            let received = match next {
+                Next::Received(received) => received,
+                Next::UpdateAnswer(DueUpdate::Subscription(answer)) => {
+                    send_update_answer(&sender, answer).await;
+                    continue;
+                }
+                Next::UpdateAnswer(DueUpdate::NamespacePrefix {
+                    prefix,
+                    decision,
+                    moved_sender,
+                }) => {
+                    let Err((code, reason)) = decision else {
+                        kind = context
+                            .channel()
+                            .move_namespace_subscription(request_id, &kind, prefix, &sender)
+                            .await;
+                        if let Some(moved_sender) = moved_sender {
+                            let _ = moved_sender.send(());
+                        }
+                        continue;
+                    };
+                    // §10.9.1: a failed update closes the stream, which ends
+                    // the subscription as the peer's withdrawal would.
+                    Self::reject(&sender, code, &reason).await;
+                    Self::peer_ended(&context, request_id, kind).await;
+                    return;
+                }
+                Next::Stopped(stopped) => {
+                    watching_stop = false;
+                    if stopped.is_some() {
+                        // Cancelling notifies `reader_stop`, which ends this task.
+                        fetch_cancelled(&context, request_id).await;
+                    }
+                    if !reading {
+                        return;
+                    }
+                    continue;
+                }
+                Next::Cancelled => {
+                    if reading {
+                        receiver.stop(super::cancelled());
+                    }
+                    return;
+                }
+            };
             match received {
+                Ok(Some(Message::GoAway(go_away))) => {
+                    if !accept_request_go_away(&context, go_away_received, &go_away.new_session_uri)
+                    {
+                        return;
+                    }
+                    go_away_received = true;
+                    tracing::debug!(request_id, "per-request GOAWAY ignored");
+                }
                 Ok(Some(message)) => {
                     match Self::follow_up(
                         &context,
-                        &sender,
                         request_id,
-                        &kind,
+                        &updated_kind,
                         &mut baseline,
                         message,
-                    )
-                    .await
-                    {
+                    ) {
                         FollowUp::Continue => {}
+                        FollowUp::AcceptUpdate => {
+                            update_answers.push(Box::pin(std::future::ready(
+                                DueUpdate::Subscription(Some(None)),
+                            )));
+                        }
                         FollowUp::AnswerUpdate(answer_receiver) => {
-                            update_answers.push(answer_receiver);
+                            update_answers.push(Box::pin(
+                                subscription_answer(answer_receiver).map(DueUpdate::Subscription),
+                            ));
+                        }
+                        FollowUp::AnswerNamespaceUpdate(answer_receiver, prefix) => {
+                            updated_kind = updated_kind.with_namespace_prefix(prefix.clone());
+                            update_answers
+                                .push(Box::pin(namespace_prefix_answer(answer_receiver, prefix)));
                         }
                         FollowUp::Done => return,
                     }
@@ -290,9 +400,15 @@ impl IncomingRequestTask {
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
                 // §3.3.2: a FIN does not cancel a FETCH; its stream ends once
                 // the response is done (§5.2).
-                Ok(None) if kind == RequestStreamKind::Fetch => return,
+                Ok(None) if kind == RequestStreamKind::Fetch => {
+                    tracing::debug!(request_id, "FETCH requester finished its request stream");
+                    reading = false;
+                    if !watching_stop {
+                        return;
+                    }
+                }
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
-                    Self::peer_ended(&context, request_id, kind);
+                    Self::peer_ended(&context, request_id, kind).await;
                     return;
                 }
                 Err(
@@ -312,7 +428,7 @@ impl IncomingRequestTask {
         scope: &Scope,
         sender: &Arc<StreamSender>,
         message: Message,
-    ) -> Option<(RequestId, RequestStreamKind, Option<SubscribeUpdate>)> {
+    ) -> Option<(RequestId, RequestStream, Option<SubscribeUpdate>)> {
         let channel = scope.channel();
         let request_id = match &message {
             Message::Subscribe(m) | Message::TrackStatus(m) => m.request_id,
@@ -368,8 +484,8 @@ impl IncomingRequestTask {
                 publish,
                 track_properties,
             } => {
-                if let Some((code, _)) = refused_track(&track_properties) {
-                    Self::reject(sender, code).await;
+                if let Some((code, reason)) = refused_track(&track_properties) {
+                    Self::reject(sender, code, reason).await;
                     return None;
                 }
                 default_publisher_priority =
@@ -418,22 +534,21 @@ impl IncomingRequestTask {
             ),
             _ => unreachable!("non-request messages returned above"),
         };
+        let stream = RequestStream {
+            default_publisher_priority,
+            ..RequestStream::new(kind, sender.clone())
+        };
         // Registered before the event, so a handler can answer at once.
-        channel.requests().incoming.insert(
-            request_id,
-            RequestStream {
-                kind: kind.clone(),
-                sender: sender.clone(),
-                default_publisher_priority,
-                fetch_end: Default::default(),
-            },
-        );
+        channel
+            .requests()
+            .incoming
+            .insert(request_id, stream.clone());
         emit(scope, event);
-        Some((request_id, kind, baseline))
+        Some((request_id, stream, baseline))
     }
 
-    async fn reject(sender: &StreamSender, code: RequestErrorCode) {
-        let Ok(message) = messages::encode_request_error(code, "") else {
+    async fn reject(sender: &StreamSender, code: RequestErrorCode, reason: &str) {
+        let Ok(message) = messages::encode_request_error(code, reason) else {
             return;
         };
         if sender.send(&message).await.is_ok() {
@@ -441,9 +556,8 @@ impl IncomingRequestTask {
         }
     }
 
-    async fn follow_up(
+    fn follow_up(
         scope: &Scope,
-        sender: &StreamSender,
         request_id: RequestId,
         kind: &RequestStreamKind,
         baseline: &mut Option<SubscribeUpdate>,
@@ -462,16 +576,38 @@ impl IncomingRequestTask {
                 let (update, filter) = apply_update(baseline, update.request_id, update.parameters);
                 FollowUp::AnswerUpdate(emit_update(scope, update, filter))
             }
+            (
+                RequestStreamKind::SubscribeNamespace(prefix)
+                | RequestStreamKind::SubscribeTracks(prefix),
+                Message::RequestUpdate(update),
+            ) => {
+                let new_prefix = update
+                    .parameters
+                    .into_iter()
+                    .filter_map(|parameter| match parameter {
+                        Parameter::TrackNamespacePrefix(prefix) => Some(prefix),
+                        _ => None,
+                    })
+                    .last();
+                let Some(new_prefix) = new_prefix else {
+                    return FollowUp::AcceptUpdate;
+                };
+                let interest = match kind {
+                    RequestStreamKind::SubscribeNamespace(_) => NamespaceInterest::Namespaces,
+                    _ => NamespaceInterest::Tracks,
+                };
+                let (handler, answer_receiver) =
+                    SubscribeNamespaceUpdateHandler::new(prefix, &new_prefix, interest);
+                emit(scope, SessionEvent::SubscribeNamespaceUpdate(handler));
+                FollowUp::AnswerNamespaceUpdate(answer_receiver, new_prefix)
+            }
             // §10.14: the subscriber cannot update a TRACK_STATUS.
             (RequestStreamKind::TrackStatus, Message::RequestUpdate(_)) => {
                 close_on_violation(scope, "REQUEST_UPDATE on a TRACK_STATUS stream");
                 FollowUp::Done
             }
-            (_, Message::RequestUpdate(_)) => {
-                // Only a subscription has a Largest Object.
-                send_update_answer(sender, Some(None)).await;
-                FollowUp::Continue
-            }
+            // Only a subscription has a Largest Object.
+            (_, Message::RequestUpdate(_)) => FollowUp::AcceptUpdate,
             // Answers to our REQUEST_UPDATE of the subscription the PUBLISH
             // started (§10.9); a failed one is followed by PUBLISH_DONE.
             (RequestStreamKind::Publish, Message::RequestOk(_) | Message::RequestError(_)) => {
@@ -490,10 +626,6 @@ impl IncomingRequestTask {
                 scope.channel().take_incoming(request_id);
                 FollowUp::Done
             }
-            (_, Message::GoAway(_)) => {
-                tracing::debug!(request_id, "per-request GOAWAY ignored");
-                FollowUp::Continue
-            }
             _ => {
                 close_on_violation(scope, "unexpected message on a request stream");
                 FollowUp::Done
@@ -504,7 +636,11 @@ impl IncomingRequestTask {
     /// The peer closed or reset its half: for an open request, that
     /// withdraws it (§3.3.2), as draft-14's UNSUBSCRIBE / FETCH_CANCEL /
     /// PUBLISH_NAMESPACE_DONE / UNSUBSCRIBE_NAMESPACE would.
-    fn peer_ended(scope: &Scope, request_id: RequestId, kind: RequestStreamKind) {
+    async fn peer_ended(scope: &Scope, request_id: RequestId, kind: RequestStreamKind) {
+        if kind == RequestStreamKind::Fetch {
+            fetch_cancelled(scope, request_id).await;
+            return;
+        }
         if scope.channel().take_incoming(request_id).is_none() {
             return;
         }
@@ -514,11 +650,7 @@ impl IncomingRequestTask {
                 &scope.connection,
                 Unsubscribe { request_id },
             )),
-            RequestStreamKind::Fetch => SessionEvent::FetchCancel(FetchCancelHandler::new(
-                scope.session.clone(),
-                &scope.connection,
-                FetchCancel::new(request_id),
-            )),
+            RequestStreamKind::Fetch => unreachable!("a FETCH returned above"),
             RequestStreamKind::PublishNamespace(namespace) => SessionEvent::PublishNamespaceDone(
                 PublishNamespaceDoneHandler::new(PublishNamespaceDone::new(namespace)),
             ),
@@ -547,12 +679,48 @@ impl IncomingRequestTask {
     }
 }
 
+/// §5.2: the peer cancelled the FETCH it sent as `request_id`, by
+/// STOP_SENDING on either of its streams or by resetting its half of the
+/// request stream. Its request and response streams are reset and the
+/// application hears `FetchCancel`, unless the FETCH had ended already.
+pub(super) async fn fetch_cancelled(scope: &Scope, request_id: RequestId) {
+    if !scope.channel().reset_cancelled_fetch(request_id).await {
+        return;
+    }
+    emit(
+        scope,
+        SessionEvent::FetchCancel(FetchCancelHandler::new(
+            scope.session.clone(),
+            &scope.connection,
+            FetchCancel::new(request_id),
+        )),
+    );
+}
+
+/// What a peer's request stream yields next.
+enum Next {
+    Received(Result<Option<Message>, StreamReceiveError>),
+    /// The peer's STOP_SENDING code on this side's half, `None` once it can
+    /// no longer send one.
+    Stopped(Option<u64>),
+    /// This side cancelled the request.
+    Cancelled,
+    /// The next answer to a REQUEST_UPDATE is due (see `UpdateAnswers`).
+    UpdateAnswer(DueUpdate),
+}
+
 /// What reading the next message of a peer's request stream leads to.
 enum FollowUp {
     Continue,
+    /// Answer the REQUEST_UPDATE with REQUEST_OK, in its turn.
+    AcceptUpdate,
     /// Answer the REQUEST_UPDATE once its handler is answered or dropped,
     /// while the stream goes on being read.
     AnswerUpdate(UpdateAnswerReceiver),
+    /// Move the namespace subscription to the prefix once the handler
+    /// accepts, or end it when the handler refuses, is dropped or does not
+    /// answer in time (§10.9.1), while the stream goes on being read.
+    AnswerNamespaceUpdate(NamespaceUpdateAnswerReceiver, Vec<String>),
     Done,
 }
 
@@ -571,22 +739,86 @@ fn emit_update(
 /// arrival order (§10.9: exactly one REQUEST_OK or REQUEST_ERROR each). Each
 /// waits for its handler at most the control message timeout, counted from
 /// its arrival.
-#[derive(Default)]
-struct UpdateAnswers(FuturesOrdered<BoxFuture<Option<Option<Location>>>>);
+struct UpdateAnswers<T>(FuturesOrdered<BoxFuture<T>>);
 
-impl UpdateAnswers {
-    fn push(&mut self, answer_receiver: UpdateAnswerReceiver) {
-        self.0.push_back(Box::pin(
-            answer_receiver.within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT),
-        ));
+impl<T> Default for UpdateAnswers<T> {
+    fn default() -> Self {
+        Self(FuturesOrdered::new())
+    }
+}
+
+impl<T> UpdateAnswers<T> {
+    fn push(&mut self, answer: BoxFuture<T>) {
+        self.0.push_back(answer);
     }
 
     /// The next answer to write; pending while no update awaits one.
-    async fn next(&mut self) -> Option<Option<Location>> {
+    async fn next(&mut self) -> T {
         match self.0.next().await {
             Some(answer) => answer,
             None => std::future::pending().await,
         }
+    }
+}
+
+/// An answer due on a peer's request stream.
+enum DueUpdate {
+    /// See `subscription_answer`.
+    Subscription(Option<Option<Location>>),
+    /// Move the namespace subscription to `prefix` and signal `moved_sender`,
+    /// or refuse the update and end the subscription.
+    NamespacePrefix {
+        prefix: Vec<String>,
+        decision: PrefixUpdateDecision,
+        moved_sender: Option<oneshot::Sender<()>>,
+    },
+}
+
+/// The LARGEST_OBJECT to answer a subscription update with, `None` inside
+/// when every handler clone was dropped unanswered; `None` for REQUEST_ERROR
+/// TIMEOUT.
+async fn subscription_answer(answer_receiver: UpdateAnswerReceiver) -> Option<Option<Location>> {
+    match answer_receiver
+        .within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT)
+        .await
+    {
+        DueAnswer::Answered(largest) => Some(largest),
+        DueAnswer::Dropped => Some(None),
+        DueAnswer::TimedOut => None,
+    }
+}
+
+async fn namespace_prefix_answer(
+    answer_receiver: NamespaceUpdateAnswerReceiver,
+    prefix: Vec<String>,
+) -> DueUpdate {
+    let (decision, moved_sender) = match answer_receiver
+        .within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT)
+        .await
+    {
+        DueAnswer::Answered((decision, moved_sender)) => (decision, Some(moved_sender)),
+        DueAnswer::Dropped => (
+            Err((
+                RequestErrorCode::NotSupported,
+                "namespace prefix update not handled".to_string(),
+            )),
+            None,
+        ),
+        DueAnswer::TimedOut => {
+            tracing::warn!("namespace prefix update not answered in time; answering REQUEST_ERROR");
+            (
+                Err((
+                    RequestErrorCode::Timeout,
+                    "update not answered in time".to_string(),
+                )),
+                None,
+            )
+        }
+    };
+    DueUpdate::NamespacePrefix {
+        prefix,
+        decision,
+        moved_sender,
     }
 }
 
@@ -679,8 +911,7 @@ fn apply_update(
 pub(crate) struct OutgoingRequestTask {
     pub(super) connection: Weak<Connection>,
     pub(super) request_id: RequestId,
-    pub(super) kind: RequestStreamKind,
-    pub(super) sender: Arc<StreamSender>,
+    pub(super) stream: RequestStream,
     pub(super) receiver: MessageReceiver,
     pub(super) response: tokio::sync::oneshot::Sender<ResponseMessage>,
     pub(super) group_order: GroupOrder,
@@ -699,7 +930,7 @@ impl OutgoingRequestTask {
         }
     }
 
-    pub(crate) fn run(self) {
+    pub(super) fn run(self) {
         executor::spawn("draft-18 outgoing request", self.read().in_current_span());
     }
 
@@ -707,13 +938,20 @@ impl OutgoingRequestTask {
         let Self {
             connection,
             request_id,
-            kind,
-            sender,
+            stream,
             mut receiver,
             response,
             group_order,
         } = self;
-        let first = receiver.receive().await;
+        let RequestStream {
+            kind,
+            sender,
+            reader_stop,
+            ..
+        } = stream;
+        let Some(first) = receive_unless_cancelled(&mut receiver, &reader_stop).await else {
+            return;
+        };
         let Some(context) = Scope::of(&connection) else {
             return;
         };
@@ -761,13 +999,17 @@ impl OutgoingRequestTask {
         let mut update_answers = UpdateAnswers::default();
         loop {
             let received = tokio::select! {
-                received = receiver.receive() => received,
+                received = receive_unless_cancelled(&mut receiver, &reader_stop) => received,
                 answer = update_answers.next() => {
                     send_update_answer(&sender, answer).await;
                     continue;
                 }
             };
             let Some(context) = Scope::of(&connection) else {
+                return;
+            };
+            let Some(received) = received else {
+                Self::withdraw_namespaces(&context, namespaces);
                 return;
             };
             match received {
@@ -792,7 +1034,9 @@ impl OutgoingRequestTask {
                     };
                     let (update, filter) =
                         apply_update(baseline, update.request_id, update.parameters);
-                    update_answers.push(emit_update(&context, update, filter));
+                    update_answers.push(Box::pin(subscription_answer(emit_update(
+                        &context, update, filter,
+                    ))));
                 }
                 // Answers to our REQUEST_UPDATE.
                 Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}
@@ -836,7 +1080,11 @@ impl OutgoingRequestTask {
                     }
                     Self::namespace_withdrawn(&context, namespace);
                 }
+                // The request ends at its first GOAWAY; a second is never read.
                 Ok(Some(Message::GoAway(go_away))) => {
+                    if !accept_request_go_away(&context, false, &go_away.new_session_uri) {
+                        return;
+                    }
                     tracing::info!(
                         request_id,
                         new_session_uri = go_away.new_session_uri,

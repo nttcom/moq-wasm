@@ -645,16 +645,33 @@ fn varint_property_value(properties: &[KeyValuePair], key: u64) -> Option<u64> {
         })
 }
 
-/// The Track Properties ending a message (§2.5). Priorities above 255 are
-/// invalid (§12.4) and close the session with PROTOCOL_VIOLATION.
+/// The Track Properties ending a message (§2.5). Priorities above 255
+/// (§12.4) and group orders other than Ascending or Descending (§12.5), in
+/// the mutable list or inside Immutable Properties, close the session with
+/// PROTOCOL_VIOLATION.
 fn get_track_properties(buf: &mut Bytes) -> Result<Vec<KeyValuePair>, DecodeError> {
     let properties = get_key_value_pairs(buf)?;
-    if varint_property_value(&properties, DEFAULT_PUBLISHER_PRIORITY_PROPERTY)
-        .is_some_and(|priority| priority > u64::from(u8::MAX))
-    {
-        return Err(DecodeError::protocol_violation(
-            "DEFAULT PUBLISHER PRIORITY above 255",
-        ));
+    for property in searched_properties(&properties) {
+        let KeyValuePair {
+            key,
+            value: VariantType::Even(value),
+        } = property
+        else {
+            continue;
+        };
+        match key {
+            DEFAULT_PUBLISHER_PRIORITY_PROPERTY if value > u64::from(u8::MAX) => {
+                return Err(DecodeError::protocol_violation(
+                    "DEFAULT PUBLISHER PRIORITY above 255",
+                ));
+            }
+            DEFAULT_PUBLISHER_GROUP_ORDER_PROPERTY if !matches!(value, 0x1 | 0x2) => {
+                return Err(DecodeError::protocol_violation(
+                    "DEFAULT PUBLISHER GROUP ORDER is neither Ascending nor Descending",
+                ));
+            }
+            _ => {}
+        }
     }
     Ok(properties)
 }
@@ -1625,26 +1642,73 @@ mod tests {
 
     #[test]
     fn a_default_publisher_priority_above_255_is_a_protocol_violation() {
-        // Arrange
-        let mut payload = BytesMut::new();
-        put_vi64(&mut payload, 1);
-        put_parameters(&mut payload, &[]).unwrap();
-        put_key_value_pairs(&mut payload, &[varint_property(0x0E, 256)]).unwrap();
+        // Arrange: DEFAULT PUBLISHER PRIORITY (0x0E) of 256, in the mutable
+        // list, inside Immutable Properties, and after a valid one
+        let cases = [
+            vec![varint_property(0x0E, 256)],
+            vec![varint_property(0x0E, 9), varint_property(0x0E, 256)],
+            vec![
+                immutable(&[varint_property(0x0E, 256)]),
+                varint_property(0x0E, 9),
+            ],
+        ];
+        for properties in cases {
+            let mut payload = BytesMut::new();
+            put_vi64(&mut payload, 1);
+            put_parameters(&mut payload, &[]).unwrap();
+            put_key_value_pairs(&mut payload, &properties).unwrap();
 
-        // Act
-        let result = decode_message(SUBSCRIBE_OK, payload.freeze());
+            // Act
+            let result = decode_message(SUBSCRIBE_OK, payload.freeze());
 
-        // Assert: §12.4
-        assert!(
-            matches!(
-                result,
-                Err(DecodeError::Violation {
-                    code: TerminationErrorCode::ProtocolViolation,
-                    ..
-                })
-            ),
-            "{result:?}"
-        );
+            // Assert: §12.4
+            assert!(
+                matches!(
+                    result,
+                    Err(DecodeError::Violation {
+                        code: TerminationErrorCode::ProtocolViolation,
+                        ..
+                    })
+                ),
+                "{properties:?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_default_publisher_group_order_out_of_range_is_a_protocol_violation() {
+        // Arrange: DEFAULT PUBLISHER GROUP ORDER (0x22) of 3 or 0, in the
+        // mutable list, inside Immutable Properties, and before a valid one
+        let cases = [
+            vec![varint_property(0x22, 3)],
+            vec![varint_property(0x22, 0)],
+            vec![immutable(&[varint_property(0x22, 3)])],
+            vec![
+                immutable(&[varint_property(0x22, 3)]),
+                varint_property(0x22, 1),
+            ],
+        ];
+        for properties in cases {
+            let mut payload = BytesMut::new();
+            put_vi64(&mut payload, 1);
+            put_parameters(&mut payload, &[]).unwrap();
+            put_key_value_pairs(&mut payload, &properties).unwrap();
+
+            // Act
+            let result = decode_message(SUBSCRIBE_OK, payload.freeze());
+
+            // Assert: §12.5
+            assert!(
+                matches!(
+                    result,
+                    Err(DecodeError::Violation {
+                        code: TerminationErrorCode::ProtocolViolation,
+                        ..
+                    })
+                ),
+                "{properties:?}: {result:?}"
+            );
+        }
     }
 
     /// §12.7 Immutable Properties holding `properties`.

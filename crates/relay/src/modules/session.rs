@@ -59,62 +59,74 @@ impl Session for moqt::Session {
     }
 
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
-        let event = self.receive_event().await?;
-        let result = match event {
-            moqt::SessionEvent::PublishNamespace(publish_namespace_handler) => {
-                MoqtSessionEvent::PublishNamespace(Box::new(publish_namespace_handler))
-            }
-            moqt::SessionEvent::PublishNamespaceDone(publish_namespace_done_handler) => {
-                MoqtSessionEvent::PublishNamespaceDone(publish_namespace_done_handler)
-            }
-            moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
-                MoqtSessionEvent::SubscribeNamespace(Box::new(subscribe_namespace_handler))
-            }
-            moqt::SessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler) => {
-                MoqtSessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler)
-            }
-            moqt::SessionEvent::PublishBlocked(publish_blocked_handler) => {
-                MoqtSessionEvent::PublishBlocked(publish_blocked_handler)
-            }
-            moqt::SessionEvent::Publish(publish_handler) => {
-                MoqtSessionEvent::Publish(Box::new(publish_handler))
-            }
-            moqt::SessionEvent::Subscribe(subscribe_handler) => {
-                MoqtSessionEvent::Subscribe(Box::new(subscribe_handler))
-            }
-            moqt::SessionEvent::Unsubscribe(unsubscribe_handler) => {
-                MoqtSessionEvent::Unsubscribe(unsubscribe_handler)
-            }
-            moqt::SessionEvent::Disconnected() => MoqtSessionEvent::Disconnected(),
-            moqt::SessionEvent::ProtocolViolation() => MoqtSessionEvent::ProtocolViolation(),
-            moqt::SessionEvent::Fetch(fetch_handler) => {
-                MoqtSessionEvent::Fetch(Box::new(fetch_handler))
-            }
-            moqt::SessionEvent::FetchCancel(fetch_cancel_handler) => {
-                MoqtSessionEvent::FetchCancel(fetch_cancel_handler)
-            }
-            moqt::SessionEvent::GoAway(go_away_handler) => {
-                MoqtSessionEvent::GoAway(go_away_handler)
-            }
-            moqt::SessionEvent::MaxRequestId(max_request_id_handler) => {
-                MoqtSessionEvent::MaxRequestId(max_request_id_handler)
-            }
-            moqt::SessionEvent::RequestsBlocked(requests_blocked_handler) => {
-                MoqtSessionEvent::RequestsBlocked(requests_blocked_handler)
-            }
-            moqt::SessionEvent::PublishDone(publish_done_handler) => {
-                MoqtSessionEvent::PublishDone(publish_done_handler)
-            }
-            moqt::SessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler) => {
-                MoqtSessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler)
-            }
-            moqt::SessionEvent::SubscribeUpdate(subscribe_update_handler) => {
-                MoqtSessionEvent::SubscribeUpdate(Box::new(subscribe_update_handler))
-            }
-            moqt::SessionEvent::TrackStatus(track_status_handler) => {
-                MoqtSessionEvent::TrackStatus(Box::new(track_status_handler))
-            }
-        };
-        Ok(result)
+        loop {
+            let event = self.receive_event().await?;
+            let result = match event {
+                moqt::SessionEvent::PublishNamespace(publish_namespace_handler) => {
+                    MoqtSessionEvent::PublishNamespace(Box::new(publish_namespace_handler))
+                }
+                moqt::SessionEvent::PublishNamespaceDone(publish_namespace_done_handler) => {
+                    MoqtSessionEvent::PublishNamespaceDone(publish_namespace_done_handler)
+                }
+                moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
+                    MoqtSessionEvent::SubscribeNamespace(Box::new(subscribe_namespace_handler))
+                }
+                moqt::SessionEvent::SubscribeNamespaceUpdate(
+                    subscribe_namespace_update_handler,
+                ) => MoqtSessionEvent::SubscribeNamespaceUpdate(Box::new(
+                    subscribe_namespace_update_handler,
+                )),
+                moqt::SessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler) => {
+                    MoqtSessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler)
+                }
+                moqt::SessionEvent::PublishBlocked(publish_blocked_handler) => {
+                    MoqtSessionEvent::PublishBlocked(publish_blocked_handler)
+                }
+                moqt::SessionEvent::Publish(publish_handler) => {
+                    MoqtSessionEvent::Publish(Box::new(publish_handler))
+                }
+                moqt::SessionEvent::Subscribe(subscribe_handler) => {
+                    MoqtSessionEvent::Subscribe(Box::new(subscribe_handler))
+                }
+                moqt::SessionEvent::Unsubscribe(unsubscribe_handler) => {
+                    MoqtSessionEvent::Unsubscribe(unsubscribe_handler)
+                }
+                moqt::SessionEvent::Disconnected() => MoqtSessionEvent::Disconnected(),
+                moqt::SessionEvent::ProtocolViolation() => MoqtSessionEvent::ProtocolViolation(),
+                moqt::SessionEvent::Fetch(fetch_handler) => {
+                    MoqtSessionEvent::Fetch(Box::new(fetch_handler))
+                }
+                moqt::SessionEvent::FetchCancel(fetch_cancel_handler) => {
+                    MoqtSessionEvent::FetchCancel(fetch_cancel_handler)
+                }
+                moqt::SessionEvent::GoAway(go_away_handler) => {
+                    MoqtSessionEvent::GoAway(go_away_handler)
+                }
+                moqt::SessionEvent::MaxRequestId(max_request_id_handler) => {
+                    MoqtSessionEvent::MaxRequestId(max_request_id_handler)
+                }
+                moqt::SessionEvent::RequestsBlocked(requests_blocked_handler) => {
+                    MoqtSessionEvent::RequestsBlocked(requests_blocked_handler)
+                }
+                moqt::SessionEvent::PublishDone(publish_done_handler) => {
+                    MoqtSessionEvent::PublishDone(publish_done_handler)
+                }
+                moqt::SessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler) => {
+                    MoqtSessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler)
+                }
+                moqt::SessionEvent::SubscribeUpdate(subscribe_update_handler) => {
+                    MoqtSessionEvent::SubscribeUpdate(Box::new(subscribe_update_handler))
+                }
+                moqt::SessionEvent::TrackStatus(track_status_handler) => {
+                    MoqtSessionEvent::TrackStatus(Box::new(track_status_handler))
+                }
+                // Dropping its handler gives the answer moqt documents for it.
+                event => {
+                    tracing::warn!(?event, "session event the relay does not handle");
+                    continue;
+                }
+            };
+            return Ok(result);
+        }
     }
 }

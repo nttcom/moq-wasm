@@ -31,6 +31,15 @@ pub(super) fn session_event_span(
             event = "SubscribeNamespace",
             track_namespace_prefix = %handler.track_namespace_prefix(),
         ),
+        MoqtSessionEvent::SubscribeNamespaceUpdate(handler) => tracing::info_span!(
+            parent: session_span,
+            "relay.session.event",
+            session_id = %session_id,
+            event = "SubscribeNamespaceUpdate",
+            track_namespace_prefix = %handler.track_namespace_prefix(),
+            new_track_namespace_prefix = %handler.new_track_namespace_prefix(),
+            interest = ?handler.interest(),
+        ),
         MoqtSessionEvent::UnsubscribeNamespace(handler) => tracing::info_span!(
             parent: session_span,
             "relay.session.event",

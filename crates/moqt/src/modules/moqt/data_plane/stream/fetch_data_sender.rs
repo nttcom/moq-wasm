@@ -11,7 +11,10 @@ use crate::modules::moqt::{
     domains::connection::Connection,
     version::{FetchEncoder, Version},
 };
-use crate::modules::transport::transport_connection::BoxedSendStream;
+use crate::modules::transport::{
+    transport_connection::BoxedSendStream, transport_send_stream::TransportSendError,
+};
+use futures::FutureExt;
 
 /// What `FetchDataSender::report_unknown_range` did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +30,8 @@ pub enum UnknownRange {
 /// reset with INTERNAL_ERROR.
 pub struct FetchDataSender {
     version: Version,
+    /// Shared with the request registry, which resets it when the FETCH is
+    /// cancelled (draft-18 §5.2).
     stream_sender: Arc<StreamSender>,
     /// Held across the send, so objects reach the stream in the order they
     /// were encoded.
@@ -39,6 +44,8 @@ pub struct FetchDataSender {
 }
 
 impl FetchDataSender {
+    /// Fails when the FETCH `request_id` is no longer open, having reset the
+    /// stream: a cancelled FETCH gets no response (draft-18 §5.2).
     // On wasm32 the browser transport is !Send, but the sender is shared with
     // the native build, where the tasks run on a multi-threaded executor.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
@@ -49,6 +56,15 @@ impl FetchDataSender {
     ) -> anyhow::Result<Self> {
         let version = connection.control.version();
         let stream_sender = Arc::new(StreamSender::new(send_stream));
+        if !connection
+            .control
+            .attach_fetch_response(request_id, &stream_sender)
+        {
+            stream_sender
+                .reset(version.data_stream_reset_code(DataStreamResetCode::Cancelled))
+                .await?;
+            anyhow::bail!("FETCH {request_id} is no longer open");
+        }
         stream_sender
             .send(&version.encode_fetch_header(request_id))
             .await?;
@@ -68,10 +84,15 @@ impl FetchDataSender {
     /// objects and skips the others.
     pub async fn send_object(&self, object: &Object) -> anyhow::Result<()> {
         let mut encoder = self.encoder.lock().await;
-        match encoder.object(object)? {
-            Some(bytes) => Ok(self.stream_sender.send(&bytes).await?),
-            None => Ok(()),
+        let Some(bytes) = encoder.object(object)? else {
+            return Ok(());
+        };
+        let sent = self.stream_sender.send(&bytes).await;
+        drop(encoder);
+        if let Err(TransportSendError::Stopped { .. }) = &sent {
+            self.stopped_by_peer().await;
         }
+        Ok(sent?)
     }
 
     /// Reports that the objects after the last one sent (or the start of the
@@ -96,11 +117,25 @@ impl FetchDataSender {
     }
 
     /// Ends the response with FIN: every object of the range this side
-    /// knows was sent.
+    /// knows was sent. Fails when the peer has stopped the stream, which
+    /// cancels the FETCH instead.
     pub async fn close(&self) -> anyhow::Result<()> {
         self.ended.store(true, Ordering::Relaxed);
+        if let Some(Some(code)) = self.stream_sender.stopped().now_or_never() {
+            self.stopped_by_peer().await;
+            return Err(TransportSendError::Stopped { code }.into());
+        }
         self.stream_sender.close().await?;
         response_ended(&self.connection, self.request_id).await
+    }
+
+    async fn stopped_by_peer(&self) {
+        if let Some(connection) = self.connection.upgrade() {
+            connection
+                .control
+                .fetch_response_stopped(&connection, self.request_id)
+                .await;
+        }
     }
 
     pub async fn reset(&self, code: DataStreamResetCode) -> anyhow::Result<()> {
@@ -148,17 +183,21 @@ mod tests {
     use bytes::Bytes;
 
     use super::{FetchDataSender, UnknownRange};
-    use crate::modules::{
-        moqt::{
-            control_plane::control_messages::messages::parameters::location::Location,
-            data_plane::object::{
-                canonical_object::{ForwardingPreference, Object},
-                object_status::ObjectStatus,
+    use crate::{
+        Session, SessionEvent,
+        fetch::FetchOption,
+        modules::{
+            moqt::{
+                control_plane::control_messages::messages::parameters::location::Location,
+                data_plane::object::{
+                    canonical_object::{ForwardingPreference, Object},
+                    object_status::ObjectStatus,
+                },
+                version::Version,
             },
-            version::Version,
+            test_support::{spawn_connected_draft18_sessions, spawn_connected_dual_sessions},
+            transport::transport_send_stream::MockTransportSendStream,
         },
-        test_support::{spawn_connected_draft18_sessions, spawn_connected_dual_sessions},
-        transport::transport_send_stream::MockTransportSendStream,
     };
 
     /// A send stream that accepts every write and reports the code it is
@@ -177,9 +216,47 @@ mod tests {
         (stream, reset_receiver)
     }
 
+    /// A FETCH from `client` that `server` holds open, answered on
+    /// `stream`.
+    async fn answering_fetch(
+        client: &Session,
+        server: &Session,
+        stream: MockTransportSendStream,
+    ) -> FetchDataSender {
+        let mut subscriber = client.subscriber();
+        tokio::spawn(async move {
+            let _ = subscriber
+                .fetch(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    Location {
+                        group_id: 0,
+                        object_id: 0,
+                    },
+                    Location {
+                        group_id: 2,
+                        object_id: 0,
+                    },
+                    FetchOption::default(),
+                )
+                .await;
+        });
+        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected FETCH");
+        };
+        let (connection, wire_request_id) = server
+            .publisher()
+            .session
+            .connection_of(handler.request_id)
+            .unwrap();
+        FetchDataSender::new(&connection, Box::new(stream), wire_request_id)
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn a_fetch_sender_dropped_unended_resets_with_internal_error() {
-        for (version, (client, _server)) in [
+        for (version, (client, server)) in [
             (
                 Version::Draft14,
                 spawn_connected_dual_sessions("fetch-sender-dropped-14").await,
@@ -190,12 +267,12 @@ mod tests {
             ),
         ] {
             // Arrange
-            let connection = client.publisher().session.connection();
-            assert_eq!(connection.control.version(), version);
+            assert_eq!(
+                server.publisher().session.connection().control.version(),
+                version
+            );
             let (stream, mut reset_receiver) = recording_stream();
-            let sender = FetchDataSender::new(&connection, Box::new(stream), 1)
-                .await
-                .unwrap();
+            let sender = answering_fetch(&client, &server, stream).await;
 
             // Act
             drop(sender);
@@ -210,7 +287,7 @@ mod tests {
     async fn an_unknown_range_the_draft_cannot_express_resets_with_unknown_object_status() {
         // Arrange: draft-14 has no End of Unknown Range; on draft-18 the range
         // ends in the group of the object sent before it
-        for (version, (client, _server), wire_code) in [
+        for (version, (client, server), wire_code) in [
             (
                 Version::Draft14,
                 spawn_connected_dual_sessions("fetch-sender-unknown-14").await,
@@ -222,11 +299,8 @@ mod tests {
                 0x6,
             ),
         ] {
-            let connection = client.publisher().session.connection();
             let (stream, mut reset_receiver) = recording_stream();
-            let sender = FetchDataSender::new(&connection, Box::new(stream), 1)
-                .await
-                .unwrap();
+            let sender = answering_fetch(&client, &server, stream).await;
             sender
                 .send_object(&Object {
                     location: Location {

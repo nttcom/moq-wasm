@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use moqt::{
     TerminationErrorCode,
-    namespace::NamespaceInterest,
+    namespace::{NamespaceInterest, PrefixUpdateAnswer},
     object::{ContentExists, GroupOrder},
     subscribe::FilterType,
 };
@@ -26,6 +26,7 @@ use crate::modules::{
             fetch::FetchHandler, publish::PublishHandler,
             publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
             subscribe_namespace::SubscribeNamespaceHandler,
+            subscribe_namespace_update::SubscribeNamespaceUpdateHandler,
             subscribe_update::SubscribeUpdateHandler,
         },
         moqt_session_event::MoqtSessionEvent,
@@ -1000,6 +1001,72 @@ impl PublishNamespaceHandler for MockPublishNamespaceHandler {
         _reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())
+    }
+}
+
+/// A draft-18 update moving a namespace subscription; its answers go to
+/// `answers`, `None` for REQUEST_OK and the code for REQUEST_ERROR.
+#[derive(Clone)]
+pub(crate) struct MockSubscribeNamespaceUpdateHandler {
+    pub(crate) track_namespace_prefix: String,
+    pub(crate) new_track_namespace_prefix: String,
+    pub(crate) new_track_namespace_prefix_tuple: Vec<String>,
+    pub(crate) interest: NamespaceInterest,
+    pub(crate) answers: Arc<Mutex<Vec<Option<RequestErrorCode>>>>,
+    /// What `ok` reports.
+    pub(crate) ok_answer: PrefixUpdateAnswer,
+}
+
+impl MockSubscribeNamespaceUpdateHandler {
+    pub(crate) fn new(
+        track_namespace_prefix: &str,
+        new_track_namespace_prefix: &str,
+        interest: NamespaceInterest,
+    ) -> Self {
+        Self {
+            track_namespace_prefix: track_namespace_prefix.to_string(),
+            new_track_namespace_prefix: new_track_namespace_prefix.to_string(),
+            new_track_namespace_prefix_tuple: new_track_namespace_prefix
+                .split('/')
+                .filter(|field| !field.is_empty())
+                .map(str::to_string)
+                .collect(),
+            interest,
+            answers: Arc::default(),
+            ok_answer: PrefixUpdateAnswer::Accepted,
+        }
+    }
+
+    pub(crate) fn answers(&self) -> Vec<Option<RequestErrorCode>> {
+        self.answers.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl SubscribeNamespaceUpdateHandler for MockSubscribeNamespaceUpdateHandler {
+    fn track_namespace_prefix(&self) -> &str {
+        &self.track_namespace_prefix
+    }
+
+    fn new_track_namespace_prefix(&self) -> &str {
+        &self.new_track_namespace_prefix
+    }
+
+    fn new_track_namespace_prefix_tuple(&self) -> &[String] {
+        &self.new_track_namespace_prefix_tuple
+    }
+
+    fn interest(&self) -> NamespaceInterest {
+        self.interest
+    }
+
+    async fn ok(&self) -> PrefixUpdateAnswer {
+        self.answers.lock().unwrap().push(None);
+        self.ok_answer
+    }
+
+    async fn error(&self, code: RequestErrorCode, _reason_phrase: String) {
+        self.answers.lock().unwrap().push(Some(code));
     }
 }
 
