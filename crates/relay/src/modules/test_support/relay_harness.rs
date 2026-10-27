@@ -86,9 +86,19 @@ impl EgressRunnerHandle {
         });
     }
 
-    pub(crate) fn set_forward(&self, forward: bool) {
-        self.delivery_control_sender
-            .send_modify(|control| control.forward = forward);
+    /// An update that turns Forward to 0 and keeps the range.
+    pub(crate) fn pause(&self) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(control.requested(false, None, None));
+        });
+    }
+
+    /// An update that turns Forward to 1 while the track's Largest Object is
+    /// `largest`, and keeps the range.
+    pub(crate) fn resume(&self, largest: Option<moqt::object::Location>) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(control.requested(true, None, largest));
+        });
     }
 
     pub(crate) async fn expect_publish_done(&mut self) -> SentPublishDone {

@@ -36,7 +36,7 @@ impl ReleaseUnwatchedPublishes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::directory_fixtures::{
@@ -86,8 +86,7 @@ mod tests {
                 100,
                 10,
                 SessionPeer::Client,
-                track_key(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key(), None),
                 delivery_control(true),
             )
             .unwrap();

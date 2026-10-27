@@ -1,7 +1,10 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    domain::{
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
+        session_id::SessionId,
+    },
 };
 use tracing::Span;
 
@@ -9,8 +12,10 @@ pub(crate) struct Unsubscribe;
 
 impl Unsubscribe {
     /// Removes the downstream subscription `subscribe_id` and releases the
-    /// upstream subscriptions it leaves unneeded; runs for an UNSUBSCRIBE and
-    /// for a subscription whose egress runner delivered its whole range.
+    /// upstream subscriptions it leaves unneeded; runs for an UNSUBSCRIBE,
+    /// for a subscription whose egress runner delivered its whole range, and
+    /// for one the relay ends with PUBLISH_DONE `end` (see
+    /// `InMemoryLocalPubSubDirectory::end_downstream_subscription`).
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.unsubscribe",
@@ -18,6 +23,7 @@ impl Unsubscribe {
         parent = session_span,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
@@ -26,6 +32,7 @@ impl Unsubscribe {
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         subscribe_id: u64,
+        end: Option<PublishDoneReason>,
     ) {
         tracing::info!(
             session_id = %session_id,
@@ -33,7 +40,7 @@ impl Unsubscribe {
             "SequenceHandler::unsubscribe"
         );
 
-        let Some(removed) = table.remove_downstream_subscription(session_id, subscribe_id) else {
+        let Some(removed) = table.end_downstream_subscription(session_id, subscribe_id, end) else {
             tracing::warn!(
                 session_id = %session_id,
                 subscribe_id = %subscribe_id,
@@ -66,8 +73,8 @@ impl Unsubscribe {
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use tokio::sync::oneshot;
 
     use super::*;
@@ -105,8 +112,7 @@ mod tests {
                         *session_id,
                         *subscribe_id,
                         SessionPeer::Client,
-                        track_key(),
-                        JoinPoint::Largest(None),
+                        downstream_subscription(track_key(), None),
                         delivery_control(true),
                     )
                     .unwrap()
@@ -120,6 +126,15 @@ mod tests {
     }
 
     async fn run_unsubscribe(ctx: &TestContext, session_id: SessionId, subscribe_id: u64) {
+        end_subscription(ctx, session_id, subscribe_id, None).await;
+    }
+
+    async fn end_subscription(
+        ctx: &TestContext,
+        session_id: SessionId,
+        subscribe_id: u64,
+        end: Option<PublishDoneReason>,
+    ) {
         Unsubscribe
             .handle(
                 session_id,
@@ -128,8 +143,28 @@ mod tests {
                 &ctx.upstream.forwarder,
                 &ctx.upstream.ingress_sender,
                 subscribe_id,
+                end,
             )
             .await;
+    }
+
+    #[tokio::test]
+    async fn ending_a_subscription_hands_its_runner_the_publish_done_and_releases_upstream() {
+        // Arrange
+        let mut ctx = setup(UpstreamSubscriptionOrigin::Subscribe, &[(100, 10)]).await;
+
+        // Act
+        end_subscription(&ctx, 100, 10, Some(PublishDoneReason::update_failed())).await;
+
+        // Assert: the runner answers it with PUBLISH_DONE UPDATE_FAILED
+        assert_eq!(
+            ctx.runner_stop_receivers[0].try_recv(),
+            Ok(PublishDoneReason::update_failed())
+        );
+        assert_eq!(
+            ctx.upstream.recorded.unsubscribed_request_ids(),
+            vec![UPSTREAM_REQUEST_ID]
+        );
     }
 
     #[tokio::test]

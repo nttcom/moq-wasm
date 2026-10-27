@@ -24,6 +24,7 @@ use crate::modules::{
         handler::{
             fetch::FetchHandler, publish::PublishHandler,
             publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
+            subscribe_update::SubscribeUpdateHandler,
         },
         moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
@@ -614,7 +615,39 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 }
 
-pub(crate) struct MockFetchHandler;
+/// `joining_rule` stands in for the session draft's Joining FETCH rule.
+pub(crate) struct MockFetchHandler {
+    pub(crate) fetch_params: moqt::fetch::FetchParams,
+    pub(crate) joining_rule:
+        fn(moqt::fetch::JoinedSubscription) -> Result<(), moqt::fetch::JoiningFetchRefusal>,
+}
+
+impl MockFetchHandler {
+    /// Permits every Joining FETCH.
+    pub(crate) fn fetching(fetch_params: moqt::fetch::FetchParams) -> Self {
+        Self {
+            fetch_params,
+            joining_rule: |_| Ok(()),
+        }
+    }
+}
+
+impl Default for MockFetchHandler {
+    fn default() -> Self {
+        Self::fetching(moqt::fetch::FetchParams::Standalone {
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            start_location: moqt::object::Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            end_location: moqt::object::Location {
+                group_id: 1,
+                object_id: 0,
+            },
+        })
+    }
+}
 
 #[async_trait::async_trait]
 impl FetchHandler for MockFetchHandler {
@@ -627,18 +660,14 @@ impl FetchHandler for MockFetchHandler {
     }
 
     fn fetch_params(&self) -> moqt::fetch::FetchParams {
-        moqt::fetch::FetchParams::Standalone {
-            track_namespace: vec!["ns".to_string()],
-            track_name: "track".to_string(),
-            start_location: moqt::object::Location {
-                group_id: 0,
-                object_id: 0,
-            },
-            end_location: moqt::object::Location {
-                group_id: 1,
-                object_id: 0,
-            },
-        }
+        self.fetch_params.clone()
+    }
+
+    fn check_joining(
+        &self,
+        subscription: moqt::fetch::JoinedSubscription,
+    ) -> Result<(), moqt::fetch::JoiningFetchRefusal> {
+        (self.joining_rule)(subscription)
     }
 
     async fn ok(
@@ -656,6 +685,80 @@ impl FetchHandler for MockFetchHandler {
         _reason: String,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())
+    }
+}
+
+/// An update of subscription `subscription_request_id` in a session of
+/// `draft`; `answers` records the Largest Object of every `ok`.
+pub(crate) struct MockSubscribeUpdateHandler {
+    subscription_request_id: u64,
+    forward: bool,
+    filter: Option<FilterType>,
+    draft: UpdateDraft,
+    pub(crate) answers: Mutex<Vec<Option<moqt::object::Location>>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum UpdateDraft {
+    /// No answer, no widening (draft-14 §9.10).
+    Draft14,
+    /// REQUEST_OK with LARGEST_OBJECT, widening allowed (draft-18 §10.9.1).
+    Draft18,
+    /// A draft-18 update already answered REQUEST_ERROR TIMEOUT.
+    Draft18TimedOut,
+}
+
+impl MockSubscribeUpdateHandler {
+    pub(crate) fn new(
+        draft: UpdateDraft,
+        subscription_request_id: u64,
+        forward: bool,
+        filter: Option<FilterType>,
+    ) -> Self {
+        Self {
+            subscription_request_id,
+            forward,
+            filter,
+            draft,
+            answers: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl SubscribeUpdateHandler for MockSubscribeUpdateHandler {
+    fn request_id(&self) -> u64 {
+        0
+    }
+
+    fn subscription_request_id(&self) -> u64 {
+        self.subscription_request_id
+    }
+
+    fn subscriber_priority(&self) -> u8 {
+        128
+    }
+
+    fn forward(&self) -> bool {
+        self.forward
+    }
+
+    fn filter(&self) -> Option<FilterType> {
+        self.filter
+    }
+
+    fn may_widen(&self) -> bool {
+        !matches!(self.draft, UpdateDraft::Draft14)
+    }
+
+    fn ok(&self, largest: Option<moqt::object::Location>) -> moqt::subscribe::UpdateAnswer {
+        self.answers.lock().unwrap().push(largest);
+        match self.draft {
+            UpdateDraft::Draft14 => moqt::subscribe::UpdateAnswer::Accepted {
+                largest_told: false,
+            },
+            UpdateDraft::Draft18 => moqt::subscribe::UpdateAnswer::Accepted { largest_told: true },
+            UpdateDraft::Draft18TimedOut => moqt::subscribe::UpdateAnswer::Failed,
+        }
     }
 }
 

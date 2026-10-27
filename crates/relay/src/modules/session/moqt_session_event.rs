@@ -1,7 +1,7 @@
 use crate::modules::session::handler::{
     fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
     subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
-    track_status::TrackStatusHandler,
+    subscribe_update::SubscribeUpdateHandler, track_status::TrackStatusHandler,
 };
 
 pub(crate) enum MoqtSessionEvent {
@@ -16,7 +16,7 @@ pub(crate) enum MoqtSessionEvent {
     Publish(Box<dyn PublishHandler>),
     PublishDone(moqt::publish::PublishDoneHandler),
     Subscribe(Box<dyn SubscribeHandler>),
-    SubscribeUpdate(moqt::subscribe::SubscribeUpdateHandler),
+    SubscribeUpdate(Box<dyn SubscribeUpdateHandler>),
     Unsubscribe(moqt::subscribe::UnsubscribeHandler),
     Fetch(Box<dyn FetchHandler>),
     FetchCancel(moqt::fetch::FetchCancelHandler),

@@ -36,42 +36,64 @@ pub(crate) struct GroupSender {
     delivery_stats: Arc<DeliveryStats>,
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
     group_sequence: GroupSequence,
+    /// Set once the scheduler has scheduled its last task.
+    schedule_over_sender: watch::Sender<bool>,
 }
 
-/// Where a send task reads its subgroup from: the cache, until a
-/// SUBSCRIBE_UPDATE moves the subscription's range past the group.
+/// Where a send task reads its subgroup from: the cache, while the
+/// subscription forwards and its range holds the group.
 struct SubgroupSource {
     key: SubgroupKey,
     generation: usize,
     cache: Arc<TrackCache>,
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
+    /// `DeliveryControl::resumes` the task last delivered under.
+    resumes: u64,
+    schedule_over_receiver: watch::Receiver<bool>,
 }
 
 enum SubgroupNext {
     Cache(NextObject),
     Malformed,
-    /// draft-14 §10.4.3: the group left the subscription's range, so an open
-    /// stream is reset.
-    LeftRange,
+    /// draft-14 §10.4.3: the group lies at or past the End Group, so an open
+    /// stream is reset and the subgroup is not delivered any more.
+    PastEnd,
+    /// The group lies before the Start Location, or Forward is 0 or has been
+    /// 0 since the task last delivered. An open stream is reset (draft-18
+    /// §11.4.3), and the subgroup may continue on a new stream (see
+    /// `SubgroupSource::held`).
+    Held,
 }
 
 impl SubgroupSource {
     async fn next(&mut self, object_id: u64) -> SubgroupNext {
         let group_id = self.key.group_id();
+        let resumes = self.resumes;
         let receiver = &mut self.delivery_control_receiver;
-        let left_range = async {
-            let left = receiver
-                .wait_for(|control| !control.contains_group(group_id))
+        let interrupted = async {
+            let interruption = receiver
+                .wait_for(|control| {
+                    !control.contains_group(group_id)
+                        || !control.forward
+                        || control.resumes != resumes
+                })
                 .await
-                .is_ok();
-            if !left {
+                .map(|control| {
+                    if control.is_past_end(group_id) {
+                        SubgroupNext::PastEnd
+                    } else {
+                        SubgroupNext::Held
+                    }
+                });
+            match interruption {
+                Ok(interruption) => interruption,
                 // Without its registration the range can no longer change.
-                std::future::pending::<()>().await;
+                Err(_) => std::future::pending().await,
             }
         };
         tokio::select! {
             biased;
-            () = left_range => SubgroupNext::LeftRange,
+            interruption = interrupted => interruption,
             next = self.cache.next_subgroup_object_or_wait(self.key, self.generation, object_id) => {
                 match next {
                     Ok(next) => SubgroupNext::Cache(next),
@@ -79,6 +101,50 @@ impl SubgroupSource {
                 }
             }
         }
+    }
+
+    /// Waits until an update releases the subgroup and returns the object id
+    /// to continue at: `unsent`, or past the Largest Object at that update if
+    /// later (`DeliveryControl::resume_object_id`). `None` when nothing is
+    /// left to send: the subgroup ended, its group lies past the End Group or
+    /// at or before that Largest Object, the registration is gone, or the
+    /// scheduler has returned (no update can release it then, and the runner
+    /// sends PUBLISH_DONE only after every task ends).
+    async fn held(&mut self, unsent: u64) -> Option<u64> {
+        let group_id = self.key.group_id();
+        let (key, generation, cache) = (self.key, self.generation, self.cache.clone());
+        let subgroup_ended = async move {
+            let mut cursor = unsent;
+            loop {
+                let object_id = match cache
+                    .next_subgroup_object_or_wait(key, generation, cursor)
+                    .await
+                {
+                    Ok(NextObject::Object(object)) => object.object.location.object_id,
+                    Ok(NextObject::Partial(partial)) => partial.object.location.object_id,
+                    _ => break,
+                };
+                cursor = object_id.saturating_add(1);
+            }
+        };
+        let schedule_over = self.schedule_over_receiver.wait_for(|over| *over);
+        let control = {
+            let released = self.delivery_control_receiver.wait_for(|control| {
+                control.is_past_end(group_id)
+                    || (control.forward && control.contains_group(group_id))
+            });
+            tokio::select! {
+                biased;
+                released = released => *released.ok()?,
+                () = subgroup_ended => return None,
+                _ = schedule_over => return None,
+            }
+        };
+        if control.is_past_end(group_id) {
+            return None;
+        }
+        self.resumes = control.resumes;
+        control.resume_object_id(group_id, unsent)
     }
 }
 
@@ -111,6 +177,7 @@ impl GroupSender {
             delivery_stats,
             delivery_control_receiver,
             group_sequence: GroupSequence::new(),
+            schedule_over_sender: watch::channel(false).0,
         }
     }
 
@@ -120,6 +187,8 @@ impl GroupSender {
             generation: task.generation,
             cache: self.cache.clone(),
             delivery_control_receiver: self.delivery_control_receiver.clone(),
+            resumes: task.resumes,
+            schedule_over_receiver: self.schedule_over_sender.subscribe(),
         }
     }
 
@@ -132,7 +201,11 @@ impl GroupSender {
 
         loop {
             tokio::select! {
-                Some(task) = self.receiver.recv() => {
+                task = self.receiver.recv(), if !*self.schedule_over_sender.borrow() => {
+                    let Some(task) = task else {
+                        self.schedule_over_sender.send_replace(true);
+                        continue;
+                    };
                     match task.key {
                         SubgroupKey::Stream { group_id, subgroup_id } => {
                             let factory = stream_factory
@@ -189,13 +262,20 @@ impl GroupSender {
     }
 
     async fn send_stream_task(task: StreamSendTask) {
-        let (object_count, end_reason) = Self::send_stream(task).await;
+        let sent = Self::send_stream(task).await;
         let span = Span::current();
-        span.record("object_count", object_count);
-        span.record("end_reason", end_reason);
+        span.record("object_count", sent.object_count);
+        span.record("end_reason", sent.end_reason);
     }
 
-    async fn send_stream(mut task: StreamSendTask) -> (u64, &'static str) {
+    /// Sends the subgroup on a stream opened at its first object to send. An
+    /// update that holds the subgroup (Forward 0, or the start moved past
+    /// its group) resets the stream. Once a later update releases it, the
+    /// subgroup continues on a new stream past the Largest Object at that
+    /// update: draft-18 §11.4.3 lets the publisher reopen a subgroup after
+    /// Forward 0→1, and §10.9.1 serves a start moved back like a new
+    /// subscription.
+    async fn send_stream(mut task: StreamSendTask) -> SentSubgroup {
         let SubgroupKey::Stream {
             group_id,
             subgroup_id,
@@ -203,25 +283,157 @@ impl GroupSender {
         else {
             unreachable!("run() spawns send_stream_task only for SubgroupKey::Stream");
         };
-        let (first, publisher_priority) = match task.source.next(task.object_id).await {
-            SubgroupNext::Cache(NextObject::Object(first)) => {
-                let publisher_priority = first.object.publisher_priority;
-                (NextObject::Object(first), publisher_priority)
-            }
-            SubgroupNext::Cache(NextObject::Partial(first)) => {
-                let publisher_priority = first.object.publisher_priority;
-                (NextObject::Partial(first), publisher_priority)
-            }
-            SubgroupNext::LeftRange => {
-                tracing::debug!("group left the subscription range before any object to send");
-                return (0, "left_range");
-            }
-            SubgroupNext::Cache(_) | SubgroupNext::Malformed => {
-                tracing::debug!("subgroup ended before any object to send");
-                return (0, "no_objects");
-            }
+        let mut sent = SentSubgroup {
+            object_count: 0,
+            end_reason: "no_objects",
+            unsent: task.object_id,
         };
+        let mut sender: Option<Box<dyn DataSender>> = None;
+        loop {
+            let (next, (object_id, publisher_priority)) = match task.source.next(sent.unsent).await
+            {
+                SubgroupNext::Cache(NextObject::Object(object)) => {
+                    let first = &object.object;
+                    let first = (first.location.object_id, first.publisher_priority);
+                    (NextObject::Object(object), first)
+                }
+                SubgroupNext::Cache(NextObject::Partial(partial)) => {
+                    let first = &partial.object;
+                    let first = (first.location.object_id, first.publisher_priority);
+                    (NextObject::Partial(partial), first)
+                }
+                SubgroupNext::Cache(NextObject::Finished) => {
+                    if let Some(mut sender) = sender {
+                        if let Err(error) = sender.close().await {
+                            tracing::warn!(?error, "failed to close egress stream sender");
+                        }
+                        sent.end_reason = "cache_closed";
+                    }
+                    return sent;
+                }
+                SubgroupNext::Cache(NextObject::Aborted) => {
+                    // draft-14 §10.4.3: a subgroup that ended upstream without a FIN
+                    // may be missing objects, so the downstream stream is reset.
+                    if let Some(sender) = sender {
+                        Self::reset(
+                            sender,
+                            &task.delivery_stats,
+                            DataStreamResetCode::InternalError,
+                        )
+                        .await;
+                        sent.end_reason = "upstream_aborted";
+                    }
+                    return sent;
+                }
+                // The runner terminates the subscription with PUBLISH_DONE; a FIN
+                // here would claim the partial subgroup is complete.
+                SubgroupNext::Malformed => {
+                    sent.end_reason = "malformed_track";
+                    return sent;
+                }
+                SubgroupNext::PastEnd => {
+                    if let Some(sender) = sender {
+                        Self::reset(sender, &task.delivery_stats, DataStreamResetCode::Cancelled)
+                            .await;
+                    }
+                    sent.end_reason = "left_range";
+                    return sent;
+                }
+                SubgroupNext::Held => {
+                    if let Some(sender) = sender.take() {
+                        tracing::debug!("subgroup held by an update; resetting egress stream");
+                        Self::reset(sender, &task.delivery_stats, DataStreamResetCode::Cancelled)
+                            .await;
+                    }
+                    match task.source.held(sent.unsent).await {
+                        Some(object_id) => sent.unsent = object_id,
+                        None => {
+                            sent.end_reason = "not_resumed";
+                            return sent;
+                        }
+                    }
+                    continue;
+                }
+            };
+            if sender.is_none() {
+                match Self::open_stream(&task, group_id, subgroup_id, publisher_priority).await {
+                    Some(opened) => sender = Some(opened),
+                    None => {
+                        sent.end_reason = "open_failed";
+                        return sent;
+                    }
+                }
+            }
+            let Some(open) = sender.as_mut() else {
+                unreachable!("the stream was opened above");
+            };
+            match next {
+                NextObject::Object(object) => match object.load().await {
+                    Ok(loaded) => {
+                        tracing::debug!(object_id, "egress sending subgroup object");
+                        if open
+                            .send_object(DataObject::SubgroupObject(loaded))
+                            .await
+                            .is_err()
+                        {
+                            tracing::error!(object_id, "failed to send subgroup object");
+                            sent.end_reason = "send_object_failed";
+                            return sent;
+                        }
+                        task.delivery_stats
+                            .record_object_sent(object.payload_len(), object.received_at);
+                        sent.object_count += 1;
+                    }
+                    // Its payload could not be read: skipped, as an expired object is.
+                    Err(error) => {
+                        tracing::debug!(object_id, ?error, "skipping unloadable object")
+                    }
+                },
+                NextObject::Partial(partial) => {
+                    tracing::debug!(object_id, "egress forwarding an arriving subgroup object");
+                    match forward_partial(open.as_mut(), &partial).await {
+                        Ok(()) => {
+                            task.delivery_stats
+                                .record_object_sent(partial.payload_len, partial.received_at);
+                            sent.object_count += 1;
+                        }
+                        // draft-14 §10.4.3: the upstream stream ended inside the
+                        // payload, so the downstream stream is reset.
+                        Err(PartialForwardFailure::Aborted) => {
+                            if let Some(sender) = sender {
+                                Self::reset(
+                                    sender,
+                                    &task.delivery_stats,
+                                    DataStreamResetCode::InternalError,
+                                )
+                                .await;
+                            }
+                            sent.end_reason = "upstream_aborted";
+                            return sent;
+                        }
+                        Err(PartialForwardFailure::SendFailed) => {
+                            tracing::error!(object_id, "failed to send subgroup object");
+                            sent.end_reason = "send_object_failed";
+                            return sent;
+                        }
+                    }
+                }
+                NextObject::Finished | NextObject::Aborted => {
+                    unreachable!("only objects reach this point")
+                }
+            }
+            sent.unsent = object_id.saturating_add(1);
+        }
+    }
 
+    /// Opens the downstream stream and sends the SUBGROUP_HEADER of its first
+    /// object, which carries `publisher_priority`.
+    async fn open_stream(
+        task: &StreamSendTask,
+        group_id: u64,
+        subgroup_id: u64,
+        publisher_priority: u8,
+    ) -> Option<Box<dyn DataSender>> {
         let priority = moqt::object::StreamPriority {
             subscriber_priority: task.subscriber_priority,
             publisher_priority,
@@ -242,7 +454,7 @@ impl GroupSender {
             Ok(sender) => sender,
             Err(e) => {
                 tracing::error!(?e, "failed to open stream sender");
-                return (0, "open_failed");
+                return None;
             }
         };
         task.delivery_stats.record_stream_opened();
@@ -256,81 +468,19 @@ impl GroupSender {
         tracing::debug!("egress sending subgroup header");
         if let Err(error) = sender.send_object(DataObject::SubgroupHeader(start)).await {
             tracing::error!(?error, "failed to send subgroup header");
-            return (0, "send_header_failed");
+            return None;
         }
+        Some(sender)
+    }
 
-        let mut object_count = 0u64;
-        let mut next = first;
-        loop {
-            let object_id = match next {
-                NextObject::Object(object) => {
-                    let object_id = object.object.location.object_id;
-                    match object.load().await {
-                        Ok(loaded) => {
-                            tracing::debug!(object_id, "egress sending subgroup object");
-                            if sender
-                                .send_object(DataObject::SubgroupObject(loaded))
-                                .await
-                                .is_err()
-                            {
-                                tracing::error!(object_id, "failed to send subgroup object");
-                                return (object_count, "send_object_failed");
-                            }
-                            task.delivery_stats
-                                .record_object_sent(object.payload_len(), object.received_at);
-                            object_count += 1;
-                        }
-                        Err(error) => {
-                            tracing::debug!(object_id, ?error, "skipping unloadable object")
-                        }
-                    }
-                    object_id
-                }
-                NextObject::Partial(partial) => {
-                    let object_id = partial.object.location.object_id;
-                    tracing::debug!(object_id, "egress forwarding an arriving subgroup object");
-                    match forward_partial(sender.as_mut(), &partial).await {
-                        Ok(()) => {
-                            task.delivery_stats
-                                .record_object_sent(partial.payload_len, partial.received_at);
-                            object_count += 1;
-                        }
-                        Err(PartialForwardFailure::Aborted) => {
-                            next = NextObject::Aborted;
-                            continue;
-                        }
-                        Err(PartialForwardFailure::SendFailed) => {
-                            tracing::error!(object_id, "failed to send subgroup object");
-                            return (object_count, "send_object_failed");
-                        }
-                    }
-                    object_id
-                }
-                NextObject::Aborted => {
-                    task.delivery_stats.record_stream_reset();
-                    if let Err(error) = sender.reset(DataStreamResetCode::InternalError).await {
-                        tracing::warn!(?error, "failed to reset egress stream sender");
-                    }
-                    return (object_count, "upstream_aborted");
-                }
-                NextObject::Finished => {
-                    if let Err(error) = sender.close().await {
-                        tracing::warn!(?error, "failed to close egress stream sender");
-                    }
-                    return (object_count, "cache_closed");
-                }
-            };
-            next = match task.source.next(object_id.saturating_add(1)).await {
-                SubgroupNext::Cache(next) => next,
-                SubgroupNext::Malformed => return (object_count, "malformed_track"),
-                SubgroupNext::LeftRange => {
-                    task.delivery_stats.record_stream_reset();
-                    if let Err(error) = sender.reset(DataStreamResetCode::Cancelled).await {
-                        tracing::warn!(?error, "failed to reset egress stream sender");
-                    }
-                    return (object_count, "left_range");
-                }
-            };
+    async fn reset(
+        mut sender: Box<dyn DataSender>,
+        delivery_stats: &DeliveryStats,
+        code: DataStreamResetCode,
+    ) {
+        delivery_stats.record_stream_reset();
+        if let Err(error) = sender.reset(code).await {
+            tracing::warn!(?error, "failed to reset egress stream sender");
         }
     }
 
@@ -342,7 +492,18 @@ impl GroupSender {
         delivery_stats: Arc<DeliveryStats>,
     ) {
         let mut cursor = object_id;
-        while let SubgroupNext::Cache(NextObject::Object(object)) = source.next(cursor).await {
+        loop {
+            let object = match source.next(cursor).await {
+                SubgroupNext::Cache(NextObject::Object(object)) => object,
+                SubgroupNext::Held => match source.held(cursor).await {
+                    Some(object_id) => {
+                        cursor = object_id;
+                        continue;
+                    }
+                    None => return,
+                },
+                _ => return,
+            };
             let object_id = object.object.location.object_id;
             cursor = object_id.saturating_add(1);
             let loaded = match object.load().await {
@@ -368,6 +529,14 @@ impl GroupSender {
             delivery_stats.record_object_sent(object.payload_len(), object.received_at);
         }
     }
+}
+
+/// What a stream task sent, and why it ended.
+struct SentSubgroup {
+    object_count: u64,
+    end_reason: &'static str,
+    /// The next object id not sent.
+    unsent: u64,
 }
 
 enum PartialForwardFailure {

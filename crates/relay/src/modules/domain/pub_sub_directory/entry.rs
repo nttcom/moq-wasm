@@ -97,6 +97,14 @@ impl PublishDoneReason {
             error_reason: "malformed track".to_string(),
         }
     }
+
+    /// draft-18 §10.9.1: a REQUEST_UPDATE that failed ends its subscription.
+    pub(crate) fn update_failed() -> Self {
+        Self {
+            status_code: PublishDoneCode::UpdateFailed,
+            error_reason: "subscription update failed".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,27 +119,15 @@ pub(crate) enum MatchingPublication {
     Track(TrackKey),
 }
 
-#[derive(Clone, Debug)]
+/// What a Joining FETCH of the subscription resolves against (draft-14
+/// §9.16.2, draft-18 §10.12.2).
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DownstreamSubscription {
     pub(crate) track_key: TrackKey,
-    pub(crate) join_point: JoinPoint,
-}
-
-/// What a Joining FETCH of the subscription resolves against (draft-14 §9.16.2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JoinPoint {
-    /// The Largest Location at subscribe time; `None` when the track had no objects.
-    Largest(Option<Location>),
-    NotLargestObject,
-}
-
-impl JoinPoint {
-    pub(crate) fn new(filter_type: &FilterType, largest: Option<Location>) -> Self {
-        match filter_type {
-            FilterType::LargestObject => Self::Largest(largest),
-            _ => Self::NotLargestObject,
-        }
-    }
+    pub(crate) filter_type: FilterType,
+    /// The Largest Location the subscription was accepted with, `None` when
+    /// the track had no objects; draft-18 §5.1 calls it the Joining Location.
+    pub(crate) joining_location: Option<Location>,
 }
 
 #[derive(Clone, Debug)]

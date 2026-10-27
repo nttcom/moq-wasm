@@ -82,6 +82,8 @@ struct InflightRequests {
 pub(crate) struct ControlChannel {
     send_stream: BiStreamSender,
     request_id: AtomicU64,
+    /// The Request ID after the largest one the peer has used.
+    next_peer_request_id: AtomicU64,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
 }
 
@@ -92,6 +94,7 @@ impl ControlChannel {
         Self {
             send_stream,
             request_id: AtomicU64::new(first_request_id),
+            next_peer_request_id: AtomicU64::new(1 - first_request_id),
             inflight_requests: Arc::default(),
         }
     }
@@ -105,6 +108,29 @@ impl ControlChannel {
 
     pub(crate) fn next_request_id(&self) -> RequestId {
         self.request_id.fetch_add(2, Ordering::SeqCst)
+    }
+
+    fn note_peer_request_id(&self, request_id: RequestId) {
+        if self.is_peer_request_id(request_id) {
+            self.next_peer_request_id
+                .fetch_max(request_id + 2, Ordering::SeqCst);
+        }
+    }
+
+    /// Whether either endpoint has used `request_id` in this session. Each
+    /// endpoint uses its Request IDs in order (§9.1), so every one below its
+    /// next has existed.
+    fn request_id_has_existed(&self, request_id: RequestId) -> bool {
+        let next = if self.is_peer_request_id(request_id) {
+            &self.next_peer_request_id
+        } else {
+            &self.request_id
+        };
+        request_id < next.load(Ordering::SeqCst)
+    }
+
+    fn is_peer_request_id(&self, request_id: RequestId) -> bool {
+        request_id % 2 == self.next_peer_request_id.load(Ordering::SeqCst) % 2
     }
 
     pub(super) async fn send_request(

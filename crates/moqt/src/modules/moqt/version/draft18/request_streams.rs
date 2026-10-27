@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use futures::future::select;
+use futures::{StreamExt, future::select, stream::FuturesOrdered};
 use tracing::{Instrument, Span};
 
 use super::{
@@ -21,7 +21,7 @@ use super::{
 use crate::{
     SessionEvent,
     modules::{
-        executor::{self, JoinHandle},
+        executor::{self, BoxFuture, JoinHandle},
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
@@ -41,15 +41,17 @@ use crate::{
                 enums::{RequestId, ResponseMessage},
                 error_codes::{DataStreamResetCode, PublishDoneCode, RequestErrorCode},
                 handler::{
-                    fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
-                    go_away_handler::GoAwayHandler, publish_done_handler::PublishDoneHandler,
+                    fetch_cancel_handler::FetchCancelHandler,
+                    fetch_handler::FetchHandler,
+                    go_away_handler::GoAwayHandler,
+                    publish_done_handler::PublishDoneHandler,
                     publish_handler::PublishHandler,
                     publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
                     publish_namespace_done_handler::PublishNamespaceDoneHandler,
                     publish_namespace_handler::PublishNamespaceHandler,
                     subscribe_handler::SubscribeHandler,
                     subscribe_namespace_handler::SubscribeNamespaceHandler,
-                    subscribe_update_handler::SubscribeUpdateHandler,
+                    subscribe_update_handler::{SubscribeUpdateHandler, UpdateAnswerReceiver},
                     track_status_handler::TrackStatusHandler,
                     unsubscribe_handler::UnsubscribeHandler,
                     unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
@@ -59,6 +61,7 @@ use crate::{
                 stream_receiver::StreamReceiveError, stream_sender::StreamSender,
             },
             domains::{connection::Connection, session_context::SessionContext},
+            version,
         },
         transport::read_error::ReadError,
     },
@@ -233,14 +236,21 @@ impl IncomingRequestTask {
             return;
         };
         drop(context);
+        let mut update_answers = UpdateAnswers::default();
         loop {
-            let received = receiver.receive().await;
+            let received = tokio::select! {
+                received = receiver.receive() => received,
+                answer = update_answers.next() => {
+                    send_update_answer(&sender, answer).await;
+                    continue;
+                }
+            };
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
             match received {
                 Ok(Some(message)) => {
-                    if !Self::follow_up(
+                    match Self::follow_up(
                         &context,
                         &sender,
                         request_id,
@@ -250,7 +260,11 @@ impl IncomingRequestTask {
                     )
                     .await
                     {
-                        return;
+                        FollowUp::Continue => {}
+                        FollowUp::AnswerUpdate(answer_receiver) => {
+                            update_answers.push(answer_receiver);
+                        }
+                        FollowUp::Done => return,
                     }
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
@@ -393,7 +407,6 @@ impl IncomingRequestTask {
         }
     }
 
-    /// `false` when the stream is done.
     async fn follow_up(
         scope: &Scope,
         sender: &StreamSender,
@@ -401,36 +414,34 @@ impl IncomingRequestTask {
         kind: &RequestStreamKind,
         baseline: &mut Option<SubscribeUpdate>,
         message: Message,
-    ) -> bool {
+    ) -> FollowUp {
         if let Message::RequestUpdate(update) = &message
             && !accept_request_id(scope, update.request_id)
         {
-            return false;
+            return FollowUp::Done;
         }
         match (kind, message) {
             (RequestStreamKind::Subscribe, Message::RequestUpdate(update)) => {
                 let Some(baseline) = baseline else {
                     unreachable!("a SUBSCRIBE stream keeps its baseline")
                 };
-                let update = apply_update(baseline, update.request_id, update.parameters);
-                emit(
-                    scope,
-                    SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(
-                        &scope.connection,
-                        update,
-                    )),
-                );
-                acknowledge_update(sender).await;
-                true
+                let (update, filter) = apply_update(baseline, update.request_id, update.parameters);
+                FollowUp::AnswerUpdate(emit_update(scope, update, filter))
             }
             // §10.14: the subscriber cannot update a TRACK_STATUS.
             (RequestStreamKind::TrackStatus, Message::RequestUpdate(_)) => {
                 close_on_violation(scope, "REQUEST_UPDATE on a TRACK_STATUS stream");
-                false
+                FollowUp::Done
             }
             (_, Message::RequestUpdate(_)) => {
-                acknowledge_update(sender).await;
-                true
+                // Only a subscription has a Largest Object.
+                send_update_answer(sender, Some(None)).await;
+                FollowUp::Continue
+            }
+            // Answers to our REQUEST_UPDATE of the subscription the PUBLISH
+            // started (§10.9); a failed one is followed by PUBLISH_DONE.
+            (RequestStreamKind::Publish, Message::RequestOk(_) | Message::RequestError(_)) => {
+                FollowUp::Continue
             }
             (RequestStreamKind::Publish, Message::PublishDone(done)) => {
                 emit(
@@ -443,15 +454,15 @@ impl IncomingRequestTask {
                     )),
                 );
                 scope.channel().take_incoming(request_id);
-                false
+                FollowUp::Done
             }
             (_, Message::GoAway(_)) => {
                 tracing::debug!(request_id, "per-request GOAWAY ignored");
-                true
+                FollowUp::Continue
             }
             _ => {
                 close_on_violation(scope, "unexpected message on a request stream");
-                false
+                FollowUp::Done
             }
         }
     }
@@ -496,11 +507,64 @@ impl IncomingRequestTask {
     }
 }
 
-async fn acknowledge_update(sender: &StreamSender) {
-    if let Ok(message) = messages::encode_empty_request_ok()
+/// What reading the next message of a peer's request stream leads to.
+enum FollowUp {
+    Continue,
+    /// Answer the REQUEST_UPDATE once its handler is answered or dropped,
+    /// while the stream goes on being read.
+    AnswerUpdate(UpdateAnswerReceiver),
+    Done,
+}
+
+fn emit_update(
+    scope: &Scope,
+    update: SubscribeUpdate,
+    filter: Option<FilterType>,
+) -> UpdateAnswerReceiver {
+    let (handler, answer_receiver) =
+        SubscribeUpdateHandler::answered(&scope.connection, update, filter);
+    emit(scope, SessionEvent::SubscribeUpdate(handler));
+    answer_receiver
+}
+
+/// The pending answers to one request stream's REQUEST_UPDATEs, yielded in
+/// arrival order (§10.9: exactly one REQUEST_OK or REQUEST_ERROR each). Each
+/// waits for its handler at most the control message timeout, counted from
+/// its arrival.
+#[derive(Default)]
+struct UpdateAnswers(FuturesOrdered<BoxFuture<Option<Option<Location>>>>);
+
+impl UpdateAnswers {
+    fn push(&mut self, answer_receiver: UpdateAnswerReceiver) {
+        self.0.push_back(Box::pin(
+            answer_receiver.within(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT),
+        ));
+    }
+
+    /// The next answer to write; pending while no update awaits one.
+    async fn next(&mut self) -> Option<Option<Location>> {
+        match self.0.next().await {
+            Some(answer) => answer,
+            None => std::future::pending().await,
+        }
+    }
+}
+
+/// REQUEST_OK with the LARGEST_OBJECT `answer` carries, or REQUEST_ERROR
+/// TIMEOUT for an update the application did not answer in time (§10.6:
+/// "could not be completed before an implementation specific timeout").
+async fn send_update_answer(sender: &StreamSender, answer: Option<Option<Location>>) {
+    let message = match answer {
+        Some(largest) => messages::encode_request_update_ok(largest),
+        None => {
+            tracing::warn!("REQUEST_UPDATE not answered in time; answering REQUEST_ERROR");
+            messages::encode_request_error(RequestErrorCode::Timeout, "update not answered in time")
+        }
+    };
+    if let Ok(message) = message
         && let Err(error) = sender.send(&message).await
     {
-        tracing::debug!(%error, "could not acknowledge REQUEST_UPDATE");
+        tracing::debug!(%error, "could not answer REQUEST_UPDATE");
     }
 }
 
@@ -546,14 +610,16 @@ fn filter_range(filter: FilterType) -> (Location, u64) {
 
 /// §10.9: a REQUEST_UPDATE carries only the parameters that change, while
 /// draft-14's SUBSCRIBE_UPDATE carries the whole state, so the update is
-/// applied to `baseline`.
+/// applied to `baseline`. Also returns the SUBSCRIPTION_FILTER the update
+/// carries: the baseline cannot hold a relative filter's Start Location.
 fn apply_update(
     baseline: &mut SubscribeUpdate,
     request_id: RequestId,
     parameters: Vec<Parameter>,
-) -> SubscribeUpdate {
+) -> (SubscribeUpdate, Option<FilterType>) {
     baseline.request_id = request_id;
     baseline.authorization_tokens.clear();
+    let mut updated_filter = None;
     for parameter in parameters {
         match parameter {
             Parameter::SubscriberPriority(priority) => baseline.subscriber_priority = priority,
@@ -561,12 +627,13 @@ fn apply_update(
             Parameter::AuthorizationToken(token) => baseline.authorization_tokens.push(token),
             Parameter::ObjectDeliveryTimeout(timeout) => baseline.delivery_timeout = Some(timeout),
             Parameter::SubscriptionFilter(filter) => {
-                (baseline.start_location, baseline.end_group) = filter_range(filter)
+                (baseline.start_location, baseline.end_group) = filter_range(filter);
+                updated_filter = Some(filter);
             }
             _ => {}
         }
     }
-    baseline.clone()
+    (baseline.clone(), updated_filter)
 }
 
 pub(crate) struct OutgoingRequestTask {
@@ -645,8 +712,15 @@ impl OutgoingRequestTask {
         let mut publish_done = false;
         // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn.
         let mut namespaces: HashSet<Vec<String>> = HashSet::new();
+        let mut update_answers = UpdateAnswers::default();
         loop {
-            let received = receiver.receive().await;
+            let received = tokio::select! {
+                received = receiver.receive() => received,
+                answer = update_answers.next() => {
+                    send_update_answer(&sender, answer).await;
+                    continue;
+                }
+            };
             let Some(context) = Scope::of(&connection) else {
                 return;
             };
@@ -670,15 +744,9 @@ impl OutgoingRequestTask {
                     let Some(baseline) = &mut baseline else {
                         unreachable!("an accepted PUBLISH keeps its baseline")
                     };
-                    let update = apply_update(baseline, update.request_id, update.parameters);
-                    emit(
-                        &context,
-                        SessionEvent::SubscribeUpdate(SubscribeUpdateHandler::new(
-                            &context.connection,
-                            update,
-                        )),
-                    );
-                    acknowledge_update(&sender).await;
+                    let (update, filter) =
+                        apply_update(baseline, update.request_id, update.parameters);
+                    update_answers.push(emit_update(&context, update, filter));
                 }
                 // Answers to our REQUEST_UPDATE.
                 Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}

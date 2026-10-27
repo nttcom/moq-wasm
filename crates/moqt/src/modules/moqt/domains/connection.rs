@@ -13,7 +13,10 @@ use crate::{
     RequestFailure, SessionEvent,
     modules::{
         moqt::{
-            control_plane::{constants::TerminationErrorCode, enums::RequestId},
+            control_plane::{
+                constants::TerminationErrorCode,
+                control_messages::messages::parameters::location::Location, enums::RequestId,
+            },
             data_plane::stream::{
                 fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
             },
@@ -73,6 +76,9 @@ pub(crate) struct Connection {
 struct CarriedIds {
     wire_by_logical: HashMap<u64, u64>,
     logical_by_wire: HashMap<u64, u64>,
+    /// The Start Location each SUBSCRIBE sent again here established, by
+    /// logical id.
+    subscription_starts: HashMap<u64, Location>,
 }
 
 pub(crate) enum ObjectSink {
@@ -243,6 +249,24 @@ impl Connection {
         carried.logical_by_wire.insert(wire_id, logical_id);
     }
 
+    /// `carry` for a SUBSCRIBE whose SUBSCRIBE_OK here established `start`.
+    pub(crate) fn carry_subscription(&self, logical_id: u64, wire_id: u64, start: Location) {
+        self.carry(logical_id, wire_id);
+        self.carried_ids()
+            .subscription_starts
+            .insert(logical_id, start);
+    }
+
+    /// The Start Location of the subscription `logical_id` here; `None` when
+    /// it was first sent here, so that the application's `Subscription` holds
+    /// it.
+    pub(crate) fn carried_start(&self, logical_id: u64) -> Option<Location> {
+        self.carried_ids()
+            .subscription_starts
+            .get(&logical_id)
+            .copied()
+    }
+
     pub(crate) fn serve(&self, request_id: u64) {
         self.served_ids().insert(request_id);
     }
@@ -330,11 +354,12 @@ impl Connection {
     }
 
     /// Starts a cutover for the sink of the subscription `wire_request_id`,
-    /// which becomes its previous side. `None` when no such sink is
-    /// installed.
+    /// which becomes its previous side, toward a subscription starting in
+    /// group `current_start`. `None` when no such sink is installed.
     pub(crate) async fn start_cutover(
         &self,
         wire_request_id: RequestId,
+        current_start: u64,
         cut_over: oneshot::Sender<()>,
     ) -> Option<CutoverStart> {
         let mut sinks = self.object_sinks.lock().await;
@@ -345,7 +370,7 @@ impl Connection {
             _ => None,
         })?;
         let shared = Arc::new(std::sync::Mutex::new(SharedCutover {
-            cutover: GroupCutover::waiting_after(receiver.newest_group),
+            cutover: GroupCutover::waiting_after(receiver.newest_group, current_start),
             cut_over: Some(cut_over),
         }));
         receiver.cutover = Some(SinkCutover {

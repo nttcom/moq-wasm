@@ -376,7 +376,9 @@ mod tests {
         let subscriber = handler.register_session(2).await;
         handler.send(SessionEvent {
             session_id: 2,
-            kind: EventKind::FromSession(MoqtSessionEvent::Fetch(Box::new(MockFetchHandler))),
+            kind: EventKind::FromSession(MoqtSessionEvent::Fetch(Box::new(
+                MockFetchHandler::default(),
+            ))),
         });
 
         // Act

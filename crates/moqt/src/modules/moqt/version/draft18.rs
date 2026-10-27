@@ -657,7 +657,9 @@ mod tests {
             ContentExists, DataReceiver, ForwardingPreference, Location, Object, ObjectStatus,
         },
         publish::{PublishDoneCode, PublishOption},
-        subscribe::{FilterType, SubscribeHandler, SubscribeOption},
+        subscribe::{
+            FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateHandler, UpdateAnswer,
+        },
     };
 
     const SCHEMES: [&str; 2] = ["moqt", "https"];
@@ -1232,12 +1234,7 @@ mod tests {
         let (client, server) = spawn_connected_draft18_sessions("draft18-update", "moqt").await;
         let option = SubscribeOption {
             subscriber_priority: 7,
-            filter_type: FilterType::AbsoluteStart {
-                location: Location {
-                    group_id: 5,
-                    object_id: 0,
-                },
-            },
+            filter_type: FilterType::LargestObject,
             ..SubscribeOption::default()
         };
         let subscription = subscribed(&client, &server, option).await;
@@ -1256,20 +1253,289 @@ mod tests {
         stream.sender.send(&update).await.unwrap();
         let event = next_event(&server).await;
 
-        // Assert
+        // Assert: §10.2.9 an omitted SUBSCRIPTION_FILTER leaves the filter unchanged
         let SessionEvent::SubscribeUpdate(update) = event else {
             panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
         };
         assert_eq!(update.subscription_request_id(), subscription.request_id());
         assert!(!update.forward());
         assert_eq!(update.subscriber_priority(), 7);
-        assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 5,
-                object_id: 0,
-            }
+        assert_eq!(update.filter(), None);
+    }
+
+    #[tokio::test]
+    async fn a_request_update_hands_over_the_filter_it_carries() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-filter", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+        let update = request_update(
+            client
+                .publisher()
+                .session
+                .connection()
+                .control
+                .next_request_id(),
+            &[parameters::Parameter::SubscriptionFilter(
+                FilterType::NextGroupStart,
+            )],
         );
+
+        // Act
+        stream.sender.send(&update).await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert: a relative filter is left for the publisher to resolve
+        let SessionEvent::SubscribeUpdate(update) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        assert_eq!(update.filter(), Some(FilterType::NextGroupStart));
+    }
+
+    /// A SUBSCRIBE `client` sends on a stream it reads itself, answered by
+    /// `server`; returns the stream after its SUBSCRIBE_OK.
+    async fn raw_subscription(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (StreamSender, MessageReceiver) {
+        let connection = client.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
+        let sender = StreamSender::new(send_stream);
+        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let subscribe = messages::encode_subscribe(&Subscribe {
+            request_id: connection.control.next_request_id(),
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            forward: true,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        })
+        .unwrap();
+        sender.send(&subscribe).await.unwrap();
+        let SessionEvent::Subscribe(handler) = next_event(server).await else {
+            panic!("expected SUBSCRIBE");
+        };
+        handler.ok(0, ContentExists::False).await.unwrap();
+        let response = receiver.receive().await.unwrap();
+        assert!(
+            matches!(response, Some(messages::Message::SubscribeOk(_))),
+            "{response:?}"
+        );
+        (sender, receiver)
+    }
+
+    async fn requested_update(
+        client: &crate::Session,
+        server: &crate::Session,
+        stream: &StreamSender,
+    ) -> SubscribeUpdateHandler {
+        let request_id = client
+            .publisher()
+            .session
+            .connection()
+            .control
+            .next_request_id();
+        stream
+            .send(&request_update(
+                request_id,
+                &[parameters::Parameter::Forward(true)],
+            ))
+            .await
+            .unwrap();
+        let event = next_event(server).await;
+        let SessionEvent::SubscribeUpdate(handler) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        handler
+    }
+
+    #[tokio::test]
+    async fn a_request_update_is_answered_with_the_largest_object_the_publisher_gives() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-largest", "moqt").await;
+        let (sender, mut receiver) = raw_subscription(&client, &server).await;
+        let handler = requested_update(&client, &server, &sender).await;
+        let largest = Location {
+            group_id: 3,
+            object_id: 1,
+        };
+
+        // Act
+        let told = handler.ok(Some(largest));
+        let response = receiver.receive().await.unwrap();
+
+        // Assert: §10.2.11 LARGEST_OBJECT
+        assert_eq!(told, UpdateAnswer::Accepted { largest_told: true });
+        let Some(messages::Message::RequestOk(ok)) = response else {
+            panic!("expected REQUEST_OK, got {response:?}");
+        };
+        assert_eq!(
+            ok.parameters,
+            vec![parameters::Parameter::LargestObject(largest)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_update_whose_handler_is_dropped_gets_a_request_ok_without_largest_object() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-dropped", "moqt").await;
+        let (sender, mut receiver) = raw_subscription(&client, &server).await;
+        let handler = requested_update(&client, &server, &sender).await;
+
+        // Act
+        drop(handler);
+        let response = receiver.receive().await.unwrap();
+
+        // Assert
+        let Some(messages::Message::RequestOk(ok)) = response else {
+            panic!("expected REQUEST_OK, got {response:?}");
+        };
+        assert!(ok.parameters.is_empty(), "{:?}", ok.parameters);
+    }
+
+    fn largest(group_id: u64, object_id: u64) -> Location {
+        Location {
+            group_id,
+            object_id,
+        }
+    }
+
+    async fn request_ok_largest(receiver: &mut MessageReceiver) -> Option<Location> {
+        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
+            .await
+            .expect("no answer to the REQUEST_UPDATE")
+            .unwrap();
+        let Some(messages::Message::RequestOk(ok)) = response else {
+            panic!("expected REQUEST_OK, got {response:?}");
+        };
+        ok.parameters.iter().find_map(|parameter| match parameter {
+            parameters::Parameter::LargestObject(largest) => Some(*largest),
+            _ => None,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_second_request_update_is_read_while_the_first_is_unanswered() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-read-on", "moqt").await;
+        let (sender, _receiver) = raw_subscription(&client, &server).await;
+        let _first = requested_update(&client, &server, &sender).await;
+
+        // Act
+        let second = requested_update(&client, &server, &sender).await;
+
+        // Assert
+        assert!(second.forward());
+    }
+
+    #[tokio::test]
+    async fn request_update_answers_go_out_in_the_order_the_updates_arrived() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-answer-order", "moqt").await;
+        let (sender, mut receiver) = raw_subscription(&client, &server).await;
+        let first = requested_update(&client, &server, &sender).await;
+        let second = requested_update(&client, &server, &sender).await;
+
+        // Act
+        second.ok(Some(largest(5, 0)));
+        first.ok(Some(largest(4, 0)));
+
+        // Assert: §10.9, one answer per update in the order they arrived
+        assert_eq!(request_ok_largest(&mut receiver).await, Some(largest(4, 0)));
+        assert_eq!(request_ok_largest(&mut receiver).await, Some(largest(5, 0)));
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_request_update_gets_request_error_timeout() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-timeout", "moqt").await;
+        let (sender, mut receiver) = raw_subscription(&client, &server).await;
+        let handler = requested_update(&client, &server, &sender).await;
+        tokio::time::pause();
+
+        // Act
+        let response = receiver.receive().await.unwrap();
+        tokio::time::resume();
+        let late = handler.ok(Some(largest(4, 0)));
+
+        // Assert: §10.6 TIMEOUT; §10.9.1 the update failed
+        let Some(messages::Message::RequestError(error)) = response else {
+            panic!("expected REQUEST_ERROR, got {response:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::Timeout);
+        assert_eq!(late, UpdateAnswer::Failed);
+    }
+
+    #[tokio::test]
+    async fn a_peer_reset_is_noticed_while_a_request_update_answer_is_pending() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-reset", "moqt").await;
+        let (sender, _receiver) = raw_subscription(&client, &server).await;
+        let _unanswered = requested_update(&client, &server, &sender).await;
+
+        // Act
+        sender.reset(0).await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert: §3.3.2 the reset withdraws the subscription
+        assert!(
+            matches!(event, SessionEvent::Unsubscribe(_)),
+            "expected UNSUBSCRIBE, got {event:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_answer_to_a_request_update_on_a_publish_keeps_the_subscription_open() {
+        // Arrange: two updates; the publisher reads the second only after answering the first
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-update", "moqt").await;
+        let track = published_track_between(client, server).await;
+        let subscriber = track.server.subscriber();
+        subscriber
+            .update_forward(&track.accepted, false)
+            .await
+            .unwrap();
+        subscriber
+            .update_forward(&track.accepted, true)
+            .await
+            .unwrap();
+        let SessionEvent::SubscribeUpdate(first) = next_event(&track.client).await else {
+            panic!("expected SUBSCRIBE_UPDATE");
+        };
+        first.ok(Some(Location {
+            group_id: 3,
+            object_id: 1,
+        }));
+        let SessionEvent::SubscribeUpdate(_second) = next_event(&track.client).await else {
+            panic!("expected SUBSCRIBE_UPDATE");
+        };
+
+        // Act
+        track
+            .client
+            .publisher()
+            .publish_done(
+                &track.published,
+                PublishDoneCode::TrackEnded,
+                0,
+                String::new(),
+            )
+            .await
+            .unwrap();
+        let event = next_event(&track.server).await;
+
+        // Assert: the subscriber read the REQUEST_OK before the PUBLISH_DONE
+        assert!(matches!(event, SessionEvent::PublishDone(_)), "{event:?}");
     }
 
     #[tokio::test]

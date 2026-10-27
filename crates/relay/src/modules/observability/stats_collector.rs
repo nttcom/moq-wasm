@@ -238,8 +238,8 @@ fn subscription_stats(
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
     use std::{sync::Arc, time::Duration};
 
@@ -400,8 +400,7 @@ mod tests {
                 3,
                 0,
                 SessionPeer::Relay,
-                stats_track,
-                JoinPoint::Largest(None),
+                downstream_subscription(stats_track, None),
                 delivery_control(true),
             )
             .unwrap();
@@ -445,8 +444,7 @@ mod tests {
                 9,
                 4,
                 SessionPeer::Client,
-                track_key,
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key, None),
                 delivery_control(true),
             )
             .unwrap();

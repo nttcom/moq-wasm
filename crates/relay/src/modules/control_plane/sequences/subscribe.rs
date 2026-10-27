@@ -16,7 +16,7 @@ use crate::modules::{
         delivery_control::DeliveryControl,
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
-            entry::{JoinPoint, UpstreamTrack},
+            entry::{self, UpstreamTrack},
         },
         session_id::SessionId,
         session_peer::SessionPeer,
@@ -481,8 +481,11 @@ impl Subscribe {
             session_id,
             handler.subscribe_id(),
             subscriber_peer,
-            track_key.clone(),
-            JoinPoint::new(&filter_type, largest_location),
+            entry::DownstreamSubscription {
+                track_key: track_key.clone(),
+                filter_type,
+                joining_location: largest_location,
+            },
             DeliveryControl::new(handler.forward(), &filter_type, largest_location),
         ) else {
             tracing::debug!(
@@ -612,9 +615,11 @@ mod tests {
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
         session_peer::SessionPeer,
     };
-    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, active_upstream, local_publisher_resolver, track_key, upstream_track,
+    };
+    use crate::modules::test_support::directory_fixtures::{
+        delivery_control, downstream_subscription,
     };
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, mock_session_answering_subscribe,
@@ -782,8 +787,7 @@ mod tests {
                     SUBSCRIBER_SESSION,
                     1,
                     SessionPeer::Client,
-                    access.track_key.clone(),
-                    JoinPoint::Largest(None),
+                    downstream_subscription(access.track_key.clone(), None),
                     delivery_control(true),
                 )
                 .unwrap();

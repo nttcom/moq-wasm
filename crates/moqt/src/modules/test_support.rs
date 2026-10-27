@@ -33,7 +33,7 @@ use crate::{
     publish::PublishOption,
     server::Handshake,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
-    subscribe::FilterType,
+    subscribe::{FilterType, SubscribeOption, SubscribeUpdateHandler},
     wire::{SubgroupId, SubgroupObject},
 };
 
@@ -134,7 +134,15 @@ fn spawn_dual_server_handshake_offering(
 /// Starts a DUAL server on a free port whose accept loop resolves the first
 /// incoming session; returns the port and the accept task.
 pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_dual_server_handshake(name);
+    spawn_dual_server_offering(name, APPLICATION_PROTOCOLS)
+}
+
+/// `spawn_dual_server` offering only `protocols`.
+pub(crate) fn spawn_dual_server_offering(
+    name: &str,
+    protocols: ApplicationProtocols,
+) -> (u16, tokio::task::JoinHandle<Session>) {
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, protocols);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
 }
@@ -205,8 +213,7 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     name: &str,
     scheme: &str,
 ) -> (Session, Session) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
-    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    let (port, accept) = spawn_dual_server_offering(name, DRAFT18_PROTOCOLS);
     let client =
         Endpoint::<DUAL>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
             .unwrap();
@@ -260,6 +267,55 @@ pub(crate) async fn published_track_between(client: Session, server: Session) ->
         published: published.unwrap(),
         accepted,
     }
+}
+
+/// A subscription the client made to the server's `ns/track`.
+pub(crate) struct SubscribedTrack {
+    pub(crate) client: Session,
+    pub(crate) server: Session,
+    pub(crate) subscription: Subscription,
+}
+
+/// The client subscribes to `ns/track` and the server accepts it.
+pub(crate) async fn subscribed_track(name: &str) -> SubscribedTrack {
+    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let mut subscriber = client.subscriber();
+    let (subscribed, ()) = within(async {
+        tokio::join!(
+            subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            async {
+                let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+                    panic!("expected SUBSCRIBE from the client");
+                };
+                handler
+                    .ok(0, crate::object::ContentExists::False)
+                    .await
+                    .unwrap();
+            }
+        )
+    })
+    .await;
+    SubscribedTrack {
+        client,
+        server,
+        subscription: subscribed.unwrap(),
+    }
+}
+
+/// Has the server update the Forward State of the track it accepted and
+/// returns the update as the publishing client receives it.
+pub(crate) async fn received_subscribe_update(track: &PublishedTrack) -> SubscribeUpdateHandler {
+    track
+        .server
+        .subscriber()
+        .update_forward(&track.accepted, true)
+        .await
+        .unwrap();
+    let event = within(track.client.receive_event()).await.unwrap();
+    let SessionEvent::SubscribeUpdate(update) = event else {
+        panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+    };
+    update
 }
 
 pub(crate) fn object_with_extensions() -> Object {

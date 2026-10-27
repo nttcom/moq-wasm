@@ -22,10 +22,7 @@ use crate::modules::{
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
-    domain::{
-        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
-        session_id::SessionId,
-    },
+    domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
     session::{
         handler::track_status::TrackStatusHandler,
         moqt_session_event::MoqtSessionEvent,
@@ -157,6 +154,7 @@ impl SessionWorker {
                         &self.deps.control_message_forwarder,
                         &self.deps.ingress_sender,
                         request_id,
+                        None,
                     )
                     .instrument(event_span)
                     .await;
@@ -301,6 +299,7 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
                         handler.subscribe_id(),
+                        None,
                     )
                     .instrument(event_span)
                     .await;
@@ -341,19 +340,30 @@ impl SessionWorker {
                     .await;
             }
             MoqtSessionEvent::SubscribeUpdate(handler) => {
-                event_span.in_scope(|| {
+                let end = event_span.in_scope(|| {
                     SubscribeUpdate {}.handle(
                         session_id,
                         &session_span,
                         deps.local_pub_sub_directory.as_ref(),
-                        handler.subscription_request_id(),
-                        DeliveryControl::from_subscribe_update(
-                            handler.forward(),
-                            handler.start_location(),
-                            handler.end_group(),
-                        ),
+                        &deps.cache_store,
+                        &deps.relay_event_sender,
+                        handler.as_ref(),
                     )
                 });
+                if let Some(end) = end {
+                    Unsubscribe {}
+                        .handle(
+                            session_id,
+                            &session_span,
+                            deps.local_pub_sub_directory.as_ref(),
+                            &deps.control_message_forwarder,
+                            &deps.ingress_sender,
+                            handler.subscription_request_id(),
+                            Some(end),
+                        )
+                        .instrument(event_span)
+                        .await;
+                }
             }
             MoqtSessionEvent::PublishDone(handler) => {
                 UpstreamPublishDone
