@@ -46,6 +46,7 @@ services:
       # Development relay token minted from apps.example.json (see crates/vts/README.md).
       AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://clickstack-otel-collector:4317}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
@@ -81,6 +82,7 @@ services:
       # Development relay token minted from apps.example.json (see crates/vts/README.md).
       AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://clickstack-otel-collector:4317}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
@@ -139,6 +141,52 @@ services:
         condition: service_started
       relay-b:
         condition: service_started
+      hyperdx:
+        condition: service_started
+
+  # ClickStack: its collector writes relay OTLP logs and traces into the
+  # `otel` database of the clickhouse service. HyperDX (http://localhost:8080)
+  # searches them. Both start with observability.
+  # Relays export only with OTEL_SDK_DISABLED=false.
+  clickstack-otel-collector:
+    image: docker.clickhouse.com/clickhouse/clickstack-otel-collector:2.42.0@sha256:90ca453137798285871190722fcd7c79e7731e9376cf23a922d6f855bf94f3c7
+    environment:
+      CLICKHOUSE_ENDPOINT: tcp://clickhouse:9000?dial_timeout=10s
+      CLICKHOUSE_USER: observability
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-observability}
+      HYPERDX_OTEL_EXPORTER_CLICKHOUSE_DATABASE: otel
+      HYPERDX_OTEL_EXPORTER_TABLES_TTL: 168h
+      HYPERDX_LOG_LEVEL: info
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  clickstack-mongo:
+    image: mongo:5.0.32-focal@sha256:3b6c281e1c0825d34b28e503b0bc97174132a283eeb79d402bd3893944cf9fd7
+    volumes:
+      - clickstack-mongo-data:/data/db
+
+  hyperdx:
+    image: docker.hyperdx.io/hyperdx/hyperdx:2.42.0@sha256:409af6d989595376507283c7703b04912a2f66042af434e830ca4b410fc5a716
+    environment:
+      FRONTEND_URL: http://localhost:8080
+      HYPERDX_API_PORT: "8000"
+      HYPERDX_APP_PORT: "8080"
+      HYPERDX_APP_URL: http://localhost
+      HYPERDX_LOG_LEVEL: info
+      MONGO_URI: mongodb://clickstack-mongo:27017/hyperdx
+      SERVER_URL: http://127.0.0.1:8000
+      USAGE_STATS_ENABLED: "false"
+      DEFAULT_CONNECTIONS: '[{"name":"ClickHouse","host":"http://clickhouse:8123","username":"observability","password":"${CLICKHOUSE_PASSWORD:-observability}"}]'
+      DEFAULT_SOURCES: '[{"from":{"databaseName":"otel","tableName":"otel_logs"},"kind":"log","timestampValueExpression":"Timestamp","name":"Logs","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"Body","serviceNameExpression":"ServiceName","bodyExpression":"Body","eventAttributesExpression":"LogAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,SeverityText,Body","severityTextExpression":"SeverityText","severityNumberExpression":"SeverityNumber","eventNameExpression":"EventName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","connection":"ClickHouse","traceSourceId":"Traces"},{"from":{"databaseName":"otel","tableName":"otel_traces"},"kind":"trace","timestampValueExpression":"Timestamp","name":"Traces","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"SpanName","serviceNameExpression":"ServiceName","eventAttributesExpression":"SpanAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","durationExpression":"Duration","durationPrecision":9,"parentSpanIdExpression":"ParentSpanId","spanNameExpression":"SpanName","spanKindExpression":"SpanKind","statusCodeExpression":"StatusCode","statusMessageExpression":"StatusMessage","spanEventsValueExpression":"Events","spanLinksValueExpression":"Links","connection":"ClickHouse","logSourceId":"Logs"}]'
+    ports:
+      - "8080:8080"
+    depends_on:
+      clickstack-mongo:
+        condition: service_started
+      clickstack-otel-collector:
+        condition: service_started
 
 volumes:
   clickhouse-data:
+  clickstack-mongo-data:
