@@ -179,7 +179,7 @@ impl ConnectedRelay {
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let endpoint = Endpoint::<RelayTransport>::create_client(&ClientConfig {
             verify_certificate: target.verify_certificate,
-            authorization_token: target.auth_token.clone(),
+            authorization_token: target.auth_token.clone().map(Into::into),
             ..ClientConfig::default()
         })?;
         let connecting = endpoint

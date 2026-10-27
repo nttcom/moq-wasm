@@ -26,7 +26,7 @@ impl RelayConnection {
     ) -> Result<Self> {
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
             verify_certificate,
-            authorization_token,
+            authorization_token: authorization_token.map(Into::into),
             ..ClientConfig::default()
         })?;
         tracing::info!(relay = url, "connecting to relay");

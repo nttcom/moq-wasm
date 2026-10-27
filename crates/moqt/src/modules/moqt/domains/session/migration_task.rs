@@ -641,13 +641,16 @@ where
 mod tests {
     use bytes::Bytes;
 
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use crate::{
-        ClientConfig, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
-        TrackWriter,
+        AuthorizationToken, AuthorizationTokenSource, ClientConfig, Session, SessionEvent,
+        Subscription, TerminationErrorCode, TrackReader, TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::test_support::{
             DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
-            open_subgroup, send_payload, spawn_native_server, subscribed_track_reader,
+            open_subgroup, send_payload, spawn_native_server, spawn_native_server_handshake,
+            subscribed_track_reader,
         },
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
@@ -1394,5 +1397,49 @@ mod tests {
             event.unwrap().unwrap(),
             SessionEvent::Disconnected()
         ));
+    }
+
+    #[tokio::test]
+    async fn go_away_asks_the_token_provider_again_for_the_new_server() {
+        // Arrange
+        let (port_a, accept_a) = spawn_native_server("session-migration-token-a");
+        let (port_b, handshake_b) = spawn_native_server_handshake("session-migration-token-b");
+        let calls = Arc::new(AtomicU64::new(0));
+        let provider_calls = calls.clone();
+        let endpoint = native_client_with_config(ClientConfig {
+            verify_certificate: false,
+            authorization_token: Some(AuthorizationTokenSource::provider(move || {
+                let call = provider_calls.fetch_add(1, Ordering::SeqCst);
+                async move { Ok(format!("token-{call}")) }
+            })),
+            ..ClientConfig::default()
+        });
+        let _client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            endpoint
+                .connect(&format!("moqt://127.0.0.1:{port_a}"))
+                .await?
+                .await
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let server_a = accept_a.await.unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let handshake_b = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake_b)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            handshake_b.authorization_tokens(),
+            [AuthorizationToken::use_value_utf8("token-1")]
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }

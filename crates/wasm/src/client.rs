@@ -331,7 +331,7 @@ impl MOQTClient {
         auth_token: Option<String>,
     ) -> Result<(), JsValue> {
         let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
-            authorization_token: auth_token,
+            authorization_token: auth_token.map(Into::into),
             web_socket_fallback: self.web_socket_fallback.get(),
             ..ClientConfig::default()
         })

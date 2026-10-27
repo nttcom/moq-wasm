@@ -1,9 +1,12 @@
 use std::{pin::pin, sync::Arc};
 
+use anyhow::Context;
+
 use crate::SessionEvent;
 use crate::modules::executor::{self, BoxFuture, MaybeSend, MaybeSync};
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::domains::connection::Connection;
+use crate::modules::moqt::domains::endpoint::AuthorizationTokenSource;
 use crate::modules::moqt::domains::session::{Follow, Session};
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
@@ -21,7 +24,7 @@ const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) transport_creator: T::ConnectionCreator,
-    pub(crate) authorization_token: Option<String>,
+    pub(crate) authorization_token: Option<AuthorizationTokenSource>,
     pub(crate) follow_go_away: bool,
     web_socket_fallback: WebSocketFallback,
 }
@@ -58,7 +61,7 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
 impl<T: TransportProtocol> SessionCreator<T> {
     pub(crate) fn new(
         transport_creator: T::ConnectionCreator,
-        authorization_token: Option<String>,
+        authorization_token: Option<AuthorizationTokenSource>,
         follow_go_away: bool,
         web_socket_fallback: WebSocketFallback,
     ) -> Self {
@@ -215,8 +218,17 @@ impl<T: TransportProtocol> SessionCreator<T> {
         generation: u64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
+        let token = match &self.authorization_token {
+            Some(source) => Some(
+                source
+                    .token()
+                    .await
+                    .context("the authorization token provider failed")?,
+            ),
+            None => None,
+        };
         let (control, control_receiver, server_setup) =
-            match version::connect(&transport_conn, self.authorization_token.as_deref()).await {
+            match version::connect(&transport_conn, token.as_deref()).await {
                 Ok(established) => established,
                 Err(error) => {
                     return Err(Self::explain_rejected_setup(&transport_conn, error).await);
@@ -267,7 +279,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        ClientConfig, Endpoint, NATIVE, Session, TerminationErrorCode, WebSocketFallback,
+        AuthorizationTokenSource, ClientConfig, Endpoint, NATIVE, Session, TerminationErrorCode,
+        WebSocketFallback,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{
@@ -428,7 +441,7 @@ mod tests {
         let client = tokio::spawn(async move {
             native_client_with_config(ClientConfig {
                 verify_certificate: false,
-                authorization_token: Some("jwt".to_string()),
+                authorization_token: Some("jwt".to_string().into()),
                 follow_go_away: false,
                 ..ClientConfig::default()
             })
@@ -449,6 +462,68 @@ mod tests {
             [AuthorizationToken::use_value_utf8("jwt")]
         );
         client.abort();
+    }
+
+    #[tokio::test]
+    async fn connect_sends_the_token_the_provider_returns() {
+        // Arrange
+        let (port, accept) = spawn_native_server_handshake("client-setup-token-provider");
+        let url = format!("moqt://127.0.0.1:{port}");
+        let client = tokio::spawn(async move {
+            native_client_with_config(ClientConfig {
+                authorization_token: Some(AuthorizationTokenSource::provider(|| async {
+                    Ok("fresh-jwt".to_string())
+                })),
+                verify_certificate: false,
+                ..ClientConfig::default()
+            })
+            .connect(&url)
+            .await?
+            .await
+        });
+
+        // Act
+        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            handshake.authorization_tokens(),
+            [AuthorizationToken::use_value_utf8("fresh-jwt")]
+        );
+        client.abort();
+    }
+
+    #[tokio::test]
+    async fn a_failing_token_provider_fails_the_connect() {
+        // Arrange
+        let (port, _accept) = spawn_native_server_handshake("client-setup-token-provider-error");
+        let url = format!("moqt://127.0.0.1:{port}");
+        let endpoint = native_client_with_config(ClientConfig {
+            authorization_token: Some(AuthorizationTokenSource::provider(|| async {
+                anyhow::bail!("token backend unreachable")
+            })),
+            verify_certificate: false,
+            ..ClientConfig::default()
+        });
+
+        // Act
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            endpoint.connect(&url).await?.await
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        let Err(error) = result else {
+            panic!("expected the connect to fail");
+        };
+        assert!(
+            format!("{error:#}").contains("token backend unreachable"),
+            "{error:#}"
+        );
     }
 
     #[tokio::test]
