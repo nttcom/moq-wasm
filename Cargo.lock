@@ -531,9 +531,9 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1696,9 +1696,9 @@ dependencies = [
  "moqt",
  "msf",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1715,9 +1715,9 @@ dependencies = [
  "rml_rtmp",
  "socket2 0.6.5",
  "srt-tokio",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "transcode",
 ]
 
@@ -2080,9 +2080,9 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2125,10 +2125,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "telemetry",
  "time",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2738,9 +2738,9 @@ dependencies = [
  "object_store",
  "reqwest",
  "serde_json",
+ "telemetry",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "transcode",
  "url",
 ]

@@ -27,7 +27,6 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{launcher::LauncherKind, recording::Layout, room_recording::RecordingLimits};
 
@@ -295,14 +294,19 @@ impl LauncherArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+        service_name: "recorder",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &[
+            "recorder=info",
+            "moqt=info",
+            "msf=info",
+            "mediapack=info",
+            "transcode=info",
+        ],
+        resource_attributes: Vec::new(),
+        log_output: telemetry::LogOutput::Stderr,
+    })?;
     // One parser per mode instead of clap subcommands: with subcommands, a
     // recording flag filled from an environment variable (`MOQT_URL`) counts
     // as given, so clap parses the recording mode, ignores the mode name and

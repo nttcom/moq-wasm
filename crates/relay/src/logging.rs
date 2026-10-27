@@ -1,4 +1,4 @@
-use telemetry::{TelemetryConfig, TelemetryGuard};
+use telemetry::{LogOutput, TelemetryConfig, TelemetryGuard};
 
 use crate::config::{non_empty_env, relay_id};
 
@@ -19,5 +19,6 @@ pub fn init_logging(service_name: &str) -> anyhow::Result<TelemetryGuard> {
             ("relay.hostname", relay_hostname),
             ("relay.id", relay_id()),
         ],
+        log_output: LogOutput::Stdout,
     })
 }

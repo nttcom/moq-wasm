@@ -14,7 +14,7 @@ msf = { path = "../msf" }
 serde_json = "1"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+telemetry = { path = "../telemetry" }
 
 [dev-dependencies]
 moqt = { path = "../moqt", features = ["self-signed-cert"] }
