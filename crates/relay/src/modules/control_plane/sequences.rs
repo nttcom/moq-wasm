@@ -31,6 +31,28 @@ pub(crate) struct CascadingRelayContext<'a> {
     pub(crate) inter_relay_connection_manager: &'a InterRelayConnectionManager,
 }
 
+/// Records `upstream_relay_id` and `upstream_request_id` on the current
+/// span, which must declare both fields; the upstream relay records the same
+/// pair as `peer_relay_id` and `request_id`. Records nothing when the
+/// publisher is a client.
+pub(crate) async fn record_upstream_relay(
+    forwarder: &ControlMessageForwarder,
+    publisher_session_id: SessionId,
+    upstream_request_id: u64,
+) {
+    let relay_id = forwarder
+        .repository
+        .lock()
+        .await
+        .verified_token(publisher_session_id)
+        .and_then(|token| token.relay_id.clone());
+    if let Some(relay_id) = relay_id {
+        let span = tracing::Span::current();
+        span.record("upstream_relay_id", relay_id.as_str());
+        span.record("upstream_request_id", upstream_request_id);
+    }
+}
+
 pub(crate) async fn is_origin_client(
     session_id: SessionId,
     forwarder: &ControlMessageForwarder,

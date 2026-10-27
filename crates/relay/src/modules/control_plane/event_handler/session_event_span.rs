@@ -2,7 +2,8 @@ use tracing::Span;
 
 use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
-    domain::session_id::SessionId, session::moqt_session_event::MoqtSessionEvent,
+    auth::verified_token::VerifiedToken, domain::session_id::SessionId,
+    session::moqt_session_event::MoqtSessionEvent,
 };
 
 /// A request's span roots its own trace and links to the session span.
@@ -11,9 +12,11 @@ use crate::modules::{
 pub(super) fn session_event_span(
     session_id: SessionId,
     session_span: &Span,
-    app_id: Option<&str>,
+    token: Option<&VerifiedToken>,
     event: &MoqtSessionEvent,
 ) -> Span {
+    let app_id = token.map(|token| token.app_id.as_str());
+    let peer_relay_id = token.and_then(|token| token.relay_id.as_deref());
     let span = match event {
         MoqtSessionEvent::PublishNamespace(handler) => tracing::info_span!(
             parent: None,
@@ -65,6 +68,9 @@ pub(super) fn session_event_span(
             "relay.subscribe",
             session_id = %session_id,
             app_id,
+            peer_relay_id,
+            upstream_relay_id = tracing::field::Empty,
+            upstream_request_id = tracing::field::Empty,
             relay_hostname = relay_hostname(),
             request_id = handler.subscribe_id(),
             track_namespace = %handler.track_namespace(),
@@ -92,6 +98,9 @@ pub(super) fn session_event_span(
             "relay.fetch",
             session_id = %session_id,
             app_id,
+            peer_relay_id,
+            upstream_relay_id = tracing::field::Empty,
+            upstream_request_id = tracing::field::Empty,
             relay_hostname = relay_hostname(),
             request_id = handler.request_id(),
             fetch_params = ?handler.fetch_params(),

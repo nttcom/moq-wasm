@@ -88,17 +88,18 @@ The Dockerfile expects the repository root as build context:
 ## Local stack
 
 `docker compose up -d` starts the VTS with `apps.example.json` and points
-both relays at it. The relays authenticate to each other with a development
-relay token that is the compose default for `AUTH_RELAY_TOKEN`; it was minted
-from the relay row of `apps.example.json` and is valid for ten years:
+both relays at it. The relays authenticate to each other with development
+relay tokens, the compose defaults for `AUTH_RELAY_TOKEN`; each was minted
+from the relay row of `apps.example.json` with its relay's `RELAY_ID`
+(`relay-a`, `relay-b`) and is valid for ten years:
 
 ```
 AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "11111111-2222-3333-4444-555555555555") | .secret' crates/vts/apps.example.json)" \
-  cargo run -p auth-token --features cli -- --app-id 11111111-2222-3333-4444-555555555555 --publish "" --subscribe "" --ttl 3650d
+  cargo run -p auth-token --features cli -- --app-id 11111111-2222-3333-4444-555555555555 --publish "" --subscribe "" --ttl 3650d --relay-id relay-a
 ```
 
-Re-run that command and replace the default in `docker-compose.yml` if the
-development relay secret changes. To run the stack against your own ledger,
+Re-run that command for each relay and replace the defaults in
+`docker-compose.yml` if the development relay secret changes. To run the stack against your own ledger,
 set `VTS_APPS_FILE` and `AUTH_RELAY_TOKEN` (minted from that ledger) in `.env`.
 
 `vts` is reachable only inside the compose network.
