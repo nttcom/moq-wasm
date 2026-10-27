@@ -278,20 +278,14 @@ mod tests {
         ctx: &mut DownstreamPublishContext,
         sent: SentMessages,
     ) {
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &Span::none(),
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &NoopRelayRouteRegistry,
-                &MockSubscribeNamespaceHandler {
-                    sent,
-                    ..MockSubscribeNamespaceHandler::new("ns")
-                },
-            )
-            .await;
+        subscribe_namespace(
+            ctx,
+            MockSubscribeNamespaceHandler {
+                sent,
+                ..MockSubscribeNamespaceHandler::new("ns")
+            },
+        )
+        .await;
         tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
             .await
             .expect("the accepted PUBLISH should start an egress reader");
