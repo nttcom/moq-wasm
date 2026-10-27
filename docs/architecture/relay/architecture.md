@@ -403,9 +403,11 @@ subscribers' forwards. A publisher that ends the track meanwhile is covered by
 the PUBLISH_DONE TRACK_ENDED answer above.
 
 ### SUBSCRIBE_NAMESPACE sequence
-Register the prefix (and, for the first client subscriber of the prefix, its
-Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward what already
-matches: PUBLISH_NAMESPACE for published namespaces (reply handled by a
+Refuse with PREFIX_OVERLAP a subscription whose prefix is a prefix of, equal
+to or an extension of one the session already holds (draft-14 §9.28).
+Otherwise register the prefix (and, for the first client subscriber of the
+prefix, its Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward
+what already matches: PUBLISH_NAMESPACE for published namespaces (reply handled by a
 `PublishNamespaceResponseTask`), a `DownstreamPublish` for each published
 track (one per publisher session), then PUBLISH_NAMESPACE for remote
 namespace-publisher routes. The OK goes first because draft-14 §9.28 forwards

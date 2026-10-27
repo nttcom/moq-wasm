@@ -43,6 +43,25 @@ impl SubscribeNameSpace {
             "SequenceHandler::SubscribeNamespace"
         );
         let peer = super::session_peer(session_id, forwarder).await;
+        if table.has_overlapping_namespace_subscription(session_id, track_namespace_prefix) {
+            tracing::info!(
+                track_namespace_prefix = %track_namespace_prefix,
+                "namespace subscription overlaps another of the session"
+            );
+            if let Err(error) = handler
+                .error(
+                    RequestErrorCode::NamespacePrefixOverlap,
+                    "overlaps another namespace subscription of the session".to_string(),
+                )
+                .await
+            {
+                tracing::error!(
+                    ?error,
+                    "failed to refuse an overlapping namespace subscription"
+                );
+            }
+            return;
+        }
         let is_first_client = table.register_subscribe_namespace(
             session_id,
             track_namespace_prefix.to_string(),
@@ -207,14 +226,19 @@ mod tests {
 
     type SentMessages = Arc<Mutex<Vec<&'static str>>>;
 
+    /// How long a PUBLISH that should not come is waited for.
+    const NO_PUBLISH_TIMEOUT: Duration = Duration::from_millis(200);
+
     struct MockSubscribeNamespaceHandler {
+        track_namespace_prefix: &'static str,
         sent: SentMessages,
+        error_codes: Arc<Mutex<Vec<RequestErrorCode>>>,
     }
 
     #[async_trait::async_trait]
     impl SubscribeNamespaceHandler for MockSubscribeNamespaceHandler {
         fn track_namespace_prefix(&self) -> &str {
-            "ns"
+            self.track_namespace_prefix
         }
 
         fn track_namespace_prefix_tuple(&self) -> &[String] {
@@ -228,10 +252,11 @@ mod tests {
 
         async fn error(
             &self,
-            _code: RequestErrorCode,
+            code: RequestErrorCode,
             _reason_phrase: String,
         ) -> Result<(), moqt::TransportSendError> {
             self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_ERROR");
+            self.error_codes.lock().unwrap().push(code);
             Ok(())
         }
     }
@@ -254,17 +279,7 @@ mod tests {
         ctx: &mut DownstreamPublishContext,
         sent: SentMessages,
     ) {
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &Span::none(),
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &NoopRelayRouteRegistry,
-                &MockSubscribeNamespaceHandler { sent },
-            )
-            .await;
+        subscribe_namespace(ctx, "ns", sent).await;
         tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
             .await
             .expect("the accepted PUBLISH should start an egress reader");
@@ -302,5 +317,75 @@ mod tests {
             .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
             .expect("PUBLISH_OK should register a downstream subscription");
         assert_eq!(registered.track_key, track_key());
+    }
+
+    async fn context_holding_namespace_subscription(prefix: &str) -> DownstreamPublishContext {
+        let ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            prefix.to_string(),
+            SessionPeer::Client,
+        );
+        ctx
+    }
+
+    async fn subscribe_namespace(
+        ctx: &DownstreamPublishContext,
+        track_namespace_prefix: &'static str,
+        sent: SentMessages,
+    ) -> MockSubscribeNamespaceHandler {
+        let handler = MockSubscribeNamespaceHandler {
+            track_namespace_prefix,
+            sent,
+            error_codes: Arc::default(),
+        };
+        SubscribeNameSpace
+            .handle(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                &Span::none(),
+                &ctx.table,
+                &ctx.forwarder,
+                &ctx.downstream_publish(),
+                &NoopRelayRouteRegistry,
+                &handler,
+            )
+            .await;
+        handler
+    }
+
+    #[tokio::test]
+    async fn a_wider_namespace_subscription_after_a_narrower_one_is_refused_with_prefix_overlap() {
+        // Arrange
+        let mut ctx = context_holding_namespace_subscription("ns/track").await;
+
+        // Act
+        let handler = subscribe_namespace(&ctx, "ns", SentMessages::default()).await;
+        let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
+
+        // Assert: draft-14 §9.28
+        assert_eq!(*handler.sent.lock().unwrap(), ["SUBSCRIBE_NAMESPACE_ERROR"]);
+        assert_eq!(
+            *handler.error_codes.lock().unwrap(),
+            [RequestErrorCode::NamespacePrefixOverlap]
+        );
+        assert!(ctx.table.subscriber_namespaces.get("ns").is_none());
+        assert!(egress.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_narrower_namespace_subscription_after_a_wider_one_is_refused_with_prefix_overlap() {
+        // Arrange
+        let ctx = context_holding_namespace_subscription("ns").await;
+
+        // Act
+        let handler = subscribe_namespace(&ctx, "ns/track", SentMessages::default()).await;
+
+        // Assert: draft-14 §9.28
+        assert_eq!(*handler.sent.lock().unwrap(), ["SUBSCRIBE_NAMESPACE_ERROR"]);
+        assert_eq!(
+            *handler.error_codes.lock().unwrap(),
+            [RequestErrorCode::NamespacePrefixOverlap]
+        );
+        assert!(ctx.table.subscriber_namespaces.get("ns/track").is_none());
     }
 }
