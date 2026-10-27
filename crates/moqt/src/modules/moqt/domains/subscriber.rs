@@ -736,17 +736,16 @@ mod tests {
 
     use crate::{
         RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription,
-        TerminationErrorCode,
+        TerminationErrorCode, Version,
         fetch::{
             Fetch, FetchCancelHandler, FetchDataReceiver, FetchDataSender, FetchHandle,
-            FetchHandler, FetchOption,
+            FetchHandler, FetchOption, FetchParams,
         },
         modules::{
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
-                location, next_subgroup, object_with_extensions, read_fetch_objects,
-                read_subgroup_objects, send_subgroup_object, spawn_connected_draft18_sessions,
-                spawn_connected_dual_sessions, subscribed_track, within,
+                DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, connected_sessions, data_receiver,
+                first_subgroup_stream, location, next_subgroup, object_with_extensions,
+                read_fetch_objects, read_subgroup_objects, send_subgroup_object, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -936,16 +935,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_fetch_whose_response_is_never_taken_keeps_no_ledger() {
-        let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-ledger-untaken").await;
-        fetch_never_taken_keeps_no_ledger(client, server).await;
-    }
-
-    #[tokio::test]
-    async fn a_draft18_fetch_whose_response_is_never_taken_keeps_no_ledger() {
-        let (client, server) =
-            spawn_connected_draft18_sessions("subscriber-fetch-ledger-untaken-d18", "moqt").await;
-        fetch_never_taken_keeps_no_ledger(client, server).await;
+        for version in DRAFTS {
+            let (client, server) =
+                connected_sessions("subscriber-fetch-ledger-untaken", version).await;
+            fetch_never_taken_keeps_no_ledger(client, server).await;
+        }
     }
 
     async fn fetch_releases_the_ledger_at_its_end(client: Session, server: Session) {
@@ -968,315 +962,329 @@ mod tests {
 
     #[tokio::test]
     async fn a_fetch_response_read_to_its_end_releases_the_ledger() {
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-ledger-end").await;
-        fetch_releases_the_ledger_at_its_end(client, server).await;
-    }
-
-    #[tokio::test]
-    async fn a_draft18_fetch_response_read_to_its_end_releases_the_ledger() {
-        let (client, server) =
-            spawn_connected_draft18_sessions("subscriber-fetch-ledger-end-d18", "moqt").await;
-        fetch_releases_the_ledger_at_its_end(client, server).await;
+        for version in DRAFTS {
+            let (client, server) = connected_sessions("subscriber-fetch-ledger-end", version).await;
+            fetch_releases_the_ledger_at_its_end(client, server).await;
+        }
     }
 
     #[tokio::test]
     async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-sender").await;
-        let (request, handler) = start_fetch(&client, &server, TRACK).await;
-        handler.ok(false, END).await.unwrap();
-        let fetch_sender = server
-            .publisher()
-            .create_fetch_stream(handler.request_id)
-            .await
-            .unwrap();
-        let fetch_handle = request.await.unwrap().unwrap();
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-fetch-sender", version).await;
+            let (request, handler) = start_fetch(&client, &server, TRACK).await;
+            handler.ok(false, END).await.unwrap();
+            let fetch_sender = server
+                .publisher()
+                .create_fetch_stream(handler.request_id)
+                .await
+                .unwrap();
+            let fetch_handle = request.await.unwrap().unwrap();
 
-        // Act
-        let mut fetch_receiver = client
-            .subscriber()
-            .accept_fetch_receiver(&fetch_handle)
-            .await
-            .unwrap();
-        fetch_sender
-            .send_object(&fetch_object(START, b"object"))
-            .await
-            .unwrap();
-        let object = fetch_receiver.receive().await.unwrap();
-
-        // Assert
-        assert!(
-            !client
+            // Act
+            let mut fetch_receiver = client
                 .subscriber()
-                .session
-                .connection()
-                .fetch_notification_map
-                .lock()
-                .unwrap()
-                .contains_key(&fetch_handle.request_id)
-        );
-        assert!(
-            matches!(&object, Fetch::Object(received) if *received == fetch_object(START, b"object")),
-            "{object:?}"
-        );
+                .accept_fetch_receiver(&fetch_handle)
+                .await
+                .unwrap();
+            fetch_sender
+                .send_object(&fetch_object(START, b"object"))
+                .await
+                .unwrap();
+            let object = fetch_receiver.receive().await.unwrap();
+
+            // Assert
+            assert!(
+                !client
+                    .subscriber()
+                    .session
+                    .connection()
+                    .fetch_notification_map
+                    .lock()
+                    .unwrap()
+                    .contains_key(&fetch_handle.request_id)
+            );
+            assert!(
+                matches!(&object, Fetch::Object(received) if *received == fetch_object(START, b"object")),
+                "{object:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn fetch_receiver_fails_when_the_peer_disconnects_before_the_stream() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-disconnect-before-stream").await;
-        let (request, handler) = start_fetch(&client, &server, TRACK).await;
-        handler.ok(false, END).await.unwrap();
-        let fetch_handle = request.await.unwrap().unwrap();
-        let mut subscriber = client.subscriber();
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-fetch-disconnect-before-stream", version).await;
+            let (request, handler) = start_fetch(&client, &server, TRACK).await;
+            handler.ok(false, END).await.unwrap();
+            let fetch_handle = request.await.unwrap().unwrap();
+            let mut subscriber = client.subscriber();
 
-        // Act
-        server.close_with_error(TerminationErrorCode::NoError, "closing");
-        let accepted = tokio::time::timeout(
-            DISCONNECT_TIMEOUT,
-            subscriber.accept_fetch_receiver(&fetch_handle),
-        )
-        .await;
+            // Act
+            server.close_with_error(TerminationErrorCode::NoError, "closing");
+            let accepted = tokio::time::timeout(
+                DISCONNECT_TIMEOUT,
+                subscriber.accept_fetch_receiver(&fetch_handle),
+            )
+            .await;
 
-        // Assert
-        let accepted = accepted.expect("the stream wait ends once the peer disconnects");
-        assert!(accepted.is_err(), "{accepted:?}");
+            // Assert
+            let accepted = accepted.expect("the stream wait ends once the peer disconnects");
+            assert!(accepted.is_err(), "{accepted:?}");
+        }
     }
 
     #[tokio::test]
     async fn fetch_ok_hands_its_max_cache_duration_to_the_fetch_handle() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-max-cache-duration").await;
-        let (request, mut handler) = start_fetch(&client, &server, TRACK).await;
-        handler.track_properties.set_max_cache_duration(Some(2_000));
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-fetch-max-cache-duration", version).await;
+            let (request, mut handler) = start_fetch(&client, &server, TRACK).await;
+            handler.track_properties.set_max_cache_duration(Some(2_000));
 
-        // Act
-        handler.ok(false, END).await.unwrap();
+            // Act
+            handler.ok(false, END).await.unwrap();
 
-        // Assert
-        let fetch_handle = request.await.unwrap().unwrap();
-        assert_eq!(
-            fetch_handle.track_properties.max_cache_duration(),
-            Some(2_000)
-        );
+            // Assert
+            let fetch_handle = request.await.unwrap().unwrap();
+            assert_eq!(
+                fetch_handle.track_properties.max_cache_duration(),
+                Some(2_000)
+            );
+        }
     }
 
     #[tokio::test]
     async fn rejected_fetch_releases_its_pending_state() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-rejected").await;
-        let (request, handler) = start_fetch(&client, &server, TRACK).await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-fetch-rejected", version).await;
+            let (request, handler) = start_fetch(&client, &server, TRACK).await;
 
-        // Act
-        handler
-            .error(RequestErrorCode::InternalError, "rejected".to_string())
-            .await
-            .unwrap();
-        let result = request.await.unwrap();
+            // Act
+            handler
+                .error(RequestErrorCode::InternalError, "rejected".to_string())
+                .await
+                .unwrap();
+            let result = request.await.unwrap();
 
-        // Assert
-        assert!(result.is_err());
-        assert!(!has_pending_fetch(&client, handler.request_id));
+            // Assert
+            assert!(result.is_err());
+            assert!(!has_pending_fetch(&client, handler.request_id));
+        }
     }
 
     #[tokio::test]
     async fn abandoned_fetch_releases_its_pending_state() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-abandoned").await;
-        let (request, handler) = start_fetch(&client, &server, TRACK).await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-fetch-abandoned", version).await;
+            let (request, handler) = start_fetch(&client, &server, TRACK).await;
 
-        // Act
-        request.abort();
-        let _ = request.await;
+            // Act
+            request.abort();
+            let _ = request.await;
 
-        // Assert
-        assert!(!has_pending_fetch(&client, handler.request_id));
+            // Assert
+            assert!(!has_pending_fetch(&client, handler.request_id));
+        }
     }
 
     #[tokio::test]
     async fn repeated_fetches_on_one_session_each_end_and_release_their_state() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-repeated").await;
-        let with_objects = [
-            fetch_object(location(0, 0), b"first"),
-            fetch_object(location(0, 1), b"second"),
-        ];
-        let rounds: Vec<&[Object]> = (0..REPEATED_FETCHES)
-            .map(|round| {
-                if round % 2 == 0 {
-                    &with_objects[..]
-                } else {
-                    &[]
-                }
-            })
-            .collect();
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-fetch-repeated", version).await;
+            let with_objects = [
+                fetch_object(location(0, 0), b"first"),
+                fetch_object(location(0, 1), b"second"),
+            ];
+            let rounds: Vec<&[Object]> = (0..REPEATED_FETCHES)
+                .map(|round| {
+                    if round % 2 == 0 {
+                        &with_objects[..]
+                    } else {
+                        &[]
+                    }
+                })
+                .collect();
 
-        // Act
-        let mut fetched = Vec::new();
-        for (round, objects) in rounds.iter().enumerate() {
-            let completed =
-                tokio::time::timeout(HANDSHAKE_TIMEOUT, complete_fetch(&client, &server, objects))
-                    .await
-                    .unwrap_or_else(|_| panic!("FETCH round {round} did not complete"));
-            fetched.push(completed);
-        }
+            // Act
+            let mut fetched = Vec::new();
+            for (round, objects) in rounds.iter().enumerate() {
+                let completed = tokio::time::timeout(
+                    HANDSHAKE_TIMEOUT,
+                    complete_fetch(&client, &server, objects),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("FETCH round {round} did not complete"));
+                fetched.push(completed);
+            }
 
-        // Assert
-        for (round, ((_, received), sent)) in fetched.iter().zip(&rounds).enumerate() {
-            assert_eq!(received.as_slice(), *sent, "round {round}");
-        }
-        for (handle, _) in &fetched {
-            assert!(!has_pending_fetch(&client, handle.request_id));
+            // Assert
+            for (round, ((_, received), sent)) in fetched.iter().zip(&rounds).enumerate() {
+                assert_eq!(received.as_slice(), *sent, "round {round}");
+            }
+            for (handle, _) in &fetched {
+                assert!(!has_pending_fetch(&client, handle.request_id));
+            }
         }
     }
 
     #[tokio::test]
     async fn fetch_ok_after_the_caller_stopped_waiting_cancels_the_fetch_and_later_fetches_succeed()
     {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-late-ok").await;
-        let (request, handler) = start_fetch(&client, &server, TRACK).await;
-        request.abort();
-        let _ = request.await;
-        let later_objects = [fetch_object(START, b"later")];
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-fetch-late-ok", version).await;
+            let (request, handler) = start_fetch(&client, &server, TRACK).await;
+            request.abort();
+            let _ = request.await;
+            let later_objects = [fetch_object(START, b"later")];
 
-        // Act
-        handler.ok(false, END).await.unwrap();
-        let sender = server
-            .publisher()
-            .create_fetch_stream(handler.request_id)
-            .await
-            .unwrap();
-        let cancel = within(receive_fetch_cancel(&server)).await;
-        let stopped = within(send_until_stopped(&sender)).await;
-        let (_, later) = within(complete_fetch(&client, &server, &later_objects)).await;
+            // Act
+            handler.ok(false, END).await.unwrap();
+            let sender = server
+                .publisher()
+                .create_fetch_stream(handler.request_id)
+                .await
+                .unwrap();
+            let cancel = within(receive_fetch_cancel(&server)).await;
+            let stopped = within(send_until_stopped(&sender)).await;
+            let (_, later) = within(complete_fetch(&client, &server, &later_objects)).await;
 
-        // Assert
-        assert_eq!(cancel.request_id(), handler.request_id);
-        assert!(
-            TransportSendError::is_stopped_by_peer(&stopped),
-            "{stopped:#}"
-        );
-        assert!(!has_pending_fetch(&client, handler.request_id));
-        assert_eq!(later, later_objects);
+            // Assert
+            assert_eq!(cancel.request_id(), handler.request_id);
+            assert!(failed_for_the_cancel(version, &stopped), "{stopped:#}");
+            assert!(!has_pending_fetch(&client, handler.request_id));
+            assert_eq!(later, later_objects);
+        }
     }
 
     #[tokio::test]
     async fn fetches_answered_in_reverse_order_each_get_their_own_response_and_objects() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-reverse-order").await;
-        let tracks = ["track-0", "track-1", "track-2"];
-        let mut requests = Vec::new();
-        for track in tracks {
-            requests.push(start_fetch(&client, &server, track).await);
-        }
-        let end_of = |index: usize| location(index as u64 + 1, 0);
-        let object_of =
-            |index: usize| fetch_object(location(index as u64, 0), tracks[index].as_bytes());
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-fetch-reverse-order", version).await;
+            let tracks = ["track-0", "track-1", "track-2"];
+            let mut requests = Vec::new();
+            for track in tracks {
+                requests.push(start_fetch(&client, &server, track).await);
+            }
+            let end_of = |index: usize| location(index as u64 + 1, 0);
+            let object_of =
+                |index: usize| fetch_object(location(index as u64, 0), tracks[index].as_bytes());
 
-        // Act
-        for (index, (_, handler)) in requests.iter().enumerate().rev() {
-            within(serve_fetch(
-                &server,
-                handler,
-                end_of(index),
-                &[object_of(index)],
-            ))
-            .await;
-        }
-        let mut fetched = Vec::new();
-        for (request, handler) in requests {
-            fetched.push((
-                handler.request_id,
-                within(receive_fetch(&client, request)).await,
-            ));
-        }
+            // Act
+            for (index, (_, handler)) in requests.iter().enumerate().rev() {
+                within(serve_fetch(
+                    &server,
+                    handler,
+                    end_of(index),
+                    &[object_of(index)],
+                ))
+                .await;
+            }
+            let mut fetched = Vec::new();
+            for (request, handler) in requests {
+                fetched.push((
+                    handler.request_id,
+                    within(receive_fetch(&client, request)).await,
+                ));
+            }
 
-        // Assert
-        for (index, (request_id, (handle, objects))) in fetched.into_iter().enumerate() {
-            assert_eq!(handle.request_id, request_id, "{}", tracks[index]);
-            assert_eq!(handle.end_location, end_of(index), "{}", tracks[index]);
-            assert_eq!(objects, [object_of(index)], "{}", tracks[index]);
+            // Assert
+            for (index, (request_id, (handle, objects))) in fetched.into_iter().enumerate() {
+                assert_eq!(handle.request_id, request_id, "{}", tracks[index]);
+                assert_eq!(handle.end_location, end_of(index), "{}", tracks[index]);
+                assert_eq!(objects, [object_of(index)], "{}", tracks[index]);
+            }
         }
     }
 
     #[tokio::test]
     async fn cancelling_one_fetch_leaves_the_other_fetches_on_the_session_running() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-cancel-one").await;
-        let firsts = [b"a0", b"b0", b"c0"].map(|payload| fetch_object(location(0, 0), payload));
-        let seconds = [b"a1", b"c1"].map(|payload| fetch_object(location(0, 1), payload));
-        let mut kept_a = open_fetch(&client, &server, "track-a", &firsts[0]).await;
-        let cancelled = open_fetch(&client, &server, "track-b", &firsts[1]).await;
-        let mut kept_c = open_fetch(&client, &server, "track-c", &firsts[2]).await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-fetch-cancel-one", version).await;
+            let firsts = [b"a0", b"b0", b"c0"].map(|payload| fetch_object(location(0, 0), payload));
+            let seconds = [b"a1", b"c1"].map(|payload| fetch_object(location(0, 1), payload));
+            let mut kept_a = open_fetch(&client, &server, "track-a", &firsts[0]).await;
+            let cancelled = open_fetch(&client, &server, "track-b", &firsts[1]).await;
+            let mut kept_c = open_fetch(&client, &server, "track-c", &firsts[2]).await;
 
-        // Act
-        client
-            .subscriber()
-            .fetch_cancel(&cancelled.handle)
-            .await
-            .unwrap();
-        drop(cancelled.receiver);
-        let cancel = within(receive_fetch_cancel(&server)).await;
-        let stopped = within(send_until_stopped(&cancelled.sender)).await;
-        for (kept, second) in [(&kept_a, &seconds[0]), (&kept_c, &seconds[1])] {
-            kept.sender.send_object(second).await.unwrap();
-            kept.sender.close().await.unwrap();
+            // Act
+            client
+                .subscriber()
+                .fetch_cancel(&cancelled.handle)
+                .await
+                .unwrap();
+            drop(cancelled.receiver);
+            let cancel = within(receive_fetch_cancel(&server)).await;
+            let stopped = within(send_until_stopped(&cancelled.sender)).await;
+            for (kept, second) in [(&kept_a, &seconds[0]), (&kept_c, &seconds[1])] {
+                kept.sender.send_object(second).await.unwrap();
+                kept.sender.close().await.unwrap();
+            }
+            let received_a = within(read_fetch_objects(&mut kept_a.receiver)).await;
+            let received_c = within(read_fetch_objects(&mut kept_c.receiver)).await;
+
+            // Assert
+            assert_eq!(cancel.request_id(), cancelled.handler.request_id);
+            assert!(failed_for_the_cancel(version, &stopped), "{stopped:#}");
+            assert_eq!(received_a, [firsts[0].clone(), seconds[0].clone()]);
+            assert_eq!(received_c, [firsts[2].clone(), seconds[1].clone()]);
         }
-        let received_a = within(read_fetch_objects(&mut kept_a.receiver)).await;
-        let received_c = within(read_fetch_objects(&mut kept_c.receiver)).await;
-
-        // Assert
-        assert_eq!(cancel.request_id(), cancelled.handler.request_id);
-        assert!(
-            TransportSendError::is_stopped_by_peer(&stopped),
-            "{stopped:#}"
-        );
-        assert_eq!(received_a, [firsts[0].clone(), seconds[0].clone()]);
-        assert_eq!(received_c, [firsts[2].clone(), seconds[1].clone()]);
     }
 
     #[tokio::test]
     async fn fetch_fails_as_soon_as_the_peer_disconnects_without_answering() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-disconnect-response").await;
-        let (request, _handler) = start_fetch(&client, &server, TRACK).await;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-fetch-disconnect-response", version).await;
+            let (request, _handler) = start_fetch(&client, &server, TRACK).await;
 
-        // Act
-        server.close_with_error(TerminationErrorCode::NoError, "closing");
-        let fetched = tokio::time::timeout(DISCONNECT_TIMEOUT, request).await;
+            // Act
+            server.close_with_error(TerminationErrorCode::NoError, "closing");
+            let fetched = tokio::time::timeout(DISCONNECT_TIMEOUT, request).await;
 
-        // Assert
-        let fetched = fetched
-            .expect("the FETCH wait ends once the peer disconnects")
-            .unwrap();
-        assert!(
-            matches!(fetched, Err(RequestFailure::SessionClosed)),
-            "{fetched:?}"
-        );
+            // Assert
+            let fetched = fetched
+                .expect("the FETCH wait ends once the peer disconnects")
+                .unwrap();
+            assert!(
+                matches!(fetched, Err(RequestFailure::SessionClosed)),
+                "{fetched:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn fetch_stream_fails_instead_of_ending_when_the_peer_disconnects_mid_stream() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-disconnect-mid-stream").await;
-        let mut open = open_fetch(&client, &server, TRACK, &fetch_object(START, b"first")).await;
-        let Fetch::Object(_) = within(open.receiver.receive()).await.unwrap() else {
-            panic!("expected the first object of the FETCH");
-        };
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-fetch-disconnect-mid-stream", version).await;
+            let mut open =
+                open_fetch(&client, &server, TRACK, &fetch_object(START, b"first")).await;
+            let Fetch::Object(_) = within(open.receiver.receive()).await.unwrap() else {
+                panic!("expected the first object of the FETCH");
+            };
 
-        // Act
-        server.close_with_error(TerminationErrorCode::NoError, "closing");
-        let received = tokio::time::timeout(DISCONNECT_TIMEOUT, open.receiver.receive()).await;
+            // Act
+            server.close_with_error(TerminationErrorCode::NoError, "closing");
+            let received = tokio::time::timeout(DISCONNECT_TIMEOUT, open.receiver.receive()).await;
 
-        // Assert
-        let received = received.expect("the receive wait ends once the peer disconnects");
-        assert!(received.is_err(), "{received:?}");
+            // Assert
+            let received = received.expect("the receive wait ends once the peer disconnects");
+            assert!(received.is_err(), "{received:?}");
+        }
     }
 
     async fn start_subscribe(
@@ -1311,387 +1319,423 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_ok_after_cancellation_unsubscribes_and_later_subscribe_delivers() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-subscribe-late-ok").await;
-        let (request, handler) = start_subscribe(&client, &server, "cancelled").await;
-        let mut object = object_with_extensions();
-        object.payload = Bytes::from_static(b"later subscription");
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-subscribe-late-ok", version).await;
+            let (request, handler) = start_subscribe(&client, &server, "cancelled").await;
+            let mut object = object_with_extensions();
+            object.payload = Bytes::from_static(b"later subscription");
 
-        // Act
-        request.abort();
-        let cancelled = request.await.unwrap_err();
-        let unsubscribe = within(async {
-            handler.ok(0, ContentExists::False).await.unwrap();
-            let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
-            else {
-                panic!("expected UNSUBSCRIBE after a late SUBSCRIBE_OK");
-            };
-            unsubscribe
-        })
-        .await;
-        let (later_request, later_handler) = start_subscribe(&client, &server, "later").await;
-        let (later, received_alias, objects) = within(async {
-            let alias = later_handler.ok(0, ContentExists::False).await.unwrap();
-            let later = later_request.await.unwrap().unwrap();
-            send_subgroup_object(&server, &later_handler.into_subscription(alias), &object).await;
-            let (received_alias, objects) = receive_subscribe_objects(&client, &later).await;
-            (later, received_alias, objects)
-        })
-        .await;
+            // Act
+            request.abort();
+            let cancelled = request.await.unwrap_err();
+            let unsubscribe = within(async {
+                handler.ok(0, ContentExists::False).await.unwrap();
+                let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
+                else {
+                    panic!("expected UNSUBSCRIBE after a late SUBSCRIBE_OK");
+                };
+                unsubscribe
+            })
+            .await;
+            let (later_request, later_handler) = start_subscribe(&client, &server, "later").await;
+            let (later, received_alias, objects) = within(async {
+                let alias = later_handler.ok(0, ContentExists::False).await.unwrap();
+                let later = later_request.await.unwrap().unwrap();
+                send_subgroup_object(&server, &later_handler.into_subscription(alias), &object)
+                    .await;
+                let (received_alias, objects) = receive_subscribe_objects(&client, &later).await;
+                (later, received_alias, objects)
+            })
+            .await;
 
-        // Assert
-        assert!(cancelled.is_cancelled());
-        assert_eq!(unsubscribe.subscribe_id(), handler.request_id());
-        assert_ne!(later.request_id(), handler.request_id());
-        assert_eq!(later.track_name(), "later");
-        assert_eq!(received_alias, later.track_alias());
-        assert_eq!(objects, [object]);
+            // Assert
+            assert!(cancelled.is_cancelled());
+            assert_eq!(unsubscribe.subscribe_id(), handler.request_id());
+            assert_ne!(later.request_id(), handler.request_id());
+            assert_eq!(later.track_name(), "later");
+            assert_eq!(received_alias, later.track_alias());
+            assert_eq!(objects, [object]);
+        }
     }
 
     #[tokio::test]
     async fn unsubscribing_one_track_leaves_the_other_delivering_on_the_same_session() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-unsubscribe-one").await;
-        let (cancelled_request, cancelled_handler) =
-            start_subscribe(&client, &server, "cancelled").await;
-        let cancelled_alias = within(cancelled_handler.ok(0, ContentExists::False))
-            .await
-            .unwrap();
-        let cancelled = within(cancelled_request).await.unwrap().unwrap();
-        let (kept_request, kept_handler) = start_subscribe(&client, &server, "kept").await;
-        let kept_alias = within(kept_handler.ok(0, ContentExists::False))
-            .await
-            .unwrap();
-        let kept = within(kept_request).await.unwrap().unwrap();
-        let mut before = object_with_extensions();
-        before.payload = Bytes::from_static(b"before unsubscribe");
-        within(send_subgroup_object(
-            &server,
-            &cancelled_handler.into_subscription(cancelled_alias),
-            &before,
-        ))
-        .await;
-        let (_, cancelled_before) = within(receive_subscribe_objects(&client, &cancelled)).await;
-        within(send_subgroup_object(
-            &server,
-            &kept_handler.into_subscription(kept_alias),
-            &before,
-        ))
-        .await;
-        let mut kept_receiver = within(data_receiver(&client, &kept)).await;
-        let mut first = within(next_subgroup(&mut kept_receiver)).await;
-        let kept_before = within(read_subgroup_objects(&mut first)).await;
-        let mut after = object_with_extensions();
-        after.location.group_id += 1;
-        after.payload = Bytes::from_static(b"after unsubscribe");
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-unsubscribe-one", version).await;
+            let (cancelled_request, cancelled_handler) =
+                start_subscribe(&client, &server, "cancelled").await;
+            let cancelled_alias = within(cancelled_handler.ok(0, ContentExists::False))
+                .await
+                .unwrap();
+            let cancelled = within(cancelled_request).await.unwrap().unwrap();
+            let (kept_request, kept_handler) = start_subscribe(&client, &server, "kept").await;
+            let kept_alias = within(kept_handler.ok(0, ContentExists::False))
+                .await
+                .unwrap();
+            let kept = within(kept_request).await.unwrap().unwrap();
+            let mut before = object_with_extensions();
+            before.payload = Bytes::from_static(b"before unsubscribe");
+            within(send_subgroup_object(
+                &server,
+                &cancelled_handler.into_subscription(cancelled_alias),
+                &before,
+            ))
+            .await;
+            let (_, cancelled_before) =
+                within(receive_subscribe_objects(&client, &cancelled)).await;
+            within(send_subgroup_object(
+                &server,
+                &kept_handler.into_subscription(kept_alias),
+                &before,
+            ))
+            .await;
+            let mut kept_receiver = within(data_receiver(&client, &kept)).await;
+            let mut first = within(next_subgroup(&mut kept_receiver)).await;
+            let kept_before = within(read_subgroup_objects(&mut first)).await;
+            let mut after = object_with_extensions();
+            after.location.group_id += 1;
+            after.payload = Bytes::from_static(b"after unsubscribe");
 
-        // Act
-        let (unsubscribe, received_alias, objects) = within(async {
-            client.subscriber().unsubscribe(&cancelled).await.unwrap();
-            let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
-            else {
-                panic!("expected UNSUBSCRIBE from the client");
-            };
-            send_subgroup_object(&server, &kept_handler.into_subscription(kept_alias), &after)
-                .await;
-            let mut next = next_subgroup(&mut kept_receiver).await;
-            let received_alias = next.track_alias;
-            let objects = read_subgroup_objects(&mut next).await;
-            (unsubscribe, received_alias, objects)
-        })
-        .await;
+            // Act
+            let (unsubscribe, received_alias, objects) = within(async {
+                client.subscriber().unsubscribe(&cancelled).await.unwrap();
+                let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
+                else {
+                    panic!("expected UNSUBSCRIBE from the client");
+                };
+                send_subgroup_object(&server, &kept_handler.into_subscription(kept_alias), &after)
+                    .await;
+                let mut next = next_subgroup(&mut kept_receiver).await;
+                let received_alias = next.track_alias;
+                let objects = read_subgroup_objects(&mut next).await;
+                (unsubscribe, received_alias, objects)
+            })
+            .await;
 
-        // Assert
-        assert_eq!(cancelled_before, [before.clone()]);
-        assert_eq!(kept_before, [before]);
-        assert_eq!(unsubscribe.subscribe_id(), cancelled_handler.request_id());
-        assert_ne!(unsubscribe.subscribe_id(), kept.request_id());
-        assert_eq!(received_alias, kept_alias);
-        assert_eq!(objects, [after]);
+            // Assert
+            assert_eq!(cancelled_before, [before.clone()]);
+            assert_eq!(kept_before, [before]);
+            assert_eq!(unsubscribe.subscribe_id(), cancelled_handler.request_id());
+            assert_ne!(unsubscribe.subscribe_id(), kept.request_id());
+            assert_eq!(received_alias, kept_alias);
+            assert_eq!(objects, [after]);
+        }
     }
 
     #[tokio::test]
     async fn subscribes_answered_in_reverse_order_receive_their_own_metadata_alias_and_objects() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_dual_sessions("subscriber-subscribe-reverse-order").await;
-        let tracks = ["track-0", "track-1", "track-2"];
-        let mut requests = Vec::new();
-        for track in tracks {
-            requests.push(start_subscribe(&client, &server, track).await);
-        }
-        let objects = tracks.map(|track| {
-            let mut object = object_with_extensions();
-            object.payload = Bytes::copy_from_slice(track.as_bytes());
-            object
-        });
-        let content_of = |index: usize| ContentExists::True {
-            location: location(index as u64 + 1, 0),
-        };
-        let mut aliases = vec![0; tracks.len()];
-
-        // Act
-        let received = within(async {
-            for (index, (_, handler)) in requests.iter_mut().enumerate().rev() {
-                handler
-                    .track_properties
-                    .set_max_cache_duration(Some(1000 + index as u64));
-                aliases[index] = handler
-                    .ok(10 + index as u64, content_of(index))
-                    .await
-                    .unwrap();
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-subscribe-reverse-order", version).await;
+            let tracks = ["track-0", "track-1", "track-2"];
+            let mut requests = Vec::new();
+            for track in tracks {
+                requests.push(start_subscribe(&client, &server, track).await);
             }
-            let mut received = Vec::new();
-            for (index, (request, handler)) in requests.into_iter().enumerate() {
-                let subscription = request.await.unwrap().unwrap();
-                send_subgroup_object(
-                    &server,
-                    &handler.into_subscription(aliases[index]),
-                    &objects[index],
+            let objects = tracks.map(|track| {
+                let mut object = object_with_extensions();
+                object.payload = Bytes::copy_from_slice(track.as_bytes());
+                object
+            });
+            let content_of = |index: usize| ContentExists::True {
+                location: location(index as u64 + 1, 0),
+            };
+            let mut aliases = vec![0; tracks.len()];
+
+            // Act
+            let received = within(async {
+                for (index, (_, handler)) in requests.iter_mut().enumerate().rev() {
+                    handler
+                        .track_properties
+                        .set_max_cache_duration(Some(1000 + index as u64));
+                    aliases[index] = handler
+                        .ok(10 + index as u64, content_of(index))
+                        .await
+                        .unwrap();
+                }
+                let mut received = Vec::new();
+                for (index, (request, handler)) in requests.into_iter().enumerate() {
+                    let subscription = request.await.unwrap().unwrap();
+                    send_subgroup_object(
+                        &server,
+                        &handler.into_subscription(aliases[index]),
+                        &objects[index],
+                    )
+                    .await;
+                    let (received_alias, objects) =
+                        receive_subscribe_objects(&client, &subscription).await;
+                    received.push((handler.request_id(), subscription, received_alias, objects));
+                }
+                received
+            })
+            .await;
+
+            // Assert
+            for (index, (request_id, subscription, received_alias, received_objects)) in
+                received.into_iter().enumerate()
+            {
+                assert_eq!(subscription.request_id(), request_id, "{}", tracks[index]);
+                assert_eq!(subscription.track_namespace(), "ns");
+                assert_eq!(subscription.track_name(), tracks[index]);
+                assert_eq!(subscription.track_alias(), aliases[index]);
+                assert_eq!(received_alias, aliases[index]);
+                assert_eq!(subscription.expires(), Some(10 + index as u64));
+                assert_eq!(subscription.content_exists(), content_of(index));
+                assert_eq!(
+                    subscription.track_properties().max_cache_duration(),
+                    Some(1000 + index as u64)
+                );
+                assert_eq!(received_objects, [objects[index].clone()]);
+            }
+            assert_ne!(aliases[0], aliases[1]);
+            assert_ne!(aliases[1], aliases[2]);
+            assert_ne!(aliases[0], aliases[2]);
+        }
+    }
+
+    /// A subscription to `ns/track` the server answered with Largest {3, 1}.
+    async fn subscribed(client: &Session, server: &Session) -> (Subscription, SubscribeHandler) {
+        let (request, handler) = start_subscribe(client, server, "track").await;
+        let largest = location(3, 1);
+        handler
+            .ok(0, ContentExists::True { location: largest })
+            .await
+            .unwrap();
+        (request.await.unwrap().unwrap(), handler)
+    }
+
+    /// How sending on the response stream of a FETCH the subscriber
+    /// cancelled fails: draft-14 meets the subscriber's STOP_SENDING, while
+    /// a draft-18 publisher resets the stream itself (§5.2).
+    fn failed_for_the_cancel(version: Version, error: &anyhow::Error) -> bool {
+        match version {
+            Version::Draft14 => TransportSendError::is_stopped_by_peer(error),
+            Version::Draft18 => error.chain().any(|cause| {
+                matches!(
+                    cause.downcast_ref::<TransportSendError>(),
+                    Some(TransportSendError::ClosedStream)
                 )
-                .await;
-                let (received_alias, objects) =
-                    receive_subscribe_objects(&client, &subscription).await;
-                received.push((handler.request_id(), subscription, received_alias, objects));
-            }
-            received
-        })
-        .await;
-
-        // Assert
-        for (index, (request_id, subscription, received_alias, received_objects)) in
-            received.into_iter().enumerate()
-        {
-            assert_eq!(subscription.request_id(), request_id, "{}", tracks[index]);
-            assert_eq!(subscription.track_namespace(), "ns");
-            assert_eq!(subscription.track_name(), tracks[index]);
-            assert_eq!(subscription.track_alias(), aliases[index]);
-            assert_eq!(received_alias, aliases[index]);
-            assert_eq!(subscription.expires(), Some(10 + index as u64));
-            assert_eq!(subscription.content_exists(), content_of(index));
-            assert_eq!(
-                subscription.track_properties().max_cache_duration(),
-                Some(1000 + index as u64)
-            );
-            assert_eq!(received_objects, [objects[index].clone()]);
+            }),
         }
-        assert_ne!(aliases[0], aliases[1]);
-        assert_ne!(aliases[1], aliases[2]);
-        assert_ne!(aliases[0], aliases[2]);
+    }
+
+    #[tokio::test]
+    async fn a_relative_joining_fetch_names_its_subscription_and_delivers_the_joined_objects() {
+        for version in DRAFTS {
+            // Arrange: the subscription's Largest is {3, 1}
+            let (client, server) = connected_sessions("subscriber-relative-joining", version).await;
+            let (subscription, subscribe_handler) = subscribed(&client, &server).await;
+            let joined = [
+                fetch_object(location(2, 0), b"joined-2"),
+                fetch_object(location(3, 0), b"joined-3"),
+            ];
+
+            // Act
+            let mut subscriber = client.subscriber();
+            let (handle, fetch_params) = within(async {
+                tokio::join!(
+                    subscriber.fetch_relative_joining(&subscription, 1, FetchOption::default()),
+                    async {
+                        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap()
+                        else {
+                            panic!("expected FETCH from the client");
+                        };
+                        serve_fetch(&server, &handler, location(3, 2), &joined).await;
+                        handler.fetch.fetch_params.clone()
+                    }
+                )
+            })
+            .await;
+            let mut receiver = subscriber
+                .accept_fetch_receiver(&handle.unwrap())
+                .await
+                .unwrap();
+            let fetched = within(read_fetch_objects(&mut receiver)).await;
+
+            // Assert
+            assert_eq!(
+                fetch_params,
+                FetchParams::RelativeJoining {
+                    joining_request_id: subscribe_handler.request_id(),
+                    joining_start: 1,
+                }
+            );
+            assert_eq!(fetched, joined);
+        }
     }
 
     #[tokio::test]
     async fn update_forward_repeats_the_subscription_fields_with_the_new_forward_flag() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-update-forward").await;
-        let mut subscriber = client.subscriber();
-        let request = tokio::spawn(async move {
-            subscriber
-                .subscribe(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    SubscribeOption::default(),
-                )
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-update-forward", version).await;
+            let (subscription, handler) = subscribed(&client, &server).await;
+
+            // Act
+            client
+                .subscriber()
+                .update_forward(&subscription, false)
                 .await
-        });
-        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE from the client");
-        };
-        let largest = Location {
-            group_id: 3,
-            object_id: 1,
-        };
-        handler
-            .ok(0, ContentExists::True { location: largest })
-            .await
-            .unwrap();
-        let subscription = request.await.unwrap().unwrap();
+                .unwrap();
 
-        // Act
-        client
-            .subscriber()
-            .update_forward(&subscription, false)
-            .await
-            .unwrap();
-
-        // Assert
-        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE_UPDATE from the client");
-        };
-        assert_eq!(update.subscription_request_id(), handler.request_id());
-        assert!(!update.forward());
-        assert_eq!(
-            update.filter(),
-            Some(FilterType::AbsoluteStart {
-                location: Location {
-                    group_id: 3,
-                    object_id: 2
-                }
-            })
-        );
-        assert_eq!(update.subscriber_priority(), 128);
+            // Assert
+            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_UPDATE from the client");
+            };
+            assert_eq!(update.subscription_request_id(), handler.request_id());
+            assert!(!update.forward());
+            assert_eq!(
+                update.filter(),
+                Some(FilterType::AbsoluteStart {
+                    location: Location {
+                        group_id: 3,
+                        object_id: 2
+                    }
+                })
+            );
+            assert_eq!(update.subscriber_priority(), 128);
+        }
     }
 
     #[tokio::test]
-    async fn accepting_a_draft14_update_tells_the_subscriber_nothing() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-update-largest").await;
-        let mut subscriber = client.subscriber();
-        let request = tokio::spawn(async move {
-            subscriber
-                .subscribe(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    SubscribeOption::default(),
-                )
+    async fn accepting_an_update_tells_the_subscriber_the_largest_object_only_on_draft18() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-update-largest", version).await;
+            let (subscription, _handler) = subscribed(&client, &server).await;
+            client
+                .subscriber()
+                .update_forward(&subscription, true)
                 .await
-        });
-        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE from the client");
-        };
-        handler.ok(0, ContentExists::False).await.unwrap();
-        let subscription = request.await.unwrap().unwrap();
-        client
-            .subscriber()
-            .update_forward(&subscription, true)
-            .await
-            .unwrap();
-        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE_UPDATE from the client");
-        };
+                .unwrap();
+            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_UPDATE from the client");
+            };
 
-        // Act
-        let told = update.ok(Some(location(3, 1)));
+            // Act
+            let told = update.ok(Some(location(3, 1)));
 
-        // Assert: draft-14 SUBSCRIBE_UPDATE has no answer
-        assert_eq!(
-            told,
-            crate::subscribe::UpdateAnswer::Accepted {
-                largest_told: false
-            }
-        );
+            // Assert: draft-18 §10.2.11 REQUEST_OK; draft-14 SUBSCRIBE_UPDATE has no answer
+            assert_eq!(
+                told,
+                crate::subscribe::UpdateAnswer::Accepted {
+                    largest_told: version == Version::Draft18
+                },
+                "{version:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn end_before_group_sends_the_group_as_end_group_plus_one() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-end-before-group").await;
-        let mut subscriber = client.subscriber();
-        let request = tokio::spawn(async move {
-            subscriber
-                .subscribe(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    SubscribeOption::default(),
-                )
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-end-before-group", version).await;
+            let (subscription, handler) = subscribed(&client, &server).await;
+
+            // Act
+            client
+                .subscriber()
+                .end_before_group(&subscription, 7, true)
                 .await
-        });
-        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE from the client");
-        };
-        let largest = Location {
-            group_id: 3,
-            object_id: 1,
-        };
-        handler
-            .ok(0, ContentExists::True { location: largest })
-            .await
-            .unwrap();
-        let subscription = request.await.unwrap().unwrap();
+                .unwrap();
 
-        // Act
-        client
-            .subscriber()
-            .end_before_group(&subscription, 7, true)
-            .await
-            .unwrap();
-
-        // Assert: groups up to 6 stay in the range, which the field encodes as 6 + 1
-        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE_UPDATE from the client");
-        };
-        assert_eq!(update.subscription_request_id(), handler.request_id());
-        assert!(update.forward());
-        assert_eq!(
-            update.filter(),
-            Some(FilterType::AbsoluteRange {
-                location: Location {
-                    group_id: 3,
-                    object_id: 2
-                },
-                end_group: 6,
-            })
-        );
+            // Assert: groups up to 6 stay in the range, which the field encodes as 6 + 1
+            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_UPDATE from the client");
+            };
+            assert_eq!(update.subscription_request_id(), handler.request_id());
+            assert!(update.forward());
+            assert_eq!(
+                update.filter(),
+                Some(FilterType::AbsoluteRange {
+                    location: Location {
+                        group_id: 3,
+                        object_id: 2
+                    },
+                    end_group: 6,
+                })
+            );
+        }
     }
 
     #[tokio::test]
     async fn subscribe_update_sends_the_given_fields_for_the_given_subscription() {
-        // Arrange
-        let track = subscribed_track("subscriber-subscribe-update").await;
-        let option = SubscribeUpdateOption {
-            start_location: Location {
-                group_id: 4,
-                object_id: 2,
-            },
-            end_group: 9,
-            subscriber_priority: 7,
-            forward: true,
-        };
-
-        // Act
-        track
-            .client
-            .subscriber()
-            .subscribe_update(&track.subscription, option)
-            .await
-            .unwrap();
-
-        // Assert
-        let SessionEvent::SubscribeUpdate(update) = track.server.receive_event().await.unwrap()
-        else {
-            panic!("expected SUBSCRIBE_UPDATE from the client");
-        };
-        assert_eq!(
-            update.subscription_request_id(),
-            track.subscription.request_id()
-        );
-        assert_eq!(
-            update.filter(),
-            Some(FilterType::AbsoluteRange {
-                location: Location {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-subscribe-update", version).await;
+            let option = SubscribeUpdateOption {
+                start_location: Location {
                     group_id: 4,
-                    object_id: 2
+                    object_id: 2,
                 },
-                end_group: 8,
-            })
-        );
-        assert_eq!(update.subscriber_priority(), 7);
-        assert!(update.forward());
+                end_group: 9,
+                subscriber_priority: 7,
+                forward: true,
+            };
+
+            let (subscription, handler) = subscribed(&client, &server).await;
+
+            // Act
+            client
+                .subscriber()
+                .subscribe_update(&subscription, option)
+                .await
+                .unwrap();
+
+            // Assert
+            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_UPDATE from the client");
+            };
+            assert_eq!(update.subscription_request_id(), handler.request_id());
+            assert_eq!(
+                update.filter(),
+                Some(FilterType::AbsoluteRange {
+                    location: Location {
+                        group_id: 4,
+                        object_id: 2
+                    },
+                    end_group: 8,
+                })
+            );
+            assert_eq!(update.subscriber_priority(), 7);
+            assert!(update.forward());
+        }
     }
 
     #[tokio::test]
     async fn subscribe_fails_as_soon_as_the_peer_disconnects_without_answering() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-peer-disconnects").await;
-        let mut subscriber = client.subscriber();
-        let request = tokio::spawn(async move {
-            subscriber
-                .subscribe(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    SubscribeOption::default(),
-                )
-                .await
-        });
-        let SessionEvent::Subscribe(_) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE from the client");
-        };
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-peer-disconnects", version).await;
+            let mut subscriber = client.subscriber();
+            let request = tokio::spawn(async move {
+                subscriber
+                    .subscribe(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        SubscribeOption::default(),
+                    )
+                    .await
+            });
+            let SessionEvent::Subscribe(_) = server.receive_event().await.unwrap() else {
+                panic!("expected SUBSCRIBE from the client");
+            };
 
-        // Act
-        drop(server);
-        let subscribed = tokio::time::timeout(DISCONNECT_TIMEOUT, request).await;
+            // Act
+            drop(server);
+            let subscribed = tokio::time::timeout(DISCONNECT_TIMEOUT, request).await;
 
-        // Assert
-        assert!(subscribed.unwrap().unwrap().is_err());
+            // Assert
+            assert!(subscribed.unwrap().unwrap().is_err());
+        }
     }
 }

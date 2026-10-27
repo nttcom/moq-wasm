@@ -177,8 +177,8 @@ mod tests {
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{
-                HANDSHAKE_TIMEOUT, dual_client, dual_client_with_config,
-                spawn_connected_dual_sessions, spawn_dual_server_handshake,
+                DRAFTS, HANDSHAKE_TIMEOUT, connected_sessions, dual_client,
+                dual_client_with_config, spawn_dual_server_handshake,
             },
         },
     };
@@ -235,24 +235,26 @@ mod tests {
 
     #[tokio::test]
     async fn client_request_ids_are_even_from_zero_and_server_ids_odd_from_one() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-parity").await;
-        let client_context = client.publisher().session;
-        let server_context = server.publisher().session;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("request-id-parity", version).await;
+            let client_context = client.publisher().session;
+            let server_context = server.publisher().session;
 
-        // Act
-        let client_ids = [
-            client_context.connection().control.next_request_id(),
-            client_context.connection().control.next_request_id(),
-        ];
-        let server_ids = [
-            server_context.connection().control.next_request_id(),
-            server_context.connection().control.next_request_id(),
-        ];
+            // Act
+            let client_ids = [
+                client_context.connection().control.next_request_id(),
+                client_context.connection().control.next_request_id(),
+            ];
+            let server_ids = [
+                server_context.connection().control.next_request_id(),
+                server_context.connection().control.next_request_id(),
+            ];
 
-        // Assert
-        assert_eq!(client_ids, [0, 2]);
-        assert_eq!(server_ids, [1, 3]);
+            // Assert
+            assert_eq!(client_ids, [0, 2]);
+            assert_eq!(server_ids, [1, 3]);
+        }
     }
 
     #[tokio::test]

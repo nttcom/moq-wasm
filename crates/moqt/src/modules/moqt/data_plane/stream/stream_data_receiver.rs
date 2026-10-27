@@ -239,7 +239,7 @@ mod tests {
     use super::Subgroup;
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, first_subgroup_stream, open_subgroup, published_track,
+            HANDSHAKE_TIMEOUT, first_subgroup_stream, open_raw_subgroup, published_track,
         },
         object::{
             ForwardingPreference, Location, ObjectStatus, StreamReceiveError, SubgroupObjectSender,
@@ -268,7 +268,7 @@ mod tests {
         // Arrange: deltas 0, 0, 1 mean ids 0, 1, 3
         let track = published_track("receiver-deltas").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut sender = open_subgroup(&factory, 4, SubgroupId::Value(2)).await;
+        let mut sender = open_raw_subgroup(&factory, 4, SubgroupId::Value(2)).await;
         send_raw(&mut sender, 0, payload(b"a")).await;
         send_raw(&mut sender, 0, payload(b"b")).await;
         send_raw(&mut sender, 1, payload(b"c")).await;
@@ -315,7 +315,7 @@ mod tests {
         // Arrange
         let track = published_track("receiver-first-object").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut sender = open_subgroup(&factory, 0, SubgroupId::FirstObjectIdDelta).await;
+        let mut sender = open_raw_subgroup(&factory, 0, SubgroupId::FirstObjectIdDelta).await;
         send_raw(&mut sender, 5, payload(b"a")).await;
         let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
 
@@ -342,7 +342,7 @@ mod tests {
         // Arrange
         let track = published_track("receiver-first-object-empty").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut sender = open_subgroup(&factory, 0, SubgroupId::FirstObjectIdDelta).await;
+        let mut sender = open_raw_subgroup(&factory, 0, SubgroupId::FirstObjectIdDelta).await;
         let receiver = first_subgroup_stream(&track.server, &track.accepted);
         sender.close().await.unwrap();
         let mut receiver = receiver.await;
@@ -356,7 +356,7 @@ mod tests {
         // Arrange
         let track = published_track("receiver-status").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut sender = open_subgroup(&factory, 0, SubgroupId::None).await;
+        let mut sender = open_raw_subgroup(&factory, 0, SubgroupId::None).await;
         send_raw(
             &mut sender,
             0,
@@ -382,7 +382,7 @@ mod tests {
         // Arrange: draft-14 §10.2.1.1 defines no status 0x2
         let track = published_track("receiver-unknown-status").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut sender = open_subgroup(&factory, 0, SubgroupId::None).await;
+        let mut sender = open_raw_subgroup(&factory, 0, SubgroupId::None).await;
         send_raw(&mut sender, 0, SubgroupObject::new_status(0x2)).await;
         let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
         receive(&mut receiver).await;

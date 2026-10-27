@@ -163,7 +163,8 @@ mod tests {
         modules::{
             moqt::domains::connection::IncomingObjectNotification,
             test_support::{
-                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
+                DRAFTS, connected_sessions, notify_datagram, register_and_take_data_receiver,
+                spawn_connected_dual_sessions,
             },
         },
     };
@@ -240,43 +241,47 @@ mod tests {
 
     #[tokio::test]
     async fn publish_error_drops_the_objects_buffered_for_its_track_alias() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-handler-error-buffer").await;
-        let request = tokio::spawn(async move {
-            client
-                .publisher()
-                .publish(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    PublishOption::default(),
-                )
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("publish-handler-error-buffer", version).await;
+            let request = tokio::spawn(async move {
+                client
+                    .publisher()
+                    .publish(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        PublishOption::default(),
+                    )
+                    .await
+            });
+            let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+                panic!("expected PUBLISH from the client");
+            };
+            let context = server.subscriber().session;
+            notify_datagram(&context, handler.track_alias).await;
+
+            // Act
+            handler
+                .error(RequestErrorCode::InternalError, "uninterested".to_string())
                 .await
-        });
-        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected PUBLISH from the client");
-        };
-        let context = server.subscriber().session;
-        notify_datagram(&context, handler.track_alias).await;
+                .unwrap();
+            let notification = notify_datagram(&context, handler.track_alias).await;
 
-        // Act
-        handler
-            .error(RequestErrorCode::InternalError, "uninterested".to_string())
-            .await
-            .unwrap();
-        let notification = notify_datagram(&context, handler.track_alias).await;
-
-        // Assert
-        assert!(
-            matches!(notification, IncomingObjectNotification::Discarded),
-            "{notification:?}"
-        );
-        let mut receiver =
-            register_and_take_data_receiver(&context, OTHER_REQUEST_ID, handler.track_alias).await;
-        let received = receiver.try_recv();
-        assert!(
-            matches!(&received, Err(TryRecvError::Empty)),
-            "{received:?}"
-        );
-        request.abort();
+            // Assert
+            assert!(
+                matches!(notification, IncomingObjectNotification::Discarded),
+                "{notification:?}"
+            );
+            let mut receiver =
+                register_and_take_data_receiver(&context, OTHER_REQUEST_ID, handler.track_alias)
+                    .await;
+            let received = receiver.try_recv();
+            assert!(
+                matches!(&received, Err(TryRecvError::Empty)),
+                "{received:?}"
+            );
+            request.abort();
+        }
     }
 }

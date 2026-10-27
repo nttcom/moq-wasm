@@ -89,10 +89,11 @@ impl DataReceiver {
 #[cfg(test)]
 mod tests {
     use crate::{
+        Version,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, PublishedTrack, data_receiver, datagram_object, next_datagram,
-            next_subgroup, object_with_extensions, open_subgroup, published_draft18_track,
-            published_track,
+            next_subgroup, object_with_extensions, open_raw_subgroup, published_track,
+            published_track_over,
         },
         object::{
             DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus,
@@ -229,7 +230,7 @@ mod tests {
             .await
             .unwrap();
         next_datagram(&mut receiver).await;
-        let _subgroup = open_subgroup(
+        let _subgroup = open_raw_subgroup(
             &publisher.create_stream(&track.published),
             0,
             SubgroupId::None,
@@ -254,7 +255,7 @@ mod tests {
         let track = published_track("data-receiver-stream-then-datagram").await;
         let publisher = track.client.publisher();
         let mut receiver = data_receiver(&track.server, &track.accepted).await;
-        let _subgroup = open_subgroup(
+        let _subgroup = open_raw_subgroup(
             &publisher.create_stream(&track.published),
             0,
             SubgroupId::None,
@@ -282,7 +283,11 @@ mod tests {
     #[tokio::test]
     async fn a_draft18_track_delivers_a_subgroup_stream_after_a_datagram() {
         // Arrange
-        let track = published_draft18_track("data-receiver-draft18-datagram-then-stream").await;
+        let track = published_track_over(
+            "data-receiver-draft18-datagram-then-stream",
+            Version::Draft18,
+        )
+        .await;
         let mut receiver = data_receiver(&track.server, &track.accepted).await;
         send_datagram(&track, 0).await;
         let first = next_group(&mut receiver).await;
@@ -300,7 +305,11 @@ mod tests {
     #[tokio::test]
     async fn a_draft18_track_delivers_a_datagram_after_a_subgroup_stream() {
         // Arrange
-        let track = published_draft18_track("data-receiver-draft18-stream-then-datagram").await;
+        let track = published_track_over(
+            "data-receiver-draft18-stream-then-datagram",
+            Version::Draft18,
+        )
+        .await;
         let mut receiver = data_receiver(&track.server, &track.accepted).await;
         let _first_stream = open_stream(&track, 0).await;
         let first = next_group(&mut receiver).await;
@@ -328,7 +337,8 @@ mod tests {
     #[tokio::test]
     async fn a_draft18_subscription_does_not_compare_the_status_of_duplicates() {
         // Arrange
-        let track = published_draft18_track("data-receiver-draft18-duplicate-status").await;
+        let track =
+            published_track_over("data-receiver-draft18-duplicate-status", Version::Draft18).await;
         // Act
         let receiver = data_receiver(&track.server, &track.accepted).await;
         // Assert: draft-18 §9.1 compares only the forwarding preference,

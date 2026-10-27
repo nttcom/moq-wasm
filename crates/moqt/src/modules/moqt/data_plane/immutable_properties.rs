@@ -24,7 +24,7 @@ mod tests {
             moqt::version::Version,
             test_support::{
                 PublishedTrack, data_receiver, fetch_answered_with, next_subgroup,
-                object_with_extensions, published_draft18_track, published_track,
+                object_with_extensions, published_track, published_track_over,
                 send_subgroup_object, within,
             },
         },
@@ -144,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn a_draft18_subgroup_object_with_malformed_immutable_properties_is_a_malformed_track() {
         assert_subgroup_object_is_malformed(
-            published_draft18_track("immutable-subgroup-d18").await,
+            published_track_over("immutable-subgroup-d18", Version::Draft18).await,
         )
         .await;
     }
@@ -176,7 +176,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_draft18_datagram_with_malformed_immutable_properties_is_a_malformed_track() {
-        assert_datagram_is_malformed(published_draft18_track("immutable-datagram-d18").await).await;
+        assert_datagram_is_malformed(
+            published_track_over("immutable-datagram-d18", Version::Draft18).await,
+        )
+        .await;
     }
 
     async fn assert_fetch_object_is_malformed(track: PublishedTrack) {
@@ -203,8 +206,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_draft18_fetched_object_with_malformed_immutable_properties_is_a_malformed_track() {
-        assert_fetch_object_is_malformed(published_draft18_track("immutable-fetch-d18").await)
-            .await;
+        assert_fetch_object_is_malformed(
+            published_track_over("immutable-fetch-d18", Version::Draft18).await,
+        )
+        .await;
     }
 
     async fn assert_well_formed_object_is_delivered(
@@ -245,7 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_draft18_object_with_well_formed_immutable_properties_is_delivered() {
-        let track = published_draft18_track("immutable-well-formed-d18").await;
+        let track = published_track_over("immutable-well-formed-d18", Version::Draft18).await;
         assert_well_formed_object_is_delivered(track, WELL_FORMED_DRAFT18).await;
     }
 }

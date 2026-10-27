@@ -1554,6 +1554,46 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_or_truncated_subscription_filter_is_a_protocol_violation() {
+        // Arrange: the filter value of AbsoluteStart {0x2a, 0x2b} is its
+        // length, type 0x3 and the location
+        let absolute_start: &[u8] = &[3, 0x3, 0x2a, 0x2b];
+        let mut subscribe = subscribe();
+        subscribe.filter_type = FilterType::AbsoluteStart {
+            location: location(0x2a, 0x2b),
+        };
+        let mut framed = encode_subscribe(&subscribe).unwrap();
+        let (message_type, payload) = take_message(&mut framed).unwrap();
+        assert!(decode_message(message_type, payload.clone()).is_ok());
+        let at = payload
+            .windows(absolute_start.len())
+            .position(|window| window == absolute_start)
+            .unwrap();
+        let unknown_two_byte_type: &[u8] = &[2, 0x80, 0xfa];
+        let cut_inside_the_location: &[u8] = &[2, 0x3, 0x2a];
+        for filter in [unknown_two_byte_type, cut_inside_the_location] {
+            let mut patched = payload[..at].to_vec();
+            patched.extend_from_slice(filter);
+            patched.extend_from_slice(&payload[at + absolute_start.len()..]);
+
+            // Act
+            let result = decode_message(message_type, Bytes::from(patched));
+
+            // Assert
+            assert!(
+                matches!(
+                    result,
+                    Err(DecodeError::Violation {
+                        code: TerminationErrorCode::ProtocolViolation,
+                        ..
+                    })
+                ),
+                "{filter:x?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_mandatory_track_property_is_recognised() {
         // Arrange
         let properties = [KeyValuePair {

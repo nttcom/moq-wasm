@@ -172,8 +172,7 @@ mod tests {
     use crate::{
         RequestErrorCode, RequestFailure, SessionEvent,
         modules::test_support::{
-            connect_sessions, mandatory_track_properties, spawn_connected_dual_sessions,
-            spawn_dual_server,
+            DRAFTS, connected_sessions, mandatory_track_properties, spawn_connected_dual_sessions,
         },
         object::{ContentExists, GroupOrder},
     };
@@ -249,95 +248,94 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_ok_states_ascending_when_the_subscriber_leaves_the_order_to_the_publisher() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-group-order");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
-        let request = tokio::spawn(async move {
-            client
-                .subscriber()
-                .subscribe(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    SubscribeOption {
-                        group_order: GroupOrder::Publisher,
-                        ..SubscribeOption::default()
-                    },
-                )
-                .await
-        });
-        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE from the client");
-        };
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscribe-handler-group-order", version).await;
+            let request = tokio::spawn(async move {
+                client
+                    .subscriber()
+                    .subscribe(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        SubscribeOption {
+                            group_order: GroupOrder::Publisher,
+                            ..SubscribeOption::default()
+                        },
+                    )
+                    .await
+            });
+            let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+                panic!("expected SUBSCRIBE from the client");
+            };
 
-        // Act
-        handler.ok(0, ContentExists::False).await.unwrap();
+            // Act
+            handler.ok(0, ContentExists::False).await.unwrap();
 
-        // Assert
-        let subscription = request.await.unwrap().unwrap();
-        assert_eq!(subscription.group_order(), GroupOrder::Ascending);
+            // Assert
+            let subscription = request.await.unwrap().unwrap();
+            assert_eq!(subscription.group_order(), GroupOrder::Ascending);
+        }
     }
 
     #[tokio::test]
     async fn subscribe_ok_hands_its_max_cache_duration_to_the_subscriber() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-max-cache-duration");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
-        let request = tokio::spawn(async move {
-            client
-                .subscriber()
-                .subscribe(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    SubscribeOption::default(),
-                )
-                .await
-        });
-        let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE from the client");
-        };
-        handler.track_properties.set_max_cache_duration(Some(2_000));
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscribe-handler-max-cache-duration", version).await;
+            let request = tokio::spawn(async move {
+                client
+                    .subscriber()
+                    .subscribe(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        SubscribeOption::default(),
+                    )
+                    .await
+            });
+            let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
+                panic!("expected SUBSCRIBE from the client");
+            };
+            handler.track_properties.set_max_cache_duration(Some(2_000));
 
-        // Act
-        handler.ok(0, ContentExists::False).await.unwrap();
+            // Act
+            handler.ok(0, ContentExists::False).await.unwrap();
 
-        // Assert
-        let subscription = request.await.unwrap().unwrap();
-        assert_eq!(
-            subscription.track_properties().max_cache_duration(),
-            Some(2_000)
-        );
+            // Assert
+            let subscription = request.await.unwrap().unwrap();
+            assert_eq!(
+                subscription.track_properties().max_cache_duration(),
+                Some(2_000)
+            );
+        }
     }
 
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-namespace");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
-        let request = tokio::spawn(async move {
-            client
-                .subscriber()
-                .subscribe(
-                    "a/b/c".to_string(),
-                    "track".to_string(),
-                    SubscribeOption::default(),
-                )
-                .await
-        });
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscribe-handler-namespace", version).await;
+            let request = tokio::spawn(async move {
+                client
+                    .subscriber()
+                    .subscribe(
+                        "a/b/c".to_string(),
+                        "track".to_string(),
+                        SubscribeOption::default(),
+                    )
+                    .await
+            });
 
-        // Act
-        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected SUBSCRIBE from the client");
-        };
+            // Act
+            let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+                panic!("expected SUBSCRIBE from the client");
+            };
 
-        // Assert
-        assert_eq!(handler.track_namespace_tuple, vec!["a", "b", "c"]);
-        assert_eq!(handler.track_namespace, "a/b/c");
-        request.abort();
+            // Assert
+            assert_eq!(handler.track_namespace_tuple, vec!["a", "b", "c"]);
+            assert_eq!(handler.track_namespace, "a/b/c");
+            request.abort();
+        }
     }
 }

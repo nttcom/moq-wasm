@@ -174,8 +174,8 @@ mod tests {
     use crate::{
         TrackObject, TrackReader,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
-            subscribed_track_reader,
+            HANDSHAKE_TIMEOUT, datagram_object, open_raw_subgroup, published_track,
+            send_raw_payload, subscribed_track_reader,
         },
         object::{ForwardingPreference, MalformedTrackError},
         wire::{SubgroupId, SubgroupObject},
@@ -220,14 +220,14 @@ mod tests {
         // Arrange
         let track = published_track("reader-unclosed").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
-        send_payload(&mut group_0, b"g0-o0").await;
+        let mut group_0 = open_raw_subgroup(&factory, 0, SubgroupId::None).await;
+        send_raw_payload(&mut group_0, b"g0-o0").await;
         let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
-        let mut group_1 = open_subgroup(&factory, 1, SubgroupId::None).await;
-        send_payload(&mut group_1, b"g1-o0").await;
-        send_payload(&mut group_0, b"g0-o1").await;
+        let mut group_1 = open_raw_subgroup(&factory, 1, SubgroupId::None).await;
+        send_raw_payload(&mut group_1, b"g1-o0").await;
+        send_raw_payload(&mut group_0, b"g0-o1").await;
         let objects = collect_objects(&mut reader, 3).await;
 
         // Assert
@@ -250,8 +250,8 @@ mod tests {
 
         // Act: a poll that times out drops the future while nothing arrived
         let early = tokio::time::timeout(NO_OBJECT_TIMEOUT, reader.next_object()).await;
-        let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
-        send_payload(&mut group_0, b"g0-o0").await;
+        let mut group_0 = open_raw_subgroup(&factory, 0, SubgroupId::None).await;
+        send_raw_payload(&mut group_0, b"g0-o0").await;
         let objects = collect_objects(&mut reader, 1).await;
 
         // Assert
@@ -264,17 +264,17 @@ mod tests {
         // Arrange
         let track = published_track("reader-subgroups").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut subgroup_0 = open_subgroup(&factory, 5, SubgroupId::Value(0)).await;
-        send_payload(&mut subgroup_0, b"s0-o0").await;
+        let mut subgroup_0 = open_raw_subgroup(&factory, 5, SubgroupId::Value(0)).await;
+        send_raw_payload(&mut subgroup_0, b"s0-o0").await;
         let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
-        let mut subgroup_1 = open_subgroup(&factory, 5, SubgroupId::Value(1)).await;
+        let mut subgroup_1 = open_raw_subgroup(&factory, 5, SubgroupId::Value(1)).await;
         subgroup_1
             .send_raw(2, SubgroupObject::new_payload(Bytes::from_static(b"s1-o2")))
             .await
             .unwrap();
-        send_payload(&mut subgroup_0, b"s0-o1").await;
+        send_raw_payload(&mut subgroup_0, b"s0-o1").await;
         let objects = collect_objects(&mut reader, 3).await;
 
         // Assert
@@ -293,7 +293,7 @@ mod tests {
         // Arrange
         let track = published_track("reader-first-id").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut subgroup = open_subgroup(&factory, 2, SubgroupId::FirstObjectIdDelta).await;
+        let mut subgroup = open_raw_subgroup(&factory, 2, SubgroupId::FirstObjectIdDelta).await;
         subgroup
             .send_raw(7, SubgroupObject::new_payload(Bytes::from_static(b"o7")))
             .await
@@ -301,7 +301,7 @@ mod tests {
         let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
-        send_payload(&mut subgroup, b"o8").await;
+        send_raw_payload(&mut subgroup, b"o8").await;
         let objects = collect_objects(&mut reader, 2).await;
 
         // Assert
@@ -319,8 +319,8 @@ mod tests {
         // Arrange
         let track = published_track("reader-status").await;
         let factory = track.client.publisher().create_stream(&track.published);
-        let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
-        send_payload(&mut group_0, b"g0-o0").await;
+        let mut group_0 = open_raw_subgroup(&factory, 0, SubgroupId::None).await;
+        send_raw_payload(&mut group_0, b"g0-o0").await;
         let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
@@ -363,13 +363,13 @@ mod tests {
         // Arrange
         let track = published_track("reader-malformed").await;
         let publisher = track.client.publisher();
-        let mut group_0 = open_subgroup(
+        let mut group_0 = open_raw_subgroup(
             &publisher.create_stream(&track.published),
             0,
             SubgroupId::None,
         )
         .await;
-        send_payload(&mut group_0, b"g0-o0").await;
+        send_raw_payload(&mut group_0, b"g0-o0").await;
         let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
         collect_objects(&mut reader, 1).await;
 

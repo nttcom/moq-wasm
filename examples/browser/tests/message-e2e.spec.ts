@@ -54,6 +54,9 @@ test.describe('control messages sent from client to relay', () => {
       await send(client, client.publishNamespaceButton, 'PUBLISH_NAMESPACE')
       await send(client, client.subscribeNamespaceButton, 'SUBSCRIBE_NAMESPACE')
       await send(client, client.subscribeButton, 'SUBSCRIBE')
+      // SUBSCRIBE_UPDATE は購読が生きている間に送る。draft-18 では更新を
+      // SUBSCRIBE のリクエストストリームで送るため、UNSUBSCRIBE 後は送れない。
+      await send(client, client.subscribeUpdateButton, 'SUBSCRIBE_UPDATE')
       await send(client, client.unsubscribeButton, 'UNSUBSCRIBE')
       await send(client, client.publishButton, 'PUBLISH')
       await send(client, client.fetchButton, 'FETCH')
@@ -65,7 +68,6 @@ test.describe('control messages sent from client to relay', () => {
       await send(client, client.maxRequestIdButton, 'MAX_REQUEST_ID')
       await send(client, client.requestsBlockedButton, 'REQUESTS_BLOCKED')
       await send(client, client.fetchCancelButton, 'FETCH_CANCEL')
-      await send(client, client.subscribeUpdateButton, 'SUBSCRIBE_UPDATE')
       await send(client, client.publishDoneButton, 'PUBLISH_DONE')
       await send(client, client.publishNamespaceCancelButton, 'PUBLISH_NAMESPACE_CANCEL')
       // TRACK_STATUS は最後に送る。relay からの応答が届くことで、直前の
