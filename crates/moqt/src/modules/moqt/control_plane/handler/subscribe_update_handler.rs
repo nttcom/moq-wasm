@@ -39,10 +39,9 @@ pub(crate) struct UpdateAnswerReceiver {
 }
 
 impl UpdateAnswerReceiver {
-    /// The LARGEST_OBJECT the application answered with, `None` inside when
-    /// every handler clone was dropped unanswered. `None` when it did not
-    /// answer within `timeout`; a later `ok` then reports
-    /// `UpdateAnswer::Failed`.
+    /// `Some(largest)` once the application answers, `Some(None)` if every
+    /// handler clone was dropped unanswered, `None` if it did not answer
+    /// within `timeout`; a later `ok` then returns `UpdateAnswer::Failed`.
     pub(crate) async fn within(mut self, timeout: Duration) -> Option<Option<Location>> {
         if let Ok(answer) = executor::timeout(timeout, &mut self.receiver).await {
             return Some(answer.unwrap_or(None));
@@ -150,7 +149,7 @@ impl SubscribeUpdateHandler {
     }
 
     /// The subscription filter the update asks for; `None` keeps the current
-    /// one (draft-18 §10.2.9: an omitted SUBSCRIPTION_FILTER is unchanged).
+    /// one (draft-18 §10.2.9).
     /// A draft-14 SUBSCRIBE_UPDATE always states its range (§9.10), as an
     /// AbsoluteStart or AbsoluteRange filter. A relative filter is resolved
     /// against the publisher's Largest Object, as for a new subscription.

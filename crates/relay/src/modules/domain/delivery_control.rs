@@ -97,8 +97,9 @@ impl DeliveryControl {
         self.end_group.is_some_and(|end| group_id >= end)
     }
 
-    /// Takes the Forward State and range of `requested`, which the session's
-    /// draft has already allowed (see `widens_to`).
+    /// Takes `requested`, which the session's draft has already allowed (see
+    /// `widens_to`); counts a Start Location moved back in `restarts` and
+    /// Forward 0→1 in `resumes`.
     pub(crate) fn apply_update(&mut self, requested: DeliveryControl) {
         let restarts = self.restarts + u64::from(requested.start < self.start);
         let resumes = self.resumes + u64::from(!self.forward && requested.forward);

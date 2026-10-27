@@ -24,10 +24,9 @@ impl SubscribeUpdate {
     /// that the subscriber was given it does an update that turns Forward on
     /// make it the subscription's Joining Location (draft-18 §5.1).
     ///
-    /// Returns the PUBLISH_DONE to end the subscription with when the update
-    /// failed: `ok` reports an update answered REQUEST_ERROR for being
-    /// answered too late, and draft-18 §10.9.1 then ends the subscription
-    /// with UPDATE_FAILED.
+    /// Returns the PUBLISH_DONE to end the subscription with when `ok`
+    /// reports the update failed: moqt answered it REQUEST_ERROR for coming
+    /// too late, and draft-18 §10.9.1 then requires UPDATE_FAILED.
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.subscribe_update",

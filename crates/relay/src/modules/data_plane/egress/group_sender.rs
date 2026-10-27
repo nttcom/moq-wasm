@@ -58,11 +58,10 @@ enum SubgroupNext {
     /// draft-14 §10.4.3: the group lies at or past the End Group, so an open
     /// stream is reset and the subgroup is not delivered any more.
     PastEnd,
-    /// The group lies before the Start Location, or Forward is 0 or was
-    /// since the task last delivered. An open stream is reset, as no object
-    /// may be sent at Forward 0 (draft-14 §5.1, draft-18 §5.1; draft-18
-    /// §11.4.3 lists both among the reasons to reset), and the subgroup may
-    /// continue on a new stream (see `SubgroupSource::held`).
+    /// The group lies before the Start Location, or Forward is 0 or has been
+    /// 0 since the task last delivered. An open stream is reset (draft-18
+    /// §11.4.3), and the subgroup may continue on a new stream (see
+    /// `SubgroupSource::held`).
     Held,
 }
 
@@ -104,15 +103,13 @@ impl SubgroupSource {
         }
     }
 
-    /// Waits, sending nothing, until an update lets the subgroup be
-    /// delivered again, and returns the object id to go on at given that
-    /// `unsent` is the next one not sent: past the Largest Object at that
-    /// update, as for a new subscription (see
-    /// `DeliveryControl::resume_object_id`). `None` when nothing is left to
-    /// send: the subgroup ended meanwhile, its group lies past the End Group
-    /// or at or before that Largest Object, the registration is gone, or the
-    /// scheduler is done. A done scheduler restarts nothing any more, and the
-    /// runner sends PUBLISH_DONE only once every task has ended.
+    /// Waits until an update releases the subgroup and returns the object id
+    /// to continue at: `unsent`, or past the Largest Object at that update if
+    /// later (`DeliveryControl::resume_object_id`). `None` when nothing is
+    /// left to send: the subgroup ended, its group lies past the End Group or
+    /// at or before that Largest Object, the registration is gone, or the
+    /// scheduler has returned (no update can release it then, and the runner
+    /// sends PUBLISH_DONE only after every task ends).
     async fn held(&mut self, unsent: u64) -> Option<u64> {
         let group_id = self.key.group_id();
         let (key, generation, cache) = (self.key, self.generation, self.cache.clone());
@@ -534,7 +531,7 @@ impl GroupSender {
     }
 }
 
-/// How a stream task ended.
+/// What a stream task sent, and why it ended.
 struct SentSubgroup {
     object_count: u64,
     end_reason: &'static str,

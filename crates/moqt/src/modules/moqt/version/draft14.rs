@@ -110,7 +110,6 @@ impl ControlChannel {
         self.request_id.fetch_add(2, Ordering::SeqCst)
     }
 
-    /// Records the Request ID of a request the peer sent.
     fn note_peer_request_id(&self, request_id: RequestId) {
         if self.is_peer_request_id(request_id) {
             self.next_peer_request_id
