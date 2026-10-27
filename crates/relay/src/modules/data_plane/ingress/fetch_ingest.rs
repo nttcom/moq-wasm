@@ -641,7 +641,8 @@ mod tests {
         )
         .await;
 
-        // Assert: draft-18 §10.2.5, the rest is reported as unknown
+        // Assert: draft-18 §10.2.5, the plan reports the rest as unknown; as it
+        // ends in group 0 of the last object, the sender resets there (§10.12)
         assert!(ingested.result.is_ok(), "{:?}", ingested.result);
         assert!(
             ingested
@@ -669,8 +670,8 @@ mod tests {
         .await;
 
         // Assert: draft-18 §10.2.5, without a Fill Timeout the relay waits its
-        // own duration before reporting the rest as unknown; a draft-14 sender
-        // resets there instead
+        // own duration before reporting the rest as unknown, which the sender
+        // turns into a reset here (§10.12)
         assert!(ingested.result.is_ok(), "{:?}", ingested.result);
         assert!(
             ingested

@@ -4,7 +4,7 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use crate::modules::test_support::relay_harness::{
-    FetchSent, RelayHarness, UpstreamSubgroupStream, fixtures::location,
+    FetchSent, RelayHarness, UnknownRangeDraft, UpstreamSubgroupStream, fixtures::location,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -127,7 +127,7 @@ async fn a_fetch_reporting_unknown_marks_what_the_cache_lacks_and_ends_with_fin(
     let fetch = harness.start_fetch_reporting_unknown(
         location(0, 0),
         location(2, 0),
-        moqt::fetch::UnknownRange::Marked,
+        UnknownRangeDraft::Draft18,
     );
 
     // Assert: draft-18 §10.12, the known objects around the unknown group are served
@@ -148,20 +148,20 @@ async fn a_fetch_reporting_unknown_stops_once_the_sender_has_reset() {
     // Arrange
     let harness = harness_missing_group_1().await;
 
-    // Act: the sender cannot express the range, as on draft-14
+    // Act: draft-14 has no End of Unknown Range
     let fetch = harness.start_fetch_reporting_unknown(
         location(0, 0),
         location(2, 0),
-        moqt::fetch::UnknownRange::Reset,
+        UnknownRangeDraft::Draft14,
     );
 
-    // Assert: draft-18 §10.12, the reset ends the response
+    // Assert: the reset ends the response (draft-18 §10.12 names its code)
     assert_eq!(
         sent_steps(fetch.finished().await),
         vec![
             "0/0".to_string(),
             "0/1".to_string(),
-            format!("unknown..1/{}", u64::MAX),
+            "reset UnknownObjectStatus".to_string(),
         ]
     );
 }
@@ -188,7 +188,7 @@ async fn harness_with_open_group_1() -> (RelayHarness, UpstreamSubgroupStream) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_fill_deadline_bounds_the_wait_for_an_open_group() {
+async fn a_fill_deadline_in_an_open_group_resets_after_the_objects_sent() {
     // Arrange
     let (harness, group1) = harness_with_open_group_1().await;
     let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
@@ -204,21 +204,15 @@ async fn a_fill_deadline_bounds_the_wait_for_an_open_group() {
     fetch.expect_objects(&[(1, 1)]).await;
 
     // Assert: draft-18 §10.2.5, once the budget runs out the rest of the open
-    // group is reported as unknown and the delivery goes on without resending
+    // group is unknown; §11.4.4.2 cannot mark a range ending in the group of
+    // the last object sent, so the response is reset (§10.12)
     let steps = sent_steps(fetch.finished().await);
     assert!(tokio::time::Instant::now() >= deadline);
-    assert_eq!(
-        steps,
-        vec![
-            format!("unknown..1/{}", u64::MAX),
-            "2/0".to_string(),
-            "fin".to_string(),
-        ]
-    );
+    assert_eq!(steps, vec!["reset UnknownObjectStatus".to_string()]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_fill_deadline_in_descending_order_goes_on_with_the_lower_groups() {
+async fn a_fill_deadline_in_descending_order_resets_in_the_open_group() {
     // Arrange
     let (harness, _group1) = harness_with_open_group_1().await;
     let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
@@ -231,14 +225,11 @@ async fn a_fill_deadline_in_descending_order_goes_on_with_the_lower_groups() {
     );
     fetch.expect_objects(&[(2, 0), (1, 0)]).await;
 
-    // Assert: draft-18 §10.2.5, the rest of group 1 is unknown and group 0
-    // follows
+    // Assert: draft-18 §10.2.5, the rest of group 1 is unknown; it ends in
+    // the group of the last object sent, so the response is reset (§10.12)
+    // instead of going on with group 0
     assert_eq!(
         sent_steps(fetch.finished().await),
-        vec![
-            format!("unknown..1/{}", u64::MAX),
-            "0/0".to_string(),
-            "fin".to_string(),
-        ]
+        vec!["reset UnknownObjectStatus".to_string()]
     );
 }

@@ -925,7 +925,13 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   `report_unknown_range`. moqt marks it with draft-18's End of Unknown Range
   and the delivery goes on, or resets the stream with UNKNOWN_OBJECT_STATUS
   where the draft cannot express it (draft-14, or a range ending in the
-  group of the previous object), which ends the delivery.
+  group of the previous object), which ends the delivery. That second case
+  is the usual one when a fill budget runs out: the stop lies inside the
+  open group or the group a stalled fill was reading, so a draft-18
+  downstream is reset there too, as §10.12 allows. This is a gap in
+  draft-18's End of Unknown Range (§11.4.4.2), and an interop item: a plain
+  RESET_STREAM lets the receiver discard the objects it has not read yet
+  (RFC 9000 §3.2).
   `FetchWait::Until(deadline)` drives the cursor until the deadline and
   then serves the rest of the plan, the steps after the last object sent.
   A FETCH served from the cache takes its wait from `FillBudget`: `Never`
