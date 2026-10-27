@@ -213,7 +213,8 @@ export function MemberGrid({
           picture={pictures?.screenshare ?? null}
           label="Screen"
           speaking={false}
-          onHeight={(heightPx) => onTileHeight(tile.key, heightPx)}
+          heightKey={tile.key}
+          onHeight={onTileHeight}
           onOpenDetails={() => setDetailsTarget(member.id)}
         />
       )
@@ -227,7 +228,8 @@ export function MemberGrid({
         picture={pictures?.camera ?? null}
         speaking={speakingMemberIds.has(member.id)}
         caption={captions?.captions.get(member.name)}
-        onHeight={(heightPx) => onTileHeight(tile.key, heightPx)}
+        heightKey={tile.key}
+        onHeight={onTileHeight}
         footer={
           <span data-testid={`member-stats-${member.name}`}>{stats ? formatLiveStats(stats) : 'Awaiting media'}</span>
         }

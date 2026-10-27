@@ -30,7 +30,7 @@ An empty value counts as unset and selects the default.
 | `REDIS_URL` | unset | Route registry shared by cascading relays; unset runs standalone |
 | `RELAY_DRAIN_TIMEOUT_SECS` | `30` | On Ctrl+C or SIGTERM, how long to wait for clients to leave after GOAWAY before closing them with GOAWAY_TIMEOUT; a second signal exits at once |
 | `AUTH_VTS_URL` | required | VTS verify endpoint, e.g. `http://vts:8081/verify` |
-| `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays |
+| `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays; sign it with `--relay-id` set to this relay's `RELAY_ID` (a different `relayId` is warned at startup) |
 | `AUTH_MAX_TOKEN_TTL_SECONDS` | `3600` | Longest client token lifetime accepted |
 | `AUTH_CLOCK_LEEWAY_SECONDS` | `5` | Tolerance when checking `iat` / `exp` |
 | `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in memory; with the disk cache, how long a payload stays in memory before only its disk copy is kept |

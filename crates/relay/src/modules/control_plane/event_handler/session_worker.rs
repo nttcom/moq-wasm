@@ -182,11 +182,12 @@ impl SessionWorker {
         let session_span = self.session_span.clone();
         let deps = &self.deps;
         let event = scope_anonymous_root_subscription(self.verified_token.as_deref(), event);
-        let app_id = self
-            .verified_token
-            .as_ref()
-            .map(|token| token.app_id.as_str());
-        let event_span = session_event_span(session_id, &session_span, app_id, &event);
+        let event_span = session_event_span(
+            session_id,
+            &session_span,
+            self.verified_token.as_deref(),
+            &event,
+        );
         event_span.in_scope(|| tracing::debug!("Received session event"));
         if let Err(denied) = authorize_request(self.verified_token.as_deref(), &event) {
             let reject_span = tracing::info_span!(

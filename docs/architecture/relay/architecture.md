@@ -130,7 +130,15 @@ transport connection to a per-connection task owned by `SessionIntake`:
 4. the session is boxed as `dyn session::Session` and added to
    `SessionRepository` as a `NewSession` carrying its `SessionPeer` (`Client`
    or `Relay` — the endpoint it arrived on) and its
-   `VerifiedToken`, which later requests are authorized against;
+   `VerifiedToken`, which later requests are authorized against. A relay
+   token's `relay_id` is recorded on the `relay.session` span as
+   `peer_relay_id`, and `relay.subscribe` / `relay.fetch` carry it too, so
+   a request from another relay can be matched to that relay's record of
+   sending it: a SUBSCRIBE or FETCH that goes upstream to a relay records
+   that relay's id and the upstream request's id on the request's span as
+   `upstream_relay_id` / `upstream_request_id`
+   (`sequences::record_upstream_relay`; for a track with several relay
+   publishers, the newest one's);
 5. for a client token (`is_relay == false`) with an `exp`, the repository
    starts a `SessionExpiryTask` that closes the session with
    `EXPIRED_AUTH_TOKEN (0x18)` when the token expires. A client that wants to
@@ -493,7 +501,8 @@ per-request authorization gate under "Event pipeline".
 - `verified_token.rs` — `VerifiedToken`, the claims returned by the Verify
   Token Service (VTS): `app_id`, optional `publish` / `subscribe` namespace
   paths (already split on `/`; the empty claim `""` is the app root, i.e. an
-  empty path), `is_relay`, and `expires_at`.
+  empty path), `is_relay`, `expires_at`, and `relay_id`, the `relayId`
+  claim of a relay token (never read from a client token).
 - `authorize.rs` — `authorize(token, Operation, namespace_tuple)`: rejects a
   namespace whose element contains `/`, requires the first element to equal
   the token's `app_id` unless `is_relay`, then requires the granted path to be
@@ -900,8 +909,8 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 - `InterRelayConnectionManager` lazily dials the remote relay's inner endpoint
   over raw QUIC (`moqt::QUIC`, certificate verification disabled), presenting
   this relay's own JWT (`AUTH_RELAY_TOKEN`) in CLIENT_SETUP, and registers the
-  session as `SessionPeer::Relay` with `VerifiedToken::full_access()`, reusing
-  it afterwards. From then on the remote relay behaves like any upstream
+  session as `SessionPeer::Relay` with `VerifiedToken::full_access()` naming
+  the dialed relay in `relay_id`, reusing it afterwards. From then on the remote relay behaves like any upstream
   publisher session.
 - A client's PUBLISH reaches every remote relay `find_namespace_subscribers`
   returns (namespace-subscriber and watched-namespace routes) as a

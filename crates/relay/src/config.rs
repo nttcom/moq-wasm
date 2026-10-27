@@ -178,6 +178,14 @@ pub(crate) fn relay_id() -> String {
     non_empty_env("RELAY_ID").unwrap_or_else(|| "relay-local".to_string())
 }
 
+fn relay_token_names_another_relay(relay_token: &str, relay_id: &str) -> Option<String> {
+    let claimed = auth_token::decode_unverified_payload(relay_token)?
+        .get("relayId")?
+        .as_str()?
+        .to_string();
+    (claimed != relay_id).then_some(claimed)
+}
+
 impl RelayConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         let relay_id = relay_id();
@@ -204,6 +212,14 @@ impl RelayConfig {
             max_token_ttl_seconds: non_empty_env("AUTH_MAX_TOKEN_TTL_SECONDS"),
             clock_leeway_seconds: non_empty_env("AUTH_CLOCK_LEEWAY_SECONDS"),
         })?;
+        if let Some(token_relay_id) = relay_token_names_another_relay(&auth.relay_token, &relay_id)
+        {
+            tracing::warn!(
+                relay_id,
+                token_relay_id,
+                "AUTH_RELAY_TOKEN names another relay; other relays record this relay under that name"
+            );
+        }
         let cache = CacheConfig::from_env_values(
             non_empty_env("RELAY_CACHE_TTL_SECS"),
             non_empty_env("RELAY_CACHE_EVICT_INTERVAL_SECS"),
@@ -394,6 +410,42 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "RELAY_INNER_PORT must be a port number, got \"4433x\""
+        );
+    }
+
+    fn relay_token(relay_id: Option<&str>) -> String {
+        let claims = auth_token::Claims {
+            relay_id: relay_id.map(str::to_string),
+            ..auth_token::Claims::issued(
+                "RELAY".to_string(),
+                Some(String::new()),
+                Some(String::new()),
+                0,
+                Duration::from_secs(60),
+            )
+        };
+        auth_token::sign_token(&claims, "secret").unwrap()
+    }
+
+    #[test]
+    fn a_relay_token_naming_another_relay_is_reported() {
+        // Act / Assert
+        assert_eq!(
+            super::relay_token_names_another_relay(&relay_token(Some("relay-b")), "relay-a"),
+            Some("relay-b".to_string())
+        );
+    }
+
+    #[test]
+    fn a_relay_token_naming_this_relay_or_none_is_not_reported() {
+        // Act / Assert
+        assert_eq!(
+            super::relay_token_names_another_relay(&relay_token(Some("relay-a")), "relay-a"),
+            None
+        );
+        assert_eq!(
+            super::relay_token_names_another_relay(&relay_token(None), "relay-a"),
+            None
         );
     }
 }

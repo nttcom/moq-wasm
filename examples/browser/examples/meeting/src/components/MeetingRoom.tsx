@@ -24,7 +24,7 @@ import {
 import { catalogTracksForRole, pickHighestBitrateTrack, pickLowestBitrateTrack } from '../media/meetingCatalog'
 import { checkCodecSupport } from '../utils/codecSupport'
 import type { VideoAdaptation } from '../media/mediaSubscriber'
-import type { LocalStatsSample, RemoteStatsSample, VideoSendTiming } from '../types/stats'
+import type { LocalStatsSample, RemoteStatsSample } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 import { type StageView, arrangeStage, tileKey } from '../utils/stageLayout'
 import { capLadderToHeight } from '@player/adaptiveBitrate'
@@ -32,15 +32,6 @@ import { capLadderToHeight } from '@player/adaptiveBitrate'
 interface MeetingRoomProps {
   session: LocalSession
   onLeave: () => void
-}
-
-type StatsSnapshot = {
-  localCameraBitrate: number | null
-  localScreenShareBitrate: number | null
-  localAudioBitrate: number | null
-  localCameraVideoSendTiming: VideoSendTiming | null
-  localScreenShareVideoSendTiming: VideoSendTiming | null
-  remoteMembers: RemoteMember[]
 }
 
 const SIDEBAR_STATS_SAMPLE_INTERVAL_MS = 1000
@@ -96,11 +87,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     microphoneBusy,
     localVideoStream,
     localScreenShareStream,
-    localAudioBitrate,
-    localCameraBitrate,
-    localScreenShareBitrate,
-    localCameraVideoSendTiming,
-    localScreenShareVideoSendTiming,
+    localSendStats,
     remotePictures,
     toggleCamera,
     toggleScreenShare,
@@ -135,14 +122,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     notice
   } = useMeetingMedia(session)
 
-  const statsSnapshotRef = useRef<StatsSnapshot>({
-    localCameraBitrate,
-    localScreenShareBitrate,
-    localAudioBitrate,
-    localCameraVideoSendTiming,
-    localScreenShareVideoSendTiming,
-    remoteMembers: []
-  })
+  const remoteMembersRef = useRef<RemoteMember[]>([])
 
   const [room, setRoom] = useState<Room>(() => ({
     name: roomName,
@@ -209,41 +189,19 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }, [room.remoteMembers])
 
   useEffect(() => {
-    statsSnapshotRef.current = {
-      localCameraBitrate,
-      localScreenShareBitrate,
-      localAudioBitrate,
-      localCameraVideoSendTiming,
-      localScreenShareVideoSendTiming,
-      remoteMembers: Array.from(room.remoteMembers.values())
-    }
-  }, [
-    localAudioBitrate,
-    localCameraBitrate,
-    localScreenShareBitrate,
-    localCameraVideoSendTiming,
-    localScreenShareVideoSendTiming,
-    room.remoteMembers
-  ])
+    remoteMembersRef.current = Array.from(room.remoteMembers.values())
+  }, [room.remoteMembers])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const snapshot = statsSnapshotRef.current
       const sampledAt = Date.now()
       const { subscriber } = session.getMediaController()
-      const localSample: LocalStatsSample = {
-        timestamp: sampledAt,
-        cameraBitrateKbps: snapshot.localCameraBitrate,
-        screenShareBitrateKbps: snapshot.localScreenShareBitrate,
-        audioBitrateKbps: snapshot.localAudioBitrate,
-        cameraSend: snapshot.localCameraVideoSendTiming,
-        screenShareSend: snapshot.localScreenShareVideoSendTiming
-      }
+      const localSample: LocalStatsSample = { timestamp: sampledAt, ...localSendStats.current }
       setLocalStatsHistory((prev) => appendStatsSample(prev, localSample))
       setRemoteStatsHistory(
         (prev) =>
           new Map(
-            snapshot.remoteMembers.map((member) => [
+            remoteMembersRef.current.map((member) => [
               member.id,
               appendStatsSample(prev.get(member.id), { timestamp: sampledAt, ...subscriber.stats(member.id) })
             ])
@@ -252,7 +210,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     }, SIDEBAR_STATS_SAMPLE_INTERVAL_MS)
 
     return () => window.clearInterval(timer)
-  }, [session])
+  }, [session, localSendStats])
 
   useSessionEventHandlers({
     session,

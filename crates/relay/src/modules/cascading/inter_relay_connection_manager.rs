@@ -95,7 +95,10 @@ impl InterRelayConnectionManager {
                     session: Box::new(session),
                     session_span,
                     peer: SessionPeer::Relay,
-                    verified_token: VerifiedToken::full_access(),
+                    verified_token: VerifiedToken {
+                        relay_id: Some(relay.relay_id.clone()),
+                        ..VerifiedToken::full_access()
+                    },
                 },
                 self.session_event_sender.clone(),
             )

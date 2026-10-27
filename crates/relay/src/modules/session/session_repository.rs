@@ -304,6 +304,7 @@ mod tests {
             subscribe: Some(vec![]),
             is_relay,
             expires_at: Some(SystemTime::now() - Duration::from_secs(1)),
+            relay_id: None,
         }
     }
 

@@ -288,6 +288,8 @@ impl Fetch {
             .await;
         match fetched {
             Ok(handle) => {
+                super::record_upstream_relay(forwarder, publisher_session_id, handle.request_id)
+                    .await;
                 tracing::info!(
                     publisher_session_id,
                     track_namespace = %target.track_namespace,

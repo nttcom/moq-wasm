@@ -30,6 +30,10 @@ const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const PUBLISHER_RETRY_MS = 2_000
 const ADAPT_INTERVAL_MS = 500
+/// Listeners redraw their whole UI on each state change, and every video object
+/// advances the playback position, so a position-only change is reported at
+/// most this often.
+const PROGRESS_NOTIFY_INTERVAL_MS = 200
 
 export type { Packaging } from './trackContext'
 
@@ -124,6 +128,7 @@ export class LivePlayer {
   private volume = 1
   private playbackRate = 1
   private videoObjectCount = 0
+  private progressNotifiedAt = Number.NEGATIVE_INFINITY
   private newestVideoGroup: bigint | undefined
   private videoSwitch: VideoSwitch | undefined
   private readonly adaptiveBitrate = new AdaptiveBitrate()
@@ -863,9 +868,16 @@ export class LivePlayer {
   }
 
   private notePlaying(trackName: string): void {
-    if (!this.review) {
-      this.playbackStatus = { text: `Playing ${trackName}`, state: 'ok' }
+    const text = `Playing ${trackName}`
+    const statusChanged = !this.review && this.playbackStatus.text !== text
+    if (statusChanged) {
+      this.playbackStatus = { text, state: 'ok' }
     }
+    const now = performance.now()
+    if (!statusChanged && now - this.progressNotifiedAt < PROGRESS_NOTIFY_INTERVAL_MS) {
+      return
+    }
+    this.progressNotifiedAt = now
     this.changed()
   }
 

@@ -34,6 +34,7 @@ pub(crate) fn app_token(publish: Option<&str>, subscribe: Option<&str>) -> Verif
         subscribe: subscribe.map(parse_namespace_path),
         is_relay: false,
         expires_at: None,
+        relay_id: None,
     }
 }
 
