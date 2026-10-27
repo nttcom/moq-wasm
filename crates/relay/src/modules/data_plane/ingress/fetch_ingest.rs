@@ -28,33 +28,29 @@ pub(crate) struct FetchIngestStart {
 /// for it (draft-18 §10.2.5 FILL_TIMEOUT).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FillBudget {
-    /// The FETCH's FILL_TIMEOUT and when it runs out, counted from the
-    /// FETCH's arrival. The objects not filled by then are reported as
-    /// unknown.
-    requested: Option<(Duration, Instant)>,
-    /// MOQT_FETCH_FILL_TIMEOUT_SECS: without FILL_TIMEOUT, the most a fill
-    /// waits before the objects not filled are reported as unknown.
-    relay_limit: Duration,
-    /// When `relay_limit` runs out, counted from the FETCH's arrival.
-    relay_deadline: Instant,
+    /// The FETCH's FILL_TIMEOUT.
+    requested: Option<Duration>,
+    /// When the wait ends, counted from the FETCH's arrival: FILL_TIMEOUT,
+    /// at most MOQT_FETCH_FILL_TIMEOUT_SECS, which also applies without
+    /// FILL_TIMEOUT. The objects not filled by then are reported as unknown.
+    deadline: Instant,
 }
 
 impl FillBudget {
     /// The relay waits at most `relay_limit`, even for a longer FILL_TIMEOUT
     /// (§10.2.5 MAY).
     pub(crate) fn new(requested: Option<Duration>, relay_limit: Duration) -> Self {
-        let arrival = Instant::now();
+        let wait = requested.map_or(relay_limit, |requested| requested.min(relay_limit));
         Self {
-            requested: requested.map(|requested| (requested, arrival + requested.min(relay_limit))),
-            relay_limit,
-            relay_deadline: arrival + relay_limit,
+            requested,
+            deadline: Instant::now() + wait,
         }
     }
 
     /// FILL_TIMEOUT 0: the FETCH wants only what is at hand (§10.2.5 MUST NOT
     /// wait).
     pub(crate) fn forbids_waiting(&self) -> bool {
-        matches!(self.requested, Some((Duration::ZERO, _)))
+        self.requested == Some(Duration::ZERO)
     }
 
     /// How long a FETCH served from the cache waits for the objects live
@@ -64,19 +60,16 @@ impl FillBudget {
     /// delivery waits for them.
     pub(crate) fn delivery_wait(&self, marks_unknown_ranges: bool) -> FetchWait {
         match self.requested {
-            Some((Duration::ZERO, _)) => FetchWait::Never,
-            Some((_, deadline)) => FetchWait::Until(deadline),
-            None if marks_unknown_ranges => FetchWait::Until(self.relay_deadline),
+            Some(Duration::ZERO) => FetchWait::Never,
+            Some(_) => FetchWait::Until(self.deadline),
+            None if marks_unknown_ranges => FetchWait::Until(self.deadline),
             None => FetchWait::Unlimited,
         }
     }
 
-    /// When a fill starting now has to end.
+    /// When a fill has to end.
     fn fill_deadline(&self) -> Instant {
-        match self.requested {
-            Some((_, deadline)) => deadline,
-            None => Instant::now() + self.relay_limit,
-        }
+        self.deadline
     }
 }
 
@@ -707,6 +700,21 @@ mod tests {
         assert!(budget.fill_deadline() <= now + Duration::from_secs(21));
         assert!(!budget.forbids_waiting());
         assert!(FillBudget::new(Some(Duration::ZERO), Duration::from_secs(20)).forbids_waiting());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_relay_limit_of_an_upstream_fill_counts_from_the_fetch_arrival() {
+        // Arrange
+        let arrival = Instant::now();
+        let budget = FillBudget::new(None, Duration::from_secs(20));
+        tokio::time::advance(Duration::from_secs(5)).await;
+
+        // Act: the upstream FETCH_OK arrives and the fill starts
+        let deadline = budget.fill_deadline();
+
+        // Assert: the same limit a cache-served FETCH waits for (delivery_wait)
+        assert_eq!(deadline, arrival + Duration::from_secs(20));
+        assert_eq!(budget.delivery_wait(true), FetchWait::Until(deadline));
     }
 
     #[tokio::test]

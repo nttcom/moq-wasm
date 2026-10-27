@@ -500,7 +500,8 @@ does not cover is served at once from the cache with the rest unknown,
 going upstream only when the cache holds no object at or after the start,
 so FETCH_OK has an End Location, and then waiting for no object. Without
 FILL_TIMEOUT (always on draft-14) the relay waits up to
-`MOQT_FETCH_FILL_TIMEOUT_SECS` and then does the same (§10.2.5 "an
+`MOQT_FETCH_FILL_TIMEOUT_SECS`, also counted from the FETCH's arrival, and
+then does the same (§10.2.5 "an
 implementation specific duration"); toward a draft-14 downstream moqt
 cannot mark the rest unknown and resets the FETCH there, with
 INTERNAL_ERROR on the wire. A response whose upstream marked objects
