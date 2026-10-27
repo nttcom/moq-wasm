@@ -6,5 +6,7 @@ pub use crate::modules::moqt::data_plane::stream::fetch_data_receiver::Fetch;
 pub use crate::modules::moqt::data_plane::stream::fetch_data_receiver::FetchDataReceiver;
 pub use crate::modules::moqt::data_plane::stream::fetch_data_sender::FetchDataSender;
 pub use crate::modules::moqt::domains::fetch_handle::FetchHandle;
-pub use crate::modules::moqt::domains::fetch_range::FetchRangeError;
-pub use crate::modules::moqt::domains::fetch_range::resolve_fetch_range;
+pub use crate::modules::moqt::domains::fetch_range::{
+    FetchRangeError, JoinPoint, JoiningFetchError, JoiningStart, resolve_fetch_range,
+    resolve_joining_fetch,
+};

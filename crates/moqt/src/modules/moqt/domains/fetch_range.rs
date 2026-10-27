@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::object::Location;
+use crate::{RequestErrorCode, object::Location, subscribe::FilterType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -34,6 +34,88 @@ pub fn resolve_fetch_range(
         return Err(FetchRangeError::StartAfterLargest);
     }
     Ok(response_end_location(requested_end, largest))
+}
+
+/// What a Joining Fetch of a subscription resolves against (draft-14 §9.16.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinPoint {
+    /// The Largest Location of the SUBSCRIBE_OK; `None` when Content Exists
+    /// was 0.
+    Largest(Option<Location>),
+    NotLargestObject,
+}
+
+impl JoinPoint {
+    pub fn new(filter_type: &FilterType, largest: Option<Location>) -> Self {
+        match filter_type {
+            FilterType::LargestObject => Self::Largest(largest),
+            _ => Self::NotLargestObject,
+        }
+    }
+}
+
+/// The Joining Start of a Relative or Absolute Joining Fetch (draft-14
+/// §9.16.2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoiningStart {
+    /// Groups before the joined Largest Location's group.
+    Relative(u64),
+    Absolute(u64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum JoiningFetchError {
+    #[error("no subscription has the joining request id")]
+    UnknownSubscription,
+    #[error("the joined subscription does not use the Largest Object filter")]
+    NotLargestObject,
+    #[error("the track had no objects when the joined subscription was answered")]
+    NothingPublished,
+    #[error("the range starts after the joined largest object")]
+    StartAfterLargest,
+}
+
+impl JoiningFetchError {
+    /// The FETCH_ERROR code; `None` when the session closes with
+    /// PROTOCOL_VIOLATION instead (draft-14 §9.16.2).
+    pub fn request_error_code(self) -> Option<RequestErrorCode> {
+        match self {
+            Self::UnknownSubscription => Some(RequestErrorCode::InvalidJoiningRequestId),
+            Self::NotLargestObject => None,
+            Self::NothingPublished | Self::StartAfterLargest => {
+                Some(RequestErrorCode::InvalidRange)
+            }
+        }
+    }
+}
+
+/// The Start and End Location of a Joining Fetch, in the Standalone Fetch
+/// encoding: from Object 0 of the start group to right after the joined
+/// Largest Location (draft-14 §9.16.2.1). The caller answers
+/// `JoiningFetchError::UnknownSubscription` when the session has no such
+/// subscription.
+pub fn resolve_joining_fetch(
+    joining_start: JoiningStart,
+    joined: JoinPoint,
+) -> Result<(Location, Location), JoiningFetchError> {
+    let largest = match joined {
+        JoinPoint::NotLargestObject => return Err(JoiningFetchError::NotLargestObject),
+        JoinPoint::Largest(None) => return Err(JoiningFetchError::NothingPublished),
+        JoinPoint::Largest(Some(largest)) => largest,
+    };
+    let start_group_id = match joining_start {
+        JoiningStart::Relative(groups) => largest.group_id.saturating_sub(groups),
+        JoiningStart::Absolute(group_id) => group_id,
+    };
+    let start = Location {
+        group_id: start_group_id,
+        object_id: 0,
+    };
+    if start > largest {
+        return Err(JoiningFetchError::StartAfterLargest);
+    }
+    Ok((start, largest.next()))
 }
 
 fn explicit_end_before_or_equal_start(start: Location, end: Location) -> bool {
@@ -150,6 +232,78 @@ mod tests {
         assert_eq!(
             resolve_fetch_range(location(3, 2), location(3, 0), Some(location(5, 1))),
             Ok(location(3, 0))
+        );
+    }
+
+    #[test]
+    fn a_relative_joining_fetch_starts_groups_before_the_joined_largest_group() {
+        // Act / Assert
+        assert_eq!(
+            resolve_joining_fetch(
+                JoiningStart::Relative(2),
+                JoinPoint::Largest(Some(location(5, 3)))
+            ),
+            Ok((location(3, 0), location(5, 4)))
+        );
+        assert_eq!(
+            resolve_joining_fetch(
+                JoiningStart::Relative(9),
+                JoinPoint::Largest(Some(location(5, 3)))
+            ),
+            Ok((location(0, 0), location(5, 4)))
+        );
+    }
+
+    #[test]
+    fn an_absolute_joining_fetch_starts_at_the_requested_group() {
+        // Act / Assert
+        assert_eq!(
+            resolve_joining_fetch(
+                JoiningStart::Absolute(5),
+                JoinPoint::Largest(Some(location(5, 3)))
+            ),
+            Ok((location(5, 0), location(5, 4)))
+        );
+        assert_eq!(
+            resolve_joining_fetch(
+                JoiningStart::Absolute(6),
+                JoinPoint::Largest(Some(location(5, 3)))
+            ),
+            Err(JoiningFetchError::StartAfterLargest)
+        );
+    }
+
+    #[test]
+    fn a_joining_fetch_without_a_largest_object_subscription_is_rejected() {
+        // Act / Assert
+        assert_eq!(
+            resolve_joining_fetch(JoiningStart::Relative(0), JoinPoint::NotLargestObject),
+            Err(JoiningFetchError::NotLargestObject)
+        );
+        assert_eq!(
+            resolve_joining_fetch(JoiningStart::Relative(0), JoinPoint::Largest(None)),
+            Err(JoiningFetchError::NothingPublished)
+        );
+    }
+
+    #[test]
+    fn only_a_joined_subscription_without_the_largest_object_filter_closes_the_session() {
+        // Act / Assert
+        assert_eq!(
+            JoiningFetchError::UnknownSubscription.request_error_code(),
+            Some(RequestErrorCode::InvalidJoiningRequestId)
+        );
+        assert_eq!(
+            JoiningFetchError::NotLargestObject.request_error_code(),
+            None
+        );
+        assert_eq!(
+            JoiningFetchError::NothingPublished.request_error_code(),
+            Some(RequestErrorCode::InvalidRange)
+        );
+        assert_eq!(
+            JoiningFetchError::StartAfterLargest.request_error_code(),
+            Some(RequestErrorCode::InvalidRange)
         );
     }
 }
