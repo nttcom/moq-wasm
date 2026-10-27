@@ -553,13 +553,10 @@ fn emit_update(
     answer_receiver
 }
 
-/// The answers to the REQUEST_UPDATEs read from one request stream, in the
-/// order the updates arrived: §10.9 requires exactly one REQUEST_OK or
-/// REQUEST_ERROR each. The stream goes on being read meanwhile, so the
-/// peer's later updates and its reset or FIN are seen while an answer is
-/// pending; an answer waits behind the earlier ones. Each update waits for
-/// its handler for at most the control message timeout, counted from its
-/// arrival.
+/// The pending answers to one request stream's REQUEST_UPDATEs, yielded in
+/// arrival order (§10.9: exactly one REQUEST_OK or REQUEST_ERROR each). Each
+/// waits for its handler at most the control message timeout, counted from
+/// its arrival.
 #[derive(Default)]
 struct UpdateAnswers(FuturesOrdered<BoxFuture<Option<Option<Location>>>>);
 

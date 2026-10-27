@@ -196,8 +196,8 @@ mod tests {
         modules::{
             moqt::version::APPLICATION_PROTOCOLS,
             test_support::{
-                HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config, open_bi_streams,
-                server_transport_creator, spawn_dual_server,
+                HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions_from,
+                insecure_client_config, server_transport_creator, spawn_dual_server,
             },
             transport::{
                 accept_error::AcceptError, connect_target::ConnectTarget,
@@ -237,19 +237,8 @@ mod tests {
         let (client_connection, server_connection) =
             (client_connection.unwrap(), server_connection.unwrap());
 
-        // Act
-        let opened = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            tokio::join!(
-                open_bi_streams(&client_connection),
-                open_bi_streams(&server_connection)
-            )
-        })
-        .await;
-
-        // Assert
-        let (from_client, from_server) = opened.expect("every stream opens in time");
-        assert!(from_client.is_ok(), "{:?}", from_client.err());
-        assert!(from_server.is_ok(), "{:?}", from_server.err());
+        // Act / Assert
+        assert_both_sides_open_bi_streams(&client_connection, &server_connection).await;
     }
 
     #[tokio::test]
