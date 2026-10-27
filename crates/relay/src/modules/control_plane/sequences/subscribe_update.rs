@@ -102,7 +102,7 @@ mod tests {
         session::session_event::EventKind,
         test_support::{
             directory_fixtures::{delivery_control, table_with_upstream},
-            mock_session::MockSubscribeUpdateHandler,
+            mock_session::{MockSubscribeUpdateHandler, UpdateDraft},
             relay_harness::fixtures::{cached_object::insert_closed_group, location},
         },
     };
@@ -198,7 +198,12 @@ mod tests {
     fn forward_off_reaches_the_egress_runner_of_the_subscription() {
         // Arrange
         let mut updated = subscription_with(delivery_control(true));
-        let handler = MockSubscribeUpdateHandler::draft14(SUBSCRIPTION, false, Some(FROM_START));
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft14,
+            SUBSCRIPTION,
+            false,
+            Some(FROM_START),
+        );
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -215,7 +220,8 @@ mod tests {
             location: location(0, 0),
             end_group: 3,
         };
-        let handler = MockSubscribeUpdateHandler::draft14(SUBSCRIPTION, true, Some(filter));
+        let handler =
+            MockSubscribeUpdateHandler::new(UpdateDraft::Draft14, SUBSCRIPTION, true, Some(filter));
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -232,7 +238,12 @@ mod tests {
         let earlier_start = FilterType::AbsoluteStart {
             location: location(4, 0),
         };
-        let handler = MockSubscribeUpdateHandler::draft14(SUBSCRIPTION, true, Some(earlier_start));
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft14,
+            SUBSCRIPTION,
+            true,
+            Some(earlier_start),
+        );
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -250,7 +261,12 @@ mod tests {
             end_group: 4,
         };
         let mut updated = subscription_with(DeliveryControl::new(true, &range, None));
-        let handler = MockSubscribeUpdateHandler::draft14(SUBSCRIPTION, true, Some(FROM_START));
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft14,
+            SUBSCRIPTION,
+            true,
+            Some(FROM_START),
+        );
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -271,7 +287,8 @@ mod tests {
         let wider = FilterType::AbsoluteStart {
             location: location(2, 0),
         };
-        let handler = MockSubscribeUpdateHandler::draft18(SUBSCRIPTION, true, Some(wider));
+        let handler =
+            MockSubscribeUpdateHandler::new(UpdateDraft::Draft18, SUBSCRIPTION, true, Some(wider));
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -290,7 +307,12 @@ mod tests {
         let earlier_start = FilterType::AbsoluteStart {
             location: location(2, 0),
         };
-        let handler = MockSubscribeUpdateHandler::draft18(SUBSCRIPTION, true, Some(earlier_start));
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft18,
+            SUBSCRIPTION,
+            true,
+            Some(earlier_start),
+        );
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -303,7 +325,8 @@ mod tests {
     fn an_update_without_a_filter_keeps_the_range() {
         // Arrange
         let mut updated = subscription_with(starting_at(location(5, 0)));
-        let handler = MockSubscribeUpdateHandler::draft18(SUBSCRIPTION, false, None);
+        let handler =
+            MockSubscribeUpdateHandler::new(UpdateDraft::Draft18, SUBSCRIPTION, false, None);
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -317,7 +340,12 @@ mod tests {
     fn an_update_answered_after_its_timeout_ends_the_subscription_with_update_failed() {
         // Arrange
         let mut updated = subscription_with(delivery_control(true));
-        let handler = MockSubscribeUpdateHandler::draft18_timed_out(SUBSCRIPTION, false, None);
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft18TimedOut,
+            SUBSCRIPTION,
+            false,
+            None,
+        );
 
         // Act
         let end = update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -331,7 +359,12 @@ mod tests {
     fn update_from_another_session_leaves_the_subscription_forwarding() {
         // Arrange
         let mut updated = subscription_with(delivery_control(true));
-        let handler = MockSubscribeUpdateHandler::draft14(SUBSCRIPTION, false, Some(FROM_START));
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft14,
+            SUBSCRIPTION,
+            false,
+            Some(FROM_START),
+        );
 
         // Act
         update(&mut updated, 3, &handler);
@@ -344,7 +377,8 @@ mod tests {
     fn forward_turned_on_moves_the_joining_location_to_the_largest_object_told() {
         // Arrange
         let mut updated = subscription_with(delivery_control(false));
-        let handler = MockSubscribeUpdateHandler::draft18(SUBSCRIPTION, true, None);
+        let handler =
+            MockSubscribeUpdateHandler::new(UpdateDraft::Draft18, SUBSCRIPTION, true, None);
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -358,7 +392,12 @@ mod tests {
     fn forward_turned_on_without_telling_the_largest_object_keeps_the_joining_location() {
         // Arrange
         let mut updated = subscription_with(delivery_control(false));
-        let handler = MockSubscribeUpdateHandler::draft14(SUBSCRIPTION, true, Some(FROM_START));
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft14,
+            SUBSCRIPTION,
+            true,
+            Some(FROM_START),
+        );
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
@@ -372,7 +411,8 @@ mod tests {
     fn an_update_keeping_forward_on_reports_the_largest_object_but_keeps_the_joining_location() {
         // Arrange
         let mut updated = subscription_with(delivery_control(true));
-        let handler = MockSubscribeUpdateHandler::draft18(SUBSCRIPTION, true, None);
+        let handler =
+            MockSubscribeUpdateHandler::new(UpdateDraft::Draft18, SUBSCRIPTION, true, None);
 
         // Act
         update(&mut updated, SUBSCRIBER_SESSION, &handler);
