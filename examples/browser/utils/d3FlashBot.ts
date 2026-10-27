@@ -78,11 +78,7 @@ export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
       botRoom.open(resolveServiceUrl(window.location.search, relayUrl, options.botService), options.room)
       await session.connect(relayUrl)
       session.setOnConnectionClosedHandler(() => void reset('切断されました', 'error'))
-      session.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
-        if (!isSuccess) {
-          await respondError(BigInt(code), 'subscribe rejected')
-          return
-        }
+      session.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
         const { trackName, requestId } = subscribe
         if (!sameNamespace(subscribe.trackNamespace, ownNamespace) || !ownTracks.includes(trackName)) {
           await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')

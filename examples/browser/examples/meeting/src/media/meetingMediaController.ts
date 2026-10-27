@@ -13,17 +13,13 @@ export class MeetingMediaController {
     this.publisher = new MediaPublisher(client, trackNamespace)
     this.subscriber = new MediaSubscriber(client)
 
-    client.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
+    client.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
       const trackName = subscribe.trackName ?? ''
       const isLocalTrack = this.isLocalNamespace(subscribe.trackNamespace)
       const isCatalogTrack = this.publisher.isCatalogTrack(trackName)
-      console.info('[meeting][moqt] received SUBSCRIBE', { subscribe, isSuccess, code })
-      if (!isSuccess) {
-        await respondError(BigInt(code), 'Subscription validation failed')
-        return
-      }
+      console.info('[meeting][moqt] received SUBSCRIBE', { subscribe })
       if (!isLocalTrack) {
-        await respondError(404n, 'Unknown namespace')
+        await respondError(RequestErrorCode.TrackDoesNotExist, 'Unknown namespace')
         return
       }
       if (trackName === 'chat') {
@@ -37,7 +33,7 @@ export class MeetingMediaController {
       }
       const role = this.publisher.resolveTrackRole(trackName)
       if (!role) {
-        await respondError(404n, 'Unknown track')
+        await respondError(RequestErrorCode.TrackDoesNotExist, 'Unknown track')
         return
       }
       await respondOk(0n)

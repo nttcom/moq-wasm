@@ -157,13 +157,8 @@ function registerClientCallbacks(): void {
     registerTrackAlias(response.requestId, response.trackAlias, requestTrackMetadata.get(response.requestId))
     attachSubgroupObjectHandler(response.trackAlias)
   })
-  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
-    console.info({ subscribeMessage: subscribe, isSuccess, code })
-    if (!isSuccess) {
-      await respondError(BigInt(code), 'subscribe rejected')
-      return
-    }
-
+  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk }) => {
+    console.info({ subscribeMessage: subscribe })
     const trackAlias = await respondOk(0n)
     registerTrackAlias(subscribe.requestId, trackAlias, {
       trackNamespace: [...subscribe.trackNamespace],

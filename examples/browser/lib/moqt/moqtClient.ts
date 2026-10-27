@@ -153,8 +153,6 @@ export interface IncomingPublishNamespaceContext {
 
 export interface IncomingSubscribeContext {
   subscribe: SubscribeMessage
-  isSuccess: boolean
-  code: number
   respondOk(expires?: bigint, deliveryTimeout?: bigint, maxDuration?: bigint): Promise<bigint>
   respondError(code: bigint, reasonPhrase: string): Promise<void>
 }
@@ -751,12 +749,10 @@ export class MoqtClientWrapper {
       settle(this.pendingPublish, 'PUBLISH_ERROR', response)
     })
 
-    client.onSubscribe(async (subscribe: SubscribeMessage, isSuccess: boolean, code: number) => {
+    client.onSubscribe(async (subscribe: SubscribeMessage) => {
       const handler = this.incomingSubscribeHandler ?? defaultIncomingSubscribeHandler
       await handler({
         subscribe,
-        isSuccess,
-        code,
         respondOk: async (expires = 0n, deliveryTimeout, maxDuration) => {
           const trackAlias = await client.sendSubscribeOk(subscribe.requestId, expires, deliveryTimeout, maxDuration)
           this.incomingSubscriptions.set(trackAlias, {
@@ -1001,8 +997,8 @@ const defaultIncomingPublishNamespaceHandler: IncomingPublishNamespaceHandler = 
   await respondOk()
 }
 
-const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async ({ code, respondError }) => {
-  await respondError(BigInt(code || 500), 'subscribe rejected')
+const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async ({ respondError }) => {
+  await respondError(RequestErrorCode.TrackDoesNotExist, 'track does not exist')
 }
 
 const defaultIncomingTrackStatusHandler: IncomingTrackStatusHandler = async ({ respondError }) => {

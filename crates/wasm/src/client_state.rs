@@ -125,17 +125,20 @@ impl ClientState {
         }
     }
 
-    pub(crate) fn validate_incoming_subscribe(&self, message: &Subscribe) -> u64 {
+    pub(crate) fn validate_incoming_subscribe(
+        &self,
+        message: &Subscribe,
+    ) -> Result<(), RequestErrorCode> {
         if !self.contains_published_namespace(&message.track_namespace) {
-            return 404;
+            return Err(RequestErrorCode::TrackDoesNotExist);
         }
         if self
             .incoming_subscriptions
             .contains_key(&message.request_id)
         {
-            return 409;
+            return Err(RequestErrorCode::InternalError);
         }
-        0
+        Ok(())
     }
 
     pub(crate) fn register_incoming_subscribe(&mut self, message: &Subscribe) {
@@ -533,6 +536,18 @@ mod tests {
 
         // Act
         let accepted = state.accept_incoming_track_status(&subscribe(4, GroupOrder::Ascending));
+
+        // Assert
+        assert_eq!(accepted, Err(RequestErrorCode::TrackDoesNotExist));
+    }
+
+    #[test]
+    fn subscribe_for_an_unpublished_namespace_is_rejected_as_track_does_not_exist() {
+        // Arrange
+        let state = ClientState::default();
+
+        // Act
+        let accepted = state.validate_incoming_subscribe(&subscribe(4, GroupOrder::Ascending));
 
         // Assert
         assert_eq!(accepted, Err(RequestErrorCode::TrackDoesNotExist));
