@@ -26,7 +26,9 @@ use crate::{
     modules::{
         executor::JoinHandle,
         moqt::{
-            control_plane::control_messages::messages::parameters::group_order::GroupOrder,
+            control_plane::control_messages::messages::parameters::{
+                group_order::GroupOrder, location::Location,
+            },
             control_plane::{
                 constants::TerminationErrorCode,
                 control_messages::messages::{
@@ -48,12 +50,13 @@ use crate::{
             data_plane::{
                 object::canonical_object::{Object, SubgroupStart},
                 stream::{
-                    fetch_data_receiver::FetchDataReceiver,
+                    fetch_data_receiver::{self, FetchDataReceiver},
                     stream_data_receiver::{StreamDataReceiver, SubgroupPart},
                     stream_receiver::{BiStreamReceiver, StreamReceiveError},
                 },
             },
             domains::{connection::Connection, session_context::SessionContext},
+            runtime::dispatch::incoming_object::IncomingDatagram,
             version::draft14::control_message_receive_task::ControlMessageReceiveTask,
         },
         transport::{
@@ -141,14 +144,15 @@ impl Version {
         }
     }
 
-    /// Returns `(track alias, object)`, or `None` for a datagram that carries
-    /// no object (draft-18 padding).
+    /// Returns `(track alias, datagram)`, or `None` for a datagram that
+    /// carries no object (draft-18 padding).
     pub(crate) fn decode_datagram(
         self,
         data: &mut BytesMut,
-    ) -> anyhow::Result<Option<(u64, Object)>> {
+    ) -> anyhow::Result<Option<(u64, IncomingDatagram)>> {
         match self {
-            Self::Draft14 => draft14::objects::decode_datagram(data).map(Some),
+            Self::Draft14 => draft14::objects::decode_datagram(data)
+                .map(|(track_alias, object)| Some((track_alias, IncomingDatagram::new(object)))),
             Self::Draft18 => Ok(draft18::objects::decode_datagram(data)?),
         }
     }
@@ -195,6 +199,14 @@ impl SubgroupReader {
         }
     }
 
+    /// draft-14 headers always carry a priority.
+    pub(crate) fn inherit_priority(&mut self, default_publisher_priority: u8) {
+        match self {
+            Self::Draft14(_) => {}
+            Self::Draft18(reader) => reader.inherit_priority(default_publisher_priority),
+        }
+    }
+
     /// Objects and payload parts, never a header. `Ok(None)` means the peer
     /// finished the stream (FIN).
     pub(crate) async fn next_part(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
@@ -220,11 +232,13 @@ impl FetchReader {
         }
     }
 
-    /// `Ok(None)` means the peer finished the stream (FIN).
-    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+    pub(crate) async fn next(&mut self) -> Result<fetch_data_receiver::Fetch, StreamReceiveError> {
         match self {
-            Self::Draft14(reader) => reader.next_object().await,
-            Self::Draft18(reader) => reader.next_object().await,
+            Self::Draft14(reader) => Ok(reader.next_object().await?.map_or(
+                fetch_data_receiver::Fetch::End,
+                fetch_data_receiver::Fetch::Object,
+            )),
+            Self::Draft18(reader) => reader.next().await,
         }
     }
 }
@@ -315,6 +329,16 @@ impl FetchEncoder {
             Self::Draft18(encoder) => encoder.object(object),
         }
     }
+
+    /// The marker saying the objects through `last` have unknown status;
+    /// `None` where the draft cannot express it: draft-14 has no marker, and
+    /// draft-18 cannot end a range in the group of the prior object.
+    pub(crate) fn end_of_unknown_range(&mut self, last: Location) -> Option<BytesMut> {
+        match self {
+            Self::Draft14 => None,
+            Self::Draft18(encoder) => encoder.end_of_unknown_range(last),
+        }
+    }
 }
 
 pub(crate) enum OutgoingRequest {
@@ -382,6 +406,40 @@ impl ControlChannel {
         match self {
             Self::Draft14(channel) => channel.next_request_id(),
             Self::Draft18(channel) => channel.next_request_id(),
+        }
+    }
+
+    /// `None` for draft-14, whose FETCH has no request stream of its own.
+    pub(crate) fn fetch_request_end(
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) -> Option<draft18::FetchRequestEnd> {
+        match connection.control {
+            Self::Draft14(_) => None,
+            Self::Draft18(_) => Some(draft18::FetchRequestEnd::new(
+                Arc::downgrade(connection),
+                request_id,
+            )),
+        }
+    }
+
+    /// The response stream of the FETCH `request_id` the peer sent ended
+    /// with FIN or a reset (draft-18 §5.2).
+    pub(crate) async fn fetch_response_ended(
+        &self,
+        request_id: RequestId,
+    ) -> Result<(), TransportSendError> {
+        match self {
+            Self::Draft14(_) => Ok(()),
+            Self::Draft18(channel) => channel.fetch_response_ended(request_id).await,
+        }
+    }
+
+    /// draft-14 objects always carry a priority, so its value goes unused.
+    pub(crate) fn default_publisher_priority(&self, request_id: RequestId) -> u8 {
+        match self {
+            Self::Draft14(_) => draft18::messages::DEFAULT_PUBLISHER_PRIORITY,
+            Self::Draft18(channel) => channel.default_publisher_priority(request_id),
         }
     }
 

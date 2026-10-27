@@ -1559,6 +1559,7 @@ fn fetch_option(group_order: u8) -> Result<FetchOption, JsValue> {
     Ok(FetchOption {
         subscriber_priority: 0,
         group_order: group_order_from(group_order)?,
+        fill_timeout: None,
     })
 }
 

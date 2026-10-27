@@ -307,7 +307,7 @@ mod tests {
         // Act
         let resolution = harness
             .cache()
-            .resolve_fetch_range(location(0, 0), location(0, 2));
+            .resolve_fetch_range(location(0, 0), location(0, 2), None);
 
         // Assert: both objects, the End of Group included, expired
         assert_eq!(resolution, FetchRangeResolution::NotCovered);

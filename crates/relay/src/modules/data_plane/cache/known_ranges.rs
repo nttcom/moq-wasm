@@ -5,9 +5,33 @@ pub(crate) struct KnownRanges {
     ranges: Vec<Range<moqt::object::Location>>,
 }
 
+/// The position right after `at` in Location order, for the half-open
+/// ranges of `insert_until` and `covers_until`.
+pub(crate) fn following(at: moqt::object::Location) -> moqt::object::Location {
+    match at.object_id.checked_add(1) {
+        Some(object_id) => moqt::object::Location {
+            group_id: at.group_id,
+            object_id,
+        },
+        None => moqt::object::Location {
+            group_id: at.group_id.saturating_add(1),
+            object_id: 0,
+        },
+    }
+}
+
 impl KnownRanges {
     pub(crate) fn insert(&mut self, start: moqt::object::Location, end: moqt::object::Location) {
-        let end = Self::exclusive_end(end);
+        self.insert_until(start, Self::exclusive_end(end));
+    }
+
+    /// `insert` for the half-open range `start..end`, where `{group, 0}` is
+    /// that group's first object rather than the whole group.
+    pub(crate) fn insert_until(
+        &mut self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) {
         if start >= end {
             return;
         }
@@ -80,12 +104,21 @@ impl KnownRanges {
         end: moqt::object::Location,
     ) -> bool {
         let end = Self::exclusive_end(end);
-        if start >= end {
-            return false;
-        }
-        self.ranges
-            .iter()
-            .any(|range| range.start <= start && end <= range.end)
+        start < end && self.covers_until(start, end)
+    }
+
+    /// Whether every position of the half-open range `start..end` is known;
+    /// an empty range is.
+    pub(crate) fn covers_until(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
+        start >= end
+            || self
+                .ranges
+                .iter()
+                .any(|range| range.start <= start && end <= range.end)
     }
 
     /// Positions below that end are fully decided: an absent object there is

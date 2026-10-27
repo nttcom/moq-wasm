@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 
-use crate::modules::test_support::relay_harness::{FetchSent, RelayHarness, fixtures::location};
+use crate::modules::test_support::relay_harness::{
+    FetchSent, RelayHarness, UnknownRangeDraft, UpstreamSubgroupStream, fixtures::location,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn closed_groups_are_delivered_before_a_later_open_group_closes() {
@@ -84,4 +86,150 @@ async fn aborted_upstream_stream_resets_the_fetch_stream() {
         fetch.expect_end().await,
         FetchSent::Reset(code) if code == DataStreamResetCode::InternalError
     ));
+}
+
+/// Groups 0 and 2 closed, group 1 never received.
+async fn harness_missing_group_1() -> RelayHarness {
+    let harness = RelayHarness::new();
+    for (group_id, object_count) in [(0, 2), (2, 1)] {
+        let stream = harness.open_upstream_stream();
+        stream.header(group_id);
+        for index in 0..object_count {
+            stream.object(index);
+        }
+        stream.fin();
+        harness.wait_group_closed(group_id).await;
+    }
+    harness
+}
+
+fn sent_steps(sent: Vec<FetchSent>) -> Vec<String> {
+    sent.into_iter()
+        .map(|step| match step {
+            FetchSent::Object(object) => {
+                format!("{}/{}", object.location.group_id, object.location.object_id)
+            }
+            FetchSent::UnknownRange(last) => {
+                format!("unknown..{}/{}", last.group_id, last.object_id)
+            }
+            FetchSent::Closed => "fin".to_string(),
+            FetchSent::Reset(code) => format!("reset {code:?}"),
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fetch_reporting_unknown_marks_what_the_cache_lacks_and_ends_with_fin() {
+    // Arrange
+    let harness = harness_missing_group_1().await;
+
+    // Act
+    let fetch = harness.start_fetch_reporting_unknown(
+        location(0, 0),
+        location(2, 0),
+        UnknownRangeDraft::Draft18,
+    );
+
+    // Assert: draft-18 §10.12, the known objects around the unknown group are served
+    assert_eq!(
+        sent_steps(fetch.finished().await),
+        vec![
+            "0/0".to_string(),
+            "0/1".to_string(),
+            format!("unknown..1/{}", u64::MAX),
+            "2/0".to_string(),
+            "fin".to_string(),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fetch_reporting_unknown_stops_once_the_sender_has_reset() {
+    // Arrange
+    let harness = harness_missing_group_1().await;
+
+    // Act: draft-14 has no End of Unknown Range
+    let fetch = harness.start_fetch_reporting_unknown(
+        location(0, 0),
+        location(2, 0),
+        UnknownRangeDraft::Draft14,
+    );
+
+    // Assert: the reset ends the response (draft-18 §10.12 names its code)
+    assert_eq!(
+        sent_steps(fetch.finished().await),
+        vec![
+            "0/0".to_string(),
+            "0/1".to_string(),
+            "reset UnknownObjectStatus".to_string(),
+        ]
+    );
+}
+
+/// Group 0 with object 0 closed, group 1 with object 0 open, group 2 with
+/// object 0 closed; returns group 1's stream.
+async fn harness_with_open_group_1() -> (RelayHarness, UpstreamSubgroupStream) {
+    let harness = RelayHarness::new();
+    let group0 = harness.open_upstream_stream();
+    group0.header(0);
+    group0.object(0);
+    group0.fin();
+    harness.wait_group_closed(0).await;
+    let group1 = harness.open_upstream_stream();
+    group1.header(1);
+    group1.object(0);
+    harness.wait_largest_location(location(1, 0)).await;
+    let group2 = harness.open_upstream_stream();
+    group2.header(2);
+    group2.object(0);
+    group2.fin();
+    harness.wait_group_closed(2).await;
+    (harness, group1)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fill_deadline_in_an_open_group_resets_after_the_objects_sent() {
+    // Arrange
+    let (harness, group1) = harness_with_open_group_1().await;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+    let mut fetch = harness.start_fetch_waiting_until(
+        location(0, 0)..location(2, 0),
+        moqt::object::GroupOrder::Ascending,
+        deadline,
+    );
+    fetch.expect_objects(&[(0, 0), (1, 0)]).await;
+
+    // Act: one more object arrives within the budget, then the group stalls
+    group1.object(1);
+    fetch.expect_objects(&[(1, 1)]).await;
+
+    // Assert: draft-18 §10.2.5, once the budget runs out the rest of the open
+    // group is unknown; §11.4.4.2 cannot mark a range ending in the group of
+    // the last object sent, so the response is reset (§10.12)
+    let steps = sent_steps(fetch.finished().await);
+    assert!(tokio::time::Instant::now() >= deadline);
+    assert_eq!(steps, vec!["reset UnknownObjectStatus".to_string()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fill_deadline_in_descending_order_resets_in_the_open_group() {
+    // Arrange
+    let (harness, _group1) = harness_with_open_group_1().await;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+
+    // Act
+    let mut fetch = harness.start_fetch_waiting_until(
+        location(0, 0)..location(2, 1),
+        moqt::object::GroupOrder::Descending,
+        deadline,
+    );
+    fetch.expect_objects(&[(2, 0), (1, 0)]).await;
+
+    // Assert: draft-18 §10.2.5, the rest of group 1 is unknown; it ends in
+    // the group of the last object sent, so the response is reset (§10.12)
+    // instead of going on with group 0
+    assert_eq!(
+        sent_steps(fetch.finished().await),
+        vec!["reset UnknownObjectStatus".to_string()]
+    );
 }

@@ -25,6 +25,7 @@ use crate::{
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
+                control_messages::key_value_pair::KeyValuePair,
                 control_messages::messages::{
                     fetch_cancel::FetchCancel,
                     go_away::GoAway,
@@ -106,6 +107,23 @@ fn accept_request_id(scope: &Scope, request_id: RequestId) -> bool {
         "invalid request id",
     );
     false
+}
+
+/// Why the track of a message carrying `properties` is not processed.
+fn refused_track(properties: &[KeyValuePair]) -> Option<(RequestErrorCode, &'static str)> {
+    if messages::has_malformed_immutable_properties(properties) {
+        Some((
+            RequestErrorCode::MalformedTrack,
+            "malformed Immutable Properties",
+        ))
+    } else if has_mandatory_track_property(properties) {
+        Some((
+            RequestErrorCode::UnsupportedExtension,
+            "mandatory track property not understood",
+        ))
+    } else {
+        None
+    }
 }
 
 /// Reads the peer's control stream and accepts the request streams the
@@ -268,6 +286,9 @@ impl IncomingRequestTask {
                     }
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
+                // §3.3.2: a FIN does not cancel a FETCH; its stream ends once
+                // the response is done (§5.2).
+                Ok(None) if kind == RequestStreamKind::Fetch => return,
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
                     Self::peer_ended(&context, request_id, kind);
                     return;
@@ -307,6 +328,7 @@ impl IncomingRequestTask {
             return None;
         }
         let mut baseline = None;
+        let mut default_publisher_priority = messages::DEFAULT_PUBLISHER_PRIORITY;
         let (kind, event) = match message {
             Message::Subscribe(subscribe) => {
                 baseline = Some(update_baseline(
@@ -344,10 +366,12 @@ impl IncomingRequestTask {
                 publish,
                 track_properties,
             } => {
-                if has_mandatory_track_property(&track_properties) {
-                    Self::reject(sender, RequestErrorCode::UnsupportedExtension).await;
+                if let Some((code, _)) = refused_track(&track_properties) {
+                    Self::reject(sender, code).await;
                     return None;
                 }
+                default_publisher_priority =
+                    messages::default_publisher_priority(&track_properties);
                 (
                     RequestStreamKind::Publish,
                     SessionEvent::Publish(PublishHandler::new(
@@ -392,6 +416,8 @@ impl IncomingRequestTask {
             RequestStream {
                 kind: kind.clone(),
                 sender: sender.clone(),
+                default_publisher_priority,
+                fetch_end: Default::default(),
             },
         );
         emit(scope, event);
@@ -684,6 +710,12 @@ impl OutgoingRequestTask {
                 return;
             }
         };
+        if let Message::SubscribeOk(ok) = &message {
+            context.channel().set_default_publisher_priority(
+                request_id,
+                messages::default_publisher_priority(&ok.track_properties),
+            );
+        }
         let Some(first_response) = Self::first_response(request_id, &kind, message, group_order)
         else {
             close_on_violation(&context, "the first response does not match the request");
@@ -779,6 +811,7 @@ impl OutgoingRequestTask {
                         new_session_uri = go_away.new_session_uri,
                         "GOAWAY on a request stream; ending the request"
                     );
+                    Self::withdraw_namespaces(&context, namespaces);
                     Self::peer_ended(&context, request_id, kind, publish_done, true).await;
                     return;
                 }
@@ -795,10 +828,7 @@ impl OutgoingRequestTask {
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
-                    // §10.18: the end of the stream withdraws every namespace.
-                    for namespace in namespaces {
-                        Self::namespace_withdrawn(&context, namespace);
-                    }
+                    Self::withdraw_namespaces(&context, namespaces);
                     Self::peer_ended(&context, request_id, kind, publish_done, false).await;
                     return;
                 }
@@ -824,6 +854,14 @@ impl OutgoingRequestTask {
         );
     }
 
+    /// §10.18: the end of a SUBSCRIBE_NAMESPACE request withdraws every
+    /// namespace it announced.
+    fn withdraw_namespaces(scope: &Scope, namespaces: HashSet<Vec<String>>) {
+        for namespace in namespaces {
+            Self::namespace_withdrawn(scope, namespace);
+        }
+    }
+
     fn namespace_withdrawn(scope: &Scope, namespace: Vec<String>) {
         emit(
             scope,
@@ -841,14 +879,11 @@ impl OutgoingRequestTask {
     ) -> Option<ResponseMessage> {
         Some(match (kind, message) {
             (RequestStreamKind::Subscribe, Message::SubscribeOk(ok)) => {
-                if has_mandatory_track_property(&ok.track_properties) {
-                    ResponseMessage::SubscribeError(
-                        request_id,
-                        RequestErrorCode::UnsupportedExtension,
-                        "mandatory track property not understood".to_string(),
-                    )
-                } else {
-                    ResponseMessage::SubscribeOk(ok.into_subscribe_ok(request_id))
+                match refused_track(&ok.track_properties) {
+                    Some((code, reason)) => {
+                        ResponseMessage::SubscribeError(request_id, code, reason.to_string())
+                    }
+                    None => ResponseMessage::SubscribeOk(ok.into_subscribe_ok(request_id)),
                 }
             }
             (RequestStreamKind::Subscribe, Message::RequestError(error)) => {
@@ -861,14 +896,11 @@ impl OutgoingRequestTask {
                 ResponseMessage::TrackStatusError(request_id, error.code, error.reason)
             }
             (RequestStreamKind::Fetch, Message::FetchOk(ok)) => {
-                if has_mandatory_track_property(&ok.track_properties) {
-                    ResponseMessage::FetchError(
-                        request_id,
-                        RequestErrorCode::UnsupportedExtension,
-                        "mandatory track property not understood".to_string(),
-                    )
-                } else {
-                    ResponseMessage::FetchOk(ok.into_fetch_ok(request_id, group_order))
+                match refused_track(&ok.track_properties) {
+                    Some((code, reason)) => {
+                        ResponseMessage::FetchError(request_id, code, reason.to_string())
+                    }
+                    None => ResponseMessage::FetchOk(ok.into_fetch_ok(request_id, group_order)),
                 }
             }
             (RequestStreamKind::Fetch, Message::RequestError(error)) => {
@@ -897,10 +929,10 @@ impl OutgoingRequestTask {
     }
 
     /// The peer ended a request this endpoint still had open: raises the
-    /// withdrawal draft-14 would have sent as a message. With `going_away` (a
-    /// GOAWAY on the request stream, §10.4) the request ends with GOING_AWAY
-    /// and its stream is reset, as draft-14 events have no per-request
-    /// migration.
+    /// withdrawal draft-14 would have sent as a message, then ends this side's
+    /// half with FIN. With `going_away` (a GOAWAY on the request stream,
+    /// §10.4) the request ends with GOING_AWAY and its stream is reset, as
+    /// draft-14 events have no per-request migration.
     async fn peer_ended(
         scope: &Scope,
         request_id: RequestId,
@@ -945,15 +977,18 @@ impl OutgoingRequestTask {
         if let Some(event) = event {
             emit(scope, event);
         }
-        if going_away
-            && let Err(error) = stream
+        let ended = if going_away {
+            stream
                 .sender
                 .reset(super::error_codes::stream_reset_code_to_wire(
                     DataStreamResetCode::GoingAway,
                 ))
                 .await
-        {
-            tracing::debug!(%error, "could not cancel a request moved by GOAWAY");
+        } else {
+            stream.sender.close().await
+        };
+        if let Err(error) = ended {
+            tracing::debug!(%error, "could not end the stream of a request the peer ended");
         }
     }
 }

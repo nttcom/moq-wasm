@@ -95,6 +95,9 @@ pub(crate) async fn read_fetch(
                     let message = FetchObjectMessage::new(request_id, &object);
                     emit(&shared.callbacks, |c| &c.fetch_object, &[message.into()]);
                 }
+                // Only draft-18 has unknown ranges, and the browser offers
+                // draft-14 alone.
+                Ok(FetchData::UnknownRange { .. }) => {}
                 Ok(FetchData::End) => break FetchStreamEndMessage::finished(request_id),
                 Err(_) => break FetchStreamEndMessage::reset(request_id, 0),
             }

@@ -2,7 +2,7 @@ use std::{
     collections::btree_map::Entry,
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
+        atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
     },
     time::Duration,
 };
@@ -37,12 +37,14 @@ fn after(at: moqt::object::Location) -> moqt::object::Location {
 }
 
 mod fetch_cursor;
+mod fetch_plan;
 mod ingress_stats;
 mod ledger;
 mod open_subgroup;
 mod partial_object;
 
 pub(crate) use fetch_cursor::FetchCursor;
+pub(crate) use fetch_plan::PlannedFetch;
 pub(crate) use ingress_stats::{IngressCounters, IngressStats};
 use ledger::Ledger;
 pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, PartialObjectWriter, SubgroupRun};
@@ -53,7 +55,8 @@ pub(crate) struct TrackCache {
     notify: Notify,
     live_ingest_count: AtomicUsize,
     eviction_generation: AtomicU64,
-    malformed: AtomicBool,
+    /// When the track was found malformed; the latch is never cleared.
+    malformed_at: std::sync::OnceLock<Instant>,
     malformed_notify: Notify,
     subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
     ingress_stats: IngressStats,
@@ -79,7 +82,7 @@ impl TrackCache {
             notify: Notify::new(),
             live_ingest_count: AtomicUsize::new(0),
             eviction_generation: AtomicU64::new(0),
-            malformed: AtomicBool::new(false),
+            malformed_at: std::sync::OnceLock::new(),
             malformed_notify: Notify::new(),
             subgroup_opened_sender: broadcast::channel(256).0,
             ingress_stats: IngressStats::default(),
@@ -115,11 +118,11 @@ impl TrackCache {
     }
 
     pub(crate) fn is_malformed(&self) -> bool {
-        self.malformed.load(AtomicOrdering::Acquire)
+        self.malformed_at.get().is_some()
     }
 
     pub(crate) fn mark_malformed(&self) {
-        self.malformed.store(true, AtomicOrdering::Release);
+        let _ = self.malformed_at.set(Instant::now());
         self.malformed_notify.notify_waiters();
     }
 
@@ -246,6 +249,17 @@ impl TrackCache {
         self.read().objects.is_empty()
     }
 
+    /// Empty, and not latched malformed within `ttl`: a request for a
+    /// latched track is answered MALFORMED_TRACK (draft-18 §2.4.2) for the
+    /// TTL even when nothing of it was cached.
+    pub(crate) fn is_removable(&self, ttl: Duration) -> bool {
+        self.is_empty()
+            && self
+                .malformed_at
+                .get()
+                .is_none_or(|malformed_at| malformed_at.elapsed() >= ttl)
+    }
+
     pub(crate) fn evict(&self, ttl: Duration) {
         let removed_count = {
             let mut ledger = self.write();
@@ -313,12 +327,21 @@ impl TrackCache {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn insert_fetch_known_range(
         &self,
         start: moqt::object::Location,
         end: moqt::object::Location,
     ) {
         self.write().known_ranges.insert(start, end);
+    }
+
+    pub(crate) fn insert_known_until(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) {
+        self.write().known_ranges.insert_until(start, end);
     }
 
     pub(crate) fn eviction_generation(&self) -> u64 {
@@ -377,10 +400,13 @@ pub(crate) enum FetchRangeResolution {
 }
 
 impl TrackCache {
+    /// `upstream_largest` is the Largest Location an upstream SUBSCRIBE_OK
+    /// reported; the cache lacks the objects up to it until ingest catches up.
     pub(crate) fn resolve_fetch_range(
         &self,
         start: moqt::object::Location,
         end: moqt::object::Location,
+        upstream_largest: Option<moqt::object::Location>,
     ) -> FetchRangeResolution {
         if Self::explicit_end_before_or_equal_start(start, end) {
             return FetchRangeResolution::InvalidRange;
@@ -391,7 +417,8 @@ impl TrackCache {
             return FetchRangeResolution::NotCovered;
         };
 
-        if start > largest && self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0 {
+        let known_largest = upstream_largest.map_or(largest, |reported| reported.max(largest));
+        if start > known_largest && self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0 {
             return FetchRangeResolution::InvalidRange;
         }
 
@@ -415,6 +442,18 @@ impl TrackCache {
         }
 
         FetchRangeResolution::NotCovered
+    }
+
+    /// The FETCH_OK End Location of a response serving only what the cache
+    /// holds, or `None` when it holds no object at or after `start`.
+    pub(crate) fn known_end_location(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> Option<moqt::object::Location> {
+        let ledger = self.read();
+        let largest = ledger.largest_location()?;
+        (start <= largest).then(|| Self::resolve_fetch_end_location(&ledger, end, largest))
     }
 
     fn serves_after_in_flight_wait(
@@ -1017,7 +1056,7 @@ mod fetch_tests {
     fn resolve_fetch_range_returns_not_covered_for_empty_cache() {
         // Arrange / Act / Assert: no cached objects means the relay cannot safely FIN a fetch stream
         assert_eq!(
-            TrackCache::new().resolve_fetch_range(location(0, 0), location(0, 1)),
+            TrackCache::new().resolve_fetch_range(location(0, 0), location(0, 1), None),
             FetchRangeResolution::NotCovered
         );
     }
@@ -1029,7 +1068,7 @@ mod fetch_tests {
         let _open = open_group(&cache, 0, &[0, 1, 2]);
         // Act / Assert
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(0, 3)),
+            cache.resolve_fetch_range(location(0, 0), location(0, 3), None),
             FetchRangeResolution::Serve {
                 end_location: location(0, 3)
             }
@@ -1044,11 +1083,11 @@ mod fetch_tests {
         let _open = open_group(&cache, 0, &[0, 2]);
         // Act / Assert
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(0, 3)),
+            cache.resolve_fetch_range(location(0, 0), location(0, 3), None),
             FetchRangeResolution::NotCovered
         );
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 2), location(0, 3)),
+            cache.resolve_fetch_range(location(0, 2), location(0, 3), None),
             FetchRangeResolution::Serve {
                 end_location: location(0, 3)
             }
@@ -1063,7 +1102,7 @@ mod fetch_tests {
         let _open = open_group(&cache, 2, &[0]);
         // Act / Assert: local FIN would imply group 1 has no objects
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(2, 1)),
+            cache.resolve_fetch_range(location(0, 0), location(2, 1), None),
             FetchRangeResolution::NotCovered
         );
     }
@@ -1075,7 +1114,7 @@ mod fetch_tests {
         let _open = open_group(&cache, 0, &[0, 1, 2]);
         // Act / Assert: unpublished tail objects are not fetched; End Location is largest + 1
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(0, 0)),
+            cache.resolve_fetch_range(location(0, 0), location(0, 0), None),
             FetchRangeResolution::Serve {
                 end_location: location(0, 3)
             }
@@ -1089,7 +1128,7 @@ mod fetch_tests {
         insert_closed_group(&cache, 0, &[0, 1, 2]);
         // Act / Assert
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(0, 0)),
+            cache.resolve_fetch_range(location(0, 0), location(0, 0), None),
             FetchRangeResolution::Serve {
                 end_location: location(0, 0)
             }
@@ -1105,7 +1144,7 @@ mod fetch_tests {
         let _g2 = open_group(&cache, 2, &[0]);
         // Act / Assert
         assert_eq!(
-            cache.resolve_fetch_range(location(1, 0), location(1, 0)),
+            cache.resolve_fetch_range(location(1, 0), location(1, 0), None),
             FetchRangeResolution::NoObjects
         );
     }
@@ -1120,7 +1159,7 @@ mod fetch_tests {
         let _g1 = open_group(&cache, 1, &[0, 1]);
         // Act / Assert: serve and let delivery wait for the pending closes
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(1, 2)),
+            cache.resolve_fetch_range(location(0, 0), location(1, 2), None),
             FetchRangeResolution::Serve {
                 end_location: location(1, 2)
             }
@@ -1139,7 +1178,7 @@ mod fetch_tests {
         let _live = open_group(&cache, LIVE_GROUP, &[0, 1]);
 
         // Act
-        let resolution = cache.resolve_fetch_range(location(0, 0), location(LIVE_GROUP, 2));
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(LIVE_GROUP, 2), None);
 
         // Assert: the group ids between the fill and the live group are unknown, so the FETCH goes upstream
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
@@ -1168,7 +1207,7 @@ mod fetch_tests {
         let _g1 = open_group(&cache, 1, &[0, 1]);
         // Act / Assert
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(1, 2)),
+            cache.resolve_fetch_range(location(0, 0), location(1, 2), None),
             FetchRangeResolution::NotCovered
         );
     }
@@ -1185,7 +1224,7 @@ mod fetch_tests {
         cache.evict(ttl);
         // Act / Assert: evicted knowledge must not be served as an in-flight wait
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(1, 1)),
+            cache.resolve_fetch_range(location(0, 0), location(1, 1), None),
             FetchRangeResolution::NotCovered
         );
     }
@@ -1197,7 +1236,7 @@ mod fetch_tests {
         let _open = open_group(&cache, 0, &[0]);
         // Act / Assert: without live ingest the relay forwards upstream instead of asserting invalidity
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 1), location(0, 2)),
+            cache.resolve_fetch_range(location(0, 1), location(0, 2), None),
             FetchRangeResolution::NotCovered
         );
         // Act / Assert: with live ingest Largest is trusted
@@ -1205,12 +1244,12 @@ mod fetch_tests {
         cache.begin_live_ingest();
         cache.end_live_ingest();
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 1), location(0, 2)),
+            cache.resolve_fetch_range(location(0, 1), location(0, 2), None),
             FetchRangeResolution::InvalidRange
         );
         cache.end_live_ingest();
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 1), location(0, 2)),
+            cache.resolve_fetch_range(location(0, 1), location(0, 2), None),
             FetchRangeResolution::NotCovered
         );
     }
@@ -1224,7 +1263,7 @@ mod fetch_tests {
         cache.insert_fetch_known_range(location(0, 0), location(3, 0));
         // Act / Assert
         assert_eq!(
-            cache.resolve_fetch_range(location(0, 0), location(3, 0)),
+            cache.resolve_fetch_range(location(0, 0), location(3, 0), None),
             FetchRangeResolution::Serve {
                 end_location: location(3, 0)
             }
@@ -1528,11 +1567,11 @@ mod max_cache_duration_tests {
         // Arrange: the range is fully known, so only the expiry stops serving it
         let cache = TrackCache::new();
         closed_expiring_group(&cache, MAX_CACHE_DURATION);
-        let before_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2));
+        let before_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2), None);
         tokio::time::advance(MAX_CACHE_DURATION).await;
 
         // Act
-        let after_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2));
+        let after_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2), None);
 
         // Assert
         assert_eq!(
@@ -1552,7 +1591,7 @@ mod max_cache_duration_tests {
         tokio::time::advance(MAX_CACHE_DURATION).await;
 
         // Act
-        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 0));
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 0), None);
 
         // Assert
         assert_eq!(resolution, FetchRangeResolution::NotCovered);

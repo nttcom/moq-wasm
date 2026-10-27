@@ -281,6 +281,8 @@ impl Router {
     }
 }
 
+// Moved once out of a select arm; boxing would allocate for every event.
+#[allow(clippy::large_enum_variant)]
 enum PreviousSignal {
     Event(Option<SessionEvent>),
     Released,
@@ -543,6 +545,9 @@ async fn carry_subscription(
                     previous: false,
                 }),
                 open_subgroups: OpenSubgroups::new(),
+                default_publisher_priority: connection
+                    .control
+                    .default_publisher_priority(subscribe_ok.request_id),
             },
         )
         .await
@@ -590,7 +595,8 @@ mod tests {
             moqt::version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, open_subgroup, send_payload,
-                spawn_dual_server, spawn_dual_server_offering, subscribed_track_reader,
+                spawn_draft18_server, spawn_dual_server, spawn_dual_server_offering,
+                subscribed_track_reader,
             },
             transport::application_protocol::ApplicationProtocols,
         },
@@ -1287,6 +1293,7 @@ mod tests {
             loop {
                 match receiver.receive().await {
                     Ok(Fetch::Object(object)) => rest.push(object.payload),
+                    Ok(Fetch::UnknownRange { .. }) => {}
                     Ok(Fetch::End) => return Ok(rest),
                     Err(error) => return Err(error),
                 }
@@ -1312,6 +1319,115 @@ mod tests {
             }
         );
         assert_eq!(rest.unwrap(), vec![Bytes::from("o2")]);
+    }
+
+    /// The FILL_TIMEOUT of the FETCH a draft-18 session sends again on the
+    /// next server, after the first server answered a FETCH with
+    /// `fill_timeout` and moved the session `wait` later; returns it with
+    /// the time from the first FETCH to the second one's arrival.
+    async fn fill_timeout_sent_again(
+        name: &str,
+        fill_timeout: Duration,
+        wait: Duration,
+    ) -> (Option<Duration>, Duration) {
+        let (port_a, accept_a) = spawn_draft18_server(&format!("{name}-a"));
+        let (port_b, accept_b) = spawn_draft18_server(&format!("{name}-b"));
+        let client = Endpoint::<DUAL>::create_client_offering(
+            &ClientConfig {
+                port: 0,
+                verify_certificate: false,
+                authorization_token: None,
+                follow_go_away: true,
+            },
+            DRAFT18_PROTOCOLS,
+        )
+        .unwrap();
+        let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            client
+                .connect(&format!("moqt://127.0.0.1:{port_a}"))
+                .await?
+                .await
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let server_a = accept_a.await.unwrap();
+        let end = Location {
+            group_id: 1,
+            object_id: 3,
+        };
+        let mut subscriber = client.subscriber();
+        let first_sent = std::time::Instant::now();
+        let (handle, (_, _sender_a)) = tokio::join!(
+            subscriber.fetch(
+                "ns".into(),
+                "track".into(),
+                Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+                end,
+                FetchOption {
+                    fill_timeout: Some(fill_timeout),
+                    ..FetchOption::default()
+                },
+            ),
+            serve_fetch(&server_a, end)
+        );
+        let mut receiver = subscriber
+            .accept_fetch_receiver(&handle.unwrap())
+            .await
+            .unwrap();
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        tokio::time::sleep(wait).await;
+        server_a.close_with_error(TerminationErrorCode::GoawayTimeout, "drained");
+        let _rest = tokio::spawn(async move { while receiver.receive().await.is_ok() {} });
+        let SessionEvent::Fetch(handler) =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
+                .await
+                .expect("the rest of the FETCH reaches B")
+                .unwrap()
+        else {
+            panic!("expected FETCH on B");
+        };
+        (handler.fill_timeout(), first_sent.elapsed())
+    }
+
+    #[tokio::test]
+    async fn a_fetch_sent_again_after_go_away_carries_the_fill_timeout_left() {
+        // Arrange
+        let fill_timeout = Duration::from_secs(10);
+        let wait = Duration::from_millis(200);
+
+        // Act
+        let (sent_again, elapsed) =
+            fill_timeout_sent_again("session-migration-fill-left", fill_timeout, wait).await;
+
+        // Assert: draft-18 §10.2.5, the budget counts from the first FETCH, not from the second
+        let sent_again = sent_again.expect("the FETCH sent again keeps a FILL_TIMEOUT");
+        assert!(sent_again <= fill_timeout - wait, "{sent_again:?}");
+        assert!(
+            sent_again + Duration::from_millis(1) >= fill_timeout - elapsed,
+            "{sent_again:?} after {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fetch_sent_again_after_its_fill_timeout_ran_out_carries_zero() {
+        // Act
+        let (sent_again, _) = fill_timeout_sent_again(
+            "session-migration-fill-spent",
+            Duration::from_millis(50),
+            Duration::from_millis(200),
+        )
+        .await;
+
+        // Assert: draft-18 §10.2.5, nothing of the budget is left to wait
+        assert_eq!(sent_again, Some(Duration::ZERO));
     }
 
     #[tokio::test]

@@ -1,3 +1,4 @@
+use moqt::fetch::UnknownRange;
 use moqt::object::DataStreamResetCode;
 use moqt::publish::PublishDoneCode;
 use tokio::sync::mpsc;
@@ -170,27 +171,75 @@ impl Publisher for MockPublisher {
 #[derive(Debug)]
 pub(crate) enum FetchSent {
     Object(moqt::object::Object),
+    UnknownRange(moqt::object::Location),
     Closed,
     Reset(DataStreamResetCode),
 }
 
+/// The draft whose rule `MockFetchSender::report_unknown_range` follows, as
+/// `moqt::fetch::FetchDataSender` does.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum UnknownRangeDraft {
+    /// No End of Unknown Range: every range resets the response.
+    Draft14,
+    /// A range is marked unless it ends in the group of the previous object
+    /// or marker (§11.4.4.2), which resets the response.
+    Draft18,
+}
+
+/// Records what reaches the wire: a range the draft cannot mark shows up as
+/// the reset with UNKNOWN_OBJECT_STATUS.
 pub(crate) struct MockFetchSender {
     sent: mpsc::UnboundedSender<FetchSent>,
+    draft: UnknownRangeDraft,
+    /// The location of the previous object or marker.
+    previous: std::sync::Mutex<Option<moqt::object::Location>>,
 }
 
 impl MockFetchSender {
-    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<FetchSent>) {
+    pub(crate) fn new(draft: UnknownRangeDraft) -> (Self, mpsc::UnboundedReceiver<FetchSent>) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        (Self { sent: sender }, receiver)
+        (
+            Self {
+                sent: sender,
+                draft,
+                previous: std::sync::Mutex::default(),
+            },
+            receiver,
+        )
+    }
+
+    fn record(&self, sent: FetchSent) -> anyhow::Result<()> {
+        self.sent
+            .send(sent)
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 }
 
 #[async_trait::async_trait]
 impl FetchSender for MockFetchSender {
     async fn send(&self, object: moqt::object::Object) -> anyhow::Result<()> {
-        self.sent
-            .send(FetchSent::Object(object))
-            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+        *self.previous.lock().unwrap() = Some(object.location);
+        self.record(FetchSent::Object(object))
+    }
+
+    async fn report_unknown_range(
+        &self,
+        last: moqt::object::Location,
+    ) -> anyhow::Result<UnknownRange> {
+        let previous = self.previous.lock().unwrap().replace(last);
+        let marks = match self.draft {
+            UnknownRangeDraft::Draft14 => false,
+            UnknownRangeDraft::Draft18 => {
+                previous.is_none_or(|previous| previous.group_id != last.group_id)
+            }
+        };
+        if !marks {
+            self.record(FetchSent::Reset(DataStreamResetCode::UnknownObjectStatus))?;
+            return Ok(UnknownRange::Reset);
+        }
+        self.record(FetchSent::UnknownRange(last))?;
+        Ok(UnknownRange::Marked)
     }
 
     async fn close(&self) -> anyhow::Result<()> {

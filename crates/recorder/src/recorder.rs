@@ -494,6 +494,7 @@ fn fetched_object(
 ) -> Option<TrackObject> {
     match fetched {
         Ok(Fetch::Object(object)) => relay::fetched_track_object(object),
+        Ok(Fetch::UnknownRange { .. }) => None,
         Ok(Fetch::End) => {
             *fetch = None;
             None

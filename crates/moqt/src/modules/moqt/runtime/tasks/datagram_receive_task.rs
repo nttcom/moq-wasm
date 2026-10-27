@@ -40,7 +40,7 @@ impl DatagramReceiveTask {
     #[tracing::instrument(level = "trace", name = "on_datagram_received", skip_all)]
     async fn on_datagram_received(connection: &Connection, data: &mut BytesMut) -> bool {
         tracing::trace!(?data, "Received datagram");
-        let (track_alias, object) = match connection.control.version().decode_datagram(data) {
+        let (track_alias, datagram) = match connection.control.version().decode_datagram(data) {
             Ok(Some(decoded)) => decoded,
             Ok(None) => return false,
             Err(error) => {
@@ -49,7 +49,7 @@ impl DatagramReceiveTask {
             }
         };
 
-        SubscriptionNotifier::notify(connection, track_alias, IncomingObject::Datagram(object))
+        SubscriptionNotifier::notify(connection, track_alias, IncomingObject::Datagram(datagram))
             .await;
         true
     }

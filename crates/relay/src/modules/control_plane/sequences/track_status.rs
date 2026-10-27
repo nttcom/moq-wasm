@@ -3,7 +3,7 @@ use moqt::object::ContentExists;
 use tracing::Span;
 
 use crate::modules::{
-    control_plane::sequences::subscribe::cached_largest,
+    control_plane::sequences::subscribe::{cached_largest, is_latched_malformed},
     data_plane::cache::store::TrackCacheStore,
     domain::{
         pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId, track_key::TrackKey,
@@ -34,6 +34,14 @@ impl TrackStatus {
     ) {
         let track_key = TrackKey::new(handler.track_namespace(), handler.track_name());
         let response = match table.get_upstream_track(&track_key) {
+            _ if is_latched_malformed(cache_store, &track_key) => {
+                handler
+                    .error(
+                        RequestErrorCode::MalformedTrack,
+                        "malformed track".to_string(),
+                    )
+                    .await
+            }
             Some(upstream_track) => {
                 let content_exists = match cached_largest(cache_store, &track_key) {
                     Some(location) => ContentExists::True { location },
@@ -183,6 +191,28 @@ mod tests {
                 expires: 0,
                 content_exists: ContentExists::False,
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_track_status_for_a_latched_track_is_answered_malformed_track() {
+        // Arrange: the latch ended the track's upstream subscriptions
+        let table = InMemoryLocalPubSubDirectory::new();
+        let cache_store = TrackCacheStore::new();
+        cache_store
+            .get_or_create(&TrackKey::new("ns", "track"))
+            .mark_malformed();
+        let handler = MockTrackStatusHandler::default();
+
+        // Act
+        TrackStatus
+            .handle(1, &Span::none(), &table, &cache_store, &handler)
+            .await;
+
+        // Assert: draft-18 §2.4.2, the track is malformed, not unknown
+        assert_eq!(
+            handler.responses(),
+            vec![Response::Error(RequestErrorCode::MalformedTrack)]
         );
     }
 

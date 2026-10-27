@@ -130,10 +130,11 @@ async fn a_fetch_over_a_deleted_segment_goes_upstream() {
     ingest_past_the_byte_cap(&track).await;
 
     // Act
-    let resolution = track
-        .harness
-        .cache()
-        .resolve_fetch_range(location(0, 0), location(0, 1));
+    let resolution =
+        track
+            .harness
+            .cache()
+            .resolve_fetch_range(location(0, 0), location(0, 1), None);
 
     // Assert
     assert_eq!(resolution, FetchRangeResolution::NotCovered);

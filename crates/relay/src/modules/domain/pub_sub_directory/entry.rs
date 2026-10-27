@@ -31,6 +31,14 @@ pub(crate) struct UpstreamTrack {
 
 impl UpstreamTrack {
     pub(crate) fn content_exists(&self) -> ContentExists {
+        self.largest_location()
+            .map_or(ContentExists::False, |location| ContentExists::True {
+                location,
+            })
+    }
+
+    /// The largest Largest Location of its upstream subscriptions.
+    pub(crate) fn largest_location(&self) -> Option<moqt::object::Location> {
         self.subscriptions
             .values()
             .filter_map(|subscription| match subscription.content_exists {
@@ -38,9 +46,6 @@ impl UpstreamTrack {
                 ContentExists::False => None,
             })
             .max()
-            .map_or(ContentExists::False, |location| ContentExists::True {
-                location,
-            })
     }
 
     /// A relay's upstream subscription only serves this relay's clients, so a

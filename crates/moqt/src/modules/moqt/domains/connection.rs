@@ -102,6 +102,7 @@ pub(crate) struct SinkReceiver {
     /// Set while the subscription is read on two connections.
     pub(crate) cutover: Option<SinkCutover>,
     pub(crate) open_subgroups: OpenSubgroups,
+    pub(crate) default_publisher_priority: u8,
 }
 
 /// What the sink on the new connection takes from the previous one when a
@@ -132,7 +133,10 @@ pub(crate) struct SharedCutover {
 fn location_of(object: &IncomingObject) -> (u64, u64) {
     match object {
         IncomingObject::Subgroup(receiver) => (receiver.group_id(), 0),
-        IncomingObject::Datagram(object) => (object.location.group_id, object.location.object_id),
+        IncomingObject::Datagram(datagram) => (
+            datagram.object.location.group_id,
+            datagram.object.location.object_id,
+        ),
     }
 }
 
@@ -171,6 +175,7 @@ impl SinkReceiver {
             receiver.track_alias = self.logical_alias;
             receiver.count_in(&self.open_subgroups);
         }
+        object.inherit_priority(self.default_publisher_priority);
         if self.sender.send(object).is_err() {
             IncomingObjectNotification::ReceiverClosed
         } else {

@@ -1,15 +1,16 @@
 use moqt::object::DataStreamResetCode;
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 
 use crate::modules::{
     data_plane::{
         cache::{
             cached_object::{CacheStamp, CachedObject},
+            known_ranges::{KnownRanges, following},
             track_cache::TrackCache,
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::coordinator::{EgressCommand, EgressFetchRequest, FetchWait},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
@@ -20,12 +21,105 @@ pub(crate) struct FetchIngestStart {
     pub(crate) upstream_publisher_session_id: SessionId,
     pub(crate) fetch_handle: moqt::fetch::FetchHandle,
     pub(crate) egress_start: EgressFetchRequest,
-    pub(crate) fill_timeout: Duration,
+    pub(crate) fill_budget: FillBudget,
 }
 
-/// Strict store-and-forward: delivery starts only after the whole response
-/// reached `Fetch::End`, so first-byte latency equals the upstream transfer
-/// time and fills longer than MOQT_FETCH_FILL_TIMEOUT_SECS fail.
+/// How long a FETCH may wait for the objects the relay fetches upstream
+/// for it (draft-18 §10.2.5 FILL_TIMEOUT).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FillBudget {
+    /// The FETCH's FILL_TIMEOUT.
+    requested: Option<Duration>,
+    /// When the wait ends, counted from the FETCH's arrival: FILL_TIMEOUT,
+    /// at most MOQT_FETCH_FILL_TIMEOUT_SECS, which also applies without
+    /// FILL_TIMEOUT. The objects not filled by then are reported as unknown.
+    deadline: Instant,
+}
+
+impl FillBudget {
+    /// The relay waits at most `relay_limit`, even for a longer FILL_TIMEOUT
+    /// (§10.2.5 MAY).
+    pub(crate) fn new(requested: Option<Duration>, relay_limit: Duration) -> Self {
+        let wait = requested.map_or(relay_limit, |requested| requested.min(relay_limit));
+        Self {
+            requested,
+            deadline: Instant::now() + wait,
+        }
+    }
+
+    /// FILL_TIMEOUT 0: the FETCH wants only what is at hand (§10.2.5 MUST NOT
+    /// wait).
+    pub(crate) fn forbids_waiting(&self) -> bool {
+        self.requested == Some(Duration::ZERO)
+    }
+
+    /// How long a FETCH served from the cache waits for the objects live
+    /// ingest has yet to deliver. Without FILL_TIMEOUT the relay limit
+    /// applies only when the response can report the rest as unknown
+    /// (`marks_unknown_ranges`); otherwise stopping would reset it, so the
+    /// delivery waits for them.
+    pub(crate) fn delivery_wait(&self, marks_unknown_ranges: bool) -> FetchWait {
+        match self.requested {
+            Some(Duration::ZERO) => FetchWait::Never,
+            Some(_) => FetchWait::Until(self.deadline),
+            None if marks_unknown_ranges => FetchWait::Until(self.deadline),
+            None => FetchWait::Unlimited,
+        }
+    }
+
+    /// When a fill has to end.
+    fn fill_deadline(&self) -> Instant {
+        self.deadline
+    }
+}
+
+/// What an ascending fill has shown known: every position from the start of
+/// the range up to `next`, except the ranges the response marked unknown.
+struct FillProgress {
+    known: Vec<Range<moqt::object::Location>>,
+    known_from: moqt::object::Location,
+    /// The position after the last object or marker received.
+    next: moqt::object::Location,
+    unknown_seen: bool,
+}
+
+impl FillProgress {
+    fn new(start: moqt::object::Location) -> Self {
+        Self {
+            known: Vec::new(),
+            known_from: start,
+            next: start,
+            unknown_seen: false,
+        }
+    }
+
+    fn object(&mut self, at: moqt::object::Location) {
+        self.next = self.next.max(following(at));
+    }
+
+    /// draft-18 §11.4.4.2: the positions from `next` through `last` may hold
+    /// objects.
+    fn unknown(&mut self, last: moqt::object::Location) {
+        self.known.push(self.known_from..self.next);
+        self.next = self.next.max(following(last));
+        self.known_from = self.next;
+        self.unknown_seen = true;
+    }
+
+    /// The known ranges once the response ended at `end` (exclusive), or
+    /// stopped early when `end` is `None`.
+    fn into_known(
+        mut self,
+        end: Option<moqt::object::Location>,
+    ) -> Vec<Range<moqt::object::Location>> {
+        self.known.push(self.known_from..end.unwrap_or(self.next));
+        self.known
+    }
+}
+
+/// Strict store-and-forward: delivery starts only after the response reached
+/// `Fetch::End` or the fill budget ran out, so first-byte latency equals the
+/// upstream transfer time.
 pub(crate) struct FetchIngest {
     _join_handle: JoinHandle<()>,
 }
@@ -45,10 +139,8 @@ impl FetchIngest {
         let cache = start.egress_start.cache.clone();
         let join_handle = tokio::spawn(async move {
             if let Err(error) = Self::run_inner(session_repo.clone(), &egress_sender, start).await {
-                // Expected request-scoped failures (timeout, upstream reset):
-                // log the chain without anyhow's captured backtrace.
-                tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                 let error_code = if cache.is_malformed() {
+                    tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                     let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
                         upstream_publisher_session_id,
                         track_key,
@@ -61,6 +153,9 @@ impl FetchIngest {
                     .await;
                     DataStreamResetCode::MalformedTrack
                 } else {
+                    // Expected request-scoped failures (timeout, upstream
+                    // reset): log the chain without anyhow's captured backtrace.
+                    tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                     DataStreamResetCode::InternalError
                 };
                 Self::reset_downstream_fetch(
@@ -77,24 +172,68 @@ impl FetchIngest {
         }
     }
 
+    /// Hands the range to egress once the fill ended: as filled when the
+    /// response covered all of it, or reporting the rest as unknown when it
+    /// marked objects unknown or the fill budget ran out.
     async fn run_inner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
-        let timeout = start.fill_timeout;
-        tokio::time::timeout(
-            timeout,
-            Self::ingest_fetch_stream(session_repo, egress_sender, start),
+        let cache = start.egress_start.cache.clone();
+        let start_eviction_generation = cache.eviction_generation();
+        let mut progress = FillProgress::new(start.egress_start.start_location);
+        let filled = tokio::time::timeout_at(
+            start.fill_budget.fill_deadline(),
+            Self::ingest_fetch_stream(session_repo.clone(), &start, &cache, &mut progress),
         )
-        .await
-        .map_err(|_| anyhow::anyhow!("fetch ingest timed out after {:?}", timeout))?
+        .await;
+        let end = match filled {
+            Ok(result) => {
+                result?;
+                Some(KnownRanges::exclusive_end(start.egress_start.end_location))
+            }
+            Err(_) => {
+                tracing::info!(
+                    request_id = start.egress_start.request_id,
+                    "fill timeout ran out; serving the fetch with what arrived"
+                );
+                Self::cancel_upstream_fetch(
+                    session_repo,
+                    start.upstream_publisher_session_id,
+                    &start.fetch_handle,
+                )
+                .await;
+                None
+            }
+        };
+        if cache.eviction_generation() != start_eviction_generation {
+            tracing::warn!(
+                request_id = start.egress_start.request_id,
+                "fetch fill crossed cache eviction; resetting downstream fetch"
+            );
+            anyhow::bail!("fetch fill crossed cache eviction");
+        }
+        let mut egress_start = start.egress_start;
+        if end.is_none() || progress.unknown_seen {
+            egress_start.wait = FetchWait::Never;
+        }
+        for known in progress.into_known(end) {
+            cache.insert_known_until(known.start, known.end);
+        }
+        egress_sender
+            .send(EgressCommand::StartFetch(egress_start))
+            .await?;
+        Ok(())
     }
 
+    /// Fills the cache until the response ends (FIN), the fill fails or it
+    /// is dropped when its budget runs out.
     async fn ingest_fetch_stream(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
-        start: FetchIngestStart,
+        start: &FetchIngestStart,
+        cache: &TrackCache,
+        progress: &mut FillProgress,
     ) -> anyhow::Result<()> {
         let (mut subscriber, persist) = {
             let session_repo = session_repo.lock().await;
@@ -109,8 +248,6 @@ impl FetchIngest {
         let mut receiver = subscriber
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
-        let cache = start.egress_start.cache.clone();
-        let start_eviction_generation = cache.eviction_generation();
         let stamp = CacheStamp {
             max_cache_duration: start
                 .fetch_handle
@@ -128,25 +265,11 @@ impl FetchIngest {
             };
             match received {
                 moqt::fetch::Fetch::Object(object) => {
-                    Self::append_fetch_object(&cache, object, stamp)?;
+                    progress.object(object.location);
+                    Self::append_fetch_object(cache, object, stamp)?;
                 }
-                moqt::fetch::Fetch::End => {
-                    if cache.eviction_generation() != start_eviction_generation {
-                        tracing::warn!(
-                            request_id = start.egress_start.request_id,
-                            "fetch fill crossed cache eviction; resetting downstream fetch"
-                        );
-                        anyhow::bail!("fetch fill crossed cache eviction");
-                    }
-                    cache.insert_fetch_known_range(
-                        start.egress_start.start_location,
-                        start.egress_start.end_location,
-                    );
-                    egress_sender
-                        .send(EgressCommand::StartFetch(start.egress_start))
-                        .await?;
-                    return Ok(());
-                }
+                moqt::fetch::Fetch::UnknownRange { last } => progress.unknown(last),
+                moqt::fetch::Fetch::End => return Ok(()),
             }
         }
     }
@@ -223,13 +346,17 @@ mod tests {
     use super::*;
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::{
+        auth::verified_token::VerifiedToken,
         data_plane::cache::track_cache::FetchRangeResolution,
         session::session_event::EventKind,
         test_support::{
-            mock_session::session_repository_with_upstream_session,
+            mock_session::{
+                FetchAnswer, RecordedControlMessages, recorded_session_answering_fetch,
+                session_repository_with_session, session_repository_with_upstream_session,
+            },
             relay_harness::fixtures::{
                 cached_object::{status_object, stream_object, stream_object_with_payload},
-                location,
+                location, planned_steps,
             },
         },
     };
@@ -281,8 +408,9 @@ mod tests {
                 start_location: location(0, 0),
                 end_location: location(0, 1),
                 group_order: moqt::object::GroupOrder::Ascending,
+                wait: FetchWait::Unlimited,
             },
-            fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
+            fill_budget: FillBudget::new(None, DEFAULT_FETCH_FILL_TIMEOUT),
         };
 
         // Act: the receiver pends forever, so only the malformed latch can
@@ -330,7 +458,7 @@ mod tests {
         fill(&cache, status_object(1, 0, ObjectStatus::Normal)).unwrap();
 
         // Act
-        let resolution = cache.resolve_fetch_range(location(0, 0), location(1, 1));
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(1, 1), None);
 
         // Assert: only a completed FETCH known range may cover this historical gap.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
@@ -357,6 +485,228 @@ mod tests {
         assert!(cache.is_malformed());
     }
 
+    const UPSTREAM_SESSION: SessionId = 1;
+
+    struct Ingested {
+        cache: Arc<TrackCache>,
+        egress_receiver: mpsc::Receiver<EgressCommand>,
+        result: anyhow::Result<()>,
+        recorded: RecordedControlMessages,
+    }
+
+    impl Ingested {
+        fn handed_over(&mut self) -> Option<EgressFetchRequest> {
+            match self.egress_receiver.try_recv() {
+                Ok(EgressCommand::StartFetch(request)) => Some(request),
+                _ => None,
+            }
+        }
+
+        fn served(&self) -> Vec<Result<(u64, u64), (u64, u64)>> {
+            planned_steps(self.cache.plan_fetch(
+                location(0, 0),
+                location(0, 3),
+                moqt::object::GroupOrder::Ascending,
+            ))
+        }
+    }
+
+    /// Fills a fresh cache for {0,0}..{0,3} from an upstream FETCH answered
+    /// with `response`, which then pends.
+    async fn ingest(response: Vec<moqt::fetch::Fetch>, fill_budget: FillBudget) -> Ingested {
+        let (session, recorded) = recorded_session_answering_fetch(FetchAnswer::Respond(response));
+        let session_repo = session_repository_with_session(
+            UPSTREAM_SESSION,
+            session,
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let cache = Arc::new(TrackCache::new());
+        let (egress_sender, egress_receiver) = mpsc::channel(1);
+        let start = FetchIngestStart {
+            track_key: TrackKey::new("ns", "track"),
+            upstream_publisher_session_id: UPSTREAM_SESSION,
+            fetch_handle: moqt::fetch::FetchHandle {
+                request_id: 7,
+                group_order: moqt::object::GroupOrder::Ascending,
+                end_of_track: false,
+                end_location: location(0, 3),
+                max_cache_duration: None,
+                remainder: None,
+            },
+            egress_start: EgressFetchRequest {
+                subscriber_session_id: 2,
+                request_id: 3,
+                cache: cache.clone(),
+                start_location: location(0, 0),
+                end_location: location(0, 3),
+                group_order: moqt::object::GroupOrder::Ascending,
+                wait: FetchWait::Unlimited,
+            },
+            fill_budget,
+        };
+        let result = FetchIngest::run_inner(session_repo, &egress_sender, start).await;
+        Ingested {
+            cache,
+            egress_receiver,
+            result,
+            recorded,
+        }
+    }
+
+    fn fetched(object_id: u64) -> moqt::fetch::Fetch {
+        moqt::fetch::Fetch::Object(stream_object(0, object_id).object)
+    }
+
+    fn unlimited() -> FillBudget {
+        FillBudget::new(None, DEFAULT_FETCH_FILL_TIMEOUT)
+    }
+
+    #[tokio::test]
+    async fn a_complete_upstream_response_covers_its_range() {
+        // Act
+        let mut ingested = ingest(
+            vec![fetched(0), fetched(2), moqt::fetch::Fetch::End],
+            unlimited(),
+        )
+        .await;
+
+        // Assert: the gap at {0,1} is known not to exist
+        assert!(ingested.result.is_ok(), "{:?}", ingested.result);
+        assert_eq!(
+            ingested
+                .cache
+                .resolve_fetch_range(location(0, 0), location(0, 3), None),
+            FetchRangeResolution::Serve {
+                end_location: location(0, 3)
+            }
+        );
+        assert!(
+            ingested
+                .handed_over()
+                .is_some_and(|request| request.wait == FetchWait::Unlimited)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_range_in_the_upstream_response_is_served_with_the_known_objects() {
+        // Act
+        let mut ingested = ingest(
+            vec![
+                fetched(0),
+                moqt::fetch::Fetch::UnknownRange {
+                    last: location(0, 1),
+                },
+                fetched(2),
+                moqt::fetch::Fetch::End,
+            ],
+            unlimited(),
+        )
+        .await;
+
+        // Assert: draft-18 §10.12; a later FETCH of the range goes upstream
+        // again, as the cache does not cover it
+        assert!(ingested.result.is_ok(), "{:?}", ingested.result);
+        assert_eq!(
+            ingested
+                .cache
+                .resolve_fetch_range(location(0, 0), location(0, 3), None),
+            FetchRangeResolution::NotCovered
+        );
+        assert!(
+            ingested
+                .handed_over()
+                .is_some_and(|request| request.wait == FetchWait::Never)
+        );
+        assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 1)), Ok((0, 2))]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fill_timeout_that_runs_out_serves_what_arrived_and_cancels_the_upstream_fetch() {
+        // Act: object {0,0} arrives, then the upstream stalls
+        let mut ingested = ingest(
+            vec![fetched(0)],
+            FillBudget::new(Some(Duration::from_millis(50)), DEFAULT_FETCH_FILL_TIMEOUT),
+        )
+        .await;
+
+        // Assert: draft-18 §10.2.5, the plan reports the rest as unknown; as it
+        // ends in group 0 of the last object, the sender resets there (§10.12)
+        assert!(ingested.result.is_ok(), "{:?}", ingested.result);
+        assert!(
+            ingested
+                .handed_over()
+                .is_some_and(|request| request.wait == FetchWait::Never)
+        );
+        assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 2))]);
+        assert_eq!(
+            *ingested
+                .recorded
+                .fetch_cancelled_request_ids
+                .lock()
+                .unwrap(),
+            vec![7]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fill_without_fill_timeout_serves_what_arrived_when_the_relay_limit_runs_out() {
+        // Act: object {0,0} arrives, then the upstream stalls past the relay limit
+        let mut ingested = ingest(
+            vec![fetched(0)],
+            FillBudget::new(None, Duration::from_millis(50)),
+        )
+        .await;
+
+        // Assert: draft-18 §10.2.5, without a Fill Timeout the relay waits its
+        // own duration before reporting the rest as unknown, which the sender
+        // turns into a reset here (§10.12)
+        assert!(ingested.result.is_ok(), "{:?}", ingested.result);
+        assert!(
+            ingested
+                .handed_over()
+                .is_some_and(|request| request.wait == FetchWait::Never)
+        );
+        assert_eq!(ingested.served(), vec![Ok((0, 0)), Err((0, 2))]);
+        assert_eq!(
+            *ingested
+                .recorded
+                .fetch_cancelled_request_ids
+                .lock()
+                .unwrap(),
+            vec![7]
+        );
+    }
+
+    #[test]
+    fn a_fill_timeout_above_the_relay_limit_is_cut_to_it() {
+        // Arrange
+        let now = Instant::now();
+
+        // Act
+        let budget = FillBudget::new(Some(Duration::from_secs(600)), Duration::from_secs(20));
+
+        // Assert: draft-18 §10.2.5 MAY use a shorter timeout
+        assert!(budget.fill_deadline() <= now + Duration::from_secs(21));
+        assert!(!budget.forbids_waiting());
+        assert!(FillBudget::new(Some(Duration::ZERO), Duration::from_secs(20)).forbids_waiting());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_relay_limit_of_an_upstream_fill_counts_from_the_fetch_arrival() {
+        // Arrange
+        let arrival = Instant::now();
+        let budget = FillBudget::new(None, Duration::from_secs(20));
+        tokio::time::advance(Duration::from_secs(5)).await;
+
+        // Act: the upstream FETCH_OK arrives and the fill starts
+        let deadline = budget.fill_deadline();
+
+        // Assert: the same limit a cache-served FETCH waits for (delivery_wait)
+        assert_eq!(deadline, arrival + Duration::from_secs(20));
+        assert_eq!(budget.delivery_wait(true), FetchWait::Until(deadline));
+    }
+
     #[tokio::test]
     async fn partial_fetch_ingest_does_not_register_coverage() {
         // Arrange: a FETCH fill wrote an object but has not reached Fetch::End.
@@ -364,7 +714,7 @@ mod tests {
         fill(&cache, stream_object(0, 0)).unwrap();
 
         // Act
-        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 1));
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 1), None);
 
         // Assert: only Fetch::End may register the filled range as known.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);

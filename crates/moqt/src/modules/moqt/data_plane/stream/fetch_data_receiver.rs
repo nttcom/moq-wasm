@@ -11,16 +11,23 @@ use crate::{
             connection::generation_of, fetch_handle::FetchRemainder,
             session_context::SessionContext,
         },
-        version::FetchReader,
+        version::{FetchReader, draft18::FetchRequestEnd},
     },
     object::{GroupOrder, Location},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Fetch {
     Object(Object),
+    /// draft-18 §11.4.4.2 End of Unknown Range: the objects after the
+    /// previous one (or the range start) through `last` have unknown status
+    /// and may exist. draft-14 never yields it.
+    UnknownRange {
+        last: Location,
+    },
     /// The publisher finished the stream (FIN): every object of the range
-    /// was delivered.
+    /// the publisher knows was delivered; an object missing outside the
+    /// unknown ranges does not exist.
     End,
 }
 
@@ -30,6 +37,8 @@ pub struct FetchDataReceiver {
     reader: FetchReader,
     /// Set for a FETCH a session that follows GOAWAY can send again.
     carry: Option<FetchCarry>,
+    /// `None` on draft-14, whose FETCH has no request stream.
+    request_end: Option<FetchRequestEnd>,
 }
 
 /// Lets a FETCH whose stream a migration cut off continue on the session's
@@ -64,7 +73,7 @@ impl FetchCarry {
 
     /// The stream of the part not delivered yet, FETCHed on the current
     /// connection; `None` when the session has not moved since.
-    async fn rest(&mut self) -> anyhow::Result<Option<FetchReader>> {
+    async fn rest(&mut self) -> anyhow::Result<Option<FetchDataReceiver>> {
         if self.session.connection().generation == self.generation || self.rest_is_empty() {
             return Ok(None);
         }
@@ -80,13 +89,14 @@ impl FetchCarry {
                 FetchOption {
                     subscriber_priority: self.remainder.subscriber_priority,
                     group_order: GroupOrder::Ascending,
+                    fill_timeout: self.remainder.fill_timeout_left(),
                 },
             )
             .await?;
         let receiver = subscriber.accept_fetch_receiver(&handle).await?;
         self.generation = generation_of(handle.request_id);
         tracing::info!(start = ?self.remainder.start, "FETCH sent again on the new connection");
-        Ok(Some(receiver.reader))
+        Ok(Some(receiver))
     }
 }
 
@@ -96,7 +106,12 @@ impl FetchDataReceiver {
             request_id,
             reader,
             carry: None,
+            request_end: None,
         }
+    }
+
+    pub(crate) fn end_request_with(&mut self, request_end: Option<FetchRequestEnd>) {
+        self.request_end = request_end;
     }
 
     pub(crate) fn carry_with(
@@ -120,16 +135,18 @@ impl FetchDataReceiver {
 
     pub async fn receive(&mut self) -> anyhow::Result<Fetch> {
         loop {
-            let error = match self.reader.next_object().await {
-                Ok(Some(object)) => {
-                    if let Some(carry) = &mut self.carry {
-                        carry.delivered(object.location);
+            let error = match self.reader.next().await {
+                Ok(fetched) => {
+                    match (&fetched, &mut self.carry) {
+                        (Fetch::Object(object), Some(carry)) => carry.delivered(object.location),
+                        (Fetch::End, _) => self.response_ended(),
+                        _ => {}
                     }
-                    return Ok(Fetch::Object(object));
+                    return Ok(fetched);
                 }
-                Ok(None) => return Ok(Fetch::End),
                 Err(error) => error,
             };
+            self.response_ended();
             match &error {
                 StreamReceiveError::Decode(_) | StreamReceiveError::ProtocolViolation(_) => {
                     tracing::error!(%error, "Failed to decode the fetch stream")
@@ -140,8 +157,9 @@ impl FetchDataReceiver {
                 && matches!(error, StreamReceiveError::Closed(_))
             {
                 match carry.rest().await {
-                    Ok(Some(reader)) => {
-                        self.reader = reader;
+                    Ok(Some(rest)) => {
+                        self.reader = rest.reader;
+                        self.request_end = rest.request_end;
                         continue;
                     }
                     Ok(None) => {}
@@ -154,6 +172,12 @@ impl FetchDataReceiver {
                 }
             }
             anyhow::bail!("Failed to receive data from fetch stream: {error}")
+        }
+    }
+
+    fn response_ended(&mut self) {
+        if let Some(request_end) = self.request_end.take() {
+            request_end.response_ended();
         }
     }
 }

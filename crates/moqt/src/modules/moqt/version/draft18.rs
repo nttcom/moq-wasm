@@ -109,6 +109,20 @@ impl RequestStreamKind {
 struct RequestStream {
     kind: RequestStreamKind,
     sender: Arc<StreamSender>,
+    /// For a subscription: the priority its objects inherit when they omit
+    /// one, from its SUBSCRIBE_OK or PUBLISH (§12.4).
+    default_publisher_priority: u8,
+    /// For a FETCH the peer sent: how far its response has come.
+    fetch_end: FetchEnd,
+}
+
+/// §5.2: a publisher destroys the state of a FETCH after closing its
+/// response stream, so the request stream ends with FIN once the FETCH_OK
+/// is sent too.
+#[derive(Debug, Clone, Copy, Default)]
+struct FetchEnd {
+    fetch_ok_sent: bool,
+    response_ended: bool,
 }
 
 #[derive(Default)]
@@ -273,6 +287,56 @@ impl ControlChannel {
         )))
     }
 
+    pub(super) fn default_publisher_priority(&self, request_id: RequestId) -> u8 {
+        let requests = self.requests();
+        requests
+            .outgoing
+            .get(&request_id)
+            .or_else(|| requests.incoming.get(&request_id))
+            .map_or(messages::DEFAULT_PUBLISHER_PRIORITY, |stream| {
+                stream.default_publisher_priority
+            })
+    }
+
+    fn set_default_publisher_priority(&self, request_id: RequestId, priority: u8) {
+        if let Some(stream) = self.requests().outgoing.get_mut(&request_id) {
+            stream.default_publisher_priority = priority;
+        }
+    }
+
+    /// Records `progress` on the FETCH the peer sent as `request_id`, and
+    /// ends its request stream with FIN once both FETCH_OK and the end of
+    /// the response stream are done.
+    async fn advance_fetch(
+        &self,
+        request_id: RequestId,
+        progress: impl FnOnce(&mut FetchEnd),
+    ) -> Result<(), TransportSendError> {
+        let ended = {
+            let mut requests = self.requests();
+            let Some(stream) = requests.incoming.get_mut(&request_id) else {
+                return Ok(());
+            };
+            progress(&mut stream.fetch_end);
+            if !(stream.fetch_end.fetch_ok_sent && stream.fetch_end.response_ended) {
+                return Ok(());
+            }
+            requests.incoming.remove(&request_id)
+        };
+        match ended {
+            Some(stream) => stream.sender.close().await,
+            None => Ok(()),
+        }
+    }
+
+    pub(super) async fn fetch_response_ended(
+        &self,
+        request_id: RequestId,
+    ) -> Result<(), TransportSendError> {
+        self.advance_fetch(request_id, |end| end.response_ended = true)
+            .await
+    }
+
     fn take_incoming(&self, request_id: RequestId) -> Option<RequestStream> {
         self.requests().incoming.remove(&request_id)
     }
@@ -364,6 +428,8 @@ impl ControlChannel {
             RequestStream {
                 kind: kind.clone(),
                 sender: sender.clone(),
+                default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
+                fetch_end: FetchEnd::default(),
             },
         );
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
@@ -430,7 +496,9 @@ impl ControlChannel {
             }
             OutgoingResponse::FetchOk(ok) => {
                 let message = messages::encode_fetch_ok(&ok);
-                self.send_on_incoming(ok.request_id, message, false).await
+                self.send_on_incoming(ok.request_id, message, false).await?;
+                self.advance_fetch(ok.request_id, |end| end.fetch_ok_sent = true)
+                    .await
             }
             OutgoingResponse::PublishNamespaceOk(ok)
             | OutgoingResponse::SubscribeNamespaceOk(ok) => {
@@ -550,6 +618,60 @@ impl ControlChannel {
     }
 }
 
+/// §5.2: a subscriber keeps the state of a FETCH until its response stream
+/// ends with FIN or a reset. Ends the request stream of a FETCH this side
+/// sent with FIN then, or with a reset (cancelling it, §3.3.2) when the
+/// reader of the response stream is dropped first.
+#[derive(Debug)]
+pub(crate) struct FetchRequestEnd {
+    connection: Weak<Connection>,
+    request_id: RequestId,
+    response_ended: bool,
+}
+
+impl FetchRequestEnd {
+    pub(super) fn new(connection: Weak<Connection>, request_id: RequestId) -> Self {
+        Self {
+            connection,
+            request_id,
+            response_ended: false,
+        }
+    }
+
+    pub(crate) fn response_ended(mut self) {
+        self.response_ended = true;
+    }
+}
+
+impl Drop for FetchRequestEnd {
+    fn drop(&mut self) {
+        end_outgoing(&self.connection, self.request_id, self.response_ended);
+    }
+}
+
+/// Ends the stream of the request this side sent as `request_id`, if it is
+/// still open: with FIN when `finished`, otherwise with a reset that cancels
+/// the request (§3.3.2). Called from `Drop`, so it does not wait and, outside
+/// a runtime, leaves the stream to its own drop.
+fn end_outgoing(connection: &Weak<Connection>, request_id: RequestId, finished: bool) {
+    let Some(connection) = connection.upgrade() else {
+        return;
+    };
+    let Some(stream) = ControlChannel::of(&connection).take_outgoing(request_id) else {
+        return;
+    };
+    executor::try_spawn("end draft-18 request", async move {
+        let ended = if finished {
+            stream.sender.close().await
+        } else {
+            stream.sender.reset(cancelled()).await
+        };
+        if let Err(error) = ended {
+            tracing::debug!(%error, "could not end a request stream");
+        }
+    });
+}
+
 pub(crate) struct PendingResponse {
     receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
     /// The request whose stream is reset when the caller stops waiting
@@ -559,20 +681,9 @@ pub(crate) struct PendingResponse {
 
 impl Drop for PendingResponse {
     fn drop(&mut self) {
-        let Some((connection, request_id)) = self.cancel.take() else {
-            return;
-        };
-        let Some(connection) = connection.upgrade() else {
-            return;
-        };
-        let Some(stream) = ControlChannel::of(&connection).take_outgoing(request_id) else {
-            return;
-        };
-        executor::spawn("cancel draft-18 request", async move {
-            if let Err(error) = stream.sender.reset(cancelled()).await {
-                tracing::debug!(%error, "could not cancel an abandoned request");
-            }
-        });
+        if let Some((connection, request_id)) = self.cancel.take() {
+            end_outgoing(&connection, request_id, false);
+        }
     }
 }
 
@@ -633,13 +744,16 @@ mod tests {
 
     use crate::{
         RequestErrorCode, RequestFailure, SessionEvent, TrackWriter,
-        fetch::{Fetch, FetchOption},
+        fetch::{
+            Fetch, FetchDataReceiver, FetchDataSender, FetchHandler, FetchOption, FetchParams,
+            UnknownRange,
+        },
         modules::{
             moqt::{
                 control_plane::{
                     control_messages::messages::{
-                        parameters::group_order::GroupOrder, subscribe::Subscribe,
-                        subscribe_ok::SubscribeOk,
+                        fetch::Fetch as FetchMessage, parameters::group_order::GroupOrder,
+                        subscribe::Subscribe, subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
                 },
@@ -648,13 +762,14 @@ mod tests {
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, datagram_object,
-                notify_datagram, published_track_between, read_fetch_objects,
-                spawn_connected_draft18_sessions, subscribed_track_reader,
+                datagram_receiver, notify_datagram, published_track_between, read_fetch_objects,
+                spawn_connected_draft18_sessions, subgroup_receiver, subscribed_track_reader,
             },
         },
         namespace::SubscribeNamespaceHandler,
         object::{
-            ContentExists, DataReceiver, ForwardingPreference, Location, Object, ObjectStatus,
+            ContentExists, DataReceiver, ForwardingPreference, KeyValuePair, Location, Object,
+            ObjectStatus, Subgroup, VariantType,
         },
         publish::{PublishDoneCode, PublishOption},
         subscribe::{
@@ -1050,6 +1165,433 @@ mod tests {
         assert!(matches!(receiver.receive().await.unwrap(), Fetch::End));
     }
 
+    /// More FETCHes than the 1000 concurrent bidirectional streams a
+    /// connection allows.
+    const SEQUENTIAL_FETCHES: usize = 1010;
+
+    #[tokio::test]
+    async fn completed_fetches_release_their_request_streams() {
+        for scheme in SCHEMES {
+            // Arrange
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-fetch-release-{scheme}"),
+                scheme,
+            )
+            .await;
+            let end = Location {
+                group_id: 0,
+                object_id: 1,
+            };
+            let object = Object {
+                location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+                publisher_priority: 128,
+                status: ObjectStatus::Normal,
+                extension_headers: Default::default(),
+                payload: Bytes::from_static(b"o"),
+                ends_group: false,
+            };
+            let answering = tokio::spawn(async move {
+                for _ in 0..SEQUENTIAL_FETCHES {
+                    let SessionEvent::Fetch(handler) = next_event(&server).await else {
+                        panic!("expected FETCH");
+                    };
+                    handler.ok(false, end).await.unwrap();
+                    let sender = server
+                        .publisher()
+                        .create_fetch_stream(handler.request_id)
+                        .await
+                        .unwrap();
+                    sender.send_object(&object).await.unwrap();
+                    sender.close().await.unwrap();
+                }
+                let SessionEvent::Subscribe(handler) = next_event(&server).await else {
+                    panic!("expected SUBSCRIBE");
+                };
+                handler.ok(0, ContentExists::False).await.unwrap();
+                server
+            });
+            let mut subscriber = client.subscriber();
+
+            // Act
+            for index in 0..SEQUENTIAL_FETCHES {
+                let handle = tokio::time::timeout(
+                    HANDSHAKE_TIMEOUT,
+                    subscriber.fetch(
+                        "ns".into(),
+                        "track".into(),
+                        Location {
+                            group_id: 0,
+                            object_id: 0,
+                        },
+                        end,
+                        FetchOption::default(),
+                    ),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("{scheme}: FETCH {index} was not answered"))
+                .unwrap();
+                let mut receiver = subscriber.accept_fetch_receiver(&handle).await.unwrap();
+                assert_eq!(read_fetch_objects(&mut receiver).await.len(), 1);
+            }
+            let subscription = tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            )
+            .await;
+
+            // Assert: only the subscription keeps a request stream
+            assert!(matches!(subscription, Ok(Ok(_))), "{scheme}");
+            let server = answering.await.unwrap();
+            assert_eq!(
+                ControlChannel::of(&client.publisher().session.connection())
+                    .requests()
+                    .outgoing
+                    .len(),
+                1,
+                "{scheme}"
+            );
+            assert_eq!(
+                ControlChannel::of(&server.publisher().session.connection())
+                    .requests()
+                    .incoming
+                    .len(),
+                1,
+                "{scheme}"
+            );
+        }
+    }
+
+    /// A FETCH from `client` that `server` answers with FETCH_OK and a
+    /// response stream it keeps open.
+    async fn fetch_with_open_response(
+        client: &crate::Session,
+        server: &crate::Session,
+    ) -> (
+        crate::Subscriber,
+        FetchDataReceiver,
+        FetchHandler,
+        FetchDataSender,
+    ) {
+        let end = Location {
+            group_id: 1,
+            object_id: 0,
+        };
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            let handle = subscriber
+                .fetch(
+                    "ns".into(),
+                    "track".into(),
+                    Location {
+                        group_id: 0,
+                        object_id: 0,
+                    },
+                    end,
+                    FetchOption::default(),
+                )
+                .await
+                .unwrap();
+            let receiver = subscriber.accept_fetch_receiver(&handle).await.unwrap();
+            (subscriber, receiver)
+        });
+        let SessionEvent::Fetch(handler) = next_event(server).await else {
+            panic!("expected FETCH");
+        };
+        handler.ok(false, end).await.unwrap();
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        let (subscriber, receiver) = request.await.unwrap();
+        (subscriber, receiver, handler, sender)
+    }
+
+    #[tokio::test]
+    async fn a_fetch_response_reports_an_unknown_range_and_goes_on() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-unknown-range", "moqt").await;
+        let (_subscriber, mut receiver, _handler, sender) =
+            fetch_with_open_response(&client, &server).await;
+        let object = |group_id| Object {
+            location: Location {
+                group_id,
+                object_id: 0,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: Default::default(),
+            payload: Bytes::from_static(b"o"),
+            ends_group: false,
+        };
+        let unknown_through = Location {
+            group_id: 2,
+            object_id: u64::MAX,
+        };
+
+        // Act
+        sender.send_object(&object(0)).await.unwrap();
+        let reported = sender.report_unknown_range(unknown_through).await.unwrap();
+        sender.send_object(&object(3)).await.unwrap();
+        sender.close().await.unwrap();
+        let mut received = Vec::new();
+        loop {
+            let fetched = receiver.receive().await.unwrap();
+            let end = fetched == Fetch::End;
+            received.push(fetched);
+            if end {
+                break;
+            }
+        }
+
+        // Assert: §11.4.4.2
+        assert_eq!(reported, UnknownRange::Marked);
+        assert_eq!(
+            received,
+            vec![
+                Fetch::Object(object(0)),
+                Fetch::UnknownRange {
+                    last: unknown_through
+                },
+                Fetch::Object(object(3)),
+                Fetch::End,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_range_ending_in_the_group_of_the_last_object_resets_after_the_objects_sent()
+    {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-unknown-same-group", "moqt").await;
+        let (_subscriber, mut receiver, _handler, sender) =
+            fetch_with_open_response(&client, &server).await;
+        let object = |object_id| Object {
+            location: Location {
+                group_id: 0,
+                object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: Default::default(),
+            payload: Bytes::from_static(b"o"),
+            ends_group: false,
+        };
+
+        // Act: the rest of group 0 stays unknown, as when a fill stalls there.
+        // The objects are read first: RESET_STREAM lets the receiver discard
+        // what it has not read (RFC 9000 §3.2)
+        sender.send_object(&object(0)).await.unwrap();
+        sender.send_object(&object(1)).await.unwrap();
+        let first = receiver.receive().await.unwrap();
+        let second = receiver.receive().await.unwrap();
+        let reported = sender
+            .report_unknown_range(Location {
+                group_id: 0,
+                object_id: u64::MAX,
+            })
+            .await
+            .unwrap();
+        let end = receiver.receive().await;
+
+        // Assert: §11.4.4.2 cannot end a range in the prior object's group, so
+        // the response is reset with UNKNOWN_OBJECT_STATUS (§10.12) after the
+        // objects already sent
+        assert_eq!(
+            (first, second),
+            (Fetch::Object(object(0)), Fetch::Object(object(1)))
+        );
+        assert_eq!(reported, UnknownRange::Reset);
+        let error = end.expect_err("the response is reset");
+        assert!(
+            error.to_string().contains("stream reset by peer"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_a_fetch_receiver_before_the_end_cancels_the_fetch() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-receiver-dropped", "moqt").await;
+        let (_subscriber, receiver, _handler, _sender) =
+            fetch_with_open_response(&client, &server).await;
+
+        // Act
+        drop(receiver);
+        let event = next_event(&server).await;
+
+        // Assert: §3.3.2
+        assert!(matches!(event, SessionEvent::FetchCancel(_)), "{event:?}");
+    }
+
+    #[tokio::test]
+    async fn a_fetch_receiver_dropped_outside_a_runtime_does_not_panic() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-receiver-off-runtime", "moqt").await;
+        let (_subscriber, receiver, _handler, _sender) =
+            fetch_with_open_response(&client, &server).await;
+
+        // Act
+        let dropped = std::thread::spawn(move || drop(receiver)).join();
+
+        // Assert
+        assert!(dropped.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_fetch_sender_dropped_unended_releases_the_request_stream() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-sender-dropped", "moqt").await;
+        let (_subscriber, mut receiver, _handler, sender) =
+            fetch_with_open_response(&client, &server).await;
+
+        // Act
+        drop(sender);
+        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive()).await;
+        let released = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while !ControlChannel::of(&server.publisher().session.connection())
+                .requests()
+                .incoming
+                .is_empty()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+
+        // Assert: an unfinished response is reset, not ended with FIN (§5.2)
+        assert!(matches!(received, Ok(Err(_))), "{received:?}");
+        assert!(released.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_fetch_stream_for_a_subscribe_leaves_the_subscribe_open() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-stream-for-subscribe", "moqt").await;
+        let (_subscription, handler) =
+            subscribed_with_track_properties(&client, &server, 4, &[]).await;
+
+        // Act
+        send_raw_stream(
+            &server,
+            &Version::Draft18.encode_fetch_header(handler.request_id()),
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Assert: only a FETCH's own response stream ends its request
+        assert!(
+            ControlChannel::of(&client.publisher().session.connection())
+                .requests()
+                .outgoing
+                .contains_key(&handler.request_id())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fin_after_a_fetch_does_not_cancel_it() {
+        // Arrange
+        let (client, server) = spawn_connected_draft18_sessions("draft18-fetch-fin", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
+        let sender = StreamSender::new(send_stream);
+        let fetch = messages::encode_fetch(&FetchMessage {
+            request_id: connection.control.next_request_id(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            fetch_params: FetchParams::Standalone {
+                track_namespace: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                start_location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                end_location: Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            },
+            authorization_tokens: vec![],
+            fill_timeout: None,
+        })
+        .unwrap();
+        sender.send(&fetch).await.unwrap();
+
+        // Act
+        sender.close().await.unwrap();
+        let SessionEvent::Fetch(handler) = next_event(&server).await else {
+            panic!("expected FETCH");
+        };
+        let later = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            server.receive_event(),
+        )
+        .await;
+        let answered = handler
+            .ok(
+                false,
+                Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            )
+            .await;
+
+        // Assert: §3.3.2 cancels by reset, not by FIN
+        assert!(later.is_err(), "{later:?}");
+        assert!(answered.is_ok(), "{answered:?}");
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_hands_its_fill_timeout_to_the_handler() {
+        // Arrange: a FETCH with FILL_TIMEOUT 0, which no FetchOption sets
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-fill-timeout", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
+        let fetch = messages::encode_fetch(&FetchMessage {
+            request_id: connection.control.next_request_id(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            fetch_params: FetchParams::Standalone {
+                track_namespace: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                start_location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                end_location: Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            },
+            authorization_tokens: vec![],
+            fill_timeout: Some(0),
+        })
+        .unwrap();
+
+        // Act
+        StreamSender::new(send_stream).send(&fetch).await.unwrap();
+        let SessionEvent::Fetch(handler) = next_event(&server).await else {
+            panic!("expected FETCH");
+        };
+
+        // Assert: §10.2.5
+        assert_eq!(handler.fill_timeout(), Some(std::time::Duration::ZERO));
+    }
+
     #[tokio::test]
     async fn a_namespace_subscriber_hears_namespaces_as_publish_namespace() {
         // Arrange
@@ -1210,6 +1752,375 @@ mod tests {
         };
         assert_eq!(done.request_id(), subscription.request_id());
         assert_eq!(done.status_code(), PublishDoneCode::GoingAway);
+    }
+
+    /// §12.4 DEFAULT PUBLISHER PRIORITY.
+    fn default_priority_property(priority: u64) -> KeyValuePair {
+        KeyValuePair {
+            key: 0x0E,
+            value: VariantType::Even(priority),
+        }
+    }
+
+    /// A SUBSCRIBE from `client` that `server` answers itself with a
+    /// SUBSCRIBE_OK for `track_alias` carrying `track_properties`. Hold the
+    /// returned handler: dropping it unanswered sends REQUEST_ERROR.
+    async fn subscribe_answered_with_track_properties(
+        client: &crate::Session,
+        server: &crate::Session,
+        track_alias: u64,
+        track_properties: &[KeyValuePair],
+    ) -> (
+        Result<crate::Subscription, RequestFailure>,
+        SubscribeHandler,
+    ) {
+        let (request, handler) =
+            subscribe_requested(client, server, SubscribeOption::default()).await;
+        let stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&handler.request_id())
+            .cloned()
+            .unwrap();
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, track_alias);
+        parameters::put_parameters(&mut payload, &[]).unwrap();
+        codec::put_key_value_pairs(&mut payload, track_properties).unwrap();
+        stream
+            .sender
+            .send(&messages::frame(messages::SUBSCRIBE_OK, &payload).unwrap())
+            .await
+            .unwrap();
+        (request.await.unwrap(), handler)
+    }
+
+    async fn subscribed_with_track_properties(
+        client: &crate::Session,
+        server: &crate::Session,
+        track_alias: u64,
+        track_properties: &[KeyValuePair],
+    ) -> (crate::Subscription, SubscribeHandler) {
+        let (subscription, handler) =
+            subscribe_answered_with_track_properties(client, server, track_alias, track_properties)
+                .await;
+        (subscription.unwrap(), handler)
+    }
+
+    /// A PUBLISH of "ns"/"track" from `publisher` with `track_properties`,
+    /// on a stream it reads itself.
+    async fn raw_publish(
+        publisher: &crate::Session,
+        track_alias: u64,
+        track_properties: &[KeyValuePair],
+    ) -> (StreamSender, MessageReceiver) {
+        let connection = publisher.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, connection.control.next_request_id());
+        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
+        codec::put_vi64(&mut payload, track_alias);
+        parameters::put_parameters(&mut payload, &[]).unwrap();
+        codec::put_key_value_pairs(&mut payload, track_properties).unwrap();
+        let sender = StreamSender::new(send_stream);
+        sender
+            .send(&messages::frame(messages::PUBLISH, &payload).unwrap())
+            .await
+            .unwrap();
+        (sender, MessageReceiver::new(receive_stream, MessageDecoder))
+    }
+
+    async fn send_raw_stream(session: &crate::Session, bytes: &[u8]) {
+        let connection = session.publisher().session.connection();
+        let sender = StreamSender::new(connection.transport.open_uni().await.unwrap());
+        sender.send(&BytesMut::from(bytes)).await.unwrap();
+        sender.close().await.unwrap();
+    }
+
+    async fn next_stream_object(
+        factory: &mut crate::object::StreamDataReceiverFactory,
+    ) -> (crate::object::SubgroupStart, Object) {
+        let mut stream = factory.next().await.unwrap();
+        let Some(Subgroup::Header(start)) = stream.receive().await.unwrap() else {
+            panic!("expected the subgroup header");
+        };
+        let Some(Subgroup::Object(object)) = stream.receive().await.unwrap() else {
+            panic!("expected an object");
+        };
+        (start, object)
+    }
+
+    #[tokio::test]
+    async fn subgroups_inherit_the_default_publisher_priority_of_the_subscribe_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-default-priority-stream", "moqt").await;
+        let (subscription, _handler) =
+            subscribed_with_track_properties(&client, &server, 4, &[default_priority_property(9)])
+                .await;
+
+        // Act: a header without priority (type 0x30), then one with 200 (0x10)
+        send_raw_stream(&server, &[0x30, 4, 0, 0, 1, b'a']).await;
+        let mut factory = subgroup_receiver(&client, &subscription).await;
+        let (inherited_start, inherited) = next_stream_object(&mut factory).await;
+        send_raw_stream(&server, &[0x10, 4, 1, 200, 0, 1, b'b']).await;
+        let (explicit_start, explicit) = next_stream_object(&mut factory).await;
+
+        // Assert
+        assert_eq!(inherited_start.publisher_priority, 9);
+        assert_eq!(inherited.publisher_priority, 9);
+        assert_eq!(explicit_start.publisher_priority, 200);
+        assert_eq!(explicit.publisher_priority, 200);
+    }
+
+    #[tokio::test]
+    async fn a_datagram_without_priority_takes_the_track_default_or_128() {
+        for (properties, expected) in [(vec![default_priority_property(9)], 9), (vec![], 128)] {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions("draft18-default-priority-datagram", "moqt").await;
+            let (subscription, _handler) =
+                subscribed_with_track_properties(&client, &server, 4, &properties).await;
+
+            // Act: type 0x0C omits the priority and the Object ID
+            server
+                .publisher()
+                .session
+                .connection()
+                .transport
+                .send_datagram(BytesMut::from(&[0x0C, 4, 0, b'd'][..]))
+                .unwrap();
+            let object = datagram_receiver(&client, &subscription)
+                .await
+                .receive()
+                .await
+                .unwrap();
+
+            // Assert
+            assert_eq!(object.publisher_priority, expected, "{properties:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_datagram_without_priority_takes_the_default_its_publish_announces() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-default-priority-publish", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, connection.control.next_request_id());
+        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
+        codec::put_vi64(&mut payload, 6);
+        parameters::put_parameters(&mut payload, &[]).unwrap();
+        codec::put_key_value_pairs(&mut payload, &[default_priority_property(9)]).unwrap();
+        let publish_stream = StreamSender::new(send_stream);
+        publish_stream
+            .send(&messages::frame(messages::PUBLISH, &payload).unwrap())
+            .await
+            .unwrap();
+        let subscription = accept_publish(&server).await;
+
+        // Act
+        connection
+            .transport
+            .send_datagram(BytesMut::from(&[0x0C, 6, 0, b'd'][..]))
+            .unwrap();
+        let object = datagram_receiver(&server, &subscription)
+            .await
+            .receive()
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(object.publisher_priority, 9);
+    }
+
+    #[tokio::test]
+    async fn a_max_cache_duration_inside_immutable_properties_reaches_the_subscription() {
+        let max_cache_duration = KeyValuePair {
+            key: 0x04,
+            value: VariantType::Even(50),
+        };
+        let mut contents = BytesMut::new();
+        codec::put_key_value_pairs(&mut contents, std::slice::from_ref(&max_cache_duration))
+            .unwrap();
+        let immutable = KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(contents.freeze()),
+        };
+        for properties in [vec![immutable], vec![max_cache_duration]] {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions("draft18-immutable-max-cache-duration", "moqt")
+                    .await;
+
+            // Act
+            let (subscription, _handler) =
+                subscribed_with_track_properties(&client, &server, 4, &properties).await;
+
+            // Assert
+            assert_eq!(
+                subscription.max_cache_duration(),
+                Some(50),
+                "{properties:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_with_malformed_immutable_properties_is_refused_before_the_application() {
+        // Arrange: Immutable Properties holding Type 0x04 without its value
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-malformed-publish", "moqt").await;
+        let properties = [KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(Bytes::from_static(&[0x04])),
+        }];
+
+        // Act
+        let (_sender, mut receiver) = raw_publish(&client, 6, &properties).await;
+        let response = receiver.receive().await.unwrap();
+
+        // Assert: §12.7, §2.4.2; the application, e.g. a relay, never sees
+        // the PUBLISH, so it has no track to latch
+        let Some(messages::Message::RequestError(error)) = response else {
+            panic!("expected REQUEST_ERROR, got {response:?}");
+        };
+        assert_eq!(error.code, RequestErrorCode::MalformedTrack);
+        let event = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            server.receive_event(),
+        )
+        .await;
+        assert!(event.is_err(), "{event:?}");
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_refused_with_malformed_track_fails_as_malformed_track() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-subscribe-malformed-track", "moqt").await;
+        let (request, handler) =
+            subscribe_requested(&client, &server, SubscribeOption::default()).await;
+
+        // Act: the publisher, e.g. a relay that latched the track, refuses it
+        handler
+            .error(RequestErrorCode::MalformedTrack, "malformed".to_string())
+            .await
+            .unwrap();
+
+        // Assert: §2.4.2, §10.6 MALFORMED_TRACK reaches the subscriber as such
+        let result = request.await.unwrap();
+        assert!(
+            matches!(
+                &result,
+                Err(RequestFailure::Rejected {
+                    code: RequestErrorCode::MalformedTrack,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_with_malformed_immutable_properties_fails_the_subscribe() {
+        let immutable = |contents: Vec<u8>| KeyValuePair {
+            key: 0x0B,
+            value: VariantType::Odd(Bytes::from(contents)),
+        };
+        // Type 0x04 without its value; Immutable Properties (0x0B) of one
+        // empty Immutable Properties.
+        for properties in [
+            vec![immutable(vec![0x04])],
+            vec![immutable(vec![0x0B, 0x00])],
+        ] {
+            // Arrange
+            let (client, server) =
+                spawn_connected_draft18_sessions("draft18-malformed-immutable", "moqt").await;
+
+            // Act
+            let (result, _handler) =
+                subscribe_answered_with_track_properties(&client, &server, 4, &properties).await;
+
+            // Assert: §12.7
+            assert!(
+                matches!(
+                    &result,
+                    Err(RequestFailure::Rejected {
+                        code: RequestErrorCode::MalformedTrack,
+                        ..
+                    })
+                ),
+                "{properties:?}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_goaway_on_a_namespace_subscription_withdraws_its_namespaces_once() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-goaway", "moqt").await;
+        let subscriber = client.subscriber();
+        let request =
+            tokio::spawn(async move { subscriber.subscribe_namespace("live".into()).await });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+        for namespace in ["live/room", "live/hall"] {
+            server
+                .publisher()
+                .publish_namespace(namespace.into())
+                .await
+                .unwrap();
+            let SessionEvent::PublishNamespace(_) = next_event(&client).await else {
+                panic!("expected PUBLISH_NAMESPACE");
+            };
+        }
+        let stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .values()
+            .find(|stream| {
+                stream.kind == super::RequestStreamKind::SubscribeNamespace(vec!["live".into()])
+            })
+            .cloned()
+            .unwrap();
+        let go_away = messages::encode_go_away(&messages::GoAwayMessage {
+            new_session_uri: String::new(),
+            request_id: None,
+        })
+        .unwrap();
+
+        // Act
+        stream.sender.send(&go_away).await.unwrap();
+        let mut withdrawn = Vec::new();
+        for _ in 0..2 {
+            let event = next_event(&client).await;
+            let SessionEvent::PublishNamespaceDone(done) = event else {
+                panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
+            };
+            withdrawn.push(done.track_namespace().to_string());
+        }
+        let later = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            client.receive_event(),
+        )
+        .await;
+
+        // Assert
+        withdrawn.sort();
+        assert_eq!(withdrawn, ["live/hall", "live/room"]);
+        assert!(later.is_err(), "no duplicate withdrawal: {later:?}");
+        assert!(
+            ControlChannel::of(&client.publisher().session.connection())
+                .requests()
+                .outgoing
+                .is_empty()
+        );
     }
 
     fn outgoing_stream(session: &crate::Session, request_id: u64) -> super::RequestStream {

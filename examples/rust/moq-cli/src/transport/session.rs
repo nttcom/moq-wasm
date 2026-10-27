@@ -131,6 +131,7 @@ async fn fetch_current_group(
     loop {
         match receiver.receive().await? {
             Fetch::Object(object) => objects.push(object),
+            Fetch::UnknownRange { .. } => {}
             Fetch::End => return Ok(objects),
         }
     }

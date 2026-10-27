@@ -1,5 +1,5 @@
 use crate::modules::moqt::version::OutgoingResponse;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use thiserror::Error;
 
@@ -75,6 +75,24 @@ impl FetchHandler {
         }
     }
 
+    /// draft-18 §10.2.5 FILL_TIMEOUT: how long a relay may wait for objects
+    /// it must fetch upstream before reporting them unknown; `ZERO` forbids
+    /// waiting. Always `None` on draft-14.
+    pub fn fill_timeout(&self) -> Option<Duration> {
+        self.fetch.fill_timeout.map(Duration::from_millis)
+    }
+
+    /// Whether the response can mark a range of objects unknown and go on
+    /// (draft-18 §11.4.4.2 End of Unknown Range), except for a range ending
+    /// in the group of the last object sent. Where it cannot,
+    /// `FetchDataSender::report_unknown_range` resets the response instead.
+    pub fn marks_unknown_ranges(&self) -> bool {
+        match self.guard.connection().control.version() {
+            Version::Draft14 => false,
+            Version::Draft18 => true,
+        }
+    }
+
     /// Whether this Joining FETCH may join `subscription` under the session's
     /// draft (draft-14 §9.16.2, draft-18 §10.12.2); each refusal names the
     /// answer its draft requires. Not meaningful for a Standalone FETCH.
@@ -122,10 +140,13 @@ impl FetchHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{FetchHandler, JoinedSubscription, JoiningFetchRefusal};
     use crate::{
-        Session, SessionEvent,
+        RequestErrorCode, RequestFailure, Session, SessionEvent,
         fetch::FetchOption,
+        modules::moqt::version::Version,
         modules::test_support::{
             connect_sessions, spawn_connected_draft18_sessions, spawn_connected_dual_sessions,
             spawn_dual_server,
@@ -178,22 +199,139 @@ mod tests {
     }
 
     async fn received_fetch(client: &Session, server: &Session) -> FetchHandler {
+        received_fetch_with(client, server, FetchOption::default()).await
+    }
+
+    async fn received_fetch_with(
+        client: &Session,
+        server: &Session,
+        option: FetchOption,
+    ) -> FetchHandler {
         let mut subscriber = client.subscriber();
         tokio::spawn(async move {
             let _ = subscriber
-                .fetch(
-                    "ns".to_string(),
-                    "track".to_string(),
-                    START,
-                    END,
-                    FetchOption::default(),
-                )
+                .fetch("ns".to_string(), "track".to_string(), START, END, option)
                 .await;
         });
         let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
             panic!("expected FETCH from the client");
         };
         handler
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetch_has_no_fill_timeout() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("fetch-handler-fill-14").await;
+
+        // Act
+        let handler = received_fetch(&client, &server).await;
+
+        // Assert: draft-14 §9.16 defines no FILL_TIMEOUT
+        assert_eq!(handler.fill_timeout(), None);
+    }
+
+    #[tokio::test]
+    async fn a_fetch_option_fill_timeout_is_sent_on_draft18_only() {
+        let fill_timeout = Duration::from_millis(1500);
+        for (version, (client, server), expected) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-option-fill-14").await,
+                None,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-option-fill-18", "moqt").await,
+                Some(fill_timeout),
+            ),
+        ] {
+            // Act
+            let handler = received_fetch_with(
+                &client,
+                &server,
+                FetchOption {
+                    fill_timeout: Some(fill_timeout),
+                    ..FetchOption::default()
+                },
+            )
+            .await;
+
+            // Assert: draft-18 §10.2.5 FILL_TIMEOUT; draft-14 §9.16 has none
+            assert_eq!(handler.fill_timeout(), expected, "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn only_a_draft18_fetch_response_can_mark_objects_unknown() {
+        for (version, (client, server), expected) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-marks-unknown-14").await,
+                false,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-marks-unknown-18", "moqt").await,
+                true,
+            ),
+        ] {
+            // Act
+            let handler = received_fetch(&client, &server).await;
+
+            // Assert: draft-18 §11.4.4.2 End of Unknown Range; draft-14 §10.4.4 has no such marker
+            assert_eq!(handler.marks_unknown_ranges(), expected, "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fetch_refused_with_malformed_track_fails_as_malformed_track() {
+        for (version, (client, server)) in [
+            (
+                Version::Draft14,
+                spawn_connected_dual_sessions("fetch-malformed-track-14").await,
+            ),
+            (
+                Version::Draft18,
+                spawn_connected_draft18_sessions("fetch-malformed-track-18", "moqt").await,
+            ),
+        ] {
+            // Arrange
+            let mut subscriber = client.subscriber();
+            let request = tokio::spawn(async move {
+                subscriber
+                    .fetch(
+                        "ns".to_string(),
+                        "track".to_string(),
+                        START,
+                        END,
+                        FetchOption::default(),
+                    )
+                    .await
+            });
+            let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+                panic!("expected FETCH from the client");
+            };
+
+            // Act: the publisher, e.g. a relay that latched the track, refuses it
+            handler
+                .error(RequestErrorCode::MalformedTrack, "malformed".to_string())
+                .await
+                .unwrap();
+
+            // Assert: draft-14 §9.18 FETCH_ERROR 0x9, draft-18 §10.6 0x12
+            let result = request.await.unwrap();
+            assert!(
+                matches!(
+                    &result,
+                    Err(RequestFailure::Rejected {
+                        code: RequestErrorCode::MalformedTrack,
+                        ..
+                    })
+                ),
+                "{version:?}: {result:?}"
+            );
+        }
     }
 
     #[tokio::test]

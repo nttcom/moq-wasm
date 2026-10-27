@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use crate::modules::moqt::{
     data_plane::stream::fetch_data_receiver::FetchDataReceiver, domains::connection::Connection,
+    version::ControlChannel,
 };
 
 pub(crate) struct FetchNotifier;
@@ -12,9 +15,9 @@ impl FetchNotifier {
         fields(request_id = request_id)
     )]
     pub(crate) async fn notify(
-        connection: &Connection,
+        connection: &Arc<Connection>,
         request_id: u64,
-        fetch_data_receiver: FetchDataReceiver,
+        mut fetch_data_receiver: FetchDataReceiver,
     ) {
         // Draft-14 §9.16.3: a FETCH response is delivered on a single stream.
         let sender = connection
@@ -23,6 +26,9 @@ impl FetchNotifier {
             .expect("fetch_notification_map poisoned")
             .remove(&request_id);
         if let Some(sender) = sender {
+            // Only the stream handed to this side's FETCH may end its request.
+            fetch_data_receiver
+                .end_request_with(ControlChannel::fetch_request_end(connection, request_id));
             if let Err(e) = sender.send(fetch_data_receiver) {
                 tracing::warn!("Failed to notify fetch stream: {}", e);
             }

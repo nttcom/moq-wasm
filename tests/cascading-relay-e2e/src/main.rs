@@ -720,6 +720,7 @@ async fn joining_fetch_payloads(
                 tracing::info!(location = ?object.location, "joining fetch received object");
                 payloads.push(object.payload.to_vec());
             }
+            Fetch::UnknownRange { last } => bail!("unknown range through {last:?}"),
             Fetch::End => return Ok(payloads),
         }
     }
