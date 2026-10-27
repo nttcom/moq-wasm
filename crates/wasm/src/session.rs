@@ -9,9 +9,7 @@ use moqt::{
     TrackReader,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     namespace::NamespaceEvent,
-    object::{
-        ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
-    },
+    object::{ContentExists, ExtensionHeaders, Location},
     subscribe::{FilterType, SubscribeOption},
     wire::{RequestKind, request_error_code_to_wire},
 };
@@ -304,8 +302,8 @@ impl FetchStream {
         loop {
             match receiver.receive().await.map_err(anyhow_error)? {
                 Fetch::Object(object) => {
-                    if let Some(object) = fetched_object(object) {
-                        return Ok(Some(object));
+                    if let Some(object) = TrackObject::from_object(object) {
+                        return Ok(Some(object.into()));
                     }
                 }
                 Fetch::End => return Ok(None),
@@ -476,23 +474,6 @@ fn largest(content_exists: ContentExists) -> Option<MoqLocation> {
         }),
         ContentExists::False => None,
     }
-}
-
-/// `None` for status objects, which carry no payload.
-fn fetched_object(object: Object) -> Option<MoqObject> {
-    if object.status != ObjectStatus::Normal || object.payload.is_empty() {
-        return None;
-    }
-    Some(MoqObject {
-        group_id: object.location.group_id,
-        subgroup_id: match object.forwarding {
-            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
-            ForwardingPreference::Datagram => 0,
-        },
-        object_id: object.location.object_id,
-        payload: object.payload,
-        extension_headers: object.extension_headers,
-    })
 }
 
 /// An `Error` whose `code` is the draft-14 request error code.

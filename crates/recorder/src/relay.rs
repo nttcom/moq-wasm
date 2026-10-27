@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use moqt::{
-    ClientConfig, Endpoint, NATIVE, Session, Subscription, TerminationErrorCode, TrackObject,
-    TrackReader,
+    ClientConfig, Endpoint, NATIVE, Session, Subscription, TerminationErrorCode, TrackReader,
     fetch::{FetchDataReceiver, FetchOption},
-    object::{ContentExists, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
+    object::{ContentExists, GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -119,23 +118,6 @@ pub(crate) async fn fetch_cached(
         )
         .await?;
     Ok(Some(subscriber.accept_fetch_receiver(&handle).await?))
-}
-
-/// `None` for status objects, which carry no media.
-pub(crate) fn fetched_track_object(object: Object) -> Option<TrackObject> {
-    if object.status != ObjectStatus::Normal || object.payload.is_empty() {
-        return None;
-    }
-    Some(TrackObject {
-        group_id: object.location.group_id,
-        subgroup_id: match object.forwarding {
-            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
-            ForwardingPreference::Datagram => 0,
-        },
-        object_id: object.location.object_id,
-        extension_headers: object.extension_headers,
-        payload: object.payload,
-    })
 }
 
 #[cfg(test)]

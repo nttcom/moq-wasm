@@ -489,7 +489,7 @@ fn fetched_object(
     fetch: &mut Option<FetchDataReceiver>,
 ) -> Option<TrackObject> {
     match fetched {
-        Ok(Fetch::Object(object)) => relay::fetched_track_object(object),
+        Ok(Fetch::Object(object)) => TrackObject::from_object(object),
         Ok(Fetch::End) => {
             *fetch = None;
             None

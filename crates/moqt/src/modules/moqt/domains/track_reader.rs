@@ -25,6 +25,27 @@ pub struct TrackObject {
     pub payload: Bytes,
 }
 
+impl TrackObject {
+    /// `None` for a status object, which carries no payload. An object
+    /// forwarded in a datagram takes subgroup 0.
+    pub fn from_object(object: Object) -> Option<Self> {
+        if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+            return None;
+        }
+        let subgroup_id = match object.forwarding {
+            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+            ForwardingPreference::Datagram => 0,
+        };
+        Some(Self {
+            group_id: object.location.group_id,
+            subgroup_id,
+            object_id: object.location.object_id,
+            extension_headers: object.extension_headers,
+            payload: object.payload,
+        })
+    }
+}
+
 /// Reads every subgroup stream of one track concurrently, inside one task, and
 /// yields objects in arrival order. Ordering is only guaranteed within a
 /// subgroup (draft-14 §10.4); consumers that need cross-subgroup order use
@@ -112,30 +133,13 @@ async fn send_current_group(
         .await?;
     let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
     while let Fetch::Object(object) = receiver.receive().await? {
-        if let Some(object) = track_object(object)
+        if let Some(object) = TrackObject::from_object(object)
             && object_sender.send(Ok(object)).await.is_err()
         {
             break;
         }
     }
     Ok(())
-}
-
-fn track_object(object: Object) -> Option<TrackObject> {
-    if object.status != ObjectStatus::Normal || object.payload.is_empty() {
-        return None;
-    }
-    let subgroup_id = match object.forwarding {
-        ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
-        ForwardingPreference::Datagram => 0,
-    };
-    Some(TrackObject {
-        group_id: object.location.group_id,
-        subgroup_id,
-        object_id: object.location.object_id,
-        extension_headers: object.extension_headers,
-        payload: object.payload,
-    })
 }
 
 struct SubgroupStreamAcceptTask {
@@ -207,7 +211,7 @@ async fn read_subgroup_objects(
     loop {
         match receiver.receive().await? {
             Some(Subgroup::Object(object)) => {
-                let Some(object) = track_object(object) else {
+                let Some(object) = TrackObject::from_object(object) else {
                     continue;
                 };
                 if object_sender.send(Ok(object)).await.is_err() {
