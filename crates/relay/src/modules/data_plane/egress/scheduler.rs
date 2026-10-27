@@ -249,41 +249,25 @@ impl EgressScheduler {
         control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
-        for (run, object_id) in self.cache_scan(start, control) {
-            let _ = self.schedule(run, object_id, control, scheduled).await;
-        }
-    }
-
-    /// The subgroup runs `schedule_cached_objects` schedules, each with the
-    /// object id its task starts at, in the subscription's Group Order.
-    fn cache_scan(
-        &self,
-        start: &moqt::object::Location,
-        control: &DeliveryControl,
-    ) -> Vec<(SubgroupRun, u64)> {
         let mut group_ids = self.cache.groups_at_or_after(start.group_id);
         group_ids.retain(|&group_id| !control.is_past_end(group_id));
         // §7.1: Descending sends groups with higher group IDs first.
         if matches!(self.group_order, GroupOrder::Descending) {
             group_ids.reverse();
         }
-        group_ids
-            .into_iter()
-            .flat_map(|group_id| {
-                let object_id = if group_id == start.group_id {
-                    start.object_id
-                } else {
-                    0
-                };
-                // Skip a closed subgroup with nothing at or after the start, such as one
-                // only a FETCH filled. Its task would end at once, and its live stream's
-                // open event would then be dropped as a duplicate.
-                self.cache
-                    .subgroup_runs_in_group(group_id, object_id)
-                    .into_iter()
-                    .map(move |run| (run, object_id))
-            })
-            .collect()
+        for group_id in group_ids {
+            let object_id = if group_id == start.group_id {
+                start.object_id
+            } else {
+                0
+            };
+            // Skip a closed subgroup with nothing at or after the start, such as one
+            // only a FETCH filled. Its task would end at once, and its live stream's
+            // open event would then be dropped as a duplicate.
+            for run in self.cache.subgroup_runs_in_group(group_id, object_id) {
+                let _ = self.schedule(run, object_id, control, scheduled).await;
+            }
+        }
     }
 
     /// A reopened run resumes from where the key's previous task started, so the
