@@ -473,6 +473,14 @@ impl TrackCache {
             else {
                 return false;
             };
+            // When knowledge of a group stops inside the range, only an open
+            // subgroup of that group can bring the rest.
+            if range_end.object_id != 0
+                && range_end < end
+                && !ledger.has_open_subgroup_in_group(range_end.group_id)
+            {
+                return false;
+            }
             if range_end > location(end.group_id, 0) {
                 return true;
             }
@@ -1051,8 +1059,8 @@ mod fetch_tests {
     use crate::modules::{
         data_plane::cache::subgroup_key::SubgroupKey,
         test_support::relay_harness::fixtures::cached_object::{
-            datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
-            stream_object, stream_object_in_subgroup,
+            datagram_object, fetch_all, insert_aborted_group, insert_closed_group, open_group,
+            status_object, stream_key, stream_object, stream_object_in_subgroup,
         },
     };
 
@@ -1214,6 +1222,21 @@ mod fetch_tests {
 
         // Assert: the group ids between the fill and the live group are unknown, so the FETCH goes upstream
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[test]
+    fn resolve_fetch_range_not_covered_for_the_rest_of_a_group_whose_stream_ended() {
+        // Arrange: g0's upstream stream ended after object 0, but the publisher
+        // sent object 1 too; g1 is live
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        insert_aborted_group(&cache, 0, &[0]);
+        let _g1 = open_group(&cache, 1, &[0]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 2)),
+            FetchRangeResolution::NotCovered
+        );
     }
 
     #[test]
