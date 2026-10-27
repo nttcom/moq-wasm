@@ -201,13 +201,11 @@ impl GroupSender {
         let track_alias = self.downstream_subscription.track_alias();
         let subscriber_priority = self.downstream_subscription.subscriber_priority();
         let group_order = self.downstream_subscription.group_order();
-        let mut schedule_over = false;
 
         loop {
             tokio::select! {
-                task = self.receiver.recv(), if !schedule_over => {
+                task = self.receiver.recv(), if !*self.schedule_over_sender.borrow() => {
                     let Some(task) = task else {
-                        schedule_over = true;
                         self.schedule_over_sender.send_replace(true);
                         continue;
                     };
