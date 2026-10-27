@@ -13,8 +13,7 @@ use crate::{
     server::Accepting,
 };
 
-/// The AUTHORIZATION TOKEN a client sends in CLIENT_SETUP (draft-14 §9.2.1.1):
-/// a fixed value, `From<String>`, or a provider.
+/// The AUTHORIZATION TOKEN a client sends in CLIENT_SETUP (draft-14 §9.2.1.1).
 #[derive(Clone)]
 pub struct AuthorizationTokenSource(TokenSource);
 
@@ -39,9 +38,8 @@ where
 }
 
 impl AuthorizationTokenSource {
-    /// `provider` is called before each CLIENT_SETUP: the session's first
-    /// connection and every connection it opens to follow GOAWAY. An `Err`
-    /// fails that connection.
+    /// `provider` is called before every CLIENT_SETUP, including on connections
+    /// opened to follow GOAWAY. An `Err` fails that connection.
     pub fn provider<F, Fut>(provider: F) -> Self
     where
         F: Fn() -> Fut + MaybeSend + MaybeSync + 'static,
