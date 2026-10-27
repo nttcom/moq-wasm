@@ -1,5 +1,5 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::authorization_token::AuthorizationToken,
@@ -7,17 +7,17 @@ use crate::modules::{
 };
 use anyhow::Context;
 use bytes::{Bytes, BytesMut};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, PartialEq)]
-#[repr(u8)]
-pub enum SetupParameterType {
-    Path = 0x01,
-    MaxRequestID = 0x02,
-    AuthorizationToken = 0x03,
-    MaxAuthTokenCacheSize = 0x04,
-    Authority = 0x05,
-    MOQTimplementation = 0x07,
+wire_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum SetupParameterType: u8 {
+        Path = 0x01,
+        MaxRequestID = 0x02,
+        AuthorizationToken = 0x03,
+        MaxAuthTokenCacheSize = 0x04,
+        Authority = 0x05,
+        MOQTimplementation = 0x07,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
