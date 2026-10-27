@@ -37,8 +37,9 @@ const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const PUBLISHER_RETRY_MS = 2_000
 const ADAPT_INTERVAL_MS = 500
-/// Every video object moves the timeline on, but listeners redraw their whole
-/// UI on a state change, so progress alone is reported at most this often.
+/// Listeners redraw their whole UI on each state change, and every video object
+/// advances the playback position, so a position-only change is reported at
+/// most this often.
 const PROGRESS_NOTIFY_INTERVAL_MS = 200
 
 export type { Packaging } from './trackContext'

@@ -14,9 +14,10 @@ interface ParticipantTileProps {
   /// The member's newest transcribed utterance, while it is fresh.
   caption?: string
   footer?: ReactNode
-  /// Called with `heightKey` and the shown height in device pixels whenever
-  /// the height changes.
+  /// Echoed back to `onHeight` so the parent can pass one stable callback to
+  /// every tile; a new callback per render would reconnect the ResizeObserver.
   heightKey?: string
+  /// Called with the shown height in device pixels whenever it changes.
   onHeight?: (heightKey: string, heightPx: number) => void
   onOpenDetails: () => void
   menuTestId?: string

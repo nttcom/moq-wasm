@@ -20,7 +20,8 @@ import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMed
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 
 const AUTH_INFO = 'secret'
-/// The stream monitors are rebuilt from scratch on each draw.
+/// Each draw rebuilds every stream monitor's SVG through innerHTML, too costly
+/// to run on every frame.
 const STREAM_RENDER_INTERVAL_MS = 100
 
 const moqtClient = new MoqtClientWrapper()

@@ -58,7 +58,8 @@ interface UseMeetingMediaResult {
   localVideoStream: MediaStream | null
   localScreenShareStream: MediaStream | null
   localAudioStream: MediaStream | null
-  /// Updated per encoded chunk outside React state; the stats sampler reads it.
+  /// A ref, not state: it is written per encoded chunk, and state would
+  /// re-render the room each time. The stats sampler reads it.
   localSendStats: RefObject<LocalSendStats>
   remotePictures: Map<string, RemotePictures>
   toggleCamera: () => Promise<boolean>
