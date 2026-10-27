@@ -321,9 +321,11 @@ use these facades instead of the data-plane factories directly:
   bound. Ordering is therefore only guaranteed within a subgroup (draft-14
   §10.4); consumers that need cross-subgroup order sort by the ids themselves.
   It reads the resolved objects `StreamDataReceiver` returns (below);
-  status objects are skipped, a failure inside one stream is returned as `Err`
-  while the other streams keep being read, and `Ok(None)` means the factory
-  has no more streams.
+  status objects are skipped, and `Ok(None)` means the factory has no more
+  streams. A failure inside one stream (a publisher that leaves resets its
+  open group, a GOAWAY cutover cuts the group still open on the retired
+  connection) is logged at DEBUG and ends only that stream, so the only `Err`
+  is a `MalformedTrackError`, after which the track ends.
 - `Subscriber::subscribe_current_group` is how a late joiner reads a track
   from the start of its current group (draft-14 §9.16.2, the catalog join of
   draft-ietf-moq-msf-01 §5). It subscribes with Largest Object and returns a
