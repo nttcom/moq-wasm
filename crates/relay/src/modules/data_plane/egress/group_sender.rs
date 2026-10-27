@@ -293,9 +293,17 @@ impl GroupSender {
         };
         let mut sender: Option<Box<dyn DataSender>> = None;
         loop {
-            let next = match task.source.next(sent.unsent).await {
-                SubgroupNext::Cache(next @ (NextObject::Object(_) | NextObject::Partial(_))) => {
-                    next
+            let (next, (object_id, publisher_priority)) = match task.source.next(sent.unsent).await
+            {
+                SubgroupNext::Cache(NextObject::Object(object)) => {
+                    let first = &object.object;
+                    let first = (first.location.object_id, first.publisher_priority);
+                    (NextObject::Object(object), first)
+                }
+                SubgroupNext::Cache(NextObject::Partial(partial)) => {
+                    let first = &partial.object;
+                    let first = (first.location.object_id, first.publisher_priority);
+                    (NextObject::Partial(partial), first)
                 }
                 SubgroupNext::Cache(NextObject::Finished) => {
                     if let Some(mut sender) = sender {
@@ -350,16 +358,7 @@ impl GroupSender {
                     continue;
                 }
             };
-            let first = match &next {
-                NextObject::Object(object) => &object.object,
-                NextObject::Partial(partial) => &partial.object,
-                NextObject::Finished | NextObject::Aborted => {
-                    unreachable!("only objects reach this point")
-                }
-            };
-            let object_id = first.location.object_id;
             if sender.is_none() {
-                let publisher_priority = first.publisher_priority;
                 match Self::open_stream(&task, group_id, subgroup_id, publisher_priority).await {
                     Some(opened) => sender = Some(opened),
                     None => {
