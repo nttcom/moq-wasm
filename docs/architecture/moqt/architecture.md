@@ -237,7 +237,8 @@ the next connection through the endpoint's `SessionCreator` (`Reconnect`),
 sends every SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE
 made on the session again (`NextGroupStart`, or an AbsoluteRange from the
 group after the newest one delivered to its End Group, which is not sent
-again once that group has started; the last Forward state; a
+again once that group has started; the range, Forward state and priority
+of the last SUBSCRIBE_UPDATE; a
 rejected namespace or SUBSCRIBE is repeated every 500 ms for up to 10 s),
 makes it the current connection, and closes the previous one with NO_ERROR
 once the server takes no track this side sends there any more and no
