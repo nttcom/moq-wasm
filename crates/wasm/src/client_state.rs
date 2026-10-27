@@ -132,12 +132,6 @@ impl ClientState {
         if !self.contains_published_namespace(&message.track_namespace) {
             return Err(RequestErrorCode::TrackDoesNotExist);
         }
-        if self
-            .incoming_subscriptions
-            .contains_key(&message.request_id)
-        {
-            return Err(RequestErrorCode::InternalError);
-        }
         Ok(())
     }
 
