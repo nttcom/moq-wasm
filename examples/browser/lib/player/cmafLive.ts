@@ -1,6 +1,6 @@
 import { MseSink, type MseSources, type MseTrackSource } from '../../utils/media/mseSink'
 import type { MediaKind } from './trackContext'
-import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
+import type { ReceivedObject } from '@moqt/session'
 import type { MediaCatalogTrack } from '../msf/catalog'
 
 export function cmafSource(track: MediaCatalogTrack): MseTrackSource | undefined {
@@ -39,7 +39,7 @@ export class CmafLive {
     this.awaitingKeyframe = true
   }
 
-  append(kind: MediaKind, object: SubgroupObjectMessageWithLoc): void {
+  append(kind: MediaKind, object: ReceivedObject): void {
     if (!this.sink) {
       return
     }

@@ -1,5 +1,6 @@
-import { type MoqtClientWrapper, RequestError, RequestErrorCode } from '@moqt/moqtClient'
-import { type PublishDoneMessage, parse_msf_catalog_json } from '../../pkg/moqt'
+import { RequestError, RequestErrorCode } from '@moqt/moqtClient'
+import type { MoqSession, PublishDone, ReceivedObject } from '@moqt/session'
+import { parse_msf_catalog_json } from '../../pkg/moqt'
 import { parseAudioChannelCount } from '../../utils/media/audioChannelConfig'
 import { monotonicUnixMicros } from '../../utils/media/clock'
 import { readLocHeader } from '../../utils/media/loc'
@@ -21,7 +22,6 @@ import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
-import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../../utils/page'
 import { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from '../msf/catalog'
@@ -44,7 +44,6 @@ export type LivePlayerCallbacks = {
 }
 
 export type LivePlayerOptions = {
-  client: MoqtClientWrapper
   container: HTMLElement
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
@@ -142,20 +141,18 @@ export class LivePlayer {
     this.callbacks = options.callbacks
     this.keepLiveWhileReviewing = options.keepLiveWhileReviewing ?? false
     this.context = {
-      client: options.client,
+      session: undefined,
       namespace: [],
-      authInfo: '',
       observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => options.callbacks.onLog(level, message)
     }
     this.textTracks = new TextTracks(this.context)
     this.catalog = new CatalogFollower(
-      this.context,
       this.textTracks,
       (text) => void this.queueTrackChange(() => this.applyCatalog(text)),
-      (message) => void this.publisherLeft(publisherEndedText(CATALOG_TRACK_NAME, message))
+      (done) => void this.publisherLeft(publisherEndedText(CATALOG_TRACK_NAME, done))
     )
-    this.subscriptions = new TrackSubscriptions(this.context, (kind, message) => this.publisherEnded(kind, message))
+    this.subscriptions = new TrackSubscriptions(this.context, (kind, done) => this.publisherEnded(kind, done))
     this.stallWatch = new StallWatch(() => {
       this.changed()
       this.adaptVideo()
@@ -164,7 +161,7 @@ export class LivePlayer {
     this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
       onPresented: (picture) => this.notePresentedFrame(picture),
       onFrameShown: (ids, captureMicros) => {
-        const trackAlias = this.subscriptions.get('video')?.trackAlias
+        const trackAlias = this.subscriptions.get('video')?.id
         if (ids && trackAlias !== undefined) {
           this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
         }
@@ -227,8 +224,8 @@ export class LivePlayer {
         playheadSeconds: review && review.playheadMicros / MICROS_PER_SECOND
       },
       delivery: {
-        liveVideoAlias: this.subscriptions.get('video')?.trackAlias,
-        liveAudioAlias: this.subscriptions.get('audio')?.trackAlias,
+        liveVideoAlias: this.subscriptions.get('video')?.id,
+        liveAudioAlias: this.subscriptions.get('audio')?.id,
         mediaTimelineTrackName: this.timeline.mediaTimelineTrackName,
         reviewFetchWindows: review?.fetchWindows ?? []
       }
@@ -247,10 +244,11 @@ export class LivePlayer {
   /// them but the tracks themselves, and they never change.
   /// Resolves once the tracks are subscribed or, when nobody publishes the
   /// namespace yet, once the player has started waiting for the publisher.
-  async start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void> {
+  /// Plays `namespace` over `session`; the session stays the caller's to close.
+  async start(session: MoqSession, namespace: string[], tracks?: LiveTracks): Promise<void> {
     await this.queueTrackChange(async () => {
+      this.context.session = session
       this.context.namespace = namespace
-      this.context.authInfo = authInfo
       this.givenTracks = tracks
       this.started = true
       this.watchGeneration += 1
@@ -699,12 +697,7 @@ export class LivePlayer {
 
   /// Objects that arrive before the subscription is known to the switch are
   /// dropped, so the splice is decided by a group start seen afterwards.
-  private handleIncomingVideo(
-    pending: VideoSwitch,
-    trackName: string,
-    groupId: bigint,
-    object: SubgroupObjectMessageWithLoc
-  ): void {
+  private handleIncomingVideo(pending: VideoSwitch, trackName: string, groupId: bigint, object: ReceivedObject): void {
     const next = pending.next
     if (!next) {
       return
@@ -774,12 +767,7 @@ export class LivePlayer {
     }
   }
 
-  private handleLocObject(
-    kind: MediaKind,
-    trackName: string,
-    groupId: bigint,
-    object: SubgroupObjectMessageWithLoc
-  ): void {
+  private handleLocObject(kind: MediaKind, trackName: string, groupId: bigint, object: ReceivedObject): void {
     if (kind === 'video') {
       const pending = this.videoSwitch
       if (pending?.outgoing.name === trackName && pending.splice.acceptOutgoing(groupId) === 'retire') {
@@ -799,12 +787,7 @@ export class LivePlayer {
     this.locLive.push(kind, groupId, object)
   }
 
-  private handleCmafObject(
-    kind: MediaKind,
-    trackName: string,
-    groupId: bigint,
-    object: SubgroupObjectMessageWithLoc
-  ): void {
+  private handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: ReceivedObject): void {
     if (object.objectStatus != null) {
       return
     }
@@ -820,7 +803,7 @@ export class LivePlayer {
     this.cmafLive.append(kind, object)
   }
 
-  private observeVideoDelivery(object: SubgroupObjectMessageWithLoc): void {
+  private observeVideoDelivery(object: ReceivedObject): void {
     const arrivedAtMs = monotonicUnixMicros() / 1_000
     const captureMicros = readLocHeader(object.locHeader).captureTimestampMicros
     this.adaptiveBitrate.observe({
@@ -855,11 +838,11 @@ export class LivePlayer {
     }
   }
 
-  private publisherEnded(kind: MediaKind, message: PublishDoneMessage): void {
+  private publisherEnded(kind: MediaKind, done: PublishDone): void {
     if (kind === 'video') {
       this.stallWatch.clear()
     }
-    const playbackText = publisherEndedText(kind, message)
+    const playbackText = publisherEndedText(kind, done)
     this.playbackStatus = { text: playbackText, state: 'idle' }
     this.changed()
     if (kind === 'video' && this.givenTracks) {
@@ -1109,8 +1092,8 @@ export class LivePlayer {
   }
 }
 
-function publisherEndedText(trackName: string, message: PublishDoneMessage): string {
-  const reason = message.errorReason ? `: ${message.errorReason}` : ''
+function publisherEndedText(trackName: string, done: PublishDone): string {
+  const reason = done.reason ? `: ${done.reason}` : ''
   return `Publisher ended the ${trackName} track${reason}`
 }
 

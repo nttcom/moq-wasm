@@ -1,101 +1,65 @@
-import { type TrackContext, observedObjectHandler } from './trackContext'
-import type { PublishDoneMessage, SubscribeOkMessage } from '../../pkg/moqt'
-import { getErrorMessage } from '../../utils/page'
+import type { MoqSubscription, PublishDone } from '@moqt/session'
+import { type TrackContext, observedObjectHandler, sessionOf, streamId } from './trackContext'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 
+export type TextTrackOptions = {
+  /// Reads the group the largest object is in from its first object too
+  /// (SUBSCRIBE with a joining FETCH), as MSF asks of a catalog subscriber.
+  currentGroup?: boolean
+  /// Called when the publisher ends the track with PUBLISH_DONE.
+  onEnded?: (done: PublishDone) => void
+}
+
 export class TextTracks {
-  private readonly subscribed: { requestId: bigint; trackAlias: bigint }[] = []
+  private readonly subscribed: { id: bigint; handle: MoqSubscription }[] = []
 
   constructor(private readonly context: TrackContext) {}
 
-  /// `onEnded` is called when the publisher ends the track with PUBLISH_DONE.
-  async subscribe(
-    name: string,
-    onText: TextTrackHandler,
-    onEnded?: (message: PublishDoneMessage) => void
-  ): Promise<SubscribeOkMessage> {
-    const { client, namespace, authInfo } = this.context
-    const { requestId, subscribeOk } = await client.subscribe(namespace, name, authInfo, {
-      forward: true,
-      onPublishDone: (message) => this.end(name, message, onEnded)
-    })
-    this.subscribed.push({ requestId, trackAlias: subscribeOk.trackAlias })
-    client.setOnSubgroupObjectHandler(
-      subscribeOk.trackAlias,
-      observedObjectHandler(this.context, subscribeOk.trackAlias, name, (groupId, object) =>
-        deliverText(object.objectPayload, groupId, onText)
-      )
+  async subscribe(name: string, onText: TextTrackHandler, options: TextTrackOptions = {}): Promise<void> {
+    const { namespace } = this.context
+    const session = sessionOf(this.context)
+    const handle = options.currentGroup
+      ? await session.subscribeCurrentGroup(namespace, name)
+      : await session.subscribe(namespace, name)
+    const subscription = { id: streamId(), handle }
+    this.subscribed.push(subscription)
+    const observed = observedObjectHandler(this.context, subscription.id, name, (groupId, object) =>
+      deliverText(object.objectPayload, groupId, onText)
     )
+    void handle.done.then((done) => done && this.end(name, subscription, done, options.onEnded))
+    void (async () => {
+      for await (const object of handle) {
+        if (this.subscribed.includes(subscription)) {
+          observed(object.groupId, object)
+        }
+      }
+    })().catch((error: unknown) => this.context.log('info', `${name} read ended: ${error}`))
     this.context.log('info', `subscribed ${namespace.join('/')}/${name}`)
-    return subscribeOk
   }
 
   private end(
     name: string,
-    message: PublishDoneMessage,
-    onEnded: ((message: PublishDoneMessage) => void) | undefined
+    subscription: { id: bigint; handle: MoqSubscription },
+    done: PublishDone,
+    onEnded: ((done: PublishDone) => void) | undefined
   ): void {
-    const index = this.subscribed.findIndex((subscription) => subscription.requestId === message.requestId)
+    const index = this.subscribed.indexOf(subscription)
     if (index < 0) {
       return
     }
     this.subscribed.splice(index, 1)
     this.context.log('info', `${name} ended by the publisher`)
-    onEnded?.(message)
+    onEnded?.(done)
   }
 
   async unsubscribeAll(): Promise<void> {
-    const { client } = this.context
-    for (const { requestId, trackAlias } of this.subscribed.splice(0)) {
-      client.clearSubgroupObjectHandler(trackAlias)
-      if (client.getConnectionStatus()) {
-        await client.unsubscribe(requestId)
+    for (const { id, handle } of this.subscribed.splice(0)) {
+      this.context.observer.forget(id)
+      if (this.context.session?.isOpen) {
+        await handle.close()
       }
     }
-  }
-}
-
-/// draft-ietf-moq-transport-14 §9.8: SUBSCRIBE_OK names a Largest Location
-/// only when content exists; without one nothing has been published yet, so
-/// there is nothing to fetch and the first object arrives on the SUBSCRIBE.
-export async function fetchLatestText(
-  context: TrackContext,
-  name: string,
-  subscribeOk: SubscribeOkMessage,
-  onText: TextTrackHandler
-): Promise<void> {
-  const largestGroup = subscribeOk.largestGroupId
-  if (largestGroup === undefined) {
-    context.log('info', `${name} has no published object yet; waiting for it on the subscription`)
-    return
-  }
-  const endObject = (subscribeOk.largestObjectId ?? 0n) + 1n
-  try {
-    const { requestId } = await context.client.fetch(
-      context.namespace,
-      name,
-      largestGroup,
-      0n,
-      largestGroup,
-      endObject,
-      {
-        onObject: (message) => {
-          context.observer.fetchObject(
-            message.requestId,
-            name,
-            message.groupId,
-            message.objectId,
-            message.objectPayload.byteLength
-          )
-          deliverText(message.objectPayload, message.groupId, onText)
-        }
-      }
-    )
-    context.observer.fetchFinished(requestId)
-    context.log('info', `fetched ${name}`)
-  } catch (error) {
-    context.log('info', `fetch ${name}: ${getErrorMessage(error)}`)
   }
 }
 
