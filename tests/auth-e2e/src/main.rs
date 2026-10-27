@@ -23,8 +23,8 @@ use moqt::{
     AuthorizationToken, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session,
     SessionEvent, Subscription,
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectStatus, Subgroup, SubgroupStart,
+        ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus,
+        Subgroup, SubgroupStart, TrackData,
     },
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
@@ -431,15 +431,14 @@ where
         .await
         .context("subscriber failed to subscribe")?;
     after_subscribe().await?;
-    let receiver = session
+    let mut receiver = session
         .subscriber()
         .accept_data_receiver(&subscription)
         .await
         .context("subscriber failed to accept data receiver")?;
-    let DataReceiver::Stream(mut factory) = receiver else {
-        bail!("expected a subgroup stream receiver");
+    let TrackData::Subgroup(mut stream) = receiver.next().await? else {
+        bail!("expected a subgroup stream, got a datagram");
     };
-    let mut stream = factory.next().await?;
     loop {
         let Some(subgroup) = stream.receive().await? else {
             bail!("stream ended before receiving an object");

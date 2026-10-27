@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use moqt::{
     TrackReader,
-    object::{DataReceiver, GroupOrder},
+    object::GroupOrder,
     subscribe::{FilterType, SubscribeOption},
 };
 use relay_stats::RelaySnapshot;
@@ -80,12 +80,9 @@ async fn receive_snapshots(
         )
         .await
         .context("SUBSCRIBE to the stats track was refused")?;
-    let DataReceiver::Stream(factory) = subscriber.accept_data_receiver(&subscription).await?
-    else {
-        bail!("the stats track is not delivered on streams");
-    };
+    let receiver = subscriber.accept_data_receiver(&subscription).await?;
     tracing::info!(relay_id = %relay.relay_id, url = %relay.url, "subscribed to relay stats");
-    let mut reader = TrackReader::new(factory);
+    let mut reader = TrackReader::new(receiver);
     let mut closed = std::pin::pin!(session.closed());
     loop {
         let next = tokio::select! {

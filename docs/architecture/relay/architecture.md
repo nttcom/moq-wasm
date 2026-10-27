@@ -627,12 +627,16 @@ per-request authorization gate under "Event pipeline".
 
 - On `Start`, it obtains the upstream session's `Subscriber`, creates the data
   receiver (cancellable via a `watch` stop channel per track and publisher), and hands it to
-  `TrackIngestTask` as an `IngestSource` (subgroup-stream factory or datagram
-  receiver).
-- `TrackIngestTask` (`track_ingest_task.rs`) runs one task per track,
-  publisher and source kind: `accept_streams` (`stream_reader.rs`) spawns a `read_stream`
-  per accepted subgroup stream, `read_datagrams` (`datagram_reader.rs`) reads
-  the datagram receiver. Every reader of one publisher's track shares one `TrackIngest`
+  `TrackIngestTask` in an `IngestStart`. The receiver
+  (`session::data_receiver::receiver::DataReceiver`) yields the
+  subscription's subgroup streams and datagrams in arrival order
+  (`UpstreamData`), so a draft-18 track that mixes them (§11) is ingested
+  as it comes.
+- `TrackIngestTask` (`track_ingest_task.rs`) runs one task per track and
+  publisher: `read_track` (`track_reader.rs`) spawns a `read_stream`
+  (`stream_reader.rs`) per subgroup stream and inserts each datagram through
+  a `DatagramGroup` (`datagram_reader.rs`), which keeps the datagram group
+  being filled open in the cache. Every reader of one publisher's track shares one `TrackIngest`
   (track key, publisher, cache, session-event sender, stop receiver).
   **Every publisher is ingested** (draft-14 §8.2): all publishers of a track
   insert into the same `TrackCache`, whose §8.1 duplicate handling
@@ -670,11 +674,15 @@ per-request authorization gate under "Event pipeline".
   the stream (an unknown Object Status) terminates the publisher session.
 - `FetchIngest` inserts each FETCH object one-to-one (`CachedObject::from_object`
   via `TrackCache::insert`, which registers no knowledge); no header synthesis and
-  no per-subgroup delta state.
+  no per-subgroup delta state. An object of a response that carries no
+  forwarding preference (draft-14, `carries_forwarding_preference()`) is
+  marked `forwarding_inferred`.
 - The cache's sticky §2.5 malformed latch is set by an ingest reader: by the
-  insert that conflicts, or when moqt returns `MalformedTrackError` because one
-  publisher's upstream subscription switched between subgroup streams and
-  datagrams (`accept_streams`, `read_datagrams`). That reader is always
+  insert that conflicts, or when moqt reports a malformed track — a draft-14
+  upstream subscription that switched between subgroup streams and datagrams,
+  or an object that conflicts with a copy the same upstream session delivered
+  before (`MalformedTrackError` from `read_track` or `FetchIngest`,
+  `StreamReceiveError::MalformedTrack` from `read_stream`). That reader is always
   present to report `MalformedTrackDetected` into the event pipeline — no
   standing watcher is needed. Two publishers that use different forwarding
   preferences for one track are not detected unless their objects conflict. Downstream, `EgressRunner` watches the same
@@ -714,9 +722,16 @@ per-request authorization gate under "Event pipeline".
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;
   extension changes and Does Not Exist transitions are tolerated duplicates.
-  A datagram's `ends_group` is not compared. When a live datagram meets a
-  fetched copy that arrived first, the cache takes the forwarding preference
-  and `ends_group` from the datagram.
+  draft-18 §9.1 compares no status: the ingest asks moqt whether its upstream
+  session compares it (`compares_duplicate_status`) and stamps the answer on
+  each object as `status_may_change`, and the status counts only when neither
+  copy carries it. A datagram's `ends_group` is not compared. Only a `forwarding_inferred`
+  copy (from a draft-14 FETCH, §10.4.4) in the subgroup of its Object ID is
+  the same object as a datagram; a draft-18 track may send an object in that
+  subgroup and a datagram FETCH copy says so (§11.4.4), so elsewhere the
+  preference is compared exactly. When a live datagram meets such an inferred
+  copy that arrived first, the cache takes the forwarding preference and
+  `ends_group` from the datagram.
 - `TrackCache` (`track_cache.rs` + `track_cache/{ledger,open_subgroup}.rs`) is one
   track-level ledger behind a `std::sync::RwLock` that is never held across an
   await: `objects: BTreeMap<Location, Arc<CachedObject>>` (stream and datagram
@@ -950,7 +965,10 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   task sent lies at or before that location, so none is sent twice. Groups
   still in the range are delivered to their end. Datagram groups are
   re-emitted with the downstream track alias, and stop at the same range
-  change.
+  change. Every `SubgroupKey` is sent by the preference its objects arrived
+  with, so a draft-18 track mixing subgroup streams and datagrams goes
+  downstream mixed, and a draft-14 downstream treats it as malformed
+  (draft-14 §2.5).
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscription's subscriber priority, the first object's publisher
   priority, the subscription's group order with a per-subscription
@@ -1113,7 +1131,8 @@ so cache, fan-out, FETCH and authorization need no separate path.
   above the start whether it arrives as an open event or is already cached;
   neither path requires the start group id itself to exist.
 - **Every publisher is ingested**: one reader set per track and publisher,
-  all inserting into the track's single cache; a publisher's stop ends only
+  covering its subgroup streams and datagrams, all inserting into the track's
+  single cache; a publisher's stop ends only
   its own readers, and only a FIN covering a stream subgroup from its
   earliest received object completes it.
 - **Egress runner lifetime is the downstream registration's**: a runner stops

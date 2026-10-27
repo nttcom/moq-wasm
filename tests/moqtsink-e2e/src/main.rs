@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, Subscriber, Subscription,
     fetch::{Fetch, FetchOption},
-    object::{ContentExists, DataReceiver, GroupOrder, Location, Subgroup},
+    object::{ContentExists, GroupOrder, Location, Subgroup, TrackData},
     subscribe::{FilterType, SubscribeOption},
 };
 use msf::Catalog;
@@ -179,14 +179,12 @@ async fn expect_groups(
 ) -> Result<()> {
     let track = subscription.track_name();
     let receive = async {
-        let DataReceiver::Stream(mut streams) =
-            subscriber.accept_data_receiver(subscription).await?
-        else {
-            bail!("{track} arrived as datagrams");
-        };
+        let mut streams = subscriber.accept_data_receiver(subscription).await?;
         let mut received = BTreeSet::new();
         while received.len() < groups {
-            let mut stream = streams.next().await?;
+            let TrackData::Subgroup(mut stream) = streams.next().await? else {
+                bail!("{track} arrived as datagrams");
+            };
             let mut group_id = None;
             while let Some(object) = stream.receive().await? {
                 match object {

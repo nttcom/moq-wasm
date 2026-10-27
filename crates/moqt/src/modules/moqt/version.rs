@@ -49,7 +49,10 @@ use crate::{
                 namespace_interest::NamespaceInterest,
             },
             data_plane::{
-                object::canonical_object::{Object, SubgroupStart},
+                object::{
+                    canonical_object::{Object, SubgroupStart},
+                    extension_headers::ExtensionHeaders,
+                },
                 stream::{
                     fetch_data_receiver::{self, FetchDataReceiver},
                     stream_data_receiver::{StreamDataReceiver, SubgroupPart},
@@ -106,6 +109,46 @@ impl Version {
         match self {
             Self::Draft14 => draft14::error_codes::termination_code_to_wire(code),
             Self::Draft18 => draft18::error_codes::termination_code_to_wire(code),
+        }
+    }
+
+    /// Whether a track may carry objects on subgroup streams and in
+    /// datagrams alike: draft-18 §11 allows it, draft-14 §10 forbids it.
+    pub(crate) fn mixes_forwarding_preferences(self) -> bool {
+        match self {
+            Self::Draft14 => false,
+            Self::Draft18 => true,
+        }
+    }
+
+    /// Whether a duplicate object whose status moves between Normal, End of
+    /// Group and End of Track makes its track malformed: draft-14 §8.1 says
+    /// so; draft-18 §9.1 compares only the forwarding preference, subgroup,
+    /// priority and payload.
+    pub(crate) fn compares_duplicate_status(self) -> bool {
+        match self {
+            Self::Draft14 => true,
+            Self::Draft18 => false,
+        }
+    }
+
+    /// Whether `properties` hold Immutable Properties that hold Immutable
+    /// Properties or a Key-Value-Pair that does not parse, in the
+    /// Key-Value-Pair form of the draft (draft-14 §11.2, draft-18 §12.7).
+    pub(crate) fn has_malformed_immutable_properties(self, properties: &ExtensionHeaders) -> bool {
+        match self {
+            Self::Draft14 => draft14::objects::has_malformed_immutable_extensions(properties),
+            Self::Draft18 => {
+                draft18::messages::has_malformed_immutable_properties(&properties.key_value_pairs)
+            }
+        }
+    }
+
+    /// draft-18 marks a datagram object in FETCH (§11.4.4); draft-14 does not (§10.4.4).
+    pub(crate) fn fetch_carries_forwarding_preference(self) -> bool {
+        match self {
+            Self::Draft14 => false,
+            Self::Draft18 => true,
         }
     }
 
@@ -185,6 +228,13 @@ pub(crate) enum SubgroupReader {
 }
 
 impl SubgroupReader {
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
+        }
+    }
+
     /// `None` until the first object arrives, for header types that take the
     /// subgroup id from it.
     pub(crate) fn start(&self) -> Option<SubgroupStart> {
@@ -226,6 +276,13 @@ pub(crate) enum FetchReader {
 }
 
 impl FetchReader {
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
+        }
+    }
+
     /// draft-18 encodes Group IDs as deltas in the FETCH's group order.
     pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
         match self {

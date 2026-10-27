@@ -161,7 +161,9 @@ impl Publisher for MockPublisher {
         &self,
         _downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn DataSender> {
-        unreachable!("not used by the egress path under test")
+        Box::new(MockDataSender {
+            sent: self.sent.clone(),
+        })
     }
 
     async fn new_fetch_sender(&self, _request_id: u64) -> anyhow::Result<Box<dyn FetchSender>> {

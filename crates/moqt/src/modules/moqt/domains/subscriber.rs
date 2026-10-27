@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tracing::Instrument;
-
 use crate::{
     RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
     fetch::FetchOption,
@@ -17,28 +15,19 @@ use crate::{
             enums::ResponseMessage,
             namespace_interest::NamespaceInterest,
         },
-        data_plane::stream::{
-            fetch_data_receiver::FetchDataReceiver,
-            stream_data_receiver_factory::StreamDataReceiverFactory,
-        },
+        data_plane::{data_receiver::DataReceiver, stream::fetch_data_receiver::FetchDataReceiver},
         domains::{
             connection::{Connection, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
             session_context::{CarriedSubscription, SessionContext},
         },
-        runtime::dispatch::incoming_object::IncomingObject,
         version::{Notification, OutgoingRequest},
     },
-    object::{DatagramReceiver, GroupOrder, Location},
+    object::{GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
     wire::TrackStatusOk,
 };
-
-pub enum DataReceiver {
-    Stream(StreamDataReceiverFactory),
-    Datagram(DatagramReceiver),
-}
 
 pub struct Subscriber {
     pub(crate) session: Arc<SessionContext>,
@@ -214,7 +203,7 @@ impl Subscriber {
         );
         let fetch_params = FetchParams::Standalone {
             track_namespace: namespace_tuple(&track_namespace),
-            track_name,
+            track_name: track_name.clone(),
             start_location,
             end_location,
         };
@@ -223,6 +212,7 @@ impl Subscriber {
             fetch_params,
             option,
             Some(remainder),
+            (track_namespace, track_name),
         )
         .await
     }
@@ -279,7 +269,11 @@ impl Subscriber {
             joining_request_id,
             joining_start,
         };
-        self.send_fetch(connection, fetch_params, option, remainder)
+        let track = (
+            subscription.track_namespace().to_string(),
+            subscription.track_name().to_string(),
+        );
+        self.send_fetch(connection, fetch_params, option, remainder, track)
             .await
     }
 
@@ -292,13 +286,19 @@ impl Subscriber {
         fetch_params: FetchParams,
         option: FetchOption,
         remainder: Option<FetchRemainder>,
+        (track_namespace, track_name): (String, String),
     ) -> Result<FetchHandle, RequestFailure> {
         let remainder = remainder.filter(|_| {
             self.session.follows_go_away() && option.group_order != GroupOrder::Descending
         });
         let request_id = connection.control.next_request_id();
 
-        let pending_fetch = self.session.register_pending_fetch(&connection, request_id);
+        let pending_fetch = self.session.register_pending_fetch(
+            &connection,
+            request_id,
+            track_namespace,
+            track_name,
+        );
 
         let fetch = Fetch {
             request_id,
@@ -502,10 +502,8 @@ impl Subscriber {
         Ok(())
     }
 
-    /// The objects of `subscription`. The wait for the first data stream runs
-    /// in the reader's task, so unlike `accept_data_receiver`,
-    /// `TrackReader::next_object` may be polled in `select!` from the start.
-    /// A track delivered in datagrams yields a `MalformedTrackError`.
+    /// The objects of `subscription`, from its subgroup streams and its
+    /// datagrams alike.
     pub fn track_reader(&self, subscription: &Subscription) -> TrackReader {
         TrackReader::of(
             Subscriber {
@@ -543,7 +541,7 @@ impl Subscriber {
         fetch_handle: &FetchHandle,
     ) -> anyhow::Result<FetchDataReceiver> {
         let request_id = fetch_handle.request_id;
-        let mut fetch_stream_rx = self
+        let mut channel = self
             .session
             .fetch_receiver_map
             .lock()
@@ -555,11 +553,16 @@ impl Subscriber {
                     request_id
                 )
             })?;
-        let mut receiver = fetch_stream_rx
+        let mut receiver = channel
+            .receiver
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
         receiver.set_group_order(fetch_handle.group_order);
+        receiver.check_with(
+            self.session
+                .object_ledger(&channel.track_namespace, &channel.track_name),
+        );
         if let Some(remainder) = fetch_handle.remainder.clone() {
             receiver.carry_with(
                 self.session.clone(),
@@ -571,6 +574,8 @@ impl Subscriber {
         Ok(receiver)
     }
 
+    /// Takes the receiver of `subscription`'s subgroup streams and datagrams.
+    /// Fails when it was already taken or the subscription is not known.
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscriber.accept_data_receiver",
@@ -582,45 +587,20 @@ impl Subscriber {
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver> {
         let track_alias = subscription.track_alias();
-        let mut receiver = self
+        let channel = self
             .session
             .receiver_map
             .lock()
             .await
             .remove(&track_alias)
             .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?;
-        let stream_with_object = {
-            let span = tracing::info_span!(
-                "moqt.subscriber.wait_first_object",
-                track_alias = track_alias,
-                object_kind = tracing::field::Empty,
-            );
-            let stream_with_object = async {
-                receiver
-                    .recv()
-                    .await
-                    .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))
-            }
-            .instrument(span.clone())
-            .await?;
-            match stream_with_object {
-                IncomingObject::Subgroup(_) => {
-                    span.record("object_kind", "stream_header");
-                }
-                IncomingObject::Datagram(_) => {
-                    span.record("object_kind", "datagram");
-                }
-            }
-            stream_with_object
-        };
-        match stream_with_object {
-            IncomingObject::Subgroup(first) => Ok(DataReceiver::Stream(
-                StreamDataReceiverFactory::new(first, receiver),
-            )),
-            IncomingObject::Datagram(datagram) => Ok(DataReceiver::Datagram(
-                DatagramReceiver::new(track_alias, datagram.object, receiver),
-            )),
-        }
+        Ok(DataReceiver::new(
+            track_alias,
+            channel.receiver,
+            channel.version,
+            self.session
+                .object_ledger(subscription.track_namespace(), subscription.track_name()),
+        ))
     }
 }
 
@@ -763,10 +743,10 @@ mod tests {
         },
         modules::{
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, first_subgroup_stream, location,
-                object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                send_subgroup_object, spawn_connected_dual_sessions, subgroup_receiver,
-                subscribed_track, within,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, data_receiver, first_subgroup_stream,
+                location, next_subgroup, object_with_extensions, read_fetch_objects,
+                read_subgroup_objects, send_subgroup_object, spawn_connected_draft18_sessions,
+                spawn_connected_dual_sessions, subscribed_track, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -896,8 +876,13 @@ mod tests {
 
     /// A FETCH answered with FETCH_OK whose stream carries `first` and stays
     /// open.
-    async fn open_fetch(client: &Session, server: &Session, first: &Object) -> OpenFetch {
-        let (request, handler) = start_fetch(client, server, TRACK).await;
+    async fn open_fetch(
+        client: &Session,
+        server: &Session,
+        track_name: &str,
+        first: &Object,
+    ) -> OpenFetch {
+        let (request, handler) = start_fetch(client, server, track_name).await;
         handler.ok(false, END).await.unwrap();
         let sender = server
             .publisher()
@@ -933,6 +918,65 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
+    }
+
+    fn holds_ledger(client: &Session) -> bool {
+        client.subscriber().session.holds_ledger("ns", TRACK)
+    }
+
+    async fn fetch_never_taken_keeps_no_ledger(client: Session, server: Session) {
+        // Arrange
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
+        // Act: the response ends while the application never takes it
+        serve_fetch(&server, &handler, END, &[fetch_object(START, b"object")]).await;
+        let _handle = request.await.unwrap().unwrap();
+        // Assert
+        assert!(!holds_ledger(&client));
+    }
+
+    #[tokio::test]
+    async fn a_fetch_whose_response_is_never_taken_keeps_no_ledger() {
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-ledger-untaken").await;
+        fetch_never_taken_keeps_no_ledger(client, server).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_whose_response_is_never_taken_keeps_no_ledger() {
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-fetch-ledger-untaken-d18", "moqt").await;
+        fetch_never_taken_keeps_no_ledger(client, server).await;
+    }
+
+    async fn fetch_releases_the_ledger_at_its_end(client: Session, server: Session) {
+        // Arrange
+        let (request, handler) = start_fetch(&client, &server, TRACK).await;
+        serve_fetch(&server, &handler, END, &[fetch_object(START, b"object")]).await;
+        let handle = request.await.unwrap().unwrap();
+        let mut receiver = client
+            .subscriber()
+            .accept_fetch_receiver(&handle)
+            .await
+            .unwrap();
+        let held_while_read = holds_ledger(&client);
+        // Act: read up to the FIN, keeping the receiver
+        within(read_fetch_objects(&mut receiver)).await;
+        // Assert: draft-18 §5.2, the FETCH state ends with the FIN
+        assert!(held_while_read);
+        assert!(!holds_ledger(&client));
+    }
+
+    #[tokio::test]
+    async fn a_fetch_response_read_to_its_end_releases_the_ledger() {
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-ledger-end").await;
+        fetch_releases_the_ledger_at_its_end(client, server).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_response_read_to_its_end_releases_the_ledger() {
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-fetch-ledger-end-d18", "moqt").await;
+        fetch_releases_the_ledger_at_its_end(client, server).await;
     }
 
     #[tokio::test]
@@ -1162,9 +1206,9 @@ mod tests {
         let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-cancel-one").await;
         let firsts = [b"a0", b"b0", b"c0"].map(|payload| fetch_object(location(0, 0), payload));
         let seconds = [b"a1", b"c1"].map(|payload| fetch_object(location(0, 1), payload));
-        let mut kept_a = open_fetch(&client, &server, &firsts[0]).await;
-        let cancelled = open_fetch(&client, &server, &firsts[1]).await;
-        let mut kept_c = open_fetch(&client, &server, &firsts[2]).await;
+        let mut kept_a = open_fetch(&client, &server, "track-a", &firsts[0]).await;
+        let cancelled = open_fetch(&client, &server, "track-b", &firsts[1]).await;
+        let mut kept_c = open_fetch(&client, &server, "track-c", &firsts[2]).await;
 
         // Act
         client
@@ -1218,7 +1262,7 @@ mod tests {
         // Arrange
         let (client, server) =
             spawn_connected_dual_sessions("subscriber-fetch-disconnect-mid-stream").await;
-        let mut open = open_fetch(&client, &server, &fetch_object(START, b"first")).await;
+        let mut open = open_fetch(&client, &server, TRACK, &fetch_object(START, b"first")).await;
         let Fetch::Object(_) = within(open.receiver.receive()).await.unwrap() else {
             panic!("expected the first object of the FETCH");
         };
@@ -1331,8 +1375,8 @@ mod tests {
             &before,
         ))
         .await;
-        let mut kept_receiver = within(subgroup_receiver(&client, &kept)).await;
-        let mut first = within(kept_receiver.next()).await.unwrap();
+        let mut kept_receiver = within(data_receiver(&client, &kept)).await;
+        let mut first = within(next_subgroup(&mut kept_receiver)).await;
         let kept_before = within(read_subgroup_objects(&mut first)).await;
         let mut after = object_with_extensions();
         after.location.group_id += 1;
@@ -1347,7 +1391,7 @@ mod tests {
             };
             send_subgroup_object(&server, &kept_handler.into_subscription(kept_alias), &after)
                 .await;
-            let mut next = kept_receiver.next().await.unwrap();
+            let mut next = next_subgroup(&mut kept_receiver).await;
             let received_alias = next.track_alias;
             let objects = read_subgroup_objects(&mut next).await;
             (unsubscribe, received_alias, objects)

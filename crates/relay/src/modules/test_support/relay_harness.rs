@@ -18,9 +18,7 @@ use crate::modules::{
             runner::EgressRunner,
         },
         ingress::{
-            datagram_reader::read_datagrams,
-            stream_reader::{accept_streams, read_stream},
-            track_ingest_task::TrackIngest,
+            stream_reader::read_stream, track_ingest_task::TrackIngest, track_reader::read_track,
         },
     },
     domain::{
@@ -31,7 +29,8 @@ use crate::modules::{
         track_key::TrackKey,
     },
     session::{
-        data_object::DataObject, session_event::SessionEvent, session_repository::SessionRepository,
+        data_object::DataObject, data_receiver::receiver::DataReceiver,
+        session_event::SessionEvent, session_repository::SessionRepository,
     },
     test_support::mock_session::session_repository_with_session,
 };
@@ -42,7 +41,9 @@ mod mocks;
 pub(crate) use self::mocks::downstream_client::{
     FetchSent, MockPublisherObservers, Sent, UnknownRangeDraft,
 };
-pub(crate) use self::mocks::upstream_client::{FailingUpstream, UpstreamSubgroupStream};
+pub(crate) use self::mocks::upstream_client::{
+    FailingUpstream, UpstreamSubgroupStream, UpstreamTrack,
+};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
@@ -131,6 +132,13 @@ impl EgressRunnerHandle {
             .await
             .expect("egress should open a downstream stream")
             .expect("egress dropped its publisher before opening a stream")
+    }
+
+    pub(crate) async fn expect_sent(&mut self) -> Sent {
+        tokio::time::timeout(RECV_TIMEOUT, self.sent.recv())
+            .await
+            .expect("egress should send downstream")
+            .expect("egress dropped its publisher")
     }
 
     pub(crate) async fn expect_sent_object(&mut self) -> DataObject {
@@ -234,6 +242,7 @@ impl RelayHarness {
             CacheStamp {
                 max_cache_duration,
                 persist: false,
+                ..CacheStamp::default()
             },
         )
     }
@@ -277,26 +286,39 @@ impl RelayHarness {
         })
     }
 
-    pub(crate) async fn run_stream_ingest(&self, upstream: FailingUpstream) {
+    /// Ingests an upstream subscription until the returned track is dropped.
+    pub(crate) fn start_track_ingest(&self) -> UpstreamTrack {
+        self.start_ingest_of(UpstreamTrack::channel())
+    }
+
+    /// `start_track_ingest` of a draft-18 subscription.
+    pub(crate) fn start_draft18_track_ingest(&self) -> UpstreamTrack {
+        self.start_ingest_of(UpstreamTrack::draft18_channel())
+    }
+
+    fn start_ingest_of(
+        &self,
+        (upstream, receiver): (UpstreamTrack, Box<dyn DataReceiver>),
+    ) -> UpstreamTrack {
+        tokio::spawn(read_track(
+            self.ingest.clone(),
+            receiver,
+            tracing::Span::none(),
+        ));
+        upstream
+    }
+
+    pub(crate) async fn run_ingest(&self, upstream: FailingUpstream) {
         tokio::time::timeout(
             RECV_TIMEOUT,
-            accept_streams(
+            read_track(
                 self.ingest.clone(),
                 Box::new(upstream),
                 tracing::Span::none(),
             ),
         )
         .await
-        .expect("stream ingest should end");
-    }
-
-    pub(crate) async fn run_datagram_ingest(&self, upstream: FailingUpstream) {
-        tokio::time::timeout(
-            RECV_TIMEOUT,
-            read_datagrams(self.ingest.clone(), Box::new(upstream)),
-        )
-        .await
-        .expect("datagram ingest should end");
+        .expect("ingest should end");
     }
 
     pub(crate) fn is_track_malformed(&self) -> bool {

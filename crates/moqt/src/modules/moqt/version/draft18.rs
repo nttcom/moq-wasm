@@ -981,10 +981,10 @@ mod tests {
             },
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, datagram_object,
-                datagram_receiver, notify_datagram, published_track_between, read_fetch_objects,
-                spawn_connected_draft18_sessions, subgroup_receiver, subscribed_track_reader,
-                use_up_bidi_streams,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, data_receiver,
+                datagram_object, next_datagram, next_subgroup, notify_datagram,
+                published_track_between, read_fetch_objects, spawn_connected_draft18_sessions,
+                subscribed_track_reader, use_up_bidi_streams,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -1227,16 +1227,7 @@ mod tests {
             .send_object(&datagram_object())
             .await
             .unwrap();
-        let DataReceiver::Datagram(mut receiver) = track
-            .server
-            .subscriber()
-            .accept_data_receiver(&track.accepted)
-            .await
-            .unwrap()
-        else {
-            panic!("expected a datagram receiver");
-        };
-        let object = receiver.receive().await.unwrap();
+        let object = next_datagram(&mut data_receiver(&track.server, &track.accepted).await).await;
 
         // Assert
         assert_eq!(object, datagram_object());
@@ -2670,9 +2661,9 @@ mod tests {
     }
 
     async fn next_stream_object(
-        factory: &mut crate::object::StreamDataReceiverFactory,
+        receiver: &mut DataReceiver,
     ) -> (crate::object::SubgroupStart, Object) {
-        let mut stream = factory.next().await.unwrap();
+        let mut stream = next_subgroup(receiver).await;
         let Some(Subgroup::Header(start)) = stream.receive().await.unwrap() else {
             panic!("expected the subgroup header");
         };
@@ -2693,10 +2684,10 @@ mod tests {
 
         // Act: a header without priority (type 0x30), then one with 200 (0x10)
         send_raw_stream(&server, &[0x30, 4, 0, 0, 1, b'a']).await;
-        let mut factory = subgroup_receiver(&client, &subscription).await;
-        let (inherited_start, inherited) = next_stream_object(&mut factory).await;
+        let mut receiver = data_receiver(&client, &subscription).await;
+        let (inherited_start, inherited) = next_stream_object(&mut receiver).await;
         send_raw_stream(&server, &[0x10, 4, 1, 200, 0, 1, b'b']).await;
-        let (explicit_start, explicit) = next_stream_object(&mut factory).await;
+        let (explicit_start, explicit) = next_stream_object(&mut receiver).await;
 
         // Assert
         assert_eq!(inherited_start.publisher_priority, 9);
@@ -2722,11 +2713,7 @@ mod tests {
                 .transport
                 .send_datagram(BytesMut::from(&[0x0C, 4, 0, b'd'][..]))
                 .unwrap();
-            let object = datagram_receiver(&client, &subscription)
-                .await
-                .receive()
-                .await
-                .unwrap();
+            let object = next_datagram(&mut data_receiver(&client, &subscription).await).await;
 
             // Assert
             assert_eq!(object.publisher_priority, expected, "{properties:?}");
@@ -2758,11 +2745,7 @@ mod tests {
             .transport
             .send_datagram(BytesMut::from(&[0x0C, 6, 0, b'd'][..]))
             .unwrap();
-        let object = datagram_receiver(&server, &subscription)
-            .await
-            .receive()
-            .await
-            .unwrap();
+        let object = next_datagram(&mut data_receiver(&server, &subscription).await).await;
 
         // Assert
         assert_eq!(object.publisher_priority, 9);

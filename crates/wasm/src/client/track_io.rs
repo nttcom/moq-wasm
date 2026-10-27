@@ -3,7 +3,7 @@ use std::rc::Rc;
 use moqt::{
     Session, Subscription,
     fetch::{Fetch as FetchData, FetchHandle},
-    object::{DataReceiver, StreamDataReceiver, Subgroup},
+    object::{StreamDataReceiver, Subgroup, TrackData},
 };
 use wasm_bindgen_futures::spawn_local;
 
@@ -20,7 +20,7 @@ pub(crate) async fn read_track(
     session: Rc<Session>,
     subscription: Subscription,
 ) {
-    let receiver = match session
+    let mut receiver = match session
         .subscriber()
         .accept_data_receiver(&subscription)
         .await
@@ -28,15 +28,13 @@ pub(crate) async fn read_track(
         Ok(receiver) => receiver,
         Err(_) => return,
     };
-    match receiver {
-        DataReceiver::Stream(mut factory) => {
-            while let Ok(stream) = factory.next().await {
+    let track_alias = receiver.track_alias;
+    while let Ok(data) = receiver.next().await {
+        match data {
+            TrackData::Subgroup(stream) => {
                 spawn_local(read_subgroup_stream(shared.clone(), stream));
             }
-        }
-        DataReceiver::Datagram(mut receiver) => {
-            let track_alias = receiver.track_alias;
-            while let Ok(object) = receiver.receive().await {
+            TrackData::Datagram(object) => {
                 if object.payload.is_empty() {
                     let message = ObjectDatagramStatusMessage::new(track_alias, object);
                     emit(

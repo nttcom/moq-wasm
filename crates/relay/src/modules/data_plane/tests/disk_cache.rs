@@ -24,6 +24,7 @@ use crate::modules::{
 const PERSIST: CacheStamp = CacheStamp {
     max_cache_duration: None,
     persist: true,
+    status_may_change: false,
 };
 
 struct DiskBackedTrack {

@@ -61,8 +61,7 @@ to notice through its idle timeout.
 
 ```rust,no_run
 use moqt::{
-    ClientConfig, Endpoint, QUIC, TrackReader,
-    object::DataReceiver,
+    ClientConfig, Endpoint, QUIC,
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -77,11 +76,8 @@ let option = SubscribeOption {
 let subscription = subscriber
     .subscribe("example/room".to_string(), "chat".to_string(), option)
     .await?;
-let DataReceiver::Stream(factory) = subscriber.accept_data_receiver(&subscription).await? else {
-    anyhow::bail!("the track is delivered over datagrams");
-};
 
-let mut reader = TrackReader::new(factory);
+let mut reader = subscriber.track_reader(&subscription);
 while let Some(object) = reader.next_object().await? {
     println!("group {} object {}: {:?}", object.group_id, object.object_id, object.payload);
 }

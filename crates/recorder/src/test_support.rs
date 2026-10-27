@@ -7,6 +7,7 @@ use mediapack::{
 };
 use moqt::{
     DUAL, Endpoint, SessionEvent, TrackObject,
+    object::ForwardingPreference,
     publish::Origin,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
 };
@@ -73,7 +74,7 @@ pub(crate) fn fixture() -> Fixture {
 pub(crate) fn track_object(group_id: u64, object_id: u64, object: LocObject) -> TrackObject {
     TrackObject {
         group_id,
-        subgroup_id: 0,
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
         object_id,
         extension_headers: loc::to_extension_headers(&object.extensions),
         payload: object.payload,

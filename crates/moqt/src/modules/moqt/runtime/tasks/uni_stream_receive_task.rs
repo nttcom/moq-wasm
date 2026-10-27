@@ -70,6 +70,9 @@ impl UniStreamReceiveTask {
                 tracing::error!(%error, "Failed to decode the stream header");
                 return false;
             }
+            Err(StreamReceiveError::MalformedTrack(_)) => {
+                unreachable!("only the objects after the header are checked for a malformed track")
+            }
         };
 
         match incoming {

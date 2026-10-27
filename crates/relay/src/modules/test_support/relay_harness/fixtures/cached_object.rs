@@ -41,6 +41,18 @@ pub(crate) fn stream_object_in_subgroup(
     cached
 }
 
+/// A draft-14 FETCH copy, which carries no forwarding preference: a
+/// datagram object comes in the subgroup of its Object ID.
+pub(crate) fn fetched_copy_in_subgroup(
+    group_id: u64,
+    subgroup_id: u64,
+    object_id: u64,
+) -> CachedObject {
+    let mut cached = stream_object_in_subgroup(group_id, subgroup_id, object_id);
+    cached.forwarding_inferred = true;
+    cached
+}
+
 pub(crate) fn stream_object_with_payload(
     group_id: u64,
     object_id: u64,

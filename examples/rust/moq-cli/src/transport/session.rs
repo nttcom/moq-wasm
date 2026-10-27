@@ -5,7 +5,7 @@ use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, Subscription, TrackReader,
     fetch::{Fetch, FetchOption},
-    object::{DataReceiver, GroupOrder, Object},
+    object::{GroupOrder, Object},
     subscribe::{FilterType, SubscribeOption},
 };
 use tracing::info;
@@ -103,17 +103,13 @@ pub async fn subscribe(
         .with_context(|| format!("failed to subscribe {namespace}/{name}"))
 }
 
-/// Waits for the first data stream of `subscription`.
 pub async fn track_reader(session: &Session, subscription: &Subscription) -> Result<TrackReader> {
     let receiver = session
         .subscriber()
         .accept_data_receiver(subscription)
         .await
         .context("failed to accept data receiver")?;
-    let DataReceiver::Stream(factory) = receiver else {
-        anyhow::bail!("expected stream data receiver");
-    };
-    Ok(TrackReader::new(factory))
+    Ok(TrackReader::new(receiver))
 }
 
 /// Reads the group of the subscription's Largest Location, up to that

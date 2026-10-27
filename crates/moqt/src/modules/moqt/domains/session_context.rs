@@ -13,13 +13,15 @@ use crate::{
             constants::TerminationErrorCode, enums::RequestId,
             namespace_interest::NamespaceInterest,
         },
-        data_plane::stream::{
-            fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+        data_plane::{
+            object_ledger::ObjectLedger,
+            stream::{fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups},
         },
         domains::connection::{
             Connection, ObjectSink, SinkReceiver, generation_of, logical_id, wire_part,
         },
         runtime::dispatch::incoming_object::IncomingObject,
+        version::Version,
     },
     publish::PublishOption,
     subscribe::SubscribeOption,
@@ -32,10 +34,11 @@ use crate::{
 pub(crate) struct SessionContext {
     connections: std::sync::Mutex<Connections>,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    pub(crate) receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
-    pub(crate) fetch_receiver_map:
-        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
+    pub(crate) receiver_map: tokio::sync::Mutex<HashMap<u64, DataChannel>>,
+    pub(crate) fetch_receiver_map: std::sync::Mutex<HashMap<u64, FetchChannel>>,
+    /// The ledger of each track a subscription or FETCH is reading, keyed by
+    /// namespace and name; the readers hold it, so it ends with the last one.
+    ledgers: std::sync::Mutex<HashMap<(String, String), Weak<ObjectLedger>>>,
     /// `None` for a session that does not follow GOAWAY. Held while a
     /// carried request is sent and while a migration sends them all again,
     /// so a request sent during a migration is not skipped.
@@ -46,6 +49,22 @@ pub(crate) struct SessionContext {
     publications: std::sync::Mutex<HashMap<u64, Publication>>,
     /// Wakes `unserved` whenever a connection stops serving a track.
     served_changed: watch::Sender<()>,
+}
+
+/// The objects of a subscription, until the application takes them.
+pub(crate) struct DataChannel {
+    pub(crate) receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
+    /// The version of the connection the subscription was accepted on.
+    pub(crate) version: Version,
+}
+
+/// The response stream of a FETCH, until the application takes it. It
+/// holds no ledger, so a response never taken keeps none alive; taking it
+/// joins the track's ledger.
+pub(crate) struct FetchChannel {
+    pub(crate) receiver: tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>,
+    pub(crate) track_namespace: String,
+    pub(crate) track_name: String,
 }
 
 pub(crate) struct Publication {
@@ -133,10 +152,42 @@ impl SessionContext {
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
+            ledgers: std::sync::Mutex::default(),
             carried: follows_go_away.then(|| tokio::sync::Mutex::new(CarriedRequests::default())),
             publications: std::sync::Mutex::default(),
             served_changed: watch::channel(()).0,
         }
+    }
+
+    /// The ledger of the track `track_namespace` / `track_name`, shared by
+    /// every subscription and FETCH of it the session reads.
+    pub(crate) fn object_ledger(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+    ) -> Arc<ObjectLedger> {
+        let mut ledgers = self
+            .ledgers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let key = (track_namespace.to_string(), track_name.to_string());
+        if let Some(ledger) = ledgers.get(&key).and_then(Weak::upgrade) {
+            return ledger;
+        }
+        ledgers.retain(|_, ledger| ledger.strong_count() > 0);
+        let ledger = Arc::new(ObjectLedger::new());
+        ledgers.insert(key, Arc::downgrade(&ledger));
+        ledger
+    }
+
+    /// Whether a receiver still holds the ledger of the track.
+    #[cfg(test)]
+    pub(crate) fn holds_ledger(&self, track_namespace: &str, track_name: &str) -> bool {
+        self.ledgers
+            .lock()
+            .unwrap()
+            .get(&(track_namespace.to_string(), track_name.to_string()))
+            .is_some_and(|ledger| ledger.strong_count() > 0)
     }
 
     pub(crate) fn follows_go_away(&self) -> bool {
@@ -334,10 +385,13 @@ impl SessionContext {
                 },
             )
             .await?;
-        self.receiver_map
-            .lock()
-            .await
-            .insert(logical_alias, receiver);
+        self.receiver_map.lock().await.insert(
+            logical_alias,
+            DataChannel {
+                receiver,
+                version: connection.control.version(),
+            },
+        );
         Ok(logical_alias)
     }
 
@@ -375,6 +429,8 @@ impl SessionContext {
         self: &Arc<Self>,
         connection: &Arc<Connection>,
         request_id: RequestId,
+        track_namespace: String,
+        track_name: String,
     ) -> PendingFetch {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
         connection
@@ -385,7 +441,14 @@ impl SessionContext {
         self.fetch_receiver_map
             .lock()
             .expect("fetch_receiver_map poisoned")
-            .insert(logical_id(connection.generation, request_id), receiver);
+            .insert(
+                logical_id(connection.generation, request_id),
+                FetchChannel {
+                    receiver,
+                    track_namespace,
+                    track_name,
+                },
+            );
         PendingFetch {
             session: self.clone(),
             connection: connection.clone(),

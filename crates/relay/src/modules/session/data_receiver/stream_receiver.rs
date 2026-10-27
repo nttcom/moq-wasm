@@ -34,19 +34,3 @@ impl StreamReceiver for moqt::object::SubgroupPartReceiver {
         }))
     }
 }
-
-#[async_trait::async_trait]
-pub(crate) trait StreamReceiverFactory: Send + 'static {
-    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>>;
-}
-
-#[async_trait::async_trait]
-impl StreamReceiverFactory for moqt::object::StreamDataReceiverFactory {
-    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
-        Ok(Box::new(
-            moqt::object::StreamDataReceiverFactory::next(self)
-                .await?
-                .into_parts(),
-        ))
-    }
-}

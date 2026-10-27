@@ -6,7 +6,7 @@ use moqt::{
     ClientConfig, DUAL, Endpoint, Session, Subscription, TerminationErrorCode, TrackObject,
     TrackReader,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
-    object::{ContentExists, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
+    object::{ContentExists, GroupOrder, Location, Object, ObjectStatus},
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -149,10 +149,7 @@ pub(crate) fn fetched_track_object(object: Object) -> Option<TrackObject> {
     }
     Some(TrackObject {
         group_id: object.location.group_id,
-        subgroup_id: match object.forwarding {
-            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
-            ForwardingPreference::Datagram => 0,
-        },
+        forwarding: object.forwarding,
         object_id: object.location.object_id,
         extension_headers: object.extension_headers,
         payload: object.payload,

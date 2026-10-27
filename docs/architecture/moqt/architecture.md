@@ -453,18 +453,20 @@ use these facades instead of the data-plane factories directly:
   exposes where numbering continues, object ids run from 0 within each group;
   publisher priority is fixed at 128 and the subgroup id is omitted
   (`SubgroupId::None`).
-- `TrackReader` wraps `StreamDataReceiverFactory` and yields
-  `TrackObject { group_id, subgroup_id, object_id, extension_headers, payload }`
-  in arrival order. Subgroup streams are read **concurrently**: an accept task
-  takes every new stream from the factory and spawns one reader task per
-  stream; readers feed a bounded channel (64 objects) so a slow consumer
+- `TrackReader` wraps a `DataReceiver` and yields
+  `TrackObject { group_id, forwarding, object_id, extension_headers, payload }`
+  in arrival order, from subgroup streams and datagrams alike. Subgroup
+  streams are read **concurrently**: one task takes every new stream or
+  datagram from the receiver and runs one reader future per stream; readers
+  and datagrams feed a bounded channel (64 objects) so a slow consumer
   applies QUIC flow control to the publisher instead of buffering without
   bound. Ordering is therefore only guaranteed within a subgroup (draft-14
   §10.4); consumers that need cross-subgroup order sort by the ids themselves.
   It reads the resolved objects `StreamDataReceiver` returns (below);
   status objects are skipped, a failure inside one stream is returned as `Err`
-  while the other streams keep being read, and `Ok(None)` means the factory
-  has no more streams.
+  while the other streams keep being read, a `MalformedTrackError` ends the
+  track once the accepted streams are drained, and `Ok(None)` means the
+  subscription ended.
 
 ### `Origin` — the tracks this endpoint originates
 
@@ -559,9 +561,19 @@ state name the connection:
 
 - `event_sender`.
 - `receiver_map` and `fetch_receiver_map` — the receivers the application
-  takes per logical track alias and per logical FETCH request id.
-  Registering a FETCH returns a `PendingFetch` drop-guard that removes both
-  FETCH entries unless FETCH_OK arrived.
+  takes per logical track alias and per logical FETCH request id. A
+  subscription's entry keeps the version of the connection it was accepted
+  on, which decides whether its track may mix forwarding preferences; a
+  FETCH's entry names its track, whose `ObjectLedger` the receiver joins
+  when the application takes it. Registering a FETCH returns
+  a `PendingFetch` drop-guard that removes both FETCH entries unless FETCH_OK
+  arrived.
+- `ledgers` — a `Weak<ObjectLedger>` per full track name. `object_ledger`
+  hands the live one to every subscription and FETCH of the track it
+  receives, or starts a new one; the receivers hold it, so it ends with the
+  last of them, and a migration keeps it. A FETCH receiver lets go of it
+  when the response ends (FIN, or an error the session cannot carry over),
+  and a response the application never takes holds none.
 - `carried` — for a session that follows GOAWAY, the namespace (with their
   `NamespaceInterest`) and track subscriptions and the published namespaces a
   migration sends again.
@@ -667,6 +679,33 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   types the transport uses); this satisfies the draft-14 §10.2.1.2 requirement
   to forward unsupported extension headers unmodified, and lets higher layers
   (e.g. LOC) define their own header types without changing the transport.
+- `data_receiver.rs` — `DataReceiver`, what `accept_data_receiver` returns at
+  once for a subscription: `next()` yields `TrackData::Subgroup(StreamDataReceiver)`
+  or `TrackData::Datagram(Object)` in arrival order. A draft-14 track that
+  mixes the two fails with `MalformedTrackError::MixedForwardingPreference`
+  (draft-14 §2.5, §10); draft-18 allows the mix (§11).
+- `immutable_properties.rs` — the object rule of draft-14 §11.2 and draft-18
+  §12.7: Immutable Properties that hold Immutable Properties, or a
+  Key-Value-Pair that does not parse in the form of the connection's draft,
+  are `MalformedTrackError::MalformedImmutableProperties`. Subgroup streams
+  (at an object's head), datagrams and FETCH responses check every object
+  before the ledger does.
+- `object_ledger.rs` — `ObjectLedger`, the duplicate rule of draft-14 §8.1 and
+  draft-18 §9.1 for one track: per location it keeps the Subgroup ID (or a
+  datagram mark) and one word packing the priority, the status, the
+  draft-14 FETCH mark and a 52-bit hash of the payload. An entry is 32 B
+  with its `Location` key, about 38 B with hashbrown's control byte at its
+  7/8 load. No entry is removed while a receiver of the track lives, so a
+  long-lived subscription at 80 objects/s holds about 260 MB a day. A copy
+  that differs in preference, subgroup, priority or payload is
+  `MalformedTrackError::ConflictingDuplicate`, and so is, on draft-14
+  (§8.1), one whose status moves between Normal, End of Group and End of
+  Track; draft-18 §9.1 compares no status. The draft is that of the
+  connection the copy came on (`CopySource`). Extension headers are not
+  compared and a move to or from Does Not Exist passes. A draft-14 FETCH
+  carries no preference, so its copy in the subgroup of its Object ID matches
+  a datagram until a copy with a known preference arrives. Its
+  `std::sync::Mutex` is never held across an await.
 - `codec/*` — incremental decoders (`ControlMessageDecoder`,
   `UniStreamDecoder`, `SubgroupDecoder`, `FetchDecoder`) over a shared
   `tokio_reader`.
@@ -691,7 +730,8 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     types (0x12/0x13/0x1A/0x1B) are returned only once the first object
     started to arrive (a stream that ends before it yields no header). An
     Object Status draft-14 does not define is
-    `StreamReceiveError::ProtocolViolation`.
+    `StreamReceiveError::ProtocolViolation`; an object the ledger rejects is
+    `StreamReceiveError::MalformedTrack` and is not returned.
   - `StreamDataReceiver::into_parts()` returns a `SubgroupPartReceiver`
     whose `receive()` hands over `SubgroupPart`s: the header, whole objects
     whose payload arrived with the fields before it, and otherwise
@@ -702,9 +742,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     pieces share the read buffer (no copy); a whole object's payload is
     copied, because a cache may keep it long after the buffer would
     otherwise be freed. A stream that ends inside a payload is a decode
-    error.
-  - `DatagramSender::send_object(&Object)` / `DatagramReceiver::receive()
-    -> Object` do the same for datagrams (`ObjectDatagram::from_object` /
+    error. The ledger hashes an arriving payload piece by piece and checks
+    the object with its last piece, so a rejected object ends with
+    `StreamReceiveError::MalformedTrack` in place of that piece.
+  - `DatagramSender::send_object(&Object)` / `TrackData::Datagram(Object)`
+    do the same for datagrams (`ObjectDatagram::from_object` /
     `into_object`): an object id is always sent explicitly, a zero-length
     object is sent as its status (§10.2.1.1), and an object with a payload is
     always `Normal`: an End of Group type sets `Object::ends_group` instead of
@@ -718,7 +760,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     moqt and not returned. `UnknownRange` is draft-18's End of Unknown Range
     (§11.4.4.2): the objects through `last` were not sent and may exist, so
     `End` after it does not mean the range is complete. draft-14 never
-    yields it; draft-18's End of Non-Existent Range yields nothing.
+    yields it; draft-18's End of Non-Existent Range yields nothing. Each
+    object is checked against its track's ledger (a conflict fails with
+    `MalformedTrackError`); `carries_forwarding_preference()` is `false` on
+    draft-14, whose datagram objects arrive in the subgroup of their Object
+    ID.
     The sending side is `FetchDataSender::report_unknown_range(last) ->
     UnknownRange`: draft-18 writes the marker and the response goes on
     (`Marked`). A Group ID Delta always moves to another group (§11.4.4.1),
@@ -740,9 +786,8 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     modulo 2^12, reversed for Descending group order; the subgroup id
     saturates at 7. These values never reach the wire: MoQT headers carry the
     original priority numbers.
-  - `StreamDataReceiverFactory` / `StreamDataReceiver`, `DatagramSender` /
-    `DatagramReceiver`, `FetchDataSender` / `FetchDataReceiver` mirror this on
-    the other side.
+  - `DataReceiver` / `StreamDataReceiver` and `FetchDataReceiver` mirror the
+    senders on the other side.
 
 ## Runtime dispatch (`modules/moqt/runtime/dispatch`)
 
@@ -809,12 +854,19 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   Every request that waits for a response returns `RequestFailure`, so
   callers tell a peer rejection, a timeout and a closed session apart by
   matching instead of downcasting.
-- **One forwarding preference per track alias** (draft-14 §2.5, §10): the
-  first object decides whether `accept_data_receiver` returns a stream or a
-  datagram receiver. An object of the other kind later makes that receiver
-  return `MalformedTrackError`, which `TrackReader` passes on. moqt does not
-  UNSUBSCRIBE on its own: the caller does, because a relay must also end
-  its downstream subscriptions.
+- **One forwarding preference per draft-14 track** (draft-14 §2.5, §10): the
+  first data of a draft-14 subscription fixes subgroup streams or datagrams,
+  and data of the other kind makes `DataReceiver::next` return
+  `MalformedTrackError::MixedForwardingPreference`, which `TrackReader` passes
+  on. A draft-18 track may carry both (§11). moqt does not UNSUBSCRIBE on its
+  own: the caller does, because a relay must also end its downstream
+  subscriptions.
+- **A duplicate object must match** (draft-14 §8.1, draft-18 §9.1): every
+  object a subscription or FETCH of a track delivers is checked against the
+  track's one `ObjectLedger`, whichever connection of the session it came
+  on, so a conflicting copy is reported as
+  `MalformedTrackError::ConflictingDuplicate` instead of being returned.
+  Identical copies are returned; moqt does not drop duplicates.
 - **Header-first subgroup streams**: enforced by the sender typestate; on the
   receive side a uni stream whose first frame is not a header is rejected.
 - **Priority before data**: a stream's transport priority is settable only

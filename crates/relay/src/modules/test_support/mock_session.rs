@@ -119,8 +119,15 @@ pub(crate) enum FetchAnswer {
     Never,
     Refuse(RequestErrorCode),
     FetchOk,
-    /// FETCH_OK, then a response stream yielding these, then nothing.
+    /// FETCH_OK, then a draft-14 response stream yielding these, then
+    /// nothing.
     Respond(Vec<moqt::fetch::Fetch>),
+    /// Like `Respond`, with objects that carry their forwarding preference
+    /// (draft-18).
+    RespondWithPreference(Vec<moqt::fetch::Fetch>),
+    /// FETCH_OK, then a response stream on which moqt finds the track
+    /// malformed this way.
+    Malformed(moqt::object::MalformedTrackError),
 }
 
 type PublishAnswer = Arc<dyn Fn() -> anyhow::Result<bool> + Send + Sync>;
@@ -540,7 +547,7 @@ impl Subscriber for MockUpstreamSubscriber {
     async fn create_data_receiver(
         &mut self,
         _subscription: &UpstreamSubscription,
-    ) -> anyhow::Result<DataReceiver> {
+    ) -> anyhow::Result<Box<dyn DataReceiver>> {
         unimplemented!("not used by MockUpstreamSession tests")
     }
 
@@ -564,7 +571,10 @@ impl Subscriber for MockUpstreamSubscriber {
                 code,
                 reason: "refused".to_string(),
             })),
-            FetchAnswer::FetchOk | FetchAnswer::Respond(_) => Ok(moqt::fetch::FetchHandle {
+            FetchAnswer::FetchOk
+            | FetchAnswer::Respond(_)
+            | FetchAnswer::RespondWithPreference(_)
+            | FetchAnswer::Malformed(_) => Ok(moqt::fetch::FetchHandle {
                 request_id: 0,
                 group_order: GroupOrder::Ascending,
                 end_of_track: false,
@@ -580,9 +590,15 @@ impl Subscriber for MockUpstreamSubscriber {
         _handle: &moqt::fetch::FetchHandle,
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
         match &self.answer_fetch {
-            FetchAnswer::Respond(response) => {
-                Ok(Box::new(ScriptedFetchReceiver(response.clone().into())))
-            }
+            FetchAnswer::Respond(response) => Ok(Box::new(ScriptedFetchReceiver {
+                response: response.clone().into(),
+                carries_forwarding_preference: false,
+            })),
+            FetchAnswer::RespondWithPreference(response) => Ok(Box::new(ScriptedFetchReceiver {
+                response: response.clone().into(),
+                carries_forwarding_preference: true,
+            })),
+            FetchAnswer::Malformed(error) => Ok(Box::new(MalformedFetchReceiver(error.clone()))),
             _ => Ok(Box::new(PendingFetchReceiver)),
         }
     }
@@ -599,15 +615,44 @@ impl Subscriber for MockUpstreamSubscriber {
 
 struct PendingFetchReceiver;
 
-struct ScriptedFetchReceiver(std::collections::VecDeque<moqt::fetch::Fetch>);
+struct MalformedFetchReceiver(moqt::object::MalformedTrackError);
+
+#[async_trait::async_trait]
+impl UpstreamFetchReceiver for MalformedFetchReceiver {
+    async fn receive(&mut self) -> anyhow::Result<moqt::fetch::Fetch> {
+        Err(self.0.clone().into())
+    }
+
+    fn carries_forwarding_preference(&self) -> bool {
+        false
+    }
+
+    fn compares_duplicate_status(&self) -> bool {
+        true
+    }
+}
+
+struct ScriptedFetchReceiver {
+    response: std::collections::VecDeque<moqt::fetch::Fetch>,
+    carries_forwarding_preference: bool,
+}
 
 #[async_trait::async_trait]
 impl UpstreamFetchReceiver for ScriptedFetchReceiver {
     async fn receive(&mut self) -> anyhow::Result<moqt::fetch::Fetch> {
-        match self.0.pop_front() {
+        match self.response.pop_front() {
             Some(fetched) => Ok(fetched),
             None => std::future::pending().await,
         }
+    }
+
+    fn carries_forwarding_preference(&self) -> bool {
+        self.carries_forwarding_preference
+    }
+
+    /// `RespondWithPreference` stands for a draft-18 response.
+    fn compares_duplicate_status(&self) -> bool {
+        !self.carries_forwarding_preference
     }
 }
 
@@ -615,6 +660,14 @@ impl UpstreamFetchReceiver for ScriptedFetchReceiver {
 impl UpstreamFetchReceiver for PendingFetchReceiver {
     async fn receive(&mut self) -> anyhow::Result<moqt::fetch::Fetch> {
         std::future::pending().await
+    }
+
+    fn carries_forwarding_preference(&self) -> bool {
+        false
+    }
+
+    fn compares_duplicate_status(&self) -> bool {
+        true
     }
 }
 

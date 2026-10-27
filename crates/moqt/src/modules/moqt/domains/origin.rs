@@ -650,10 +650,10 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            accept_publish, read_fetch_objects, rejection, spawn_connected_dual_sessions,
-            subscribed_track_reader, within,
+            accept_publish, data_receiver, next_subgroup, read_fetch_objects, rejection,
+            spawn_connected_dual_sessions, subscribed_track_reader, within,
         },
-        object::{DataReceiver, GroupOrder, Object, Subgroup},
+        object::{GroupOrder, Object, Subgroup},
         subscribe::{FilterType, SubscribeOption},
     };
 
@@ -1003,16 +1003,8 @@ mod tests {
             .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
             .await
             .unwrap();
-        let DataReceiver::Stream(mut streams) = peers
-            .server
-            .subscriber()
-            .accept_data_receiver(&subscription)
-            .await
-            .unwrap()
-        else {
-            panic!("expected a subgroup stream receiver");
-        };
-        let mut subgroup = within(streams.next()).await.unwrap();
+        let mut streams = data_receiver(&peers.server, &subscription).await;
+        let mut subgroup = within(next_subgroup(&mut streams)).await;
         assert!(matches!(
             within(subgroup.receive()).await,
             Ok(Some(Subgroup::Header(_)))

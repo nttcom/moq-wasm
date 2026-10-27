@@ -5,7 +5,10 @@ use crate::{
     fetch::FetchOption,
     modules::moqt::{
         data_plane::{
-            object::canonical_object::Object, stream::stream_receiver::StreamReceiveError,
+            immutable_properties,
+            object::canonical_object::Object,
+            object_ledger::{CopySource, ObjectLedger},
+            stream::stream_receiver::StreamReceiveError,
         },
         domains::{
             connection::generation_of, fetch_handle::FetchRemainder,
@@ -39,6 +42,9 @@ pub struct FetchDataReceiver {
     carry: Option<FetchCarry>,
     /// `None` on draft-14, whose FETCH has no request stream.
     request_end: Option<FetchRequestEnd>,
+    /// The fetched track's ledger from when the stream is handed to the
+    /// application until the response ends.
+    ledger: Option<Arc<ObjectLedger>>,
 }
 
 /// Lets a FETCH whose stream a migration cut off continue on the session's
@@ -107,7 +113,13 @@ impl FetchDataReceiver {
             reader,
             carry: None,
             request_end: None,
+            ledger: None,
         }
+    }
+
+    /// Checks every object read from here on against the track's `ledger`.
+    pub(crate) fn check_with(&mut self, ledger: Arc<ObjectLedger>) {
+        self.ledger = Some(ledger);
     }
 
     pub(crate) fn end_request_with(&mut self, request_end: Option<FetchRequestEnd>) {
@@ -133,13 +145,40 @@ impl FetchDataReceiver {
         self.reader.set_group_order(group_order);
     }
 
+    /// Whether the objects carry their forwarding preference: draft-18 marks
+    /// a datagram object (§11.4.4), while draft-14 sends it in the subgroup
+    /// of its Object ID (§10.4.4).
+    pub fn carries_forwarding_preference(&self) -> bool {
+        self.reader.version().fetch_carries_forwarding_preference()
+    }
+
+    /// Whether a duplicate object whose status differs from an earlier copy
+    /// makes the track malformed on this session: draft-14 §8.1 compares the
+    /// status, draft-18 §9.1 does not.
+    pub fn compares_duplicate_status(&self) -> bool {
+        self.reader.version().compares_duplicate_status()
+    }
+
+    /// The next object or range of the response. An object that repeats one
+    /// the session received before with other properties fails with a
+    /// `MalformedTrackError` and is not returned.
     pub async fn receive(&mut self) -> anyhow::Result<Fetch> {
         loop {
             let error = match self.reader.next().await {
                 Ok(fetched) => {
+                    if let Fetch::Object(object) = &fetched {
+                        let version = self.reader.version();
+                        immutable_properties::check(version, object)?;
+                        if let Some(ledger) = &self.ledger {
+                            ledger.check(object, CopySource::Fetch(version))?;
+                        }
+                    }
                     match (&fetched, &mut self.carry) {
                         (Fetch::Object(object), Some(carry)) => carry.delivered(object.location),
-                        (Fetch::End, _) => self.response_ended(),
+                        (Fetch::End, _) => {
+                            self.response_ended();
+                            self.ledger = None;
+                        }
                         _ => {}
                     }
                     return Ok(fetched);
@@ -150,6 +189,9 @@ impl FetchDataReceiver {
             match &error {
                 StreamReceiveError::Decode(_) | StreamReceiveError::ProtocolViolation(_) => {
                     tracing::error!(%error, "Failed to decode the fetch stream")
+                }
+                StreamReceiveError::MalformedTrack(_) => {
+                    tracing::warn!(%error, "the fetch stream made its track malformed")
                 }
                 StreamReceiveError::Closed(_) => tracing::debug!(%error, "Fetch stream ended"),
             }
@@ -171,6 +213,7 @@ impl FetchDataReceiver {
                     }
                 }
             }
+            self.ledger = None;
             anyhow::bail!("Failed to receive data from fetch stream: {error}")
         }
     }
@@ -192,8 +235,8 @@ mod tests {
         modules::{
             moqt::control_plane::error_codes::DataStreamResetCode,
             test_support::{
-                HANDSHAKE_TIMEOUT, fetched_stream, location, object_with_extensions,
-                read_fetch_objects,
+                HANDSHAKE_TIMEOUT, fetched_draft18_stream, fetched_stream, location,
+                object_with_extensions, read_fetch_objects,
             },
         },
         object::{ExtensionHeaders, Object, ObjectStatus, ReadError, StreamReceiveError},
@@ -285,5 +328,22 @@ mod tests {
             matches!(&result, Err(error) if error.to_string().contains(&reset_error)),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_fetch_compares_the_status_of_duplicates() {
+        // Act
+        let stream = fetched_stream("fetch-draft14-duplicate-status").await;
+        // Assert: draft-14 §8.1
+        assert!(stream.receiver.compares_duplicate_status());
+    }
+
+    #[tokio::test]
+    async fn a_draft18_fetch_does_not_compare_the_status_of_duplicates() {
+        // Act
+        let stream = fetched_draft18_stream("fetch-draft18-duplicate-status").await;
+        // Assert: draft-18 §9.1 compares only the forwarding preference,
+        // subgroup, priority and payload
+        assert!(!stream.receiver.compares_duplicate_status());
     }
 }
