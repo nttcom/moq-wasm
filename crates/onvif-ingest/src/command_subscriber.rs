@@ -307,7 +307,10 @@ impl CommandReceiver {
                         );
                         return;
                     }
-                    Err(err) => tracing::warn!("command subgroup receive failed: {err}"),
+                    Err(err) => {
+                        tracing::warn!("command track is malformed: {err}");
+                        return;
+                    }
                 }
             }
         });

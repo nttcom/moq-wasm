@@ -19,7 +19,7 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
                     out.flush().await?;
                 }
                 Ok(None) => break,
-                Err(error) => tracing::warn!(%error, "group read error, advancing to next group"),
+                Err(error) => return Err(error.context("the track is malformed")),
             },
             close = session.closed() => anyhow::bail!("session closed by the relay: {close}"),
         }

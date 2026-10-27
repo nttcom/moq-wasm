@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use moqt::{
-    Session, Subscription, TrackObject, TrackReader, object::MalformedTrackError,
-    subscribe::SubscribeOption,
-};
+use moqt::{Session, Subscription, TrackObject, TrackReader, subscribe::SubscribeOption};
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*, types::PyBytes};
 
 #[pyclass(frozen, module = "moqt")]
@@ -78,17 +75,9 @@ impl Track {
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let reader = self.reader.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let mut reader = reader.lock().await;
-            // A failed subgroup stream does not end the track: a publisher that
-            // leaves resets its open group before the track ends, and a GOAWAY's
-            // cutover cuts the group still open on the retired connection.
-            loop {
-                match reader.next_object().await {
-                    Ok(Some(object)) => return Ok(Object::from(object)),
-                    Ok(None) => return Err(PyStopAsyncIteration::new_err("the track ended")),
-                    Err(err) if err.is::<MalformedTrackError>() => return Err(err.into()),
-                    Err(err) => tracing::debug!(%err, "skipping a failed subgroup stream"),
-                }
+            match reader.lock().await.next_object().await? {
+                Some(object) => Ok(Object::from(object)),
+                None => Err(PyStopAsyncIteration::new_err("the track ended")),
             }
         })
     }

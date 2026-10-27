@@ -72,8 +72,8 @@ impl TrackReceiveTask {
                         break;
                     }
                     Err(error) => {
-                        tracing::warn!(track = %name, %error, "group read error, advancing");
-                        continue;
+                        tracing::warn!(track = %name, %error, "track is malformed");
+                        break;
                     }
                 };
                 let object = loc_object(object);

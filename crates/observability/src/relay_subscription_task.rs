@@ -100,9 +100,7 @@ async fn receive_snapshots(
                 }
             },
             Ok(None) => bail!("the relay ended the stats track"),
-            Err(error) => {
-                tracing::warn!(?error, relay_id = %relay.relay_id, "a snapshot group failed")
-            }
+            Err(error) => return Err(error.context("the stats track is malformed")),
         }
     }
 }

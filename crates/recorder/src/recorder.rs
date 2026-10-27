@@ -379,9 +379,7 @@ async fn record_live(
                     tracks.video = None;
                     recording.end_video().await?;
                 }
-                Err(error) => {
-                    tracing::warn!(%error, "video read error; continuing with the next group");
-                }
+                Err(error) => tracing::warn!(%error, "video track is malformed"),
             },
             object = next_object(tracks.audio.as_mut()) => match object {
                 Ok(Some(object)) => recording.push_audio(&object).await?,
@@ -389,9 +387,7 @@ async fn record_live(
                     tracing::info!("audio track ended; recording video until the catalog lists one");
                     tracks.audio = None;
                 }
-                Err(error) => {
-                    tracing::warn!(%error, "audio read error; continuing with the next group");
-                }
+                Err(error) => tracing::warn!(%error, "audio track is malformed"),
             },
         }
     }

@@ -81,9 +81,9 @@ impl TrackReader {
     }
 
     /// Returns `Ok(None)` once the track has no more subgroup streams. A
-    /// failure inside one subgroup stream is returned as `Err`; the other
-    /// streams keep being read. A `MalformedTrackError` ends the track after
-    /// the streams already accepted are drained.
+    /// failed subgroup stream only ends that stream. The only `Err` is a
+    /// `MalformedTrackError`, which ends the track after the streams already
+    /// accepted are drained.
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
         self.object_receiver.recv().await.transpose()
     }
@@ -196,7 +196,7 @@ async fn read_subgroup(
     object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
 ) {
     if let Err(error) = read_subgroup_objects(&mut receiver, &object_sender).await {
-        let _ = object_sender.send(Err(error)).await;
+        tracing::debug!(%error, "subgroup stream failed; the track goes on");
     }
 }
 
@@ -232,7 +232,7 @@ mod tests {
             HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
-        object::MalformedTrackError,
+        object::{DataStreamResetCode, MalformedTrackError},
         wire::{SubgroupId, SubgroupObject},
     };
 
@@ -385,6 +385,28 @@ mod tests {
         // Assert
         assert_eq!(objects[0].payload, Bytes::from_static(b"g0-o0"));
         assert!(nothing_more.is_err(), "reader must wait for further groups");
+    }
+
+    #[tokio::test]
+    async fn a_reset_subgroup_stream_is_skipped_and_the_next_group_is_read() {
+        // Arrange
+        let track = published_track("reader-reset").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
+        send_payload(&mut group_0, b"g0-o0").await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
+        collect_objects(&mut reader, 1).await;
+
+        // Act
+        group_0.reset(DataStreamResetCode::Cancelled).await.unwrap();
+        let mut group_1 = open_subgroup(&factory, 1, SubgroupId::None).await;
+        send_payload(&mut group_1, b"g1-o0").await;
+        let next = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+            .await
+            .expect("object within timeout");
+
+        // Assert
+        assert_eq!(next.unwrap().unwrap().payload, Bytes::from_static(b"g1-o0"));
     }
 
     #[tokio::test]
