@@ -114,7 +114,6 @@ impl RelayState {
 }
 
 pub(crate) struct ConnectedRelay {
-    /// `None` for a session someone else opened and reads the events of.
     owned: Option<OwnedSession>,
     session: Arc<Session>,
     origin: Origin,
@@ -124,7 +123,6 @@ pub(crate) struct ConnectedRelay {
     events: RelayEvents,
 }
 
-/// The endpoint and event loop of a session this connection opened.
 struct OwnedSession {
     endpoint: Endpoint<RelayTransport>,
     event_task: JoinHandle,
@@ -136,7 +134,6 @@ impl Drop for OwnedSession {
     }
 }
 
-/// Answers the session events that concern the broadcasts on a connection.
 #[derive(Clone)]
 struct RelayEvents {
     origin: Origin,
@@ -156,9 +153,8 @@ impl RelayConnection {
         }
     }
 
-    /// Publishes on `session`, which the caller keeps open and reads the
-    /// events of: each event goes through `handle` first. `close` leaves the
-    /// session open.
+    /// Publishes on `session`, whose owner keeps reading its events and passes
+    /// each to `handle` first. `close` leaves the session open.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn with_session(session: Arc<Session>) -> Self {
         let ledger = StreamLedger::default();
@@ -240,8 +236,6 @@ impl ConnectedRelay {
         Ok(Self::new(Some(endpoint), session, ledger))
     }
 
-    /// With an `endpoint`, the session is this connection's own: it reads the
-    /// events and closes the session.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     fn new(
         endpoint: Option<Endpoint<RelayTransport>>,
@@ -270,8 +264,6 @@ impl ConnectedRelay {
         }
     }
 
-    /// Answers what the broadcasts do not: the events a leaf publisher gets
-    /// on a session of its own.
     fn spawn_event_loop(session: Arc<Session>, events: RelayEvents) -> JoinHandle {
         executor::spawn("broadcast-relay-events", async move {
             loop {
@@ -1017,7 +1009,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_broadcast_publishes_on_a_session_its_owner_reads_and_close_leaves_it_open() {
-        // Arrange: the test owns the session and hands every event to the connection
+        // Arrange
         let mut relay = FakeRelay::spawn("shared-session");
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
             verify_certificate: false,
