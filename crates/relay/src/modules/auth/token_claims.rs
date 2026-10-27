@@ -92,6 +92,7 @@ mod tests {
                 subscribe: Some("site1".to_string()),
                 iat: Some(iat),
                 exp: Some(exp),
+                relay_id: None,
             },
         }
     }
