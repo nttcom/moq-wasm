@@ -90,14 +90,27 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
 const OPEN_STREAMS: usize = 150;
 
 /// Opens [`OPEN_STREAMS`] bidirectional streams and keeps every one open.
-pub(crate) async fn open_bi_streams(
-    connection: &BoxedConnection,
-) -> anyhow::Result<Vec<impl Sized>> {
+async fn open_bi_streams(connection: &BoxedConnection) -> anyhow::Result<Vec<impl Sized>> {
     let mut streams = Vec::with_capacity(OPEN_STREAMS);
     for _ in 0..OPEN_STREAMS {
         streams.push(connection.open_bi().await?);
     }
     Ok(streams)
+}
+
+/// Asserts that both sides open [`OPEN_STREAMS`] bidirectional streams at
+/// once within [`HANDSHAKE_TIMEOUT`].
+pub(crate) async fn assert_both_sides_open_bi_streams(
+    client: &BoxedConnection,
+    server: &BoxedConnection,
+) {
+    let opened = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        tokio::join!(open_bi_streams(client), open_bi_streams(server))
+    })
+    .await;
+    let (from_client, from_server) = opened.expect("every stream opens in time");
+    assert!(from_client.is_ok(), "{:?}", from_client.err());
+    assert!(from_server.is_ok(), "{:?}", from_server.err());
 }
 
 /// Starts a DUAL server on a free port whose accept loop resolves the first

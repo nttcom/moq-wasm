@@ -11,12 +11,12 @@ use super::codec::{
     DecodeError, get_key_value_pairs, get_length_prefixed, get_u8, get_vi64, put_key_value_pairs,
     put_vi64,
 };
-use crate::modules::executor;
 use crate::modules::moqt::{
     control_plane::control_messages::messages::parameters::{
         group_order::GroupOrder, location::Location,
     },
     data_plane::{
+        codec::payload_splitter::{PayloadSplit, PayloadSplitter},
         object::{
             canonical_object::{ForwardingPreference, Object, SubgroupStart},
             extension_headers::ExtensionHeaders,
@@ -273,57 +273,46 @@ enum DecoderState {
     Fetch,
 }
 
-/// Splits the objects of a subgroup stream into heads and payload pieces
-/// when the payload has not been buffered with the head.
 #[derive(Debug)]
 struct SubgroupDecoder {
     properties: bool,
-    /// Payload bytes of the current object not yet handed out.
-    payload_remaining: usize,
-    /// When the first byte of the next object was buffered, on the
-    /// `executor::now` clock.
-    object_buffered_at: Option<Duration>,
+    splitter: PayloadSplitter,
 }
 
 impl SubgroupDecoder {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<StreamFrame>, DecodeError> {
-        if src.is_empty() {
-            return Ok(None);
-        }
-        let buffered_at = *self.object_buffered_at.get_or_insert_with(executor::now);
-        if self.payload_remaining > 0 {
-            let data = src.split_to(self.payload_remaining.min(src.len())).freeze();
-            self.payload_remaining -= data.len();
-            let completed_in =
-                (self.payload_remaining == 0).then(|| self.complete_object(buffered_at, src));
-            return Ok(Some(StreamFrame::Payload { data, completed_in }));
-        }
-        let mut buf = &src[..];
-        let (mut field, payload_len) = match get_subgroup_object_head(self.properties, &mut buf) {
-            Ok(head) => head,
-            Err(DecodeError::NeedMoreData) => return Ok(None),
-            Err(violation) => return Err(violation),
-        };
-        let consumed = src.len() - buf.len();
-        src.advance(consumed);
-        if src.len() < payload_len {
-            self.payload_remaining = payload_len;
-            return Ok(Some(StreamFrame::SubgroupObjectHead { field, payload_len }));
-        }
-        field.payload = Bytes::copy_from_slice(&src[..payload_len]);
-        src.advance(payload_len);
-        Ok(Some(StreamFrame::SubgroupObject {
-            field,
-            receive_time: self.complete_object(buffered_at, src),
+        let properties = self.properties;
+        let split = self.splitter.decode(src, |src| {
+            let mut buf = &src[..];
+            let head = match get_subgroup_object_head(properties, &mut buf) {
+                Ok(head) => head,
+                Err(DecodeError::NeedMoreData) => return Ok(None),
+                Err(violation) => return Err(violation),
+            };
+            let consumed = src.len() - buf.len();
+            src.advance(consumed);
+            Ok(Some(head))
+        })?;
+        Ok(split.map(|split| match split {
+            PayloadSplit::Object {
+                head: mut field,
+                payload,
+                receive_time,
+            } => {
+                field.payload = payload;
+                StreamFrame::SubgroupObject {
+                    field,
+                    receive_time,
+                }
+            }
+            PayloadSplit::Head {
+                head: field,
+                payload_len,
+            } => StreamFrame::SubgroupObjectHead { field, payload_len },
+            PayloadSplit::Payload { data, completed_in } => {
+                StreamFrame::Payload { data, completed_in }
+            }
         }))
-    }
-
-    /// Returns how long the object took to arrive.
-    fn complete_object(&mut self, buffered_at: Duration, src: &BytesMut) -> Duration {
-        let decoded_at = executor::now();
-        // Bytes left over arrived with this object's last bytes.
-        self.object_buffered_at = (!src.is_empty()).then_some(decoded_at);
-        decoded_at.saturating_sub(buffered_at)
     }
 }
 
@@ -355,8 +344,7 @@ impl StreamDecoder {
                 let header = get_subgroup_header(stream_type, buf)?;
                 self.state = DecoderState::Subgroup(SubgroupDecoder {
                     properties: header.properties,
-                    payload_remaining: 0,
-                    object_buffered_at: None,
+                    splitter: PayloadSplitter::after_header(buf),
                 });
                 Ok(StreamFrame::SubgroupHeader(header))
             }
@@ -379,11 +367,6 @@ impl Decoder for StreamDecoder {
             Ok(frame) => {
                 let consumed = src.len() - buf.len();
                 src.advance(consumed);
-                if let (StreamFrame::SubgroupHeader(_), DecoderState::Subgroup(subgroup)) =
-                    (&frame, &mut self.state)
-                {
-                    subgroup.object_buffered_at = (!src.is_empty()).then(executor::now);
-                }
                 Ok(Some(frame))
             }
             Err(DecodeError::NeedMoreData) => Ok(None),
@@ -396,15 +379,13 @@ impl Decoder for StreamDecoder {
     fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         match self.decode(src)? {
             Some(frame) => Ok(Some(frame)),
-            None if src.is_empty() && !self.inside_payload() => Ok(None),
+            None if src.is_empty()
+                && !matches!(&self.state, DecoderState::Subgroup(subgroup) if subgroup.splitter.inside_payload()) =>
+            {
+                Ok(None)
+            }
             None => Err(std::io::Error::other("bytes remaining on stream")),
         }
-    }
-}
-
-impl StreamDecoder {
-    fn inside_payload(&self) -> bool {
-        matches!(&self.state, DecoderState::Subgroup(subgroup) if subgroup.payload_remaining > 0)
     }
 }
 
@@ -678,7 +659,11 @@ impl SubgroupReader {
                 receive_time,
             }) => {
                 let object = self.state.object(field).map_err(violation)?;
-                self.log_received(&object, object.payload.len(), receive_time);
+                self.log_received(
+                    object.location.object_id,
+                    object.payload.len(),
+                    receive_time,
+                );
                 SubgroupPart::Object(object)
             }
             Some(StreamFrame::SubgroupObjectHead { field, payload_len }) => {
@@ -693,14 +678,7 @@ impl SubgroupReader {
                 if let (Some(receive_time), Some(object_id)) =
                     (completed_in, self.state.prev_object_id)
                 {
-                    tracing::debug!(
-                        track_alias = self.state.header.track_alias,
-                        group_id = self.state.header.group_id,
-                        object_id,
-                        payload_bytes = self.streaming_payload_len,
-                        receive_us = receive_time.as_micros() as u64,
-                        "subgroup object received"
-                    );
+                    self.log_received(object_id, self.streaming_payload_len, receive_time);
                 }
                 SubgroupPart::Payload {
                     data,
@@ -713,11 +691,11 @@ impl SubgroupReader {
         Ok(Some(part))
     }
 
-    fn log_received(&self, object: &Object, payload_bytes: usize, receive_time: Duration) {
+    fn log_received(&self, object_id: u64, payload_bytes: usize, receive_time: Duration) {
         tracing::debug!(
             track_alias = self.state.header.track_alias,
-            group_id = object.location.group_id,
-            object_id = object.location.object_id,
+            group_id = self.state.header.group_id,
+            object_id,
             payload_bytes,
             receive_us = receive_time.as_micros() as u64,
             "subgroup object received"
