@@ -39,7 +39,9 @@ use crate::modules::{
 pub(crate) mod fixtures;
 mod mocks;
 
-pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObservers, Sent};
+pub(crate) use self::mocks::downstream_client::{
+    FetchSent, MockPublisherObservers, Sent, UnknownRangeDraft,
+};
 pub(crate) use self::mocks::upstream_client::{FailingUpstream, UpstreamSubgroupStream};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
@@ -418,12 +420,12 @@ impl RelayHarness {
             start_location..end_location,
             moqt::object::GroupOrder::Ascending,
             FetchWait::Unlimited,
-            moqt::fetch::UnknownRange::Marked,
+            UnknownRangeDraft::Draft18,
         )
     }
 
-    /// A fetch in `group_order` that waits for objects until `deadline`,
-    /// then reports the rest as unknown to a sender that marks it.
+    /// A draft-18 fetch in `group_order` that waits for objects until
+    /// `deadline`, then reports the rest as unknown.
     pub(crate) fn start_fetch_waiting_until(
         &self,
         range: std::ops::Range<moqt::object::Location>,
@@ -434,23 +436,23 @@ impl RelayHarness {
             range,
             group_order,
             FetchWait::Until(deadline),
-            moqt::fetch::UnknownRange::Marked,
+            UnknownRangeDraft::Draft18,
         )
     }
 
-    /// A fetch that reports what the cache lacks as unknown, to a sender
-    /// answering `unknown_range`.
+    /// A fetch that reports what the cache lacks as unknown, as a session of
+    /// `draft` can.
     pub(crate) fn start_fetch_reporting_unknown(
         &self,
         start_location: moqt::object::Location,
         end_location: moqt::object::Location,
-        unknown_range: moqt::fetch::UnknownRange,
+        draft: UnknownRangeDraft,
     ) -> FetchDeliveryHandle {
         self.spawn_fetch(
             start_location..end_location,
             moqt::object::GroupOrder::Ascending,
             FetchWait::Never,
-            unknown_range,
+            draft,
         )
     }
 
@@ -460,9 +462,9 @@ impl RelayHarness {
         range: std::ops::Range<moqt::object::Location>,
         group_order: moqt::object::GroupOrder,
         wait: FetchWait,
-        unknown_range: moqt::fetch::UnknownRange,
+        draft: UnknownRangeDraft,
     ) -> FetchDeliveryHandle {
-        let (sender, sent) = MockFetchSender::answering_unknown_range(unknown_range);
+        let (sender, sent) = MockFetchSender::new(draft);
         let request = EgressFetchRequest {
             subscriber_session_id: 2,
             request_id: 0,

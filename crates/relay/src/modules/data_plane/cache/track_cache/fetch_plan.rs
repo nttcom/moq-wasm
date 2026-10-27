@@ -165,24 +165,11 @@ mod tests {
     use super::*;
     use crate::modules::{
         data_plane::cache::cached_object::CacheStamp,
-        test_support::relay_harness::fixtures::cached_object::{
-            insert_closed_group, stream_object,
+        test_support::relay_harness::fixtures::{
+            cached_object::{insert_closed_group, stream_object},
+            planned_steps,
         },
     };
-
-    /// The plan as object locations and `None` for each unknown stretch,
-    /// with the stretch's last position.
-    fn steps(plan: Vec<PlannedFetch>) -> Vec<Result<(u64, u64), (u64, u64)>> {
-        plan.into_iter()
-            .map(|step| match step {
-                PlannedFetch::Object(object) => Ok((
-                    object.object.location.group_id,
-                    object.object.location.object_id,
-                )),
-                PlannedFetch::Unknown { last } => Err((last.group_id, last.object_id)),
-            })
-            .collect()
-    }
 
     /// Groups 0 and 2 closed with objects 0 and 1; group 1 was never seen.
     fn cache_missing_group_1() -> TrackCache {
@@ -205,7 +192,7 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(steps(plan), vec![Ok((2, 0)), Ok((2, 1))]);
+        assert_eq!(planned_steps(plan), vec![Ok((2, 0)), Ok((2, 1))]);
     }
 
     #[test]
@@ -228,7 +215,7 @@ mod tests {
         // Assert: draft-18 §11.4.4.2, the unknown stretch ends where the
         // next object's group begins
         assert_eq!(
-            steps(ascending),
+            planned_steps(ascending),
             vec![
                 Ok((0, 0)),
                 Ok((0, 1)),
@@ -238,7 +225,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            steps(descending),
+            planned_steps(descending),
             vec![
                 Ok((2, 0)),
                 Ok((2, 1)),
@@ -262,7 +249,10 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(steps(plan), vec![Ok((2, 0)), Ok((2, 1)), Err((4, 2))]);
+        assert_eq!(
+            planned_steps(plan),
+            vec![Ok((2, 0)), Ok((2, 1)), Err((4, 2))]
+        );
     }
 
     #[test]
@@ -278,7 +268,7 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(steps(plan), vec![Err((7, u64::MAX))]);
+        assert_eq!(planned_steps(plan), vec![Err((7, u64::MAX))]);
     }
 
     #[tokio::test(start_paused = true)]
@@ -307,6 +297,9 @@ mod tests {
         );
 
         // Assert: draft-14 §9.2.1.3
-        assert_eq!(steps(plan), vec![Ok((0, 0)), Err((0, 1)), Ok((0, 2))]);
+        assert_eq!(
+            planned_steps(plan),
+            vec![Ok((0, 0)), Err((0, 1)), Ok((0, 2))]
+        );
     }
 }

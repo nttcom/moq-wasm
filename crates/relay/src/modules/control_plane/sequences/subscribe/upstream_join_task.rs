@@ -115,7 +115,8 @@ pub(crate) struct UpstreamJoinDeps {
 
 /// Adds every publisher that answers a pending upstream SUBSCRIBE to the
 /// already answered track, so a publisher that never answers (e.g. a session
-/// that died without closing) delays nobody.
+/// that died without closing) delays nobody. A publisher answering once the
+/// track is gone, as after a malformed refusal, is unsubscribed.
 pub(crate) struct UpstreamJoinTask {
     _join_handle: JoinHandle<()>,
 }
@@ -142,13 +143,18 @@ impl UpstreamJoinTask {
                     )
                     .await;
                 }
-                Err(error) if refused_as_malformed(&error) => {
+                Err(error) => {
+                    let malformed = refused_as_malformed(&error);
                     tracing::warn!(
                         %error,
+                        malformed,
                         pub_session_id = %answered.publisher_session_id,
                         track_key = %join.track_key,
-                        "an additional publisher refused the track as malformed; latching it"
+                        "upstream SUBSCRIBE of an additional publisher failed"
                     );
+                    if !malformed {
+                        continue;
+                    }
                     // draft-18 §2.4.2: the latch ends every downstream
                     // subscription with PUBLISH_DONE MALFORMED_TRACK.
                     deps.cache_store
@@ -164,14 +170,7 @@ impl UpstreamJoinTask {
                             &deps.ingress_sender,
                         )
                         .await;
-                    return;
                 }
-                Err(error) => tracing::warn!(
-                    %error,
-                    pub_session_id = %answered.publisher_session_id,
-                    track_key = %join.track_key,
-                    "upstream SUBSCRIBE of an additional publisher failed"
-                ),
             }
         }
     }
@@ -271,12 +270,14 @@ mod tests {
             },
             mock_session::{
                 RecordedControlMessages, recorded_session_answering_subscribe,
-                session_repository_with_session, session_repository_with_upstream_session,
+                recorded_session_answering_subscribe_after, session_repository_with_session,
+                session_repository_with_sessions, session_repository_with_upstream_session,
             },
         },
     };
 
     const LATE_PUBLISHER_SESSION: SessionId = 3;
+    const MALFORMED_PUBLISHER_SESSION: SessionId = 4;
     const LATE_UPSTREAM_REQUEST_ID: u64 = 1;
 
     async fn join_after_answer(
@@ -373,6 +374,71 @@ mod tests {
             vec![UPSTREAM_REQUEST_ID]
         );
         assert!(table.upstream_tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_publisher_answering_after_a_late_malformed_refusal_is_unsubscribed() {
+        // Arrange: a late publisher refuses the track as malformed while
+        // another one has yet to answer SUBSCRIBE_OK
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let table = Arc::new(table);
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let (answering, recorded) = recorded_session_answering_subscribe_after(gate.clone());
+        let repository = session_repository_with_sessions(
+            vec![(LATE_PUBLISHER_SESSION, answering)],
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let forwarder = ControlMessageForwarder { repository };
+        let mut pending = send_upstream_subscribes(
+            &Arc::new(local_publisher_resolver()),
+            &forwarder,
+            &track_key,
+            vec![UpstreamPublisher::Session(LATE_PUBLISHER_SESSION)],
+        );
+        pending.spawn(async {
+            Some(AnsweredUpstreamSubscribe {
+                publisher_session_id: MALFORMED_PUBLISHER_SESSION,
+                publisher_peer: SessionPeer::Client,
+                subscribed: Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
+                    request_id: LATE_UPSTREAM_REQUEST_ID,
+                    code: moqt::RequestErrorCode::MalformedTrack,
+                    reason: "malformed Immutable Properties".to_string(),
+                })),
+            })
+        });
+        let (ingress_sender, _ingress_receiver) = mpsc::channel(8);
+        let task = UpstreamJoinTask::run(
+            UpstreamJoin {
+                track_key: track_key.clone(),
+                subscriber_session_id: 2,
+                pending,
+            },
+            UpstreamJoinDeps {
+                table: table.clone(),
+                forwarder,
+                ingress_sender,
+                cache_store: Arc::new(TrackCacheStore::new()),
+            },
+        );
+        let latched = tokio::time::timeout(Duration::from_secs(1), async {
+            while !table.upstream_tracks.is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(latched.is_ok(), "the refusal ends the track");
+
+        // Act
+        gate.notify_one();
+        let ended = tokio::time::timeout(Duration::from_secs(1), task._join_handle).await;
+
+        // Assert: draft-18 §2.4.2, the latched track takes no publisher
+        assert!(ended.is_ok(), "the join goes on after the refusal");
+        assert_eq!(
+            recorded.unsubscribed_request_ids(),
+            vec![LATE_UPSTREAM_REQUEST_ID]
+        );
     }
 
     #[tokio::test]

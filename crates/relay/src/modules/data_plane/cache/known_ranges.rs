@@ -104,12 +104,7 @@ impl KnownRanges {
         end: moqt::object::Location,
     ) -> bool {
         let end = Self::exclusive_end(end);
-        if start >= end {
-            return false;
-        }
-        self.ranges
-            .iter()
-            .any(|range| range.start <= start && end <= range.end)
+        start < end && self.covers_until(start, end)
     }
 
     /// Whether every position of the half-open range `start..end` is known;
