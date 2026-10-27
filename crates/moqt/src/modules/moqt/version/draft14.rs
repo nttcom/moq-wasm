@@ -9,7 +9,7 @@ pub(crate) mod setup;
 use std::{
     collections::HashMap,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -44,9 +44,9 @@ use crate::{
 
 const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How to withdraw a request whose success response arrives after the caller
-/// stopped waiting (timeout or cancellation). Late error responses never need
-/// a withdrawal and are always discarded.
+/// How to withdraw a request whose success response the caller abandons: by
+/// timing out, by cancelling, or by dropping the `ReceivedResponse` before
+/// `accept`. Error responses need no withdrawal and are discarded.
 #[derive(Debug)]
 enum LateResponseAction {
     /// For TRACK_STATUS, which leaves no state at the peer.
@@ -70,7 +70,7 @@ enum LateResponseAction {
 /// session, §9.1).
 enum InflightRequest {
     Waiting {
-        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
+        sender: tokio::sync::oneshot::Sender<ReceivedResponse>,
         on_late_response: LateResponseAction,
     },
     Abandoned(LateResponseAction),
@@ -249,7 +249,7 @@ impl ControlChannel {
     fn register(
         &self,
         request_id: RequestId,
-        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
+        sender: tokio::sync::oneshot::Sender<ReceivedResponse>,
         on_late_response: LateResponseAction,
     ) -> RegisteredSender {
         let mut inflight = self
@@ -324,7 +324,7 @@ impl Drop for RegisteredSender {
 }
 
 pub(crate) struct PendingResponse {
-    receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
+    receiver: tokio::sync::oneshot::Receiver<ReceivedResponse>,
     _registered: RegisteredSender,
 }
 
@@ -332,7 +332,7 @@ impl PendingResponse {
     /// Bounds the wait (§12.2). A timeout fails only this request, so a shared
     /// (inter-relay) session survives one slow request; the entry stays
     /// `Abandoned` and a late response goes to `handle_late_response`.
-    pub(super) async fn response(self) -> Result<ResponseMessage, RequestFailure> {
+    pub(super) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
         match executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.receiver).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(RequestFailure::SessionClosed),
@@ -341,7 +341,72 @@ impl PendingResponse {
     }
 }
 
-/// Handles a response that arrived after the caller abandoned the request.
+/// A response on its way to the caller. Dropped before `accept`, while still
+/// in the channel or after the caller got it, it is withdrawn through
+/// `handle_late_response`.
+pub(crate) struct ReceivedResponse(Option<UnacceptedResponse>);
+
+struct UnacceptedResponse {
+    message: ResponseMessage,
+    session: Weak<SessionContext>,
+    connection: Weak<Connection>,
+    request_id: RequestId,
+    action: LateResponseAction,
+}
+
+impl ReceivedResponse {
+    fn new(
+        message: ResponseMessage,
+        session: &Arc<SessionContext>,
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+        action: LateResponseAction,
+    ) -> Self {
+        Self(Some(UnacceptedResponse {
+            message,
+            session: Arc::downgrade(session),
+            connection: Arc::downgrade(connection),
+            request_id,
+            action,
+        }))
+    }
+
+    // Only `accept` and `drop` take the response, and both consume `self`.
+    pub(super) fn message(&self) -> &ResponseMessage {
+        &self.0.as_ref().expect("taken only on consume").message
+    }
+
+    pub(super) fn accept(mut self) -> ResponseMessage {
+        self.0.take().expect("taken only on consume").message
+    }
+}
+
+impl Drop for ReceivedResponse {
+    fn drop(&mut self) {
+        let Some(unaccepted) = self.0.take() else {
+            return;
+        };
+        let (Some(session), Some(connection)) = (
+            unaccepted.session.upgrade(),
+            unaccepted.connection.upgrade(),
+        ) else {
+            return;
+        };
+        // A single fire-and-forget withdrawal needs no owned JoinHandle.
+        executor::try_spawn("Abandoned Response Withdrawal", async move {
+            handle_late_response(
+                &session,
+                &connection,
+                unaccepted.request_id,
+                unaccepted.action,
+                unaccepted.message,
+            )
+            .await;
+        });
+    }
+}
+
+/// Handles a response the caller abandoned, before or after it arrived.
 /// A success response means the peer holds state (subscription, namespace
 /// interest, ...) nobody on this side will consume, so send the matching
 /// withdrawal. A success response whose type does not match the request is a
@@ -360,11 +425,13 @@ async fn handle_late_response(
             LateResponseAction::Unsubscribe => {
                 tracing::warn!(
                     request_id,
-                    "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
+                    "SUBSCRIBE_OK of an abandoned request; sending UNSUBSCRIBE"
                 );
                 session
                     .cancel_unclaimed_track_alias(connection, subscribe_ok.track_alias)
                     .await;
+                // The caller may have registered its data receiver before dropping the response.
+                session.cancel_subscription(connection, request_id).await;
                 channel
                     .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
                     .await
@@ -375,7 +442,7 @@ async fn handle_late_response(
             LateResponseAction::UnsubscribeNamespace { namespace } => {
                 tracing::warn!(
                     request_id,
-                    "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
+                    "SUBSCRIBE_NAMESPACE_OK of an abandoned request; sending UNSUBSCRIBE_NAMESPACE"
                 );
                 channel
                     .notify(Notification::UnsubscribeNamespace(
@@ -389,7 +456,7 @@ async fn handle_late_response(
             LateResponseAction::PublishNamespaceDone { namespace } => {
                 tracing::warn!(
                     request_id,
-                    "PUBLISH_NAMESPACE_OK arrived after the request was abandoned; sending PUBLISH_NAMESPACE_DONE"
+                    "PUBLISH_NAMESPACE_OK of an abandoned request; sending PUBLISH_NAMESPACE_DONE"
                 );
                 channel
                     .notify(Notification::PublishNamespaceDone(
@@ -403,10 +470,11 @@ async fn handle_late_response(
             LateResponseAction::PublishDone => {
                 tracing::warn!(
                     request_id,
-                    "PUBLISH_OK arrived after the request was abandoned; sending PUBLISH_DONE"
+                    "PUBLISH_OK of an abandoned request; sending PUBLISH_DONE"
                 );
                 // Stream Count 0 (§9.12): `publish()` returns no
-                // Subscription before PUBLISH_OK, so no stream was opened.
+                // Subscription before it accepts PUBLISH_OK, so no stream
+                // was opened.
                 channel
                     .notify(Notification::PublishDone {
                         request_id,
@@ -422,7 +490,7 @@ async fn handle_late_response(
             LateResponseAction::FetchCancel => {
                 tracing::warn!(
                     request_id,
-                    "FETCH_OK arrived after the request was abandoned; sending FETCH_CANCEL"
+                    "FETCH_OK of an abandoned request; sending FETCH_CANCEL"
                 );
                 channel
                     .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
@@ -454,7 +522,7 @@ fn discard_late_response(
     tracing::warn!(
         request_id,
         ?response,
-        "discarding response that arrived after the request was abandoned"
+        "discarding the response of an abandoned request"
     );
     Ok(())
 }

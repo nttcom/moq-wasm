@@ -473,7 +473,13 @@ one of three paths:
 2. **Responses** (`*_OK` / `*_ERROR`) are matched against `inflight_requests` by
    request id and complete the pending `oneshot`. The waiting side holds a
    `PendingResponse` whose drop marks the entry abandoned, so a late response
-   runs its `LateResponseAction` instead of closing the session. When the
+   runs its `LateResponseAction` instead of closing the session. The
+   response itself arrives as a `ReceivedResponse`, which runs the same
+   action when dropped before the caller `accept`s it, whether still in the
+   `oneshot` or held while the caller registers what it established
+   (SUBSCRIBE's receiver). A request future is therefore cancel-safe at any
+   point: dropped after the success response, it still sends UNSUBSCRIBE,
+   FETCH_CANCEL or PUBLISH_DONE. When the
    control stream closes, every entry is failed and later registrations fail
    at once.
 3. **Protocol violations** (a malformed payload, a SETUP after the handshake,

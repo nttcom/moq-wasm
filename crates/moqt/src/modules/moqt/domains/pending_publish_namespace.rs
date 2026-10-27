@@ -14,7 +14,7 @@ pub struct PendingPublishNamespace {
 
 impl PendingPublishNamespace {
     pub async fn accepted(self) -> Result<(), RequestFailure> {
-        match self.pending.response().await? {
+        match self.pending.response().await?.accept() {
             ResponseMessage::PublishNamespaceOk(request_id) if request_id == self.request_id => {
                 Ok(())
             }

@@ -148,6 +148,32 @@ pub(crate) async fn within<F: Future>(future: F) -> F::Output {
         .expect("the exchange timed out")
 }
 
+/// Polls `request` only until `peer` receives what it sends, so its response
+/// can arrive without the requester taking it.
+pub(crate) async fn send_without_waiting<F: Future + Unpin>(
+    request: &mut F,
+    peer: &Session,
+) -> SessionEvent {
+    tokio::select! {
+        _ = request => panic!("the request completed before the peer received it"),
+        event = within(peer.receive_event()) => event.unwrap(),
+    }
+}
+
+/// Returns once `receiver` has dispatched every control message `sender`
+/// sent before the call: the control stream is ordered, so a later
+/// PUBLISH_NAMESPACE reaching `receiver` means the earlier ones were handled.
+pub(crate) async fn wait_for_control_delivery(sender: &Session, receiver: &Session) {
+    let _pending = sender
+        .publisher()
+        .begin_publish_namespace("delivery-marker".to_string())
+        .await
+        .unwrap();
+    let SessionEvent::PublishNamespace(_) = within(receiver.receive_event()).await.unwrap() else {
+        panic!("expected the PUBLISH_NAMESPACE sent as a delivery marker");
+    };
+}
+
 pub(crate) async fn receive_disconnected(session: &Session) -> anyhow::Result<()> {
     tokio::time::timeout(DISCONNECT_TIMEOUT, async {
         while !matches!(session.receive_event().await?, SessionEvent::Disconnected()) {}

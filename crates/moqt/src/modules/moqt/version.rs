@@ -434,9 +434,32 @@ impl PendingResponse {
     /// Fails with `RequestFailure::Timeout` after 10 s (the session stays
     /// open), or with `RequestFailure::SessionClosed` when the control stream
     /// closes first.
-    pub(crate) async fn response(self) -> Result<ResponseMessage, RequestFailure> {
+    pub(crate) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
         match self {
-            Self::Draft14(pending) => pending.response().await,
+            Self::Draft14(pending) => Ok(ReceivedResponse::Draft14(pending.response().await?)),
+        }
+    }
+}
+
+/// Dropping this before `accept` withdraws the request at the peer
+/// (UNSUBSCRIBE, FETCH_CANCEL, ...), as for a response that arrives after the
+/// caller stopped waiting.
+#[must_use = "dropping this withdraws the request"]
+pub(crate) enum ReceivedResponse {
+    Draft14(draft14::ReceivedResponse),
+}
+
+impl ReceivedResponse {
+    pub(crate) fn message(&self) -> &ResponseMessage {
+        match self {
+            Self::Draft14(response) => response.message(),
+        }
+    }
+
+    /// The caller takes over what the response established at the peer.
+    pub(crate) fn accept(self) -> ResponseMessage {
+        match self {
+            Self::Draft14(response) => response.accept(),
         }
     }
 }
