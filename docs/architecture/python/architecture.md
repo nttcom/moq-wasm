@@ -29,7 +29,7 @@ repository's relay and pages:
 - 0.5 replaced the announcement API with routes, so the version the bots pin
   is already behind.
 
-`moqt` does all of this: `Subscriber::fetch_relative_joining`, objects with
+`moqt` does all of this: `Subscriber::subscribe_current_group`, objects with
 their extension headers, and `publish::Origin`, which caches what it publishes
 and answers SUBSCRIBE and FETCH. An earlier binding (unmerged branch
 `feat/python-bindings`, 2026-09-07) wrapped `Session<DUAL>`, which no longer

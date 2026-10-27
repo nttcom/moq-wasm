@@ -1,49 +1,42 @@
 use anyhow::{Context, Result};
-use bytes::Bytes;
-use moqt::{Session, subscribe::FilterType};
+use moqt::Session;
 use msf::Catalog;
 
-use crate::relay::{self, Track};
+use crate::relay::Track;
 
-/// Yields the catalog's current object from the joining FETCH
+/// Yields the catalog's current group from the joining FETCH
 /// (draft-ietf-moq-msf-01 §5), then later objects from the subscription,
 /// whose first stream arrives with the next catalog object, up to 30 s later.
 pub(crate) struct CatalogReader {
     track: Track,
-    current: Option<Bytes>,
 }
 
 impl CatalogReader {
     pub(crate) async fn open(session: &Session, namespace: &str) -> Result<Self> {
-        // A joining FETCH may only join a Largest Object subscription
-        // (draft-ietf-moq-transport-14 §9.16.2).
-        let track = relay::subscribe(
-            session,
-            namespace,
-            msf::CATALOG_TRACK_NAME,
-            FilterType::LargestObject,
-        )
-        .await?;
-        let current = match relay::fetch_joining_group(session, &track).await {
-            Ok(current) => current,
-            Err(error) => {
-                tracing::warn!(%error, "joining FETCH of the catalog failed");
-                None
-            }
-        };
-        Ok(Self { track, current })
+        let (subscription, reader) = session
+            .subscriber()
+            .subscribe_current_group(namespace.to_string(), msf::CATALOG_TRACK_NAME.to_string())
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to subscribe {namespace}/{}",
+                    msf::CATALOG_TRACK_NAME
+                )
+            })?;
+        Ok(Self {
+            track: Track {
+                subscription,
+                reader,
+            },
+        })
     }
 
     /// `Ok(None)` once the catalog track has ended.
     pub(crate) async fn next(&mut self) -> Result<Option<Catalog>> {
-        let payload = match self.current.take() {
-            Some(payload) => payload,
-            None => match self.track.reader.next_object().await? {
-                Some(object) => object.payload,
-                None => return Ok(None),
-            },
+        let Some(object) = self.track.reader.next_object().await? else {
+            return Ok(None);
         };
-        serde_json::from_slice(&payload)
+        serde_json::from_slice(&object.payload)
             .map(Some)
             .context("catalog is not MSF JSON")
     }
@@ -53,6 +46,7 @@ impl CatalogReader {
 mod tests {
     use std::time::Duration;
 
+    use bytes::Bytes;
     use moqt::publish::{GroupBoundary, OutgoingObject, Retention};
 
     use super::*;

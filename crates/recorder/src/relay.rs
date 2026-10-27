@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use moqt::{
     ClientConfig, DUAL, Endpoint, Session, Subscription, TerminationErrorCode, TrackObject,
     TrackReader,
-    fetch::{Fetch, FetchDataReceiver, FetchOption},
+    fetch::{FetchDataReceiver, FetchOption},
     object::{ContentExists, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -91,25 +90,6 @@ pub(crate) async fn subscribe_audio(
     subscribe(session, namespace, name, FilterType::LargestObject).await
 }
 
-/// The last object of the group `track` joined at: the joining FETCH
-/// with offset 0 that draft-ietf-moq-msf-01 §5 asks for beside a catalog
-/// SUBSCRIBE. `None` when the publisher has sent nothing yet.
-pub(crate) async fn fetch_joining_group(session: &Session, track: &Track) -> Result<Option<Bytes>> {
-    let mut subscriber = session.subscriber();
-    let handle = subscriber
-        .fetch_relative_joining(&track.subscription, 0, FetchOption::default())
-        .await?;
-    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-    let mut latest = None;
-    loop {
-        match receiver.receive().await? {
-            Fetch::Object(object) if !object.payload.is_empty() => latest = Some(object.payload),
-            Fetch::Object(_) => {}
-            Fetch::End => return Ok(latest),
-        }
-    }
-}
-
 /// A standalone FETCH from the track's first location through the largest
 /// object the track's subscription reported (draft-14 §9.16.1: End Location is the last
 /// object plus one), so a `LargestObject` subscription continues where it
@@ -163,6 +143,7 @@ pub(crate) fn fetched_track_object(object: Object) -> Option<TrackObject> {
 mod tests {
     use std::time::Duration;
 
+    use bytes::Bytes;
     use moqt::publish::{GroupBoundary, OutgoingObject, Retention};
 
     use super::*;
