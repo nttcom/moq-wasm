@@ -11,7 +11,7 @@ export type ReceivedObject = {
   readonly objectStatus: number | undefined
   readonly objectPayload: Uint8Array
   readonly objectPayloadLength: number
-  readonly locHeader: unknown
+  readonly locHeader: any
 }
 
 export type MoqLocation = { readonly groupId: bigint; readonly objectId: bigint }
@@ -112,6 +112,11 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
   /// Resolves once the publisher ends the subscription (PUBLISH_DONE), or to
   /// `undefined` once the session ends without one.
   readonly done: Promise<PublishDone | undefined>
+  /// The wasm object is freed once it is closed and no read awaits it: a read
+  /// in flight borrows it.
+  private reads = 0
+  private closed = false
+  private freed = false
 
   constructor(private readonly inner: WasmSubscription) {
     const largest = inner.largest
@@ -129,7 +134,7 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
   /// Every object, status objects excepted; ordered within a subgroup only.
   async *[Symbol.asyncIterator](): AsyncIterator<ReceivedObject> {
     for (;;) {
-      const object = await this.inner.next()
+      const object = await this.read(() => this.inner.next())
       if (!object) {
         return
       }
@@ -140,7 +145,7 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
   /// Each subgroup stream, with its objects in order and its status objects.
   async *groups(): AsyncIterable<MoqGroup> {
     for (;;) {
-      const group = await this.inner.nextGroup()
+      const group = await this.read(() => this.inner.nextGroup())
       if (!group) {
         return
       }
@@ -158,11 +163,35 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     return this.inner.endBeforeGroup(groupId, forward)
   }
 
-  /// UNSUBSCRIBE. The handle cannot be read afterwards.
+  /// UNSUBSCRIBE. Reads end once the publisher stops the streams.
   async close(): Promise<void> {
+    if (this.closed) {
+      return
+    }
     try {
       await this.inner.close()
     } finally {
+      this.closed = true
+      this.freeIfIdle()
+    }
+  }
+
+  private async read<T>(next: () => Promise<T>): Promise<T | undefined> {
+    if (this.freed) {
+      return undefined
+    }
+    this.reads += 1
+    try {
+      return await next()
+    } finally {
+      this.reads -= 1
+      this.freeIfIdle()
+    }
+  }
+
+  private freeIfIdle(): void {
+    if (this.closed && this.reads === 0 && !this.freed) {
+      this.freed = true
       this.inner.free()
     }
   }

@@ -105,3 +105,32 @@ test('a request the relay rejects throws a RequestError with its code', async ()
   expect(error).toBeInstanceOf(RequestError)
   expect((error as RequestError).errorCode).toBe(0x4n)
 })
+
+test('a subscription closed while a read is in flight is freed only once the read returns', async () => {
+  // Arrange
+  let freed = 0
+  const { promise: nextGroup, resolve: resolveNextGroup } = Promise.withResolvers<undefined>()
+  const subscription = new MoqSubscription(
+    wasmSubscription({
+      nextGroup: () => nextGroup,
+      free: () => {
+        freed += 1
+      }
+    })
+  )
+  const reading = (async () => {
+    for await (const group of subscription.groups()) {
+      void group
+    }
+  })()
+
+  // Act
+  await subscription.close()
+  const freedWhileReading = freed
+  resolveNextGroup(undefined)
+  await reading
+
+  // Assert
+  expect(freedWhileReading).toBe(0)
+  expect(freed).toBe(1)
+})
