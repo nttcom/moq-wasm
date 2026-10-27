@@ -1,7 +1,7 @@
 use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use anyhow::Context;
 use async_trait::async_trait;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use js_sys::Uint8Array;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
@@ -149,7 +149,9 @@ impl TransportConnection for BrowserConnection {
             .await
             .map_err(js_error)?
             .context("datagram stream ended")?;
-        Ok(BytesMut::from(&Uint8Array::from(datagram).to_vec()[..]))
+        Ok(BytesMut::from(Bytes::from(
+            Uint8Array::from(datagram).to_vec(),
+        )))
     }
 
     fn stats(&self) -> TransportStats {

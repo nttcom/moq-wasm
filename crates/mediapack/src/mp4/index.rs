@@ -181,10 +181,9 @@ impl SampleTable {
                         dts_micros: micros(dts, timescale),
                         pts_micros: micros(pts, timescale),
                         end_micros: micros(pts + duration, timescale),
-                        is_sync: self
-                            .sync_samples
-                            .as_ref()
-                            .is_none_or(|sync| sync.contains(&(next_sample as u32 + 1))),
+                        is_sync: self.sync_samples.as_ref().is_none_or(|sync| {
+                            sync.binary_search(&(next_sample as u32 + 1)).is_ok()
+                        }),
                     });
                     offset += size as u64;
                     decode_time += duration;
@@ -321,11 +320,15 @@ fn read_sample_table(stbl: &[u8]) -> Result<SampleTable> {
     );
 
     let sync_samples = match find(stbl, b"stss") {
-        Some(stss) => Some(
-            entries(full_atom(stss.payload, "stss")?.body, 4)?
+        Some(stss) => {
+            let mut sync = entries(full_atom(stss.payload, "stss")?.body, 4)?
                 .map(|entry| read_u32(entry, 0))
-                .collect::<Result<Vec<_>>>()?,
-        ),
+                .collect::<Result<Vec<_>>>()?;
+            // A malformed stss may be unordered; the per-sample `binary_search` needs
+            // ascending order.
+            sync.sort_unstable();
+            Some(sync)
+        }
         None => None,
     };
 

@@ -240,10 +240,18 @@ impl Ledger {
     }
 
     pub(super) fn groups_in_range(&self, first_group_id: u64, last_group_id: u64) -> Vec<u64> {
-        let mut groups: BTreeSet<u64> = self
-            .objects
-            .range(location(first_group_id, 0)..=location(last_group_id, u64::MAX))
-            .map(|(location, _)| location.group_id)
+        // One lookup per cached group, not one step per cached object.
+        let first_cached_group_from = |group_id: u64| {
+            self.objects
+                .range(location(group_id, 0)..)
+                .next()
+                .map(|(location, _)| location.group_id)
+        };
+        let mut groups: BTreeSet<u64> =
+            std::iter::successors(first_cached_group_from(first_group_id), |&group_id| {
+                group_id.checked_add(1).and_then(first_cached_group_from)
+            })
+            .take_while(|&group_id| group_id <= last_group_id)
             .collect();
         groups.extend(
             self.live_groups

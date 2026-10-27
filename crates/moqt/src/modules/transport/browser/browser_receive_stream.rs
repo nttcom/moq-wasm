@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, Bytes};
 use js_sys::Uint8Array;
 use tokio::io::ReadBuf;
 use wasm_bindgen::{JsCast, JsValue};
@@ -20,7 +20,7 @@ use crate::modules::transport::{
 pub struct BrowserReceiveStream {
     reader: ReadableStreamDefaultReader,
     pending_read: Option<JsFuture>,
-    unread: BytesMut,
+    unread: Bytes,
 }
 
 impl BrowserReceiveStream {
@@ -29,7 +29,7 @@ impl BrowserReceiveStream {
         Ok(Self {
             reader,
             pending_read: None,
-            unread: BytesMut::new(),
+            unread: Bytes::new(),
         })
     }
 
@@ -74,7 +74,7 @@ impl TransportReceiveStream for BrowserReceiveStream {
             match self.poll_next_chunk(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(None)) => return Poll::Ready(Ok(())),
-                Poll::Ready(Ok(Some(chunk))) => self.unread.extend_from_slice(&chunk),
+                Poll::Ready(Ok(Some(chunk))) => self.unread = Bytes::from(chunk),
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(read_error(&error))),
             }
         }
