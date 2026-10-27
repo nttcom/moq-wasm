@@ -81,9 +81,7 @@ impl TrackReader {
     }
 
     /// Returns `Ok(None)` once the track has no more subgroup streams. A
-    /// failure inside one subgroup stream only ends that stream, since a
-    /// publisher that leaves resets its open group and a GOAWAY cutover cuts
-    /// the group still open on the retired connection. The only `Err` is a
+    /// failed subgroup stream only ends that stream. The only `Err` is a
     /// `MalformedTrackError`, which ends the track after the streams already
     /// accepted are drained.
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
