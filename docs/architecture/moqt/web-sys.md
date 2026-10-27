@@ -11,7 +11,7 @@ Accepted
 ## What
 
 Add `web-sys` as a `wasm32`-only dependency of the `moqt` crate, with the
-`WebTransport*`, `ReadableStream*` and `WritableStream*` features.
+`WebTransport*`, `ReadableStream*`, `WritableStream*` and `Url` features.
 `modules/transport/browser` implements the transport traits on top of the
 browser's `WebTransport` object, so `Endpoint::<BROWSER>` runs the same
 session stack as the native markers.

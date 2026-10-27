@@ -2,17 +2,19 @@ use anyhow::Context;
 use std::fmt;
 
 use bytes::{Buf, Bytes};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use crate::modules::extensions::{
+    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum,
+};
 
-#[repr(u64)]
-#[derive(Debug, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
-enum AliasType {
-    Delete = 0x00,
-    Register = 0x01,
-    UseAlias = 0x02,
-    UseValue = 0x03,
+wire_enum! {
+    #[derive(Debug, Clone, PartialEq, Eq, Copy)]
+    enum AliasType: u64 {
+        Delete = 0x00,
+        Register = 0x01,
+        UseAlias = 0x02,
+        UseValue = 0x03,
+    }
 }
 
 #[derive(Clone, PartialEq)]

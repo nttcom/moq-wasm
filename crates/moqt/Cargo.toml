@@ -10,15 +10,14 @@ anyhow = { version = "1.0.102", features = ["backtrace"] }
 tracing = "0.1.44"
 bytes = "1"
 async-trait = "0.1.89"
-num_enum = "0.7.6"
 thiserror = "2.0.18"
-url = "2"
 futures = "0.3.32"
 tokio = { version = "1.52.3", features = ["sync", "macros", "io-util"] }
 tokio-util = { version = "0.7.18", features = ["codec"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 quinn = "0.11.9"
+url = "2"
 rustls-native-certs = "0.8.4"
 tokio = { version = "1.52.3", features = ["full", "tracing"] }
 web-transport-quinn = { version = "0.13", default-features = false, features = ["ring"] }
@@ -36,6 +35,7 @@ features = [
     "ReadableStream",
     "ReadableStreamDefaultReader",
     "ReadableStreamReadResult",
+    "Url",
     "WebTransport",
     "WebTransportBidirectionalStream",
     "WebTransportCloseInfo",

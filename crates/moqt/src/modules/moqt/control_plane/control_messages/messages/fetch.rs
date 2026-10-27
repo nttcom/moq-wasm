@@ -1,9 +1,8 @@
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, odd_values},
         messages::parameters::{
@@ -27,12 +26,13 @@ use crate::modules::{
 //   Joining Start (i)
 // }
 
-#[derive(Debug, Clone, TryFromPrimitive, IntoPrimitive)]
-#[repr(u64)]
-enum FetchTypeValue {
-    Standalone = 0x1,
-    RelativeJoining = 0x2,
-    AbsoluteJoining = 0x3,
+wire_enum! {
+    #[derive(Debug, Clone)]
+    enum FetchTypeValue: u64 {
+        Standalone = 0x1,
+        RelativeJoining = 0x2,
+        AbsoluteJoining = 0x3,
+    }
 }
 
 /// Fetch Type plus its type-specific fields from the FETCH message

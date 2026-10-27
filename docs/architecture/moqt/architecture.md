@@ -99,7 +99,9 @@ Client-side helpers shared by the three creators:
   transport (`moqt://` → raw QUIC, default port 4433; `https://` → WebTransport,
   default port 443) and resolves the host, preferring IPv4 because the client
   endpoint binds an IPv4 socket. `QUIC` / `WEBTRANSPORT` creators reject a URL
-  for the other transport.
+  for the other transport. The wasm build parses with the browser's `URL`
+  (`web_sys::Url`) instead of the `url` crate and leaves host and port to
+  `WebTransport`.
 - `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
   custom CA file), the `quinn::ClientConfig` per ALPN, and the client
   `quinn::Endpoint`.

@@ -1,19 +1,19 @@
 use anyhow::Context;
 use bytes::BytesMut;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum},
     moqt::control_plane::control_messages::messages::parameters::location::Location,
 };
 
-#[derive(Debug, Clone, TryFromPrimitive, IntoPrimitive)]
-#[repr(u64)]
-enum FilterTypeValue {
-    LatestGroup = 0x01,
-    LatestObject = 0x02,
-    AbsoluteStart = 0x03,
-    AbsoluteRange = 0x04,
+wire_enum! {
+    #[derive(Debug, Clone)]
+    enum FilterTypeValue: u64 {
+        LatestGroup = 0x01,
+        LatestObject = 0x02,
+        AbsoluteStart = 0x03,
+        AbsoluteRange = 0x04,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
