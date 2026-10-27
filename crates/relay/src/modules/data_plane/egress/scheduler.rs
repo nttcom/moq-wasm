@@ -116,8 +116,11 @@ impl EgressScheduler {
         }
         let mut progress = StartLocationProgress::new(start);
         let mut restarts = (control.restarts, control.resumes);
+        // Checked before readiness: an update and the groups it lets in can
+        // arrive once the subscriber is told, and the loop sees both.
+        let range_ended = self.range_ended(&progress, &control);
         let _ = ready_sender.send(Ok(()));
-        if self.range_ended(&progress, &control) {
+        if range_ended {
             return SchedulerExit::EndGroupReached;
         }
 
