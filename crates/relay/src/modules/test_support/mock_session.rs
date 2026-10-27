@@ -109,6 +109,8 @@ impl RecordedControlMessages {
 #[derive(Clone)]
 enum SubscribeAnswer {
     SubscribeOk(Arc<dyn Fn() -> ContentExists + Send + Sync>),
+    /// SUBSCRIBE_OK once the gate is notified.
+    SubscribeOkAfter(Arc<tokio::sync::Notify>),
     Refuse(RequestErrorCode),
     Never,
 }
@@ -226,6 +228,18 @@ pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, Recor
         answer_fetch: FetchAnswer::Never,
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
+    });
+    (session, recorded)
+}
+
+/// Answers SUBSCRIBE_OK once `gate` is notified.
+pub(crate) fn recorded_session_answering_subscribe_after(
+    gate: Arc<tokio::sync::Notify>,
+) -> (Box<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        answer_subscribe: Some(SubscribeAnswer::SubscribeOkAfter(gate)),
+        ..MockUpstreamSession::new(recorded.clone())
     });
     (session, recorded)
 }
@@ -489,8 +503,12 @@ impl Subscriber for MockUpstreamSubscriber {
             .lock()
             .unwrap()
             .push(track_name.clone());
-        let answer_subscribe = match &self.answer_subscribe {
-            Some(SubscribeAnswer::SubscribeOk(answer_subscribe)) => answer_subscribe,
+        let content_exists = match &self.answer_subscribe {
+            Some(SubscribeAnswer::SubscribeOk(answer_subscribe)) => answer_subscribe(),
+            Some(SubscribeAnswer::SubscribeOkAfter(gate)) => {
+                gate.notified().await;
+                ContentExists::False
+            }
             Some(SubscribeAnswer::Refuse(code)) => {
                 return Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
                     request_id: 1,
@@ -510,7 +528,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 expires: 0,
                 group_order: GroupOrder::Ascending,
                 subscriber_priority: 128,
-                content_exists: answer_subscribe(),
+                content_exists,
                 filter_type: FilterType::LargestObject,
                 track_properties: TrackProperties::default(),
             }),
@@ -761,10 +779,9 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 }
 
-/// `joining_rule` stands in for the session draft's Joining FETCH rule;
-/// `errors` records the code of every `error` and `oks` the End Location of
-/// every `ok`. Without `understands_track_properties`, `ok` refuses the FETCH
-/// as moqt does.
+/// `joining_rule` stands in for the session draft's Joining FETCH rule.
+/// Without `understands_track_properties`, `ok` refuses the FETCH as moqt
+/// does.
 #[derive(Clone)]
 pub(crate) struct MockFetchHandler {
     pub(crate) fetch_params: moqt::fetch::FetchParams,
