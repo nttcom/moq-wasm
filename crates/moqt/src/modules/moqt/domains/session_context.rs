@@ -429,6 +429,13 @@ impl SessionContext {
 impl Drop for SessionContext {
     fn drop(&mut self) {
         tracing::debug!("SessionContext dropped.");
+        // Streams the application still holds keep a connection open after
+        // its control stream finishes, which both drafts treat as a
+        // PROTOCOL_VIOLATION (draft-14 §3.3, draft-18 §3.3); the session ends
+        // here instead.
+        for connection in self.live_connections() {
+            connection.close(TerminationErrorCode::NoError, "");
+        }
     }
 }
 

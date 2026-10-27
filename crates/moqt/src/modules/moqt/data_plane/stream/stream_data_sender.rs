@@ -159,7 +159,9 @@ impl StreamDataSender<Uninitialized> {
     ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
-            let SubgroupEncoder::Draft14(encoder) = &mut stream.encoder;
+            let SubgroupEncoder::Draft14(encoder) = &mut stream.encoder else {
+                panic!("raw draft-14 fields need a draft-14 session");
+            };
             let bytes = encoder.raw_header(group_id, subgroup_id.clone(), publisher_priority);
             results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
         }
@@ -246,7 +248,9 @@ impl StreamDataSender<HeaderSent> {
     ) -> anyhow::Result<()> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
-            let SubgroupEncoder::Draft14(encoder) = &stream.encoder;
+            let SubgroupEncoder::Draft14(encoder) = &stream.encoder else {
+                panic!("raw draft-14 fields need a draft-14 session");
+            };
             let bytes = encoder.raw_object_field(object_id_delta, subgroup_object.clone());
             results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
         }
@@ -260,7 +264,8 @@ mod tests {
 
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, first_subgroup_stream, object_with_extensions, published_track,
+            HANDSHAKE_TIMEOUT, PublishedTrack, first_subgroup_stream, object_with_extensions,
+            published_track, published_track_between, spawn_connected_draft18_sessions,
         },
         object::{
             DataStreamResetCode, ForwardingPreference, Location, Object, ObjectStatus, ReadError,
@@ -417,13 +422,11 @@ mod tests {
         assert!(result.is_err());
     }
 
-    async fn sender(
-        name: &str,
-    ) -> (
-        crate::modules::test_support::PublishedTrack,
-        SubgroupObjectSender,
-    ) {
-        let track = published_track(name).await;
+    async fn sender(name: &str) -> (PublishedTrack, SubgroupObjectSender) {
+        sender_on(published_track(name).await).await
+    }
+
+    async fn sender_on(track: PublishedTrack) -> (PublishedTrack, SubgroupObjectSender) {
         let factory = track.client.publisher().create_stream(&track.published);
         let sender = factory.next().await.unwrap().start(START).await.unwrap();
         (track, sender)
@@ -450,8 +453,35 @@ mod tests {
     #[tokio::test]
     async fn a_payload_sent_in_pieces_reaches_the_peer_before_its_last_byte() {
         // Arrange
-        let (track, mut sender) = sender("sender-payload-pieces").await;
+        let (track, sender) = sender("sender-payload-pieces").await;
 
+        // Act / Assert
+        let expected = object(63, ObjectStatus::Normal, b"");
+        payload_pieces_reach_the_peer_before_the_last_byte(track, sender, expected).await;
+    }
+
+    #[tokio::test]
+    async fn a_draft18_payload_sent_in_pieces_reaches_the_peer_before_its_last_byte() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("sender-payload-pieces-d18", "moqt").await;
+        let (track, sender) = sender_on(published_track_between(client, server).await).await;
+
+        // Act / Assert: draft-18 §11.4.2; the peer receives the properties
+        // sorted by type (§11.2.1.2)
+        let mut expected = object(63, ObjectStatus::Normal, b"");
+        expected
+            .extension_headers
+            .key_value_pairs
+            .sort_by_key(|pair| pair.key);
+        payload_pieces_reach_the_peer_before_the_last_byte(track, sender, expected).await;
+    }
+
+    async fn payload_pieces_reach_the_peer_before_the_last_byte(
+        track: PublishedTrack,
+        mut sender: SubgroupObjectSender,
+        expected: Object,
+    ) {
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             // Act: the receiver reads while the payload's second half is unsent
             sender
@@ -483,7 +513,7 @@ mod tests {
             else {
                 panic!("expected an object start of 8 payload bytes, got {start:?}");
             };
-            assert_eq!(started, object(63, ObjectStatus::Normal, b""));
+            assert_eq!(started, expected);
             assert!(!first_half_was_last);
             assert!(receive_payload_bytes(&mut receiver, b"rame").await);
             assert!(receiver.receive().await.unwrap().is_none());

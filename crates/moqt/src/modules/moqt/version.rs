@@ -4,17 +4,17 @@
 //! hold control messages, how a response finds its request, how a request
 //! is cancelled.
 //!
-//! Only draft-14 is implemented. The adapter is in place ahead of draft-18
-//! support, a deliberate exception to the coding-style rule that an
-//! abstraction waits for its second concrete use.
+//! draft-14 and draft-18 are implemented. `APPLICATION_PROTOCOLS` offers
+//! only draft-14 because draft-18 has not been checked against other
+//! implementations.
 
 pub(crate) mod draft14;
-// Built up ahead of `Version::Draft18`; nothing outside its tests uses it
-// until `APPLICATION_PROTOCOLS` offers `moqt-18`.
-#[allow(dead_code)]
 pub(crate) mod draft18;
 
-use std::sync::{Arc, Weak};
+use std::{
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use bytes::BytesMut;
 
@@ -26,30 +26,19 @@ use crate::{
     modules::{
         executor::JoinHandle,
         moqt::{
+            control_plane::control_messages::messages::parameters::group_order::GroupOrder,
             control_plane::{
                 constants::TerminationErrorCode,
                 control_messages::messages::{
-                    fetch::Fetch,
-                    fetch_cancel::FetchCancel,
-                    fetch_ok::FetchOk,
-                    go_away::GoAway,
-                    max_request_id::MaxRequestId,
-                    namespace_ok::NamespaceOk,
-                    parameters::{
-                        authorization_token::AuthorizationToken, group_order::GroupOrder,
-                    },
-                    publish::Publish,
+                    fetch::Fetch, fetch_cancel::FetchCancel, fetch_ok::FetchOk, go_away::GoAway,
+                    max_request_id::MaxRequestId, namespace_ok::NamespaceOk,
+                    parameters::authorization_token::AuthorizationToken, publish::Publish,
                     publish_namespace::PublishNamespace,
-                    publish_namespace_done::PublishNamespaceDone,
-                    publish_ok::PublishOk,
-                    requests_blocked::RequestsBlocked,
-                    server_setup::ServerSetup,
-                    subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace,
-                    subscribe_ok::SubscribeOk,
-                    subscribe_update::SubscribeUpdate,
-                    unsubscribe::Unsubscribe,
-                    unsubscribe_namespace::UnsubscribeNamespace,
+                    publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
+                    requests_blocked::RequestsBlocked, server_setup::ServerSetup,
+                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
+                    subscribe_ok::SubscribeOk, subscribe_update::SubscribeUpdate,
+                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::{
@@ -79,7 +68,19 @@ use crate::{
 /// draft-14 §3.1.2; SETUP then negotiates the version (§3.2).
 const DRAFT14_ALPN: &str = "moq-00";
 
-/// The ALPN and WebTransport subprotocol of every supported draft.
+/// draft-18 §3.1.3 / §3.1.4: the WebTransport subprotocol and the ALPN.
+const DRAFT18_PROTOCOL: &str = "moqt-18";
+
+const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Offers only draft-18, for tests.
+#[cfg(test)]
+pub(crate) const DRAFT18_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
+    quic_alpns: &[DRAFT18_PROTOCOL],
+    web_transport: &[DRAFT18_PROTOCOL],
+};
+
+/// The ALPN and WebTransport subprotocol of every draft offered to peers.
 pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
     quic_alpns: &[DRAFT14_ALPN],
     // draft-14 defines no WebTransport subprotocol (§3.1.1).
@@ -91,18 +92,22 @@ pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtoc
 pub(crate) enum Version {
     /// draft-ietf-moq-transport-14.
     Draft14,
+    /// draft-ietf-moq-transport-18.
+    Draft18,
 }
 
 impl Version {
     pub(crate) fn termination_code(self, code: TerminationErrorCode) -> u32 {
         match self {
             Self::Draft14 => draft14::error_codes::termination_code_to_wire(code),
+            Self::Draft18 => draft18::error_codes::termination_code_to_wire(code),
         }
     }
 
     pub(crate) fn data_stream_reset_code(self, code: DataStreamResetCode) -> u64 {
         match self {
             Self::Draft14 => draft14::error_codes::data_stream_reset_code_to_wire(code),
+            Self::Draft18 => draft18::error_codes::stream_reset_code_to_wire(code),
         }
     }
 
@@ -110,6 +115,10 @@ impl Version {
         match protocol {
             NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Ok(Self::Draft14),
             NegotiatedProtocol::WebTransport { protocol: None } => Ok(Self::Draft14),
+            NegotiatedProtocol::Quic { alpn } if alpn == DRAFT18_PROTOCOL => Ok(Self::Draft18),
+            NegotiatedProtocol::WebTransport {
+                protocol: Some(protocol),
+            } if protocol == DRAFT18_PROTOCOL => Ok(Self::Draft18),
             other => anyhow::bail!("no supported MoQT version negotiated: {other:?}"),
         }
     }
@@ -117,6 +126,7 @@ impl Version {
     pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> BytesMut {
         match self {
             Self::Draft14 => draft14::objects::encode_fetch_header(request_id),
+            Self::Draft18 => draft18::objects::encode_fetch_header(request_id),
         }
     }
 
@@ -127,17 +137,19 @@ impl Version {
     ) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14 => draft14::objects::encode_datagram(track_alias, object),
+            Self::Draft18 => draft18::objects::encode_datagram(track_alias, object),
         }
     }
 
     /// Returns `(track alias, object)`, or `None` for a datagram that carries
-    /// no object.
+    /// no object (draft-18 padding).
     pub(crate) fn decode_datagram(
         self,
         data: &mut BytesMut,
     ) -> anyhow::Result<Option<(u64, Object)>> {
         match self {
             Self::Draft14 => draft14::objects::decode_datagram(data).map(Some),
+            Self::Draft18 => Ok(draft18::objects::decode_datagram(data)?),
         }
     }
 
@@ -149,6 +161,7 @@ impl Version {
     ) -> Result<Option<IncomingStream>, StreamReceiveError> {
         match self {
             Self::Draft14 => draft14::objects::accept_uni_stream(stream).await,
+            Self::Draft18 => draft18::objects::accept_uni_stream(stream).await,
         }
     }
 }
@@ -162,6 +175,7 @@ pub(crate) enum IncomingStream {
 #[derive(Debug)]
 pub(crate) enum SubgroupReader {
     Draft14(draft14::objects::SubgroupReader),
+    Draft18(draft18::objects::SubgroupReader),
 }
 
 impl SubgroupReader {
@@ -170,12 +184,14 @@ impl SubgroupReader {
     pub(crate) fn start(&self) -> Option<SubgroupStart> {
         match self {
             Self::Draft14(reader) => reader.start(),
+            Self::Draft18(reader) => reader.start(),
         }
     }
 
     pub(crate) fn group_id(&self) -> u64 {
         match self {
             Self::Draft14(reader) => reader.group_id(),
+            Self::Draft18(reader) => reader.group_id(),
         }
     }
 
@@ -184,6 +200,7 @@ impl SubgroupReader {
     pub(crate) async fn next_part(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
         match self {
             Self::Draft14(reader) => reader.next_part().await,
+            Self::Draft18(reader) => reader.next_part().await,
         }
     }
 }
@@ -191,39 +208,51 @@ impl SubgroupReader {
 #[derive(Debug)]
 pub(crate) enum FetchReader {
     Draft14(draft14::objects::FetchReader),
+    Draft18(draft18::objects::FetchReader),
 }
 
 impl FetchReader {
-    pub(crate) fn set_group_order(&mut self, _group_order: GroupOrder) {}
+    /// draft-18 encodes Group IDs as deltas in the FETCH's group order.
+    pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
+        match self {
+            Self::Draft14(_) => {}
+            Self::Draft18(reader) => reader.set_group_order(group_order),
+        }
+    }
 
     /// `Ok(None)` means the peer finished the stream (FIN).
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self {
             Self::Draft14(reader) => reader.next_object().await,
+            Self::Draft18(reader) => reader.next_object().await,
         }
     }
 }
 
 pub(crate) enum SubgroupEncoder {
     Draft14(draft14::objects::SubgroupEncoder),
+    Draft18(draft18::objects::SubgroupEncoder),
 }
 
 impl SubgroupEncoder {
     pub(crate) fn new(version: Version, track_alias: u64) -> Self {
         match version {
             Version::Draft14 => Self::Draft14(draft14::objects::SubgroupEncoder::new(track_alias)),
+            Version::Draft18 => Self::Draft18(draft18::objects::SubgroupEncoder::new(track_alias)),
         }
     }
 
     pub(crate) fn version(&self) -> Version {
         match self {
             Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
         }
     }
 
     pub(crate) fn header(&mut self, start: SubgroupStart) -> BytesMut {
         match self {
             Self::Draft14(encoder) => encoder.header(start),
+            Self::Draft18(encoder) => encoder.header(start),
         }
     }
 
@@ -231,6 +260,7 @@ impl SubgroupEncoder {
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.object(object),
+            Self::Draft18(encoder) => encoder.object(object),
         }
     }
 
@@ -243,6 +273,7 @@ impl SubgroupEncoder {
     ) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.object_head(object, payload_len),
+            Self::Draft18(encoder) => encoder.object_head(object, payload_len),
         }
     }
 }
@@ -266,12 +297,14 @@ fn object_id_delta(prev_object_id: Option<u64>, object_id: u64) -> anyhow::Resul
 /// Encodes the objects of one FETCH response.
 pub(crate) enum FetchEncoder {
     Draft14,
+    Draft18(draft18::objects::FetchEncoder),
 }
 
 impl FetchEncoder {
     pub(crate) fn new(version: Version) -> Self {
         match version {
             Version::Draft14 => Self::Draft14,
+            Version::Draft18 => Self::Draft18(draft18::objects::FetchEncoder::default()),
         }
     }
 
@@ -279,6 +312,7 @@ impl FetchEncoder {
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<Option<BytesMut>> {
         match self {
             Self::Draft14 => Ok(Some(draft14::objects::encode_fetch_object(object))),
+            Self::Draft18(encoder) => encoder.object(object),
         }
     }
 }
@@ -333,31 +367,39 @@ pub(crate) enum Notification {
 /// How a session's control messages reach the peer.
 pub(crate) enum ControlChannel {
     Draft14(draft14::ControlChannel),
+    Draft18(Box<draft18::ControlChannel>),
 }
 
 impl ControlChannel {
     pub(crate) fn version(&self) -> Version {
         match self {
             Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
         }
     }
 
     pub(crate) fn next_request_id(&self) -> RequestId {
         match self {
             Self::Draft14(channel) => channel.next_request_id(),
+            Self::Draft18(channel) => channel.next_request_id(),
         }
     }
 
     /// Fails with `RequestFailure::Send` when the request cannot be written.
     /// Dropping the returned `PendingResponse` abandons the request.
+    /// `connection` owns this channel; draft-18 opens a stream on it per
+    /// request.
     pub(crate) async fn send_request(
         &self,
-        _connection: &Arc<Connection>,
+        connection: &Arc<Connection>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         match self {
             Self::Draft14(channel) => Ok(PendingResponse::Draft14(
                 channel.send_request(request).await?,
+            )),
+            Self::Draft18(channel) => Ok(PendingResponse::Draft18(
+                channel.send_request(connection, request).await?,
             )),
         }
     }
@@ -368,6 +410,7 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         match self {
             Self::Draft14(channel) => channel.respond(response).await,
+            Self::Draft18(channel) => channel.respond(response).await,
         }
     }
 
@@ -377,6 +420,7 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         match self {
             Self::Draft14(channel) => channel.notify(notification).await,
+            Self::Draft18(channel) => channel.notify(notification).await,
         }
     }
 }
@@ -384,6 +428,7 @@ impl ControlChannel {
 /// The receiving half of a control channel, consumed when the session starts.
 pub(crate) enum ControlReceiver {
     Draft14(BiStreamReceiver),
+    Draft18(draft18::message_stream::MessageReceiver),
 }
 
 impl ControlReceiver {
@@ -405,6 +450,13 @@ impl ControlReceiver {
                 publish_done_sender,
                 span,
             ),
+            Self::Draft18(control_stream) => draft18::request_streams::run_control_receiver(
+                control_stream,
+                session,
+                connection,
+                publish_done_sender,
+                span,
+            ),
         }
     }
 }
@@ -420,7 +472,7 @@ fn negotiated_version(transport_connection: &BoxedConnection) -> anyhow::Result<
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
     authorization_token: Option<&str>,
-    _target: &ConnectTarget,
+    target: &ConnectTarget,
 ) -> anyhow::Result<(ControlChannel, ControlReceiver, ServerSetup)> {
     match negotiated_version(transport_connection)? {
         Version::Draft14 => {
@@ -429,6 +481,15 @@ pub(crate) async fn connect(
             Ok((
                 ControlChannel::Draft14(channel),
                 ControlReceiver::Draft14(receiver),
+                server_setup,
+            ))
+        }
+        Version::Draft18 => {
+            let (channel, receiver, server_setup) =
+                draft18::setup::connect(transport_connection, authorization_token, target).await?;
+            Ok((
+                ControlChannel::Draft18(Box::new(channel)),
+                ControlReceiver::Draft18(receiver),
                 server_setup,
             ))
         }
@@ -444,17 +505,22 @@ pub(crate) async fn accept(
         Version::Draft14 => Ok(ServerHandshake::Draft14(
             draft14::setup::accept(transport_connection).await?,
         )),
+        Version::Draft18 => Ok(ServerHandshake::Draft18(
+            draft18::setup::accept(transport_connection).await?,
+        )),
     }
 }
 
 pub(crate) enum ServerHandshake {
     Draft14(draft14::setup::ServerHandshake),
+    Draft18(draft18::setup::ServerHandshake),
 }
 
 impl ServerHandshake {
     pub(crate) fn version(&self) -> Version {
         match self {
             Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
         }
     }
 
@@ -463,13 +529,14 @@ impl ServerHandshake {
             Self::Draft14(handshake) => {
                 &handshake.client_setup.setup_parameters.authorization_token
             }
+            Self::Draft18(handshake) => &handshake.client_setup.authorization_tokens,
         }
     }
 
     /// Answers the client's setup and opens the session's control channel.
     pub(crate) async fn accept(
         self,
-        _transport_connection: &BoxedConnection,
+        transport_connection: &BoxedConnection,
     ) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
         match self {
             Self::Draft14(handshake) => {
@@ -479,6 +546,13 @@ impl ServerHandshake {
                     ControlReceiver::Draft14(receiver),
                 ))
             }
+            Self::Draft18(handshake) => {
+                let (channel, receiver) = handshake.accept(transport_connection).await?;
+                Ok((
+                    ControlChannel::Draft18(Box::new(channel)),
+                    ControlReceiver::Draft18(receiver),
+                ))
+            }
         }
     }
 }
@@ -486,6 +560,7 @@ impl ServerHandshake {
 #[must_use = "dropping this abandons the request"]
 pub(crate) enum PendingResponse {
     Draft14(draft14::PendingResponse),
+    Draft18(draft18::PendingResponse),
 }
 
 impl PendingResponse {
@@ -495,6 +570,7 @@ impl PendingResponse {
     pub(crate) async fn response(self) -> Result<ResponseMessage, RequestFailure> {
         match self {
             Self::Draft14(pending) => pending.response().await,
+            Self::Draft18(pending) => pending.response().await,
         }
     }
 }
@@ -525,10 +601,25 @@ mod tests {
     }
 
     #[test]
+    fn the_draft18_alpn_and_subprotocol_select_draft18() {
+        // Act
+        let over_quic = Version::negotiated(&NegotiatedProtocol::Quic {
+            alpn: "moqt-18".to_string(),
+        });
+        let over_web_transport = Version::negotiated(&NegotiatedProtocol::WebTransport {
+            protocol: Some("moqt-18".to_string()),
+        });
+
+        // Assert
+        assert_eq!(over_quic.unwrap(), Version::Draft18);
+        assert_eq!(over_web_transport.unwrap(), Version::Draft18);
+    }
+
+    #[test]
     fn an_unsupported_alpn_selects_no_version() {
         // Act
         let version = Version::negotiated(&NegotiatedProtocol::Quic {
-            alpn: "moqt-18".to_string(),
+            alpn: "moqt-99".to_string(),
         });
 
         // Assert
