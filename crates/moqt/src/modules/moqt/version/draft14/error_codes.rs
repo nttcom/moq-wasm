@@ -172,7 +172,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::{Layer, layer::SubscriberExt};
 
-    /// Records the level of every event logged inside `f`.
+    /// Records the level of every event.
     struct LoggedLevels(Arc<Mutex<Vec<tracing::Level>>>);
 
     impl<S: tracing::Subscriber> Layer<S> for LoggedLevels {

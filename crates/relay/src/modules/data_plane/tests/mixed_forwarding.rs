@@ -6,7 +6,7 @@ use crate::modules::{
     domain::single_preference::CONVERTED_DATAGRAM_SUBGROUPS,
     session::data_object::DataObject,
     test_support::relay_harness::{
-        EgressRunnerHandle, FetchSent, RelayHarness, Sent, UpstreamTrack,
+        EgressRunnerHandle, FetchSent, RelayHarness, Sent, UnknownRangeDraft, UpstreamTrack,
         fixtures::{
             cached_object::datagram_object,
             data_object::{make_header_with, make_object_in_subgroup, subgroup_start},
@@ -263,7 +263,7 @@ async fn fetched_forwarding(harness: &RelayHarness) -> Vec<(u64, u64, Forwarding
     let fetch = harness.start_fetch_reporting_unknown(
         location(0, 0),
         location(2, 0),
-        moqt::fetch::UnknownRange::Marked,
+        UnknownRangeDraft::AnyRange,
     );
     fetch
         .finished()
