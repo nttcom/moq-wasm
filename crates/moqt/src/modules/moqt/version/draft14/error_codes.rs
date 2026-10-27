@@ -82,12 +82,19 @@ const PUBLISH_DONE: [(PublishDoneCode, u64); 8] = [
     (PublishDoneCode::MalformedTrack, 0x7),
 ];
 
+/// Returns INTERNAL_ERROR (0x0) for a code §13.1.3 does not define.
 pub fn publish_done_code_to_wire(code: PublishDoneCode) -> u64 {
     PUBLISH_DONE
         .iter()
         .find(|(defined, _)| *defined == code)
         .map(|(_, value)| *value)
-        .expect("PUBLISH_DONE lists every PublishDoneCode")
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                ?code,
+                "PUBLISH_DONE code undefined in draft-14; sending INTERNAL_ERROR"
+            );
+            0x0
+        })
 }
 
 pub fn publish_done_code_from_wire(value: u64) -> Option<PublishDoneCode> {
@@ -106,6 +113,12 @@ pub(crate) fn data_stream_reset_code_to_wire(code: DataStreamResetCode) -> u64 {
         // §2.5 resets the FETCH stream of a malformed track "with Status Code
         // MALFORMED_TRACK", which draft-14 defines only as FETCH_ERROR 0x9.
         DataStreamResetCode::MalformedTrack => 0x9,
+        // §13.1.8 defines no other code.
+        DataStreamResetCode::GoingAway
+        | DataStreamResetCode::TooFarBehind
+        | DataStreamResetCode::UnknownObjectStatus
+        | DataStreamResetCode::ExpiredAuthToken
+        | DataStreamResetCode::ExcessiveLoad => 0x0,
     }
 }
 
