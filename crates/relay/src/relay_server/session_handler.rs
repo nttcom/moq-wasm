@@ -42,7 +42,12 @@ impl SessionIntake {
             .authenticate(handshake.authorization_tokens(), &self.accepted_peer)
             .await
         {
-            Ok(verified_token) => verified_token,
+            Ok(verified_token) => {
+                if let Some(relay_id) = &verified_token.relay_id {
+                    session_span.record("peer_relay_id", relay_id.as_str());
+                }
+                verified_token
+            }
             Err(rejected) => {
                 tracing::warn!(
                     code = ?rejected.code,
@@ -120,6 +125,7 @@ impl SessionHandler {
                         session_id = session_id,
                         session_peer = session_peer,
                         relay_hostname = %relay_hostname,
+                        peer_relay_id = tracing::field::Empty,
                     );
                     let accept = async {
                         endpoint.accept().await.inspect_err(|error| match error {

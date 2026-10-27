@@ -55,6 +55,7 @@ pub(crate) fn build_verified_token(
         subscribe,
         is_relay: token.is_relay,
         expires_at: Some(expires_at),
+        relay_id: token.is_relay.then_some(token.claims.relay_id).flatten(),
     })
 }
 
@@ -118,6 +119,32 @@ mod tests {
             token.expires_at,
             Some(SystemTime::UNIX_EPOCH + Duration::from_secs(NOW_SECS + 3600))
         );
+    }
+
+    #[test]
+    fn a_relay_token_names_its_relay() {
+        // Arrange
+        let mut token = signed(true, NOW_SECS, NOW_SECS + 60, Some(""));
+        token.claims.relay_id = Some("relay-b".to_string());
+
+        // Act
+        let verified = build_verified_token(token, ClaimPolicy::default(), now()).unwrap();
+
+        // Assert
+        assert_eq!(verified.relay_id.as_deref(), Some("relay-b"));
+    }
+
+    #[test]
+    fn a_client_token_naming_a_relay_is_not_taken_for_one() {
+        // Arrange
+        let mut token = signed(false, NOW_SECS, NOW_SECS + 60, Some(""));
+        token.claims.relay_id = Some("relay-b".to_string());
+
+        // Act
+        let verified = build_verified_token(token, ClaimPolicy::default(), now()).unwrap();
+
+        // Assert
+        assert_eq!(verified.relay_id, None);
     }
 
     #[test]
