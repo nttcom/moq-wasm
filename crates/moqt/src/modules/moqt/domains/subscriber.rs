@@ -500,12 +500,11 @@ impl Subscriber {
         )
     }
 
-    /// Subscribes with the Largest Object filter and reads the group that
-    /// object is in from its first object, through a Relative Joining FETCH
-    /// with offset 0 (draft-14 §9.16.2), so the FETCH and the subscription
-    /// meet without a gap or a repeat. The reader yields the fetched objects
-    /// before the live ones. A track without content, or a FETCH that fails,
-    /// yields the live objects only.
+    /// Subscribes with Largest Object and reads the group that object is in from
+    /// its first object, through a Relative Joining FETCH with offset 0
+    /// (draft-14 §9.16.2). The reader yields the fetched objects before the live
+    /// ones. A track without content, or a FETCH that fails, yields the live
+    /// objects only.
     pub async fn subscribe_current_group(
         &mut self,
         track_namespace: String,

@@ -43,8 +43,8 @@ pub struct Track {
 }
 
 impl Track {
-    /// The SUBSCRIBE starts after the largest object. With `current_group`,
-    /// the objects before it in its group are read first.
+    /// The SUBSCRIBE starts after the largest object. With `current_group`, the
+    /// objects of that object's group up to and including it are read first.
     pub(crate) async fn subscribe(
         session: Arc<Session>,
         namespace: String,

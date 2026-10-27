@@ -57,9 +57,8 @@ impl TrackReader {
         }
     }
 
-    /// Reads the group `subscription` joined with a Relative Joining FETCH
-    /// (offset 0) before its live objects. The subgroup streams wait until the
-    /// FETCH ends, so the fetched objects come first.
+    /// Subgroup streams are accepted only after the FETCH ends, so the fetched
+    /// objects come first.
     pub(crate) fn joining_current_group(
         subscriber: Subscriber,
         subscription: Subscription,
@@ -100,7 +99,6 @@ async fn stream_factory(
     }
 }
 
-/// A subscription that reported no content has no group to join.
 async fn send_current_group(
     subscriber: &mut Subscriber,
     subscription: &Subscription,
@@ -123,7 +121,6 @@ async fn send_current_group(
     Ok(())
 }
 
-/// `None` for status objects, which carry no payload.
 fn track_object(object: Object) -> Option<TrackObject> {
     if object.status != ObjectStatus::Normal || object.payload.is_empty() {
         return None;

@@ -67,9 +67,9 @@ pub async fn track_reader(session: &Session, subscription: &Subscription) -> Res
     Ok(TrackReader::new(factory))
 }
 
-/// Reads the catalog's current object with the SUBSCRIBE and joining FETCH
-/// (offset 0) that draft-ietf-moq-msf-01 §5 requires, or the next one when the
-/// track has none yet.
+/// Reads the first object of the catalog's current group with the SUBSCRIBE and
+/// joining FETCH (offset 0) that draft-ietf-moq-msf-01 §5 requires, or the next
+/// object when the track has none yet.
 pub async fn read_catalog(session: &Session, namespace: &str) -> Result<Bytes> {
     let (_subscription, mut reader) = session
         .subscriber()
