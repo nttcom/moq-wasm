@@ -396,7 +396,8 @@ Location the new SUBSCRIBE_OK resolves, which `update_forward` and
 makes it the current connection, and closes the previous one with NO_ERROR
 once the server takes no track this side sends there any more and no
 carried subscription has a subgroup stream open there (each sink counts the
-streams it handed out until they end, `OpenSubgroups`), at the latest 5 s
+streams it handed out until they end, `OpenSubgroups`) or still owes a group
+before the start the new SUBSCRIBE_OK resolved, at the latest 5 s
 after every carried subscription cut over (at most 10 s after the move), or
 when the server closes it; a SUBSCRIBE still served there then ends with an
 `Unsubscribe` event. A track PUBLISHed on the session goes to every

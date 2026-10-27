@@ -405,7 +405,6 @@ impl TrackCache {
         self.write().known_ranges.insert(start, end);
     }
 
-    /// Registers the half-open range `start..end` as known.
     pub(crate) fn insert_known_until(
         &self,
         start: moqt::object::Location,

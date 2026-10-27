@@ -75,16 +75,16 @@ impl FetchHandler {
         }
     }
 
-    /// The longest a relay should wait for objects it must fetch upstream
-    /// before it reports them as unknown, `ZERO` meaning not at all
-    /// (draft-18 §10.2.5 FILL_TIMEOUT). `None` when the FETCH sets none,
-    /// which is always the case on draft-14.
+    /// draft-18 §10.2.5 FILL_TIMEOUT: how long a relay may wait for objects
+    /// it must fetch upstream before reporting them unknown; `ZERO` forbids
+    /// waiting. Always `None` on draft-14.
     pub fn fill_timeout(&self) -> Option<Duration> {
         self.fetch.fill_timeout.map(Duration::from_millis)
     }
 
     /// Whether the response can mark a range of objects unknown and go on
-    /// (draft-18 §11.4.4.2 End of Unknown Range). Where it cannot (draft-14),
+    /// (draft-18 §11.4.4.2 End of Unknown Range), except for a range ending
+    /// in the group of the last object sent. Where it cannot,
     /// `FetchDataSender::report_unknown_range` resets the response instead.
     pub fn marks_unknown_ranges(&self) -> bool {
         match self.guard.connection().control.version() {
