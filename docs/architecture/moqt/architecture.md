@@ -225,7 +225,7 @@ call through the adapter; a draft never gets a task of its own (see
   `FetchHandler::check_joining` tells whether a Joining FETCH may join a
   subscription (draft-14 §9.16.2: Largest Object filter only, refused by
   closing the session; draft-18 §10.12.2: Forward State 1 only, refused with
-  INVALID_RANGE), and `SubscribeUpdateHandler::check_widening` whether an
+  INVALID_RANGE), and `SubscribeUpdateHandler::may_widen` whether an
   update may move a subscription's Start Location back or its End Group out
   (draft-14 §9.10: no, refused by closing the session; draft-18 §10.9.1:
   yes).

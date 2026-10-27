@@ -788,11 +788,8 @@ impl SubscribeUpdateHandler for MockSubscribeUpdateHandler {
         self.filter
     }
 
-    fn check_widening(&self) -> Result<(), moqt::subscribe::SubscriptionUpdateRefusal> {
-        match self.draft {
-            UpdateDraft::Draft14 => Err(moqt::subscribe::SubscriptionUpdateRefusal::Widening),
-            UpdateDraft::Draft18 | UpdateDraft::Draft18TimedOut => Ok(()),
-        }
+    fn may_widen(&self) -> bool {
+        !matches!(self.draft, UpdateDraft::Draft14)
     }
 
     fn ok(&self, largest: Option<moqt::object::Location>) -> moqt::subscribe::UpdateAnswer {

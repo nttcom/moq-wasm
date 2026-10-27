@@ -18,7 +18,7 @@ impl SubscribeUpdate {
     /// Applies the Forward State and the range of the update's filter;
     /// Subscriber Priority keeps the value of the SUBSCRIBE. An update that
     /// widens the range is applied only if the session's draft allows it
-    /// (`check_widening`); otherwise the session is closed with
+    /// (`may_widen`); otherwise the session is closed with
     /// PROTOCOL_VIOLATION (draft-14 §9.10). The update is accepted with the
     /// track's Largest Object (draft-18 §10.2.11); only when `ok` reports
     /// that the subscriber was given it does an update that turns Forward on
@@ -59,13 +59,15 @@ impl SubscribeUpdate {
             None => cached_largest(cache_store, track_key),
         };
         let requested = current.requested(handler.forward(), handler.filter(), largest);
-        if current.widens_to(&requested)
-            && let Err(refusal) = handler.check_widening()
-        {
-            tracing::warn!(?current, ?requested, %refusal, "SUBSCRIBE_UPDATE widens the subscription");
+        if current.widens_to(&requested) && !handler.may_widen() {
+            tracing::warn!(
+                ?current,
+                ?requested,
+                "SUBSCRIBE_UPDATE widens the subscription"
+            );
             let _ = session_event_sender.send(SessionEvent::protocol_violation_detected(
                 session_id,
-                refusal.to_string(),
+                "the update widens the subscription".to_string(),
             ));
             return None;
         }

@@ -3,7 +3,6 @@ use std::{
     time::Duration,
 };
 
-use thiserror::Error;
 use tokio::sync::oneshot;
 
 use crate::{
@@ -83,17 +82,6 @@ pub enum UpdateAnswer {
     /// subscription with PUBLISH_DONE UPDATE_FAILED; the update is not
     /// applied.
     Failed,
-}
-
-/// Why the session's draft refuses an update that widens its subscription.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[non_exhaustive]
-pub enum SubscriptionUpdateRefusal {
-    /// draft-14 §9.10: the Start Location must not decrease and the End
-    /// Group must not increase; the publisher closes the session with
-    /// PROTOCOL_VIOLATION.
-    #[error("the update widens the subscription")]
-    Widening,
 }
 
 #[derive(Clone, Debug)]
@@ -191,16 +179,14 @@ impl SubscribeUpdateHandler {
         self.delivery_timeout
     }
 
-    /// Whether the session's draft lets this update widen its subscription,
-    /// that is move its Start Location back or its End Group out; the refusal
-    /// names the answer its draft requires. draft-14 forbids it (§9.10);
-    /// draft-18 allows it, and the subscriber FETCHes what lies before the
-    /// Largest Object the answer carries (§10.9.1). Only meaningful for an
-    /// update that widens.
-    pub fn check_widening(&self) -> Result<(), SubscriptionUpdateRefusal> {
+    /// Whether the session's draft lets the update move the Start Location
+    /// back or the End Group out: draft-14 refuses, and the publisher closes
+    /// the session with PROTOCOL_VIOLATION (§9.10); draft-18 allows it
+    /// (§10.9.1).
+    pub fn may_widen(&self) -> bool {
         match self.version {
-            Version::Draft14 => Err(SubscriptionUpdateRefusal::Widening),
-            Version::Draft18 => Ok(()),
+            Version::Draft14 => false,
+            Version::Draft18 => true,
         }
     }
 
@@ -236,7 +222,6 @@ impl SubscribeUpdateHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::SubscriptionUpdateRefusal;
     use crate::modules::test_support::{
         published_track, published_track_between, received_subscribe_update,
         spawn_connected_draft18_sessions,
@@ -248,11 +233,8 @@ mod tests {
         let track = published_track("update-handler-widen-14").await;
         let update = received_subscribe_update(&track).await;
 
-        // Act
-        let checked = update.check_widening();
-
-        // Assert: draft-14 §9.10
-        assert_eq!(checked, Err(SubscriptionUpdateRefusal::Widening));
+        // Act / Assert: draft-14 §9.10
+        assert!(!update.may_widen());
     }
 
     #[tokio::test]
@@ -263,10 +245,7 @@ mod tests {
         let track = published_track_between(client, server).await;
         let update = received_subscribe_update(&track).await;
 
-        // Act
-        let checked = update.check_widening();
-
-        // Assert: draft-18 §10.9.1
-        assert_eq!(checked, Ok(()));
+        // Act / Assert: draft-18 §10.9.1
+        assert!(update.may_widen());
     }
 }
