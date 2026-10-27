@@ -122,6 +122,7 @@ mod tests {
         table: InMemoryLocalPubSubDirectory,
         cache_store: TrackCacheStore,
         signals: DownstreamRunnerSignals,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
         session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     }
 
@@ -156,11 +157,12 @@ mod tests {
                 control,
             )
             .unwrap();
-        let (_, session_event_receiver) = mpsc::unbounded_channel();
+        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
         Updated {
             table,
             cache_store,
             signals,
+            session_event_sender,
             session_event_receiver,
         }
     }
@@ -170,14 +172,12 @@ mod tests {
         session_id: SessionId,
         handler: &MockSubscribeUpdateHandler,
     ) -> Option<PublishDoneReason> {
-        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
-        updated.session_event_receiver = session_event_receiver;
         SubscribeUpdate.handle(
             session_id,
             &Span::none(),
             &updated.table,
             &updated.cache_store,
-            &session_event_sender,
+            &updated.session_event_sender,
             handler,
         )
     }
