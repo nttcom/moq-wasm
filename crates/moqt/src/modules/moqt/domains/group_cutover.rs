@@ -9,6 +9,8 @@
 /// may win every race.
 pub(crate) struct GroupCutover {
     newest: Option<u64>,
+    /// The group the current subscription's Start Location lies in.
+    current_start: u64,
     state: Cutover,
 }
 
@@ -19,11 +21,13 @@ enum Cutover {
 }
 
 impl GroupCutover {
-    /// Waiting for the current subscription, after the previous one handed
-    /// out groups up to `newest`.
-    pub(crate) fn waiting_after(newest: Option<u64>) -> Self {
+    /// Waiting for the current subscription, which starts in group
+    /// `current_start`, after the previous one handed out groups up to
+    /// `newest`.
+    pub(crate) fn waiting_after(newest: Option<u64>, current_start: u64) -> Self {
         Self {
             newest,
+            current_start,
             state: Cutover::Waiting,
         }
     }
@@ -37,14 +41,21 @@ impl GroupCutover {
         }
     }
 
-    /// The previous subscription is let go while no group of it is
-    /// arriving, so it hands out nothing more. A waiting cutover is fixed at
-    /// the group after the newest it handed out, since the same publisher
-    /// numbers the groups alike on both connections.
-    pub(crate) fn release_previous(&mut self) {
+    /// Lets the previous subscription go while no group of it is arriving,
+    /// so it hands out nothing more. A waiting cutover is fixed at the group
+    /// after the newest it handed out, since the same publisher numbers the
+    /// groups alike on both connections. Returns false, releasing nothing,
+    /// while that group lies before the current subscription's start: only
+    /// the previous one can deliver the groups in between.
+    pub(crate) fn release_previous(&mut self) -> bool {
         if self.state == Cutover::Waiting {
-            self.state = Cutover::At(self.newest.map_or(0, |newest| newest + 1));
+            let next = self.newest.map_or(0, |newest| newest + 1);
+            if self.newest.is_some() && next < self.current_start {
+                return false;
+            }
+            self.state = Cutover::At(next);
         }
+        true
     }
 
     pub(crate) fn is_cut_over(&self) -> bool {
@@ -91,7 +102,7 @@ mod tests {
     use super::*;
 
     fn migrating_after(groups: &[u64]) -> GroupCutover {
-        GroupCutover::waiting_after(groups.iter().copied().max())
+        GroupCutover::waiting_after(groups.iter().copied().max(), 0)
     }
 
     #[test]
@@ -183,6 +194,24 @@ mod tests {
         assert!(!previous_next_group);
         assert!(!current_delivered_group);
         assert!(current_next_group);
+    }
+
+    #[test]
+    fn the_previous_session_is_kept_for_the_groups_before_the_current_start() {
+        // Arrange: the current subscription starts at group 3
+        let mut cutover = GroupCutover::waiting_after(Some(1), 3);
+
+        // Act
+        let released_owing = cutover.release_previous();
+        let previous_owed_group = cutover.take_previous(2);
+        let released_after_it = cutover.release_previous();
+        let current_start = cutover.take_current(3, 0);
+
+        // Assert
+        assert!(!released_owing);
+        assert!(previous_owed_group);
+        assert!(released_after_it);
+        assert!(current_start);
     }
 
     #[test]
