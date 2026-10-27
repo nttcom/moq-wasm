@@ -1,19 +1,17 @@
 use anyhow::{Context, Result};
-use moqt::Session;
+use moqt::{Session, TrackReader};
 use msf::Catalog;
-
-use crate::relay::Track;
 
 /// Yields the catalog's current group from the joining FETCH
 /// (draft-ietf-moq-msf-01 §5), then later objects from the subscription,
 /// whose first stream arrives with the next catalog object, up to 30 s later.
 pub(crate) struct CatalogReader {
-    track: Track,
+    reader: TrackReader,
 }
 
 impl CatalogReader {
     pub(crate) async fn open(session: &Session, namespace: &str) -> Result<Self> {
-        let (subscription, reader) = session
+        let (_, reader) = session
             .subscriber()
             .subscribe_current_group(namespace.to_string(), msf::CATALOG_TRACK_NAME.to_string())
             .await
@@ -23,17 +21,12 @@ impl CatalogReader {
                     msf::CATALOG_TRACK_NAME
                 )
             })?;
-        Ok(Self {
-            track: Track {
-                subscription,
-                reader,
-            },
-        })
+        Ok(Self { reader })
     }
 
     /// `Ok(None)` once the catalog track has ended.
     pub(crate) async fn next(&mut self) -> Result<Option<Catalog>> {
-        let Some(object) = self.track.reader.next_object().await? else {
+        let Some(object) = self.reader.next_object().await? else {
             return Ok(None);
         };
         serde_json::from_slice(&object.payload)
