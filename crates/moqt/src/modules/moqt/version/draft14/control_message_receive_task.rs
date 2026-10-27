@@ -140,6 +140,13 @@ impl ControlMessageReceiveTask {
         received_message: ReceivedMessage,
     ) -> DepacketizeResult {
         tracing::debug!(message = ?received_message, "Event: message_type");
+        if let Some(request_id) = new_request_id(&received_message)
+            && let Err(reason) = ControlChannel::of(connection).accept_peer_request_id(request_id)
+        {
+            tracing::error!(request_id, %reason, "Protocol violation: invalid Request ID");
+            session.close_connection(connection, TerminationErrorCode::InvalidRequestId, reason);
+            return DepacketizeResult::SessionClosed;
+        }
         match received_message {
             ReceivedMessage::Subscribe(subscribe) => {
                 let subscribe_handler =
@@ -329,6 +336,19 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionClosed
             }
         }
+    }
+}
+
+/// The Request ID of a message that starts a new request (§9.1).
+fn new_request_id(message: &ReceivedMessage) -> Option<RequestId> {
+    match message {
+        ReceivedMessage::Subscribe(m) | ReceivedMessage::TrackStatus(m) => Some(m.request_id),
+        ReceivedMessage::SubscribeUpdate(m) => Some(m.request_id),
+        ReceivedMessage::Fetch(m) => Some(m.request_id),
+        ReceivedMessage::Publish(m) => Some(m.request_id),
+        ReceivedMessage::PublishNamespace(m) => Some(m.request_id),
+        ReceivedMessage::SubscribeNamespace(m) => Some(m.request_id),
+        _ => None,
     }
 }
 

@@ -8,7 +8,10 @@ pub(crate) mod setup;
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Weak},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -87,6 +90,8 @@ struct InflightRequests {
 pub(crate) struct ControlChannel {
     send_stream: BiStreamSender,
     next_request_id: tokio::sync::Mutex<RequestId>,
+    /// The smallest Request ID the peer may use for its next request.
+    next_peer_request_id: AtomicU64,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
 }
 
@@ -97,6 +102,7 @@ impl ControlChannel {
         Self {
             send_stream,
             next_request_id: tokio::sync::Mutex::new(first_request_id),
+            next_peer_request_id: AtomicU64::new(first_request_id ^ 1),
             inflight_requests: Arc::default(),
         }
     }
@@ -108,6 +114,21 @@ impl ControlChannel {
 
     pub(super) async fn reserve_request_id(&self) -> RequestIdReservation<'_> {
         RequestIdReservation(self.next_request_id.lock().await)
+    }
+
+    /// Fails when the peer's request reuses a Request ID, goes back to a
+    /// smaller one, or has this side's parity (§9.1).
+    fn accept_peer_request_id(&self, request_id: RequestId) -> Result<(), &'static str> {
+        let next = self.next_peer_request_id.load(Ordering::Relaxed);
+        if request_id % 2 != next % 2 {
+            return Err("Request ID has the parity of the other endpoint");
+        }
+        if request_id < next {
+            return Err("Request ID is not larger than the previous request's");
+        }
+        self.next_peer_request_id
+            .store(request_id + 2, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Writes the request before releasing `reservation`, so the peer
@@ -584,16 +605,18 @@ fn close_on_mismatched_late_response(
 mod tests {
     use tokio::sync::mpsc::error::TryRecvError;
 
-    use super::{LateResponseAction, handle_late_response};
+    use super::{ControlChannel, LateResponseAction, handle_late_response};
     use crate::{
-        SessionEvent,
+        Session, SessionEvent,
         modules::{
             moqt::{
                 control_plane::{
+                    control_messages::control_message_type::ControlMessageType,
                     control_messages::messages::{
                         fetch_ok::FetchOk,
                         parameters::{content_exists::ContentExists, filter_type::FilterType},
                         publish_ok::PublishOk,
+                        subscribe::Subscribe,
                         subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
@@ -601,12 +624,13 @@ mod tests {
                 domains::connection::IncomingObjectNotification,
             },
             test_support::{
-                HANDSHAKE_TIMEOUT, notify_datagram, register_and_take_data_receiver,
-                spawn_connected_dual_sessions,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, notify_datagram,
+                register_and_take_data_receiver, spawn_connected_dual_sessions,
             },
         },
         object::{GroupOrder, Location},
         publish::PublishDoneCode,
+        subscribe::TrackStatusHandler,
     };
 
     const REQUEST_ID: u64 = 1;
@@ -791,5 +815,114 @@ mod tests {
             matches!(event, SessionEvent::ProtocolViolation()),
             "{event:?}"
         );
+    }
+
+    /// Bypasses the Request ID reservation.
+    async fn send_track_status(session: &Session, request_id: u64) {
+        let track_status = Subscribe {
+            request_id,
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            forward: false,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        };
+        let connection = session.publisher().session.connection();
+        ControlChannel::of(&connection)
+            .send_stream
+            .send(ControlMessageType::TrackStatus, track_status.encode())
+            .await
+            .unwrap();
+    }
+
+    async fn assert_closed_with_invalid_request_id(session: &Session, reason: &str) {
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, session.closed())
+            .await
+            .unwrap();
+        assert_eq!(close.code, Some(0x4));
+        assert_eq!(close.reason, reason);
+    }
+
+    /// The handler is returned so its drop does not answer a request the
+    /// test sent outside the client's inflight requests.
+    async fn receive_track_status(session: &Session) -> TrackStatusHandler {
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, session.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+        let SessionEvent::TrackStatus(handler) = event else {
+            panic!("expected TRACK_STATUS, got {event:?}");
+        };
+        handler
+    }
+
+    #[tokio::test]
+    async fn request_id_with_the_receivers_parity_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_dual_sessions("request-id-wrong-parity").await;
+
+        // Act
+        send_track_status(&client, 1).await;
+
+        // Assert: the server closes the session
+        assert_closed_with_invalid_request_id(
+            &client,
+            "Request ID has the parity of the other endpoint",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn reused_request_id_closes_the_session() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("request-id-reused").await;
+        send_track_status(&client, 0).await;
+        let first = receive_track_status(&server).await;
+        assert_eq!(first.request_id(), 0);
+
+        // Act
+        send_track_status(&client, 0).await;
+
+        // Assert: the server closes the session
+        assert_closed_with_invalid_request_id(
+            &client,
+            "Request ID is not larger than the previous request's",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn request_id_skipping_unused_ids_is_accepted() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("request-id-gap").await;
+        send_track_status(&client, 0).await;
+        let first = receive_track_status(&server).await;
+        assert_eq!(first.request_id(), 0);
+
+        // Act
+        send_track_status(&client, 6).await;
+
+        // Assert
+        assert_eq!(receive_track_status(&server).await.request_id(), 6);
+    }
+
+    #[tokio::test]
+    async fn request_id_check_applies_to_requests_from_the_server() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("request-id-server-parity").await;
+
+        // Act
+        send_track_status(&server, 0).await;
+
+        // Assert: the client closes the session
+        assert_closed_with_invalid_request_id(
+            &server,
+            "Request ID has the parity of the other endpoint",
+        )
+        .await;
+        drop(client);
     }
 }
