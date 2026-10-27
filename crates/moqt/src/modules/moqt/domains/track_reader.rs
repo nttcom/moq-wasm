@@ -4,10 +4,11 @@ use tokio::sync::mpsc;
 
 use crate::{
     Subscriber, Subscription,
+    fetch::{Fetch, FetchOption},
     modules::executor::{self, JoinHandle, MaybeSend},
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, ObjectStatus,
-        StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
+        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError,
+        Object, ObjectStatus, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
     },
 };
 
@@ -47,12 +48,31 @@ impl TrackReader {
 
     pub(crate) fn of(subscriber: Subscriber, subscription: Subscription) -> Self {
         let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        Self {
+            object_receiver,
+            _stream_accept_task: SubgroupStreamAcceptTask::run(
+                stream_factory(subscriber, subscription),
+                object_sender,
+            ),
+        }
+    }
+
+    /// Subgroup streams are accepted only after the FETCH ends, so the fetched
+    /// objects come first.
+    pub(crate) fn joining_current_group(
+        subscriber: Subscriber,
+        subscription: Subscription,
+    ) -> Self {
+        let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        let fetch_sender = object_sender.clone();
         let factory = async move {
             let mut subscriber = subscriber;
-            match subscriber.accept_data_receiver(&subscription).await? {
-                DataReceiver::Stream(factory) => Ok(factory),
-                DataReceiver::Datagram(_) => Err(MalformedTrackError.into()),
+            if let Err(error) =
+                send_current_group(&mut subscriber, &subscription, fetch_sender).await
+            {
+                tracing::debug!(%error, "joining FETCH of the current group failed");
             }
+            stream_factory(subscriber, subscription).await
         };
         Self {
             object_receiver,
@@ -67,6 +87,55 @@ impl TrackReader {
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
         self.object_receiver.recv().await.transpose()
     }
+}
+
+async fn stream_factory(
+    mut subscriber: Subscriber,
+    subscription: Subscription,
+) -> anyhow::Result<StreamDataReceiverFactory> {
+    match subscriber.accept_data_receiver(&subscription).await? {
+        DataReceiver::Stream(factory) => Ok(factory),
+        DataReceiver::Datagram(_) => Err(MalformedTrackError.into()),
+    }
+}
+
+async fn send_current_group(
+    subscriber: &mut Subscriber,
+    subscription: &Subscription,
+    object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
+) -> anyhow::Result<()> {
+    if subscription.content_exists() == ContentExists::False {
+        return Ok(());
+    }
+    let handle = subscriber
+        .fetch_relative_joining(subscription, 0, FetchOption::default())
+        .await?;
+    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
+    while let Fetch::Object(object) = receiver.receive().await? {
+        if let Some(object) = track_object(object)
+            && object_sender.send(Ok(object)).await.is_err()
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn track_object(object: Object) -> Option<TrackObject> {
+    if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+        return None;
+    }
+    let subgroup_id = match object.forwarding {
+        ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+        ForwardingPreference::Datagram => 0,
+    };
+    Some(TrackObject {
+        group_id: object.location.group_id,
+        subgroup_id,
+        object_id: object.location.object_id,
+        extension_headers: object.extension_headers,
+        payload: object.payload,
+    })
 }
 
 struct SubgroupStreamAcceptTask {
@@ -138,18 +207,8 @@ async fn read_subgroup_objects(
     loop {
         match receiver.receive().await? {
             Some(Subgroup::Object(object)) => {
-                if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+                let Some(object) = track_object(object) else {
                     continue;
-                }
-                let ForwardingPreference::Subgroup { subgroup_id } = object.forwarding else {
-                    unreachable!("a subgroup stream carries subgroup objects")
-                };
-                let object = TrackObject {
-                    group_id: object.location.group_id,
-                    subgroup_id,
-                    object_id: object.location.object_id,
-                    extension_headers: object.extension_headers,
-                    payload: object.payload,
                 };
                 if object_sender.send(Ok(object)).await.is_err() {
                     return Ok(());

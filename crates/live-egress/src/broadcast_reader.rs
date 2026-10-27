@@ -35,16 +35,7 @@ pub struct SelectedTracks {
 
 impl BroadcastReader {
     pub async fn run(session: &Session, namespace: &str) -> Result<Self> {
-        // A joining FETCH may only join a Largest Object subscription
-        // (draft-ietf-moq-transport-14 §9.16.2).
-        let catalog_subscription = subscribe(
-            session,
-            namespace,
-            msf::CATALOG_TRACK_NAME,
-            FilterType::LargestObject,
-        )
-        .await?;
-        let catalog = read_catalog(session, &catalog_subscription).await?;
+        let catalog = read_catalog(session, namespace).await?;
         let catalog: Catalog = serde_json::from_slice(&catalog).context("parse catalog json")?;
         let tracks = select_tracks(&catalog)?;
         tracing::info!(

@@ -324,6 +324,15 @@ use these facades instead of the data-plane factories directly:
   status objects are skipped, a failure inside one stream is returned as `Err`
   while the other streams keep being read, and `Ok(None)` means the factory
   has no more streams.
+- `Subscriber::subscribe_current_group` is how a late joiner reads a track
+  from the start of its current group (draft-14 §9.16.2, the catalog join of
+  draft-ietf-moq-msf-01 §5). It subscribes with Largest Object and returns a
+  `TrackReader` whose task first sends a Relative Joining FETCH (offset 0) and
+  drains it into the channel, then accepts the subgroup streams, so the
+  fetched objects come before the live ones even when a live stream arrives
+  first. Until the FETCH ends, the live streams wait in the subscription's
+  channel. No FETCH is sent when SUBSCRIBE_OK reports no content. A refused or
+  failed FETCH is logged at DEBUG, and the reader yields only the live objects.
 
 ### `Origin` — the tracks this endpoint originates
 

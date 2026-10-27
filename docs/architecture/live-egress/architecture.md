@@ -34,8 +34,9 @@ initialization data, so their `codec`, `samplerate` and `channelConfig`
 timeline are ignored.
 
 ## Joining
-The catalog is read with the joining FETCH beside its SUBSCRIBE, as MSF §5
-asks of a late joiner, so the reader does not wait for the next catalog.
+The catalog is read with `Subscriber::subscribe_current_group`, the SUBSCRIBE
+and joining FETCH MSF §5 asks of a late joiner, so the reader does not wait
+for the next catalog.
 Media tracks are subscribed rather than fetched: FETCH would deliver past
 groups as a burst, which a real-time output like RTP would send on as a
 burst. The video is subscribed from the next group start, so it begins at a

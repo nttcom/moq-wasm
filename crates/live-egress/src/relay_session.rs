@@ -4,7 +4,6 @@ use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
     ClientConfig, DUAL, Endpoint, Session, Subscription, TrackReader,
-    fetch::{Fetch, FetchOption},
     object::{DataReceiver, GroupOrder},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -68,39 +67,17 @@ pub async fn track_reader(session: &Session, subscription: &Subscription) -> Res
     Ok(TrackReader::new(factory))
 }
 
-/// Reads the catalog's latest object with the joining FETCH (offset 0) that
-/// draft-ietf-moq-msf-01 §5 requires beside the SUBSCRIBE, falling back to the
-/// subscription's next object when the FETCH fails, e.g. before the first
-/// catalog was sent.
-pub async fn read_catalog(session: &Session, subscription: &Subscription) -> Result<Bytes> {
-    match fetch_joining_group(session, subscription).await {
-        Ok(Some(latest)) => return Ok(latest),
-        Ok(None) => {}
-        Err(error) => tracing::warn!(%error, "joining FETCH of the catalog failed"),
-    }
-    let mut updates = track_reader(session, subscription).await?;
-    match updates.next_object().await? {
+/// Reads the first object of the catalog's current group with the SUBSCRIBE and
+/// joining FETCH (offset 0) that draft-ietf-moq-msf-01 §5 requires, or the next
+/// object when the track has none yet.
+pub async fn read_catalog(session: &Session, namespace: &str) -> Result<Bytes> {
+    let (_subscription, mut reader) = session
+        .subscriber()
+        .subscribe_current_group(namespace.to_string(), msf::CATALOG_TRACK_NAME.to_string())
+        .await
+        .with_context(|| format!("subscribe {namespace}/{}", msf::CATALOG_TRACK_NAME))?;
+    match reader.next_object().await? {
         Some(object) => Ok(object.payload),
         None => bail!("catalog track ended before any object"),
-    }
-}
-
-/// The last object of the group `subscription` joined at.
-async fn fetch_joining_group(
-    session: &Session,
-    subscription: &Subscription,
-) -> Result<Option<Bytes>> {
-    let mut subscriber = session.subscriber();
-    let handle = subscriber
-        .fetch_relative_joining(subscription, 0, FetchOption::default())
-        .await?;
-    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-    let mut latest = None;
-    loop {
-        match receiver.receive().await? {
-            Fetch::Object(object) if !object.payload.is_empty() => latest = Some(object.payload),
-            Fetch::Object(_) => {}
-            Fetch::End => return Ok(latest),
-        }
     }
 }
