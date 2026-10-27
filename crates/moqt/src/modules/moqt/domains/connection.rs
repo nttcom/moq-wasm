@@ -69,6 +69,7 @@ pub(crate) struct Connection {
     pub(crate) event_sender: mpsc::UnboundedSender<SessionEvent>,
     is_server: bool,
     go_away_received: AtomicBool,
+    closed_locally: AtomicBool,
     track_alias: AtomicU64,
     /// Requests of earlier connections sent again here: logical id ↔ wire id.
     carried: std::sync::Mutex<CarriedIds>,
@@ -384,6 +385,7 @@ impl Connection {
             event_sender,
             is_server,
             go_away_received: AtomicBool::new(false),
+            closed_locally: AtomicBool::new(false),
             track_alias: AtomicU64::new(0),
             carried: std::sync::Mutex::default(),
             served: std::sync::Mutex::default(),
@@ -532,8 +534,15 @@ impl Connection {
     }
 
     pub(crate) fn close(&self, code: TerminationErrorCode, reason: &str) {
+        self.closed_locally.store(true, Ordering::SeqCst);
         self.transport
             .close(self.control.version().termination_code(code), reason);
+    }
+
+    /// Whether this side closed the connection, rather than the peer or the
+    /// network.
+    pub(crate) fn closed_locally(&self) -> bool {
+        self.closed_locally.load(Ordering::SeqCst)
     }
 }
 

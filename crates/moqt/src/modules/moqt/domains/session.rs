@@ -113,7 +113,8 @@ impl Session {
     }
 
     /// Resolves once the session's last connection has closed, whichever
-    /// side closed it; a connection a GOAWAY replaced does not count.
+    /// side closed it; a connection a GOAWAY or a reconnect replaced does not
+    /// count.
     /// Consumes no session events, so it can be awaited beside
     /// `receive_event()`.
     pub async fn closed(&self) -> TransportClose {

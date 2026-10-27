@@ -22,6 +22,15 @@ use crate::{Connecting, WebSocketFallback, server::Accepting, server::Handshake}
 
 const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// The termination code a peer closed the connection with instead of
+/// answering CLIENT_SETUP (draft-14 §3.4).
+#[derive(Debug, thiserror::Error)]
+#[error("peer closed the connection before SERVER_SETUP (code {code}: {reason})")]
+pub(crate) struct SetupRejected {
+    pub(crate) code: u32,
+    reason: String,
+}
+
 pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) transport_creator: T::ConnectionCreator,
     pub(crate) authorization_token: Option<AuthorizationTokenSource>,
@@ -32,6 +41,10 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
 /// Opens another connection of a session that follows GOAWAY, on the same
 /// endpoint and transport as the first.
 pub(crate) trait Reconnect: MaybeSend + MaybeSync {
+    /// Whether each connection gets a token from a provider, so a connection
+    /// closed for an expired token can be opened again.
+    fn refreshes_token(&self) -> bool;
+
     fn connect(
         &self,
         url: String,
@@ -41,6 +54,12 @@ pub(crate) trait Reconnect: MaybeSend + MaybeSync {
 }
 
 impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
+    fn refreshes_token(&self) -> bool {
+        self.authorization_token
+            .as_ref()
+            .is_some_and(AuthorizationTokenSource::is_provider)
+    }
+
     fn connect(
         &self,
         url: String,
@@ -94,7 +113,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     event_receiver,
                     Some(server_setup),
                     Some(Follow {
-                        reconnect: Box::new(creator.clone()),
+                        reconnect: Arc::new(creator.clone()),
                         url,
                         connection_events,
                     }),
@@ -252,9 +271,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             Ok(TransportClose {
                 code: Some(code),
                 reason,
-            }) => error.context(format!(
-                "peer closed the connection before SERVER_SETUP (code {code}: {reason})"
-            )),
+            }) => error.context(SetupRejected { code, reason }),
             _ => error,
         }
     }
