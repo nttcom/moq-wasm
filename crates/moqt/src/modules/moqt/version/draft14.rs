@@ -32,6 +32,7 @@ use crate::{
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::{PublishDoneCode, RequestKind},
+                namespace_interest::NamespaceInterest,
             },
             data_plane::stream::bi_stream_sender::BiStreamSender,
             domains::{connection::Connection, session_context::SessionContext},
@@ -170,7 +171,8 @@ impl ControlChannel {
                     namespace: publish_namespace.track_namespace,
                 },
             ),
-            OutgoingRequest::SubscribeNamespace(subscribe_namespace) => (
+            OutgoingRequest::SubscribeNamespace(subscribe_namespace)
+            | OutgoingRequest::SubscribeTracks(subscribe_namespace) => (
                 subscribe_namespace.request_id,
                 ControlMessageType::SubscribeNamespace,
                 subscribe_namespace.encode(),
@@ -258,9 +260,14 @@ impl ControlChannel {
                 );
                 (ControlMessageType::PublishNamespaceCancel, cancel.encode())
             }
-            Notification::UnsubscribeNamespace(m) => {
-                (ControlMessageType::UnSubscribeNamespace, m.encode())
-            }
+            // One SUBSCRIBE_NAMESPACE covers every interest (§6.1).
+            Notification::UnsubscribeNamespace {
+                track_namespace_prefix,
+                ..
+            } => (
+                ControlMessageType::UnSubscribeNamespace,
+                UnsubscribeNamespace::new(track_namespace_prefix).encode(),
+            ),
             Notification::GoAway(m) => (ControlMessageType::GoAway, m.encode()),
             Notification::MaxRequestId(m) => (ControlMessageType::MaxRequestId, m.encode()),
             Notification::RequestsBlocked(m) => (ControlMessageType::RequestsBlocked, m.encode()),
@@ -403,9 +410,10 @@ async fn handle_late_response(
                     "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
                 );
                 channel
-                    .notify(Notification::UnsubscribeNamespace(
-                        UnsubscribeNamespace::new(namespace.clone()),
-                    ))
+                    .notify(Notification::UnsubscribeNamespace {
+                        track_namespace_prefix: namespace.clone(),
+                        interest: NamespaceInterest::NamespacesAndTracks,
+                    })
                     .await
             }
             _ => close_on_mismatched_late_response(session, connection, request_id, &response),
@@ -527,12 +535,14 @@ mod tests {
                 domains::connection::IncomingObjectNotification,
             },
             test_support::{
-                HANDSHAKE_TIMEOUT, notify_datagram, register_and_take_data_receiver,
-                spawn_connected_dual_sessions,
+                HANDSHAKE_TIMEOUT, accept_publish, notify_datagram,
+                register_and_take_data_receiver, spawn_connected_dual_sessions,
+                use_up_bidi_streams,
             },
         },
+        namespace::NamespaceInterest,
         object::{GroupOrder, Location},
-        publish::PublishDoneCode,
+        publish::{PublishDoneCode, PublishOption},
     };
 
     const REQUEST_ID: u64 = 1;
@@ -717,5 +727,39 @@ mod tests {
             matches!(event, SessionEvent::ProtocolViolation()),
             "{event:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_publish_needs_no_stream_so_it_is_never_blocked() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("draft14-publish-not-blocked").await;
+        let subscriber = client.subscriber();
+        let (subscribed, ()) = tokio::join!(
+            subscriber.subscribe_namespace("live".into(), NamespaceInterest::Tracks),
+            async {
+                let SessionEvent::SubscribeNameSpace(handler) =
+                    server.receive_event().await.unwrap()
+                else {
+                    panic!("expected SUBSCRIBE_NAMESPACE");
+                };
+                handler.ok().await.unwrap();
+            }
+        );
+        subscribed.unwrap();
+        let _streams = use_up_bidi_streams(&server).await;
+
+        // Act
+        let publisher = server.publisher();
+        let (published, _accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            tokio::join!(
+                publisher.publish("live/room".into(), "video".into(), PublishOption::default()),
+                accept_publish(&client)
+            )
+        })
+        .await
+        .expect("the PUBLISH reaches the subscriber");
+
+        // Assert: draft-14 §9.13 sends PUBLISH on the control stream and has no PUBLISH_BLOCKED
+        assert!(published.is_ok(), "{published:?}");
     }
 }

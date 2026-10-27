@@ -1,4 +1,4 @@
-use moqt::RequestErrorCode;
+use moqt::{RequestErrorCode, namespace::NamespaceInterest};
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -199,9 +199,10 @@ impl PublishNamespace {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
     ) {
-        let combined = table.get_namespace_subscribers(track_namespace);
-        tracing::debug!("The namespace are subscribed by: {:?}", combined);
-        for session_id in combined {
+        let subscribers =
+            table.get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces);
+        tracing::debug!("The namespace are subscribed by: {:?}", subscribers.keys());
+        for session_id in subscribers.into_keys() {
             forwarder
                 .publish_namespace(session_id, track_namespace.to_string())
                 .await;

@@ -11,6 +11,7 @@ use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
     fetch::{Fetch, FetchOption},
+    namespace::NamespaceInterest,
     object::{
         ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
         ObjectStatus, Subgroup, SubgroupStart,
@@ -392,7 +393,7 @@ async fn run_pub_sub_scenario(
         tracing::info!(track_namespace_prefix = %prefix, "subscriber sending SUBSCRIBE_NAMESPACE");
         subscriber_session
             .subscriber()
-            .subscribe_namespace(prefix.to_string())
+            .subscribe_namespace(prefix.to_string(), NamespaceInterest::NamespacesAndTracks)
             .await
             .context("subscriber failed to subscribe namespace")?;
     }
@@ -477,7 +478,10 @@ async fn run_namespace_catalog_track_scenario(
     tracing::info!(track_namespace_prefix = %track_namespace, "subscriber sending SUBSCRIBE_NAMESPACE");
     subscriber_session
         .subscriber()
-        .subscribe_namespace(track_namespace.to_string())
+        .subscribe_namespace(
+            track_namespace.to_string(),
+            NamespaceInterest::NamespacesAndTracks,
+        )
         .await
         .context("subscriber failed to subscribe namespace")?;
 

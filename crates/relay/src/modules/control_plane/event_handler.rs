@@ -135,6 +135,8 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
 
+    use moqt::namespace::NamespaceInterest;
+
     use super::{EventHandler, WorkerDeps};
     use crate::modules::{
         auth::{
@@ -155,17 +157,22 @@ mod tests {
             ingress::ingress_coordinator::IngressCommand,
         },
         domain::{
-            pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-            session_peer::SessionPeer, track_key::TrackKey,
+            pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::NamespaceSubscription},
+            session_id::SessionId,
+            session_peer::SessionPeer,
+            track_key::TrackKey,
         },
         session::{
             moqt_session_event::MoqtSessionEvent,
             session_event::{EventKind, SessionEvent},
             session_repository::SessionRepository,
         },
-        test_support::mock_session::{
-            MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,
-            RecordedControlMessages, mock_new_session,
+        test_support::{
+            directory_fixtures::{client_subscription, namespaces_and_tracks},
+            mock_session::{
+                MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,
+                RecordedControlMessages, SentPublish, mock_new_session,
+            },
         },
     };
 
@@ -258,11 +265,25 @@ mod tests {
             session_id: SessionId,
             track_namespace_prefix: &str,
         ) -> RecordedControlMessages {
+            self.register_namespace_subscription(
+                session_id,
+                track_namespace_prefix,
+                namespaces_and_tracks(SessionPeer::Client),
+            )
+            .await
+        }
+
+        async fn register_namespace_subscription(
+            &self,
+            session_id: SessionId,
+            track_namespace_prefix: &str,
+            subscription: NamespaceSubscription,
+        ) -> RecordedControlMessages {
             let recorded = self.register_session(session_id).await;
             self.local_pub_sub_directory.register_subscribe_namespace(
                 session_id,
                 track_namespace_prefix.to_string(),
-                SessionPeer::Client,
+                subscription,
             );
             recorded
         }
@@ -274,6 +295,32 @@ mod tests {
                     MockPublishNamespaceHandler::new(track_namespace),
                 ))),
             });
+        }
+
+        fn send_publish(&self, session_id: SessionId, track_namespace: &str, track_name: &str) {
+            self.send(SessionEvent {
+                session_id,
+                kind: EventKind::FromSession(MoqtSessionEvent::Publish(Box::new(
+                    MockPublishHandler::new(track_namespace, track_name, 0),
+                ))),
+            });
+        }
+
+        /// Waits until `session_id`'s worker has handled every earlier event,
+        /// by queueing a protocol violation behind them; the session ends
+        /// closed.
+        async fn wait_until_handled(
+            &self,
+            session_id: SessionId,
+            recorded: &RecordedControlMessages,
+        ) {
+            self.send(SessionEvent::protocol_violation_detected(
+                session_id,
+                "barrier".to_string(),
+            ));
+            wait_for_close(recorded)
+                .await
+                .expect("the session should be closed after its earlier events");
         }
 
         fn send(&self, event: SessionEvent) {
@@ -337,6 +384,118 @@ mod tests {
             }
         })
         .await
+    }
+
+    async fn wait_for_publishes(
+        recorded: &RecordedControlMessages,
+        count: usize,
+    ) -> Result<Vec<SentPublish>, tokio::time::error::Elapsed> {
+        tokio::time::timeout(WAIT_TIMEOUT, async {
+            loop {
+                let publishes = recorded.publishes();
+                if publishes.len() >= count {
+                    return publishes;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn publish_reaches_the_track_subscribers_with_their_forward_state() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        let paused = handler
+            .register_namespace_subscription(
+                2,
+                "ns",
+                NamespaceSubscription {
+                    forward: false,
+                    ..client_subscription(NamespaceInterest::Tracks)
+                },
+            )
+            .await;
+        let draft14 = handler.register_namespace_subscriber(3, "ns").await;
+        handler.register_session(1).await;
+
+        // Act
+        handler.send_publish(1, "ns", "track");
+
+        // Assert: draft-18 §10.19 gives the PUBLISH the FORWARD of the SUBSCRIBE_TRACKS
+        let paused = wait_for_publishes(&paused, 1).await.unwrap();
+        let draft14 = wait_for_publishes(&draft14, 1).await.unwrap();
+        assert!(!paused[0].forward);
+        assert!(draft14[0].forward);
+    }
+
+    #[tokio::test]
+    async fn publish_skips_a_publisher_whose_subscription_leaves_out_its_own_tracks() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        let publisher = handler
+            .register_namespace_subscription(
+                1,
+                "ns",
+                client_subscription(NamespaceInterest::Tracks),
+            )
+            .await;
+        let other = handler.register_namespace_subscriber(2, "ns").await;
+
+        // Act
+        handler.send_publish(1, "ns", "track");
+        wait_for_publishes(&other, 1).await.unwrap();
+        handler.wait_until_handled(1, &publisher).await;
+
+        // Assert: draft-18 §6.1 leaves out the tracks published by the subscriber
+        assert!(publisher.publishes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn publish_is_echoed_to_a_publisher_whose_subscription_echoes_its_tracks() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        let publisher = handler.register_namespace_subscriber(1, "ns").await;
+
+        // Act
+        handler.send_publish(1, "ns", "track");
+
+        // Assert: draft-14 §6.1 echoes PUBLISH back to the endpoint that sent it
+        wait_for_publishes(&publisher, 1)
+            .await
+            .expect("the publisher should receive its own PUBLISH");
+    }
+
+    #[tokio::test]
+    async fn publish_and_publish_namespace_go_only_to_the_subscriptions_asking_for_them() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        let namespaces = handler
+            .register_namespace_subscription(
+                2,
+                "ns",
+                client_subscription(NamespaceInterest::Namespaces),
+            )
+            .await;
+        let tracks = handler
+            .register_namespace_subscription(
+                3,
+                "ns",
+                client_subscription(NamespaceInterest::Tracks),
+            )
+            .await;
+        let publisher = handler.register_session(1).await;
+
+        // Act
+        handler.send_publish_namespace(1, "ns/a");
+        handler.send_publish(1, "ns", "track");
+        handler.wait_until_handled(1, &publisher).await;
+
+        // Assert: draft-18 §6.1 answers SUBSCRIBE_NAMESPACE with namespaces and SUBSCRIBE_TRACKS with PUBLISH
+        assert_eq!(namespaces.publish_namespaces(), ["ns/a"]);
+        assert!(namespaces.publishes().is_empty());
+        assert!(tracks.publish_namespaces().is_empty());
+        assert_eq!(wait_for_publishes(&tracks, 1).await.unwrap().len(), 1);
     }
 
     #[tokio::test]

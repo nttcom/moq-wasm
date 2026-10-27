@@ -37,7 +37,10 @@ pub(crate) struct DownstreamPublish {
 
 impl DownstreamPublish {
     /// A subscriber that already receives the track, e.g. from an earlier
-    /// publisher of it, gets no second PUBLISH.
+    /// publisher of it, gets no second PUBLISH, nor does one whose
+    /// subscription the track's PUBLISH was blocked on (draft-18 §6.1 MUST
+    /// NOT). `forward` is the Forward State
+    /// the PUBLISH asks for (draft-18 §10.19: its SUBSCRIBE_TRACKS's FORWARD).
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.downstream_publish",
@@ -48,10 +51,14 @@ impl DownstreamPublish {
         &self,
         subscriber_session_id: SessionId,
         track_key: &TrackKey,
+        forward: bool,
     ) -> anyhow::Result<()> {
         if self
             .table
             .has_downstream_subscription_to_track(subscriber_session_id, track_key)
+            || self
+                .table
+                .is_publish_blocked(subscriber_session_id, track_key)
         {
             return Ok(());
         }
@@ -64,7 +71,7 @@ impl DownstreamPublish {
             ContentExists::True { location }
         });
 
-        let downstream_subscription = self
+        let published = self
             .forwarder
             .publish(
                 subscriber_session_id,
@@ -72,8 +79,25 @@ impl DownstreamPublish {
                 track_key.track_name.clone(),
                 content_exists,
                 upstream_track.max_cache_duration(),
+                forward,
             )
-            .await?;
+            .await;
+        let downstream_subscription = match published {
+            Ok(downstream_subscription) => downstream_subscription,
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<moqt::RequestFailure>(),
+                    Some(moqt::RequestFailure::PublishBlocked)
+                ) =>
+            {
+                tracing::info!(
+                    "the subscriber had no stream for the PUBLISH; not sending it again"
+                );
+                self.table.block_publish(subscriber_session_id, track_key);
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         let request_id = downstream_subscription.request_id();
         let Some(forward) = downstream_subscription.publish_ok_forward() else {
             bail!("PUBLISH answered without a publisher-initiated subscription");
@@ -130,9 +154,13 @@ impl DownstreamPublish {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moqt::namespace::NamespaceInterest;
+
     use crate::modules::{
         domain::{
-            pub_sub_directory::entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
+            pub_sub_directory::entry::{
+                ActiveUpstreamSubscription, NamespaceSubscription, UpstreamSubscriptionOrigin,
+            },
             session_peer::SessionPeer,
         },
         test_support::{
@@ -158,7 +186,7 @@ mod tests {
 
     async fn send_publish(ctx: &DownstreamPublishContext) -> anyhow::Result<()> {
         ctx.downstream_publish()
-            .send(NAMESPACE_SUBSCRIBER_SESSION, &track_key())
+            .send(NAMESPACE_SUBSCRIBER_SESSION, &track_key(), true)
             .await
     }
 
@@ -241,6 +269,7 @@ mod tests {
                     location: location(4, 1)
                 },
                 max_cache_duration: None,
+                forward: true,
             }]
         );
         assert_eq!(
@@ -336,5 +365,73 @@ mod tests {
         assert!(result.is_err());
         assert!(ctx.table.downstream_subscriptions.is_empty());
         assert!(ctx.egress_receiver.try_recv().is_err());
+    }
+
+    fn blocked() -> anyhow::Result<bool> {
+        Err(anyhow::Error::new(moqt::RequestFailure::PublishBlocked))
+    }
+
+    #[tokio::test]
+    async fn a_track_whose_publish_was_blocked_is_never_published_to_the_subscriber_again() {
+        // Arrange
+        let mut ctx = downstream_publish_context(published_table(), blocked).await;
+        let _ = send_publish(&ctx).await;
+
+        // Act
+        let _ = send_publish(&ctx).await;
+
+        // Assert: draft-18 §6.1 MUST NOT send a PUBLISH for the track after PUBLISH_BLOCKED
+        assert_eq!(ctx.subscriber.publishes().len(), 1);
+        assert!(ctx.table.downstream_subscriptions.is_empty());
+        assert!(ctx.egress_receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_new_tracks_subscription_gets_the_publish_an_ended_one_was_blocked_from() {
+        // Arrange
+        let answered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ctx = downstream_publish_context(published_table(), {
+            let answered = answered.clone();
+            move || {
+                if answered.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    Ok(true)
+                } else {
+                    blocked()
+                }
+            }
+        })
+        .await;
+        let tracks = NamespaceSubscription {
+            interest: NamespaceInterest::Tracks,
+            peer: SessionPeer::Client,
+            forward: true,
+        };
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns".to_string(),
+            tracks,
+        );
+        let _ = send_publish(&ctx).await;
+        ctx.table.unregister_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns",
+            NamespaceInterest::Tracks,
+        );
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns".to_string(),
+            tracks,
+        );
+
+        // Act
+        send_publish(&ctx).await.unwrap();
+
+        // Assert: draft-18 §6.1, PUBLISH_BLOCKED bars the track from the subscription it went on only
+        assert_eq!(ctx.subscriber.publishes().len(), 2);
+        assert!(
+            ctx.table
+                .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
+                .is_some()
+        );
     }
 }

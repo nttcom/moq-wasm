@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use moqt::{
+    namespace::NamespaceInterest,
     object::{ContentExists, Location},
     publish::PublishDoneCode,
     subscribe::FilterType,
@@ -10,6 +11,15 @@ use crate::modules::{
     domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::subscription::UpstreamSubscription,
 };
+
+/// One session's subscription to a namespace prefix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NamespaceSubscription {
+    pub(crate) interest: NamespaceInterest,
+    pub(crate) peer: SessionPeer,
+    /// The Forward State of the PUBLISH messages it receives.
+    pub(crate) forward: bool,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveUpstreamSubscription {

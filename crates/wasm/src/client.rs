@@ -13,6 +13,7 @@ use moqt::{
     AuthorizationToken, BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session,
     Subscription, TerminationErrorCode, TransportSendError,
     fetch::{FetchDataSender, FetchHandle, FetchHandler, FetchOption},
+    namespace::NamespaceInterest,
     namespace::PublishNamespaceHandler,
     object::DataStreamResetCode,
     object::{
@@ -427,7 +428,10 @@ impl MOQTClient {
             .register_subscribe_namespace_request(request_id, track_namespace_prefix.clone());
         let result = session
             .subscriber()
-            .subscribe_namespace(track_namespace_prefix.join("/"))
+            .subscribe_namespace(
+                track_namespace_prefix.join("/"),
+                NamespaceInterest::NamespacesAndTracks,
+            )
             .await;
         self.shared
             .state

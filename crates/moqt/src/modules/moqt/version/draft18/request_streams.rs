@@ -45,6 +45,7 @@ use crate::{
                     fetch_cancel_handler::FetchCancelHandler,
                     fetch_handler::FetchHandler,
                     go_away_handler::GoAwayHandler,
+                    publish_blocked_handler::PublishBlockedHandler,
                     publish_done_handler::PublishDoneHandler,
                     publish_handler::PublishHandler,
                     publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
@@ -57,6 +58,7 @@ use crate::{
                     unsubscribe_handler::UnsubscribeHandler,
                     unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
                 },
+                namespace_interest::NamespaceInterest,
             },
             data_plane::stream::{
                 stream_receiver::StreamReceiveError, stream_sender::StreamSender,
@@ -392,20 +394,26 @@ impl IncomingRequestTask {
                 RequestStreamKind::SubscribeNamespace(
                     subscribe_namespace.track_namespace_prefix.clone(),
                 ),
-                SessionEvent::SubscribeNameSpace(SubscribeNamespaceHandler::new(
+                SessionEvent::SubscribeNameSpace(SubscribeNamespaceHandler::with_interest(
                     scope.connection.clone(),
                     subscribe_namespace,
+                    NamespaceInterest::Namespaces,
+                    true,
                 )),
             ),
+            // §6.1: SUBSCRIBE_TRACKS excludes the tracks the subscriber
+            // publishes itself.
             Message::SubscribeTracks(subscribe_tracks) => (
                 RequestStreamKind::SubscribeTracks(subscribe_tracks.track_namespace_prefix.clone()),
-                SessionEvent::SubscribeNameSpace(SubscribeNamespaceHandler::new(
+                SessionEvent::SubscribeNameSpace(SubscribeNamespaceHandler::with_interest(
                     scope.connection.clone(),
                     SubscribeNamespace {
                         request_id: subscribe_tracks.request_id,
                         track_namespace_prefix: subscribe_tracks.track_namespace_prefix,
                         authorization_token: subscribe_tracks.authorization_tokens,
                     },
+                    NamespaceInterest::Tracks,
+                    subscribe_tracks.forward,
                 )),
             ),
             _ => unreachable!("non-request messages returned above"),
@@ -514,11 +522,17 @@ impl IncomingRequestTask {
             RequestStreamKind::PublishNamespace(namespace) => SessionEvent::PublishNamespaceDone(
                 PublishNamespaceDoneHandler::new(PublishNamespaceDone::new(namespace)),
             ),
-            RequestStreamKind::SubscribeNamespace(prefix)
-            | RequestStreamKind::SubscribeTracks(prefix) => {
+            RequestStreamKind::SubscribeNamespace(prefix) => {
                 scope.channel().forget_advertised(request_id);
                 SessionEvent::UnsubscribeNamespace(UnsubscribeNamespaceHandler::new(
                     UnsubscribeNamespace::new(prefix),
+                    NamespaceInterest::Namespaces,
+                ))
+            }
+            RequestStreamKind::SubscribeTracks(prefix) => {
+                SessionEvent::UnsubscribeNamespace(UnsubscribeNamespaceHandler::new(
+                    UnsubscribeNamespace::new(prefix),
+                    NamespaceInterest::Tracks,
                 ))
             }
             RequestStreamKind::Publish => SessionEvent::PublishDone(PublishDoneHandler::new(
@@ -782,6 +796,23 @@ impl OutgoingRequestTask {
                 }
                 // Answers to our REQUEST_UPDATE.
                 Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}
+                // §6.1: the peer could not open the stream of a PUBLISH; this
+                // side can still SUBSCRIBE to the track.
+                Ok(Some(Message::PublishBlocked(blocked))) => {
+                    let RequestStreamKind::SubscribeTracks(prefix) = &kind else {
+                        close_on_violation(&context, "PUBLISH_BLOCKED outside SUBSCRIBE_TRACKS");
+                        return;
+                    };
+                    tracing::info!(request_id, "PUBLISH_BLOCKED on a SUBSCRIBE_TRACKS stream");
+                    emit(
+                        &context,
+                        SessionEvent::PublishBlocked(PublishBlockedHandler::new(
+                            prefix,
+                            &blocked.track_namespace_suffix,
+                            blocked.track_name,
+                        )),
+                    );
+                }
                 Ok(Some(Message::Namespace(suffix))) => {
                     let RequestStreamKind::SubscribeNamespace(prefix) = &kind else {
                         close_on_violation(&context, "NAMESPACE outside SUBSCRIBE_NAMESPACE");
@@ -918,12 +949,14 @@ impl OutgoingRequestTask {
             (RequestStreamKind::PublishNamespace(_), Message::RequestError(error)) => {
                 ResponseMessage::PublishNamespaceError(request_id, error.code, error.reason)
             }
-            (RequestStreamKind::SubscribeNamespace(_), Message::RequestOk(_)) => {
-                ResponseMessage::SubscribeNameSpaceOk(request_id)
-            }
-            (RequestStreamKind::SubscribeNamespace(_), Message::RequestError(error)) => {
-                ResponseMessage::SubscribeNameSpaceError(request_id, error.code, error.reason)
-            }
+            (
+                RequestStreamKind::SubscribeNamespace(_) | RequestStreamKind::SubscribeTracks(_),
+                Message::RequestOk(_),
+            ) => ResponseMessage::SubscribeNameSpaceOk(request_id),
+            (
+                RequestStreamKind::SubscribeNamespace(_) | RequestStreamKind::SubscribeTracks(_),
+                Message::RequestError(error),
+            ) => ResponseMessage::SubscribeNameSpaceError(request_id, error.code, error.reason),
             _ => return None,
         })
     }

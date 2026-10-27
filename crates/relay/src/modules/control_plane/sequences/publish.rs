@@ -1,4 +1,4 @@
-use moqt::RequestErrorCode;
+use moqt::{RequestErrorCode, namespace::NamespaceInterest};
 use std::sync::Arc;
 
 use crate::modules::{
@@ -158,14 +158,22 @@ impl Publish {
         downstream_publish: &DownstreamPublish,
         track_key: &TrackKey,
     ) {
-        let subscriber_session_ids = downstream_publish
+        let subscribers = downstream_publish
             .table
-            .get_namespace_subscribers(&track_key.track_namespace);
-        for subscriber_session_id in subscriber_session_ids {
+            .get_namespace_subscribers(&track_key.track_namespace, NamespaceInterest::Tracks);
+        for (subscriber_session_id, subscription) in subscribers {
+            if !downstream_publish.table.offers_track(
+                subscriber_session_id,
+                &subscription,
+                track_key,
+            ) {
+                continue;
+            }
             let _publish_task = DownstreamPublishTask::run(
                 downstream_publish.clone(),
                 subscriber_session_id,
                 track_key.clone(),
+                subscription.forward,
             );
         }
     }
@@ -252,10 +260,12 @@ impl Publish {
                 session_id = session_id,
                 "forwarding PUBLISH to remote relay"
             );
+            // The remote relay applies its own subscribers' Forward State.
             let _publish_task = DownstreamPublishTask::run(
                 downstream_publish.clone(),
                 session_id,
                 track_key.clone(),
+                true,
             );
         }
     }

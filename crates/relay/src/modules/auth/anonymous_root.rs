@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use moqt::RequestErrorCode;
+use moqt::{RequestErrorCode, namespace::NamespaceInterest};
 
 use crate::modules::{
     auth::verified_token::{ANONYMOUS_APP_ID, VerifiedToken},
@@ -60,6 +60,14 @@ impl SubscribeNamespaceHandler for AnonymousRootSubscribeNamespace {
         &self.track_namespace_prefix_tuple
     }
 
+    fn interest(&self) -> NamespaceInterest {
+        self.inner.interest()
+    }
+
+    fn forward(&self) -> bool {
+        self.inner.forward()
+    }
+
     async fn ok(&self) -> Result<(), moqt::TransportSendError> {
         self.inner.ok().await
     }
@@ -75,55 +83,19 @@ impl SubscribeNamespaceHandler for AnonymousRootSubscribeNamespace {
 
 #[cfg(test)]
 mod tests {
-    use async_trait::async_trait;
-    use moqt::RequestErrorCode;
+    use moqt::namespace::NamespaceInterest;
 
     use super::{scope_anonymous_root_prefix, scope_anonymous_root_subscription};
     use crate::modules::{
         auth::{test_support::app_token, verified_token::VerifiedToken},
-        session::{
-            handler::subscribe_namespace::SubscribeNamespaceHandler,
-            moqt_session_event::MoqtSessionEvent,
-        },
+        session::moqt_session_event::MoqtSessionEvent,
+        test_support::mock_session::MockSubscribeNamespaceHandler,
     };
 
-    struct StubSubscribeNamespace {
-        track_namespace_prefix_tuple: Vec<String>,
-        track_namespace_prefix: String,
-    }
-
-    impl StubSubscribeNamespace {
-        fn event(elements: &[&str]) -> MoqtSessionEvent {
-            let track_namespace_prefix_tuple: Vec<String> =
-                elements.iter().map(|element| element.to_string()).collect();
-            MoqtSessionEvent::SubscribeNamespace(Box::new(Self {
-                track_namespace_prefix: track_namespace_prefix_tuple.join("/"),
-                track_namespace_prefix_tuple,
-            }))
-        }
-    }
-
-    #[async_trait]
-    impl SubscribeNamespaceHandler for StubSubscribeNamespace {
-        fn track_namespace_prefix(&self) -> &str {
-            &self.track_namespace_prefix
-        }
-
-        fn track_namespace_prefix_tuple(&self) -> &[String] {
-            &self.track_namespace_prefix_tuple
-        }
-
-        async fn ok(&self) -> Result<(), moqt::TransportSendError> {
-            Ok(())
-        }
-
-        async fn error(
-            &self,
-            _code: RequestErrorCode,
-            _reason_phrase: String,
-        ) -> Result<(), moqt::TransportSendError> {
-            Ok(())
-        }
+    fn subscribe_namespace_event(track_namespace_prefix: &str) -> MoqtSessionEvent {
+        MoqtSessionEvent::SubscribeNamespace(Box::new(MockSubscribeNamespaceHandler::new(
+            track_namespace_prefix,
+        )))
     }
 
     fn requested_prefix(event: &MoqtSessionEvent) -> (&str, &[String]) {
@@ -142,8 +114,7 @@ mod tests {
         let token = VerifiedToken::anonymous();
 
         // Act
-        let event =
-            scope_anonymous_root_subscription(Some(&token), StubSubscribeNamespace::event(&[]));
+        let event = scope_anonymous_root_subscription(Some(&token), subscribe_namespace_event(""));
 
         // Assert
         assert_eq!(
@@ -153,15 +124,37 @@ mod tests {
     }
 
     #[test]
+    fn anonymous_root_subscription_keeps_what_it_asks_for() {
+        // Arrange
+        let token = VerifiedToken::anonymous();
+        let handler = MockSubscribeNamespaceHandler {
+            interest: NamespaceInterest::Tracks,
+            forward: false,
+            ..MockSubscribeNamespaceHandler::new("")
+        };
+
+        // Act
+        let event = scope_anonymous_root_subscription(
+            Some(&token),
+            MoqtSessionEvent::SubscribeNamespace(Box::new(handler)),
+        );
+
+        // Assert
+        let MoqtSessionEvent::SubscribeNamespace(scoped) = event else {
+            panic!("expected SubscribeNamespace, got {event:?}");
+        };
+        assert_eq!(scoped.interest(), NamespaceInterest::Tracks);
+        assert!(!scoped.forward());
+    }
+
+    #[test]
     fn anonymous_subscription_below_the_root_is_kept() {
         // Arrange
         let token = VerifiedToken::anonymous();
 
         // Act
-        let event = scope_anonymous_root_subscription(
-            Some(&token),
-            StubSubscribeNamespace::event(&["anon", "room"]),
-        );
+        let event =
+            scope_anonymous_root_subscription(Some(&token), subscribe_namespace_event("anon/room"));
 
         // Assert
         assert_eq!(
@@ -176,8 +169,7 @@ mod tests {
         let token = app_token(Some(""), Some(""));
 
         // Act
-        let event =
-            scope_anonymous_root_subscription(Some(&token), StubSubscribeNamespace::event(&[]));
+        let event = scope_anonymous_root_subscription(Some(&token), subscribe_namespace_event(""));
 
         // Assert
         assert_eq!(requested_prefix(&event), ("", &[][..]));

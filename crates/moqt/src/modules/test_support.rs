@@ -8,7 +8,10 @@ use bytes::Bytes;
 use tracing_subscriber::EnvFilter;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
-use crate::modules::transport::transport_connection::BoxedConnection;
+use crate::modules::transport::server_transport_config::MAX_CONCURRENT_BIDI_STREAMS;
+use crate::modules::transport::transport_connection::{
+    BoxedConnection, BoxedReceiveStream, BoxedSendStream,
+};
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 use crate::{
@@ -147,8 +150,18 @@ pub(crate) fn spawn_dual_server_offering(
     (port, accept)
 }
 
+/// `spawn_dual_server`, offering only draft-18.
+pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
+    spawn_dual_server_offering(name, DRAFT18_PROTOCOLS)
+}
+
 pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
     Endpoint::<DUAL>::create_client(&config).unwrap()
+}
+
+/// `dual_client_with_config`, offering only draft-18.
+pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
+    Endpoint::<DUAL>::create_client_offering(&config, DRAFT18_PROTOCOLS).unwrap()
 }
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
@@ -207,11 +220,6 @@ pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Sessi
         .unwrap()
 }
 
-/// `spawn_dual_server`, offering only draft-18.
-pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    spawn_dual_server_offering(name, DRAFT18_PROTOCOLS)
-}
-
 /// Connects a DUAL client and server that offer only draft-18, over raw
 /// QUIC for `moqt` or WebTransport for `https`.
 pub(crate) async fn spawn_connected_draft18_sessions(
@@ -219,9 +227,7 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     scheme: &str,
 ) -> (Session, Session) {
     let (port, accept) = spawn_draft18_server(name);
-    let client =
-        Endpoint::<DUAL>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
-            .unwrap();
+    let client = draft18_client_with_config(insecure_client_config());
     let path = if scheme == "https" { "/moq" } else { "" };
     connect_sessions_from(
         &client,
@@ -230,6 +236,20 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     )
     .await
     .unwrap()
+}
+
+/// Opens on `session` every bidirectional stream the peer allows, so that
+/// the peer's stream limit is reached; the streams stay open while the
+/// returned value lives.
+pub(crate) async fn use_up_bidi_streams(
+    session: &Session,
+) -> Vec<(BoxedSendStream, BoxedReceiveStream)> {
+    let connection = session.publisher().session.connection();
+    let mut streams = Vec::new();
+    for _ in 0..MAX_CONCURRENT_BIDI_STREAMS {
+        streams.push(connection.transport.open_bi().await.unwrap());
+    }
+    streams
 }
 
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
