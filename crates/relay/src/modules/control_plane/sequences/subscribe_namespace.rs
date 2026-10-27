@@ -279,21 +279,7 @@ mod tests {
         ctx: &mut DownstreamPublishContext,
         sent: SentMessages,
     ) {
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &Span::none(),
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &NoopRelayRouteRegistry,
-                &MockSubscribeNamespaceHandler {
-                    track_namespace_prefix: "ns",
-                    sent,
-                    error_codes: Arc::default(),
-                },
-            )
-            .await;
+        subscribe_namespace(ctx, "ns", sent).await;
         tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
             .await
             .expect("the accepted PUBLISH should start an egress reader");
@@ -346,10 +332,11 @@ mod tests {
     async fn subscribe_namespace(
         ctx: &DownstreamPublishContext,
         track_namespace_prefix: &'static str,
+        sent: SentMessages,
     ) -> MockSubscribeNamespaceHandler {
         let handler = MockSubscribeNamespaceHandler {
             track_namespace_prefix,
-            sent: SentMessages::default(),
+            sent,
             error_codes: Arc::default(),
         };
         SubscribeNameSpace
@@ -372,7 +359,7 @@ mod tests {
         let mut ctx = context_holding_namespace_subscription("ns/track").await;
 
         // Act
-        let handler = subscribe_namespace(&ctx, "ns").await;
+        let handler = subscribe_namespace(&ctx, "ns", SentMessages::default()).await;
         let egress = tokio::time::timeout(NO_PUBLISH_TIMEOUT, ctx.egress_receiver.recv()).await;
 
         // Assert: draft-14 §9.28
@@ -391,7 +378,7 @@ mod tests {
         let ctx = context_holding_namespace_subscription("ns").await;
 
         // Act
-        let handler = subscribe_namespace(&ctx, "ns/track").await;
+        let handler = subscribe_namespace(&ctx, "ns/track", SentMessages::default()).await;
 
         // Assert: draft-14 §9.28
         assert_eq!(*handler.sent.lock().unwrap(), ["SUBSCRIBE_NAMESPACE_ERROR"]);
