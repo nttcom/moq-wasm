@@ -12,6 +12,7 @@ use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
+use tracing::Instrument;
 
 use crate::{registry::Registry, verify::verify_token};
 
@@ -63,11 +64,23 @@ async fn handle(
     registry: Arc<Registry>,
 ) -> Result<JsonResponse, Infallible> {
     let (head, body) = request.into_parts();
-    let response = match (head.method, head.uri.path()) {
-        (Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
-        (Method::POST, "/verify") => verify(body, &registry).await,
-        _ => error_response(StatusCode::NOT_FOUND, "not_found"),
-    };
+    let span = tracing::info_span!(
+        "vts.request",
+        "http.request.method" = %head.method,
+        "url.path" = head.uri.path(),
+        "http.response.status_code" = tracing::field::Empty,
+    );
+    telemetry::continue_trace_from(&span, &head.headers);
+    let response = async {
+        match (head.method, head.uri.path()) {
+            (Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
+            (Method::POST, "/verify") => verify(body, &registry).await,
+            _ => error_response(StatusCode::NOT_FOUND, "not_found"),
+        }
+    }
+    .instrument(span.clone())
+    .await;
+    span.record("http.response.status_code", response.status().as_u16());
     Ok(response)
 }
 

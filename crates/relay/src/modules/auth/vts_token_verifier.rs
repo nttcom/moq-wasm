@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
-use reqwest::StatusCode;
+use reqwest::{StatusCode, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 
 use crate::modules::auth::{
@@ -41,10 +41,14 @@ impl VtsTokenVerifier {
 
 #[async_trait]
 impl TokenVerifier for VtsTokenVerifier {
+    #[tracing::instrument(name = "relay.vts.verify", skip_all)]
     async fn verify(&self, token: &str) -> Result<VerifiedToken, VerifyError> {
+        let mut headers = HeaderMap::new();
+        telemetry::inject_trace_context(&tracing::Span::current(), &mut headers);
         let response = self
             .client
             .post(&self.verify_url)
+            .headers(headers)
             .json(&VerifyRequest { token })
             .send()
             .await

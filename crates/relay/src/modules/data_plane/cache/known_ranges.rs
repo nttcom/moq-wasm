@@ -47,28 +47,31 @@ impl KnownRanges {
         self.ranges = next_ranges;
     }
 
-    pub(crate) fn remove_range(
+    /// `locations` must be ascending.
+    pub(crate) fn remove_locations(
         &mut self,
-        start: moqt::object::Location,
-        end: moqt::object::Location,
+        locations: impl IntoIterator<Item = moqt::object::Location>,
     ) {
-        let end = Self::exclusive_end(end);
-        if start >= end {
-            return;
-        }
-
+        let mut cuts = locations
+            .into_iter()
+            .map(|at| at..Self::after(at))
+            .filter(|cut| cut.start < cut.end)
+            .peekable();
         let mut ranges = Vec::with_capacity(self.ranges.len());
         for range in self.ranges.drain(..) {
-            if range.end <= start || end <= range.start {
-                ranges.push(range);
-                continue;
+            let mut start = range.start;
+            while let Some(cut) = cuts.peek() {
+                if cut.start >= range.end {
+                    break;
+                }
+                if start < cut.start {
+                    ranges.push(start..cut.start);
+                }
+                start = start.max(cut.end);
+                cuts.next();
             }
-
-            if range.start < start {
-                ranges.push(range.start..start);
-            }
-            if end < range.end {
-                ranges.push(end..range.end);
+            if start < range.end {
+                ranges.push(start..range.end);
             }
         }
         self.ranges = ranges;
@@ -98,6 +101,13 @@ impl KnownRanges {
             .iter()
             .find(|range| range.contains(&location))
             .map(|range| range.end)
+    }
+
+    fn after(at: moqt::object::Location) -> moqt::object::Location {
+        moqt::object::Location {
+            group_id: at.group_id,
+            object_id: at.object_id.saturating_add(1),
+        }
     }
 
     pub(crate) fn exclusive_end(location: moqt::object::Location) -> moqt::object::Location {
@@ -155,15 +165,20 @@ mod tests {
     }
 
     #[test]
-    fn remove_range_can_split_existing_range() {
+    fn removing_locations_splits_only_the_ranges_holding_them() {
         // Arrange
         let mut ranges = KnownRanges::default();
-        ranges.insert(location(0, 0), location(5, 0));
+        ranges.insert(location(0, 0), location(0, 4));
+        ranges.insert(location(2, 0), location(3, 0));
         // Act
-        ranges.remove_range(location(2, 0), location(3, 0));
+        ranges.remove_locations([location(0, 0), location(0, 2), location(2, 5)]);
         // Assert
-        assert!(ranges.contains_range(location(0, 0), location(1, 0)));
-        assert!(!ranges.contains_range(location(2, 0), location(3, 0)));
-        assert!(ranges.contains_range(location(4, 0), location(5, 0)));
+        assert!(!ranges.contains_range(location(0, 0), location(0, 1)));
+        assert!(ranges.contains_range(location(0, 1), location(0, 2)));
+        assert!(!ranges.contains_range(location(0, 2), location(0, 3)));
+        assert!(ranges.contains_range(location(0, 3), location(0, 4)));
+        assert!(ranges.contains_range(location(2, 0), location(2, 5)));
+        assert!(!ranges.contains_range(location(2, 5), location(2, 6)));
+        assert!(ranges.contains_range(location(2, 6), location(3, 0)));
     }
 }

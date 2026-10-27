@@ -1,21 +1,19 @@
-use tokio::sync::mpsc::UnboundedReceiver;
-
 use crate::modules::moqt::{
     data_plane::{
         malformed_track_error::MalformedTrackError,
         stream::stream_data_receiver::StreamDataReceiver,
     },
-    runtime::dispatch::incoming_object::IncomingObject,
+    runtime::dispatch::incoming_object::{IncomingObject, IncomingObjectReceiver},
 };
 
 pub struct StreamDataReceiverFactory {
     pending: Option<StreamDataReceiver>,
     pub track_alias: u64,
-    rest: UnboundedReceiver<IncomingObject>,
+    rest: IncomingObjectReceiver,
 }
 
 impl StreamDataReceiverFactory {
-    pub(crate) fn new(first: StreamDataReceiver, rest: UnboundedReceiver<IncomingObject>) -> Self {
+    pub(crate) fn new(first: StreamDataReceiver, rest: IncomingObjectReceiver) -> Self {
         let track_alias = first.track_alias;
         Self {
             pending: Some(first),

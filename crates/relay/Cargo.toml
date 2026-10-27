@@ -7,17 +7,14 @@ edition = "2024"
 moqt = { path = "../moqt", features = ["self-signed-cert"] }
 auth-token = { path = "../auth-token" }
 relay-stats = { path = "../relay-stats" }
+telemetry = { path = "../telemetry" }
 tokio = { version = "1.52.3", features = ["full", "tracing"] }
 tracing = "0.1.44"
 async-trait = "0.1.89"
 anyhow = "1.0.102"
 dashmap = "6.2.1"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 bytes = "1"
-opentelemetry = { version = "0.33.1", features = ["trace", "logs"] }
-opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio", "logs"] }
-opentelemetry-otlp = { version = "0.33.1", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs"] }
-opentelemetry-appender-tracing = "0.33.1"
+opentelemetry = { version = "0.33.1", features = ["trace"] }
 tracing-opentelemetry = "0.34.0"
 redis = { version = "1.2.2", features = ["tokio-comp", "connection-manager"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }

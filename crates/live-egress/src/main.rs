@@ -13,7 +13,6 @@ use mediapack::rtp::{
     muxer::{AUDIO_PAYLOAD_TYPE, VIDEO_PAYLOAD_TYPE},
 };
 use moqt::ClientConfig;
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{broadcast_reader::BroadcastReader, relay_session::RelaySession, rtp::RtpOutput};
 
@@ -80,13 +79,18 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
+    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+        service_name: "live-egress",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &[
+            "live_egress=info",
+            "moqt=info",
+            "msf=info",
+            "mediapack=info",
+        ],
+        resource_attributes: Vec::new(),
+        log_output: telemetry::LogOutput::Stdout,
+    })?;
 
     let namespace = normalize_namespace(&args.namespace)?;
     let output = args.rtp_output();
