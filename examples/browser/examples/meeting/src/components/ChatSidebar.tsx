@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react'
+import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
 import type { TranscriptRecord } from '../media/transcript'
 import { ChatMessage } from '../types/chat'
 
@@ -8,8 +9,10 @@ interface ChatSidebarProps {
   onMessageChange: (value: string) => void
   onSend: (event?: FormEvent) => void
   onToggle: () => void
-  /// The room's transcript; `undefined` while no transcriber is in the room, which hides the Transcript tab.
-  transcript: TranscriptRecord[] | undefined
+  /// `null` in a room the transcriber does not serve.
+  captions: CaptionsControls | null
+  /// Whether the transcriber is in the room.
+  transcribing: boolean
 }
 
 export function ChatSidebar({
@@ -18,41 +21,73 @@ export function ChatSidebar({
   onMessageChange,
   onSend,
   onToggle,
-  transcript
+  captions,
+  transcribing
 }: ChatSidebarProps) {
-  const [tab, setTab] = useState<'chat' | 'transcript'>('chat')
+  const [tab, setTab] = useState<'chat' | 'transcription'>('chat')
   return (
-    <aside className="h-full w-80 shrink-0 overflow-y-auto border-l border-white/10 bg-slate-900 px-4 py-4">
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex gap-1">
-            {transcript && (
-              <>
-                <SidebarTab label="Chat" active={tab === 'chat'} onClick={() => setTab('chat')} />
-                <SidebarTab
-                  label="Transcript"
-                  testId="transcript-tab"
-                  active={tab === 'transcript'}
-                  onClick={() => setTab('transcript')}
-                />
-              </>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onToggle}
-            className="rounded-md bg-white/10 px-3 py-1 text-xs font-semibold text-blue-100 transition hover:bg-white/20"
-          >
-            Close
-          </button>
+    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-white/15 bg-slate-900">
+      <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+        <div className="flex gap-1">
+          <SidebarTab label="Chat" active={tab === 'chat'} onClick={() => setTab('chat')} />
+          <SidebarTab
+            label="Transcription"
+            testId="transcript-tab"
+            active={tab === 'transcription'}
+            onClick={() => setTab('transcription')}
+          />
         </div>
-        {tab === 'transcript' && transcript ? (
-          <TranscriptPanel records={transcript} />
+        <button
+          type="button"
+          onClick={onToggle}
+          className="rounded-md bg-white/10 px-3 py-1 text-xs font-semibold text-blue-100 transition hover:bg-white/20"
+        >
+          Close
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
+        {tab === 'transcription' ? (
+          transcribing && captions ? (
+            <TranscriptPanel records={captions.records} />
+          ) : (
+            <TranscriptionNotice captions={captions} />
+          )
         ) : (
           <ChatPanel messages={messages} chatMessage={chatMessage} onMessageChange={onMessageChange} onSend={onSend} />
         )}
       </div>
     </aside>
+  )
+}
+
+function TranscriptionNotice({ captions }: { captions: CaptionsControls | null }) {
+  if (!captions) {
+    return <p className="mt-4 text-sm text-blue-100">Transcription is not available in this room</p>
+  }
+  return (
+    <div className="mt-4 space-y-3">
+      <p className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-blue-100">
+        {captions.active ? 'Starting transcription…' : 'Transcription has not started yet'}
+      </p>
+      {!captions.active && (
+        <>
+          {captions.error && <p className="text-xs text-red-300">{captions.error}</p>}
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Start transcription</div>
+          <div className="space-y-2">
+            {ASR_CHOICES.map(({ asr, label }) => (
+              <button
+                key={asr}
+                type="button"
+                onClick={() => captions.start(asr)}
+                className="w-full rounded-lg bg-white/10 px-4 py-2 text-left text-sm font-semibold text-white transition hover:bg-white/20"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -68,7 +103,7 @@ function ChatPanel({
   onSend: (event?: FormEvent) => void
 }) {
   return (
-    <div className="mt-4 flex h-full min-h-0 flex-col gap-4">
+    <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
       <div className="flex-1 overflow-y-auto space-y-3 pr-1">
         {messages.length === 0 ? (
           <p className="text-blue-100">No messages yet.</p>

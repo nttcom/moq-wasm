@@ -785,7 +785,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onMessageChange={setChatMessage}
             onSend={handleSendChatMessage}
             onToggle={() => setIsSidebarOpen(false)}
-            transcript={captions && transcriberPresent ? captions.records : undefined}
+            captions={captions}
+            transcribing={transcriberPresent}
           />
         )}
       </div>
