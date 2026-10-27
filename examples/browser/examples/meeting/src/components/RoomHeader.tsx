@@ -16,7 +16,7 @@ interface RoomHeaderProps {
 /// Every remote member appears here, on the stage or not.
 export function RoomHeader({ roomName, members, recording, transcribing, transcriberStarting }: RoomHeaderProps) {
   return (
-    <header className="flex items-center gap-3 px-4 py-2 text-sm">
+    <header className="flex items-center gap-3 border-b border-white/15 bg-slate-900 px-4 py-2 text-sm">
       <h1 className="font-semibold" data-testid="room-name">
         {roomName}
       </h1>
