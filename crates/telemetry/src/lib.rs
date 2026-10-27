@@ -11,6 +11,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
+mod http_trace_context;
+
+pub use http_trace_context::{continue_trace_from, inject_trace_context};
+
 #[derive(Clone, Copy)]
 enum OtlpProtocol {
     Grpc,

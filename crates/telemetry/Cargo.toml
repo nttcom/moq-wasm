@@ -6,6 +6,7 @@ description = "Logging and tracing setup shared by the workspace's binaries: std
 
 [dependencies]
 anyhow = "1.0.102"
+http = "1.5.0"
 opentelemetry = { version = "0.33.1", features = ["trace", "logs"] }
 opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio", "logs"] }
 opentelemetry-otlp = { version = "0.33.1", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs"] }

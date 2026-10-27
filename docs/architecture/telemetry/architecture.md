@@ -40,6 +40,14 @@ and the log bridge reads the active context.
 When OTLP is on, `init` also installs the W3C Trace Context propagator as the
 global propagator.
 
+## HTTP trace context
+
+`inject_trace_context` writes a span's context into an `http::HeaderMap` as
+W3C `traceparent`, and `continue_trace_from` makes a server's span a child of
+the context a request carries. The relay injects it into its `POST /verify`
+call and the VTS continues it, so one trace covers both processes. Both are
+no-ops while OTLP is off, because the global propagator is then a no-op.
+
 ## Lifecycle
 
 `init` fails when a subscriber is already installed or the OTLP protocol is
@@ -49,4 +57,5 @@ flushing the batches still queued, so a binary holds it for the life of
 
 ## Dependencies
 
-`opentelemetry.md` records why the OpenTelemetry crates are used.
+`opentelemetry.md` records why the OpenTelemetry crates are used, and
+`http.md` why the trace context helpers take an `http::HeaderMap`.
