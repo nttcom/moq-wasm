@@ -431,14 +431,13 @@ impl fmt::Debug for SessionContext {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
+    use crate::SessionEvent;
     use crate::modules::moqt::domains::connection::IncomingObjectNotification;
     use crate::modules::{
         moqt::runtime::dispatch::incoming_object::IncomingObject,
         test_support::{
             datagram_object, notify_datagram, register_and_take_data_receiver,
-            spawn_connected_dual_sessions, subscription,
+            spawn_connected_dual_sessions, subscription, within,
         },
     };
 
@@ -446,32 +445,36 @@ mod tests {
     const OTHER_REQUEST_ID: u64 = 3;
     const TRACK_ALIAS: u64 = 5;
 
-    #[tokio::test]
-    async fn concurrent_callers_get_distinct_request_ids() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_requests_reach_the_peer_in_increasing_request_id_order() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("request-id-concurrent").await;
-        let context = server.subscriber().session;
+        const REQUESTS: u64 = 32;
+        let (client, server) = spawn_connected_dual_sessions("request-id-concurrent").await;
 
         // Act
-        let request_ids: Vec<u64> = std::thread::scope(|scope| {
-            let callers: Vec<_> = (0..8)
-                .map(|_| {
-                    scope.spawn(|| {
-                        (0..1_000)
-                            .map(|_| context.connection().control.next_request_id())
-                            .collect::<Vec<_>>()
-                    })
+        let requests: Vec<_> = (0..REQUESTS)
+            .map(|_| {
+                let subscriber = client.subscriber();
+                tokio::spawn(async move {
+                    subscriber
+                        .track_status("ns".into(), "track".into(), vec![])
+                        .await
                 })
-                .collect();
-            callers
-                .into_iter()
-                .flat_map(|caller| caller.join().unwrap())
-                .collect()
-        });
+            })
+            .collect();
+        let mut request_ids = Vec::new();
+        for _ in 0..REQUESTS {
+            let SessionEvent::TrackStatus(handler) = within(server.receive_event()).await.unwrap()
+            else {
+                panic!("expected TRACK_STATUS from the client");
+            };
+            request_ids.push(handler.request_id());
+        }
 
         // Assert
-        let distinct: HashSet<u64> = request_ids.iter().copied().collect();
-        assert_eq!(distinct.len(), request_ids.len());
+        let expected: Vec<u64> = (0..REQUESTS).map(|i| i * 2).collect();
+        assert_eq!(request_ids, expected);
+        requests.iter().for_each(|request| request.abort());
     }
 
     #[tokio::test]

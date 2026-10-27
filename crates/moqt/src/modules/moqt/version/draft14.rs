@@ -8,12 +8,11 @@ pub(crate) mod setup;
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, Weak,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Weak},
     time::Duration,
 };
+
+use bytes::BytesMut;
 
 use crate::{
     RequestFailure,
@@ -28,7 +27,8 @@ use crate::{
                         fetch_cancel::FetchCancel, publish_done::PublishDone,
                         publish_namespace_cancel::PublishNamespaceCancel,
                         publish_namespace_done::PublishNamespaceDone, request_error::RequestError,
-                        unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
+                        subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
+                        unsubscribe_namespace::UnsubscribeNamespace,
                     },
                 },
                 enums::{RequestId, ResponseMessage},
@@ -36,7 +36,9 @@ use crate::{
             },
             data_plane::stream::bi_stream_sender::BiStreamSender,
             domains::{connection::Connection, session_context::SessionContext},
-            version::{self, Notification, OutgoingRequest, OutgoingResponse},
+            version::{
+                self, Notification, OutgoingRequest, OutgoingResponse, RequestIdReservation,
+            },
         },
         transport::transport_send_stream::TransportSendError,
     },
@@ -84,7 +86,7 @@ struct InflightRequests {
 
 pub(crate) struct ControlChannel {
     send_stream: BiStreamSender,
-    request_id: AtomicU64,
+    next_request_id: tokio::sync::Mutex<RequestId>,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
 }
 
@@ -94,7 +96,7 @@ impl ControlChannel {
     fn new(send_stream: BiStreamSender, first_request_id: RequestId) -> Self {
         Self {
             send_stream,
-            request_id: AtomicU64::new(first_request_id),
+            next_request_id: tokio::sync::Mutex::new(first_request_id),
             inflight_requests: Arc::default(),
         }
     }
@@ -104,12 +106,15 @@ impl ControlChannel {
         channel
     }
 
-    pub(crate) fn next_request_id(&self) -> RequestId {
-        self.request_id.fetch_add(2, Ordering::SeqCst)
+    pub(super) async fn reserve_request_id(&self) -> RequestIdReservation<'_> {
+        RequestIdReservation(self.next_request_id.lock().await)
     }
 
+    /// Writes the request before releasing `reservation`, so the peer
+    /// receives this side's Request IDs in increasing order.
     pub(super) async fn send_request(
         &self,
+        reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         let (request_id, message_type, payload, on_late_response) = match request {
@@ -154,13 +159,40 @@ impl ControlChannel {
                 },
             ),
         };
+        debug_assert_eq!(request_id, reservation.request_id());
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let registered = self.register(request_id, sender, on_late_response);
-        self.send_stream.send(message_type, payload).await?;
+        self.send_with_request_id(reservation, message_type, payload)
+            .await?;
         Ok(PendingResponse {
             receiver,
             _registered: registered,
         })
+    }
+
+    pub(super) async fn send_subscribe_update(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        subscribe_update: SubscribeUpdate,
+    ) -> Result<(), TransportSendError> {
+        debug_assert_eq!(subscribe_update.request_id, reservation.request_id());
+        self.send_with_request_id(
+            reservation,
+            ControlMessageType::SubscribeUpdate,
+            subscribe_update.encode(),
+        )
+        .await
+    }
+
+    async fn send_with_request_id(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        message_type: ControlMessageType,
+        payload: BytesMut,
+    ) -> Result<(), TransportSendError> {
+        let RequestIdReservation(mut next_request_id) = reservation;
+        *next_request_id += 2;
+        self.send_stream.send(message_type, payload).await
     }
 
     pub(super) async fn respond(
@@ -201,7 +233,6 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         let (message_type, payload) = match notification {
             Notification::Unsubscribe(m) => (ControlMessageType::UnSubscribe, m.encode()),
-            Notification::SubscribeUpdate(m) => (ControlMessageType::SubscribeUpdate, m.encode()),
             Notification::PublishDone {
                 request_id,
                 code,

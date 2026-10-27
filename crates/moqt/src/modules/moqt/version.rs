@@ -257,7 +257,6 @@ pub(crate) enum OutgoingResponse {
 /// A control message that neither waits on nor answers a request.
 pub(crate) enum Notification {
     Unsubscribe(Unsubscribe),
-    SubscribeUpdate(SubscribeUpdate),
     PublishDone {
         request_id: RequestId,
         code: PublishDoneCode,
@@ -277,6 +276,15 @@ pub(crate) enum Notification {
     RequestsBlocked(RequestsBlocked),
 }
 
+/// The Request ID of this side's next request (draft-14 §9.1).
+pub(crate) struct RequestIdReservation<'a>(tokio::sync::MutexGuard<'a, RequestId>);
+
+impl RequestIdReservation<'_> {
+    pub(crate) fn request_id(&self) -> RequestId {
+        *self.0
+    }
+}
+
 /// How a session's control messages reach the peer.
 pub(crate) enum ControlChannel {
     Draft14(draft14::ControlChannel),
@@ -289,9 +297,12 @@ impl ControlChannel {
         }
     }
 
-    pub(crate) fn next_request_id(&self) -> RequestId {
+    /// Blocks other requests on this channel until the reservation is
+    /// passed to `send_request` or `send_subscribe_update`, or dropped.
+    /// Dropping it leaves the Request ID unused.
+    pub(crate) async fn reserve_request_id(&self) -> RequestIdReservation<'_> {
         match self {
-            Self::Draft14(channel) => channel.next_request_id(),
+            Self::Draft14(channel) => channel.reserve_request_id().await,
         }
     }
 
@@ -299,12 +310,27 @@ impl ControlChannel {
     /// Dropping the returned `PendingResponse` abandons the request.
     pub(crate) async fn send_request(
         &self,
+        reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         match self {
             Self::Draft14(channel) => Ok(PendingResponse::Draft14(
-                channel.send_request(request).await?,
+                channel.send_request(reservation, request).await?,
             )),
+        }
+    }
+
+    pub(crate) async fn send_subscribe_update(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        subscribe_update: SubscribeUpdate,
+    ) -> Result<(), TransportSendError> {
+        match self {
+            Self::Draft14(channel) => {
+                channel
+                    .send_subscribe_update(reservation, subscribe_update)
+                    .await
+            }
         }
     }
 
