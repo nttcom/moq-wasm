@@ -1,8 +1,7 @@
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::Context;
+#[cfg(not(target_arch = "wasm32"))]
 use url::Url;
-
-const DEFAULT_MOQT_PORT: u16 = 4433;
-const DEFAULT_HTTPS_PORT: u16 = 443;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClientTransport {
@@ -10,34 +9,60 @@ pub(crate) enum ClientTransport {
     WebTransport,
 }
 
+impl ClientTransport {
+    fn from_scheme(scheme: &str) -> anyhow::Result<Self> {
+        match scheme {
+            "moqt" => Ok(Self::Quic),
+            "https" => Ok(Self::WebTransport),
+            scheme => anyhow::bail!(
+                "unsupported connect url scheme {scheme:?}: expected moqt:// (QUIC) or https:// (WebTransport)"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectTarget {
     pub(crate) transport: ClientTransport,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) url: Url,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) url: String,
+    #[cfg(not(target_arch = "wasm32"))]
     port: u16,
 }
 
 impl ConnectTarget {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn parse(url: &str) -> anyhow::Result<Self> {
         let url = Url::parse(url).with_context(|| format!("invalid connect url: {url}"))?;
-        let transport = match url.scheme() {
-            "moqt" => ClientTransport::Quic,
-            "https" => ClientTransport::WebTransport,
-            scheme => anyhow::bail!(
-                "unsupported connect url scheme {scheme:?}: expected moqt:// (QUIC) or https:// (WebTransport)"
-            ),
-        };
+        let transport = ClientTransport::from_scheme(url.scheme())?;
         if url.host().is_none() {
             anyhow::bail!("connect url has no host: {url}");
         }
         let port = url.port().unwrap_or(match transport {
-            ClientTransport::Quic => DEFAULT_MOQT_PORT,
-            ClientTransport::WebTransport => DEFAULT_HTTPS_PORT,
+            ClientTransport::Quic => 4433,
+            ClientTransport::WebTransport => 443,
         });
         Ok(Self {
             transport,
             url,
             port,
+        })
+    }
+
+    /// Host and port resolution is left to the browser's `WebTransport`.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn parse(url: &str) -> anyhow::Result<Self> {
+        let parsed = web_sys::Url::new(url)
+            .map_err(|error| anyhow::anyhow!("invalid connect url: {url}: {error:?}"))?;
+        let transport = ClientTransport::from_scheme(parsed.protocol().trim_end_matches(':'))?;
+        if parsed.hostname().is_empty() {
+            anyhow::bail!("connect url has no host: {url}");
+        }
+        Ok(Self {
+            transport,
+            url: parsed.href(),
         })
     }
 
