@@ -15,19 +15,19 @@ use crate::modules::moqt::control_plane::{
     },
 };
 
-const OBJECT_DELIVERY_TIMEOUT: u64 = 0x02;
-const AUTHORIZATION_TOKEN: u64 = 0x03;
-const RENDEZVOUS_TIMEOUT: u64 = 0x04;
-const SUBGROUP_DELIVERY_TIMEOUT: u64 = 0x06;
-const EXPIRES: u64 = 0x08;
-const LARGEST_OBJECT: u64 = 0x09;
-const FILL_TIMEOUT: u64 = 0x0A;
-const FORWARD: u64 = 0x10;
-const SUBSCRIBER_PRIORITY: u64 = 0x20;
-const SUBSCRIPTION_FILTER: u64 = 0x21;
-const GROUP_ORDER: u64 = 0x22;
-const NEW_GROUP_REQUEST: u64 = 0x32;
-const TRACK_NAMESPACE_PREFIX: u64 = 0x34;
+pub(super) const OBJECT_DELIVERY_TIMEOUT: u64 = 0x02;
+pub(super) const AUTHORIZATION_TOKEN: u64 = 0x03;
+pub(super) const RENDEZVOUS_TIMEOUT: u64 = 0x04;
+pub(super) const SUBGROUP_DELIVERY_TIMEOUT: u64 = 0x06;
+pub(super) const EXPIRES: u64 = 0x08;
+pub(super) const LARGEST_OBJECT: u64 = 0x09;
+pub(super) const FILL_TIMEOUT: u64 = 0x0A;
+pub(super) const FORWARD: u64 = 0x10;
+pub(super) const SUBSCRIBER_PRIORITY: u64 = 0x20;
+pub(super) const SUBSCRIPTION_FILTER: u64 = 0x21;
+pub(super) const GROUP_ORDER: u64 = 0x22;
+pub(super) const NEW_GROUP_REQUEST: u64 = 0x32;
+pub(super) const TRACK_NAMESPACE_PREFIX: u64 = 0x34;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Parameter {
