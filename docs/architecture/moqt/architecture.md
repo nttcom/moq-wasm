@@ -139,7 +139,8 @@ call through the adapter; a draft never gets a task of its own (see
   instead of a trait object: the set of drafts is closed, the match is
   checked for exhaustiveness when a draft is added, and async methods need no
   object safety or `Send` bounds that wasm32 cannot meet. It offers
-  `next_request_id`, `send_request(OutgoingRequest) -> PendingResponse`,
+  `reserve_request_id`, `send_request(RequestIdReservation, OutgoingRequest)
+  -> PendingResponse`, `send_subscribe_update`,
   `respond(OutgoingResponse)` and `notify(Notification)`. The draft-14
   control message structs serve as the shared model; `draft14::ControlChannel`
   encodes them.
@@ -388,7 +389,8 @@ transport connection:
 
 - `transport` — the QUIC or WebTransport connection.
 - `control: ControlChannel` — the version adapter above; for draft-14 it
-  holds the request id counter and `inflight_requests`.
+  holds this side's next request id, the peer's next request id and
+  `inflight_requests`.
 - `track_alias: AtomicU64` — the track aliases this side assigns, shared by
   `SubscribeHandler::allocate_track_alias` and `Publisher::publish`. Both
   hand the application the logical alias (below); SUBSCRIBE_OK and PUBLISH
@@ -601,6 +603,15 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   enter the per-track channel.
 
 ## Key invariants
+
+- **Request IDs reach the peer in increasing order** (draft-14 §9.1). A
+  `RequestIdReservation` holds the next Request ID's lock until the request
+  is written, so concurrent requests cannot overtake each other on the
+  control stream. A dropped reservation leaves the ID unused.
+  `ControlMessageReceiveTask` closes the session with INVALID_REQUEST_ID when
+  a peer's new request has this side's parity or is not larger than the
+  peer's previous one. Skipped IDs are accepted. MAX_REQUEST_ID is neither
+  enforced on receipt nor respected when sending.
 
 - **A carried subscription cuts over at a group boundary.** The first object
   the new connection delivers fixes the cutover group: the group after the
