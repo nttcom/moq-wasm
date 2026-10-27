@@ -134,7 +134,15 @@ fn spawn_dual_server_handshake_offering(
 /// Starts a DUAL server on a free port whose accept loop resolves the first
 /// incoming session; returns the port and the accept task.
 pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_dual_server_handshake(name);
+    spawn_dual_server_offering(name, APPLICATION_PROTOCOLS)
+}
+
+/// `spawn_dual_server` offering only `protocols`.
+pub(crate) fn spawn_dual_server_offering(
+    name: &str,
+    protocols: ApplicationProtocols,
+) -> (u16, tokio::task::JoinHandle<Session>) {
+    let (port, handshake) = spawn_dual_server_handshake_offering(name, protocols);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
 }
@@ -205,8 +213,7 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     name: &str,
     scheme: &str,
 ) -> (Session, Session) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, DRAFT18_PROTOCOLS);
-    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    let (port, accept) = spawn_dual_server_offering(name, DRAFT18_PROTOCOLS);
     let client =
         Endpoint::<DUAL>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
             .unwrap();

@@ -342,6 +342,18 @@ impl Subscriber {
         subscription: &Subscription,
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
+        let start = option.start_location;
+        self.send_update(subscription, option, |_| start).await
+    }
+
+    /// `subscribe_update` with the Start Location `start_on` gives for each
+    /// connection.
+    async fn send_update(
+        &self,
+        subscription: &Subscription,
+        option: SubscribeUpdateOption,
+        start_on: impl Fn(&Connection) -> Location,
+    ) -> anyhow::Result<()> {
         let mut carried = self.session.lock_carried().await;
         if let Some(carried) = carried
             .as_mut()
@@ -355,7 +367,7 @@ impl Subscriber {
             let subscribe_update = SubscribeUpdate {
                 request_id: connection.control.next_request_id(),
                 subscription_request_id,
-                start_location: option.start_location,
+                start_location: start_on(&connection),
                 end_group: option.end_group,
                 subscriber_priority: option.subscriber_priority,
                 forward: option.forward,
@@ -411,13 +423,20 @@ impl Subscriber {
             ContentExists::True { location } => Some(location),
             ContentExists::False => None,
         };
-        self.subscribe_update(
+        let start = subscription.filter_type().start_location(largest);
+        // A SUBSCRIBE sent again after GOAWAY has a start of its own.
+        self.send_update(
             subscription,
             SubscribeUpdateOption {
-                start_location: subscription.filter_type().start_location(largest),
+                start_location: start,
                 end_group,
                 subscriber_priority: subscription.subscriber_priority(),
                 forward,
+            },
+            |connection| {
+                connection
+                    .carried_start(subscription.request_id())
+                    .unwrap_or(start)
             },
         )
         .await
