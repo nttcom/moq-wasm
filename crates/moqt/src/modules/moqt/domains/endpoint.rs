@@ -73,11 +73,10 @@ pub struct ClientConfig {
     /// A session follows the server's GOAWAY by itself (draft-14 §3.5):
     /// it connects to the New Session URI, sends its subscriptions there
     /// again and keeps the request ids and track aliases the application
-    /// knows. Such a session also reconnects to its URL, the same way, when
-    /// the network or the server ends its connection without a termination
-    /// code, or the server closes it for an expired token and
-    /// `authorization_token` is a provider. With `false`, GOAWAY arrives as a
-    /// `SessionEvent` and the session stays on its connection.
+    /// knows. Such a session also reconnects to its URL, the same way, when its
+    /// connection ends without a termination code, or when the server closes it
+    /// for an expired token and `authorization_token` is a provider. With `false`,
+    /// GOAWAY arrives as a `SessionEvent` and the session stays on its connection.
     pub follow_go_away: bool,
     pub web_socket_fallback: WebSocketFallback,
 }

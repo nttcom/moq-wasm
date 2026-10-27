@@ -35,8 +35,7 @@ const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Publishers move on the same GOAWAY as their subscribers, so a request the
 /// new server rejects is sent again at this interval.
 const RETRY_INTERVAL: Duration = Duration::from_millis(500);
-/// How long a session that lost its connection keeps trying to open another,
-/// about as long as a relay keeps a track in its cache.
+/// About as long as a relay keeps a track in its cache.
 #[cfg(not(test))]
 const RECONNECT_LIMIT: Duration = Duration::from_secs(60);
 #[cfg(test)]
@@ -139,8 +138,6 @@ impl Router {
     async fn route(mut self, mut current: Live) {
         let mut previous: Option<Previous> = None;
         let mut migration: Option<BoxFuture<anyhow::Result<Migrated>>> = None;
-        // The migration in flight replaces a lost connection, not one a
-        // GOAWAY drains.
         let mut reconnecting = false;
         let mut current_closed = false;
         loop {
@@ -265,9 +262,6 @@ impl Router {
         }
     }
 
-    /// A connection the peer or the network ended without a termination
-    /// code is opened again, and so is one closed for an expired token when a
-    /// provider can hand out a new one; any other close ends the session.
     fn reconnects(&self, connection: &Connection, close: &TransportClose) -> bool {
         if connection.closed_locally() {
             return false;
@@ -356,9 +350,6 @@ async fn optional<F: Future + Unpin>(future: Option<&mut F>) -> F::Output {
     }
 }
 
-/// Opens a connection to `url` in place of a lost one, with a delay that
-/// doubles after each failed attempt, until `RECONNECT_LIMIT`. A peer that
-/// rejects the token gets one more attempt only.
 async fn reconnect(
     session: Arc<SessionContext>,
     reconnect: Arc<dyn Reconnect>,
@@ -1552,11 +1543,8 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
-    /// Each session a server accepted, with the tokens of its CLIENT_SETUP.
     type AcceptedSessions = mpsc::UnboundedReceiver<(Vec<AuthorizationToken>, Session)>;
 
-    /// A server that accepts every connection on one port, so a client can
-    /// reconnect to the same URL.
     fn spawn_reconnectable_server(
         name: &str,
     ) -> (u16, AcceptedSessions, tokio::task::JoinHandle<()>) {

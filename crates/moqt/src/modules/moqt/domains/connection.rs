@@ -539,8 +539,6 @@ impl Connection {
             .close(self.control.version().termination_code(code), reason);
     }
 
-    /// Whether this side closed the connection, rather than the peer or the
-    /// network.
     pub(crate) fn closed_locally(&self) -> bool {
         self.closed_locally.load(Ordering::SeqCst)
     }
