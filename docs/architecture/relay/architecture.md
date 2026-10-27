@@ -34,7 +34,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 ## Startup path
 
 `main.rs`:
-1. `init_logging` (tracing + OpenTelemetry OTLP export).
+1. `init_logging` (tracing + OpenTelemetry OTLP export, set up by `crates/telemetry`).
 2. Generate self-signed certs under `RELAY_CERT_DIR` (default `crates/relay/keys/`) if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PUBLIC_HOST` (the `host[:port]` clients connect to, default
