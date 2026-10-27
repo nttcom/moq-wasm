@@ -30,7 +30,9 @@ use crate::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
         domains::{connection::Connection, session_context::SessionContext},
-        version::draft14::{ControlChannel, InflightRequest, error_codes, handle_late_response},
+        version::draft14::{
+            ControlChannel, InflightRequest, ReceivedResponse, error_codes, handle_late_response,
+        },
     },
 };
 
@@ -87,19 +89,15 @@ impl ControlMessageReceiveTask {
                                             sender,
                                             on_late_response,
                                         }) => {
-                                            // The caller can stop waiting between response
-                                            // arrival and this send; fall back to the
-                                            // late-response withdrawal in that case.
-                                            if let Err(message) = sender.send(message) {
-                                                handle_late_response(
-                                                    &session,
-                                                    &connection,
-                                                    request_id,
-                                                    on_late_response,
-                                                    message,
-                                                )
-                                                .await;
-                                            }
+                                            // If the caller stopped waiting, `send` hands the
+                                            // response back and dropping it withdraws the request.
+                                            let _ = sender.send(ReceivedResponse::new(
+                                                message,
+                                                &session,
+                                                &connection,
+                                                request_id,
+                                                on_late_response,
+                                            ));
                                         }
                                         Some(InflightRequest::Abandoned(action)) => {
                                             handle_late_response(

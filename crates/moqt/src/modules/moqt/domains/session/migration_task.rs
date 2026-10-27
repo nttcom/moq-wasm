@@ -508,7 +508,10 @@ async fn carry_subscription(
     })
     .await;
     let subscribe_ok = match subscribed {
-        Ok(subscribe_ok) => subscribe_ok,
+        Ok((subscribe_ok, response)) => {
+            response.accept();
+            subscribe_ok
+        }
         Err(error) => {
             tracing::warn!(
                 namespace = %subscription.track_namespace,

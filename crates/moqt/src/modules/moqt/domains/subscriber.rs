@@ -28,7 +28,7 @@ use crate::{
             session_context::{CarriedSubscription, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
-        version::{Notification, OutgoingRequest},
+        version::{Notification, OutgoingRequest, ReceivedResponse},
     },
     object::{DatagramReceiver, GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
@@ -74,7 +74,8 @@ impl Subscriber {
     ) -> Result<Subscription, RequestFailure> {
         let mut carried = self.session.lock_carried().await;
         let connection = self.session.connection();
-        let message = send_subscribe(&connection, &track_namespace, &track_name, &option).await?;
+        let (message, response) =
+            send_subscribe(&connection, &track_namespace, &track_name, &option).await?;
         let logical_alias = match self
             .session
             .register_data_receiver(&connection, message.request_id, message.track_alias)
@@ -93,6 +94,8 @@ impl Subscriber {
                     code,
                     "SUBSCRIBE_OK reused an in-use track alias",
                 );
+                // The close ends the subscription; no UNSUBSCRIBE is needed.
+                response.accept();
                 return Err(RequestFailure::ProtocolViolation(
                     "SUBSCRIBE_OK reused an in-use track alias",
                 ));
@@ -118,6 +121,7 @@ impl Subscriber {
             track_alias: logical_alias,
             ..message
         };
+        response.accept();
         Ok(Subscription::SubscriberInitiated(
             SubscriberInitiatedSubscription::new(
                 track_namespace,
@@ -160,7 +164,8 @@ impl Subscriber {
             .send_request(OutgoingRequest::TrackStatus(track_status))
             .await?
             .response()
-            .await?;
+            .await?
+            .accept();
         match response {
             ResponseMessage::TrackStatusOk(message) => {
                 if request_id != message.request_id {
@@ -310,7 +315,8 @@ impl Subscriber {
             .send_request(OutgoingRequest::Fetch(fetch))
             .await?
             .response()
-            .await?;
+            .await?
+            .accept();
         match response {
             ResponseMessage::FetchOk(fetch_ok) => {
                 pending_fetch.keep();
@@ -610,7 +616,7 @@ pub(crate) async fn send_subscribe_namespace(
         ))
         .await?;
     tracing::debug!(request_id, track_namespace_prefix = %namespace, "SUBSCRIBE_NAMESPACE sent");
-    let response = pending.response().await?;
+    let response = pending.response().await?.accept();
     match response {
         ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
             if request_id != response_request_id {
@@ -646,13 +652,14 @@ pub(crate) async fn send_subscribe_namespace(
     }
 }
 
-/// The SUBSCRIBE_OK, with `connection`'s wire ids.
+/// The SUBSCRIBE_OK, with `connection`'s wire ids, and its
+/// `ReceivedResponse`: dropping that before `accept` sends UNSUBSCRIBE.
 pub(crate) async fn send_subscribe(
     connection: &Connection,
     track_namespace: &str,
     track_name: &str,
     option: &SubscribeOption,
-) -> Result<SubscribeOk, RequestFailure> {
+) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
     let request_id = connection.control.next_request_id();
     let subscribe = Subscribe {
         request_id,
@@ -671,17 +678,19 @@ pub(crate) async fn send_subscribe(
         .await?
         .response()
         .await?;
-    match response {
-        ResponseMessage::SubscribeOk(message) if message.request_id == request_id => {
-            tracing::info!(
-                request_id,
-                track_namespace,
-                track_name,
-                track_alias = message.track_alias,
-                "SUBSCRIBE_OK received"
-            );
-            Ok(message)
-        }
+    if let ResponseMessage::SubscribeOk(message) = response.message()
+        && message.request_id == request_id
+    {
+        tracing::info!(
+            request_id,
+            track_namespace,
+            track_name,
+            track_alias = message.track_alias,
+            "SUBSCRIBE_OK received"
+        );
+        return Ok((message.clone(), response));
+    }
+    match response.accept() {
         ResponseMessage::SubscribeOk(_) => Err(RequestFailure::ProtocolViolation(
             "response for another request ID",
         )),
@@ -709,6 +718,7 @@ pub(crate) async fn send_subscribe(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use futures::FutureExt;
 
     use tokio::task::JoinHandle;
 
@@ -720,11 +730,12 @@ mod tests {
             FetchHandler, FetchOption,
         },
         modules::{
+            moqt::domains::connection::IncomingObjectNotification,
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, first_subgroup_stream, location,
-                object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                send_subgroup_object, spawn_connected_dual_sessions, subgroup_receiver,
-                subscription, within,
+                notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
+                send_subgroup_object, send_without_waiting, spawn_connected_dual_sessions,
+                subgroup_receiver, subscription, wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -1523,6 +1534,98 @@ mod tests {
         assert_eq!(update.end_group(), 9);
         assert_eq!(update.subscriber_priority(), 7);
         assert!(update.forward());
+    }
+
+    #[tokio::test]
+    async fn fetch_dropped_after_its_fetch_ok_arrived_cancels_the_fetch() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-drop-after-ok").await;
+        let mut subscriber = client.subscriber();
+        let mut request = Box::pin(subscriber.fetch(
+            "ns".to_string(),
+            TRACK.to_string(),
+            START,
+            END,
+            FetchOption::default(),
+        ));
+        let SessionEvent::Fetch(handler) = send_without_waiting(&mut request, &server).await else {
+            panic!("expected FETCH from the client");
+        };
+        handler.ok(false, END).await.unwrap();
+        wait_for_control_delivery(&server, &client).await;
+
+        // Act
+        drop(request);
+        let cancel = within(receive_fetch_cancel(&server)).await;
+
+        // Assert
+        assert_eq!(cancel.request_id(), handler.request_id);
+    }
+
+    #[tokio::test]
+    async fn subscribe_dropped_after_its_subscribe_ok_arrived_unsubscribes() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-drop-after-ok").await;
+        let mut subscriber = client.subscriber();
+        let mut request = Box::pin(subscriber.subscribe(
+            "ns".to_string(),
+            TRACK.to_string(),
+            SubscribeOption::default(),
+        ));
+        let SessionEvent::Subscribe(handler) = send_without_waiting(&mut request, &server).await
+        else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        handler.ok(0, ContentExists::False).await.unwrap();
+        wait_for_control_delivery(&server, &client).await;
+
+        // Act
+        drop(request);
+        let event = within(server.receive_event()).await.unwrap();
+
+        // Assert
+        let SessionEvent::Unsubscribe(unsubscribe) = event else {
+            panic!("expected UNSUBSCRIBE, got {event:?}");
+        };
+        assert_eq!(unsubscribe.subscribe_id(), handler.request_id());
+    }
+
+    #[tokio::test]
+    async fn subscribe_dropped_while_registering_its_receiver_unsubscribes() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-drop-registering").await;
+        let session = client.subscriber().session;
+        let mut subscriber = client.subscriber();
+        let mut request = Box::pin(subscriber.subscribe(
+            "ns".to_string(),
+            TRACK.to_string(),
+            SubscribeOption::default(),
+        ));
+        let SessionEvent::Subscribe(handler) = send_without_waiting(&mut request, &server).await
+        else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+        wait_for_control_delivery(&server, &client).await;
+        let receiver_map = session.receiver_map.lock().await;
+        assert!(request.as_mut().now_or_never().is_none());
+
+        // Act
+        drop(request);
+        drop(receiver_map);
+        let event = within(server.receive_event()).await.unwrap();
+        let notification = notify_datagram(&session, track_alias).await;
+
+        // Assert: the receiver installed before the drop no longer takes objects
+        let SessionEvent::Unsubscribe(unsubscribe) = event else {
+            panic!("expected UNSUBSCRIBE, got {event:?}");
+        };
+        assert_eq!(unsubscribe.subscribe_id(), handler.request_id());
+        assert!(
+            matches!(notification, IncomingObjectNotification::Discarded),
+            "{notification:?}"
+        );
     }
 
     #[tokio::test]

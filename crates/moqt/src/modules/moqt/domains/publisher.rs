@@ -250,14 +250,13 @@ pub(crate) async fn send_publish(
         delivery_timeout: None,
         max_duration: option.max_cache_duration,
     };
-    // A late PUBLISH_OK is discarded: the peer keeps subscription state
-    // but receives no objects.
     let response = connection
         .control
         .send_request(OutgoingRequest::Publish(publish))
         .await?
         .response()
-        .await?;
+        .await?
+        .accept();
     match response {
         ResponseMessage::PublishOk(message) if message.request_id == request_id => {
             tracing::info!(
@@ -306,8 +305,9 @@ mod tests {
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
                 HANDSHAKE_TIMEOUT, first_subgroup_stream, object_with_extensions,
-                read_subgroup_objects, send_subgroup_object, spawn_connected_dual_sessions,
-                subgroup_receiver, within,
+                read_subgroup_objects, send_subgroup_object, send_without_waiting,
+                spawn_connected_dual_sessions, subgroup_receiver, wait_for_control_delivery,
+                within,
             },
         },
         object::{Location, Object},
@@ -459,6 +459,35 @@ mod tests {
         assert_eq!(done.status_code(), PublishDoneCode::InternalError);
         assert_eq!(done.stream_count(), 0);
         assert_eq!(received, vec![expected]);
+    }
+
+    #[tokio::test]
+    async fn publish_dropped_after_its_publish_ok_arrived_sends_publish_done() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("publish-drop-after-ok").await;
+        let publisher = client.publisher();
+        let mut request = Box::pin(publisher.publish(
+            "ns".to_string(),
+            "track".to_string(),
+            PublishOption::default(),
+        ));
+        let SessionEvent::Publish(handler) = send_without_waiting(&mut request, &server).await
+        else {
+            panic!("expected PUBLISH from the client");
+        };
+        handler.ok(128, FilterType::LargestObject).await.unwrap();
+        wait_for_control_delivery(&server, &client).await;
+
+        // Act
+        drop(request);
+        let event = within(server.receive_event()).await.unwrap();
+
+        // Assert
+        let SessionEvent::PublishDone(done) = event else {
+            panic!("expected PUBLISH_DONE, got {event:?}");
+        };
+        assert_eq!(done.request_id(), handler.request_id);
+        assert_eq!(done.stream_count(), 0);
     }
 
     #[tokio::test]
