@@ -5,6 +5,7 @@ use crate::{
     modules::{
         moqt::{
             control_plane::{
+                constants::TerminationErrorCode,
                 control_messages::messages::{
                     fetch::Fetch, fetch_ok::FetchOk, parameters::location::Location,
                 },
@@ -75,6 +76,18 @@ impl FetchHandler {
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
         self.guard.reject(code, reason_phrase).await
+    }
+
+    /// Closes the session with PROTOCOL_VIOLATION instead of answering. Call it
+    /// for a Joining Fetch of a subscription without the Largest Object filter
+    /// (draft-14 §9.16.2).
+    pub fn close_for_protocol_violation(&self, reason: &str) {
+        self.guard.mark_responded();
+        self.session_context.close_connection(
+            self.guard.connection(),
+            TerminationErrorCode::ProtocolViolation,
+            reason,
+        );
     }
 }
 
