@@ -62,7 +62,7 @@ pub(super) fn session_event_span(
             track_name = %handler.track_name(),
             subscriber_priority = handler._subscriber_priority(),
             group_order = ?handler._group_order(),
-            forward = handler._forward(),
+            forward = handler.forward(),
             filter_type = ?handler._filter_type(),
             max_cache_duration = ?handler._max_cache_duration(),
             delivery_timeout = ?handler._delivery_timeout(),
