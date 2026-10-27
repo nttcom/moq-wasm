@@ -10,7 +10,9 @@ use crate::{
     modules::{
         executor::{self, BoxFuture, JoinHandle},
         moqt::{
-            control_plane::control_messages::messages::unsubscribe::Unsubscribe,
+            control_plane::control_messages::messages::{
+                parameters::content_exists::ContentExists, unsubscribe::Unsubscribe,
+            },
             data_plane::stream::open_subgroups::OpenSubgroups,
             domains::{
                 connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
@@ -518,7 +520,15 @@ async fn carry_subscription(
             .await;
         return (request_id, Carried::Gone);
     };
-    connection.carry(request_id, subscribe_ok.request_id);
+    let largest = match subscribe_ok.content_exists {
+        ContentExists::True { location } => Some(location),
+        ContentExists::False => None,
+    };
+    connection.carry_subscription(
+        request_id,
+        subscribe_ok.request_id,
+        option.filter_type.start_location(largest),
+    );
     if let Err(code) = connection
         .install_receiver(
             subscribe_ok.track_alias,
@@ -698,10 +708,18 @@ mod tests {
     async fn serve_subscribe(
         server: &Session,
     ) -> (StreamDataSenderFactory, FilterType, Subscription) {
+        serve_subscribe_with(server, ContentExists::False).await
+    }
+
+    /// `serve_subscribe`, answering with `content_exists`.
+    async fn serve_subscribe_with(
+        server: &Session,
+        content_exists: ContentExists,
+    ) -> (StreamDataSenderFactory, FilterType, Subscription) {
         let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
             panic!("expected SUBSCRIBE");
         };
-        let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+        let track_alias = handler.ok(0, content_exists).await.unwrap();
         let subscription = handler.into_subscription(track_alias);
         (
             server.publisher().create_stream(&subscription),
@@ -823,6 +841,81 @@ mod tests {
             previous_close.expect("previous connection closed").code,
             Some(0)
         );
+    }
+
+    /// Subscribes on a server with no content, moves to a server whose
+    /// Largest Object is {5, 3} and pauses the subscription there; returns
+    /// the filter of the update the new server receives.
+    async fn filter_of_an_update_after_go_away(
+        name: &str,
+        versions: &[Version],
+    ) -> Option<FilterType> {
+        let (port_a, accept_a) = spawn_server_offering(&format!("{name}-a"), versions);
+        let (port_b, accept_b) = spawn_server_offering(&format!("{name}-b"), versions);
+        let client = dual_client_with_config(ClientConfig {
+            versions: versions.to_vec(),
+            ..following_go_away()
+        });
+        let client = connect_from(client, port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, _, _) = subscribe(&client, &server_a).await;
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let largest = ContentExists::True {
+            location: Location {
+                group_id: 5,
+                object_id: 3,
+            },
+        };
+        let _ = serve_subscribe_with(&server_b, largest).await;
+        let closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+        assert!(closed.is_ok(), "the migration ends once A is closed");
+
+        client
+            .subscriber()
+            .update_forward(&subscription, false)
+            .await
+            .unwrap();
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
+            .await
+            .expect("the update arrives")
+            .unwrap();
+        let SessionEvent::SubscribeUpdate(update) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        update.filter()
+    }
+
+    /// The Start Location the SUBSCRIBE sent again established: past B's
+    /// Largest Object, later than A's {0, 0}.
+    const START_ON_B: FilterType = FilterType::AbsoluteStart {
+        location: Location {
+            group_id: 6,
+            object_id: 0,
+        },
+    };
+
+    #[tokio::test]
+    async fn a_draft14_update_after_go_away_repeats_the_start_the_new_server_resolved() {
+        // Act
+        let filter =
+            filter_of_an_update_after_go_away("migration-update-14", &[Version::Draft14]).await;
+
+        // Assert: draft-14 §9.10 forbids moving the Start Location back
+        assert_eq!(filter, Some(START_ON_B));
+    }
+
+    #[tokio::test]
+    async fn a_draft18_update_after_go_away_repeats_the_start_the_new_server_resolved() {
+        // Act
+        let filter =
+            filter_of_an_update_after_go_away("migration-update-18", &[Version::Draft18]).await;
+
+        // Assert: draft-18 §10.9.1 serves an earlier Start Location as a restart
+        assert_eq!(filter, Some(START_ON_B));
     }
 
     #[tokio::test]
