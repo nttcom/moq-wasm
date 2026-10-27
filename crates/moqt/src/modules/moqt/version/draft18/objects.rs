@@ -659,7 +659,11 @@ impl SubgroupReader {
                 receive_time,
             }) => {
                 let object = self.state.object(field).map_err(violation)?;
-                self.log_received(&object, object.payload.len(), receive_time);
+                self.log_received(
+                    object.location.object_id,
+                    object.payload.len(),
+                    receive_time,
+                );
                 SubgroupPart::Object(object)
             }
             Some(StreamFrame::SubgroupObjectHead { field, payload_len }) => {
@@ -674,14 +678,7 @@ impl SubgroupReader {
                 if let (Some(receive_time), Some(object_id)) =
                     (completed_in, self.state.prev_object_id)
                 {
-                    tracing::debug!(
-                        track_alias = self.state.header.track_alias,
-                        group_id = self.state.header.group_id,
-                        object_id,
-                        payload_bytes = self.streaming_payload_len,
-                        receive_us = receive_time.as_micros() as u64,
-                        "subgroup object received"
-                    );
+                    self.log_received(object_id, self.streaming_payload_len, receive_time);
                 }
                 SubgroupPart::Payload {
                     data,
@@ -694,11 +691,11 @@ impl SubgroupReader {
         Ok(Some(part))
     }
 
-    fn log_received(&self, object: &Object, payload_bytes: usize, receive_time: Duration) {
+    fn log_received(&self, object_id: u64, payload_bytes: usize, receive_time: Duration) {
         tracing::debug!(
             track_alias = self.state.header.track_alias,
-            group_id = object.location.group_id,
-            object_id = object.location.object_id,
+            group_id = self.state.header.group_id,
+            object_id,
             payload_bytes,
             receive_us = receive_time.as_micros() as u64,
             "subgroup object received"
