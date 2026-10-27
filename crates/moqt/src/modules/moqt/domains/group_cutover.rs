@@ -9,6 +9,9 @@
 /// may win every race.
 pub(crate) struct GroupCutover {
     newest: Option<u64>,
+    /// The first group the current subscription delivers whole; it joins
+    /// earlier groups mid-way.
+    current_start: u64,
     state: Cutover,
 }
 
@@ -21,9 +24,10 @@ enum Cutover {
 impl GroupCutover {
     /// Waiting for the current subscription, after the previous one handed
     /// out groups up to `newest`.
-    pub(crate) fn waiting_after(newest: Option<u64>) -> Self {
+    pub(crate) fn waiting_after(newest: Option<u64>, current_start: u64) -> Self {
         Self {
             newest,
+            current_start,
             state: Cutover::Waiting,
         }
     }
@@ -68,7 +72,7 @@ impl GroupCutover {
             Cutover::Waiting => {
                 let cutover = match self.newest {
                     Some(newest) if group_id <= newest => newest + 1,
-                    _ if object_id == 0 => group_id,
+                    _ if object_id == 0 && group_id >= self.current_start => group_id,
                     _ => group_id + 1,
                 };
                 self.state = Cutover::At(cutover);
@@ -91,7 +95,7 @@ mod tests {
     use super::*;
 
     fn migrating_after(groups: &[u64]) -> GroupCutover {
-        GroupCutover::waiting_after(groups.iter().copied().max())
+        GroupCutover::waiting_after(groups.iter().copied().max(), 0)
     }
 
     #[test]
@@ -145,6 +149,22 @@ mod tests {
         // Assert
         assert!(!current_mid_group);
         assert!(cutover.is_cut_over());
+        assert!(previous_group);
+        assert!(current_next_group);
+    }
+
+    #[test]
+    fn a_group_the_current_session_joined_mid_way_is_left_to_the_previous_session() {
+        // Arrange: the current subscription delivers whole groups from group 3
+        let mut cutover = GroupCutover::waiting_after(Some(1), 3);
+
+        // Act
+        let current_joined_group = cutover.take_current(2, 0);
+        let previous_group = cutover.take_previous(2);
+        let current_next_group = cutover.take_current(3, 0);
+
+        // Assert
+        assert!(!current_joined_group);
         assert!(previous_group);
         assert!(current_next_group);
     }
