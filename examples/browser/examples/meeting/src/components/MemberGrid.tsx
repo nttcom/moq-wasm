@@ -2,12 +2,12 @@ import { LocalMember, RemoteMember } from '../types/member'
 import type { CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import { ReactNode, useEffect, useState } from 'react'
+import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
 import { ControlBar } from './ControlBar'
 import { ParticipantTile } from './ParticipantTile'
 import { LOCAL_MEMBER_ID, type StageArrangement, type StageTile, galleryTileWidth } from '../utils/stageLayout'
-import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
 import {
@@ -260,15 +260,23 @@ export function MemberGrid({
                 </div>
               )}
             </div>
-            {filmstripOpen && stage.others.length > 0 && (
-              <div className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto" data-testid="filmstrip">
-                {stage.others.map((tile) => (
-                  <div key={tile.key} className="aspect-video w-full shrink-0">
-                    {renderTile(tile)}
+            {stage.others.length > 0 &&
+              (filmstripOpen ? (
+                <div className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto" data-testid="filmstrip">
+                  <div className="flex justify-end">
+                    <FilmstripButton open onClick={onToggleFilmstrip} />
                   </div>
-                ))}
-              </div>
-            )}
+                  {stage.others.map((tile) => (
+                    <div key={tile.key} className="aspect-video w-full shrink-0">
+                      {renderTile(tile)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="shrink-0">
+                  <FilmstripButton open={false} onClick={onToggleFilmstrip} />
+                </div>
+              ))}
           </>
         )}
       </div>
@@ -281,13 +289,17 @@ export function MemberGrid({
         onToggleCamera={onToggleCamera}
         onToggleMicrophone={onToggleMicrophone}
         onToggleScreenShare={onToggleScreenShare}
+        videoDevices={videoDevices}
+        audioDevices={audioDevices}
+        selectedVideoDeviceId={selectedVideoDeviceId}
+        selectedAudioDeviceId={selectedAudioDeviceId}
+        onSelectVideoDevice={onSelectVideoDevice}
+        onSelectAudioDevice={onSelectAudioDevice}
         onOpenDevices={() => setIsDeviceModalOpen(true)}
         onOpenCatalog={() => setIsCatalogModalOpen(true)}
         onOpenStats={() => setIsStatsModalOpen(true)}
         view={stage.view}
         onToggleView={onToggleView}
-        filmstripOpen={stage.view === 'speaker' ? filmstripOpen : undefined}
-        onToggleFilmstrip={onToggleFilmstrip}
         chatOpen={chatOpen}
         unreadChatMessageCount={unreadChatMessageCount}
         onToggleChat={onToggleChat}
@@ -296,20 +308,8 @@ export function MemberGrid({
         captions={captions}
       />
       {isDeviceModalOpen && (
-        <DeviceModal title="Select Devices" onClose={() => setIsDeviceModalOpen(false)}>
+        <DeviceModal title="Device settings" onClose={() => setIsDeviceModalOpen(false)}>
           <div className="space-y-4">
-            <DeviceSelector
-              label="Camera"
-              devices={videoDevices}
-              selectedDeviceId={selectedVideoDeviceId}
-              onChange={onSelectVideoDevice}
-            />
-            <DeviceSelector
-              label="Microphone"
-              devices={audioDevices}
-              selectedDeviceId={selectedAudioDeviceId}
-              onChange={onSelectAudioDevice}
-            />
             <GetUserMediaForm
               settings={captureSettings}
               onChange={onChangeCaptureSettings}
@@ -398,6 +398,22 @@ export function MemberGrid({
         </DeviceModal>
       )}
     </div>
+  )
+}
+
+function FilmstripButton({ open, onClick }: { open: boolean; onClick: () => void }) {
+  const label = open ? 'Hide participants' : 'Show participants'
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      data-testid="filmstrip-button"
+      onClick={onClick}
+      className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-800 text-slate-200 transition hover:bg-slate-700 hover:text-white"
+    >
+      {open ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+    </button>
   )
 }
 

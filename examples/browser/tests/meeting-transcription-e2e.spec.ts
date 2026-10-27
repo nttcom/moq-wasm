@@ -19,10 +19,16 @@ const TRANSCRIPT_TIMEOUT_MS = 60_000
 
 test.setTimeout(300_000)
 
+async function expectCaptionsShown(model: MeetingClientPageModel, shown: boolean) {
+  await model.page.getByTestId('activities-button').click()
+  await expect(model.page.getByTestId('captions-show')).toHaveAttribute('aria-checked', String(shown))
+  await model.page.keyboard.press('Escape')
+}
+
 async function joinWithCaptionsOn(browser: import('@playwright/test').Browser, room: string, user: string) {
   const client = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
   await joinRoom(client.page, room, user, 'a')
-  await client.page.page.getByTestId('captions-button').click()
+  await client.page.page.getByTestId('activities-button').click()
   await client.page.page.getByTestId('captions-whisper').click()
   return client
 }
@@ -55,7 +61,7 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
   const bobRecords = await openTranscript(bob.page)
   await expect.poll(() => bobRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(2)
   // Assert: alice, who never asked for captions, sees them and reads the transcript too
-  await expect(alice.page.page.getByTestId('captions-button')).toHaveAccessibleName('Captions on')
+  await expectCaptionsShown(alice.page, true)
   await expect(getMemberCard(alice.page.page, 'local').getByTestId('tile-caption')).toHaveText(/\S/, {
     timeout: TRANSCRIPT_TIMEOUT_MS
   })
@@ -63,13 +69,13 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
   await expect.poll(() => aliceRecords.count(), { timeout: TRANSCRIPT_TIMEOUT_MS }).toBeGreaterThanOrEqual(2)
 
   // Act
-  await alice.page.page.getByTestId('captions-button').click()
+  await alice.page.page.getByTestId('activities-button').click()
   await alice.page.page.getByTestId('captions-hide').click()
 
   // Assert: only alice's page hides them; the transcriber stays
-  await expect(alice.page.page.getByTestId('captions-button')).toHaveAccessibleName('Captions off')
+  await expectCaptionsShown(alice.page, false)
   await expect(getMemberCard(alice.page.page, 'local').getByTestId('tile-caption')).toBeHidden()
-  await expect(bob.page.page.getByTestId('captions-button')).toHaveAccessibleName('Captions on')
+  await expectCaptionsShown(bob.page, true)
   await expect(bob.page.page.getByTestId('transcriber-badge')).toBeVisible()
 
   await alice.page.toggleMicrophoneButton.click()
@@ -98,25 +104,24 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
     dialogMessages.push(dialog.message())
     void dialog.dismiss()
   })
-  await carol.page.page.getByTestId('captions-button').click()
+  await carol.page.page.getByTestId('activities-button').click()
   await carol.page.page.getByTestId('captions-stop').click()
   await alice.page.page.waitForTimeout(5_000)
 
   // Assert: cancelling keeps the transcriber
   expect(dialogMessages).toEqual(['Stopping transcription stops it for everyone in the room.'])
   await expect(alice.page.page.getByTestId('transcriber-badge')).toBeVisible()
-  await expect(carol.page.page.getByTestId('captions-button')).toHaveAccessibleName('Captions on')
+  await expectCaptionsShown(carol.page, true)
 
   // Act
   carol.page.page.once('dialog', (dialog) => void dialog.accept())
-  await carol.page.page.getByTestId('captions-button').click()
+  await carol.page.page.getByTestId('activities-button').click()
   await carol.page.page.getByTestId('captions-stop').click()
 
   // Assert: the transcriber leaves at once rather than after the grace period, on every page
   await expect(alice.page.page.getByTestId('transcriber-badge')).toBeHidden({ timeout: 10_000 })
-  await expect(alice.page.page.getByTestId('captions-button')).toHaveAccessibleName(
-    'Captions (stopped by a participant)'
-  )
+  await alice.page.page.getByTestId('activities-button').click()
+  await expect(alice.page.page.getByTestId('captions-error')).toHaveText('stopped by a participant')
   await expect(carol.page.page.getByTestId('transcriber-badge')).toBeHidden()
 
   for (const client of [carol, alice]) {
@@ -137,7 +142,7 @@ test('a GPU recognizer that is starting is announced, then its text reaches the 
   const badge = alice.page.page.getByTestId('transcriber-badge')
 
   // Act
-  await alice.page.page.getByTestId('captions-button').click()
+  await alice.page.page.getByTestId('activities-button').click()
   await alice.page.page.getByTestId('captions-granite-speech-5-2b').click()
 
   // Assert: the badge and one transcript record say the recognizer is starting
