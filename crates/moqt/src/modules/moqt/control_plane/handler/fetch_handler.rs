@@ -78,6 +78,10 @@ impl FetchHandler {
         self.guard.reject(code, reason_phrase).await
     }
 
+    pub(crate) fn logical_request_id(&self, wire_id: u64) -> u64 {
+        self.guard.connection().logical_request_id(wire_id)
+    }
+
     /// Closes the session with PROTOCOL_VIOLATION instead of answering. Call it
     /// for a Joining Fetch of a subscription without the Largest Object filter
     /// (draft-14 §9.16.2).

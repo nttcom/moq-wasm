@@ -51,9 +51,17 @@ mod tests {
         Bytes::from(serde_json::to_vec(&Catalog::new(Vec::new(), generated_at_ms)).unwrap())
     }
 
+    async fn next_catalog(reader: &mut CatalogReader) -> Catalog {
+        tokio::time::timeout(Duration::from_secs(5), reader.next())
+            .await
+            .expect("no catalog object arrived")
+            .unwrap()
+            .unwrap()
+    }
+
     #[tokio::test]
-    async fn a_catalog_object_added_to_the_joined_group_is_read() {
-        // Arrange: `Origin` refuses the joining FETCH, so only the subscription delivers
+    async fn the_joined_group_is_read_from_the_fetch_then_from_the_subscription() {
+        // Arrange
         let mut publisher = FakePublisher::spawn();
         let origin = publisher.origin.clone();
         origin
@@ -79,15 +87,13 @@ mod tests {
         );
 
         // Act
+        let fetched = next_catalog(&mut reader).await;
         write(GroupBoundary::Within, catalog(2)).await.unwrap();
-        let read = tokio::time::timeout(Duration::from_secs(5), reader.next())
-            .await
-            .expect("no catalog object arrived")
-            .unwrap()
-            .unwrap();
+        let subscribed = next_catalog(&mut reader).await;
 
         // Assert
-        assert_eq!(read, Catalog::new(Vec::new(), 2));
+        assert_eq!(fetched, Catalog::new(Vec::new(), 1));
+        assert_eq!(subscribed, Catalog::new(Vec::new(), 2));
         connection.close().await;
     }
 }

@@ -333,6 +333,8 @@ use these facades instead of the data-plane factories directly:
   first. Until the FETCH ends, the live streams wait in the subscription's
   channel. No FETCH is sent when SUBSCRIBE_OK reports no content. A refused or
   failed FETCH is logged at DEBUG, and the reader yields only the live objects.
+  `Origin` answers the FETCH, so this works against a moqt publisher as well as
+  a relay.
 
 ### `Origin` — the tracks this endpoint originates
 
@@ -379,9 +381,16 @@ forward from their own cache through the raw stream senders.
   drops the session's writer on UNSUBSCRIBE, resetting its open group with
   CANCELLED rather than finishing it (draft-14 §10.4.3), and returns the
   track so the caller can account it; `is_serving(session)` tells whether
-  that session still takes any track; `serve_fetch` answers a Standalone FETCH from the cache on its
-  own stream (`FetchServeTask`, one per request, aborted by `cancel_fetch` and
-  when the `Origin` is dropped; joining FETCH is NOT_SUPPORTED);
+  that session still takes any track; `serve_fetch` answers a Standalone or
+  Joining FETCH from the cache on its own stream (`FetchServeTask`, one per
+  request, aborted by `cancel_fetch` and when the `Origin` is dropped). Each
+  accepted SUBSCRIBE keeps its `JoinPoint`: the Largest Location its
+  SUBSCRIBE_OK reported, or that its filter is not Largest Object. A Joining
+  FETCH ends right after that location (draft-14 §9.16.2.1), so it meets the
+  live objects without overlap. It is rejected with INVALID_JOINING_REQUEST_ID
+  once the SUBSCRIBE is released, with INVALID_RANGE when the SUBSCRIBE_OK
+  reported no content, and closes the session with PROTOCOL_VIOLATION when the
+  filter is not Largest Object (`FetchHandler::close_for_protocol_violation`);
   `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.
 - `handle(event)` is the session event loop's shortcut to all of the above:
   it accepts a SUBSCRIBE to a registered track, releases on UNSUBSCRIBE,
@@ -391,9 +400,11 @@ forward from their own cache through the raw stream senders.
 - Left to the application: whether to accept a SUBSCRIBE for a track it
   has not registered yet (`handle` returns it), namespace
   announcements, when to PUBLISH, retention and first group ids, and
-  disconnect handling. The FETCH End Location arithmetic is the free function
-  `resolve_fetch_range` (`domains/fetch_range.rs`), shared with the wasm
-  bindings.
+  disconnect handling. The FETCH range arithmetic is the free functions
+  `resolve_fetch_range` (the Standalone End Location) and
+  `resolve_joining_fetch` (a Joining Fetch's Start and End Location and its
+  `JoiningFetchError`) in `domains/fetch_range.rs`, shared with the relay and
+  the wasm bindings.
 
 ### `SessionContext` and `Connection` — shared session state
 

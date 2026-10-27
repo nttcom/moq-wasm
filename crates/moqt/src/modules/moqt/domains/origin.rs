@@ -9,7 +9,10 @@ use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
 use crate::{
     Publisher, Session, SessionEvent, TrackWriter, TransportSendError,
-    fetch::{FetchCancelHandler, FetchHandler, FetchParams},
+    fetch::{
+        FetchCancelHandler, FetchHandler, FetchParams, JoinPoint, JoiningFetchError, JoiningStart,
+        resolve_joining_fetch,
+    },
     modules::{executor, moqt::domains::session_context::SessionContext},
     object::{ContentExists, ExtensionHeaders, Location},
     publish::PublishOption,
@@ -89,8 +92,14 @@ pub struct Origin {
 #[derive(Default)]
 struct OriginState {
     tracks: HashMap<TrackKey, OriginTrack>,
-    subscriptions: HashMap<RequestKey, TrackKey>,
+    subscriptions: HashMap<RequestKey, OriginSubscription>,
     fetches: HashMap<RequestKey, FetchServeTask>,
+}
+
+struct OriginSubscription {
+    track: TrackKey,
+    /// `None` for a PUBLISH this endpoint sent, which no Joining Fetch names.
+    join_point: Option<JoinPoint>,
 }
 
 impl OriginState {
@@ -211,7 +220,13 @@ impl Origin {
                 next_group_id,
             )),
         });
-        state.subscriptions.insert(request, key);
+        state.subscriptions.insert(
+            request,
+            OriginSubscription {
+                track: key,
+                join_point: None,
+            },
+        );
         tracing::info!(
             track_namespace = namespace,
             track_name,
@@ -342,12 +357,9 @@ impl Origin {
     /// Serves the SUBSCRIBE on the session it arrived on.
     pub async fn accept_subscribe(&self, handler: SubscribeHandler) -> Result<()> {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
-        let content_exists = {
-            let mut state = self.state.lock().await;
-            content_exists(state.track_mut(&key)?.numbering.largest())
-        };
+        let largest = self.state.lock().await.track_mut(&key)?.numbering.largest();
         let track_alias = handler
-            .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists)
+            .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists(largest))
             .await
             .context("accept SUBSCRIBE")?;
         let subscription = handler.into_subscription(track_alias);
@@ -371,7 +383,13 @@ impl Origin {
                 next_group_id,
             )),
         });
-        state.subscriptions.insert(request, key);
+        state.subscriptions.insert(
+            request,
+            OriginSubscription {
+                track: key,
+                join_point: Some(JoinPoint::new(&handler.filter_type, largest)),
+            },
+        );
         tracing::info!(
             track_namespace = %handler.track_namespace,
             track_name = %handler.track_name,
@@ -402,7 +420,7 @@ impl Origin {
             handler.subscribe_id(),
         );
         let mut state = self.state.lock().await;
-        let key = state.subscriptions.remove(&request)?;
+        let key = state.subscriptions.remove(&request)?.track;
         let mut released = None;
         if let Some(track) = state.tracks.get_mut(&key) {
             track.outlets.retain_mut(|outlet| {
@@ -424,28 +442,27 @@ impl Origin {
         Some(key)
     }
 
+    /// Serves a Standalone or Joining Fetch from the cache. A Joining Fetch
+    /// names a SUBSCRIBE this origin accepted on the same session (draft-14
+    /// §9.16.2).
     pub async fn serve_fetch(&self, handler: FetchHandler) -> Result<()> {
-        let FetchParams::Standalone {
-            track_namespace,
-            track_name,
-            start_location,
-            end_location,
-        } = &handler.fetch.fetch_params
-        else {
-            handler
-                .error(
-                    RequestErrorCode::NotSupported,
-                    "only standalone FETCH is served".to_string(),
-                )
-                .await?;
-            return Ok(());
-        };
-        let key = (track_namespace.join("/"), track_name.clone());
         let mut state = self.state.lock().await;
+        let (key, start_location, end_location) = match fetch_target(&state, &handler) {
+            Ok(target) => target,
+            Err(error) => {
+                drop(state);
+                tracing::warn!(request_id = handler.request_id, %error, "Joining FETCH rejected");
+                match error.request_error_code() {
+                    Some(code) => handler.error(code, error.to_string()).await?,
+                    None => handler.close_for_protocol_violation(&error.to_string()),
+                }
+                return Ok(());
+            }
+        };
         let range = state
             .tracks
             .get(&key)
-            .map(|track| track.cache.resolve(*start_location, *end_location));
+            .map(|track| track.cache.resolve(start_location, end_location));
         let (code, reason) = match range {
             None => (RequestErrorCode::TrackDoesNotExist, "track not published"),
             Some(FetchRange::InvalidRange) => (RequestErrorCode::InvalidRange, "invalid range"),
@@ -574,6 +591,47 @@ impl Origin {
             None => Ok(WriteOutcome::NotSent),
         }
     }
+}
+
+/// The track and the `[start, end)` range a FETCH asks for, in the Standalone
+/// Fetch encoding.
+fn fetch_target(
+    state: &OriginState,
+    handler: &FetchHandler,
+) -> Result<(TrackKey, Location, Location), JoiningFetchError> {
+    let (joining_request_id, joining_start) = match &handler.fetch.fetch_params {
+        FetchParams::Standalone {
+            track_namespace,
+            track_name,
+            start_location,
+            end_location,
+        } => {
+            return Ok((
+                (track_namespace.join("/"), track_name.clone()),
+                *start_location,
+                *end_location,
+            ));
+        }
+        FetchParams::RelativeJoining {
+            joining_request_id,
+            joining_start,
+        } => (*joining_request_id, JoiningStart::Relative(*joining_start)),
+        FetchParams::AbsoluteJoining {
+            joining_request_id,
+            joining_start,
+        } => (*joining_request_id, JoiningStart::Absolute(*joining_start)),
+    };
+    let request = (
+        session_key(&handler.session_context),
+        handler.logical_request_id(joining_request_id),
+    );
+    let (track, join_point) = state
+        .subscriptions
+        .get(&request)
+        .and_then(|subscription| Some((&subscription.track, subscription.join_point?)))
+        .ok_or(JoiningFetchError::UnknownSubscription)?;
+    let (start, end) = resolve_joining_fetch(joining_start, join_point)?;
+    Ok((track.clone(), start, end))
 }
 
 fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Location, TrackWriter)> {
@@ -756,6 +814,30 @@ mod tests {
         subscription.unwrap()
     }
 
+    /// Runs `request` while the origin serves the FETCH it sends.
+    async fn served<T>(peers: &Peers, request: impl Future<Output = T>) -> T {
+        let (result, ()) = within(async {
+            tokio::join!(request, async {
+                let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
+                else {
+                    panic!("expected FETCH from the relay");
+                };
+                peers.origin.serve_fetch(handler).await.unwrap();
+            })
+        })
+        .await;
+        result
+    }
+
+    async fn read_fetch(
+        subscriber: &mut crate::Subscriber,
+        handle: FetchHandle,
+    ) -> Result<(FetchHandle, Vec<Object>)> {
+        let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
+        let objects = within(read_fetch_objects(&mut receiver)).await;
+        Ok((handle, objects))
+    }
+
     async fn fetch(
         peers: &Peers,
         track_name: &str,
@@ -768,29 +850,27 @@ mod tests {
             group_order,
             ..FetchOption::default()
         };
-        let (handle, ()) = within(async {
-            tokio::join!(
-                subscriber.fetch(
-                    NAMESPACE.to_string(),
-                    track_name.to_string(),
-                    start,
-                    end,
-                    option
-                ),
-                async {
-                    let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
-                    else {
-                        panic!("expected FETCH from the relay");
-                    };
-                    peers.origin.serve_fetch(handler).await.unwrap();
-                }
-            )
-        })
-        .await;
-        let handle = handle?;
-        let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-        let objects = within(read_fetch_objects(&mut receiver)).await;
-        Ok((handle, objects))
+        let request = subscriber.fetch(
+            NAMESPACE.to_string(),
+            track_name.to_string(),
+            start,
+            end,
+            option,
+        );
+        let handle = served(peers, request).await?;
+        read_fetch(&mut subscriber, handle).await
+    }
+
+    async fn joining_fetch(
+        peers: &Peers,
+        subscription: &Subscription,
+        joining_start: u64,
+    ) -> Result<(FetchHandle, Vec<Object>)> {
+        let mut subscriber = peers.server.subscriber();
+        let request =
+            subscriber.fetch_relative_joining(subscription, joining_start, FetchOption::default());
+        let handle = served(peers, request).await?;
+        read_fetch(&mut subscriber, handle).await
     }
 
     async fn track_status(
@@ -1248,6 +1328,113 @@ mod tests {
             received_after.extension_headers.prior_group_id_gap(),
             vec![1]
         );
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_ends_at_the_largest_object_its_subscribe_ok_reported() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch", RETENTION).await;
+        let origin = &peers.origin;
+        for group in [
+            GroupBoundary::Next,
+            GroupBoundary::Next,
+            GroupBoundary::Within,
+        ] {
+            origin
+                .write(NAMESPACE, TRACK, plain(group, b"a"))
+                .await
+                .unwrap();
+        }
+        let subscription = subscribe(&peers, FilterType::LargestObject).await;
+        origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"live"))
+            .await
+            .unwrap();
+
+        // Act
+        let (current_group, current_group_objects) =
+            joining_fetch(&peers, &subscription, 0).await.unwrap();
+        let (previous_groups, previous_groups_objects) =
+            joining_fetch(&peers, &subscription, 1).await.unwrap();
+
+        // Assert
+        assert_eq!(current_group.end_location, location(8, 2));
+        assert_eq!(ids(&current_group_objects), vec![(8, 0), (8, 1)]);
+        assert_eq!(previous_groups.end_location, location(8, 2));
+        assert_eq!(ids(&previous_groups_objects), vec![(7, 0), (8, 0), (8, 1)]);
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_of_a_subscription_answered_without_content_is_an_invalid_range() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch-empty", RETENTION).await;
+        let subscription = subscribe(&peers, FilterType::LargestObject).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+
+        // Act
+        let result = joining_fetch(&peers, &subscription, 0).await;
+
+        // Assert
+        assert_eq!(rejection(result).code, RequestErrorCode::InvalidRange);
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_of_a_released_subscription_names_an_invalid_request_id() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch-released", RETENTION).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        let subscription = subscribe(&peers, FilterType::LargestObject).await;
+        unsubscribe(&peers, &subscription).await.unwrap();
+
+        // Act
+        let result = joining_fetch(&peers, &subscription, 0).await;
+
+        // Assert
+        assert_eq!(
+            rejection(result).code,
+            RequestErrorCode::InvalidJoiningRequestId
+        );
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_of_a_next_group_start_subscription_closes_the_session() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch-violation", RETENTION).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+
+        // Act
+        let mut subscriber = peers.server.subscriber();
+        let (result, event) = within(async {
+            tokio::join!(
+                subscriber.fetch_relative_joining(&subscription, 0, FetchOption::default()),
+                async {
+                    let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
+                    else {
+                        panic!("expected FETCH from the relay");
+                    };
+                    peers.origin.serve_fetch(handler).await.unwrap();
+                    peers.client.receive_event().await.unwrap()
+                }
+            )
+        })
+        .await;
+
+        // Assert
+        assert!(result.is_err());
+        assert!(matches!(event, SessionEvent::ProtocolViolation()));
     }
 
     #[tokio::test]
