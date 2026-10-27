@@ -100,7 +100,10 @@ ids.
 
 A subscription carried over is re-sent with its Forward state and
 `NextGroupStart`, or, for an AbsoluteRange, a range that starts after the
-newest group the previous connection handed out and keeps its End Group. An
+newest group the previous connection handed out and keeps its End Group.
+A SUBSCRIBE_UPDATE replaces the carried Forward state and priority, and one
+with an End Group turns the carried filter into an AbsoluteRange of its Start
+Location and End Group, so a range narrowed after the SUBSCRIBE is kept. An
 AbsoluteRange whose End Group the previous connection has started is not
 re-sent: it ends there, and the previous connection is kept until its
 streams end (10 s limit). A subscription only delivers objects after the

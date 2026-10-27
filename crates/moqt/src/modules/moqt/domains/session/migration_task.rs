@@ -826,6 +826,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn go_away_keeps_the_end_group_a_subscribe_update_narrowed_to() {
+        // Arrange
+        let (port_a, accept_a) = spawn_dual_server("session-migration-update-a");
+        let (port_b, accept_b) = spawn_dual_server("session-migration-update-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+        client
+            .subscriber()
+            .end_before_group(&subscription, 4, true)
+            .await
+            .unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let (_, filter_b, _) = serve_subscribe(&server_b).await;
+
+        // Assert: B starts after the group A delivered and ends at the updated End Group
+        assert_eq!(
+            filter_b,
+            FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 2,
+                    object_id: 0
+                },
+                end_group: 3
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn an_absolute_range_whose_end_group_arrives_on_the_old_server_stays_there() {
         // Arrange
         let (port_a, accept_a) = spawn_dual_server("session-migration-range-end-a");

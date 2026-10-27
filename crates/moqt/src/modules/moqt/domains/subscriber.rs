@@ -361,6 +361,13 @@ impl Subscriber {
             .and_then(|carried| carried.subscriptions.get_mut(&subscription.request_id()))
         {
             carried.option.forward = option.forward;
+            carried.option.subscriber_priority = option.subscriber_priority;
+            if let Some(end_group) = option.end_group.checked_sub(1) {
+                carried.option.filter_type = FilterType::AbsoluteRange {
+                    location: option.start_location,
+                    end_group,
+                };
+            }
         }
         for (connection, subscription_request_id) in
             self.on_live_connections(subscription.request_id())
