@@ -840,9 +840,8 @@ impl FetchHandler for MockFetchHandler {
     }
 }
 
-/// An update of subscription `subscription_request_id` in a session whose
-/// draft the constructor names; `answers` records the Largest Object of
-/// every `ok`.
+/// An update of subscription `subscription_request_id` in a session of
+/// `draft`; `answers` records the Largest Object of every `ok`.
 pub(crate) struct MockSubscribeUpdateHandler {
     subscription_request_id: u64,
     forward: bool,
@@ -852,7 +851,7 @@ pub(crate) struct MockSubscribeUpdateHandler {
 }
 
 #[derive(Clone, Copy)]
-enum UpdateDraft {
+pub(crate) enum UpdateDraft {
     /// No answer, no widening (draft-14 §9.10).
     Draft14,
     /// REQUEST_OK with LARGEST_OBJECT, widening allowed (draft-18 §10.9.1).
@@ -862,52 +861,11 @@ enum UpdateDraft {
 }
 
 impl MockSubscribeUpdateHandler {
-    pub(crate) fn draft14(
-        subscription_request_id: u64,
-        forward: bool,
-        filter: Option<FilterType>,
-    ) -> Self {
-        Self::new(
-            subscription_request_id,
-            forward,
-            filter,
-            UpdateDraft::Draft14,
-        )
-    }
-
-    pub(crate) fn draft18(
-        subscription_request_id: u64,
-        forward: bool,
-        filter: Option<FilterType>,
-    ) -> Self {
-        Self::new(
-            subscription_request_id,
-            forward,
-            filter,
-            UpdateDraft::Draft18,
-        )
-    }
-
-    /// A draft-18 update `ok` reports as failed, as when the application
-    /// answers it after the timeout.
-    pub(crate) fn draft18_timed_out(
-        subscription_request_id: u64,
-        forward: bool,
-        filter: Option<FilterType>,
-    ) -> Self {
-        Self::new(
-            subscription_request_id,
-            forward,
-            filter,
-            UpdateDraft::Draft18TimedOut,
-        )
-    }
-
-    fn new(
-        subscription_request_id: u64,
-        forward: bool,
-        filter: Option<FilterType>,
+    pub(crate) fn new(
         draft: UpdateDraft,
+        subscription_request_id: u64,
+        forward: bool,
+        filter: Option<FilterType>,
     ) -> Self {
         Self {
             subscription_request_id,
@@ -940,11 +898,8 @@ impl SubscribeUpdateHandler for MockSubscribeUpdateHandler {
         self.filter
     }
 
-    fn check_widening(&self) -> Result<(), moqt::subscribe::SubscriptionUpdateRefusal> {
-        match self.draft {
-            UpdateDraft::Draft14 => Err(moqt::subscribe::SubscriptionUpdateRefusal::Widening),
-            UpdateDraft::Draft18 | UpdateDraft::Draft18TimedOut => Ok(()),
-        }
+    fn may_widen(&self) -> bool {
+        !matches!(self.draft, UpdateDraft::Draft14)
     }
 
     fn ok(&self, largest: Option<moqt::object::Location>) -> moqt::subscribe::UpdateAnswer {

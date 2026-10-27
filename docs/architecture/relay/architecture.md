@@ -475,7 +475,7 @@ and the filter `filter()` returns is resolved against the track's Largest
 Object like a SUBSCRIBE's (a draft-14 SUBSCRIBE_UPDATE states its range as an
 absolute filter; a draft-18 REQUEST_UPDATE without SUBSCRIPTION_FILTER keeps
 the range). An update that moves the Start Location back or the End Group out
-is applied only when `SubscribeUpdateHandler::check_widening` allows it;
+is applied only when `SubscribeUpdateHandler::may_widen` allows it;
 otherwise the session is closed with PROTOCOL_VIOLATION (draft-14 §9.10: the
 publisher MUST). draft-18 §10.9.1 allows both: a start moved back is served
 like a new SUBSCRIBE with that start, from just past the Largest Object at the

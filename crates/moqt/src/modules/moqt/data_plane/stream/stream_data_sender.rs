@@ -467,8 +467,8 @@ mod tests {
             spawn_connected_draft18_sessions("sender-payload-pieces-d18", "moqt").await;
         let (track, sender) = sender_on(published_track_between(client, server).await).await;
 
-        // Act / Assert: draft-18 §11.4.2 lays the payload after its length;
-        // the properties arrive in ascending type order (§11.2.1.2)
+        // Act / Assert: draft-18 §11.4.2; the peer receives the properties
+        // sorted by type (§11.2.1.2)
         let mut expected = object(63, ObjectStatus::Normal, b"");
         expected
             .extension_headers
