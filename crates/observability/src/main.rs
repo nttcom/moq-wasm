@@ -10,19 +10,18 @@ use observability::{
     snapshot_ingest_task::SnapshotIngestTask,
 };
 use tokio::{net::TcpListener, sync::mpsc};
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 const SNAPSHOT_QUEUE: usize = 64;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
+    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+        service_name: "observability",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &["observability=info", "moqt=info"],
+        resource_attributes: Vec::new(),
+        log_output: telemetry::LogOutput::Stdout,
+    })?;
     let config = ObservabilityConfig::from_env()?;
     let clickhouse = ClickHouse::new(config.clickhouse.clone());
     schema::apply(&clickhouse).await?;

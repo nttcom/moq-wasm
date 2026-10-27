@@ -34,7 +34,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 ## Startup path
 
 `main.rs`:
-1. `init_logging` (tracing + OpenTelemetry OTLP export).
+1. `init_logging` (tracing + OpenTelemetry OTLP export, set up by `crates/telemetry`).
 2. Generate self-signed certs under `RELAY_CERT_DIR` (default `crates/relay/keys/`) if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PUBLIC_HOST` (the `host[:port]` clients connect to, default
@@ -506,7 +506,9 @@ per-request authorization gate under "Event pipeline".
   with `{"token"}`. The VTS only vouches for the signature and the appId; 200
   carries `{ appId, isRelay, claims }` with the raw JWT payload, which is
   handed to `build_verified_token`. 401 → `Unauthorized`, anything else or a
-  transport error → `Unavailable`. 3 s timeout.
+  transport error → `Unavailable`. 3 s timeout. The call runs in a
+  `relay.vts.verify` span whose context goes out as a W3C `traceparent`
+  header, so the VTS's spans join the relay's trace.
 - `session_authenticator.rs` — `SessionAuthenticator`, built from
   `AuthConfig` around a `TokenVerifier`; combines the pieces above into the
   CLIENT_SETUP decision described under "Session intake".
@@ -657,6 +659,14 @@ per-request authorization gate under "Event pipeline".
   lost with the reset. `Aborted` from such a wait surfaces as
   `FetchInterrupted::Incomplete`, the malformed latch as
   `FetchInterrupted::Malformed`.
+- `resolve_fetch_range` serves a range reaching past knowledge only while
+  live ingest runs, object 0 of every group in it is known, and each group
+  whose knowledge stops inside the range still has an open subgroup to bring
+  the rest. Otherwise it answers `NotCovered`, so the FETCH goes upstream
+  before any FETCH_OK: a group whose upstream stream ended keeps its gap (a
+  joining FETCH can reach into it when the publisher's SUBSCRIBE_OK reports
+  objects sent after the relay stopped reading), and a stream reset after
+  FETCH_OK can reach the subscriber before the stream's header.
 - Eviction job (`eviction_job.rs`): every `RELAY_CACHE_EVICT_INTERVAL_SECS`
   (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (60 s) and release
   knowledge exactly for the removed locations. While live ingest runs, the

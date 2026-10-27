@@ -394,7 +394,7 @@ transport connection:
   sees, is `generation << 56 | wire id`, so the first connection's ids are
   their own logical ids and no two connections' ids meet in the session's
   maps.
-- `object_sinks: HashMap<track_alias, ObjectSink>` — the objects arriving on
+- `object_sinks: ObjectSinks` — the sink of each track alias: the objects arriving on
   this connection, keyed by wire alias; a sink sets the logical alias on
   every stream it hands out; see buffering invariant below.
 - `fetch_notification_map` — keyed by request id; `FetchNotifier` removes the
@@ -607,18 +607,29 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Buffer-before-subscribe**: objects can arrive before the application
   registers a receiver (data races SUBSCRIBE_OK). `object_sinks` buffers up to
   256 objects per track alias (`MAX_PENDING_OBJECTS_PER_TRACK_ALIAS` in
-  `session_context.rs`), dropping the oldest on overflow.
+  `connection.rs`), dropping the oldest on overflow, and at most 1024 objects
+  across a connection's unknown aliases (`MAX_PENDING_OBJECTS`), dropping a
+  later object. A buffer expires 10 s after its first object
+  (`UNKNOWN_TRACK_ALIAS_PERIOD`, draft-14 §10.3 "a brief period"), which
+  leaves an application time to accept a PUBLISH.
   `register_data_receiver` drains the buffer into the new channel atomically
   under the sinks lock.
+- **Unread datagrams are bounded**: a subscription's channel queues at most
+  1024 datagrams its application has not read (`MAX_QUEUED_DATAGRAMS` in
+  `incoming_object.rs`) and drops a later one, since datagrams take no flow
+  control. Subgroup streams are not counted: an unread stream holds its QUIC
+  stream credit, so the peer's stream limit bounds them.
 - **Cancelled subscriptions discard late objects** (draft-14 §10.1):
   `Subscriber::unsubscribe`, the UNSUBSCRIBE sent for a late SUBSCRIBE_OK and
   `PublishHandler::error` (a PUBLISH with Forward=1 sends objects before its
   answer, §9.13) turn the track alias's sink into `Cancelled`, which drops
   the buffered objects, the channel sender and a receiver not yet taken by
   `accept_data_receiver`. Objects still in flight are then dropped on arrival
-  instead of being buffered as an unknown alias until the session ends. The
-  `Cancelled` marker stays until a new subscription reuses the alias; it is
-  not released on PUBLISH_DONE because late streams may follow it (§9.12).
+  instead of being buffered as an unknown alias. The `Cancelled` marker stays
+  until a new subscription reuses the alias or `UNKNOWN_TRACK_ALIAS_PERIOD`
+  (10 s) ends; an object arriving later is buffered as one of an unknown
+  alias, bounded and expiring like any other. It is not released on
+  PUBLISH_DONE because late streams may follow it (§9.12).
 - **PUBLISH_DONE ends the subscription after a grace period** (draft-14
   §9.12): the event still reaches the application, and 10 s later
   `PublishDoneExpiryTask` cancels the subscription as an unsubscribe would,

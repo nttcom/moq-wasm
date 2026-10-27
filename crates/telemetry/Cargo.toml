@@ -1,0 +1,16 @@
+[package]
+name = "telemetry"
+version = "0.1.0"
+edition = "2024"
+description = "Logging and tracing setup shared by the workspace's binaries: stdout and OTLP"
+
+[dependencies]
+anyhow = "1.0.102"
+http = "1.5.0"
+opentelemetry = { version = "0.33.1", features = ["trace", "logs"] }
+opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio", "logs"] }
+opentelemetry-otlp = { version = "0.33.1", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs"] }
+opentelemetry-appender-tracing = "0.33.1"
+tracing = "0.1.44"
+tracing-opentelemetry = "0.34.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

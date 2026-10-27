@@ -17,4 +17,4 @@ moqt = { path = "../moqt" }
 mediapack = { path = "../mediapack", features = ["moqt"] }
 transcode = { path = "../transcode" }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+telemetry = { path = "../telemetry" }

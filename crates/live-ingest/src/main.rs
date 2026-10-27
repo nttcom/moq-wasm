@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use anyhow::Result;
 use broadcast::MoqtTarget;
 use clap::Parser;
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{
     ingest_publisher::IngestOptions,
@@ -75,18 +74,27 @@ impl Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let log_filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env_lossy();
-    let logs = tracing_subscriber::fmt().with_env_filter(log_filter);
-    let stats = if args.stats {
-        logs.with_writer(std::io::stderr).init();
+    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+        service_name: "live-ingest",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &[
+            "live_ingest=info",
+            "moqt=info",
+            "broadcast=info",
+            "mediapack=info",
+            "transcode=info",
+        ],
+        resource_attributes: Vec::new(),
+        log_output: if args.stats {
+            telemetry::LogOutput::Stderr
+        } else {
+            telemetry::LogOutput::Stdout
+        },
+    })?;
+    let stats = args.stats.then(|| {
         let registry = ConnectionRegistry::default();
-        Some((StatsPanel::run(registry.clone()), registry))
-    } else {
-        logs.init();
-        None
-    };
+        (StatsPanel::run(registry.clone()), registry)
+    });
 
     let options = IngestOptions {
         moqt: args.moqt_target(),

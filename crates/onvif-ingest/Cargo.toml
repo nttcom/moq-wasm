@@ -21,5 +21,5 @@ serde_json = "1.0.150"
 sha1 = "0.11.0"
 time = { version = "0.3.47", features = ["formatting", "macros"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+telemetry = { path = "../telemetry" }
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "sync", "io-util"] }

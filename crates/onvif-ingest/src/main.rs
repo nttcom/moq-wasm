@@ -16,7 +16,6 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
-use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
 const RTSP_EVENT_CAPACITY: usize = 64;
 const RTSP_RETRY_MIN_DELAY: Duration = Duration::from_secs(1);
@@ -86,7 +85,18 @@ struct ProfileSource {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_logger();
+    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+        service_name: "onvif-ingest",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &[
+            "onvif_ingest=info",
+            "moqt=info",
+            "broadcast=info",
+            "mediapack=info",
+        ],
+        resource_attributes: Vec::new(),
+        log_output: telemetry::LogOutput::Stdout,
+    })?;
     let args = MoqtArgs::parse();
     let target = app_config::Target::from_args(&args.onvif)?;
     let publish_namespace = parse_namespace(&args.publish_namespace);
@@ -332,11 +342,4 @@ fn parse_namespace(value: &str) -> Vec<String> {
         .filter(|part| !part.trim().is_empty())
         .map(|part| part.trim().to_string())
         .collect()
-}
-
-fn init_logger() {
-    let filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env_lossy();
-    tracing_subscriber::fmt().with_env_filter(filter).init();
 }
