@@ -290,18 +290,15 @@ export class LocalSession {
     return this.subscribe(trackNamespace, trackName, role, config, onEnded, adaptation)
   }
 
+  /// Resolves after `onTracksUpdated` has received the first catalog.
   /// `onEnded` is called when the publisher ends the catalog with PUBLISH_DONE.
   async subscribeCatalog(
     trackNamespace: string[],
     onTracksUpdated: (tracks: MeetingCatalogTrack[]) => void,
     onEnded: () => void
-  ): Promise<MeetingCatalogTrack[]> {
+  ): Promise<void> {
     this.assertReady('subscribe catalog')
-    const {
-      promise: firstTracks,
-      resolve: resolveFirst,
-      reject: rejectFirst
-    } = Promise.withResolvers<MeetingCatalogTrack[]>()
+    const { promise: firstCatalog, resolve: resolveFirst, reject: rejectFirst } = Promise.withResolvers<void>()
     const subscribed = async () => {
       const { requestId, subscribeOk } = await this.client.subscribeLatest(
         trackNamespace,
@@ -316,7 +313,7 @@ export class LocalSession {
               tracks: tracks.map((t) => t.role)
             })
             onTracksUpdated(tracks)
-            resolveFirst(tracks)
+            resolveFirst()
           } catch (error) {
             console.error('Failed to parse catalog payload:', error)
             rejectFirst(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
@@ -330,7 +327,7 @@ export class LocalSession {
         }
       )
       this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
-      return firstTracks
+      return firstCatalog
     }
     let timeoutId: number | undefined
     const timedOut = new Promise<never>((_, reject) => {
@@ -340,7 +337,7 @@ export class LocalSession {
       )
     })
     try {
-      return await Promise.race([subscribed(), timedOut])
+      await Promise.race([subscribed(), timedOut])
     } finally {
       window.clearTimeout(timeoutId)
     }
