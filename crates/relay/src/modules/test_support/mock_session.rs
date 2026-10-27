@@ -380,6 +380,7 @@ impl Publisher for MockUpstreamPublisher {
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
                 max_cache_duration: None,
+                last_update: moqt::LastSubscribeUpdate::default(),
             }),
         ))
     }
@@ -450,6 +451,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
                 max_cache_duration: None,
+                last_update: moqt::LastSubscribeUpdate::default(),
             }),
         ))
     }
@@ -722,6 +724,7 @@ impl PublishHandler for MockPublishHandler {
             filter_type,
             delivery_timeout: None,
             max_cache_duration: None,
+            last_update: moqt::LastSubscribeUpdate::default(),
         })
     }
 

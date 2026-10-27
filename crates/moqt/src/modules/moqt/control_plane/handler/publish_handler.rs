@@ -2,7 +2,7 @@ use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
-    PublisherInitiatedSubscription, Subscription,
+    LastSubscribeUpdate, PublisherInitiatedSubscription, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -102,6 +102,7 @@ impl PublishHandler {
                 filter_type,
                 delivery_timeout: self.delivery_timeout,
                 max_cache_duration: self.max_cache_duration,
+                last_update: LastSubscribeUpdate::default(),
             },
         ))
     }
