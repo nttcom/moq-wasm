@@ -147,7 +147,8 @@ impl Subscriber {
     ) -> Result<TrackStatusOk, RequestFailure> {
         let connection = self.session.connection();
         let vec_namespace = namespace_tuple(&track_namespace);
-        let request_id = connection.control.next_request_id();
+        let reservation = connection.control.reserve_request_id().await;
+        let request_id = reservation.request_id();
         let track_status = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -161,7 +162,7 @@ impl Subscriber {
         };
         let response = connection
             .control
-            .send_request(OutgoingRequest::TrackStatus(track_status))
+            .send_request(reservation, OutgoingRequest::TrackStatus(track_status))
             .await?
             .response()
             .await?
@@ -299,7 +300,8 @@ impl Subscriber {
         let remainder = remainder.filter(|_| {
             self.session.follows_go_away() && option.group_order != GroupOrder::Descending
         });
-        let request_id = connection.control.next_request_id();
+        let reservation = connection.control.reserve_request_id().await;
+        let request_id = reservation.request_id();
 
         let pending_fetch = self.session.register_pending_fetch(&connection, request_id);
 
@@ -312,7 +314,7 @@ impl Subscriber {
         };
         let response = connection
             .control
-            .send_request(OutgoingRequest::Fetch(fetch))
+            .send_request(reservation, OutgoingRequest::Fetch(fetch))
             .await?
             .response()
             .await?
@@ -372,8 +374,9 @@ impl Subscriber {
         for (connection, subscription_request_id) in
             self.on_live_connections(subscription.request_id())
         {
+            let reservation = connection.control.reserve_request_id().await;
             let subscribe_update = SubscribeUpdate {
-                request_id: connection.control.next_request_id(),
+                request_id: reservation.request_id(),
                 subscription_request_id,
                 start_location: option.start_location,
                 end_group: option.end_group,
@@ -384,7 +387,7 @@ impl Subscriber {
             };
             connection
                 .control
-                .notify(Notification::SubscribeUpdate(subscribe_update))
+                .send_subscribe_update(reservation, subscribe_update)
                 .await?;
         }
         Ok(())
@@ -615,12 +618,18 @@ pub(crate) async fn send_subscribe_namespace(
     namespace: String,
 ) -> Result<(), RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
-    let request_id = connection.control.next_request_id();
+    let reservation = connection.control.reserve_request_id().await;
+    let request_id = reservation.request_id();
     let pending = connection
         .control
-        .send_request(OutgoingRequest::SubscribeNamespace(
-            SubscribeNamespace::new(request_id, vec_namespace, vec![]),
-        ))
+        .send_request(
+            reservation,
+            OutgoingRequest::SubscribeNamespace(SubscribeNamespace::new(
+                request_id,
+                vec_namespace,
+                vec![],
+            )),
+        )
         .await?;
     tracing::debug!(request_id, track_namespace_prefix = %namespace, "SUBSCRIBE_NAMESPACE sent");
     let response = pending.response().await?.accept();
@@ -667,7 +676,8 @@ pub(crate) async fn send_subscribe(
     track_name: &str,
     option: &SubscribeOption,
 ) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
-    let request_id = connection.control.next_request_id();
+    let reservation = connection.control.reserve_request_id().await;
+    let request_id = reservation.request_id();
     let subscribe = Subscribe {
         request_id,
         track_namespace: namespace_tuple(track_namespace),
@@ -681,7 +691,7 @@ pub(crate) async fn send_subscribe(
     };
     let response = connection
         .control
-        .send_request(OutgoingRequest::Subscribe(subscribe))
+        .send_request(reservation, OutgoingRequest::Subscribe(subscribe))
         .await?
         .response()
         .await?;

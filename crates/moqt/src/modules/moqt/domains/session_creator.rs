@@ -230,18 +230,22 @@ mod tests {
         let server_context = server.publisher().session;
 
         // Act
-        let client_ids = [
-            client_context.connection().control.next_request_id(),
-            client_context.connection().control.next_request_id(),
-        ];
-        let server_ids = [
-            server_context.connection().control.next_request_id(),
-            server_context.connection().control.next_request_id(),
-        ];
+        let client_id = client_context
+            .connection()
+            .control
+            .reserve_request_id()
+            .await
+            .request_id();
+        let server_id = server_context
+            .connection()
+            .control
+            .reserve_request_id()
+            .await
+            .request_id();
 
         // Assert
-        assert_eq!(client_ids, [0, 2]);
-        assert_eq!(server_ids, [1, 3]);
+        assert_eq!(client_id, 0);
+        assert_eq!(server_id, 1);
     }
 
     #[tokio::test]

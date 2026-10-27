@@ -213,14 +213,18 @@ pub(crate) async fn send_publish_namespace(
     namespace: String,
 ) -> Result<PendingPublishNamespace, RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
-    let request_id = connection.control.next_request_id();
+    let reservation = connection.control.reserve_request_id().await;
+    let request_id = reservation.request_id();
     let pending = connection
         .control
-        .send_request(OutgoingRequest::PublishNamespace(PublishNamespace::new(
-            request_id,
-            vec_namespace,
-            vec![],
-        )))
+        .send_request(
+            reservation,
+            OutgoingRequest::PublishNamespace(PublishNamespace::new(
+                request_id,
+                vec_namespace,
+                vec![],
+            )),
+        )
         .await?;
     Ok(PendingPublishNamespace {
         request_id,
@@ -237,7 +241,8 @@ pub(crate) async fn send_publish(
     option: &PublishOption,
 ) -> Result<(PublishOk, u64), RequestFailure> {
     let track_alias = connection.allocate_track_alias();
-    let request_id = connection.control.next_request_id();
+    let reservation = connection.control.reserve_request_id().await;
+    let request_id = reservation.request_id();
     let publish = Publish {
         request_id,
         track_namespace_tuple: namespace_tuple(track_namespace),
@@ -252,7 +257,7 @@ pub(crate) async fn send_publish(
     };
     let response = connection
         .control
-        .send_request(OutgoingRequest::Publish(publish))
+        .send_request(reservation, OutgoingRequest::Publish(publish))
         .await?
         .response()
         .await?
