@@ -5,10 +5,7 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::{sync::Arc, time::Duration};
 
-use moqt::{
-    fetch::{FetchParams, JoinedSubscription, JoiningFetchRefusal},
-    object::ContentExists,
-};
+use moqt::fetch::{FetchParams, JoinedSubscription, JoiningFetchRefusal};
 use tracing::Span;
 
 use crate::modules::{
@@ -411,13 +408,9 @@ impl Fetch {
         {
             return Err(FetchError::MalformedTrack);
         }
-        let upstream_largest =
-            table
-                .get_upstream_track(&target.track_key)
-                .and_then(|upstream_track| match upstream_track.content_exists() {
-                    ContentExists::True { location } => Some(location),
-                    ContentExists::False => None,
-                });
+        let upstream_largest = table
+            .get_upstream_track(&target.track_key)
+            .and_then(|upstream_track| upstream_track.largest_location());
         let source = self.resolve_fetch_source(&target, cache_store, upstream_largest)?;
         Ok((target, source))
     }
@@ -1265,7 +1258,7 @@ mod tests {
             track_key(),
             PUBLISHER_SESSION,
             ActiveUpstreamSubscription {
-                content_exists: ContentExists::True {
+                content_exists: moqt::object::ContentExists::True {
                     location: location(1, 3),
                 },
                 ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)

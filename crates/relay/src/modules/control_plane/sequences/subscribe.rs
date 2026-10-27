@@ -71,11 +71,7 @@ pub(super) fn existing_track_largest(
     track_key: &TrackKey,
     upstream_track: &UpstreamTrack,
 ) -> Option<moqt::object::Location> {
-    let upstream_largest = match upstream_track.content_exists() {
-        ContentExists::True { location } => Some(location),
-        ContentExists::False => None,
-    };
-    cached_largest(cache_store, track_key).max(upstream_largest)
+    cached_largest(cache_store, track_key).max(upstream_track.largest_location())
 }
 
 /// `late_publishers` are the upstream SUBSCRIBEs still unanswered when the
