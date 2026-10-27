@@ -1366,6 +1366,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unknown_range_ending_in_the_group_of_the_last_object_resets_after_the_objects_sent()
+    {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-unknown-same-group", "moqt").await;
+        let (_subscriber, mut receiver, _handler, sender) =
+            fetch_with_open_response(&client, &server).await;
+        let object = |object_id| Object {
+            location: Location {
+                group_id: 0,
+                object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: Default::default(),
+            payload: Bytes::from_static(b"o"),
+            ends_group: false,
+        };
+
+        // Act: the rest of group 0 stays unknown, as when a fill stalls there.
+        // The objects are read first: RESET_STREAM lets the receiver discard
+        // what it has not read (RFC 9000 §3.2)
+        sender.send_object(&object(0)).await.unwrap();
+        sender.send_object(&object(1)).await.unwrap();
+        let first = receiver.receive().await.unwrap();
+        let second = receiver.receive().await.unwrap();
+        let reported = sender
+            .report_unknown_range(Location {
+                group_id: 0,
+                object_id: u64::MAX,
+            })
+            .await
+            .unwrap();
+        let end = receiver.receive().await;
+
+        // Assert: §11.4.4.2 cannot end a range in the prior object's group, so
+        // the response is reset with UNKNOWN_OBJECT_STATUS (§10.12) after the
+        // objects already sent
+        assert_eq!(
+            (first, second),
+            (Fetch::Object(object(0)), Fetch::Object(object(1)))
+        );
+        assert_eq!(reported, UnknownRange::Reset);
+        let error = end.expect_err("the response is reset");
+        assert!(
+            error.to_string().contains("stream reset by peer"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn dropping_a_fetch_receiver_before_the_end_cancels_the_fetch() {
         // Arrange
         let (client, server) =
