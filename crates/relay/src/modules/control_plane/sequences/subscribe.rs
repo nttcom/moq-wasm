@@ -14,16 +14,14 @@ use crate::modules::{
     },
     domain::{
         delivery_control::DeliveryControl,
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{JoinPoint, UpstreamTrack},
-        },
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
         session_id::SessionId,
         session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::handler::subscribe::SubscribeHandler,
 };
+use moqt::fetch::JoinPoint;
 
 use moqt::object::ContentExists;
 use tracing::Span;

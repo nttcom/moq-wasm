@@ -35,7 +35,6 @@ impl SubscribeUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::{
         domain::{
             pub_sub_directory::{DownstreamRunnerSignals, entry::UpstreamSubscriptionOrigin},
@@ -46,6 +45,7 @@ mod tests {
             relay_harness::fixtures::location,
         },
     };
+    use moqt::fetch::JoinPoint;
 
     fn table_with_downstream() -> (InMemoryLocalPubSubDirectory, DownstreamRunnerSignals) {
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);

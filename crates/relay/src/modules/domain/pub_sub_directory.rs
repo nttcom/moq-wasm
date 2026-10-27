@@ -13,7 +13,7 @@ use crate::modules::{
         delivery_control::{DeliveryControl, UpdateOutcome},
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
-            ActiveUpstreamSubscription, DownstreamSubscription, JoinPoint, MatchingPublication,
+            ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
             PublishDoneReason, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
             RemovedSessionSubscriptions, UpstreamSubscriptionOrigin, UpstreamTrack,
         },
@@ -23,6 +23,7 @@ use crate::modules::{
     },
     session::handler::publish::PublishHandler,
 };
+use moqt::fetch::JoinPoint;
 
 pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,

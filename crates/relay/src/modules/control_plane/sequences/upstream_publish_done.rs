@@ -35,7 +35,6 @@ impl UpstreamPublishDone {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         domain::{
@@ -47,6 +46,7 @@ mod tests {
             upstream_release_context,
         },
     };
+    use moqt::fetch::JoinPoint;
 
     const DOWNSTREAM_SESSION: SessionId = 2;
     const DOWNSTREAM_SUBSCRIBE_ID: u64 = 100;

@@ -18,14 +18,12 @@ use crate::modules::{
     },
     domain::{
         delivery_control::DeliveryControl,
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{JoinPoint, PublishDoneReason},
-        },
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
         session_id::SessionId,
         track_key::TrackKey,
     },
 };
+use moqt::fetch::JoinPoint;
 
 #[derive(Clone)]
 pub(crate) struct DownstreamPublish {

@@ -228,8 +228,8 @@ async fn join_track(
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use moqt::fetch::JoinPoint;
     use std::time::Duration;
 
     use super::*;

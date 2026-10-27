@@ -5,7 +5,7 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::{sync::Arc, time::Duration};
 
-use moqt::fetch::FetchParams;
+use moqt::fetch::{FetchParams, JoiningFetchError, JoiningStart, resolve_joining_fetch};
 
 use crate::modules::{
     control_plane::{
@@ -20,10 +20,8 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
     domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::JoinPoint},
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
+        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
+        session_peer::SessionPeer, track_key::TrackKey,
     },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
 };
@@ -59,9 +57,7 @@ enum FetchSource {
 #[derive(Debug)]
 enum FetchError {
     TrackNotFound,
-    UnknownJoiningRequestId,
-    JoinedNotLargestObject,
-    NoObjectsPublished,
+    Joining(JoiningFetchError),
     InvalidRange,
     NoObjects,
     MalformedTrack,
@@ -72,9 +68,7 @@ impl FetchError {
     fn code(&self) -> Option<RequestErrorCode> {
         match self {
             Self::TrackNotFound => Some(RequestErrorCode::TrackDoesNotExist),
-            Self::UnknownJoiningRequestId => Some(RequestErrorCode::InvalidJoiningRequestId),
-            Self::JoinedNotLargestObject => None,
-            Self::NoObjectsPublished => Some(RequestErrorCode::InvalidRange),
+            Self::Joining(error) => error.request_error_code(),
             Self::InvalidRange => Some(RequestErrorCode::InvalidRange),
             Self::NoObjects => Some(RequestErrorCode::NoObjects),
             Self::MalformedTrack => Some(RequestErrorCode::MalformedTrack),
@@ -84,11 +78,12 @@ impl FetchError {
     fn reason(&self) -> &'static str {
         match self {
             Self::TrackNotFound => "Track not found",
-            Self::UnknownJoiningRequestId => "Unknown joining request id",
-            Self::JoinedNotLargestObject => {
+            Self::Joining(JoiningFetchError::UnknownSubscription) => "Unknown joining request id",
+            Self::Joining(JoiningFetchError::NotLargestObject) => {
                 "Joining FETCH of a subscription without the Largest Object filter"
             }
-            Self::NoObjectsPublished => "No objects published",
+            Self::Joining(JoiningFetchError::NothingPublished) => "No objects published",
+            Self::Joining(_) => "Invalid fetch range",
             Self::InvalidRange => "Invalid fetch range",
             Self::NoObjects => "No objects in fetch range",
             Self::MalformedTrack => "Malformed track",
@@ -372,14 +367,21 @@ impl Fetch {
             FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
-            } => self.resolve_joining_target(session_id, joining_request_id, table, |largest| {
-                largest.group_id.saturating_sub(joining_start)
-            }),
+            } => self.resolve_joining_target(
+                session_id,
+                joining_request_id,
+                JoiningStart::Relative(joining_start),
+                table,
+            ),
             FetchParams::AbsoluteJoining {
                 joining_request_id,
                 joining_start,
-            } => self
-                .resolve_joining_target(session_id, joining_request_id, table, |_| joining_start),
+            } => self.resolve_joining_target(
+                session_id,
+                joining_request_id,
+                JoiningStart::Absolute(joining_start),
+                table,
+            ),
         }
     }
 
@@ -428,27 +430,19 @@ impl Fetch {
         &self,
         session_id: SessionId,
         joining_request_id: u64,
+        joining_start: JoiningStart,
         table: &InMemoryLocalPubSubDirectory,
-        start_group: impl FnOnce(moqt::object::Location) -> u64,
     ) -> Result<FetchTarget, FetchError> {
-        let Some(downstream_sub) =
-            table.get_downstream_subscription(session_id, joining_request_id)
-        else {
-            tracing::warn!(
-                joining_request_id,
-                "Joining fetch references unknown subscription"
-            );
-            return Err(FetchError::UnknownJoiningRequestId);
-        };
-
-        let largest = match downstream_sub.join_point {
-            JoinPoint::Largest(Some(largest)) => largest,
-            JoinPoint::Largest(None) => {
-                tracing::warn!("Joining fetch: no objects published at subscribe time");
-                return Err(FetchError::NoObjectsPublished);
-            }
-            JoinPoint::NotLargestObject => return Err(FetchError::JoinedNotLargestObject),
-        };
+        let (downstream_sub, (start_location, end_location)) = table
+            .get_downstream_subscription(session_id, joining_request_id)
+            .ok_or(JoiningFetchError::UnknownSubscription)
+            .and_then(|sub| {
+                resolve_joining_fetch(joining_start, sub.join_point).map(|range| (sub, range))
+            })
+            .map_err(|error| {
+                tracing::warn!(joining_request_id, %error, "Joining fetch rejected");
+                FetchError::Joining(error)
+            })?;
 
         if table
             .get_upstream_track(&downstream_sub.track_key)
@@ -458,19 +452,12 @@ impl Fetch {
             return Err(FetchError::TrackNotFound);
         }
 
-        let start_location = moqt::object::Location {
-            group_id: start_group(largest),
-            object_id: 0,
-        };
-        if start_location > largest {
-            return Err(FetchError::InvalidRange);
-        }
         Ok(FetchTarget {
             track_namespace: downstream_sub.track_key.track_namespace.clone(),
             track_name: downstream_sub.track_key.track_name.clone(),
             track_key: downstream_sub.track_key,
             start_location,
-            end_location: largest.next(),
+            end_location,
         })
     }
 }
@@ -498,6 +485,7 @@ mod tests {
             },
         },
     };
+    use moqt::fetch::JoinPoint;
 
     const FETCH: Fetch = Fetch {
         fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
@@ -971,7 +959,10 @@ mod tests {
         let result = FETCH.resolve_fetch_target(1, relative_joining_fetch_params(999), &table);
 
         // Assert
-        assert!(matches!(result, Err(FetchError::UnknownJoiningRequestId)));
+        assert!(matches!(
+            result,
+            Err(FetchError::Joining(JoiningFetchError::UnknownSubscription))
+        ));
     }
 
     #[test]
@@ -991,7 +982,10 @@ mod tests {
         let result = FETCH.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
 
         // Assert
-        assert!(matches!(result, Err(FetchError::NoObjectsPublished)));
+        assert!(matches!(
+            result,
+            Err(FetchError::Joining(JoiningFetchError::NothingPublished))
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1284,6 +1278,9 @@ mod tests {
         );
 
         // Assert
-        assert!(matches!(result, Err(FetchError::InvalidRange)));
+        assert!(matches!(
+            result,
+            Err(FetchError::Joining(JoiningFetchError::StartAfterLargest))
+        ));
     }
 }
