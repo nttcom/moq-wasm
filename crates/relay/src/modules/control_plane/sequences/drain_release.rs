@@ -36,7 +36,6 @@ impl ReleaseUnwatchedPublishes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::{
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::directory_fixtures::{
@@ -44,6 +43,7 @@ mod tests {
             track_key, upstream_release_context,
         },
     };
+    use moqt::fetch::JoinPoint;
 
     async fn release(ctx: &UpstreamReleaseContext) {
         ReleaseUnwatchedPublishes

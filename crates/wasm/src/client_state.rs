@@ -2,8 +2,11 @@ use moqt::RequestErrorCode;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
-use moqt::fetch::{FetchParams, resolve_fetch_range};
-use moqt::wire::{ContentExists, Fetch, GroupOrder, Location, Subscribe, TrackStatus};
+use moqt::fetch::{
+    FetchParams, JoinPoint, JoiningFetchError, JoiningStart, resolve_fetch_range,
+    resolve_joining_fetch,
+};
+use moqt::wire::{ContentExists, Fetch, FilterType, GroupOrder, Location, Subscribe, TrackStatus};
 
 use crate::messages::SubgroupState;
 
@@ -22,8 +25,32 @@ impl TrackKey {
 #[derive(Debug, Clone)]
 struct IncomingSubscribeRequest {
     track_key: TrackKey,
+    filter_type: FilterType,
     track_alias: Option<u64>,
-    largest_location: Option<Location>,
+    /// Set when the SUBSCRIBE is answered.
+    join_point: Option<JoinPoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FetchRejection {
+    Error(RequestErrorCode),
+    /// draft-14 §9.16.2: the session closes with PROTOCOL_VIOLATION.
+    ProtocolViolation(JoiningFetchError),
+}
+
+impl From<RequestErrorCode> for FetchRejection {
+    fn from(code: RequestErrorCode) -> Self {
+        Self::Error(code)
+    }
+}
+
+impl From<JoiningFetchError> for FetchRejection {
+    fn from(error: JoiningFetchError) -> Self {
+        match error.request_error_code() {
+            Some(code) => Self::Error(code),
+            None => Self::ProtocolViolation(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -143,8 +170,9 @@ impl ClientState {
                     message.track_namespace.clone(),
                     message.track_name.clone(),
                 ),
+                filter_type: message.filter_type,
                 track_alias: None,
-                largest_location: None,
+                join_point: None,
             },
         );
     }
@@ -160,10 +188,11 @@ impl ClientState {
                 .get_mut(&request_id)
                 .ok_or_else(|| anyhow!("unknown subscribe request: {request_id}"))?;
             entry.track_alias = Some(track_alias);
-            entry.largest_location = self
+            let largest = self
                 .largest_published_locations
                 .get(&entry.track_key)
                 .copied();
+            entry.join_point = Some(JoinPoint::new(&entry.filter_type, largest));
             entry.track_key.clone()
         };
         let content_exists = self.published_content(&track_key);
@@ -240,10 +269,10 @@ impl ClientState {
     pub(crate) fn accept_incoming_fetch(
         &mut self,
         fetch: &Fetch,
-    ) -> Result<IncomingFetchRequest, RequestErrorCode> {
+    ) -> Result<IncomingFetchRequest, FetchRejection> {
         let target = self.fetch_target(&fetch.fetch_params)?;
         if !self.contains_published_namespace(&target.track_key.namespace) {
-            return Err(RequestErrorCode::TrackDoesNotExist);
+            return Err(RequestErrorCode::TrackDoesNotExist.into());
         }
         let largest = self
             .largest_published_locations
@@ -262,7 +291,7 @@ impl ClientState {
         Ok(request)
     }
 
-    fn fetch_target(&self, fetch_params: &FetchParams) -> Result<FetchTarget, RequestErrorCode> {
+    fn fetch_target(&self, fetch_params: &FetchParams) -> Result<FetchTarget, FetchRejection> {
         match fetch_params {
             FetchParams::Standalone {
                 track_namespace,
@@ -277,38 +306,31 @@ impl ClientState {
             FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
-            } => self.joining_fetch_target(*joining_request_id, |largest| {
-                largest.group_id.saturating_sub(*joining_start)
-            }),
+            } => self
+                .joining_fetch_target(*joining_request_id, JoiningStart::Relative(*joining_start)),
             FetchParams::AbsoluteJoining {
                 joining_request_id,
                 joining_start,
-            } => self.joining_fetch_target(*joining_request_id, |_| *joining_start),
+            } => self
+                .joining_fetch_target(*joining_request_id, JoiningStart::Absolute(*joining_start)),
         }
     }
 
-    /// draft-14 §9.16.2.1: a Joining Fetch starts at Object 0 of a group and
-    /// ends right after the Largest Location of the joined subscription.
     fn joining_fetch_target(
         &self,
         joining_request_id: u64,
-        start_group: impl FnOnce(Location) -> u64,
-    ) -> Result<FetchTarget, RequestErrorCode> {
-        let subscription = self
+        joining_start: JoiningStart,
+    ) -> Result<FetchTarget, FetchRejection> {
+        let (track_key, join_point) = self
             .incoming_subscriptions
             .get(&joining_request_id)
-            .filter(|subscription| subscription.track_alias.is_some())
-            .ok_or(RequestErrorCode::InvalidJoiningRequestId)?;
-        let largest = subscription
-            .largest_location
-            .ok_or(RequestErrorCode::InvalidRange)?;
+            .and_then(|subscription| Some((&subscription.track_key, subscription.join_point?)))
+            .ok_or(JoiningFetchError::UnknownSubscription)?;
+        let (start, requested_end) = resolve_joining_fetch(joining_start, join_point)?;
         Ok(FetchTarget {
-            track_key: subscription.track_key.clone(),
-            start: Location {
-                group_id: start_group(largest),
-                object_id: 0,
-            },
-            requested_end: largest.next(),
+            track_key: track_key.clone(),
+            start,
+            requested_end,
         })
     }
 
@@ -601,7 +623,10 @@ mod tests {
             state.accept_incoming_fetch(&standalone_fetch(6, location(0, 0), location(1, 0)));
 
         // Assert
-        assert_eq!(accepted.unwrap_err(), RequestErrorCode::TrackDoesNotExist);
+        assert_eq!(
+            accepted.unwrap_err(),
+            FetchRejection::Error(RequestErrorCode::TrackDoesNotExist)
+        );
     }
 
     #[test]
@@ -633,7 +658,7 @@ mod tests {
         // Assert
         assert_eq!(
             accepted.unwrap_err(),
-            RequestErrorCode::InvalidJoiningRequestId
+            FetchRejection::Error(RequestErrorCode::InvalidJoiningRequestId)
         );
     }
 
@@ -649,7 +674,7 @@ mod tests {
         // Assert
         assert_eq!(
             accepted.unwrap_err(),
-            RequestErrorCode::InvalidJoiningRequestId
+            FetchRejection::Error(RequestErrorCode::InvalidJoiningRequestId)
         );
     }
 
@@ -662,6 +687,28 @@ mod tests {
         let accepted = state.accept_incoming_fetch(&relative_joining_fetch(6, 2, 1));
 
         // Assert
-        assert_eq!(accepted.unwrap_err(), RequestErrorCode::InvalidRange);
+        assert_eq!(
+            accepted.unwrap_err(),
+            FetchRejection::Error(RequestErrorCode::InvalidRange)
+        );
+    }
+
+    #[test]
+    fn a_joining_fetch_of_a_next_group_start_subscription_is_a_protocol_violation() {
+        // Arrange
+        let mut state = state_with_largest(location(5, 3));
+        let mut next_group_start = subscribe(4, GroupOrder::Ascending);
+        next_group_start.filter_type = FilterType::NextGroupStart;
+        state.register_incoming_subscribe(&next_group_start);
+        state.activate_incoming_subscribe(4, 104).unwrap();
+
+        // Act
+        let accepted = state.accept_incoming_fetch(&relative_joining_fetch(6, 4, 1));
+
+        // Assert
+        assert_eq!(
+            accepted.unwrap_err(),
+            FetchRejection::ProtocolViolation(JoiningFetchError::NotLargestObject)
+        );
     }
 }

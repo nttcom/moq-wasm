@@ -238,9 +238,9 @@ fn subscription_stats(
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::domain::pub_sub_directory::entry::JoinPoint;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
+    use moqt::fetch::JoinPoint;
     use std::{sync::Arc, time::Duration};
 
     use bytes::Bytes;
