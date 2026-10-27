@@ -875,7 +875,7 @@ export class LivePlayer {
 
   private notePlaying(trackName: string): void {
     const text = `Playing ${trackName}`
-    const statusChanged = !this.review && (this.playbackStatus.text !== text || this.playbackStatus.state !== 'ok')
+    const statusChanged = !this.review && this.playbackStatus.text !== text
     if (statusChanged) {
       this.playbackStatus = { text, state: 'ok' }
     }
