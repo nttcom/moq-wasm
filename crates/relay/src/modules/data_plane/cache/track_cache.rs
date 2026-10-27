@@ -36,6 +36,7 @@ fn after(at: moqt::object::Location) -> moqt::object::Location {
     location(at.group_id, at.object_id.saturating_add(1))
 }
 
+mod eviction_queues;
 mod fetch_cursor;
 mod ingress_stats;
 mod ledger;
@@ -162,11 +163,12 @@ impl TrackCache {
         let payload_bytes = object.object.payload.len();
         self.ingress_stats.record_object(payload_bytes);
         let at = object.object.location;
-        let mut ledger = self.write();
+        let mut guard = self.write();
+        let ledger = &mut *guard;
         let mut to_persist = None;
         let inserted = match ledger.objects.entry(at) {
             Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
-                drop(ledger);
+                drop(guard);
                 self.mark_malformed();
                 return Err(TrackMalformed);
             }
@@ -184,6 +186,7 @@ impl TrackCache {
             }
             Entry::Vacant(slot) => {
                 let object = Arc::new(object);
+                ledger.eviction_queues.track(&object);
                 if object.persisted {
                     to_persist = Some(object.clone());
                 }
@@ -196,7 +199,7 @@ impl TrackCache {
         if registers_knowledge {
             ledger.register_live_object(at);
         }
-        drop(ledger);
+        drop(guard);
         if let (Some(object), Some(disk)) = (to_persist, &self.disk) {
             disk.write(&object);
         }
@@ -209,12 +212,14 @@ impl TrackCache {
     /// The disk cache wrote the payload of the object at `at`. Ignored when
     /// the object left the cache, or was replaced, in the meantime.
     pub(crate) fn record_stored(&self, at: moqt::object::Location, stored: StoredPayload) {
-        let mut ledger = self.write();
+        let mut guard = self.write();
+        let ledger = &mut *guard;
         if let Some(object) = ledger.objects.get_mut(&at)
             && object.stored.is_none()
             && object.object.payload.len() == stored.len
         {
-            *object = Arc::new(object.with_stored(stored));
+            *object = Arc::new(object.with_stored(stored.clone()));
+            ledger.eviction_queues.track_stored(object, &stored);
         }
     }
 
@@ -246,62 +251,93 @@ impl TrackCache {
         self.read().objects.is_empty()
     }
 
+    /// Visits only the objects that expired, lost their disk copy or passed
+    /// the memory TTL since the last call. The end-of-broadcast purge walks
+    /// every persisted object once.
     pub(crate) fn evict(&self, ttl: Duration) {
         let removed_count = {
-            let mut ledger = self.write();
+            let mut guard = self.write();
+            let ledger = &mut *guard;
+            let live = self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0;
             // A late subscriber joins at the largest location (draft-14 §9.8
             // Content Exists) and fetches it, so a track whose publisher is
             // still live keeps its newest object past the TTL.
-            let newest_of_live_track = (self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0)
-                .then(|| ledger.largest_location())
-                .flatten();
-            let mut removed = Vec::new();
-            let mut freed_payload_bytes = 0u64;
+            let newest_of_live_track = live.then(|| ledger.largest_location()).flatten();
             let now = Instant::now();
-            let purge = self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0
+            let purge = !live
                 && ledger
                     .publisher_left_at
                     .is_some_and(|left_at| now.duration_since(left_at) >= PUBLISHER_GONE_GRACE);
+            let mut removed = Vec::new();
+            let mut removed_payload_bytes = 0u64;
+            let mut swapped_payload_bytes = 0u64;
+            let mut remove = |ledger: &mut Ledger, at| {
+                if let Some(object) = ledger.objects.remove(&at) {
+                    removed_payload_bytes += object.object.payload.len() as u64;
+                    removed.push(at);
+                }
+            };
             if purge {
                 ledger.publisher_left_at = None;
+                let persisted: Vec<_> = ledger
+                    .objects
+                    .iter()
+                    .filter(|(_, object)| object.persisted)
+                    .map(|(at, _)| *at)
+                    .collect();
+                for at in persisted {
+                    remove(ledger, at);
+                }
+                ledger.eviction_queues.forget_segments();
             }
-            ledger.objects.retain(|location, object| {
-                let keep = if object.is_expired(now) || (purge && object.persisted) {
-                    false
-                } else if now.saturating_duration_since(object.received_at) <= ttl {
-                    true
-                } else if object.stored.is_some() {
+            for at in ledger.eviction_queues.take_expired(now) {
+                if ledger
+                    .objects
+                    .get(&at)
+                    .is_some_and(|object| object.is_expired(now))
+                {
+                    remove(ledger, at);
+                }
+            }
+            let arrived = now
+                .checked_sub(ttl)
+                .map(|deadline| ledger.eviction_queues.take_arrived_before(deadline))
+                .unwrap_or_default();
+            for (received_at, at) in arrived {
+                let Some(object) = ledger.objects.get_mut(&at) else {
+                    continue;
+                };
+                if object.received_at != received_at {
+                    continue;
+                }
+                if object.stored.is_some() {
                     // Past the memory TTL only the disk copy is kept.
                     if !object.object.payload.is_empty() {
-                        freed_payload_bytes += object.object.payload.len() as u64;
+                        swapped_payload_bytes += object.object.payload.len() as u64;
                         *object = Arc::new(object.without_memory_payload());
                     }
-                    true
                 } else if object.persisted && object.object.payload.is_empty() {
                     // A status object needs no disk copy to stay with its
                     // neighbours on disk.
-                    true
-                } else {
+                } else if object.expires_at.is_some() {
                     // A publisher's MAX_CACHE_DURATION replaces the relay TTL,
                     // longer or shorter, and the newest-object exception does
                     // not apply to it (draft-14 §9.2.1.3).
-                    match object.expires_at {
-                        Some(_) => true,
-                        None => Some(*location) == newest_of_live_track,
-                    }
-                };
-                if !keep {
-                    removed.push(*location);
-                    freed_payload_bytes += object.object.payload.len() as u64;
+                } else if Some(at) == newest_of_live_track {
+                    ledger.eviction_queues.return_arrival((received_at, at));
+                } else {
+                    remove(ledger, at);
                 }
-                keep
-            });
-            self.payload_bytes
-                .fetch_sub(freed_payload_bytes, AtomicOrdering::Relaxed);
-            for &at in &removed {
-                ledger.known_ranges.remove_range(at, after(at));
             }
-            ledger.forget_runs_of_vanished_groups();
+            self.payload_bytes.fetch_sub(
+                removed_payload_bytes + swapped_payload_bytes,
+                AtomicOrdering::Relaxed,
+            );
+            removed.sort_unstable();
+            ledger
+                .known_ranges
+                .remove_locations(removed.iter().copied());
+            ledger.forget_runs_of_vanished_groups(&removed);
             if purge && let Some(disk) = &self.disk {
                 disk.purge();
             }
@@ -437,6 +473,14 @@ impl TrackCache {
             else {
                 return false;
             };
+            // When knowledge of a group stops inside the range, only an open
+            // subgroup of that group can bring the rest.
+            if range_end.object_id != 0
+                && range_end < end
+                && !ledger.has_open_subgroup_in_group(range_end.group_id)
+            {
+                return false;
+            }
             if range_end > location(end.group_id, 0) {
                 return true;
             }
@@ -803,6 +847,26 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn evict_removes_the_kept_newest_object_once_a_newer_one_arrives() {
+        // Arrange: group 0 was kept past the TTL as the newest object
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(stream_object(0, 0));
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        let _ = cache.insert_live(stream_object(1, 0));
+        tokio::time::advance(Duration::from_secs(11)).await;
+
+        // Act
+        cache.evict(ttl);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 1);
+        assert_eq!(cache.largest_location(), Some(location(1, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn evict_removes_the_newest_object_once_live_ingest_ended() {
         // Arrange
         let ttl = Duration::from_secs(10);
@@ -903,6 +967,29 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn evict_forgets_the_runs_of_a_group_that_closes_after_its_objects_left() {
+        // Arrange: the open group's only object was evicted, then the group aborted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        drop(open);
+        drop(cache.open_subgroup(stream_key(0)));
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
+        // Act
+        cache.evict(ttl);
+        let _open = cache.open_subgroup(stream_key(0));
+        // Assert
+        assert_eq!(
+            subgroup_opened_receiver
+                .try_recv()
+                .map(|run| run.generation),
+            Ok(0)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn eviction_generation_increments_only_when_objects_are_removed() {
         // Arrange
         let ttl = Duration::from_secs(10);
@@ -972,8 +1059,8 @@ mod fetch_tests {
     use crate::modules::{
         data_plane::cache::subgroup_key::SubgroupKey,
         test_support::relay_harness::fixtures::cached_object::{
-            datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
-            stream_object, stream_object_in_subgroup,
+            datagram_object, fetch_all, insert_aborted_group, insert_closed_group, open_group,
+            status_object, stream_key, stream_object, stream_object_in_subgroup,
         },
     };
 
@@ -1135,6 +1222,21 @@ mod fetch_tests {
 
         // Assert: the group ids between the fill and the live group are unknown, so the FETCH goes upstream
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[test]
+    fn resolve_fetch_range_not_covered_for_the_rest_of_a_group_whose_stream_ended() {
+        // Arrange: g0's upstream stream ended after object 0, but the publisher
+        // sent object 1 too; g1 is live
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        insert_aborted_group(&cache, 0, &[0]);
+        let _g1 = open_group(&cache, 1, &[0]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 2)),
+            FetchRangeResolution::NotCovered
+        );
     }
 
     #[test]

@@ -63,10 +63,7 @@ impl PublishDoneExpiryTask {
 mod tests {
     use std::time::Duration;
 
-    use tokio::{
-        sync::mpsc::{UnboundedReceiver, error::TryRecvError},
-        time::Instant,
-    };
+    use tokio::{sync::mpsc::error::TryRecvError, time::Instant};
 
     use super::PUBLISH_DONE_GRACE_PERIOD;
     use crate::{
@@ -74,7 +71,7 @@ mod tests {
         modules::{
             moqt::{
                 control_plane::error_codes::PublishDoneCode,
-                runtime::dispatch::incoming_object::IncomingObject,
+                runtime::dispatch::incoming_object::IncomingObjectReceiver,
             },
             test_support::{
                 register_and_take_data_receiver, spawn_connected_dual_sessions, subscription,
@@ -88,7 +85,7 @@ mod tests {
     struct EndedSubscription {
         _client: Session,
         _server: Session,
-        object_receiver: UnboundedReceiver<IncomingObject>,
+        object_receiver: IncomingObjectReceiver,
         /// Taken before PUBLISH_DONE is sent, so the grace period ends at least
         /// `PUBLISH_DONE_GRACE_PERIOD` after this instant.
         publish_done_sent_at: Instant,

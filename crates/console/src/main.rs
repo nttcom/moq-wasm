@@ -5,17 +5,16 @@ use app_registry::{Location, LocationVariables, RegistryStore};
 use console::{ConsoleServer, ConsoleState, GOOGLE_IAP_KEYS_URL, Identity, IdentitySettings};
 use reqwest::Url;
 use tokio::net::TcpListener;
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
+    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+        service_name: "console",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &["console=info", "app_registry=info", "auth_token=info"],
+        resource_attributes: Vec::new(),
+        log_output: telemetry::LogOutput::Stdout,
+    })?;
 
     let port: u16 = non_empty_env("PORT")
         .unwrap_or_else(|| "8080".to_owned())

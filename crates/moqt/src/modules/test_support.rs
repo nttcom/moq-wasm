@@ -21,7 +21,7 @@ use crate::{
             object_datagram::ObjectDatagram,
         },
         domains::{connection::IncomingObjectNotification, session_context::SessionContext},
-        runtime::dispatch::incoming_object::IncomingObject,
+        runtime::dispatch::incoming_object::{IncomingObject, IncomingObjectReceiver},
     },
     object::{
         DataReceiver, DatagramReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
@@ -389,7 +389,7 @@ pub(crate) async fn register_and_take_data_receiver(
     context: &SessionContext,
     request_id: u64,
     track_alias: u64,
-) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject> {
+) -> IncomingObjectReceiver {
     context
         .register_data_receiver(&context.connection(), request_id, track_alias)
         .await
