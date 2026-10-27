@@ -122,18 +122,10 @@ impl UpstreamSubscriptionError {
 }
 
 impl Subscribe {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
@@ -232,7 +224,7 @@ impl Subscribe {
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.get_or_create_upstream_subscription",
         skip_all,
         fields(
@@ -304,7 +296,7 @@ impl Subscribe {
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.create_upstream_subscription",
         skip_all,
         fields(
@@ -438,7 +430,7 @@ impl Subscribe {
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.accept_downstream_subscription",
         skip_all,
         fields(
@@ -580,7 +572,7 @@ impl Subscribe {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe.response_error",
         skip_all
     )]
@@ -1098,7 +1090,6 @@ mod tests {
         Subscribe
             .handle(
                 SUBSCRIBER_SESSION,
-                &Span::none(),
                 &table,
                 &ControlMessageForwarder {
                     repository: repository.clone(),

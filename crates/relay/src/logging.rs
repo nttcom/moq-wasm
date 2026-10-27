@@ -1,6 +1,14 @@
+use opentelemetry::trace::TraceContextExt as _;
 use telemetry::{LogOutput, TelemetryConfig, TelemetryGuard};
+use tracing::Span;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::config::{non_empty_env, relay_id};
+
+/// For a span that roots its own trace but starts from another span's work.
+pub(crate) fn link_span(span: &Span, linked: &Span) {
+    span.add_link(linked.context().span().span_context().clone());
+}
 
 pub(crate) fn relay_hostname() -> String {
     non_empty_env("RELAY_HOSTNAME")

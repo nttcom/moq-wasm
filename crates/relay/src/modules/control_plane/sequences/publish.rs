@@ -34,18 +34,10 @@ use tracing::Span;
 pub(crate) struct Publish;
 
 impl Publish {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
@@ -122,7 +114,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.notify_namespace_subscribers",
         skip_all,
         fields(track_key = %track_key)
@@ -148,7 +140,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.notify_local_namespace_subscribers",
         skip_all,
         fields(track_key = %track_key)
@@ -171,7 +163,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.register_upstream_subscription",
         skip_all,
         fields(session_id = %session_id)
@@ -217,7 +209,7 @@ impl Publish {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish.notify_remote_subscribers",
         skip_all,
         fields(track_key = %track_key)

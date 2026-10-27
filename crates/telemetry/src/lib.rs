@@ -217,8 +217,8 @@ pub fn init(config: TelemetryConfig) -> Result<TelemetryGuard> {
     let otel_trace_layer = tracer_provider.as_ref().map(|provider| {
         tracing_opentelemetry::layer()
             .with_tracer(provider.tracer(service_name.clone()))
-            .with_location(true)
-            .with_threads(true)
+            .with_location(false)
+            .with_threads(false)
             .with_tracked_inactivity(false)
             .with_target(false)
             .with_filter(filter_fn(|metadata| metadata.is_span()))

@@ -2,6 +2,7 @@ use moqt::object::DataStreamResetCode;
 use std::{sync::Arc, time::Duration};
 
 use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::{Instrument, Span};
 
 use crate::modules::{
     data_plane::{
@@ -43,35 +44,40 @@ impl FetchIngest {
         let upstream_fetch = start.fetch_handle.clone();
         let track_key = start.track_key.clone();
         let cache = start.egress_start.cache.clone();
-        let join_handle = tokio::spawn(async move {
-            if let Err(error) = Self::run_inner(session_repo.clone(), &egress_sender, start).await {
-                // Expected request-scoped failures (timeout, upstream reset):
-                // log the chain without anyhow's captured backtrace.
-                tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
-                let error_code = if cache.is_malformed() {
-                    let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
-                        upstream_publisher_session_id,
-                        track_key,
-                    ));
-                    Self::cancel_upstream_fetch(
-                        session_repo.clone(),
-                        upstream_publisher_session_id,
-                        &upstream_fetch,
+        let join_handle = tokio::spawn(
+            async move {
+                if let Err(error) =
+                    Self::run_inner(session_repo.clone(), &egress_sender, start).await
+                {
+                    // These failures are request-scoped and expected (timeout, upstream reset).
+                    // Log the chain without anyhow's backtrace.
+                    tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
+                    let error_code = if cache.is_malformed() {
+                        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
+                            upstream_publisher_session_id,
+                            track_key,
+                        ));
+                        Self::cancel_upstream_fetch(
+                            session_repo.clone(),
+                            upstream_publisher_session_id,
+                            &upstream_fetch,
+                        )
+                        .await;
+                        DataStreamResetCode::MalformedTrack
+                    } else {
+                        DataStreamResetCode::InternalError
+                    };
+                    Self::reset_downstream_fetch(
+                        session_repo,
+                        downstream_subscriber_session_id,
+                        request_id,
+                        error_code,
                     )
                     .await;
-                    DataStreamResetCode::MalformedTrack
-                } else {
-                    DataStreamResetCode::InternalError
-                };
-                Self::reset_downstream_fetch(
-                    session_repo,
-                    downstream_subscriber_session_id,
-                    request_id,
-                    error_code,
-                )
-                .await;
+                }
             }
-        });
+            .instrument(Span::current()),
+        );
         Self {
             _join_handle: join_handle,
         }

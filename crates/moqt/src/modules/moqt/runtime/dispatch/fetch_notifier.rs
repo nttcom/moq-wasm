@@ -6,7 +6,7 @@ pub(crate) struct FetchNotifier;
 
 impl FetchNotifier {
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.fetch_notifier.notify",
         skip_all,
         fields(request_id = request_id)

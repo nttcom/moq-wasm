@@ -10,22 +10,13 @@ use crate::modules::{
     },
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
 };
-use tracing::Span;
 
 pub(crate) struct PublishNamespaceDone;
 
 impl PublishNamespaceDone {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish_namespace_done",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
@@ -54,7 +45,7 @@ impl PublishNamespaceDone {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish_namespace_done.notify_local_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace)
@@ -86,7 +77,7 @@ impl PublishNamespaceDone {
     /// Unregisters the Redis publisher route and tells remote subscriber relays
     /// that the namespace has been withdrawn, so they can drop their local copy.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.publish_namespace_done.withdraw_namespace_publication",
         skip_all,
         fields(track_namespace = %track_namespace)
@@ -191,7 +182,6 @@ mod tests {
         PublishNamespaceDone
             .handle(
                 publisher_session_id,
-                &Span::none(),
                 table,
                 &ControlMessageForwarder { repository },
                 CascadingRelayContext {

@@ -6,6 +6,7 @@ use tokio::{
 };
 use tracing::{Instrument, Span};
 
+use crate::logging::link_span;
 use crate::modules::{
     data_plane::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
@@ -152,8 +153,10 @@ impl EgressCoordinator {
 
         let cache = cache_store.get_or_create(&request.track_key);
         let track_alias = request.downstream_subscription.track_alias();
+        // The track outlives the request that starts it, so its span roots its
+        // own trace, linked to the request.
         let egress_track_span = tracing::info_span!(
-            parent: &request.parent_span,
+            parent: None,
             "relay.dataplane.egress.track",
             subscriber_session_id = %request.subscriber_session_id,
             downstream_subscribe_id = request.downstream_subscribe_id,
@@ -162,6 +165,8 @@ impl EgressCoordinator {
             track_namespace = %request.track_key.track_namespace,
             track_name = %request.track_key.track_name,
         );
+
+        link_span(&egress_track_span, &request.parent_span);
 
         let runner = EgressRunner::new(
             request.track_key,

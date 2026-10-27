@@ -194,7 +194,7 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.remove_session",
         skip_all,
         fields(session_id = %session_id)
@@ -257,7 +257,7 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.register_publish_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, peer = ?peer)
@@ -277,7 +277,7 @@ impl InMemoryLocalPubSubDirectory {
     /// Returns true when no client publisher remains for the namespace,
     /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.unregister_publish_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
@@ -301,7 +301,7 @@ impl InMemoryLocalPubSubDirectory {
     /// same time; purging here lets the next subscriber re-learn them from
     /// the route registry instead of a stale local copy.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.purge_relay_publish_namespaces",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
@@ -346,7 +346,7 @@ impl InMemoryLocalPubSubDirectory {
     /// Returns true when this registration adds the first client subscriber
     /// for the prefix, i.e. the caller should register the Redis route.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, peer = ?peer)
@@ -376,7 +376,7 @@ impl InMemoryLocalPubSubDirectory {
     /// Returns true when no client subscriber remains for the prefix,
     /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.unregister_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
@@ -394,7 +394,7 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.register_publish",
         skip_all,
         fields(session_id = %session_id)
@@ -416,7 +416,7 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.get_namespace_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace)
@@ -435,7 +435,7 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.matching_publications",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
@@ -471,7 +471,7 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.local_pub_sub_directory.find_upstream_publishers",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tracing::Span;
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
@@ -246,7 +247,7 @@ impl RelayHarness {
 
     pub(crate) fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
         UpstreamSubgroupStream::open(|receiver| {
-            tokio::spawn(read_stream(self.ingest.clone(), receiver))
+            tokio::spawn(read_stream(self.ingest.clone(), receiver, Span::none()))
         })
     }
 

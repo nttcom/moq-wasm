@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use tracing::{Instrument, Span};
 
 use super::{WorkerDeps, session_cleanup::cleanup_session, session_event_span::session_event_span};
+use crate::logging::link_span;
 use crate::modules::{
     auth::{
         anonymous_root::{scope_anonymous_root_prefix, scope_anonymous_root_subscription},
@@ -112,16 +113,14 @@ impl SessionWorker {
             EventKind::FromSession(event) => self.handle_moqt_event(event).await,
             EventKind::MalformedTrackDetected(track_key) => {
                 let event_span = tracing::info_span!(
-                    parent: &self.session_span,
-                    "relay.session.event",
+                    parent: None,
+                    "relay.malformed_track_detected",
                     session_id = %session_id,
-                    event = "MalformedTrackDetected",
                     track_key = %track_key,
                 );
+                link_span(&event_span, &self.session_span);
                 MalformedTrackCleanup {}
                     .handle(
-                        session_id,
-                        &self.session_span,
                         &track_key,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
@@ -143,16 +142,15 @@ impl SessionWorker {
             }
             EventKind::DownstreamSubscriptionEnded { request_id } => {
                 let event_span = tracing::info_span!(
-                    parent: &self.session_span,
-                    "relay.session.event",
+                    parent: None,
+                    "relay.downstream_subscription_ended",
                     session_id = %session_id,
-                    event = "DownstreamSubscriptionEnded",
                     request_id,
                 );
+                link_span(&event_span, &self.session_span);
                 Unsubscribe {}
                     .handle(
                         session_id,
-                        &self.session_span,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
                         &self.deps.ingress_sender,
@@ -182,17 +180,19 @@ impl SessionWorker {
         let session_span = self.session_span.clone();
         let deps = &self.deps;
         let event = scope_anonymous_root_subscription(self.verified_token.as_deref(), event);
-        let event_span = session_event_span(session_id, &session_span, &event);
+        let app_id = self
+            .verified_token
+            .as_ref()
+            .map(|token| token.app_id.as_str());
+        let event_span = session_event_span(session_id, &session_span, app_id, &event);
         event_span.in_scope(|| match event {
             MoqtSessionEvent::ProtocolViolation() => tracing::error!("Received session event"),
             _ => tracing::info!("Received session event"),
         });
         if let Err(denied) = authorize_request(self.verified_token.as_deref(), &event) {
             let reject_span = tracing::info_span!(
-                parent: &session_span,
+                parent: &event_span,
                 "relay.session.unauthorized_request",
-                session_id = %session_id,
-                event = ?event,
                 reason = denied.reason,
             );
             reject_unauthorized(event, denied)
@@ -206,7 +206,6 @@ impl SessionWorker {
                 PublishNamespace {}
                     .handle(
                         session_id,
-                        &session_span,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -221,7 +220,6 @@ impl SessionWorker {
                 PublishNamespaceDone {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         self.cascading_relay_context(),
@@ -234,7 +232,6 @@ impl SessionWorker {
                 SubscribeNameSpace {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &self.downstream_publish(),
@@ -248,7 +245,6 @@ impl SessionWorker {
                 UnsubscribeNamespace {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         self.cascading_relay_context(),
@@ -264,7 +260,6 @@ impl SessionWorker {
                 Publish {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -279,7 +274,6 @@ impl SessionWorker {
                 Subscribe {}
                     .handle(
                         session_id,
-                        &session_span,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -296,7 +290,6 @@ impl SessionWorker {
                 Unsubscribe {}
                     .handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -311,7 +304,6 @@ impl SessionWorker {
                 }
                 .handle(
                     session_id,
-                    &session_span,
                     &deps.local_pub_sub_directory,
                     &deps.cache_store,
                     &deps.egress_sender,
@@ -326,8 +318,6 @@ impl SessionWorker {
             MoqtSessionEvent::TrackStatus(handler) if handler.authorization_tokens().is_empty() => {
                 TrackStatus {}
                     .handle(
-                        session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.cache_store,
                         handler.as_ref(),
@@ -344,7 +334,6 @@ impl SessionWorker {
                 event_span.in_scope(|| {
                     SubscribeUpdate {}.handle(
                         session_id,
-                        &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         handler.subscription_request_id(),
                         DeliveryControl::from_subscribe_update(
@@ -359,7 +348,6 @@ impl SessionWorker {
                 UpstreamPublishDone
                     .handle(
                         session_id,
-                        &session_span,
                         handler.request_id(),
                         PublishDoneReason {
                             status_code: handler.status_code(),
@@ -376,7 +364,6 @@ impl SessionWorker {
                 GoAway
                     .handle(
                         session_id,
-                        &session_span,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
@@ -394,25 +381,15 @@ impl SessionWorker {
                 });
             }
             MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation() => {
-                let terminal_span = if matches!(event, MoqtSessionEvent::Disconnected()) {
-                    let span = tracing::info_span!(
-                        parent: &event_span,
-                        "relay.session.disconnected",
-                        session_id = session_id
-                    );
-                    span.in_scope(|| tracing::info!("Session disconnected: {}", session_id));
-                    span
-                } else {
-                    let span = tracing::info_span!(
-                        parent: &event_span,
-                        "relay.session.protocol_violation",
-                        session_id = session_id
-                    );
-                    span.in_scope(|| tracing::error!("Session protocol violation: {}", session_id));
-                    span
-                };
+                event_span.in_scope(|| {
+                    if matches!(event, MoqtSessionEvent::Disconnected()) {
+                        tracing::info!(session_id, "session disconnected");
+                    } else {
+                        tracing::error!(session_id, "session protocol violation");
+                    }
+                });
                 cleanup_session(session_id, deps)
-                    .instrument(terminal_span)
+                    .instrument(event_span)
                     .await;
             }
         }

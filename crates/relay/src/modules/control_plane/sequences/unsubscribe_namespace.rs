@@ -10,22 +10,13 @@ use crate::modules::{
     },
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
 };
-use tracing::Span;
 
 pub(crate) struct UnsubscribeNamespace;
 
 impl UnsubscribeNamespace {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.unsubscribe_namespace",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
@@ -57,7 +48,7 @@ impl UnsubscribeNamespace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.unsubscribe_namespace.cleanup_empty_namespace_subscription",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)

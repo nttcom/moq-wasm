@@ -13,23 +13,14 @@ use crate::modules::{
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
 use moqt::RequestErrorCode;
-use tracing::Span;
 
 pub(crate) struct SubscribeNameSpace;
 
 impl SubscribeNameSpace {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe_namespace",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         downstream_publish: &DownstreamPublish,
@@ -77,7 +68,7 @@ impl SubscribeNameSpace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe_namespace.register_route",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
@@ -115,7 +106,7 @@ impl SubscribeNameSpace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe_namespace.forward_matching_publications",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
@@ -149,7 +140,7 @@ impl SubscribeNameSpace {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.sequence.subscribe_namespace.notify_remote_publish_namespaces",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
@@ -257,7 +248,6 @@ mod tests {
         SubscribeNameSpace
             .handle(
                 NAMESPACE_SUBSCRIBER_SESSION,
-                &Span::none(),
                 &ctx.table,
                 &ctx.forwarder,
                 &ctx.downstream_publish(),

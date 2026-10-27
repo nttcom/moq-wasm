@@ -6,7 +6,6 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 use std::{sync::Arc, time::Duration};
 
 use moqt::fetch::FetchParams;
-use tracing::Span;
 
 use crate::modules::{
     control_plane::{
@@ -98,18 +97,10 @@ impl FetchError {
 }
 
 impl Fetch {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.fetch",
-        skip_all,
-        parent = session_span,
-        fields(session_id = %session_id)
-    )]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        session_span: &Span,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         cache_store: &Arc<TrackCacheStore>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
