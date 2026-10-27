@@ -186,6 +186,20 @@ impl Subscribe {
                 }
             };
 
+            if let Some((publisher_session_id, upstream)) = access
+                .upstream_track
+                .subscriptions
+                .iter()
+                .rev()
+                .find(|(_, upstream)| upstream.publisher_peer == SessionPeer::Relay)
+            {
+                super::record_upstream_relay(
+                    forwarder,
+                    *publisher_session_id,
+                    upstream.subscription.request_id(),
+                )
+                .await;
+            }
             let acceptance = self
                 .accept_downstream_subscription(
                     session_id,

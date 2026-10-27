@@ -11,7 +11,8 @@ pub(crate) struct VerifiedToken {
     pub(crate) subscribe: Option<NamespacePath>,
     pub(crate) is_relay: bool,
     pub(crate) expires_at: Option<SystemTime>,
-    /// The presenting relay's `relayId` claim; set only on a relay token.
+    /// The peer relay of a relay session: the `relayId` claim of the token it
+    /// presented, or the relay this relay dialed. `None` for a client.
     pub(crate) relay_id: Option<String>,
 }
 
