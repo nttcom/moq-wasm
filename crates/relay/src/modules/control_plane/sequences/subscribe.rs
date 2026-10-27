@@ -383,6 +383,21 @@ impl Subscribe {
                         "upstream SUBSCRIBE refused the track as malformed; latching it"
                     );
                     cache_store.get_or_create(&track_key).mark_malformed();
+                    // The latched track takes no publisher, so each one that
+                    // answers SUBSCRIBE_OK later is unsubscribed.
+                    let _upstream_join = UpstreamJoinTask::run(
+                        UpstreamJoin {
+                            track_key,
+                            subscriber_session_id: session_id,
+                            pending,
+                        },
+                        UpstreamJoinDeps {
+                            table: table.clone(),
+                            forwarder: forwarder.clone(),
+                            ingress_sender: ingress_sender.clone(),
+                            cache_store: cache_store.clone(),
+                        },
+                    );
                     return Err(UpstreamSubscriptionError::SubscribeFailed(error));
                 }
                 Err(error) => {
@@ -651,8 +666,8 @@ mod tests {
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, mock_session_answering_subscribe,
         mock_session_never_answering_subscribe, mock_session_refusing_subscribe,
-        recorded_session_answering_subscribe, session_repository_with_session,
-        session_repository_with_sessions,
+        recorded_session_answering_subscribe, recorded_session_answering_subscribe_after,
+        session_repository_with_session, session_repository_with_sessions,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
 
@@ -933,6 +948,39 @@ mod tests {
                 .map_err(|error| error.subscribe_error_response().0),
             Err(RequestErrorCode::MalformedTrack)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_publisher_answering_after_a_malformed_refusal_is_unsubscribed() {
+        // Arrange
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let (late_publisher, recorded) = recorded_session_answering_subscribe_after(gate.clone());
+        let publishers = vec![
+            (
+                DEAD_PUBLISHER_SESSION,
+                mock_session_refusing_subscribe(RequestErrorCode::MalformedTrack),
+            ),
+            (NEW_PUBLISHER_SESSION, late_publisher),
+        ];
+        let (_table, created) =
+            subscribe_to_publishers(publishers, &Arc::new(TrackCacheStore::new())).await;
+        assert!(created.is_err());
+
+        // Act
+        gate.notify_one();
+        let unsubscribed = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while recorded.unsubscribed_request_ids().is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+
+        // Assert: draft-18 §2.4.2, the latched track takes no publisher, and
+        // the one that accepted is not left subscribed
+        assert!(
+            unsubscribed.is_ok(),
+            "the late SUBSCRIBE_OK is unsubscribed"
+        );
     }
 
     #[tokio::test]
