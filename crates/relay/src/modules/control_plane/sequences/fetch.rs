@@ -402,10 +402,7 @@ impl Fetch {
         cache_store: &TrackCacheStore,
     ) -> Result<(FetchTarget, FetchSource), FetchError> {
         let target = self.resolve_fetch_target(session_id, handler, table)?;
-        if cache_store
-            .get(&target.track_key)
-            .is_some_and(|cache| cache.is_malformed())
-        {
+        if super::subscribe::is_latched_malformed(cache_store, &target.track_key) {
             return Err(FetchError::MalformedTrack);
         }
         let upstream_largest = table
