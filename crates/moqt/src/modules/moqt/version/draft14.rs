@@ -556,8 +556,7 @@ mod tests {
             expires: 0,
             group_order: GroupOrder::Ascending,
             content_exists: ContentExists::False,
-            delivery_timeout: None,
-            max_duration: None,
+            track_properties: Default::default(),
         }
     }
 
@@ -589,7 +588,7 @@ mod tests {
                 group_id: 0,
                 object_id: 0,
             },
-            max_cache_duration: None,
+            track_properties: Default::default(),
         })
     }
 

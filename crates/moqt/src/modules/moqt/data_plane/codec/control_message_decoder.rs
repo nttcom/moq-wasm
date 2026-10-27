@@ -394,8 +394,7 @@ mod tests {
                 expires: 0,
                 group_order: GroupOrder::Ascending,
                 content_exists: ContentExists::False,
-                delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             }
             .encode(),
         ));

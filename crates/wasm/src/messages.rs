@@ -2,7 +2,7 @@ mod subgroup_state;
 
 use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::{
-    object::{ForwardingPreference, Object, SubgroupStart},
+    object::{ForwardingPreference, GroupOrder, Object, SubgroupStart},
     wire::{
         ContentExists, FilterType, Publish, PublishOk, ServerSetup, Subscribe, SubscribeNamespace,
         SubscribeOk,
@@ -165,7 +165,10 @@ impl From<&Publish> for PublishMessage {
             track_namespace: message.track_namespace_tuple.clone(),
             track_name: message.track_name.clone(),
             track_alias: message.track_alias,
-            group_order: message.group_order as u8,
+            group_order: message
+                .track_properties
+                .group_order()
+                .unwrap_or(GroupOrder::Ascending) as u8,
             content_exists,
             largest_group_id,
             largest_object_id,
@@ -294,8 +297,8 @@ impl From<&SubscribeOk> for SubscribeOkMessage {
             content_exists,
             largest_group_id,
             largest_object_id,
-            delivery_timeout: message.delivery_timeout,
-            max_duration: message.max_duration,
+            delivery_timeout: message.track_properties.delivery_timeout(),
+            max_duration: message.track_properties.max_cache_duration(),
         }
     }
 }

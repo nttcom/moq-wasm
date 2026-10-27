@@ -2,7 +2,7 @@ use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
-    SubscriberInitiatedSubscription, Subscription,
+    SubscriberInitiatedSubscription, Subscription, TrackProperties,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -33,10 +33,8 @@ pub struct SubscribeHandler {
     pub group_order: GroupOrder,
     pub forward: bool,
     pub filter_type: FilterType,
-    /// Sent as MAX_CACHE_DURATION (milliseconds, draft-14 §9.2.1.3) in the
-    /// SUBSCRIBE_OK.
-    pub max_cache_duration: Option<u64>,
-    pub delivery_timeout: Option<u64>,
+    /// Sent in the SUBSCRIBE_OK.
+    pub track_properties: TrackProperties,
     guard: ResponseGuard,
 }
 
@@ -65,8 +63,7 @@ impl SubscribeHandler {
             group_order: subscribe_message.group_order,
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
-            max_cache_duration: None,
-            delivery_timeout: None,
+            track_properties: TrackProperties::default(),
         }
     }
 
@@ -94,10 +91,9 @@ impl SubscribeHandler {
             request_id: self.guard.request_id(),
             track_alias: wire_part(track_alias),
             expires,
-            group_order: self.group_order.delivered(),
+            group_order: delivered_group_order(self.group_order, &self.track_properties),
             content_exists,
-            delivery_timeout: self.delivery_timeout,
-            max_duration: self.max_cache_duration,
+            track_properties: self.track_properties.clone(),
         };
         self.guard
             .connection()
@@ -137,6 +133,21 @@ impl SubscribeHandler {
             track_alias,
             self,
         ))
+    }
+}
+
+/// The order a subscription is delivered in, which a draft-14 SUBSCRIBE_OK
+/// or TRACK_STATUS_OK states (§9.10): the one the subscriber asked for, else
+/// the track's DEFAULT PUBLISHER GROUP ORDER, else Ascending.
+pub(crate) fn delivered_group_order(
+    requested: GroupOrder,
+    track_properties: &TrackProperties,
+) -> GroupOrder {
+    match requested {
+        GroupOrder::Publisher => track_properties
+            .group_order()
+            .unwrap_or(GroupOrder::Ascending),
+        requested => requested,
     }
 }
 
@@ -201,14 +212,17 @@ mod tests {
         let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
             panic!("expected SUBSCRIBE from the client");
         };
-        handler.max_cache_duration = Some(2_000);
+        handler.track_properties.set_max_cache_duration(Some(2_000));
 
         // Act
         handler.ok(0, ContentExists::False).await.unwrap();
 
         // Assert
         let subscription = request.await.unwrap().unwrap();
-        assert_eq!(subscription.max_cache_duration(), Some(2_000));
+        assert_eq!(
+            subscription.track_properties().max_cache_duration(),
+            Some(2_000)
+        );
     }
 
     #[tokio::test]

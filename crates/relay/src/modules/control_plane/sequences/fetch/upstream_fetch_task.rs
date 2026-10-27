@@ -88,7 +88,7 @@ impl UpstreamFetchTask {
             .ok(
                 prepared.handle.end_of_track,
                 prepared.handle.end_location,
-                prepared.handle.max_cache_duration,
+                prepared.handle.track_properties.clone(),
             )
             .await
         {

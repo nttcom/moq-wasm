@@ -4,3 +4,4 @@ pub mod filter_type;
 pub mod group_order;
 pub mod location;
 pub mod setup_parameters;
+pub mod track_properties;

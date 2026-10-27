@@ -465,15 +465,16 @@ impl MOQTClient {
         _auth_info: String,
     ) -> Result<u64, JsValue> {
         let session = self.session()?;
+        let mut track_properties = moqt::TrackProperties::default();
+        track_properties.set_group_order(Some(group_order_from(group_order)?));
         let option = PublishOption {
-            group_order: group_order_from(group_order)?,
             content_exists: content_exists_from_fields(
                 content_exists,
                 largest_group_id,
                 largest_object_id,
             ),
             forward,
-            max_cache_duration: None,
+            track_properties,
         };
         let result = session
             .publisher()
@@ -619,8 +620,7 @@ impl MOQTClient {
                     expires: subscription.expires().unwrap_or(0),
                     group_order: subscription.group_order(),
                     content_exists: subscription.content_exists(),
-                    delivery_timeout: None,
-                    max_duration: None,
+                    track_properties: moqt::TrackProperties::default(),
                 };
                 self.shared
                     .issued_subscriptions
@@ -813,8 +813,12 @@ impl MOQTClient {
             .borrow_mut()
             .activate_incoming_subscribe(request_id, track_alias)
             .map_err(anyhow_error)?;
-        handler.delivery_timeout = delivery_timeout;
-        handler.max_cache_duration = max_duration;
+        handler
+            .track_properties
+            .set_delivery_timeout(delivery_timeout);
+        handler
+            .track_properties
+            .set_max_cache_duration(max_duration);
         handler
             .ok_with_track_alias(track_alias, expires, content_exists)
             .await
@@ -1078,7 +1082,10 @@ impl MOQTClient {
             .borrow_mut()
             .answer_incoming_track_status(request_id)
             .map_err(anyhow_error)?;
-        handler.ok(0, content_exists).await.map_err(send_error)
+        handler
+            .ok(0, content_exists, moqt::TrackProperties::default())
+            .await
+            .map_err(send_error)
     }
 
     #[wasm_bindgen(js_name = sendTrackStatusError)]

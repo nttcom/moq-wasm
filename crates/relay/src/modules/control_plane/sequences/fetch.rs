@@ -183,12 +183,18 @@ impl Fetch {
                 start_location,
                 end_location,
             }) => {
+                // The newest live publisher's set, as in SUBSCRIBE_OK; the
+                // cache keeps it for when no publisher is left.
+                let track_properties = table
+                    .get_upstream_track(&target.track_key)
+                    .filter(|upstream_track| !upstream_track.subscriptions.is_empty())
+                    .map_or_else(
+                        || cache.track_properties(),
+                        |upstream_track| upstream_track.track_properties(),
+                    );
                 // The relay does not yet track final End Of Track via PUBLISH_DONE,
                 // so local cache responses cannot assert it.
-                let max_cache_duration = table
-                    .get_upstream_track(&target.track_key)
-                    .and_then(|upstream_track| upstream_track.max_cache_duration());
-                if let Err(e) = handler.ok(false, end_location, max_cache_duration).await {
+                if let Err(e) = handler.ok(false, end_location, track_properties).await {
                     tracing::error!(?e, "Failed to send FETCH_OK");
                     return;
                 }
@@ -594,7 +600,7 @@ mod tests {
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, active_upstream, local_publisher_resolver, table_with_upstream,
-                track_key,
+                track_key, upstream_carrying,
             },
             mock_session::{
                 FetchAnswer, MockFetchHandler, RecordedControlMessages,
@@ -604,6 +610,7 @@ mod tests {
             relay_harness::fixtures::{
                 cached_object::{insert_closed_group, open_group},
                 location,
+                subscription::unknown_track_properties,
             },
         },
     };
@@ -1345,6 +1352,74 @@ mod tests {
                 panic!("expected cache fetch readiness")
             }
         }
+    }
+
+    /// The track properties of each FETCH_OK sent for a FETCH that the
+    /// cache of `ns/track` serves, which served `cached` from publisher 1
+    /// until it left.
+    async fn fetch_oks_from_cache(
+        table: InMemoryLocalPubSubDirectory,
+        cached: moqt::TrackProperties,
+    ) -> Vec<moqt::TrackProperties> {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
+        let _open_g1 = open_group(&cache, 1, &[2, 3]);
+        cache.publisher_started(1, cached);
+        cache.publisher_stopped(1);
+        let (egress_sender, _egress_receiver) = tokio::sync::mpsc::channel(1);
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        let repository =
+            session_repository_with_sessions(vec![], VerifiedToken::full_access()).await;
+        let handler =
+            MockFetchHandler::fetching(standalone_fetch_params(location(1, 2), location(1, 4)));
+        FETCH
+            .handle(
+                2,
+                &Span::none(),
+                &Arc::new(table),
+                &cache_store,
+                &egress_sender,
+                &session_event_sender,
+                &ControlMessageForwarder { repository },
+                &Arc::new(local_publisher_resolver()),
+                Box::new(handler.clone()),
+            )
+            .await;
+        handler.fetch_oks.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn a_fetch_served_from_cache_after_the_publisher_left_carries_the_cached_properties() {
+        // Act: the directory holds no upstream subscription any more
+        let fetch_oks = fetch_oks_from_cache(
+            InMemoryLocalPubSubDirectory::new(),
+            unknown_track_properties(1),
+        )
+        .await;
+
+        // Assert: draft-18 §2.5 caches the properties with the track
+        assert_eq!(fetch_oks, vec![unknown_track_properties(1)]);
+    }
+
+    #[tokio::test]
+    async fn a_fetch_served_from_cache_carries_the_newest_live_publishers_properties() {
+        // Arrange: publisher 3 answered SUBSCRIBE, but the cache has served
+        // only publisher 1's set
+        let table = InMemoryLocalPubSubDirectory::new();
+        for publisher_session_id in [1, 3] {
+            table.register_upstream_subscription(
+                TrackKey::new("ns", "track"),
+                publisher_session_id,
+                upstream_carrying(unknown_track_properties(publisher_session_id)),
+            );
+        }
+
+        // Act
+        let fetch_oks = fetch_oks_from_cache(table, unknown_track_properties(1)).await;
+
+        // Assert: the set a SUBSCRIBE_OK for the track carries
+        assert_eq!(fetch_oks, vec![unknown_track_properties(3)]);
     }
 
     fn relative_joining_fetch_params(joining_request_id: u64) -> FetchParams {

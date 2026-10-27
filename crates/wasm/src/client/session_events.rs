@@ -89,12 +89,10 @@ fn on_publish(shared: &ClientShared, handler: PublishHandler) {
         track_namespace_tuple: handler.track_namespace_tuple.clone(),
         track_name: handler.track_name.clone(),
         track_alias: handler.track_alias,
-        group_order: handler.group_order,
         content_exists: handler.content_exists,
         forward: handler.forward,
         authorization_tokens: vec![],
-        delivery_timeout: handler.delivery_timeout,
-        max_duration: handler.max_cache_duration,
+        track_properties: handler.track_properties.clone(),
     };
     shared
         .incoming
@@ -130,7 +128,7 @@ fn on_subscribe(shared: &ClientShared, handler: SubscribeHandler) {
         forward: handler.forward,
         filter_type: handler.filter_type,
         authorization_tokens: vec![],
-        delivery_timeout: handler.delivery_timeout,
+        delivery_timeout: None,
     };
     let validation_code = {
         let mut state = shared.state.borrow_mut();

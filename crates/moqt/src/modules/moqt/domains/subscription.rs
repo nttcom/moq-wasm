@@ -1,4 +1,5 @@
 use crate::{
+    TrackProperties,
     modules::moqt::control_plane::control_messages::messages::{
         parameters::content_exists::ContentExists, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
     },
@@ -69,10 +70,10 @@ impl Subscription {
         }
     }
 
-    pub fn max_cache_duration(&self) -> Option<u64> {
+    pub fn track_properties(&self) -> &TrackProperties {
         match self {
-            Self::PublisherInitiated(subscription) => subscription.max_cache_duration,
-            Self::SubscriberInitiated(subscription) => subscription.max_cache_duration,
+            Self::PublisherInitiated(subscription) => &subscription.track_properties,
+            Self::SubscriberInitiated(subscription) => &subscription.track_properties,
         }
     }
 
@@ -95,10 +96,8 @@ pub struct SubscriberInitiatedSubscription {
     pub content_exists: ContentExists,
     pub subscriber_priority: u8,
     pub filter_type: FilterType,
-    pub delivery_timeout: Option<u64>,
-    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the SUBSCRIBE_OK
-    /// carried.
-    pub max_cache_duration: Option<u64>,
+    /// What the SUBSCRIBE_OK said about the track.
+    pub track_properties: TrackProperties,
 }
 
 impl SubscriberInitiatedSubscription {
@@ -119,8 +118,7 @@ impl SubscriberInitiatedSubscription {
             content_exists: subscribe_ok.content_exists,
             subscriber_priority,
             filter_type,
-            delivery_timeout: None,
-            max_cache_duration: subscribe_ok.max_duration,
+            track_properties: subscribe_ok.track_properties,
         }
     }
 
@@ -135,8 +133,7 @@ impl SubscriberInitiatedSubscription {
             content_exists: ContentExists::False,
             subscriber_priority: handler.subscriber_priority,
             filter_type: handler.filter_type,
-            delivery_timeout: handler.delivery_timeout,
-            max_cache_duration: handler.max_cache_duration,
+            track_properties: handler.track_properties.clone(),
         }
     }
 }
@@ -153,9 +150,8 @@ pub struct PublisherInitiatedSubscription {
     pub forward: bool,
     pub filter_type: FilterType,
     pub delivery_timeout: Option<u64>,
-    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the PUBLISH
-    /// carried.
-    pub max_cache_duration: Option<u64>,
+    /// What the PUBLISH said about the track.
+    pub track_properties: TrackProperties,
 }
 
 impl PublisherInitiatedSubscription {
@@ -164,7 +160,7 @@ impl PublisherInitiatedSubscription {
         track_name: String,
         track_alias: u64,
         publish_ok: PublishOk,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
     ) -> Self {
         Self {
             track_namespace,
@@ -177,7 +173,7 @@ impl PublisherInitiatedSubscription {
             forward: publish_ok.forward,
             filter_type: publish_ok.filter_type,
             delivery_timeout: None,
-            max_cache_duration,
+            track_properties,
         }
     }
 

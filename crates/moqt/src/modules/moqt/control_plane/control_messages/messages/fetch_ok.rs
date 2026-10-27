@@ -5,7 +5,9 @@ use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, find_even},
-        messages::parameters::{group_order::GroupOrder, location::Location},
+        messages::parameters::{
+            group_order::GroupOrder, location::Location, track_properties::TrackProperties,
+        },
         util,
     },
 };
@@ -28,7 +30,7 @@ pub struct FetchOk {
     pub group_order: GroupOrder,
     pub end_of_track: bool,
     pub end_location: Location,
-    pub max_cache_duration: Option<u64>,
+    pub track_properties: TrackProperties,
 }
 
 impl FetchOk {
@@ -40,13 +42,14 @@ impl FetchOk {
         let end_of_track = util::u8_to_bool(end_of_track_u8).context("end of track")?;
         let end_location = Location::decode(buf)?;
         let parameters = KeyValuePair::decode_list(buf)?;
-        let max_cache_duration = find_even(&parameters, 0x04);
+        let mut track_properties = TrackProperties::default();
+        track_properties.set_max_cache_duration(find_even(&parameters, 0x04));
         Ok(FetchOk {
             request_id,
             group_order,
             end_of_track,
             end_location,
-            max_cache_duration,
+            track_properties,
         })
     }
 
@@ -57,7 +60,8 @@ impl FetchOk {
         payload.put_u8(self.end_of_track as u8);
         payload.unsplit(self.end_location.encode());
         let parameters: Vec<KeyValuePair> = self
-            .max_cache_duration
+            .track_properties
+            .max_cache_duration()
             .map(|value| KeyValuePair::even(0x04, value))
             .into_iter()
             .collect();
@@ -81,7 +85,7 @@ mod tests {
                     group_id: 10,
                     object_id: 5,
                 },
-                max_cache_duration: None,
+                track_properties: Default::default(),
             };
             let result = fetch_ok.encode();
             let expected = [
@@ -108,7 +112,7 @@ mod tests {
                     group_id: 10,
                     object_id: 5,
                 },
-                max_cache_duration: None,
+                track_properties: Default::default(),
             };
             assert_eq!(result, expected);
         }
@@ -123,7 +127,11 @@ mod tests {
                     group_id: 100,
                     object_id: 200,
                 },
-                max_cache_duration: Some(5000),
+                track_properties: {
+                    let mut properties = TrackProperties::default();
+                    properties.set_max_cache_duration(Some(5000));
+                    properties
+                },
             };
             let buf = expected.encode();
             let mut cursor = std::io::Cursor::new(&buf[..]);

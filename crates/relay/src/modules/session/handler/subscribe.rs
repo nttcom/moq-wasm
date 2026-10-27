@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use moqt::RequestErrorCode;
+use moqt::{RequestErrorCode, TrackProperties};
 use moqt::{
     object::{ContentExists, GroupOrder},
     subscribe::FilterType,
@@ -25,7 +25,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
         track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError>;
     async fn error(
         &self,
@@ -62,10 +62,10 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
         self.filter_type
     }
     fn _max_cache_duration(&self) -> Option<u64> {
-        self.max_cache_duration
+        self.track_properties.max_cache_duration()
     }
     fn _delivery_timeout(&self) -> Option<u64> {
-        self.delivery_timeout
+        self.track_properties.delivery_timeout()
     }
     fn allocate_track_alias(&self) -> u64 {
         moqt::subscribe::SubscribeHandler::allocate_track_alias(self)
@@ -76,12 +76,12 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
         track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
-        // moqt sends the handler's `max_cache_duration` field; the clone shares
+        // moqt sends the handler's `track_properties` field; the clone shares
         // the original's response guard.
         let mut handler = self.clone();
-        handler.max_cache_duration = max_cache_duration;
+        handler.track_properties = track_properties;
         moqt::subscribe::SubscribeHandler::ok_with_track_alias(
             &handler,
             track_alias,

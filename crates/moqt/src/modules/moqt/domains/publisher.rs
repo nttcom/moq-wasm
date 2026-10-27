@@ -163,7 +163,7 @@ impl Publisher {
                     request_id,
                     ..publish_ok
                 },
-                option.max_cache_duration,
+                option.track_properties.clone(),
             )
             .with_content_exists(option.content_exists),
         ))
@@ -242,12 +242,10 @@ pub(crate) async fn send_publish(
         track_namespace_tuple: namespace_tuple(track_namespace),
         track_name: track_name.to_string(),
         track_alias,
-        group_order: option.group_order,
         content_exists: option.content_exists,
         forward: option.forward,
         authorization_tokens: vec![],
-        delivery_timeout: None,
-        max_duration: option.max_cache_duration,
+        track_properties: option.track_properties.clone(),
     };
     // A late PUBLISH_OK is discarded: the peer keeps subscription state
     // but receives no objects.

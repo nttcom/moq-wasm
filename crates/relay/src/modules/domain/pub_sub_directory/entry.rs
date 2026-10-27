@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use moqt::{
+    TrackProperties,
     namespace::NamespaceInterest,
     object::{ContentExists, Location},
     publish::PublishDoneCode,
@@ -75,13 +76,20 @@ impl UpstreamTrack {
             .and_then(|subscription| subscription.expires)
     }
 
-    /// The newest publisher's MAX_CACHE_DURATION in milliseconds, which the
-    /// relay passes downstream unchanged.
-    pub(crate) fn max_cache_duration(&self) -> Option<u64> {
+    /// The newest publisher's track properties, which the relay passes
+    /// downstream unchanged.
+    pub(crate) fn track_properties(&self) -> TrackProperties {
         self.subscriptions
             .values()
             .next_back()
-            .and_then(|subscription| subscription.subscription.as_moqt().max_cache_duration())
+            .map(|subscription| {
+                subscription
+                    .subscription
+                    .as_moqt()
+                    .track_properties()
+                    .clone()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -165,4 +173,45 @@ pub(crate) struct RemovedSessionSubscriptions {
     pub(crate) upstream_track_keys: Vec<TrackKey>,
     pub(crate) subscribe_namespace_prefixes: Vec<String>,
     pub(crate) publish_namespace_track_namespaces: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use moqt::object::{KeyValuePair, VariantType};
+
+    use super::*;
+    use crate::modules::test_support::{
+        directory_fixtures::upstream_carrying,
+        relay_harness::fixtures::subscription::unknown_track_properties,
+    };
+
+    #[test]
+    fn the_newest_publishers_track_properties_replace_the_others_unmerged() {
+        // Arrange: the older set holds a property the newer one lacks
+        let mut older_pairs: Vec<KeyValuePair> =
+            unknown_track_properties(1).iter().cloned().collect();
+        older_pairs.push(KeyValuePair {
+            key: 0x3A,
+            value: VariantType::Even(7),
+        });
+        let mut older = moqt::TrackProperties::from_pairs(older_pairs);
+        older.set_max_cache_duration(Some(1_000));
+        let newer = moqt::TrackProperties::from_pairs(vec![KeyValuePair {
+            key: 0x38,
+            value: VariantType::Even(2),
+        }]);
+        let mut upstream_track = UpstreamTrack::default();
+        upstream_track
+            .subscriptions
+            .insert(1, upstream_carrying(older));
+        upstream_track
+            .subscriptions
+            .insert(3, upstream_carrying(newer.clone()));
+
+        // Act
+        let track_properties = upstream_track.track_properties();
+
+        // Assert: draft-18 §2.5 forbids merging sets
+        assert_eq!(track_properties, newer);
+    }
 }

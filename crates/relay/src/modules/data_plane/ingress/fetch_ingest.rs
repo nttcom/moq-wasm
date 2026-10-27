@@ -248,10 +248,12 @@ impl FetchIngest {
         let mut receiver = subscriber
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
+        cache.fetched_track_properties(start.fetch_handle.track_properties.clone());
         let stamp = CacheStamp {
             max_cache_duration: start
                 .fetch_handle
-                .max_cache_duration
+                .track_properties
+                .max_cache_duration()
                 .map(Duration::from_millis),
             persist,
             status_may_change: !receiver.compares_duplicate_status(),
@@ -364,6 +366,7 @@ mod tests {
                     stream_object_with_payload,
                 },
                 location, planned_steps,
+                subscription::unknown_track_properties,
             },
         },
     };
@@ -405,7 +408,7 @@ mod tests {
                 group_order: moqt::object::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 1),
-                max_cache_duration: None,
+                track_properties: moqt::TrackProperties::default(),
                 remainder: None,
             },
             egress_start: EgressFetchRequest {
@@ -525,14 +528,17 @@ mod tests {
             Arc::new(TrackCache::new()),
             FetchAnswer::Respond(response),
             fill_budget,
+            moqt::TrackProperties::default(),
         )
         .await
     }
 
+    /// The upstream FETCH_OK says `track_properties`.
     async fn ingest_into(
         cache: Arc<TrackCache>,
         answer: FetchAnswer,
         fill_budget: FillBudget,
+        track_properties: moqt::TrackProperties,
     ) -> Ingested {
         let (session, recorded) = recorded_session_answering_fetch(answer);
         let session_repo = session_repository_with_session(
@@ -550,7 +556,7 @@ mod tests {
                 group_order: moqt::object::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 3),
-                max_cache_duration: None,
+                track_properties,
                 remainder: None,
             },
             egress_start: EgressFetchRequest {
@@ -579,6 +585,45 @@ mod tests {
 
     fn unlimited() -> FillBudget {
         FillBudget::new(None, DEFAULT_FETCH_FILL_TIMEOUT)
+    }
+
+    #[tokio::test]
+    async fn an_upstream_fetch_ok_replaces_the_cached_track_properties() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        cache.fetched_track_properties(unknown_track_properties(1));
+
+        // Act
+        let _ = ingest_into(
+            cache.clone(),
+            FetchAnswer::Respond(vec![moqt::fetch::Fetch::End]),
+            unlimited(),
+            unknown_track_properties(2),
+        )
+        .await;
+
+        // Assert: draft-18 §2.5, the most recent set replaces the cached one
+        assert_eq!(cache.track_properties(), unknown_track_properties(2));
+    }
+
+    #[tokio::test]
+    async fn an_upstream_fetch_ok_does_not_replace_the_set_of_a_live_publisher() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        cache.publisher_started(UPSTREAM_SESSION, unknown_track_properties(1));
+
+        // Act
+        let _ = ingest_into(
+            cache.clone(),
+            FetchAnswer::Respond(vec![moqt::fetch::Fetch::End]),
+            unlimited(),
+            unknown_track_properties(2),
+        )
+        .await;
+
+        // Assert: SUBSCRIBE_OK carries the live publisher's set, and so does
+        // a FETCH served from the cache
+        assert_eq!(cache.track_properties(), unknown_track_properties(1));
     }
 
     #[tokio::test]
@@ -725,6 +770,7 @@ mod tests {
             cache.clone(),
             respond(vec![copy, moqt::fetch::Fetch::End]),
             unlimited(),
+            moqt::TrackProperties::default(),
         )
         .await;
         cache
@@ -760,6 +806,7 @@ mod tests {
                 moqt::fetch::Fetch::End,
             ]),
             unlimited(),
+            moqt::TrackProperties::default(),
         )
         .await;
         ingested.cache
@@ -792,6 +839,7 @@ mod tests {
                 location: location(0, 0),
             }),
             unlimited(),
+            moqt::TrackProperties::default(),
         )
         .await;
 
@@ -810,6 +858,7 @@ mod tests {
                 location: location(0, 0),
             }),
             unlimited(),
+            moqt::TrackProperties::default(),
         )
         .await;
 

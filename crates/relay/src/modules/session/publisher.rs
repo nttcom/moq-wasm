@@ -2,7 +2,7 @@ use moqt::publish::PublishDoneCode;
 use std::{future::Future, pin::Pin};
 
 use async_trait::async_trait;
-use moqt::object::ContentExists;
+use moqt::{TrackProperties, object::ContentExists};
 
 use crate::modules::session::{
     data_sender::{
@@ -25,7 +25,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
         forward: bool,
     ) -> anyhow::Result<DownstreamSubscription>;
     async fn send_publish_done(
@@ -63,14 +63,13 @@ impl Publisher for moqt::Publisher {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
         forward: bool,
     ) -> anyhow::Result<DownstreamSubscription> {
         let option = moqt::publish::PublishOption {
             content_exists,
-            max_cache_duration,
+            track_properties,
             forward,
-            ..Default::default()
         };
         let subscription = self.publish(track_namespace, track_name, option).await?;
         Ok(DownstreamSubscription::from(subscription))

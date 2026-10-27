@@ -1050,14 +1050,17 @@ mod tests {
         let (client, server) =
             spawn_connected_dual_sessions("subscriber-fetch-max-cache-duration").await;
         let (request, mut handler) = start_fetch(&client, &server, TRACK).await;
-        handler.max_cache_duration = Some(2_000);
+        handler.track_properties.set_max_cache_duration(Some(2_000));
 
         // Act
         handler.ok(false, END).await.unwrap();
 
         // Assert
         let fetch_handle = request.await.unwrap().unwrap();
-        assert_eq!(fetch_handle.max_cache_duration, Some(2_000));
+        assert_eq!(
+            fetch_handle.track_properties.max_cache_duration(),
+            Some(2_000)
+        );
     }
 
     #[tokio::test]
@@ -1430,7 +1433,9 @@ mod tests {
         // Act
         let received = within(async {
             for (index, (_, handler)) in requests.iter_mut().enumerate().rev() {
-                handler.max_cache_duration = Some(1000 + index as u64);
+                handler
+                    .track_properties
+                    .set_max_cache_duration(Some(1000 + index as u64));
                 aliases[index] = handler
                     .ok(10 + index as u64, content_of(index))
                     .await
@@ -1464,7 +1469,10 @@ mod tests {
             assert_eq!(received_alias, aliases[index]);
             assert_eq!(subscription.expires(), Some(10 + index as u64));
             assert_eq!(subscription.content_exists(), content_of(index));
-            assert_eq!(subscription.max_cache_duration(), Some(1000 + index as u64));
+            assert_eq!(
+                subscription.track_properties().max_cache_duration(),
+                Some(1000 + index as u64)
+            );
             assert_eq!(received_objects, [objects[index].clone()]);
         }
         assert_ne!(aliases[0], aliases[1]);

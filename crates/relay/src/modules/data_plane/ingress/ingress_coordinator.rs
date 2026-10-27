@@ -157,6 +157,7 @@ impl IngressCoordinator {
                                         persist,
                                         ..CacheStamp::default()
                                     },
+                                    track_properties: subscription.as_moqt().track_properties().clone(),
                                 }))
                                 .await
                                 .is_ok()

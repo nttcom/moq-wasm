@@ -2,7 +2,10 @@ use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, find_even},
-        messages::parameters::{content_exists::ContentExists, group_order::GroupOrder},
+        messages::parameters::{
+            content_exists::ContentExists, group_order::GroupOrder,
+            track_properties::TrackProperties,
+        },
     },
 };
 use anyhow::Context;
@@ -13,10 +16,14 @@ pub struct SubscribeOk {
     pub request_id: u64,
     pub track_alias: u64,
     pub expires: u64,
+    /// The order the subscription is delivered in: the Group Order of a
+    /// draft-14 SUBSCRIBE_OK. Draft-18 sends DEFAULT PUBLISHER GROUP ORDER
+    /// in `track_properties` instead.
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
-    pub delivery_timeout: Option<u64>,
-    pub max_duration: Option<u64>,
+    /// Holds the DELIVERY_TIMEOUT and MAX_CACHE_DURATION parameters of a
+    /// draft-14 SUBSCRIBE_OK, and its Group Order as received.
+    pub track_properties: TrackProperties,
 }
 
 impl SubscribeOk {
@@ -32,8 +39,10 @@ impl SubscribeOk {
         let content_exists = ContentExists::decode(buf)?;
 
         let parameters = KeyValuePair::decode_list(buf)?;
-        let delivery_timeout = find_even(&parameters, 0x02);
-        let max_duration = find_even(&parameters, 0x04);
+        let mut track_properties = TrackProperties::default();
+        track_properties.set_group_order(Some(group_order));
+        track_properties.set_delivery_timeout(find_even(&parameters, 0x02));
+        track_properties.set_max_cache_duration(find_even(&parameters, 0x04));
 
         Ok(SubscribeOk {
             request_id,
@@ -41,8 +50,7 @@ impl SubscribeOk {
             expires,
             group_order,
             content_exists,
-            delivery_timeout,
-            max_duration,
+            track_properties,
         })
     }
 
@@ -54,9 +62,11 @@ impl SubscribeOk {
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.content_exists.encode());
         let parameters: Vec<KeyValuePair> = [
-            self.delivery_timeout
+            self.track_properties
+                .delivery_timeout()
                 .map(|value| KeyValuePair::even(0x02, value)),
-            self.max_duration
+            self.track_properties
+                .max_cache_duration()
                 .map(|value| KeyValuePair::even(0x04, value)),
         ]
         .into_iter()
@@ -73,6 +83,7 @@ mod tests {
         use crate::modules::moqt::control_plane::control_messages::messages::{
             parameters::{
                 content_exists::ContentExists, group_order::GroupOrder, location::Location,
+                track_properties::TrackProperties,
             },
             subscribe_ok::SubscribeOk,
         };
@@ -92,8 +103,7 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
             let buf = subscribe_ok.encode();
 
@@ -127,8 +137,7 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                delivery_timeout: None,
-                max_duration: None,
+                track_properties: Default::default(),
             };
             let buf = subscribe_ok.encode();
 
@@ -172,8 +181,12 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                delivery_timeout: None,
-                max_duration: None,
+                // The Group Order is also the track's, for a draft-18 peer
+                track_properties: {
+                    let mut properties = TrackProperties::default();
+                    properties.set_group_order(Some(group_order));
+                    properties
+                },
             };
 
             assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
@@ -213,8 +226,12 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                delivery_timeout: None,
-                max_duration: None,
+                // The Group Order is also the track's, for a draft-18 peer
+                track_properties: {
+                    let mut properties = TrackProperties::default();
+                    properties.set_group_order(Some(group_order));
+                    properties
+                },
             };
 
             assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);

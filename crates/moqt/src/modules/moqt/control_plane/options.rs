@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::{
+    TrackProperties,
     modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists,
     object::{GroupOrder, Location},
     subscribe::FilterType,
@@ -8,21 +9,18 @@ use crate::{
 
 #[derive(Clone)]
 pub struct PublishOption {
-    pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
-    /// Sent as MAX_CACHE_DURATION (milliseconds, draft-14 §9.2.1.3) in the
-    /// PUBLISH.
-    pub max_cache_duration: Option<u64>,
+    /// Sent in the PUBLISH, with the track's group order (§12.5).
+    pub track_properties: TrackProperties,
 }
 
 impl Default for PublishOption {
     fn default() -> Self {
         Self {
-            group_order: GroupOrder::Ascending,
             content_exists: ContentExists::False,
             forward: true,
-            max_cache_duration: None,
+            track_properties: TrackProperties::default(),
         }
     }
 }

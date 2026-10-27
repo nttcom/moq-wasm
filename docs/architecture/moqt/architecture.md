@@ -222,8 +222,18 @@ call through the adapter; a draft never gets a task of its own (see
     and Track Properties carry the former fields, absent ones take their
     draft-18 defaults, and responses take their Request ID from the stream.
     A Track Property is looked up in the mutable list and inside Immutable
-    Properties (§12.7). Immutable Properties that do not parse, or that hold
-    Immutable Properties, refuse the track with MALFORMED_TRACK.
+    Properties (§12.7).
+    - `TrackProperties` holds every received Track Property with the bytes
+      it arrived in, and `put_track_properties` sends those bytes again, so
+      a relay forwards a property unchanged (§2.5), a non-minimal varint and
+      Immutable Properties (§12.7) included, and adds no default it did not
+      receive (an omitted DEFAULT PUBLISHER GROUP ORDER stays omitted). A
+      property set through a setter is encoded afresh, and so is the Delta
+      Type of the property after it when the type before it changed.
+    - A PUBLISH, SUBSCRIBE_OK or FETCH_OK with malformed Immutable
+      Properties (§12.7) is refused with MALFORMED_TRACK, and one with a
+      Mandatory Track Property (§2.5.1) with UNSUPPORTED_EXTENSION, before
+      it reaches the model, so the model never holds one from the peer.
   - `objects` is the draft-18 data plane. FETCH objects are delta encoded
     against the previous one, so `FetchDataSender` keeps a `FetchEncoder` and
     `accept_fetch_receiver` passes the FETCH's group order to the reader.
@@ -596,14 +606,26 @@ state name the connection:
   tuple (`track_namespace_tuple`) and as the `/`-joined string
   (`track_namespace`); the tuple is authoritative because a tuple element may
   itself contain `/`.
-- MAX_CACHE_DURATION (draft-14 §9.2.1.3, milliseconds) is read from received
-  messages and set on outgoing ones, but never enforced here; caching
-  endpoints such as the relay apply it.
-  Received values are on `Subscription::max_cache_duration()` (from
-  SUBSCRIBE_OK or PUBLISH), `PublishHandler.max_cache_duration` and
-  `FetchHandle.max_cache_duration`; values to send go in
-  `SubscribeHandler.max_cache_duration`, `FetchHandler.max_cache_duration` and
-  `PublishOption.max_cache_duration`.
+- `TrackProperties` is what PUBLISH, SUBSCRIBE_OK, TRACK_STATUS_OK and
+  FETCH_OK say about the track. Received values are on `Subscription::track_properties()` (from
+  SUBSCRIBE_OK or PUBLISH), `PublishHandler.track_properties` and
+  `FetchHandle.track_properties`; values to send go in
+  `SubscribeHandler.track_properties`, `FetchHandler.track_properties` and
+  `PublishOption.track_properties`.
+  - The property list is the single source: `max_cache_duration`,
+    `delivery_timeout`, `group_order` (DEFAULT PUBLISHER GROUP ORDER) and
+    `default_publisher_priority` read it, in the mutable list first and then
+    inside Immutable Properties (§12.7), and each setter replaces only the
+    entries of its type. No message, handler or option keeps a copy of these
+    values; `SubscribeOk.group_order` is the order a subscription is
+    delivered in, which only the draft-14 message states.
+  - Draft-14 carries the same values as parameters (DELIVERY_TIMEOUT,
+    MAX_CACHE_DURATION) and as the Group Order of PUBLISH and SUBSCRIBE_OK;
+    its codec maps them to and from the list and sends nothing else, so a
+    set from a draft-18 peer loses its other properties toward a draft-14
+    one.
+  - MAX_CACHE_DURATION (draft-14 §9.2.1.3, milliseconds) is read and sent but
+    never enforced here; caching endpoints such as the relay apply it.
 - `enums.rs` — `SessionEvent` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14

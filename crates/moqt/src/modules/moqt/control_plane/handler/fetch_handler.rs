@@ -4,6 +4,7 @@ use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 
 use crate::{
+    TrackProperties,
     modules::{
         moqt::{
             control_plane::{
@@ -50,9 +51,8 @@ pub struct FetchHandler {
     pub request_id: u64,
     pub group_order: GroupOrder,
     pub fetch: Fetch,
-    /// Sent as MAX_CACHE_DURATION (milliseconds, draft-14 §9.2.1.3) in the
-    /// FETCH_OK.
-    pub max_cache_duration: Option<u64>,
+    /// Sent in the FETCH_OK.
+    pub track_properties: TrackProperties,
     guard: ResponseGuard,
 }
 
@@ -70,7 +70,7 @@ impl FetchHandler {
             request_id,
             group_order,
             fetch,
-            max_cache_duration: None,
+            track_properties: TrackProperties::default(),
             guard,
         }
     }
@@ -120,7 +120,7 @@ impl FetchHandler {
             group_order: self.group_order.delivered(),
             end_of_track,
             end_location,
-            max_cache_duration: self.max_cache_duration,
+            track_properties: self.track_properties.clone(),
         };
         self.guard
             .connection()

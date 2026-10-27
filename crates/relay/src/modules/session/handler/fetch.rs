@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use moqt::{
-    RequestErrorCode,
+    RequestErrorCode, TrackProperties,
     fetch::{JoinedSubscription, JoiningFetchRefusal},
 };
 
@@ -18,7 +18,7 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
         &self,
         end_of_track: bool,
         end_location: moqt::object::Location,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError>;
     async fn error(
         &self,
@@ -57,12 +57,12 @@ impl FetchHandler for moqt::fetch::FetchHandler {
         &self,
         end_of_track: bool,
         end_location: moqt::object::Location,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
     ) -> Result<(), moqt::TransportSendError> {
-        // moqt sends the handler's `max_cache_duration` field; the clone shares
+        // moqt sends the handler's `track_properties` field; the clone shares
         // the original's response guard.
         let mut handler = self.clone();
-        handler.max_cache_duration = max_cache_duration;
+        handler.track_properties = track_properties;
         moqt::fetch::FetchHandler::ok(&handler, end_of_track, end_location).await
     }
 
