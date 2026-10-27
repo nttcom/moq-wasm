@@ -62,8 +62,6 @@ test.describe('control messages sent from client to relay', () => {
 
       // draft-14 で新規に実装したメッセージ。
       await send(client, client.goAwayButton, 'GOAWAY')
-      await send(client, client.maxRequestIdButton, 'MAX_REQUEST_ID')
-      await send(client, client.requestsBlockedButton, 'REQUESTS_BLOCKED')
       await send(client, client.fetchCancelButton, 'FETCH_CANCEL')
       await send(client, client.subscribeUpdateButton, 'SUBSCRIBE_UPDATE')
       await send(client, client.publishDoneButton, 'PUBLISH_DONE')

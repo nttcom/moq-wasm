@@ -46,8 +46,6 @@ function createMessagePageModel(page: Page) {
     fetchEndObjectInput: page.locator('#fetch-end-object'),
     goAwayButton: page.locator('#sendGoAwayBtn'),
     goAwayUriInput: page.locator('#goaway-new-session-uri'),
-    maxRequestIdButton: page.locator('#sendMaxRequestIdBtn'),
-    requestsBlockedButton: page.locator('#sendRequestsBlockedBtn'),
     fetchCancelButton: page.locator('#sendFetchCancelBtn'),
     subscribeUpdateButton: page.locator('#sendSubscribeUpdateBtn'),
     publishDoneButton: page.locator('#sendPublishDoneBtn'),

@@ -118,22 +118,6 @@ pub(super) fn session_event_span(
             relay_hostname = relay_hostname(),
             new_session_uri = %handler.new_session_uri(),
         ),
-        MoqtSessionEvent::MaxRequestId(handler) => tracing::info_span!(
-            parent: None,
-            "relay.max_request_id",
-            session_id = %session_id,
-            app_id,
-            relay_hostname = relay_hostname(),
-            request_id = handler.request_id(),
-        ),
-        MoqtSessionEvent::RequestsBlocked(handler) => tracing::info_span!(
-            parent: None,
-            "relay.requests_blocked",
-            session_id = %session_id,
-            app_id,
-            relay_hostname = relay_hostname(),
-            maximum_request_id = handler.maximum_request_id(),
-        ),
         MoqtSessionEvent::PublishNamespaceCancel(handler) => tracing::info_span!(
             parent: None,
             "relay.publish_namespace_cancel",

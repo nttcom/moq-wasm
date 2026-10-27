@@ -8,8 +8,6 @@ use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
-use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
-use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
@@ -164,32 +162,6 @@ impl Session {
             .connection()
             .control
             .notify(Notification::GoAway(GoAway::new(new_session_uri)))
-            .await?;
-        Ok(())
-    }
-
-    /// Allows the peer to use request ids below `max_request_id` (draft-14
-    /// §9.2). Fire-and-forget.
-    pub async fn raise_max_request_id(&self, max_request_id: u64) -> anyhow::Result<()> {
-        self.inner
-            .connection()
-            .control
-            .notify(Notification::MaxRequestId(MaxRequestId::new(
-                max_request_id,
-            )))
-            .await?;
-        Ok(())
-    }
-
-    /// Tells the peer this side ran out of request ids at
-    /// `maximum_request_id` (draft-14 §9.3). Fire-and-forget.
-    pub async fn requests_blocked(&self, maximum_request_id: u64) -> anyhow::Result<()> {
-        self.inner
-            .connection()
-            .control
-            .notify(Notification::RequestsBlocked(RequestsBlocked::new(
-                maximum_request_id,
-            )))
             .await?;
         Ok(())
     }
@@ -439,36 +411,5 @@ mod tests {
             panic!("expected GOAWAY from the client");
         };
         assert_eq!(go_away.new_session_uri(), "");
-    }
-
-    #[tokio::test]
-    async fn raise_max_request_id_reaches_the_peer() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-max-request-id").await;
-
-        // Act
-        client.raise_max_request_id(200).await.unwrap();
-
-        // Assert
-        let SessionEvent::MaxRequestId(max_request_id) = server.receive_event().await.unwrap()
-        else {
-            panic!("expected MAX_REQUEST_ID from the client");
-        };
-        assert_eq!(max_request_id.request_id(), 200);
-    }
-
-    #[tokio::test]
-    async fn requests_blocked_reaches_the_peer() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-requests-blocked").await;
-
-        // Act
-        client.requests_blocked(100).await.unwrap();
-
-        // Assert
-        let SessionEvent::RequestsBlocked(blocked) = server.receive_event().await.unwrap() else {
-            panic!("expected REQUESTS_BLOCKED from the client");
-        };
-        assert_eq!(blocked.maximum_request_id(), 100);
     }
 }

@@ -8,17 +8,18 @@ use crate::{
     modules::moqt::{
         control_plane::{
             constants::TerminationErrorCode,
-            control_messages::messages::request_error::RequestError,
+            control_messages::messages::{
+                max_request_id::MaxRequestId, request_error::RequestError,
+            },
             enums::{ErrorPhrase, RequestId, ResponseMessage},
             error_codes::{PublishDoneCode, RequestErrorCode, RequestKind},
             handler::{
                 fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
-                go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
-                publish_done_handler::PublishDoneHandler, publish_handler::PublishHandler,
+                go_away_handler::GoAwayHandler, publish_done_handler::PublishDoneHandler,
+                publish_handler::PublishHandler,
                 publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
                 publish_namespace_done_handler::PublishNamespaceDoneHandler,
                 publish_namespace_handler::PublishNamespaceHandler,
-                requests_blocked_handler::RequestsBlockedHandler,
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
                 subscribe_update_handler::SubscribeUpdateHandler,
@@ -30,8 +31,12 @@ use crate::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
         domains::{connection::Connection, session_context::SessionContext},
-        version::draft14::{
-            ControlChannel, InflightRequest, ReceivedResponse, error_codes, handle_late_response,
+        version::{
+            Notification,
+            draft14::{
+                ControlChannel, InflightRequest, ReceivedResponse, RequestIdViolation, error_codes,
+                handle_late_response,
+            },
         },
     },
 };
@@ -39,6 +44,8 @@ use crate::{
 enum DepacketizeResult {
     SessionEvent(SessionEvent),
     ResponseMessage(u64, ResponseMessage),
+    /// The message only updated this session's state.
+    Handled,
     SessionClosed,
 }
 
@@ -71,6 +78,34 @@ impl ControlMessageReceiveTask {
                                 }
                             };
 
+                            if let Some(request_id) = new_request_id(&received_message) {
+                                match ControlChannel::of(&connection)
+                                    .accept_peer_request_id(request_id)
+                                {
+                                    Ok(None) => {}
+                                    Ok(Some(limit)) => {
+                                        tracing::debug!(
+                                            maximum_request_id = limit,
+                                            "raising the peer's Maximum Request ID"
+                                        );
+                                        let raise = Notification::MaxRequestId(MaxRequestId::new(limit));
+                                        if let Err(error) =
+                                            ControlChannel::of(&connection).notify(raise).await
+                                        {
+                                            tracing::debug!(%error, "failed to send MAX_REQUEST_ID");
+                                        }
+                                    }
+                                    Err(RequestIdViolation { code, reason }) => {
+                                        tracing::error!(
+                                            request_id,
+                                            %reason,
+                                            "Protocol violation: invalid Request ID"
+                                        );
+                                        session.close_connection(&connection, code, reason);
+                                        break;
+                                    }
+                                }
+                            }
                             match Self::resolve_message(&session, &connection, received_message) {
                                 DepacketizeResult::SessionEvent(event) => {
                                     if let SessionEvent::PublishDone(handler) = &event {
@@ -80,6 +115,7 @@ impl ControlMessageReceiveTask {
                                         tracing::error!(?error, "failed to send a control message");
                                     }
                                 }
+                                DepacketizeResult::Handled => {}
                                 DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
                                     let inflight_request = ControlChannel::of(&connection)
@@ -140,13 +176,6 @@ impl ControlMessageReceiveTask {
         received_message: ReceivedMessage,
     ) -> DepacketizeResult {
         tracing::debug!(message = ?received_message, "Event: message_type");
-        if let Some(request_id) = new_request_id(&received_message)
-            && let Err(reason) = ControlChannel::of(connection).accept_peer_request_id(request_id)
-        {
-            tracing::error!(request_id, %reason, "Protocol violation: invalid Request ID");
-            session.close_connection(connection, TerminationErrorCode::InvalidRequestId, reason);
-            return DepacketizeResult::SessionClosed;
-        }
         match received_message {
             ReceivedMessage::Subscribe(subscribe) => {
                 let subscribe_handler =
@@ -291,14 +320,27 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionEvent(SessionEvent::GoAway(go_away_handler))
             }
             ReceivedMessage::MaxRequestId(max_request_id) => {
-                let max_request_id_handler = MaxRequestIdHandler::new(max_request_id);
-                DepacketizeResult::SessionEvent(SessionEvent::MaxRequestId(max_request_id_handler))
+                if let Err(reason) = ControlChannel::of(connection)
+                    .raise_peer_request_id_limit(max_request_id.request_id)
+                {
+                    tracing::error!(%reason, "Protocol violation");
+                    session.close_connection(
+                        connection,
+                        TerminationErrorCode::ProtocolViolation,
+                        reason,
+                    );
+                    return DepacketizeResult::SessionClosed;
+                }
+                DepacketizeResult::Handled
             }
             ReceivedMessage::RequestsBlocked(requests_blocked) => {
-                let requests_blocked_handler = RequestsBlockedHandler::new(requests_blocked);
-                DepacketizeResult::SessionEvent(SessionEvent::RequestsBlocked(
-                    requests_blocked_handler,
-                ))
+                // No MAX_REQUEST_ID is sent in response (§9.6 MAY): the window
+                // already moves with use, so a blocked peer has skipped Request IDs.
+                tracing::debug!(
+                    maximum_request_id = requests_blocked.maximum_request_id,
+                    "REQUESTS_BLOCKED received"
+                );
+                DepacketizeResult::Handled
             }
             ReceivedMessage::TrackStatus(track_status) => {
                 let track_status_handler =

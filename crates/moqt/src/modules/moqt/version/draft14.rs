@@ -30,8 +30,8 @@ use crate::{
                         fetch_cancel::FetchCancel, publish_done::PublishDone,
                         publish_namespace_cancel::PublishNamespaceCancel,
                         publish_namespace_done::PublishNamespaceDone, request_error::RequestError,
-                        subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
-                        unsubscribe_namespace::UnsubscribeNamespace,
+                        requests_blocked::RequestsBlocked, subscribe_update::SubscribeUpdate,
+                        unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                     },
                 },
                 enums::{RequestId, ResponseMessage},
@@ -48,6 +48,11 @@ use crate::{
 };
 
 const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The SETUP MAX_REQUEST_ID this side sends, and how far past the peer's next
+/// Request ID every later MAX_REQUEST_ID reaches. Request IDs step by 2, so it
+/// allows 500 requests.
+pub(super) const REQUEST_ID_WINDOW: RequestId = 1000;
 
 /// How to withdraw a request whose success response the caller abandons: by
 /// timing out, by cancelling, or by dropping the `ReceivedResponse` before
@@ -87,22 +92,49 @@ struct InflightRequests {
     control_stream_closed: bool,
 }
 
+struct OutgoingRequestIds {
+    next: RequestId,
+    /// The peer's Maximum Request ID this side last sent REQUESTS_BLOCKED for.
+    blocked_on: Option<RequestId>,
+}
+
+pub(super) struct RequestIdViolation {
+    pub(super) code: TerminationErrorCode,
+    pub(super) reason: &'static str,
+}
+
 pub(crate) struct ControlChannel {
     send_stream: BiStreamSender,
-    next_request_id: tokio::sync::Mutex<RequestId>,
+    request_ids: tokio::sync::Mutex<OutgoingRequestIds>,
+    /// Exclusive upper bound for this side's Request IDs: the peer's SETUP or
+    /// MAX_REQUEST_ID (§9.5).
+    peer_request_id_limit: tokio::sync::watch::Sender<RequestId>,
     /// The smallest Request ID the peer may use for its next request.
     next_peer_request_id: AtomicU64,
+    /// Exclusive upper bound for the peer's Request IDs: the last SETUP or
+    /// MAX_REQUEST_ID this side sent.
+    request_id_limit: AtomicU64,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
 }
 
 impl ControlChannel {
     /// A client numbers its requests from 0 and a server from 1, each in
-    /// steps of two.
-    fn new(send_stream: BiStreamSender, first_request_id: RequestId) -> Self {
+    /// steps of two. `peer_request_id_limit` is the peer's SETUP
+    /// MAX_REQUEST_ID; its default 0 allows no request (§9.3.2.3).
+    fn new(
+        send_stream: BiStreamSender,
+        first_request_id: RequestId,
+        peer_request_id_limit: RequestId,
+    ) -> Self {
         Self {
             send_stream,
-            next_request_id: tokio::sync::Mutex::new(first_request_id),
+            request_ids: tokio::sync::Mutex::new(OutgoingRequestIds {
+                next: first_request_id,
+                blocked_on: None,
+            }),
+            peer_request_id_limit: tokio::sync::watch::Sender::new(peer_request_id_limit),
             next_peer_request_id: AtomicU64::new(first_request_id ^ 1),
+            request_id_limit: AtomicU64::new(REQUEST_ID_WINDOW),
             inflight_requests: Arc::default(),
         }
     }
@@ -112,23 +144,85 @@ impl ControlChannel {
         channel
     }
 
+    /// Waits while the next Request ID reaches the peer's Maximum Request
+    /// ID, sending one REQUESTS_BLOCKED per limit (§9.6).
     pub(super) async fn reserve_request_id(&self) -> RequestIdReservation<'_> {
-        RequestIdReservation(self.next_request_id.lock().await)
+        let mut request_ids = self.request_ids.lock().await;
+        let mut peer_request_id_limit = self.peer_request_id_limit.subscribe();
+        loop {
+            let limit = *peer_request_id_limit.borrow_and_update();
+            if request_ids.next < limit {
+                break;
+            }
+            if request_ids.blocked_on != Some(limit) {
+                request_ids.blocked_on = Some(limit);
+                tracing::debug!(
+                    maximum_request_id = limit,
+                    "requests blocked by the peer's Maximum Request ID"
+                );
+                let blocked = Notification::RequestsBlocked(RequestsBlocked::new(limit));
+                if let Err(error) = self.notify(blocked).await {
+                    tracing::debug!(%error, "failed to send REQUESTS_BLOCKED");
+                }
+            }
+            // `self` owns the sender, so this only returns on a new value.
+            let _ = peer_request_id_limit.changed().await;
+        }
+        RequestIdReservation(tokio::sync::MutexGuard::map(request_ids, |ids| {
+            &mut ids.next
+        }))
     }
 
-    /// Fails when the peer's request reuses a Request ID, goes back to a
-    /// smaller one, or has this side's parity (§9.1).
-    fn accept_peer_request_id(&self, request_id: RequestId) -> Result<(), &'static str> {
+    /// Returns the Maximum Request ID to advertise once the peer has used half
+    /// the window, so a peer that keeps sending never blocks. Fails when the
+    /// Request ID reuses or goes below an earlier one, has this side's parity
+    /// (§9.1), or reaches the advertised limit (§9.5).
+    fn accept_peer_request_id(
+        &self,
+        request_id: RequestId,
+    ) -> Result<Option<RequestId>, RequestIdViolation> {
+        let invalid = |reason| RequestIdViolation {
+            code: TerminationErrorCode::InvalidRequestId,
+            reason,
+        };
         let next = self.next_peer_request_id.load(Ordering::Relaxed);
         if request_id % 2 != next % 2 {
-            return Err("Request ID has the parity of the other endpoint");
+            return Err(invalid("Request ID has the parity of the other endpoint"));
         }
         if request_id < next {
-            return Err("Request ID is not larger than the previous request's");
+            return Err(invalid(
+                "Request ID is not larger than the previous request's",
+            ));
         }
-        self.next_peer_request_id
-            .store(request_id + 2, Ordering::Relaxed);
-        Ok(())
+        let limit = self.request_id_limit.load(Ordering::Relaxed);
+        if request_id >= limit {
+            return Err(RequestIdViolation {
+                code: TerminationErrorCode::TooManyRequests,
+                reason: "Request ID reaches the Maximum Request ID",
+            });
+        }
+        let next = request_id + 2;
+        self.next_peer_request_id.store(next, Ordering::Relaxed);
+        if limit.saturating_sub(next) >= REQUEST_ID_WINDOW / 2 {
+            return Ok(None);
+        }
+        let raised = next + REQUEST_ID_WINDOW;
+        self.request_id_limit.store(raised, Ordering::Relaxed);
+        Ok(Some(raised))
+    }
+
+    /// Fails unless `limit` is above the current one (§9.5).
+    fn raise_peer_request_id_limit(&self, limit: RequestId) -> Result<(), &'static str> {
+        let raised = self.peer_request_id_limit.send_if_modified(|current| {
+            let raised = limit > *current;
+            if raised {
+                *current = limit;
+            }
+            raised
+        });
+        raised
+            .then_some(())
+            .ok_or("MAX_REQUEST_ID does not increase the Maximum Request ID")
     }
 
     /// Writes the request before releasing `reservation`, so the peer
@@ -338,6 +432,10 @@ impl ControlChannel {
             .expect("inflight_requests poisoned");
         inflight.control_stream_closed = true;
         inflight.requests.clear();
+        drop(inflight);
+        // No MAX_REQUEST_ID can arrive anymore: release blocked requests so
+        // they fail like any request on a closed control stream.
+        self.peer_request_id_limit.send_replace(RequestId::MAX);
     }
 }
 
@@ -603,9 +701,14 @@ fn close_on_mismatched_late_response(
 
 #[cfg(test)]
 mod tests {
+    use std::{pin::Pin, sync::Arc, time::Duration};
+
     use tokio::sync::mpsc::error::TryRecvError;
 
-    use super::{ControlChannel, LateResponseAction, handle_late_response};
+    use super::{
+        ControlChannel, LateResponseAction, Notification, REQUEST_ID_WINDOW, RequestIdReservation,
+        handle_late_response,
+    };
     use crate::{
         Session, SessionEvent,
         modules::{
@@ -614,6 +717,7 @@ mod tests {
                     control_messages::control_message_type::ControlMessageType,
                     control_messages::messages::{
                         fetch_ok::FetchOk,
+                        max_request_id::MaxRequestId,
                         parameters::{content_exists::ContentExists, filter_type::FilterType},
                         publish_ok::PublishOk,
                         subscribe::Subscribe,
@@ -621,7 +725,7 @@ mod tests {
                     },
                     enums::ResponseMessage,
                 },
-                domains::connection::IncomingObjectNotification,
+                domains::connection::{Connection, IncomingObjectNotification},
             },
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, notify_datagram,
@@ -838,12 +942,30 @@ mod tests {
             .unwrap();
     }
 
-    async fn assert_closed_with_invalid_request_id(session: &Session, reason: &str) {
+    async fn assert_closed_with(session: &Session, code: u32, reason: &str) {
         let close = tokio::time::timeout(DISCONNECT_TIMEOUT, session.closed())
             .await
             .unwrap();
-        assert_eq!(close.code, Some(0x4));
+        assert_eq!(close.code, Some(code));
         assert_eq!(close.reason, reason);
+    }
+
+    async fn assert_closed_with_invalid_request_id(session: &Session, reason: &str) {
+        assert_closed_with(session, 0x4, reason).await;
+    }
+
+    fn connection_of(session: &Session) -> Arc<Connection> {
+        session.publisher().session.connection()
+    }
+
+    async fn blocked_reservation(
+        channel: &ControlChannel,
+    ) -> Pin<Box<impl Future<Output = RequestIdReservation<'_>>>> {
+        channel.peer_request_id_limit.send_replace(0);
+        let mut reservation = Box::pin(channel.reserve_request_id());
+        let blocked = tokio::time::timeout(Duration::from_millis(100), &mut reservation).await;
+        assert!(blocked.is_err(), "reserved past the peer's limit");
+        reservation
     }
 
     /// The handler is returned so its drop does not answer a request the
@@ -924,5 +1046,111 @@ mod tests {
         )
         .await;
         drop(client);
+    }
+
+    #[tokio::test]
+    async fn request_id_at_the_maximum_request_id_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_dual_sessions("request-id-too-many").await;
+
+        // Act
+        send_track_status(&client, REQUEST_ID_WINDOW).await;
+
+        // Assert: the server closes the session with TOO_MANY_REQUESTS
+        assert_closed_with(&client, 0x7, "Request ID reaches the Maximum Request ID").await;
+    }
+
+    #[tokio::test]
+    async fn peer_past_half_the_window_gets_a_raised_maximum_request_id() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("request-id-raised").await;
+        let mut client_limit = ControlChannel::of(&connection_of(&client))
+            .peer_request_id_limit
+            .subscribe();
+
+        // Act
+        send_track_status(&client, REQUEST_ID_WINDOW / 2).await;
+        let _first = receive_track_status(&server).await;
+
+        // Assert: the limit moves a window past the client's next Request ID
+        let raised = tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            client_limit.wait_for(|limit| *limit != REQUEST_ID_WINDOW),
+        )
+        .await
+        .unwrap()
+        .map(|limit| *limit)
+        .unwrap();
+        assert_eq!(raised, REQUEST_ID_WINDOW / 2 + 2 + REQUEST_ID_WINDOW);
+        send_track_status(&client, REQUEST_ID_WINDOW).await;
+        assert_eq!(
+            receive_track_status(&server).await.request_id(),
+            REQUEST_ID_WINDOW
+        );
+    }
+
+    #[tokio::test]
+    async fn max_request_id_that_does_not_increase_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_dual_sessions("max-request-id-not-raised").await;
+
+        // Act
+        ControlChannel::of(&connection_of(&client))
+            .send_stream
+            .send(
+                ControlMessageType::MaxRequestId,
+                MaxRequestId::new(REQUEST_ID_WINDOW).encode(),
+            )
+            .await
+            .unwrap();
+
+        // Assert: the server closes the session with PROTOCOL_VIOLATION
+        assert_closed_with(
+            &client,
+            0x3,
+            "MAX_REQUEST_ID does not increase the Maximum Request ID",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn request_at_the_peers_limit_waits_for_max_request_id() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("request-id-blocked").await;
+        let client_connection = connection_of(&client);
+        let client_channel = ControlChannel::of(&client_connection);
+        let reservation = blocked_reservation(client_channel).await;
+
+        // Act
+        ControlChannel::of(&connection_of(&server))
+            .notify(Notification::MaxRequestId(MaxRequestId::new(2)))
+            .await
+            .unwrap();
+
+        // Assert
+        let reservation = tokio::time::timeout(HANDSHAKE_TIMEOUT, reservation)
+            .await
+            .unwrap();
+        assert_eq!(reservation.request_id(), 0);
+        drop(reservation);
+        assert_eq!(client_channel.request_ids.lock().await.blocked_on, Some(0));
+    }
+
+    #[tokio::test]
+    async fn closed_control_stream_releases_a_blocked_request() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("request-id-blocked-closed").await;
+        let client_connection = connection_of(&client);
+        let client_channel = ControlChannel::of(&client_connection);
+        let reservation = blocked_reservation(client_channel).await;
+
+        // Act
+        drop(server);
+
+        // Assert
+        let reservation = tokio::time::timeout(DISCONNECT_TIMEOUT, reservation)
+            .await
+            .unwrap();
+        assert_eq!(reservation.request_id(), 0);
     }
 }

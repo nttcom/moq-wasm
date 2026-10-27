@@ -897,22 +897,6 @@ impl MOQTClient {
             .map_err(anyhow_error)
     }
 
-    #[wasm_bindgen(js_name = sendMaxRequestId)]
-    pub async fn send_max_request_id(&self, request_id: u64) -> Result<(), JsValue> {
-        self.session()?
-            .raise_max_request_id(request_id)
-            .await
-            .map_err(anyhow_error)
-    }
-
-    #[wasm_bindgen(js_name = sendRequestsBlocked)]
-    pub async fn send_requests_blocked(&self, maximum_request_id: u64) -> Result<(), JsValue> {
-        self.session()?
-            .requests_blocked(maximum_request_id)
-            .await
-            .map_err(anyhow_error)
-    }
-
     /// `subscription_request_id` is the id JavaScript chose for its SUBSCRIBE
     /// when this client issued it; any other value is sent as given.
     #[wasm_bindgen(js_name = sendSubscribeUpdate)]

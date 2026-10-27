@@ -20,7 +20,7 @@ use crate::modules::moqt::{
 use crate::modules::{
     moqt::{
         data_plane::codec::control_message_decoder::ControlMessageDecoder,
-        version::draft14::ControlChannel,
+        version::draft14::{ControlChannel, REQUEST_ID_WINDOW},
     },
     transport::transport_connection::BoxedConnection,
 };
@@ -31,7 +31,7 @@ async fn send_client_setup(
 ) -> anyhow::Result<()> {
     let setup_param = SetupParameter {
         path: None,
-        max_request_id: 1000,
+        max_request_id: REQUEST_ID_WINDOW,
         authorization_token: authorization_token
             .map(AuthorizationToken::use_value_utf8)
             .into_iter()
@@ -99,7 +99,7 @@ async fn receive_client_setup(
 async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<()> {
     let setup_param = SetupParameter {
         path: None,
-        max_request_id: 1000,
+        max_request_id: REQUEST_ID_WINDOW,
         authorization_token: vec![],
         authority: None,
         max_auth_token_cache_size: None,
@@ -124,7 +124,7 @@ pub(crate) async fn connect(
     send_client_setup(&mut send_stream, authorization_token).await?;
     let server_setup = receive_server_setup(&mut receive_stream).await?;
     Ok((
-        ControlChannel::new(send_stream, 0),
+        ControlChannel::new(send_stream, 0, server_setup.setup_parameters.max_request_id),
         receive_stream,
         server_setup,
     ))
@@ -155,7 +155,11 @@ impl ServerHandshake {
     pub(crate) async fn accept(mut self) -> anyhow::Result<(ControlChannel, BiStreamReceiver)> {
         send_server_setup(&mut self.send_stream).await?;
         Ok((
-            ControlChannel::new(self.send_stream, 1),
+            ControlChannel::new(
+                self.send_stream,
+                1,
+                self.client_setup.setup_parameters.max_request_id,
+            ),
             self.receive_stream,
         ))
     }

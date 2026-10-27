@@ -284,18 +284,6 @@ function setupControlMessageButtons(): void {
     await sendControlMessage('GOAWAY', () => moqtClient.requireConnectedClient().sendGoAway(newSessionUri))
   })
 
-  onClick('sendMaxRequestIdBtn', async () => {
-    const requestId = BigInt(field('max-request-id-value').value)
-    await sendControlMessage('MAX_REQUEST_ID', () => moqtClient.requireConnectedClient().sendMaxRequestId(requestId))
-  })
-
-  onClick('sendRequestsBlockedBtn', async () => {
-    const maximumRequestId = BigInt(field('requests-blocked-maximum-request-id').value)
-    await sendControlMessage('REQUESTS_BLOCKED', () =>
-      moqtClient.requireConnectedClient().sendRequestsBlocked(maximumRequestId)
-    )
-  })
-
   onClick('sendFetchCancelBtn', async () => {
     const requestId = BigInt(field('fetch-cancel-request-id').value)
     await sendControlMessage('FETCH_CANCEL', () => moqtClient.requireConnectedClient().sendFetchCancel(requestId))

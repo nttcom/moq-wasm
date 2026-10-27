@@ -178,7 +178,7 @@ implemented by the `moqt` types and by the mocks in `test_support`, so the
 relay logic is unit-tested against recorded control messages instead of a live
 transport. Everything past the repository works with `Box<dyn …>`;
 `MoqtSessionEvent` carries the `moqt` handlers without a relay-side trait
-(GOAWAY, MAX_REQUEST_ID, PUBLISH_DONE, …) as they are. The same module holds
+(GOAWAY, PUBLISH_DONE, …) as they are. The same module holds
 `SessionRepository` and the relay-wide `SessionEvent` (`session_event.rs`),
 so everything the relay knows about a session lives in one place.
 
@@ -253,8 +253,8 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   registrations end with it, handed the received status code and reason (see
   "Egress"); otherwise the remaining publishers keep feeding them. No UNSUBSCRIBE is sent, since the publisher
   already ended the subscription.
-- Events for control messages without relay-side logic yet (MAX_REQUEST_ID,
-  REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are logged in the
+- Events for control messages without relay-side logic yet
+  (PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are logged in the
   event span and dropped by the worker; they have no `sequences` entry.
 - Two relay-internal events exist, both reported by the ingest path (not by
   a peer) and routed to the upstream publisher session's worker:
