@@ -11,6 +11,9 @@ pub(crate) mod crypto_provider;
 pub(crate) mod dual;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod dual_stack_bind;
+// Nothing on wasm32 opens a QMux session.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) mod qmux;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod quic;
 pub(crate) mod read_error;
@@ -22,5 +25,7 @@ pub(crate) mod transport_connection_creator;
 pub(crate) mod transport_receive_stream;
 pub(crate) mod transport_send_stream;
 pub(crate) mod transport_stats;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod websocket;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod webtransport;

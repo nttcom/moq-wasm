@@ -101,9 +101,10 @@ impl<T: TransportProtocol> Endpoint<T> {
     }
 
     /// `url` selects the transport by scheme: `moqt://host[:port]` for raw
-    /// QUIC (default port 4433) and `https://host[:port][/path]` for
-    /// WebTransport (default port 443). `QUIC` and `WEBTRANSPORT` endpoints
-    /// accept only their own scheme; `DUAL` accepts both.
+    /// QUIC (default port 4433), `https://host[:port][/path]` for
+    /// WebTransport and `wss://host[:port][/path]` for QMux over WebSocket
+    /// (both default port 443). `QUIC` and `WEBTRANSPORT` endpoints accept
+    /// only their own scheme; `DUAL` accepts all three.
     pub async fn connect(&self, url: &str) -> anyhow::Result<Connecting> {
         self.session_creator.create_new_connection(url).await
     }
@@ -113,7 +114,8 @@ impl<T: TransportProtocol> Endpoint<T> {
     }
 
     /// Refuses every connection attempt at the transport level (QUIC
-    /// CONNECTION_REFUSED, HTTP 503 for WebTransport) while `accept` is polled.
+    /// CONNECTION_REFUSED, HTTP 503 for WebTransport and WebSocket) while
+    /// `accept` is polled.
     /// A client learns at once that this endpoint is closing instead of waiting
     /// for its handshake to time out. Established sessions are unaffected.
     pub fn refuse_new_connections(&self) {
@@ -198,6 +200,22 @@ mod tests {
         // Act
         run_client_that_drops_its_session_and_exits_after_wait_idle(format!(
             "moqt://127.0.0.1:{port}"
+        ))
+        .await;
+
+        // Assert
+        let server = accept.await.unwrap();
+        receive_disconnected(&server).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_observes_web_socket_client_exit_after_wait_idle() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("wait-idle-ws");
+
+        // Act
+        run_client_that_drops_its_session_and_exits_after_wait_idle(format!(
+            "wss://127.0.0.1:{port}/moq"
         ))
         .await;
 

@@ -146,12 +146,13 @@ impl Session {
     }
 
     /// The URL scheme `Endpoint::connect` takes for this session's transport:
-    /// `moqt` for raw QUIC, `https` for WebTransport. A server names a GOAWAY's
-    /// New Session URI in it (draft-14 §9.4).
+    /// `moqt` for raw QUIC, `https` for WebTransport, `wss` for WebSocket. A
+    /// server names a GOAWAY's New Session URI in it (draft-14 §9.4).
     pub fn url_scheme(&self) -> &'static str {
         match self.inner.connection().transport.negotiated_protocol() {
             NegotiatedProtocol::Quic { .. } => "moqt",
             NegotiatedProtocol::WebTransport { .. } => "https",
+            NegotiatedProtocol::WebSocket { .. } => "wss",
         }
     }
 
@@ -234,6 +235,7 @@ mod tests {
         // Arrange
         let (quic_port, quic_accept) = spawn_dual_server("url-scheme-quic");
         let (wt_port, wt_accept) = spawn_dual_server("url-scheme-wt");
+        let (ws_port, ws_accept) = spawn_dual_server("url-scheme-ws");
 
         // Act
         let (quic_client, quic_server) =
@@ -244,12 +246,18 @@ mod tests {
             connect_sessions(&format!("https://127.0.0.1:{wt_port}/moq"), wt_accept)
                 .await
                 .unwrap();
+        let (ws_client, ws_server) =
+            connect_sessions(&format!("wss://127.0.0.1:{ws_port}/moq"), ws_accept)
+                .await
+                .unwrap();
 
         // Assert
         assert_eq!(quic_client.url_scheme(), "moqt");
         assert_eq!(quic_server.url_scheme(), "moqt");
         assert_eq!(wt_client.url_scheme(), "https");
         assert_eq!(wt_server.url_scheme(), "https");
+        assert_eq!(ws_client.url_scheme(), "wss");
+        assert_eq!(ws_server.url_scheme(), "wss");
     }
 
     #[tokio::test]
