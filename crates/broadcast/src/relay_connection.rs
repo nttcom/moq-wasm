@@ -178,10 +178,9 @@ impl ConnectedRelay {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let endpoint = Endpoint::<RelayTransport>::create_client(&ClientConfig {
-            port: 0,
             verify_certificate: target.verify_certificate,
             authorization_token: target.auth_token.clone(),
-            follow_go_away: true,
+            ..ClientConfig::default()
         })?;
         let connecting = endpoint
             .connect(&target.url)

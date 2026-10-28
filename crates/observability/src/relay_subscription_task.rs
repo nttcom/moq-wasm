@@ -56,10 +56,9 @@ async fn receive_snapshots(
     snapshot_sender: &mpsc::Sender<RelaySnapshot>,
 ) -> anyhow::Result<()> {
     let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
-        port: 0,
         verify_certificate: options.verify_certificate,
         authorization_token: options.auth_token.clone(),
-        follow_go_away: true,
+        ..moqt::ClientConfig::default()
     })?;
     let session = endpoint
         .connect(&relay.url)

@@ -58,10 +58,10 @@ impl InterRelayConnectionManager {
 
         let session_id = generate_session_id();
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
-            port: 0,
             verify_certificate: false,
             authorization_token: Some(self.relay_token.clone()),
             follow_go_away: false,
+            ..moqt::ClientConfig::default()
         })?;
         let relay_hostname = relay_hostname();
         // A session outlives the request that dials it, so its span roots its own trace.
