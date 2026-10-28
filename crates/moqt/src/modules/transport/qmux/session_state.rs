@@ -128,6 +128,7 @@ impl SessionState {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn transport_ended(&self) -> watch::Receiver<bool> {
         self.transport_ended.subscribe()
     }

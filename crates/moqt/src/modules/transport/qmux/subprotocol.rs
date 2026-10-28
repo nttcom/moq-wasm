@@ -27,6 +27,7 @@ pub(crate) fn alpn_of(subprotocol: &str) -> Option<Option<&str>> {
 }
 
 /// The subprotocols a Sec-WebSocket-Protocol header value offers.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn offered(header: &str) -> Vec<String> {
     header
         .split(',')
