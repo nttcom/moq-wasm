@@ -25,7 +25,7 @@ modules/moqt/data_plane   ← object formats, stream/datagram send/receive, code
 modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL markers
         │
         ▼
-modules/transport         ← transport abstraction + quinn/web-transport-quinn impls
+modules/transport         ← transport abstraction + quinn/web-transport-quinn impls + QMux over WebSocket
 modules/executor          ← task spawning, yielding, timeouts and the monotonic clock (tokio natively, wasm-bindgen-futures / performance.now on wasm32)
 ```
 
@@ -82,7 +82,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | --- | --- | --- |
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
+| `DUAL` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
@@ -97,9 +97,10 @@ Client-side helpers shared by the three creators:
 
 - `connect_target.rs` — `ConnectTarget::parse(url)` maps the scheme to a
   transport (`moqt://` → raw QUIC, default port 4433; `https://` → WebTransport,
-  default port 443) and resolves the host, preferring IPv4 because the client
-  endpoint binds an IPv4 socket. `QUIC` / `WEBTRANSPORT` creators reject a URL
-  for the other transport. The wasm build parses with the browser's `URL`
+  default port 443; `wss://` → QMux over WebSocket, default port 443) and
+  resolves the host, preferring IPv4 because the client endpoint binds an IPv4
+  socket. `QUIC` / `WEBTRANSPORT` creators reject a URL for another transport;
+  only `DUAL` connects over WebSocket. The wasm build parses with the browser's `URL`
   (`web_sys::Url`) instead of the `url` crate and leaves host and port to
   `WebTransport`.
 - `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
@@ -116,11 +117,92 @@ The creators do not know MoQT versions. Each takes an
 connection offers or accepts, and the WebTransport subprotocols a client
 lists in WT-Available-Protocols. A WebTransport server answers with the first
 of its own subprotocols the client also offered (WT-Protocol), or with none.
+A WebSocket client offers the QMux subprotocols derived from the ALPNs
+(`qmux-02.<alpn>`, then the bare `qmux-02`; `qmux/subprotocol.rs`) in
+Sec-WebSocket-Protocol, and the server answers with the first of its own
+the client offered, or fails the upgrade with 400.
 Every connection reports what its handshake settled on through
-`TransportConnection::negotiated_protocol()`.
+`TransportConnection::negotiated_protocol()`; `Version::negotiated` maps the
+`moq-00` ALPN, a WebTransport session without a subprotocol and a WebSocket
+subprotocol naming `moq-00` or nothing to draft-14.
 `BROWSER` sets `WebTransportOptions.protocols` and reads `WebTransport.protocol`
 through `js_sys::Reflect`, since web-sys exposes neither; a browser without
 subprotocol support reports none.
+
+### QMux over WebSocket (`modules/transport/qmux`, `modules/transport/websocket`)
+
+The fallback for clients that cannot use QUIC: UDP-blocked networks and
+browsers without WebTransport. QMux (draft-ietf-quic-qmux-02) carries the
+QUIC version 1 frames — STREAM, RESET_STREAM, STOP_SENDING, MAX_DATA,
+MAX_STREAM_DATA, MAX_STREAMS, the BLOCKED frames, CONNECTION_CLOSE and
+DATAGRAM — over an ordered, reliable transport, so the stream model above the
+`TransportConnection` trait is unchanged. The WebSocket binding
+(draft-lcurley-qmux-websocket-00) makes each binary message one record
+without the `Size` prefix and negotiates the application protocol through
+the subprotocol. `modules/transport/qmux` is written for native and wasm32
+alike; only the message transport under it differs.
+
+- `message_transport.rs` — `MessageSink` / `MessageSource`, the two halves of
+  the transport a `QmuxConnection` runs on. `websocket/tungstenite_transport.rs`
+  implements them on a `tokio_tungstenite::WebSocketStream`; `qmux/in_memory.rs`
+  on channels, for tests.
+- `frame.rs`, `transport_parameters.rs` — the codecs. The first frame each
+  side sends is QX_TRANSPORT_PARAMETERS; the receive task rejects any other
+  first frame, a second one, a prohibited frame, a truncated record, a
+  record above `max_record_size` (16382, never raised) and a forbidden
+  transport parameter with the QUIC error code the draft names.
+- `qmux_connection.rs` — `QmuxConnection::establish` sends the local
+  parameters, spawns the two tasks and resolves once the peer's parameters
+  arrive. Local limits follow quinn's: 1 MiB per stream
+  (`stream_receive_window`), 1000 unidirectional streams
+  (`max_concurrent_uni_streams`), 100 bidirectional streams, 16 MiB for the
+  connection, 30 s idle timeout, datagrams up to one record; outgoing
+  datagrams wait in a 1 MiB buffer (quinn's `datagram_send_buffer_size`)
+  that drops the oldest when full.
+- `tasks/qmux_send_task.rs` — the actor that owns the sink. It builds each
+  record from control frames first, then datagrams, then stream data in
+  `set_priority` order (higher first, equal priorities round-robin), within
+  the peer's credit and record size. Backpressure reaches
+  `TransportSendStream::send` through a 64 KiB queue per stream
+  (`SendQuota`), not through the command channel, so a low-priority stream
+  that fills its queue does not hold a high-priority one. What the peer
+  grants or asks (MAX_DATA, MAX_STREAM_DATA, STOP_SENDING, QX_PING, a freed
+  stream slot) is written to shared state and the task woken at most once
+  per pass (`SessionState::wake`), so a peer that stops reading its socket
+  cannot queue work in the relay. A QX_PING every 5 s is the keep-alive (a
+  browser cannot send WebSocket Ping) and the source of
+  `TransportStats::rtt`.
+- `tasks/qmux_receive_task.rs` — reads records and hands frames to the
+  stream they belong to. **It never waits for the application** (draft §6):
+  data goes into the stream's buffer, bounded by the window this side
+  advertised; MAX_STREAM_DATA and MAX_DATA are raised once half a window has
+  been read (`qmux_receive_stream.rs`, `SessionState::consumed`). A
+  peer-opened stream's MAX_STREAMS slot is returned once the application has
+  dropped its handle and the peer's data has ended, as quinn does, so neither
+  unread streams nor a peer that ignores STOP_SENDING can grow the session
+  past the limit. Nothing
+  received for 30 s ends the session, and so does a record the peer has not
+  taken for 30 s.
+- Close: `TransportConnection::close` sends CONNECTION_CLOSE 0x1d with the
+  MoQT termination code, then the WebSocket Close frame; a peer's 0x1d is
+  reported as `TransportClose { code: Some(..) }`, a transport error (0x1c)
+  or a lost socket as `code: None`, like quinn's `ApplicationClosed`. Dropping
+  a `QmuxSendStream` before `close` resets it with code 0 and dropping a
+  `QmuxReceiveStream` before its end sends STOP_SENDING 0, as quinn does.
+- `websocket/websocket_listener.rs` — binds `[::]:port` (TCP), terminates
+  TLS with the server's certificate (ALPN `http/1.1`), runs the HTTP/1.1
+  upgrade with the subprotocol selection in a task per connection (10 s
+  limit) and answers 503 while the endpoint refuses new connections. The
+  `DUAL` creator counts every WebSocket session it hands out, accepted or
+  connected, until both its send and receive tasks have returned
+  (`TransportEnded`): the last CONNECTION_CLOSE and WebSocket Close are
+  written and the receive task has drained until the peer's Close, so
+  `wait_idle` does not close a socket with unread bytes, which would answer
+  with RST. `websocket/websocket_client.rs` is the
+  `wss://` client; it fails the handshake when the server selects no
+  offered subprotocol.
+- `Session::url_scheme` is `wss` for a WebSocket session, so a GOAWAY's New
+  Session URI takes a client that already fell back straight to WebSocket.
 
 ## Version adapter (`modules/moqt/version`)
 
@@ -413,7 +495,7 @@ forward from their own cache through the raw stream senders.
 `Connection` (`domains/connection.rs`) holds what draft-14 scopes to one
 transport connection:
 
-- `transport` — the QUIC or WebTransport connection.
+- `transport` — the QUIC, WebTransport or WebSocket connection.
 - `control: ControlChannel` — the version adapter above; for draft-14 it
   holds this side's next request id, the peer's next request id and
   `inflight_requests`.
