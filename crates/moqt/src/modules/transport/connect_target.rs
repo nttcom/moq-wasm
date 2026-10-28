@@ -33,6 +33,9 @@ pub(crate) struct ConnectTarget {
     pub(crate) url: String,
     #[cfg(not(target_arch = "wasm32"))]
     port: u16,
+    /// Set by `resolved`, so that an attempt and its fallback go to one address.
+    #[cfg(not(target_arch = "wasm32"))]
+    resolved: Option<std::net::SocketAddr>,
 }
 
 impl ConnectTarget {
@@ -51,7 +54,65 @@ impl ConnectTarget {
             transport,
             url,
             port,
+            resolved: None,
         })
+    }
+
+    /// Resolves the host now, so DNS time does not count against the fallback wait.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) async fn resolved(mut self) -> anyhow::Result<Self> {
+        self.resolved = Some(self.resolve_remote_address().await?);
+        Ok(self)
+    }
+
+    /// The browser resolves the host itself.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn resolved(self) -> anyhow::Result<Self> {
+        Ok(self)
+    }
+
+    /// The `wss://` target on the same host and port; `None` for a `wss://`
+    /// target. `moqt://` has no path, and the server ignores the WebSocket
+    /// path, so it gets `/`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn web_socket_fallback(&self) -> Option<Self> {
+        let rest = match self.transport {
+            ClientTransport::Quic => "/".to_string(),
+            ClientTransport::WebTransport => match self.url.query() {
+                Some(query) => format!("{}?{query}", self.url.path()),
+                None => self.url.path().to_string(),
+            },
+            ClientTransport::WebSocket => return None,
+        };
+        let host = self
+            .url
+            .host_str()
+            .expect("ConnectTarget::parse rejects urls without a host");
+        let mut web_socket = Self::parse(&format!("wss://{host}:{}{rest}", self.port)).ok()?;
+        web_socket.resolved = self.resolved;
+        Some(web_socket)
+    }
+
+    /// The host and port a fallback is remembered for.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn authority(&self) -> String {
+        let host = self
+            .url
+            .host_str()
+            .expect("ConnectTarget::parse rejects urls without a host");
+        format!("{host}:{}", self.port)
+    }
+
+    /// Never called, like `authority` below: `BROWSER` leaves
+    /// `FALLS_BACK_TO_WEB_SOCKET` false.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn web_socket_fallback(&self) -> Option<Self> {
+        None
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn authority(&self) -> String {
+        String::new()
     }
 
     /// Host and port resolution is left to the browser's `WebTransport`.
@@ -98,6 +159,10 @@ impl ConnectTarget {
     pub(crate) async fn resolve_remote_address(&self) -> anyhow::Result<std::net::SocketAddr> {
         use std::net::{IpAddr, SocketAddr};
         use url::Host;
+
+        if let Some(address) = self.resolved {
+            return Ok(address);
+        }
 
         let domain = match self.host() {
             Host::Domain(domain) => domain,
@@ -158,6 +223,45 @@ mod tests {
         // Assert
         assert_eq!(target.transport, ClientTransport::WebSocket);
         assert_eq!(target.port, 443);
+    }
+
+    #[test]
+    fn a_failed_target_falls_back_to_wss_on_the_same_host_and_port() {
+        // Arrange
+        let quic = ConnectTarget::parse("moqt://relay.example").unwrap();
+        let web_transport = ConnectTarget::parse("https://relay.example/moq?room=1").unwrap();
+        let ipv6 = ConnectTarget::parse("https://[::1]:4433/moq").unwrap();
+        let web_socket = ConnectTarget::parse("wss://relay.example/moq").unwrap();
+
+        // Act / Assert: moqt:// keeps its 4433 although wss:// defaults to 443
+        assert_eq!(
+            quic.web_socket_fallback().unwrap().url.as_str(),
+            "wss://relay.example:4433/"
+        );
+        assert_eq!(
+            web_transport.web_socket_fallback().unwrap().url.as_str(),
+            "wss://relay.example/moq?room=1"
+        );
+        assert_eq!(
+            ipv6.web_socket_fallback().unwrap().url.as_str(),
+            "wss://[::1]:4433/moq"
+        );
+        assert!(web_socket.web_socket_fallback().is_none());
+        assert_eq!(quic.authority(), "relay.example:4433");
+    }
+
+    #[test]
+    fn the_fallback_of_a_resolved_target_goes_to_the_same_address() {
+        // Arrange: an address DNS would not return for the name
+        let mut target = ConnectTarget::parse("moqt://localhost:4433").unwrap();
+        target.resolved = Some("127.0.0.2:4433".parse().unwrap());
+
+        // Act
+        let fallback = target.web_socket_fallback().unwrap();
+
+        // Assert
+        assert_eq!(fallback.resolved, target.resolved);
+        assert_eq!(fallback.server_name(), "localhost");
     }
 
     #[test]

@@ -103,6 +103,20 @@ Client-side helpers shared by the three creators:
   only `DUAL` connects over WebSocket. The wasm build parses with the browser's `URL`
   (`web_sys::Url`) instead of the `url` crate and leaves host and port to
   `WebTransport`.
+- WebSocket fallback — `SessionCreator::open_transport` (shared by every
+  marker and target) gives the transport of a `moqt://` or `https://` URL
+  `ClientConfig::web_socket_fallback` (5 s by default) and, failing that,
+  opens `wss://` on the same host and port (`ConnectTarget::web_socket_fallback`;
+  `moqt://` has no path, so `/`). Only creators with
+  `FALLS_BACK_TO_WEB_SOCKET` do this: `DUAL` today, so `QUIC` links between
+  relays never move to TCP. A host and port that fell back is remembered for
+  the endpoint's lifetime and opened over WebSocket at once, which covers
+  GOAWAY migrations and reconnects, since they go through the same function.
+  The host is resolved once before the wait starts, so a slow DNS server
+  does not use up the wait, and both attempts go to the same address.
+  Only opening the transport falls back; a failed SETUP is returned as is.
+  The fallback is logged at WARN with `url` and `fallback_url`. When
+  WebSocket fails too, the error names both attempts.
 - `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
   custom CA file), the `quinn::ClientConfig` per ALPN, and the client
   `quinn::Endpoint`.

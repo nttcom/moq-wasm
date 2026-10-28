@@ -114,6 +114,8 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `track_alias` | The track alias on the session the log is about |
 | `error` | The failure, as `%error` or `?error` |
 | `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
+| `url` | The URL a client connects to |
+| `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |
 
 A span that lives longer than the request that starts it (a track, a session) roots its own trace and links to the request's span: a span closes only after its children, so a long-lived child would hold its parent's trace unexported.
 

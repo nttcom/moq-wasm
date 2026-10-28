@@ -10,6 +10,9 @@ use async_trait::async_trait;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
+    /// Whether this client can open `wss://` in place of `moqt://` or `https://`.
+    const FALLS_BACK_TO_WEB_SOCKET: bool = false;
+
     fn client(
         port_num: u16,
         verify_certificate: bool,

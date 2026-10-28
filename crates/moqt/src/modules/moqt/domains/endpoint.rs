@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     Connecting, TransportProtocol,
@@ -21,6 +21,7 @@ pub struct ClientConfig {
     /// knows. With `false`, GOAWAY arrives as a `SessionEvent` and the session
     /// stays on its connection.
     pub follow_go_away: bool,
+    pub web_socket_fallback: WebSocketFallback,
 }
 
 impl Default for ClientConfig {
@@ -30,10 +31,32 @@ impl Default for ClientConfig {
             verify_certificate: true,
             authorization_token: None,
             follow_go_away: true,
+            web_socket_fallback: WebSocketFallback::default(),
         }
     }
 }
 
+/// Whether a `DUAL` client falls back to QMux over WebSocket (`wss://`, same
+/// host and port) when it cannot open the transport a `moqt://` or `https://`
+/// URL names. Only opening the transport falls back; a failed SETUP does
+/// not. Once a host and port fell back, the endpoint's later connections to
+/// it, GOAWAY migrations included, go straight to WebSocket. `QUIC`,
+/// `WEBTRANSPORT` and `BROWSER` ignore this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebSocketFallback {
+    Disabled,
+    /// Gives QUIC or WebTransport this long to open before trying WebSocket;
+    /// a failure within it tries WebSocket at once.
+    After(Duration),
+}
+
+impl Default for WebSocketFallback {
+    fn default() -> Self {
+        Self::After(Duration::from_secs(5))
+    }
+}
+
+#[derive(Clone)]
 pub struct ServerConfig {
     pub port: u16,
     pub cert_path: String,
@@ -53,11 +76,12 @@ impl<T: TransportProtocol> Endpoint<T> {
             config.verify_certificate,
             APPLICATION_PROTOCOLS,
         )?;
-        let session_creator = SessionCreator {
-            transport_creator: client,
-            authorization_token: config.authorization_token.clone(),
-            follow_go_away: config.follow_go_away,
-        };
+        let session_creator = SessionCreator::new(
+            client,
+            config.authorization_token.clone(),
+            config.follow_go_away,
+            config.web_socket_fallback,
+        );
         Ok(Self {
             session_creator: Arc::new(session_creator),
         })
@@ -72,11 +96,7 @@ impl<T: TransportProtocol> Endpoint<T> {
             custom_cert_path,
             APPLICATION_PROTOCOLS,
         )?;
-        let session_creator = SessionCreator {
-            transport_creator: client,
-            authorization_token: None,
-            follow_go_away: true,
-        };
+        let session_creator = SessionCreator::new(client, None, true, WebSocketFallback::default());
         Ok(Self {
             session_creator: Arc::new(session_creator),
         })
@@ -90,11 +110,7 @@ impl<T: TransportProtocol> Endpoint<T> {
             server_config.keep_alive_interval_sec,
             APPLICATION_PROTOCOLS,
         )?;
-        let session_creator = SessionCreator {
-            transport_creator: server,
-            authorization_token: None,
-            follow_go_away: false,
-        };
+        let session_creator = SessionCreator::new(server, None, false, WebSocketFallback::Disabled);
         Ok(Self {
             session_creator: Arc::new(session_creator),
         })

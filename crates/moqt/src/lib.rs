@@ -18,6 +18,7 @@ pub use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 pub use crate::modules::moqt::control_plane::handler::go_away_handler::GoAwayHandler;
 pub use crate::modules::moqt::domains::connecting::Connecting;
 pub use crate::modules::moqt::domains::endpoint::ClientConfig;
+pub use crate::modules::moqt::domains::endpoint::WebSocketFallback;
 pub use crate::modules::moqt::domains::endpoint::Endpoint;
 pub use crate::modules::moqt::domains::publisher::Publisher;
 pub use crate::modules::moqt::domains::request_failure::RequestFailure;

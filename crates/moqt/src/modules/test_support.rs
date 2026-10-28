@@ -9,7 +9,12 @@ use tracing_subscriber::EnvFilter;
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 use crate::modules::moqt::version::APPLICATION_PROTOCOLS;
-use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
+use crate::modules::transport::{
+    accept_error::AcceptError, application_protocol::ApplicationProtocols,
+    connect_target::ConnectTarget, transport_connection::BoxedConnection,
+    transport_connection_creator::TransportConnectionCreator,
+    websocket::websocket_listener::WebSocketListener,
+};
 
 use crate::{
     ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
@@ -101,6 +106,94 @@ pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Ses
     let (port, handshake) = spawn_dual_server_handshake(name);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
+}
+
+/// Server-only transport that accepts QMux over WebSocket and nothing else.
+#[derive(Debug)]
+#[allow(non_camel_case_types)]
+pub(crate) struct WEB_SOCKET_ONLY;
+
+impl TransportProtocol for WEB_SOCKET_ONLY {
+    type ConnectionCreator = WebSocketOnlyCreator;
+}
+
+pub(crate) struct WebSocketOnlyCreator {
+    listener: WebSocketListener,
+    port: u16,
+}
+
+#[async_trait::async_trait]
+impl TransportConnectionCreator for WebSocketOnlyCreator {
+    fn client(_: u16, _: bool, _: ApplicationProtocols) -> anyhow::Result<Self> {
+        anyhow::bail!("a WebSocket-only endpoint is a server")
+    }
+
+    fn client_with_custom_cert(_: u16, _: &str, _: ApplicationProtocols) -> anyhow::Result<Self> {
+        anyhow::bail!("a WebSocket-only endpoint is a server")
+    }
+
+    fn server(
+        cert_path: &str,
+        key_path: &str,
+        port: u16,
+        _: u64,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        let refusing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let listener = WebSocketListener::bind(port, cert_path, key_path, protocols, refusing)?;
+        Ok(Self { listener, port })
+    }
+
+    async fn create_new_transport(&self, _: &ConnectTarget) -> anyhow::Result<BoxedConnection> {
+        anyhow::bail!("a WebSocket-only endpoint is a server")
+    }
+
+    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+        Ok(Box::new(self.listener.accept().await?))
+    }
+
+    fn refuse_new_connections(&self) {}
+
+    async fn wait_idle(&self) {}
+
+    fn local_port(&self) -> anyhow::Result<u16> {
+        Ok(self.port)
+    }
+}
+
+/// A server reachable only over WebSocket, as behind a network that drops
+/// UDP: `_udp` holds the UDP port of the same number and never answers.
+pub(crate) struct UdpBlockedServer {
+    pub(crate) port: u16,
+    pub(crate) server: Endpoint<WEB_SOCKET_ONLY>,
+    _udp: std::net::UdpSocket,
+}
+
+pub(crate) fn udp_blocked_server(name: &str) -> UdpBlockedServer {
+    let config = self_signed_server_config(name);
+    loop {
+        let udp = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = udp.local_addr().unwrap().port();
+        let config = ServerConfig {
+            port,
+            ..config.clone()
+        };
+        // Retry: the port UDP picked may already be taken on TCP.
+        if let Ok(server) = Endpoint::<WEB_SOCKET_ONLY>::create_server(&config) {
+            return UdpBlockedServer {
+                port,
+                server,
+                _udp: udp,
+            };
+        }
+    }
+}
+
+/// A port nothing answers on over UDP while the returned socket is held.
+pub(crate) fn unreachable_port() -> (u16, std::net::UdpSocket) {
+    let udp = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = udp.local_addr().unwrap().port();
+    (port, udp)
 }
 
 pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
