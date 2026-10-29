@@ -886,6 +886,7 @@ mod tests {
             init_segment: String::new(),
             bitrate: None,
             cmaf: true,
+            switching_set: VIDEO_TRACK_NAME.to_string(),
         }
     }
 
