@@ -279,10 +279,12 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   subscription was the session's, see "Egress"), stop the session's ingress,
   forward upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions
   the last downstream subscriber released, and withdraw namespace routes for
-  client sessions. Leaving the repository first means an `UpstreamJoinTask`
-  adding the session to a track concurrently is either found by the directory
-  removal or, checking the repository after adding, finds the session gone
-  and removes its subscription again.
+  client sessions. Leaving the repository first closes the race with a
+  SUBSCRIBE_OK from this session that arrives concurrently, whether for the
+  first publisher of a track or for one an `UpstreamJoinTask` adds. Either the
+  directory removal finds the subscription, or the check after registering
+  (`end_if_publisher_gone`) finds the session gone and ends the subscription
+  itself. The first SUBSCRIBE then tries the next answering publisher.
 
 ### `modules/control_plane/sequences` — one struct per control message
 Each sequence owns the relay-side protocol logic for one message
