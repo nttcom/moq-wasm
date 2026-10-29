@@ -6,7 +6,7 @@ from typing import Any
 from aiohttp import web
 
 from moq_chat_moderation.chat import Label
-from moq_chat_moderation.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 
 READ_TIMEOUT_SECONDS = 2
 
@@ -23,7 +23,7 @@ class RecordingPublication:
 
 
 async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
-    timeline = EventTimeline()
+    timeline = EventTimeline(replay=True)
     publication = RecordingPublication()
     await timeline.publish_on(publication)
     await publication.next_write()

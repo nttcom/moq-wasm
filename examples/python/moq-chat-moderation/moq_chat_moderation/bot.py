@@ -17,7 +17,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from moq_chat_moderation.chat import ChatMessage
 from moq_chat_moderation.system_one import SystemOneClient
-from moq_chat_moderation.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 from moq_chat_moderation.moderator import ChatModerator
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
@@ -124,7 +124,7 @@ async def stay_connected(
 async def moderate_room(
     args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
 ) -> None:
-    timeline = EventTimeline()
+    timeline = EventTimeline(replay=True)
     status = SystemOneStatus()
     system_one = SystemOneClient(http, args.system_one_url, status, identity_token)
     worker = PipelineWorker(

@@ -16,7 +16,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from moq_ptz_tracking.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker

@@ -2,7 +2,7 @@ from pipecat.frames.frames import TextFrame
 from pipecat.tests.utils import run_test
 
 from moq_chat_moderation.chat import ChatMessage, Label
-from moq_chat_moderation.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 from moq_chat_moderation.moderator import ChatModerator
 from tests.helpers import StubSystemOne, published_timeline
 
@@ -30,7 +30,7 @@ async def test_chat_without_labels_is_not_judged():
 
     # Act
     await run_test(
-        ChatModerator(system_one, EventTimeline()),
+        ChatModerator(system_one, EventTimeline(replay=True)),
         frames_to_send=[ChatMessage(text="hello", labels=(), location=(8, 0))],
         expected_down_frames=[],
     )
@@ -45,7 +45,7 @@ async def test_other_frames_pass_through_unjudged():
 
     # Act
     await run_test(
-        ChatModerator(system_one, EventTimeline()),
+        ChatModerator(system_one, EventTimeline(replay=True)),
         frames_to_send=[TextFrame(text="hello")],
         expected_down_frames=[TextFrame],
     )

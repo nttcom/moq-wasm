@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 
-from moq_camera_detection.event_timeline import Location
+from moq_system_one_bot.event_timeline import Location
 
 MAX_QUESTIONS = 8
 MAX_QUESTION_CHARS = 200

@@ -7,7 +7,7 @@ from loguru import logger
 from pipecat.frames.frames import Frame, SystemFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from moq_ptz_tracking.event_timeline import EventTimeline, Location, location_record
+from moq_system_one_bot.event_timeline import EventTimeline, Location, location_record
 from moq_ptz_tracking.pan_planner import Home, PanPlanner, Sweeping
 from moq_ptz_tracking.ptz import CENTER_SECONDS, Heading, PtzCalibration, PtzCommands, PtzMove, Sweep
 from moq_ptz_tracking.target import LatestTarget, Target

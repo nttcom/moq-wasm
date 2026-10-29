@@ -2,9 +2,8 @@ import json
 from dataclasses import dataclass
 
 import moqt
+from moq_system_one_bot.event_timeline import Location
 from pipecat.frames.frames import DataFrame
-
-Location = tuple[int, int]
 
 MAX_LABELS = 16
 MAX_LABEL_NAME_CHARS = 20

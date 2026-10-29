@@ -6,7 +6,7 @@ from typing import Any
 import av
 from aiohttp import web
 
-from moq_camera_detection.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 from moq_camera_detection.prompt import ChoiceQuestion, Prompt
 from moq_camera_detection.vision import Answer
 
