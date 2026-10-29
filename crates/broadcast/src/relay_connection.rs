@@ -496,6 +496,32 @@ impl ConnectedRelay {
         self.send_catalog(&namespace_path).await
     }
 
+    pub(crate) async fn remove_track(&self, namespace: &[String], track_name: &str) -> Result<()> {
+        let namespace_path = namespace.join("/");
+        let dropped = {
+            let mut guard = self.state.lock().await;
+            if guard.disconnected {
+                bail!("MoQ publisher disconnected");
+            }
+            let Some(metadata) = guard.catalogs.get_mut(&namespace_path) else {
+                return Ok(());
+            };
+            let before = catalog_track_names(&namespace_path, metadata)?;
+            if !metadata.remove_track(track_name) {
+                return Ok(());
+            }
+            let after = catalog_track_names(&namespace_path, metadata)?;
+            before.difference(&after).cloned().collect::<Vec<_>>()
+        };
+        self.send_catalog(&namespace_path).await?;
+        for name in dropped {
+            self.origin.end_track(&namespace_path, &name).await?;
+            self.ledger.finish(&name);
+            tracing::info!(track_namespace = %namespace_path, track_name = %name, "track removed");
+        }
+        Ok(())
+    }
+
     /// The namespace is announced first, since the relay routes a PUBLISH by
     /// its namespace. The non-CMAF tracks are published before the catalog is
     /// sent, so a viewer subscribing to a track it read there finds the relay
@@ -600,6 +626,18 @@ impl RelayEvents {
     }
 }
 
+fn catalog_track_names(
+    namespace_path: &str,
+    metadata: &CatalogMetadata,
+) -> Result<HashSet<String>> {
+    Ok(build_catalog(namespace_path, metadata)?
+        .tracks
+        .into_iter()
+        .flatten()
+        .map(|track| track.name)
+        .collect())
+}
+
 /// The catalog is kept for as long as the publisher runs, because a viewer
 /// that joins a subscription the relay already holds can only obtain it by
 /// FETCH, however long ago it was published.
@@ -630,10 +668,15 @@ mod tests {
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
         subscribe::FilterType,
     };
+    use std::collections::BTreeSet;
+
+    use msf::Catalog;
     use tokio::sync::{mpsc, oneshot};
 
     use super::*;
-    use crate::broadcast::{Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
+    use mediapack::AudioConfig;
+
+    use crate::broadcast::{AudioTrackInfo, Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -686,6 +729,7 @@ mod tests {
             let (catalog_object_sender, catalog_objects) = mpsc::unbounded_channel();
             tokio::spawn(async move {
                 let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
+                let mut published_tracks = HashMap::new();
                 let handshake = endpoint.accept().await.unwrap().await.unwrap();
                 let session = Arc::new(handshake.accept().await.unwrap());
                 let _ = session_sender.send(session.clone());
@@ -714,6 +758,10 @@ mod tests {
                             }
                             let subscription =
                                 handler.ok(0, FilterType::LargestObject).await.unwrap();
+                            published_tracks.insert(
+                                subscription.request_id(),
+                                format!("{}/{}", handler.track_namespace, handler.track_name),
+                            );
                             if let Some(sender) = object_sender {
                                 let session = session.clone();
                                 let subscription = subscription.clone();
@@ -738,6 +786,11 @@ mod tests {
                                 });
                             }
                             let _ = published_sender.send(subscription);
+                        }
+                        SessionEvent::PublishDone(handler) => {
+                            if let Some(track) = published_tracks.get(&handler.request_id()) {
+                                let _ = request_sender.send(format!("PUBLISH_DONE {track}"));
+                            }
                         }
                         SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
                         _ => {}
@@ -1125,6 +1178,116 @@ mod tests {
             "close must leave the owner's session open"
         );
         owner_loop.abort();
+    }
+
+    #[tokio::test]
+    async fn remove_track_ends_it_with_the_tracks_listed_only_with_it_and_an_update_publishes_it_again()
+     {
+        // Arrange: the audio placeholder, timeline and chat are listed only because of `video`
+        let mut relay = FakeRelay::spawn("remove-track");
+        let (_connection, broadcast) = connected_broadcast(&relay).await;
+        broadcast
+            .update_video_catalog("video_480p", video_track_info())
+            .await
+            .unwrap();
+        relay.wait_for_request("PUBLISH live/cam/video_480p").await;
+        relay.received_catalogs().await;
+
+        // Act
+        broadcast.remove_track(VIDEO_TRACK_NAME).await.unwrap();
+        let ended = tokio::time::timeout(TEST_TIMEOUT, async {
+            let mut ended = BTreeSet::new();
+            while ended.len() < 4 {
+                let request = relay.requests.recv().await.unwrap();
+                if let Some(track) = request.strip_prefix("PUBLISH_DONE ") {
+                    ended.insert(track.to_string());
+                }
+            }
+            ended
+        })
+        .await
+        .expect("PUBLISH_DONE must arrive for every dropped track");
+        let catalogs = relay.received_catalogs().await;
+        let after_removal = relay.received_requests();
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            ended,
+            BTreeSet::from(
+                ["audio", "chat", "timeline", VIDEO_TRACK_NAME]
+                    .map(|name| format!("live/cam/{name}"))
+            )
+        );
+        assert!(
+            !after_removal
+                .iter()
+                .any(|request| request.starts_with("PUBLISH_DONE")),
+            "{after_removal:?}"
+        );
+        let newest: Catalog =
+            serde_json::from_slice(&catalogs.last().expect("a catalog must arrive").payload)
+                .unwrap();
+        let names: Vec<&str> = newest
+            .tracks
+            .iter()
+            .flatten()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert_eq!(names, ["video_480p", "video_480p_cmaf"]);
+        relay
+            .wait_for_request(&format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn removing_the_default_audio_ends_it_without_a_placeholder_while_video_stays() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("remove-default-audio");
+        let (_connection, broadcast) = connected_broadcast(&relay).await;
+        broadcast
+            .update_audio_catalog(
+                "audio",
+                AudioTrackInfo {
+                    label: "Audio".to_string(),
+                    config: AudioConfig::Opus {
+                        sample_rate: 48_000,
+                        channels: 1,
+                    },
+                    cmaf: false,
+                },
+            )
+            .await
+            .unwrap();
+        relay.received_catalogs().await;
+
+        // Act
+        broadcast.remove_track("audio").await.unwrap();
+        relay.wait_for_request("PUBLISH_DONE live/cam/audio").await;
+        let catalogs = relay.received_catalogs().await;
+
+        // Assert
+        let newest: Catalog =
+            serde_json::from_slice(&catalogs.last().expect("a catalog must arrive").payload)
+                .unwrap();
+        assert!(
+            newest
+                .tracks
+                .iter()
+                .flatten()
+                .all(|track| track.name != "audio"),
+            "{newest:?}"
+        );
+        assert!(
+            !relay
+                .received_requests()
+                .iter()
+                .any(|request| request.starts_with("PUBLISH_DONE")),
+            "only the audio track ends"
+        );
     }
 
     #[tokio::test]

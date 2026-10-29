@@ -97,6 +97,19 @@ impl Broadcast {
             })
             .await
     }
+
+    /// Sends the catalog without the video or audio track, then ends with
+    /// PUBLISH_DONE every track that catalog no longer lists: the track, its
+    /// CMAF sibling and, when it was the last default track, the `audio`
+    /// placeholder, the media timeline and the chat. Stop sending the track's
+    /// objects first. Updating its catalog again publishes it again. Fails
+    /// when the relay session has ended.
+    pub async fn remove_track(&self, track_name: &str) -> Result<()> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay.remove_track(&self.namespace, track_name).await
+    }
 }
 
 /// The tracks one `BroadcastWriter` writes its source into. The media
@@ -178,9 +191,22 @@ pub fn cmaf_track_name(track_name: &str) -> String {
 pub(crate) struct CatalogMetadata {
     pub(crate) video_tracks: BTreeMap<String, VideoTrackInfo>,
     pub(crate) audio_tracks: BTreeMap<String, AudioTrackInfo>,
+    /// The default `audio` was removed, so no placeholder stands in for it.
+    default_audio_removed: bool,
 }
 
 impl CatalogMetadata {
+    /// Whether the catalog changed.
+    pub(crate) fn remove_track(&mut self, track_name: &str) -> bool {
+        if track_name == AUDIO_TRACK_NAME && !self.default_audio_removed {
+            self.default_audio_removed = true;
+            self.audio_tracks.remove(track_name);
+            return true;
+        }
+        self.video_tracks.remove(track_name).is_some()
+            || self.audio_tracks.remove(track_name).is_some()
+    }
+
     fn has_default_tracks(&self) -> bool {
         self.video_tracks.contains_key(VIDEO_TRACK_NAME)
             || self.audio_tracks.contains_key(AUDIO_TRACK_NAME)
@@ -261,7 +287,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
 /// with `video`, the media timeline and the chat.
 fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec<Track> {
     let mut tracks = Vec::new();
-    if !metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME) {
+    if !metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME) && !metadata.default_audio_removed {
         let mut audio = audio_track(namespace, AUDIO_TRACK_NAME, "Audio");
         audio.codec = Some("mp4a.40.2".to_string());
         audio.mime_type = Some("audio/aac".to_string());
@@ -395,6 +421,7 @@ mod tests {
                     cmaf: true,
                 },
             )]),
+            ..CatalogMetadata::default()
         }
     }
 
