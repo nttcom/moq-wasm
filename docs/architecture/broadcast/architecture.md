@@ -117,8 +117,14 @@ plays on one WebTransport session: the owner keeps reading the session's
 events and passes each to `RelayConnection::handle`, which answers SUBSCRIBE,
 UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS for the broadcasts and
 returns the rest, `Disconnected` included after it ended the broadcasts'
-sends. The stream ledger, catalog state and `Origin` belong to the connection;
-the session's lifetime belongs to its owner, so `close` leaves it open.
+sends. The broadcasts write into the `Origin` the owner passes, so the owner
+can publish tracks of its own on the same session: a SUBSCRIBE in a namespace
+no broadcast here publishes, and an UNSUBSCRIBE that `Origin` does not know,
+go back to the owner, while FETCH and TRACK_STATUS are answered from the shared
+`Origin`. The stream ledger and catalog state belong to the connection; the
+session's lifetime belongs to its owner, so `close` leaves it open. A
+connection that opened its own session rejects the SUBSCRIBEs no broadcast
+takes with TRACK_DOES_NOT_EXIST.
 
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
