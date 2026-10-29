@@ -360,7 +360,9 @@ returned; requests the peer sends, on any connection, carry logical ids. A
 FETCH response stream a migration cuts off is FETCHed again on the current
 connection from the first object not delivered up to the FETCH_OK's End
 Location, and the `FetchDataReceiver` reads on from it; a descending FETCH
-is not sent again. While both
+is not sent again. A Relative Joining FETCH made after the move goes as a
+Standalone FETCH of the same range, since the current connection holds the
+subscription with the filter it was sent again with. While both
 connections deliver a subscription, the sinks of both share a `GroupCutover`
 (see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
 carried subscription is dropped; GOAWAY is never returned; `Disconnected`
