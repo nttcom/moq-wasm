@@ -2,7 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{
     Connecting, TransportProtocol,
+    executor::{MaybeSend, MaybeSync},
     modules::{
+        executor::BoxFuture,
         moqt::{domains::session_creator::SessionCreator, version::APPLICATION_PROTOCOLS},
         transport::{
             accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
@@ -11,10 +13,59 @@ use crate::{
     server::Accepting,
 };
 
+/// The AUTHORIZATION TOKEN a client sends in CLIENT_SETUP (draft-14 §9.2.1.1).
+#[derive(Clone)]
+pub struct AuthorizationTokenSource(TokenSource);
+
+#[derive(Clone)]
+enum TokenSource {
+    Fixed(String),
+    Provider(Arc<dyn TokenProvider>),
+}
+
+trait TokenProvider: MaybeSend + MaybeSync {
+    fn token(&self) -> BoxFuture<anyhow::Result<String>>;
+}
+
+impl<F, Fut> TokenProvider for F
+where
+    F: Fn() -> Fut + MaybeSend + MaybeSync,
+    Fut: Future<Output = anyhow::Result<String>> + MaybeSend + 'static,
+{
+    fn token(&self) -> BoxFuture<anyhow::Result<String>> {
+        Box::pin(self())
+    }
+}
+
+impl AuthorizationTokenSource {
+    /// `provider` is called before every CLIENT_SETUP, including on connections
+    /// opened to follow GOAWAY. An `Err` fails that connection.
+    pub fn provider<F, Fut>(provider: F) -> Self
+    where
+        F: Fn() -> Fut + MaybeSend + MaybeSync + 'static,
+        Fut: Future<Output = anyhow::Result<String>> + MaybeSend + 'static,
+    {
+        Self(TokenSource::Provider(Arc::new(provider)))
+    }
+
+    pub(crate) async fn token(&self) -> anyhow::Result<String> {
+        match &self.0 {
+            TokenSource::Fixed(token) => Ok(token.clone()),
+            TokenSource::Provider(provider) => provider.token().await,
+        }
+    }
+}
+
+impl From<String> for AuthorizationTokenSource {
+    fn from(token: String) -> Self {
+        Self(TokenSource::Fixed(token))
+    }
+}
+
 pub struct ClientConfig {
     pub port: u16,
     pub verify_certificate: bool,
-    pub authorization_token: Option<String>,
+    pub authorization_token: Option<AuthorizationTokenSource>,
     /// A session follows the server's GOAWAY by itself (draft-14 §3.5):
     /// it connects to the New Session URI, sends its subscriptions there
     /// again and keeps the request ids and track aliases the application
