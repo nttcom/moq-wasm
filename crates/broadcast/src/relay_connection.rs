@@ -479,19 +479,33 @@ impl ConnectedRelay {
         info: T,
         tracks: fn(&mut CatalogMetadata) -> &mut BTreeMap<String, T>,
     ) -> Result<()> {
+        self.update_metadata(namespace, |metadata| {
+            let tracks = tracks(metadata);
+            if tracks.get(track_name) == Some(&info) {
+                return false;
+            }
+            tracks.insert(track_name.to_string(), info);
+            true
+        })
+        .await
+    }
+
+    /// Sends the catalog when `update` reports that it changed the metadata.
+    pub(crate) async fn update_metadata(
+        &self,
+        namespace: &[String],
+        update: impl FnOnce(&mut CatalogMetadata) -> bool,
+    ) -> Result<()> {
         self.announce(namespace).await?;
         let namespace_path = namespace.join("/");
-
         {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
-            let tracks = tracks(guard.catalogs.entry(namespace_path.clone()).or_default());
-            if tracks.get(track_name) == Some(&info) {
+            if !update(guard.catalogs.entry(namespace_path.clone()).or_default()) {
                 return Ok(());
             }
-            tracks.insert(track_name.to_string(), info);
         }
         self.send_catalog(&namespace_path).await
     }

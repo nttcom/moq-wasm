@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use base64::{Engine, engine::general_purpose};
 use mediapack::{AudioConfig, VideoConfig, loc::VideoCodec, mp4::Fmp4TrackMuxer};
 use moqt::{executor, publish::OutgoingObject};
 use msf::{
-    Catalog, Track,
+    Catalog, ROOT_FIELD_NAMES, TRACK_FIELD_NAMES, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
+
+use serde_json::{Map, Value};
 
 use crate::relay_connection::RelayConnection;
 
@@ -97,6 +99,45 @@ impl Broadcast {
             })
             .await
     }
+
+    /// Replaces the custom fields set before and sends the catalog. Fails when a
+    /// name is in `msf::ROOT_FIELD_NAMES` (draft-ietf-moq-msf-01 §5) or the
+    /// relay session has ended.
+    pub async fn set_catalog_fields(&self, fields: Map<String, Value>) -> Result<()> {
+        reject_draft_field_names(&fields, &ROOT_FIELD_NAMES)?;
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay
+            .update_metadata(&self.namespace, |metadata| {
+                if metadata.root_fields == fields {
+                    return false;
+                }
+                metadata.root_fields = fields;
+                true
+            })
+            .await
+    }
+
+    /// Replaces the custom fields set before on the LOC track `track_name` and
+    /// its CMAF sibling, and sends the catalog. Fails when a name is in
+    /// `msf::TRACK_FIELD_NAMES` (draft-ietf-moq-msf-01 §5) or the relay
+    /// session has ended.
+    pub async fn set_track_fields(
+        &self,
+        track_name: &str,
+        fields: Map<String, Value>,
+    ) -> Result<()> {
+        reject_draft_field_names(&fields, &TRACK_FIELD_NAMES)?;
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay
+            .update_catalog(&self.namespace, track_name, fields, |metadata| {
+                &mut metadata.track_fields
+            })
+            .await
+    }
 }
 
 /// The tracks one `BroadcastWriter` writes its source into. The media
@@ -174,10 +215,12 @@ pub fn cmaf_track_name(track_name: &str) -> String {
     format!("{track_name}{CMAF_TRACK_SUFFIX}")
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CatalogMetadata {
     pub(crate) video_tracks: BTreeMap<String, VideoTrackInfo>,
     pub(crate) audio_tracks: BTreeMap<String, AudioTrackInfo>,
+    pub(crate) track_fields: BTreeMap<String, Map<String, Value>>,
+    root_fields: Map<String, Value>,
 }
 
 impl CatalogMetadata {
@@ -251,8 +294,19 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         tracks.extend(default_tracks(&namespace, metadata));
     }
 
+    for track in &mut tracks {
+        let source = match track.name.strip_suffix(CMAF_TRACK_SUFFIX) {
+            Some(loc) if is_cmaf(track) => loc,
+            _ => &track.name,
+        };
+        if let Some(fields) = metadata.track_fields.get(source) {
+            track.custom_fields = fields.clone();
+        }
+    }
+
     let mut catalog = Catalog::new(tracks, executor::system_time().as_millis() as u64);
     catalog.init_data_list = (!init_data_list.is_empty()).then_some(init_data_list);
+    catalog.custom_fields = metadata.root_fields.clone();
     Ok(catalog)
 }
 
@@ -302,6 +356,16 @@ fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec
     chat.mime_type = Some("application/json".to_string());
     tracks.push(chat);
     tracks
+}
+
+fn reject_draft_field_names(fields: &Map<String, Value>, draft_names: &[&str]) -> Result<()> {
+    if let Some(name) = fields
+        .keys()
+        .find(|name| draft_names.contains(&name.as_str()))
+    {
+        bail!("custom catalog field {name} collides with a draft-ietf-moq-msf-01 field");
+    }
+    Ok(())
 }
 
 fn video_mime_type(codec: &str) -> &'static str {
@@ -395,6 +459,7 @@ mod tests {
                     cmaf: true,
                 },
             )]),
+            ..CatalogMetadata::default()
         }
     }
 
@@ -429,6 +494,57 @@ mod tests {
         assert!(!awaits_subscribe(&catalog, "video"));
         assert!(!awaits_subscribe(&catalog, "timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
+    }
+
+    #[test]
+    fn custom_fields_go_on_the_track_its_cmaf_sibling_and_the_catalog() {
+        // Arrange
+        let mut metadata = metadata_with_video_and_audio();
+        let speaker = Map::from_iter([("com.skyway-speaker".to_string(), Value::from("alice"))]);
+        metadata
+            .track_fields
+            .insert(VIDEO_TRACK_NAME.to_string(), speaker.clone());
+        metadata.root_fields = Map::from_iter([("com.skyway-room".to_string(), Value::from(7))]);
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        assert_eq!(
+            track_named(&catalog, VIDEO_TRACK_NAME).custom_fields,
+            speaker
+        );
+        assert_eq!(
+            track_named(&catalog, &cmaf_track_name(VIDEO_TRACK_NAME)).custom_fields,
+            speaker
+        );
+        assert!(
+            track_named(&catalog, AUDIO_TRACK_NAME)
+                .custom_fields
+                .is_empty()
+        );
+        assert_eq!(catalog.custom_fields["com.skyway-room"], 7);
+    }
+
+    #[tokio::test]
+    async fn a_custom_field_named_like_a_draft_field_is_rejected() {
+        // Arrange
+        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["live".to_string()]);
+
+        // Act
+        let track = broadcast
+            .set_track_fields(
+                VIDEO_TRACK_NAME,
+                Map::from_iter([("codec".to_string(), Value::from("vp8"))]),
+            )
+            .await;
+        let root = broadcast
+            .set_catalog_fields(Map::from_iter([("tracks".to_string(), Value::Null)]))
+            .await;
+
+        // Assert
+        assert!(track.is_err());
+        assert!(root.is_err());
     }
 
     #[test]
