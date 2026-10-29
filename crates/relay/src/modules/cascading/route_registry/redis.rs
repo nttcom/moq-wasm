@@ -12,6 +12,7 @@ use redis::AsyncCommands;
 use tokio::sync::watch;
 
 use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
+use crate::modules::domain::track_key::is_namespace_prefix;
 
 #[derive(Clone, Copy)]
 enum RouteKind {
@@ -361,6 +362,10 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
             else {
                 continue;
             };
+            // The key pattern matches by characters, not by fields.
+            if !is_namespace_prefix(track_namespace_prefix, &track_namespace) {
+                continue;
+            }
             if self.find_active_routes(key).await?.is_empty() {
                 continue;
             }
