@@ -4,7 +4,8 @@ import {
   answerDetectorWith,
   askCamera,
   clickJoinCamera,
-  joinCamera
+  joinCamera,
+  placeBoxes
 } from './camera-detection-e2e-arrange'
 import { delaySystemOneAnswers } from './fake-system-one'
 import { leaveAllPages } from './leave-all-pages'
@@ -65,6 +66,23 @@ test.describe('MoQ Camera Detection', () => {
 
     // Assert
     await expect(verdict).toHaveText('緑')
+  })
+
+  test('draws the boxes of a boxes question next to the choice answer', async ({ page }) => {
+    // Arrange
+    await answerDetectorWith('はい')
+    await placeBoxes({ 人: [[0.2, 0.2, 0.5, 0.9]] })
+    await joinCamera(page)
+
+    // Act
+    await page.getByTestId('camera-detection-add-question-button').click()
+    await page.getByTestId('camera-detection-question-input').nth(1).fill('人')
+    await page.getByTestId('camera-detection-apply-button').click()
+
+    // Assert
+    const verdicts = page.getByTestId('camera-detection-verdict')
+    await expect(verdicts).toHaveText(['はい', '人 1'])
+    await expect(page.getByTestId('camera-detection-box')).toHaveText(['人'])
   })
 
   test('shows an answer outside the choices as undecided', async ({ page }) => {

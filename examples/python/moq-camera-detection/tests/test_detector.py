@@ -20,18 +20,18 @@ def fresh_picture(location: tuple[int, int], jpeg: bytes = b"jpeg") -> CameraPic
 class LateFirstAnswerVision:
     first_answer_released: asyncio.Event = field(default_factory=asyncio.Event)
 
-    async def choose(self, jpeg: bytes, prompt: Prompt) -> str:
+    async def answer(self, jpeg: bytes, prompt: Prompt) -> list[str]:
         if jpeg == b"first":
             await self.first_answer_released.wait()
         else:
             self.first_answer_released.set()
-        return "yes" if jpeg == b"first" else "no"
+        return ["yes" if jpeg == b"first" else "no"]
 
 
 async def test_fresh_picture_answer_is_recorded_at_its_location_with_its_prompt():
     # Arrange
     timeline, publication = await published_timeline()
-    vision = StubVision(answer="yes")
+    vision = StubVision(answers=["yes"])
 
     # Act
     await run_test(
@@ -41,13 +41,13 @@ async def test_fresh_picture_answer_is_recorded_at_its_location_with_its_prompt(
     )
 
     # Assert
-    assert await next_records(publication) == [{"l": [42, 3], "data": {"prompt": [7, 0], "answer": "yes"}}]
+    assert await next_records(publication) == [{"l": [42, 3], "data": {"prompt": [7, 0], "answers": ["yes"]}}]
 
 
 async def test_stale_picture_is_not_judged():
     # Arrange
     timeline, _ = await published_timeline()
-    vision = StubVision(answer="yes")
+    vision = StubVision(answers=["yes"])
     decoded_at = time.monotonic() - STALE_PICTURE_SECONDS - 1
 
     # Act
@@ -73,6 +73,6 @@ async def test_answer_returned_after_a_newer_one_is_not_recorded():
     )
 
     # Assert
-    assert await next_records(publication) == [{"l": [44, 1], "data": {"prompt": [7, 0], "answer": "no"}}]
+    assert await next_records(publication) == [{"l": [44, 1], "data": {"prompt": [7, 0], "answers": ["no"]}}]
     with pytest.raises(TimeoutError):
         await publication.next_write(NO_MORE_RECORDS_WAIT_SECONDS)

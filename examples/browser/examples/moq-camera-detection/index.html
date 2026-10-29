@@ -13,7 +13,7 @@
       <header class="hero">
         <div>
           <h1>MoQ Camera Detection</h1>
-          <p>カメラ映像についての質問に、pipecat の bot が d1-2B で答える</p>
+          <p>カメラ映像についての質問に、pipecat の bot が d1-2B で答え、探すものを枠で示す</p>
         </div>
       </header>
       <details class="card setup-toggle">
@@ -130,31 +130,18 @@ uv run python -m moq_camera_detection.bot --insecure \
         <section class="card stack">
           <h2>Camera</h2>
           <form id="promptForm" class="prompt-form" novalidate>
-            <label for="question">質問</label>
-            <input
-              type="text"
-              id="question"
-              value="人が映っていますか？"
-              maxlength="200"
-              autocomplete="off"
-              data-testid="camera-detection-question-input"
-            />
-            <label for="choices">選択肢（カンマ区切り）</label>
-            <input
-              type="text"
-              id="choices"
-              value="はい, いいえ"
-              autocomplete="off"
-              data-testid="camera-detection-choices-input"
-            />
-            <button type="submit" data-testid="camera-detection-apply-button">適用</button>
+            <span>質問</span>
+            <div id="questions" class="question-list"></div>
+            <div class="button-row">
+              <button type="button" id="addQuestionBtn" data-testid="camera-detection-add-question-button">＋ 質問</button>
+              <button type="submit" data-testid="camera-detection-apply-button">適用</button>
+            </div>
           </form>
-          <div class="camera-verdict">
-            <span id="verdict" class="verdict-badge" data-verdict="pending" data-testid="camera-detection-verdict"
-              >判定待ち</span
-            >
+          <ul id="verdicts" class="camera-verdicts"></ul>
+          <div class="camera-stage">
+            <video id="preview" class="camera-preview" autoplay muted playsinline></video>
+            <div id="boxes" class="box-overlay"></div>
           </div>
-          <video id="preview" class="camera-preview" autoplay muted playsinline></video>
         </section>
       </div>
     </main>

@@ -15,34 +15,53 @@
   margin: 0;
 }
 
+.camera-stage {
+  position: relative;
+}
+
+/* The encoder scales the whole camera frame to 4:3, so filling the same shape keeps the
+   detector's box fractions on the preview. */
 .camera-preview {
+  display: block;
   width: 100%;
   aspect-ratio: 4 / 3;
   border-radius: 12px;
   background: #111827;
-  object-fit: cover;
+  object-fit: fill;
 }
 
-.prompt-form {
+.prompt-form,
+.question-list {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px 12px;
+  gap: 8px;
+}
+
+.question-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr auto;
+  gap: 8px;
   align-items: center;
+  padding-left: 8px;
+  border-left: 6px solid var(--box-color);
 }
 
-.prompt-form button {
-  grid-column: 2;
-  justify-self: start;
+.question-row input[hidden] {
+  display: block;
+  visibility: hidden;
 }
 
-.camera-verdict {
+.camera-verdicts {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .verdict-badge {
   padding: 6px 14px;
+  border-left: 6px solid var(--box-color);
   border-radius: 999px;
   font-weight: 600;
   color: var(--muted);

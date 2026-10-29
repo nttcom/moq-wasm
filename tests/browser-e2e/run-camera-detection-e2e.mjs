@@ -35,8 +35,12 @@ import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 const botDir = resolve(repoRoot, "examples/python/moq-camera-detection");
 const childProcesses = [];
 
+/// Answers every choice question with the choice `PUT /answer` set, and every boxes question
+/// (`Every <target>.`) with the boxes `PUT /boxes` set for its target: `{"<target>": [[left, top,
+/// right, bottom], ...]}`. `PUT /delay` delays every answer by the given milliseconds.
 async function startFakeSystemOne() {
   let answer = "はい";
+  let boxes = {};
   let delayMs = 0;
   const server = createServer(async (request, response) => {
     if (request.method === "PUT" && request.url === "/delay") {
@@ -51,12 +55,37 @@ async function startFakeSystemOne() {
       response.end();
       return;
     }
+    if (request.method === "PUT" && request.url === "/boxes") {
+      boxes = JSON.parse(await text(request));
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
+    const { questions } = JSON.parse(await text(request));
     await setTimeout(delayMs);
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ answers: { answer: { choice: answer } } }));
+    response.end(
+      JSON.stringify({ answers: answerQuestions(questions, answer, boxes) }),
+    );
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   return server;
+}
+
+function answerQuestions(questions, answer, boxes) {
+  return Object.fromEntries(
+    Object.entries(questions).map(([id, question]) => {
+      if (question.type !== "boxes") {
+        return [id, { choice: answer }];
+      }
+      const target = question.instructions.replace(/^Every (.*)\.$/, "$1");
+      const found = (boxes[target] ?? []).map(([left, top, right, bottom]) => ({
+        box: { left, top, right, bottom },
+        found: 0.9,
+      }));
+      return [id, { boxes: found, count: found.length }];
+    }),
+  );
 }
 
 async function main() {

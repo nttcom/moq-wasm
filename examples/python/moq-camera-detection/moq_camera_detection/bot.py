@@ -76,7 +76,7 @@ class LatestPrompt:
                 if prompt is None:
                     logger.warning(f"ignoring an invalid prompt at {location}")
                     continue
-                logger.info(f"prompt {prompt.location}: {prompt.question} {prompt.choices}")
+                logger.info(f"prompt {prompt.location}: {prompt.questions}")
                 self.prompt = prompt
         except RuntimeError as error:
             logger.info(f"prompt track ended: {error}")
