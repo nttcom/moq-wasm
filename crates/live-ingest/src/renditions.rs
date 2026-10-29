@@ -3,7 +3,9 @@ use broadcast::{
     Broadcast, BroadcastWriter, GroupAlignment, GroupBoundary, OutgoingObject, SharedTiming,
     VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name,
 };
-use mediapack::{MediaEvent, VideoSample, loc::to_extension_headers, mp4::Fmp4TrackMuxer};
+use mediapack::{
+    MediaEvent, VideoConfig, VideoSample, loc::to_extension_headers, mp4::Fmp4TrackMuxer,
+};
 use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
@@ -116,7 +118,7 @@ impl RenditionPublisher {
         match output.event {
             MediaEvent::VideoConfig(config) => {
                 let config = config.avc()?;
-                self.cmaf[index] = Some(Fmp4TrackMuxer::video(config.clone()));
+                self.cmaf[index] = Some(Fmp4TrackMuxer::video(VideoConfig::Avc(config.clone())));
                 let mut info =
                     VideoTrackInfo::from_record(config, format!("Video {}", rendition.name))?;
                 info.bitrate = Some(u64::from(rendition.bitrate_kbps) * 1000);

@@ -22,6 +22,17 @@ pub enum VideoCodec {
     Av1,
 }
 
+impl From<&VideoConfig> for VideoCodec {
+    fn from(config: &VideoConfig) -> Self {
+        match config {
+            VideoConfig::Avc(_) => Self::H264,
+            VideoConfig::Vp8(_) => Self::Vp8,
+            VideoConfig::Vp9(_) => Self::Vp9,
+            VideoConfig::Av1(_) => Self::Av1,
+        }
+    }
+}
+
 impl VideoCodec {
     /// Reads a WebCodecs codec string, the form a catalog's `codec` takes;
     /// `None` for any other codec.

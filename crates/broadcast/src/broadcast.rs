@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose};
-use mediapack::{AudioConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer};
+use mediapack::{
+    AudioConfig, VideoConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer,
+};
 use moqt::{executor, publish::OutgoingObject};
 use msf::{
     Catalog, Track,
@@ -149,7 +151,8 @@ pub struct VideoTrackInfo {
 impl VideoTrackInfo {
     pub fn from_record(record: &AvcDecoderConfigurationRecord, label: String) -> Result<Self> {
         let sps = record.sequence_parameter_set()?;
-        let init_segment = Fmp4TrackMuxer::video(record.clone()).init_segment()?;
+        let init_segment =
+            Fmp4TrackMuxer::video(VideoConfig::Avc(record.clone())).init_segment()?;
         Ok(Self {
             label,
             codec: record.codec_string(),

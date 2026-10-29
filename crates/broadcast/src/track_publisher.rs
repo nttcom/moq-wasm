@@ -3,7 +3,7 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::{
-    AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample,
+    AudioConfig, AudioSample, MediaEvent, Timestamp, VideoConfig, VideoSample,
     loc::{Muxer as LocMuxer, to_extension_headers},
     mp4::Fmp4TrackMuxer,
 };
@@ -89,7 +89,7 @@ impl TrackPublisher {
                 self.video_cmaf = self
                     .tracks
                     .cmaf
-                    .then(|| Fmp4TrackMuxer::video(config.clone()));
+                    .then(|| Fmp4TrackMuxer::video(VideoConfig::Avc(config.clone())));
                 let info = VideoTrackInfo {
                     cmaf: self.tracks.cmaf,
                     ..VideoTrackInfo::from_record(config, self.tracks.video_label.clone())?

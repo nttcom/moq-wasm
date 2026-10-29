@@ -1,24 +1,41 @@
 use crate::{
     h264::annexb::{nal_units, with_start_codes},
-    loc::object::{AUDIO_LEVEL_ID, LocExtension, LocObject, TIMESTAMP_ID},
+    loc::{
+        VideoCodec,
+        object::{AUDIO_LEVEL_ID, LocExtension, LocObject, TIMESTAMP_ID},
+    },
     sample::{MediaEvent, Timestamp},
 };
 
-/// Emits the H.264 payload in Annex-B form, so parameter sets travel in band
+/// Emits an H.264 payload in Annex-B form, so parameter sets travel in band
 /// and no video config extension is attached: a decoder configured from
 /// extradata expects length-prefixed samples instead. Every start code is
 /// rewritten to 4 bytes, as draft-ietf-moq-loc-04 §2.1.4 recommends, so a
-/// receiver can tell it from a length prefix.
+/// receiver can tell it from a length prefix. VP8, VP9 and AV1 payloads pass
+/// unchanged.
+#[derive(Debug, Clone, Copy)]
 pub struct Muxer {
     capture_origin: Timestamp,
+    video_codec: VideoCodec,
 }
 
 impl Muxer {
     /// `capture_origin` is the wall-clock time of presentation timestamp zero,
     /// since draft-ietf-moq-loc-04 §2.3.1.1 reads a Timestamp without a
-    /// Timescale as microseconds since the Unix epoch.
+    /// Timescale as microseconds since the Unix epoch. Video is H.264 unless
+    /// `with_video_codec` sets another codec.
     pub fn new(capture_origin: Timestamp) -> Self {
-        Self { capture_origin }
+        Self {
+            capture_origin,
+            video_codec: VideoCodec::H264,
+        }
+    }
+
+    pub fn with_video_codec(self, video_codec: VideoCodec) -> Self {
+        Self {
+            video_codec,
+            ..self
+        }
     }
 
     /// An audio sample's level becomes the Audio Level property
@@ -26,7 +43,11 @@ impl Muxer {
     pub fn push(&self, event: &MediaEvent) -> Option<LocObject> {
         let (payload, pts, audio_level) = match event {
             MediaEvent::Video(sample) => {
-                (with_start_codes(nal_units(&sample.data)), sample.pts, None)
+                let payload = match self.video_codec {
+                    VideoCodec::H264 => with_start_codes(nal_units(&sample.data)),
+                    VideoCodec::Vp8 | VideoCodec::Vp9 | VideoCodec::Av1 => sample.data.clone(),
+                };
+                (payload, sample.pts, None)
             }
             MediaEvent::Audio(sample) => (sample.data.clone(), sample.pts, sample.audio_level),
             MediaEvent::Streams(_) | MediaEvent::VideoConfig(_) | MediaEvent::AudioConfig(_) => {
@@ -125,6 +146,26 @@ mod tests {
             object.capture_timestamp(),
             Some(Timestamp::from_micros(1_700_000_000_021_000))
         );
+    }
+
+    #[test]
+    fn passes_a_vp8_payload_unchanged() {
+        // Arrange: a frame holding bytes that read as a 3-byte start code
+        let sample = VideoSample {
+            data: Bytes::from_static(&[0x10, 0, 0, 1, 0x9d, 0x01, 0x2a]),
+            is_keyframe: true,
+            pts: Timestamp::ZERO,
+            dts: Timestamp::ZERO,
+        };
+
+        // Act
+        let object = muxer()
+            .with_video_codec(VideoCodec::Vp8)
+            .push(&MediaEvent::Video(sample.clone()))
+            .unwrap();
+
+        // Assert
+        assert_eq!(object.payload, sample.data);
     }
 
     #[test]

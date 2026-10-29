@@ -7,7 +7,7 @@ use crate::{
     h264::annexb::annexb_to_avcc_without_parameter_sets,
     mp4::track::{MPEG1_AUDIO_OBJECT_TYPE_INDICATION, MPEG2_AUDIO_OBJECT_TYPE_INDICATION},
     sample::{AudioConfig, AudioSample, VideoConfig, VideoSample},
-    vp9::Vp9Config,
+    vp9::{self, Vp9Config},
 };
 
 pub(super) const VIDEO_TIMESCALE: u32 = 90_000;
@@ -29,19 +29,6 @@ const COLOUR_UNSPECIFIED: u8 = 2;
 const VP_SUBSAMPLING_420_COLLOCATED: u8 = 1;
 const VP_SUBSAMPLING_422: u8 = 2;
 const VP_SUBSAMPLING_444: u8 = 3;
-/// VP9 levels by the largest luma picture size each allows (VP9 bitstream
-/// specification Annex A).
-const VP9_LEVELS: [(u32, u8); 9] = [
-    (36_864, 10),
-    (73_728, 11),
-    (122_880, 20),
-    (245_760, 21),
-    (552_960, 30),
-    (983_040, 31),
-    (2_228_224, 40),
-    (8_912_896, 50),
-    (35_651_584, 60),
-];
 
 pub(super) struct TrackInit {
     pub(super) track_id: u32,
@@ -226,7 +213,7 @@ pub(super) fn video_trak(track_id: u32, config: &VideoConfig) -> Result<Bytes> {
             b"vp08",
             vpcc(
                 0,
-                vp9_level(config.width, config.height),
+                vp9::level(config.width, config.height),
                 8,
                 VP_SUBSAMPLING_420_COLLOCATED,
                 false,
@@ -238,7 +225,7 @@ pub(super) fn video_trak(track_id: u32, config: &VideoConfig) -> Result<Bytes> {
             b"vp09",
             vpcc(
                 config.profile,
-                vp9_level(config.width, config.height),
+                vp9::level(config.width, config.height),
                 config.bit_depth,
                 vp9_chroma_subsampling(config),
                 config.full_range,
@@ -290,16 +277,6 @@ fn vpcc(profile: u8, level: u8, bit_depth: u8, chroma_subsampling: u8, full_rang
     payload.put_u8(COLOUR_UNSPECIFIED);
     payload.put_u16(0);
     full_box(b"vpcC", 1, 0, &payload)
-}
-
-/// The frame rate is unknown here, so the level is the lowest whose picture
-/// size fits, which is how ffmpeg derives it without a rate.
-fn vp9_level(width: u32, height: u32) -> u8 {
-    let picture_size = width.saturating_mul(height);
-    VP9_LEVELS
-        .iter()
-        .find(|(max_picture_size, _)| picture_size <= *max_picture_size)
-        .map_or(62, |(_, level)| *level)
 }
 
 fn vp9_chroma_subsampling(config: &Vp9Config) -> u8 {
