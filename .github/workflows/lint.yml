@@ -188,7 +188,7 @@ jobs:
         run: npm ci
         working-directory: examples/browser
       - name: Check code formatting
-        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
+        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore
   browser-unit-test:
     runs-on: ubuntu-latest
     container:
