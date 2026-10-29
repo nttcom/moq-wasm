@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use anyhow::{Result, anyhow, bail};
 use mediapack::MediaEvent;
 use tokio::sync::{
@@ -31,15 +33,25 @@ const BACKLOG_CLEARED_DEPTH: usize = BACKLOG_WARN_DEPTH / 2;
 /// start.
 pub(crate) struct PublishQueue {
     connection: RelayConnection,
-    event_sender: mpsc::Sender<MediaEvent>,
+    event_sender: mpsc::Sender<Queued>,
     failure_receiver: oneshot::Receiver<anyhow::Error>,
     awaiting_keyframe: bool,
     backlog_reported: bool,
     dropped: DroppedSamples,
 }
 
+pub(crate) enum Queued {
+    Event(MediaEvent),
+    /// Taken after every event queued before it, so none of them publishes
+    /// the track again once it is removed.
+    RemoveTrack {
+        track_name: String,
+        done_sender: oneshot::Sender<Result<()>>,
+    },
+}
+
 pub(crate) struct QueueConsumer {
-    pub(crate) event_receiver: mpsc::Receiver<MediaEvent>,
+    pub(crate) event_receiver: mpsc::Receiver<Queued>,
     pub(crate) failure_sender: oneshot::Sender<anyhow::Error>,
 }
 
@@ -95,7 +107,7 @@ impl PublishQueue {
             _ => {}
         }
         let resumes_video = self.awaiting_keyframe && matches!(&event, MediaEvent::Video(_));
-        match self.event_sender.try_send(event) {
+        match self.event_sender.try_send(Queued::Event(event)) {
             Ok(()) => {
                 if resumes_video {
                     self.resume();
@@ -106,6 +118,28 @@ impl PublishQueue {
                 bail!("publish queue full: the relay is not keeping up")
             }
             Err(TrySendError::Closed(_)) => Err(self.failure()),
+        }
+    }
+
+    /// Waits for room rather than dropping, since a removal is never
+    /// repeated.
+    pub(crate) fn remove_track(
+        &self,
+        track_name: String,
+    ) -> impl Future<Output = Result<()>> + 'static {
+        let event_sender = self.event_sender.clone();
+        async move {
+            let (done_sender, done_receiver) = oneshot::channel();
+            event_sender
+                .send(Queued::RemoveTrack {
+                    track_name,
+                    done_sender,
+                })
+                .await
+                .map_err(|_| anyhow!("media publishing stopped"))?;
+            done_receiver
+                .await
+                .map_err(|_| anyhow!("media publishing stopped"))?
         }
     }
 
@@ -209,10 +243,37 @@ mod tests {
 
     fn queued(consumer: &mut QueueConsumer) -> Vec<MediaEvent> {
         let mut events = Vec::new();
-        while let Ok(event) = consumer.event_receiver.try_recv() {
+        while let Ok(Queued::Event(event)) = consumer.event_receiver.try_recv() {
             events.push(event);
         }
         events
+    }
+
+    #[tokio::test]
+    async fn a_removal_is_taken_after_the_events_queued_before_it() {
+        // Arrange
+        let (mut queue, mut consumer) = PublishQueue::open(RelayConnection::new(None));
+        queue.push(audio_config()).unwrap();
+
+        // Act
+        let removal = tokio::spawn(queue.remove_track("audio".to_string()));
+        let first = consumer.event_receiver.recv().await;
+        let Some(Queued::RemoveTrack {
+            track_name,
+            done_sender,
+        }) = consumer.event_receiver.recv().await
+        else {
+            panic!("expected the removal after the audio configuration");
+        };
+        done_sender.send(Ok(())).unwrap();
+
+        // Assert
+        assert!(matches!(
+            first,
+            Some(Queued::Event(MediaEvent::AudioConfig(_)))
+        ));
+        assert_eq!(track_name, "audio");
+        removal.await.unwrap().unwrap();
     }
 
     #[test]

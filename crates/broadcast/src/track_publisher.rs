@@ -79,6 +79,10 @@ impl TrackPublisher {
         }
     }
 
+    pub(crate) fn broadcast(&self) -> &Broadcast {
+        &self.broadcast
+    }
+
     pub(crate) fn shared_timing(&self) -> SharedTiming {
         self.timing.clone()
     }
