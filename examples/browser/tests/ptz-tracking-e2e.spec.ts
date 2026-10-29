@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { delayD3FlashAnswers } from './fake-d3-flash'
+import { delaySystemOneAnswers } from './fake-system-one'
 import { leaveAllPages } from './leave-all-pages'
 import {
-  D3_FLASH_ORIGIN,
+  SYSTEM_ONE_ORIGIN,
   type PtzCommand,
   hideTarget,
   joinCamera,
@@ -19,7 +19,7 @@ const PAN_LEFT_TEXT = 'パン -1.48 秒・チルト 0.00 秒'
 test.describe('MoQ PTZ Tracking', () => {
   test.afterEach(async ({ browser }) => {
     await leaveAllPages(browser, 'ptz-tracking-leave-button')
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
   })
 
   test('pans the camera toward a target on the right', async ({ page }) => {
@@ -69,18 +69,18 @@ test.describe('MoQ PTZ Tracking', () => {
   test('shows the d3-flash status while its answers are late', async ({ page }) => {
     // Arrange
     await placeTargetAt(0.5, 0.5)
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, LATE_ANSWER_MS)
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, LATE_ANSWER_MS)
     const position = await joinCamera(page)
 
     // Act
     await trackTarget(page, '人')
 
     // Assert
-    const d3FlashStatus = page.getByTestId('ptz-tracking-d3-flash-status')
-    await expect(d3FlashStatus).toContainText('d3-flash', { timeout: 30_000 })
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
+    const systemOneStatus = page.getByTestId('ptz-tracking-system-one-status')
+    await expect(systemOneStatus).toContainText('d3-flash', { timeout: 30_000 })
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
     await expect(position).toHaveText('横 50%・縦 50%', { timeout: 30_000 })
-    await expect(d3FlashStatus).toBeHidden()
+    await expect(systemOneStatus).toBeHidden()
   })
 })
 

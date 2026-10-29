@@ -6,7 +6,7 @@ const moqtUrl = process.env.CHAT_MODERATION_E2E_MOQT_URL ?? 'https://127.0.0.1:4
 const botUrl = process.env.CHAT_MODERATION_E2E_BOT_URL!
 /// The room every page joins unless a test passes another, so the pages of one test meet one moderator.
 const ROOM = 'e2e'
-export const D3_FLASH_ORIGIN = process.env.CHAT_MODERATION_E2E_D3_FLASH_ORIGIN!
+export const SYSTEM_ONE_ORIGIN = process.env.CHAT_MODERATION_E2E_SYSTEM_ONE_ORIGIN!
 
 export const LEAVE_BUTTON_TEST_ID = 'chat-moderation-leave-button'
 export const ABUSIVE_TEXT = 'e2e-abusive'

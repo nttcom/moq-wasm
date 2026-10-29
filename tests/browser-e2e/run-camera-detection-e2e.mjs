@@ -35,7 +35,7 @@ import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 const botDir = resolve(repoRoot, "examples/python/moq-camera-detection");
 const childProcesses = [];
 
-async function startFakeD3Flash() {
+async function startFakeSystemOne() {
   let answer = "はい";
   let delayMs = 0;
   const server = createServer(async (request, response) => {
@@ -66,14 +66,14 @@ async function main() {
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
-  const fakeD3Flash = await startFakeD3Flash();
-  const fakeD3FlashOrigin = `http://127.0.0.1:${fakeD3Flash.address().port}`;
+  const fakeSystemOne = await startFakeSystemOne();
+  const fakeSystemOneOrigin = `http://127.0.0.1:${fakeSystemOne.address().port}`;
 
   const cleanup = async () => {
     await Promise.allSettled(
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
-    fakeD3Flash.close();
+    fakeSystemOne.close();
   };
 
   registerSignalHandlers(cleanup);
@@ -108,8 +108,8 @@ async function main() {
         "--relay-url",
         moqtUrl,
         "--insecure",
-        "--d3-flash-url",
-        `${fakeD3FlashOrigin}/v1/systemone`,
+        "--system-one-url",
+        `${fakeSystemOneOrigin}/v1/systemone`,
       ],
       { cwd: botDir },
     );
@@ -126,7 +126,7 @@ async function main() {
           MEDIA_E2E_BASE_URL: baseUrl,
           CAMERA_DETECTION_E2E_MOQT_URL: moqtUrl,
           CAMERA_DETECTION_E2E_BOT_URL: `http://127.0.0.1:${botPort}`,
-          CAMERA_DETECTION_E2E_D3_FLASH_ORIGIN: fakeD3FlashOrigin,
+          CAMERA_DETECTION_E2E_SYSTEM_ONE_ORIGIN: fakeSystemOneOrigin,
         },
       },
     );

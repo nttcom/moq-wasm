@@ -6,7 +6,7 @@ from typing import Any
 
 from aiohttp import web
 
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_system_one_bot.system_one_status import SystemOneStatus
 
 READ_TIMEOUT_SECONDS = 2
 SETTLE_SECONDS = 0.05
@@ -23,7 +23,7 @@ class RecordingPublication:
         return await asyncio.wait_for(self._writes.get(), READ_TIMEOUT_SECONDS)
 
 
-async def published_status(status: D3FlashStatus) -> RecordingPublication:
+async def published_status(status: SystemOneStatus) -> RecordingPublication:
     publication = RecordingPublication()
     await status.publish_on(publication)
     return publication
@@ -31,7 +31,7 @@ async def published_status(status: D3FlashStatus) -> RecordingPublication:
 
 async def next_status(publication: RecordingPublication) -> str:
     _, status = await publication.next_write()
-    return status["d3_flash"]
+    return status["system_one"]
 
 
 class FakeNamespaceSession:

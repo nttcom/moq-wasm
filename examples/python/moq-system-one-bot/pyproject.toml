@@ -1,5 +1,5 @@
 [project]
-name = "moq-d3-flash-bot"
+name = "moq-system-one-bot"
 version = "0.1.0"
 description = "What the MoQ bots that call d3-flash share: the d3-flash status track, identity tokens and following a published namespace"
 requires-python = ">=3.11"

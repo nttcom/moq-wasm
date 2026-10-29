@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from moq_d3_flash_bot.publication import Publication
+from moq_system_one_bot.publication import Publication
 
 from moq_chat_moderation.chat import Location
 

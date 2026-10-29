@@ -97,7 +97,7 @@ when the room is empty (below).
 The page needs no new state for the bot itself. It already sends
 SUBSCRIBE_NAMESPACE for the bot's namespace and starts the event timeline and
 the d3-flash status on the PUBLISH_NAMESPACE that follows, whenever that
-arrives (`setUpD3FlashBotPage` in `examples/browser/utils/d3FlashBot.ts`).
+arrives (`setUpSystemOneBotPage` in `examples/browser/utils/systemOneBot.ts`).
 The stream carries the server's own events, each of which ends the response:
 
 | Event | Sent when |

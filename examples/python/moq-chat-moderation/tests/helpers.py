@@ -30,7 +30,7 @@ async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
 
 
 @dataclass
-class StubD3Flash:
+class StubSystemOne:
     probability: float
     texts: list[str] = field(default_factory=list)
 
@@ -40,7 +40,7 @@ class StubD3Flash:
 
 
 @dataclass
-class FakeD3FlashServer:
+class FakeSystemOneServer:
     noul: float
     url: str = ""
     requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)

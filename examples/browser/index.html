@@ -99,7 +99,7 @@
         grid-template-areas:
           '. . browser . . . .'
           '. . browser-link . . . .'
-          'camera camera-link relay bot-link bot d3-flash-link d3-flash';
+          'camera camera-link relay bot-link bot system-one-link system-one';
         justify-content: center;
         justify-items: center;
       }
@@ -132,12 +132,12 @@
         grid-area: bot;
       }
 
-      .hub-d3-flash-link {
-        grid-area: d3-flash-link;
+      .hub-system-one-link {
+        grid-area: system-one-link;
       }
 
-      .hub-d3-flash {
-        grid-area: d3-flash;
+      .hub-system-one {
+        grid-area: system-one;
       }
 
       .observability-map {
@@ -550,8 +550,8 @@
               <span class="node hub-bot"
                 ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
               >
-              <span class="link hub-d3-flash-link">↔</span>
-              <span class="node cloud hub-d3-flash"
+              <span class="link hub-system-one-link">↔</span>
+              <span class="node cloud hub-system-one"
                 ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d3-flash</span
               >
             </p>

@@ -9,7 +9,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from moq_camera_detection.event_timeline import EventTimeline, Location, location_record
 from moq_camera_detection.prompt import Prompt
-from moq_camera_detection.vision import D3FlashVisionClient
+from moq_camera_detection.vision import SystemOneVisionClient
 
 STALE_PICTURE_SECONDS = 2.0
 MAX_JUDGING_PICTURES = 8
@@ -24,7 +24,7 @@ class CameraPicture(SystemFrame):
 
 
 class CameraDetector(FrameProcessor):
-    def __init__(self, vision: D3FlashVisionClient, timeline: EventTimeline):
+    def __init__(self, vision: SystemOneVisionClient, timeline: EventTimeline):
         super().__init__()
         self._vision = vision
         self._timeline = timeline

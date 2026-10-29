@@ -360,7 +360,7 @@ dev = [
 ]
 
 [[package]]
-name = "moq-d3-flash-bot"
+name = "moq-system-one-bot"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -9,9 +9,9 @@ from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
-from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_d3_flash_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_system_one_bot.namespace import until_room_empty, while_published
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
@@ -20,7 +20,7 @@ from moq_camera_detection.detector import CameraDetector, CameraPicture
 from moq_camera_detection.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt, parse_prompt
 from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
-from moq_camera_detection.vision import D3FlashVisionClient
+from moq_camera_detection.vision import SystemOneVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8098
@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
     parser.add_argument(
-        "--d3-flash-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
+        "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
     )
     add_identity_token_arguments(parser)
     return parser.parse_args()
@@ -127,7 +127,7 @@ async def forward_camera(session: moqt.Session, camera_namespace: list[str], wor
 
 
 async def detect_in_session(
-    session: moqt.Session, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
+    session: moqt.Session, room_id: str, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
 ) -> bool:
     """True once no page has published the room's camera for the grace period; False when the relay session closed."""
     detector_namespace = [*room_namespace(room_id), "detector"]
@@ -153,7 +153,7 @@ async def detect_in_session(
 
 
 async def stay_connected(
-    args: argparse.Namespace, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
+    args: argparse.Namespace, room_id: str, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
 ) -> None:
     while True:
         try:
@@ -178,8 +178,8 @@ async def detect_in_room(
     args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
 ) -> None:
     timeline = EventTimeline()
-    status = D3FlashStatus()
-    vision = D3FlashVisionClient(http, args.d3_flash_url, status, identity_token)
+    status = SystemOneStatus()
+    vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
     worker = PipelineWorker(
         Pipeline([CameraDetector(vision, timeline)]),
         enable_rtvi=False,
@@ -197,7 +197,7 @@ async def detect_in_room(
 async def main():
     args = parse_args()
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as http:
-        identity_token = identity_token_from_arguments(args, http, args.d3_flash_url)
+        identity_token = identity_token_from_arguments(args, http, args.system_one_url)
         await serve_rooms(args, partial(detect_in_room, args, http, identity_token))
 
 

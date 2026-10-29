@@ -11,7 +11,7 @@ from moq_ptz_tracking.event_timeline import EventTimeline, Location, location_re
 from moq_ptz_tracking.pan_planner import Home, PanPlanner, Sweeping
 from moq_ptz_tracking.ptz import CENTER_SECONDS, Heading, PtzCalibration, PtzCommands, PtzMove, Sweep
 from moq_ptz_tracking.target import LatestTarget, Target
-from moq_ptz_tracking.vision import Answer, D3FlashVisionClient, Position
+from moq_ptz_tracking.vision import Answer, SystemOneVisionClient, Position
 
 # The camera stops within 0.3 s of a Stop command, and a picture reaches the bot about 0.4 s after
 # the camera captured it.
@@ -34,7 +34,7 @@ class PtzTracker(FrameProcessor):
 
     def __init__(
         self,
-        vision: D3FlashVisionClient,
+        vision: SystemOneVisionClient,
         timeline: EventTimeline,
         commands: PtzCommands,
         calibration: PtzCalibration,
