@@ -1,23 +1,20 @@
-import { type TextTracks, fetchLatestText } from './textTrack'
-import type { TrackContext } from './trackContext'
-import type { PublishDoneMessage } from '../../pkg/moqt'
+import type { PublishDone } from '@moqt/session'
+import type { TextTracks } from './textTrack'
 import { CATALOG_TRACK_NAME } from '../msf/catalog'
 
 /// A SUBSCRIBE delivers objects published after the largest one and the bridge
 /// publishes the catalog once per upstream subscription, so a viewer joining a
-/// subscription the relay already holds would never see it; the group
-/// SUBSCRIBE_OK names as the largest is fetched as well. The FETCH and the
-/// SUBSCRIBE race, and the relay keeps the catalog of a publisher that has
-/// since been replaced, so the catalog of the newest group wins whatever order
-/// they arrive in.
+/// subscription the relay already holds would never see it; the group the
+/// largest object is in is read through a joining FETCH as well. The relay
+/// keeps the catalog of a publisher that has since been replaced, so the
+/// catalog of the newest group wins.
 export class CatalogFollower {
   private newestGroupId: bigint | undefined
 
   constructor(
-    private readonly context: TrackContext,
     private readonly textTracks: TextTracks,
     private readonly onCatalog: (text: string) => void,
-    private readonly onEnded: (message: PublishDoneMessage) => void
+    private readonly onEnded: (done: PublishDone) => void
   ) {}
 
   async follow(): Promise<void> {
@@ -28,8 +25,7 @@ export class CatalogFollower {
       this.newestGroupId = groupId
       this.onCatalog(text)
     }
-    const subscribeOk = await this.textTracks.subscribe(CATALOG_TRACK_NAME, onText, this.onEnded)
-    await fetchLatestText(this.context, CATALOG_TRACK_NAME, subscribeOk, onText)
+    await this.textTracks.subscribe(CATALOG_TRACK_NAME, onText, { currentGroup: true, onEnded: this.onEnded })
   }
 
   reset(): void {

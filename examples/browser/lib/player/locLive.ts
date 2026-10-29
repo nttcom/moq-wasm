@@ -5,7 +5,7 @@ import type { BufferPolicy } from './jitterBuffer'
 import { LivePlayout } from './livePlayout'
 import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from './livePictureSink'
 import type { MediaKind } from './trackContext'
-import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
+import type { ReceivedObject } from '@moqt/session'
 import type { MediaCatalogTrack } from '../msf/catalog'
 
 const PRESENTATION_MARGIN_MS = 200
@@ -14,7 +14,7 @@ const ARRIVAL_GAP_WINDOW_MS = 10_000
 
 export type DecodedFrameIds = { groupId: bigint; objectId: bigint }
 export type LocObject = Pick<
-  SubgroupObjectMessageWithLoc,
+  ReceivedObject,
   'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus' | 'locHeader'
 >
 

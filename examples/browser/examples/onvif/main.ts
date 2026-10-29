@@ -1,9 +1,9 @@
-import { MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
+import { MoqSession } from '@moqt/session'
+import type { TrackWriter } from '../../pkg/moqt'
 import { LivePlayer } from '@player/livePlayer'
 import { formatLiveStats } from '@player/locLive'
 import { PlayerControls } from '@player/ui/playerControls'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
-import { timeSeededGroupId } from '../../utils/media/clock'
 import { element, parseTrackNamespace } from '../../utils/page'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
@@ -32,16 +32,14 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
   speed: 1
 }
 
-const moqtClient = new MoqtClientWrapper()
+let session: MoqSession | undefined
 const stage = element<HTMLDivElement>('stage')
 const player = new LivePlayer({
-  client: moqtClient,
   container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: log }
 })
 const controls = new PlayerControls(stage, player, log)
-let commandTrackAlias: bigint | null = null
-let nextCommandGroupId = timeSeededGroupId()
+let commandWriter: TrackWriter | undefined
 
 function renderPlayer(): void {
   const { catalogStatus, playbackStatus, rewindStatus } = player.state
@@ -68,8 +66,8 @@ function updateStatus(label: string, active: boolean): void {
   }
 }
 
-function updateCommandAlias(alias: bigint | null): void {
-  element('command-alias').textContent = alias === null ? '-' : alias.toString()
+function updateCommandTrack(state: string): void {
+  element('command-track-state').textContent = state
 }
 
 function inputValue(id: string): string {
@@ -87,8 +85,8 @@ function readField(row: HTMLElement, field: FieldKey): number {
 }
 
 async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void> {
-  if (commandTrackAlias === null) {
-    updateStatus('command track not subscribed', false)
+  if (!commandWriter) {
+    updateStatus('not connected', false)
     return
   }
 
@@ -105,8 +103,12 @@ async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void
         : { type: command, pan, tilt, zoom, speed }
 
   const bytes = new TextEncoder().encode(JSON.stringify(payload))
-  const groupId = nextCommandGroupId++
-  await moqtClient.sendSingleObjectGroup(commandTrackAlias, groupId, bytes)
+  if (!(await commandWriter.writeGroup(bytes))) {
+    updateCommandTrack('not subscribed')
+    updateStatus('command track not subscribed', false)
+    return
+  }
+  updateCommandTrack('subscribed')
   updateStatus(`sent ${command}`, true)
 }
 
@@ -171,10 +173,7 @@ async function connect(): Promise<void> {
   const url = inputValue('moqt-url')
   const publishNamespace = parseTrackNamespace(inputValue('publish-namespace'))
   const subscribeNamespace = parseTrackNamespace(inputValue('subscribe-namespace'))
-  const publishNamespaceLabel = publishNamespace.join('/')
   const commandTrack = inputValue('command-track')
-  const authInfo = inputValue('auth-info')
-  const maxRequestId = BigInt(inputValue('max-subscribe-id'))
 
   if (!publishNamespace.length || !subscribeNamespace.length) {
     updateStatus('namespace required', false)
@@ -183,33 +182,28 @@ async function connect(): Promise<void> {
 
   await disconnect()
   updateStatus('connecting', true)
-  await moqtClient.connect(url, { maxRequestId })
-  moqtClient.setOnConnectionClosedHandler(() => {
-    updateStatus('disconnected', false)
-  })
-
-  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
-    if (subscribe.trackName !== commandTrack || subscribe.trackNamespace.join('/') !== publishNamespaceLabel) {
-      await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
-      return
+  const connected = await MoqSession.connect(url)
+  session = connected
+  void connected.closed.then(() => {
+    if (session === connected) {
+      updateStatus('disconnected', false)
     }
-
-    commandTrackAlias = await respondOk(0n)
-    updateCommandAlias(commandTrackAlias)
   })
-
-  await moqtClient.publishNamespace(publishNamespace, authInfo)
+  await connected.announce(publishNamespace)
+  // Only the newest command matters to a camera that subscribes later.
+  commandWriter = await connected.publishTrack(publishNamespace, commandTrack, { retentionMs: 0 })
+  updateCommandTrack('published')
   updateStatus('connected', true)
-  await player.start(subscribeNamespace, authInfo)
+  await player.start(connected, subscribeNamespace)
 }
 
 async function disconnect(): Promise<void> {
   await player.stop()
-  if (moqtClient.getConnectionStatus()) {
-    await moqtClient.disconnect()
-  }
-  commandTrackAlias = null
-  updateCommandAlias(commandTrackAlias)
+  const closing = session
+  session = undefined
+  commandWriter = undefined
+  closing?.close()
+  updateCommandTrack('-')
   updateStatus('disconnected', false)
 }
 

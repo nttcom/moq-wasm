@@ -25,6 +25,15 @@ export type MoqConnectOptions = {
   token?: string | (() => Promise<string>)
 }
 
+export type PublishTrackOptions = {
+  /// How long the session keeps each object to answer FETCH; 60 s by
+  /// default, and 0 keeps only the newest object.
+  retentionMs?: number
+  /// Sends PUBLISH so the relay takes the track before anyone subscribes;
+  /// announce the namespace first.
+  publish?: boolean
+}
+
 export type MoqSubscribeOptions = {
   filter?: 'largestObject' | 'nextGroupStart'
   forward?: boolean
@@ -32,7 +41,7 @@ export type MoqSubscribeOptions = {
 
 type WasmSession = Pick<
   Moqt.Session,
-  'closed' | 'subscribe' | 'subscribeCurrentGroup' | 'fetch' | 'trackStatus' | 'close'
+  'closed' | 'subscribe' | 'subscribeCurrentGroup' | 'fetch' | 'trackStatus' | 'announce' | 'publishTrack' | 'close'
 >
 type WasmSubscription = Pick<
   Moqt.Subscription,
@@ -97,6 +106,17 @@ export class MoqSession {
     return largest && location(largest)
   }
 
+  /// PUBLISH_NAMESPACE; the returned announcement's `close` withdraws it.
+  async announce(namespace: string[]): Promise<Moqt.Announcement> {
+    return request('PUBLISH_NAMESPACE', () => this.inner.announce(namespace))
+  }
+
+  /// Numbers, caches and sends what the writer writes, and answers the track's
+  /// SUBSCRIBE and FETCH.
+  publishTrack(namespace: string[], track: string, options: PublishTrackOptions = {}): Promise<Moqt.TrackWriter> {
+    return this.inner.publishTrack(namespace, track, options.retentionMs, options.publish)
+  }
+
   close(): void {
     this.open = false
     this.inner.close()
@@ -139,7 +159,12 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
       if (!group) {
         return
       }
-      yield new MoqGroup(group)
+      const received = new MoqGroup(group)
+      console.debug('[moqt] received subgroup header', {
+        groupId: received.groupId.toString(),
+        subgroupId: received.subgroupId.toString()
+      })
+      yield received
     }
   }
 

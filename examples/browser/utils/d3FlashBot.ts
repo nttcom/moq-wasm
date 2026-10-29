@@ -25,7 +25,7 @@ export type D3FlashBotPageOptions = {
   onTimelineObject(payload: Uint8Array): void
   onReset(): Promise<void> | void
   beforeConnect?(): Promise<void>
-  afterConnect?(): Promise<void>
+  afterConnect?(relayUrl: string): Promise<void>
 }
 
 export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
@@ -101,7 +101,7 @@ export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
       })
       await session.publishNamespace(ownNamespace, AUTH_INFO)
       await session.subscribeNamespace(botNamespace, AUTH_INFO)
-      await options.afterConnect?.()
+      await options.afterConnect?.(relayUrl)
       setStatus('connection-status', '接続済み', 'ok')
       leaveButton.disabled = false
     } catch (error) {

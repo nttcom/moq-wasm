@@ -2,7 +2,7 @@ import { type GroupMark, type ReviewFrame, sortReviewFrames } from './rewind'
 import { type FetchFailure, fetchFrames, isFetchFailure } from './reviewFetch'
 import type { GroupRange } from './audioGroups'
 import type { SeekTimeline } from './seekTimeline'
-import type { MediaKind, TrackContext } from './trackContext'
+import { type MediaKind, type TrackContext, sessionOf } from './trackContext'
 import type { TrackSubscriptions } from './trackSubscriptions'
 import { getErrorMessage } from '../../utils/page'
 
@@ -123,8 +123,8 @@ export class ReviewSession {
     if (!name) {
       return undefined
     }
-    const status = await this.context.client.trackStatus(this.context.namespace, name, '')
-    return status.contentExists ? status.largestGroupId : undefined
+    const largest = await sessionOf(this.context).trackStatus(this.context.namespace, name)
+    return largest?.groupId
   }
 
   private recover(failure: ReviewWindowFailure): void {

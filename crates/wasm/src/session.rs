@@ -319,15 +319,16 @@ impl TrackWriter {
     }
 
     /// Sends `payload` as a group of its own, the layout of an MSF catalog
-    /// (draft-ietf-moq-msf-01 §5).
+    /// (draft-ietf-moq-msf-01 §5). Resolves to whether a subscriber took it.
     #[wasm_bindgen(js_name = writeGroup)]
-    pub async fn write_group(&self, payload: Vec<u8>) -> Result<(), JsValue> {
-        self.routes
+    pub async fn write_group(&self, payload: Vec<u8>) -> Result<bool, JsValue> {
+        let outcome = self
+            .routes
             .origin
             .write_group(&self.namespace, &self.track, Bytes::from(payload))
             .await
-            .map(|_| ())
-            .map_err(anyhow_error)
+            .map_err(anyhow_error)?;
+        Ok(matches!(outcome, WriteOutcome::Sent(_)))
     }
 }
 

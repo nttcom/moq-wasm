@@ -1,4 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqSession } from '@moqt/session'
 import type { LivePictureKind } from '@player/livePictureSink'
 import { PlayerControls } from '@player/ui/playerControls'
 import { Mp4Publisher } from './mp4Publisher'
@@ -19,17 +19,15 @@ import {
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 
-const AUTH_INFO = 'secret'
 /// Each draw rebuilds every stream monitor's SVG through innerHTML, too costly
 /// to run on every frame.
 const STREAM_RENDER_INTERVAL_MS = 100
 
-const moqtClient = new MoqtClientWrapper()
+let session: MoqSession | undefined
 const streamMonitor = new StreamMonitor()
 const stage = element<HTMLDivElement>('stage')
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 const player = new LivePlayer({
-  client: moqtClient,
   container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: appendLog },
   deliveryObserver: streamMonitor,
@@ -69,7 +67,6 @@ element<HTMLButtonElement>('deliveryToggleBtn').addEventListener('click', () => 
   overlay.hidden = !overlay.hidden
   element<HTMLButtonElement>('deliveryToggleBtn').setAttribute('aria-pressed', String(!overlay.hidden))
 })
-moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
 element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
   const keptGroups = Number((event.target as HTMLInputElement).value) || 1
   streamMonitor.setKeptGroups(keptGroups)
@@ -91,10 +88,10 @@ async function watchStream(): Promise<void> {
   try {
     await stopStream()
     const url = element<HTMLInputElement>('url').value.trim()
-    await moqtClient.connect(url)
+    session = await MoqSession.connect(url)
     setStatus('connection-status', `Connected: ${url}`, 'ok')
     appendLog('info', `connected to ${url}`)
-    await player.start(trackNamespace(), AUTH_INFO)
+    await player.start(session, trackNamespace())
   } catch (error) {
     setStatus('connection-status', `Failed: ${getErrorMessage(error)}`, 'error')
     appendLog('error', getErrorMessage(error))
@@ -105,9 +102,8 @@ async function stopStream(): Promise<void> {
   playbackCharts.reset()
   streamMonitor.reset()
   await player.stop()
-  if (moqtClient.getConnectionStatus()) {
-    await moqtClient.disconnect()
-  }
+  session?.close()
+  session = undefined
   setStatus('connection-status', 'Not connected', 'idle')
 }
 

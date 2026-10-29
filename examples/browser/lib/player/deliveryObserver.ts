@@ -12,6 +12,8 @@ export type Playhead = {
 
 export interface DeliveryObserver {
   label(trackAlias: bigint, track: string): void
+  /// A subgroup stream of the subscription started.
+  opened(trackAlias: bigint, groupId: bigint): void
   object(
     trackAlias: bigint,
     groupId: bigint,
@@ -39,6 +41,7 @@ export interface DeliveryObserver {
 
 export const UNOBSERVED_DELIVERIES: DeliveryObserver = {
   label: () => {},
+  opened: () => {},
   object: () => {},
   fetchObject: () => {},
   fetchFinished: () => {},

@@ -60,18 +60,21 @@ Rules:
   the MSE pool), styled by `livePlayer.css`. It never reads form values or
   writes status text; overlays the page puts in the same container stay on
   top of the pictures.
-- L1 does not connect. It is given a connected `MoqtClientWrapper`, so a page
-  can share one session with a publisher or with other players.
-- Relay switchover is the session's, not the player's. The wasm client's
-  `moqt::Session` follows GOAWAY itself (`follow_go_away`, see
-  `docs/architecture/moqt/session-migration.md`): request ids and track
-  aliases stay what the wrapper first saw, so `MoqtClientWrapper` and the
-  player see no switchover at all. A SUBSCRIBE the old relay sent and never
-  unsubscribed is reported through the incoming-unsubscribe handler when its
-  connection closes.
-- L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
-  `setOnConnectionClosedHandler`); they have one slot per client and belong to
-  the page. It registers per-alias and per-request handlers only.
+- L1 does not connect. `start` is given a connected `MoqSession`
+  (`lib/moqt/session.ts`), so a page can share one session with a publisher
+  or with other players, and the page closes it.
+- Relay switchover and reconnecting are the session's, not the player's. The
+  wasm `Session`'s `moqt::Session` follows GOAWAY and reconnects itself (see
+  `docs/architecture/moqt/session-migration.md`), and the handles the player
+  holds keep working across it.
+- L1 holds one handle per request: a `MoqSubscription` per track, read by
+  subgroup stream through `groups()` for media (the End of Group status
+  objects order the groups) and object by object for text tracks; a
+  `MoqFetch` per review window; `trackStatus` for the live edge. The catalog
+  is read with `subscribeCurrentGroup`, the SUBSCRIBE and joining FETCH MSF
+  asks of a late joiner. PUBLISH_DONE arrives on a subscription's `done`.
+  The session API hides track aliases and request ids, so the player keys
+  subscriptions and FETCHes in the delivery observer by ids of its own.
 - L2 (`PlayerControls`) holds no playback state of its own; it renders
   `LivePlayer.state` when the page forwards `onStateChange`, issues commands,
   and keeps only the gesture in progress (a seek bar drag, pointer idle). It
@@ -88,7 +91,6 @@ Rules:
 
 ```ts
 type LivePlayerOptions = {
-  client: MoqtClientWrapper
   container: HTMLElement
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
@@ -103,7 +105,7 @@ type LivePlayerCallbacks = {
 }
 
 class LivePlayer {
-  start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void>
+  start(session: MoqSession, namespace: string[], tracks?: LiveTracks): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
