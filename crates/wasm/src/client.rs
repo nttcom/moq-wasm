@@ -304,10 +304,8 @@ impl MOQTClient {
         auth_token: Option<String>,
     ) -> Result<(), JsValue> {
         let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
-            port: 0,
-            verify_certificate: true,
             authorization_token: auth_token,
-            follow_go_away: true,
+            ..ClientConfig::default()
         })
         .map_err(anyhow_error)?;
         let session = endpoint

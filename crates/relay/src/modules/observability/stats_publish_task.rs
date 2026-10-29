@@ -56,10 +56,10 @@ async fn publish_snapshots(
     config: &StatsPublishConfig,
 ) -> anyhow::Result<()> {
     let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
-        port: 0,
         verify_certificate: false,
         authorization_token: Some(config.relay_token.clone()),
         follow_go_away: false,
+        ..moqt::ClientConfig::default()
     })?;
     let session = endpoint
         .connect(&format!("moqt://127.0.0.1:{}", config.inner_port))

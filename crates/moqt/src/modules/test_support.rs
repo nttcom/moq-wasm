@@ -109,10 +109,9 @@ pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
     ClientConfig {
-        port: 0,
         verify_certificate: false,
-        authorization_token: None,
         follow_go_away: false,
+        ..ClientConfig::default()
     }
 }
 

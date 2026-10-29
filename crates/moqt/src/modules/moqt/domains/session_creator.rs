@@ -180,10 +180,10 @@ mod tests {
         let url = format!("moqt://127.0.0.1:{port}");
         let client = tokio::spawn(async move {
             dual_client_with_config(ClientConfig {
-                port: 0,
                 verify_certificate: false,
                 authorization_token: Some("jwt".to_string()),
                 follow_go_away: false,
+                ..ClientConfig::default()
             })
             .connect(&url)
             .await?

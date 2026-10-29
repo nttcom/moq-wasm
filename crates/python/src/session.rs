@@ -25,10 +25,8 @@ pub fn connect(
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         // quinn binds the endpoint's socket through the ambient runtime, which this future runs on.
         let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
-            port: 0,
             verify_certificate,
-            authorization_token: None,
-            follow_go_away: true,
+            ..ClientConfig::default()
         })?;
         let session = Arc::new(endpoint.connect(&url).await?.await?);
         let origin = Origin::default();

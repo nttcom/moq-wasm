@@ -79,10 +79,8 @@ fn relay_url() -> String {
 
 async fn connect(relay_url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        port: 0,
         verify_certificate: false,
-        authorization_token: None,
-        follow_go_away: true,
+        ..ClientConfig::default()
     })?;
     endpoint.connect(relay_url).await?.await
 }

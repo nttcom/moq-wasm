@@ -923,10 +923,8 @@ fn ordered_object_payload(index: usize) -> Vec<u8> {
 
 async fn connect(url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        port: 0,
         verify_certificate: false,
-        authorization_token: None,
-        follow_go_away: true,
+        ..ClientConfig::default()
     })?;
     tracing::info!(url, "connecting to relay");
     let connecting = endpoint.connect(url).await?;

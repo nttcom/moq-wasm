@@ -25,10 +25,9 @@ impl RelayConnection {
         authorization_token: Option<String>,
     ) -> Result<Self> {
         let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
-            port: 0,
             verify_certificate,
             authorization_token,
-            follow_go_away: true,
+            ..ClientConfig::default()
         })?;
         tracing::info!(relay = url, "connecting to relay");
         let connecting = endpoint

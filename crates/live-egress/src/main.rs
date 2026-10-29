@@ -97,10 +97,9 @@ async fn main() -> Result<()> {
     let relay = RelaySession::connect(
         &args.moqt_url,
         &ClientConfig {
-            port: 0,
             verify_certificate: !args.insecure_skip_tls_verify,
             authorization_token: args.auth_token,
-            follow_go_away: true,
+            ..ClientConfig::default()
         },
     )
     .await?;

@@ -75,10 +75,8 @@ async fn verify(relay_url: &str) -> Result<()> {
 
 async fn connect(relay_url: &str) -> Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        port: 0,
         verify_certificate: false,
-        authorization_token: None,
-        follow_go_away: true,
+        ..ClientConfig::default()
     })?;
     endpoint.connect(relay_url).await?.await
 }

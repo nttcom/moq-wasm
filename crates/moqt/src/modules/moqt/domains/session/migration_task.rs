@@ -664,10 +664,8 @@ mod tests {
 
     async fn connect(port: u16) -> Session {
         let client = dual_client_with_config(ClientConfig {
-            port: 0,
             verify_certificate: false,
-            authorization_token: None,
-            follow_go_away: true,
+            ..ClientConfig::default()
         });
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             client
