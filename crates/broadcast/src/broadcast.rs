@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose};
-use mediapack::{AudioConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer};
+use mediapack::{AudioConfig, VideoConfig, loc::VideoCodec, mp4::Fmp4TrackMuxer};
 use moqt::{executor, publish::OutgoingObject};
 use msf::{
     Catalog, Track,
@@ -147,14 +147,22 @@ pub struct VideoTrackInfo {
 }
 
 impl VideoTrackInfo {
-    pub fn from_record(record: &AvcDecoderConfigurationRecord, label: String) -> Result<Self> {
-        let sps = record.sequence_parameter_set()?;
-        let init_segment = Fmp4TrackMuxer::video(record.clone()).init_segment()?;
+    pub fn from_config(config: &VideoConfig, label: String) -> Result<Self> {
+        let (width, height) = match config {
+            VideoConfig::Avc(record) => {
+                let sps = record.sequence_parameter_set()?;
+                (sps.width, sps.height)
+            }
+            VideoConfig::Vp8(config) => (config.width, config.height),
+            VideoConfig::Vp9(config) => (config.width, config.height),
+            VideoConfig::Av1(config) => (config.max_width, config.max_height),
+        };
+        let init_segment = Fmp4TrackMuxer::video(config.clone()).init_segment()?;
         Ok(Self {
             label,
-            codec: record.codec_string(),
-            width: sps.width,
-            height: sps.height,
+            codec: config.codec_string(),
+            width,
+            height,
             init_segment: general_purpose::STANDARD.encode(init_segment),
             bitrate: None,
             cmaf: true,
@@ -204,7 +212,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         loc.label = Some(info.label.clone());
         loc.alt_group = alt_group;
         loc.codec = Some(info.codec.clone());
-        loc.mime_type = Some("video/h264".to_string());
+        loc.mime_type = Some(video_mime_type(&info.codec).to_string());
         loc.framerate = Some(30.0);
         loc.width = Some(info.width);
         loc.height = Some(info.height);
@@ -296,6 +304,15 @@ fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec
     tracks
 }
 
+fn video_mime_type(codec: &str) -> &'static str {
+    match VideoCodec::from_codec_string(codec) {
+        Some(VideoCodec::Vp8) => "video/vp8",
+        Some(VideoCodec::Vp9) => "video/vp9",
+        Some(VideoCodec::Av1) => "video/av1",
+        Some(VideoCodec::H264) | None => "video/h264",
+    }
+}
+
 fn cmaf_sibling(loc: &Track, mime_type: &str, alt_group: Option<u64>) -> Track {
     let mut cmaf = loc.cmaf_sibling(&cmaf_track_name(&loc.name), mime_type, alt_group);
     cmaf.label = loc.label.as_ref().map(|label| format!("{label} (CMAF)"));
@@ -345,7 +362,9 @@ fn channel_config_label(channels: u8) -> String {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use mediapack::aac::AudioSpecificConfig;
+    use mediapack::{
+        aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, vp9::Vp9Config,
+    };
 
     use super::*;
 
@@ -364,7 +383,7 @@ mod tests {
         let mut video_tracks = BTreeMap::new();
         video_tracks.insert(
             VIDEO_TRACK_NAME.to_string(),
-            VideoTrackInfo::from_record(&record, "Video".to_string()).unwrap(),
+            VideoTrackInfo::from_config(&VideoConfig::Avc(record), "Video".to_string()).unwrap(),
         );
         CatalogMetadata {
             video_tracks,
@@ -410,6 +429,41 @@ mod tests {
         assert!(!awaits_subscribe(&catalog, "video"));
         assert!(!awaits_subscribe(&catalog, "timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
+    }
+
+    #[test]
+    fn a_vp9_video_is_listed_with_its_codec_and_a_vp09_cmaf_sibling() {
+        // Arrange
+        let config = VideoConfig::Vp9(Vp9Config {
+            profile: 0,
+            bit_depth: 8,
+            subsampling_x: true,
+            subsampling_y: true,
+            full_range: false,
+            width: 640,
+            height: 360,
+        });
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([(
+                VIDEO_TRACK_NAME.to_string(),
+                VideoTrackInfo::from_config(&config, "Video".to_string()).unwrap(),
+            )]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let video = track_named(&catalog, VIDEO_TRACK_NAME);
+        assert_eq!(video.codec.as_deref(), Some("vp09.00.21.08"));
+        assert_eq!(video.mime_type.as_deref(), Some("video/vp9"));
+        assert_eq!((video.width, video.height), (Some(640), Some(360)));
+        let cmaf = track_named(&catalog, &cmaf_track_name(VIDEO_TRACK_NAME));
+        let init_segment = general_purpose::STANDARD
+            .decode(init_data_of(&catalog, cmaf).unwrap())
+            .unwrap();
+        assert!(init_segment.windows(4).any(|window| window == b"vp09"));
     }
 
     #[test]

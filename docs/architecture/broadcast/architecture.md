@@ -53,8 +53,8 @@ TRACK_DOES_NOT_EXIST.
 
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-04): the payload is the
-codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law, Opus or MP3 frames,
-and the capture timestamp travels as the Timestamp property, MoQT extension
+codec bitstream, H.264 in Annex-B, VP8 or VP9 frames, AV1 temporal units and
+raw AAC, G.711 A-law, Opus or MP3 frames, and the capture timestamp travels as the Timestamp property, MoQT extension
 header 0x10, with no Timescale, so it reads as Unix µs. An audio sample whose
 source measured its level carries it as the Audio Level property, extension
 header 0x0C (§2.3.3.2), which a meeting reads to find the speaker. The capture
@@ -66,8 +66,11 @@ initialization data is a Base64-encoded entry of the catalog `initDataList` that
 the track's `initRef` names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13); each entry
 takes the name of its track as its id, which keeps the ids unique. An AAC audio
 track's AudioSpecificConfig is published this way; A-law, Opus and MP3 need none
-beyond the codec, sample rate and channel count the catalog lists, and the video
-track carries its parameter sets in band.
+beyond the codec, sample rate and channel count the catalog lists, and an H.264
+video track carries its parameter sets in band. The catalog's video `codec` is
+the WebCodecs codec string read from the bitstream; a VP9 stream carries no
+level, so its string takes the lowest level whose picture size fits, the same
+estimate the CMAF track's vpcC box gives.
 
 ## CMAF tracks
 A writer whose `SourceTracks::cmaf` is off publishes its tracks as LOC alone:

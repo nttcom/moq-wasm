@@ -33,6 +33,17 @@ pub struct Av1Config {
     pub sequence_header_obu: Bytes,
 }
 
+impl Av1Config {
+    /// `av01.P.LLT.DD` (AV1-ISOBMFF binding §5), without the optional fields.
+    pub fn codec_string(&self) -> String {
+        let tier = if self.seq_tier_0 { 'H' } else { 'M' };
+        format!(
+            "av01.{}.{:02}{tier}.{:02}",
+            self.seq_profile, self.seq_level_idx_0, self.bit_depth
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct Av1TemporalUnit {
     pub is_keyframe: bool,
@@ -301,6 +312,19 @@ fn read_leb128(data: &[u8]) -> Result<(usize, usize)> {
 mod tests {
     use super::*;
     use crate::test_support::{FIXTURE_AV1_IVF, ivf_frames};
+
+    #[test]
+    fn the_codec_string_names_the_profile_level_tier_and_bit_depth() {
+        // Arrange
+        let frames = ivf_frames(FIXTURE_AV1_IVF);
+        let config = parse_temporal_unit(&frames[0], None)
+            .unwrap()
+            .config
+            .unwrap();
+
+        // Act / Assert
+        assert_eq!(config.codec_string(), "av01.0.00M.08");
+    }
 
     #[test]
     fn reads_the_sequence_header_of_a_keyframe() {

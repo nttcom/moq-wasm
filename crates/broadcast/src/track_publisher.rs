@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::{
     AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample,
-    loc::{Muxer as LocMuxer, to_extension_headers},
+    loc::{Muxer as LocMuxer, VideoCodec, to_extension_headers},
     mp4::Fmp4TrackMuxer,
 };
 use moqt::{
@@ -55,6 +55,7 @@ pub(crate) struct TrackPublisher {
     audio_config: Option<AudioConfig>,
     timeline: MediaTimeline,
     timing: SharedTiming,
+    video_codec: VideoCodec,
     video_cmaf: Option<Fmp4TrackMuxer>,
     audio_cmaf: Option<Fmp4TrackMuxer>,
 }
@@ -72,6 +73,7 @@ impl TrackPublisher {
                 loc: Arc::new(OnceLock::new()),
                 alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
             },
+            video_codec: VideoCodec::H264,
             video_cmaf: None,
             audio_cmaf: None,
         }
@@ -85,14 +87,14 @@ impl TrackPublisher {
         match event {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
-                let config = config.avc()?;
+                self.video_codec = VideoCodec::from(config);
                 self.video_cmaf = self
                     .tracks
                     .cmaf
                     .then(|| Fmp4TrackMuxer::video(config.clone()));
                 let info = VideoTrackInfo {
                     cmaf: self.tracks.cmaf,
-                    ..VideoTrackInfo::from_record(config, self.tracks.video_label.clone())?
+                    ..VideoTrackInfo::from_config(config, self.tracks.video_label.clone())?
                 };
                 self.broadcast
                     .update_video_catalog(&self.tracks.video, info)
@@ -135,6 +137,7 @@ impl TrackPublisher {
         let Some(object) = self
             .timing
             .loc_muxer(sample.pts)
+            .with_video_codec(self.video_codec)
             .push(&MediaEvent::Video(sample.clone()))
         else {
             return Ok(());

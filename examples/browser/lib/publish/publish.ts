@@ -7,7 +7,8 @@ export type PublishOptions = {
   videoLabel?: string
   /// Frames between keyframes; each keyframe starts a group.
   keyframeIntervalFrames?: number
-  /// Replaces the encoder's H.264 default; the broadcast takes H.264 only.
+  /// Replaces the encoder's H.264 default; the broadcast takes H.264, VP8, VP9
+  /// and AV1.
   videoEncoderConfig?: VideoEncoderConfig
   onError?: (error: unknown) => void
 }
@@ -23,7 +24,7 @@ const DEFAULT_KEYFRAME_INTERVAL_FRAMES = 60
 type ChunkMessage<Chunk, Metadata> = { type: 'chunk'; chunk: Chunk; metadata: Metadata | undefined }
 
 /// Publishes `stream` as an MSF broadcast in `namespace`, encoding its first
-/// video track as H.264 and its first audio track as Opus.
+/// video track as H.264 by default and its first audio track as Opus.
 export async function publish(
   session: MoqSession,
   namespace: string[],
@@ -60,12 +61,18 @@ function encodeVideo(
   const worker = new Worker(new URL('../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
     type: 'module'
   })
+  let configuredCodec: string | undefined
   worker.onmessage = (event: MessageEvent<ChunkMessage<EncodedVideoChunk, EncodedVideoChunkMetadata>>) => {
     if (event.data.type !== 'chunk') {
       return
     }
-    const { chunk } = event.data
+    const { chunk, metadata } = event.data
     try {
+      const codec = metadata?.decoderConfig?.codec
+      if (codec && codec !== configuredCodec) {
+        broadcast.configureVideo(codec)
+        configuredCodec = codec
+      }
       broadcast.pushVideo(copied(chunk), chunk.timestamp)
     } catch (error) {
       report(error)

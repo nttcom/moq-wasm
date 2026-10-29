@@ -208,9 +208,10 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    `pushAudio` に渡す。`broadcast` はそれをその object の property として書く。
 6. **映像 codec の追加（VP8、VP9、AV1）。** `TrackPublisher` は今
    `VideoConfig::avc()` を要求する。これを `VideoConfig` の全 variant に広げ、
-   catalog の `codec` には WebCodecs の `decoderConfig.codec` をそのまま使う（VP9 の
-   level はビットストリームから決まらないため）。CMAF の兄弟 track は既存の fMP4 muxer
-   （`vp08`/`vp09`/`av01`）で作る。ブラウザからの AAC は、WebCodecs の
+   catalog の `codec` はビットストリームから読んだ config で作る。VP9 の level は
+   ビットストリームに無いので、CMAF の vpcC box と同じく画面サイズに収まる最小の
+   level にし、catalog と init segment の codec を揃える。CMAF の兄弟 track は既存の
+   fMP4 muxer（`vp08`/`vp09`/`av01`）で作る。ブラウザからの AAC は、WebCodecs の
    `decoderConfig.description`（AudioSpecificConfig）から `AudioConfig::Aac` を作れば、
    既存の経路にそのまま乗る。プレイヤー側は catalog の codec 文字列で WebCodecs の
    decoder を設定するので、`VideoDecoder.isConfigSupported` で弾くだけでよい。

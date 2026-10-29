@@ -117,6 +117,16 @@ pub enum VideoConfig {
 }
 
 impl VideoConfig {
+    /// The WebCodecs codec string, the form a catalog's `codec` takes.
+    pub fn codec_string(&self) -> String {
+        match self {
+            Self::Avc(record) => record.codec_string(),
+            Self::Vp8(_) => "vp8".to_string(),
+            Self::Vp9(config) => config.codec_string(),
+            Self::Av1(config) => config.codec_string(),
+        }
+    }
+
     /// Fails unless the config is H.264.
     pub fn avc(&self) -> Result<&AvcDecoderConfigurationRecord> {
         let codec = match self {

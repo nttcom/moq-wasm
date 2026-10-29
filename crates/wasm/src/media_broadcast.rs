@@ -1,8 +1,9 @@
 use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
 use bytes::Bytes;
 use mediapack::{
-    AudioConfig, AudioLevel, AudioSample, MediaEvent, Timestamp, aac::AudioSpecificConfig,
-    h264::ParameterSetTracker,
+    AudioConfig, AudioLevel, AudioSample, MediaEvent, Timestamp,
+    aac::AudioSpecificConfig,
+    loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
 };
 use wasm_bindgen::prelude::*;
 
@@ -14,7 +15,9 @@ use crate::js_error;
 #[wasm_bindgen]
 pub struct MediaBroadcast {
     writer: BroadcastWriter,
-    parameter_sets: ParameterSetTracker,
+    /// Reads a chunk as it reads a received LOC object: into the track's
+    /// configuration changes and a sample.
+    video: Option<LocDemuxer>,
 }
 
 impl MediaBroadcast {
@@ -32,7 +35,7 @@ impl MediaBroadcast {
         }
         Self {
             writer: BroadcastWriter::run(Broadcast::new(connection, namespace), tracks),
-            parameter_sets: ParameterSetTracker::new(),
+            video: None,
         }
     }
 
@@ -54,21 +57,34 @@ impl MediaBroadcast {
             .map_err(|err| js_error(format!("{err:#}")))
     }
 
-    /// An H.264 access unit in Annex-B, as a WebCodecs encoder with
-    /// `avc: { format: 'annexb' }` emits it. The SPS and PPS a keyframe carries
-    /// make the track's configuration, published again when they change.
+    /// `codec` is the WebCodecs codec string: `avc1.*` or `avc3.*` with
+    /// `avc: { format: 'annexb' }`, `vp8`, `vp09.*` or `av01.*`; fails for any
+    /// other.
+    #[wasm_bindgen(js_name = configureVideo)]
+    pub fn configure_video(&mut self, codec: String) -> Result<(), JsValue> {
+        let video_codec = VideoCodec::from_codec_string(&codec)
+            .ok_or_else(|| js_error(format!("unsupported video codec: {codec}")))?;
+        self.video = Some(LocDemuxer::video(video_codec).with_capture_origin(Timestamp::ZERO));
+        Ok(())
+    }
+
+    /// Call `configureVideo` first. A keyframe sets the track's configuration
+    /// (for H.264, its SPS and PPS), published again when it changes.
     /// `timestamp_micros` must not run backwards.
     #[wasm_bindgen(js_name = pushVideo)]
     pub fn push_video(&mut self, data: Vec<u8>, timestamp_micros: f64) -> Result<(), JsValue> {
-        let Some(access_unit) = self
-            .parameter_sets
-            .track(&data)
-            .map_err(|err| js_error(format!("{err:#}")))?
-        else {
-            return Ok(());
+        let video = self
+            .video
+            .as_mut()
+            .ok_or_else(|| js_error("call configureVideo first"))?;
+        let chunk = LocObject {
+            extensions: vec![LocExtension::varint(TIMESTAMP_ID, timestamp_micros as u64)],
+            payload: Bytes::from(data),
         };
-        let timestamp = Timestamp::from_micros(timestamp_micros as u64);
-        for event in access_unit.into_events(timestamp, timestamp) {
+        let events = video
+            .push(&chunk)
+            .map_err(|err| js_error(format!("{err:#}")))?;
+        for event in events {
             self.push(event)?;
         }
         Ok(())
