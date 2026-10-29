@@ -96,6 +96,8 @@ impl DualProtocolCreator {
 
 #[async_trait]
 impl TransportConnectionCreator for DualProtocolCreator {
+    const FALLS_BACK_TO_WEB_SOCKET: bool = true;
+
     fn client(
         port_num: u16,
         verify_certificate: bool,
