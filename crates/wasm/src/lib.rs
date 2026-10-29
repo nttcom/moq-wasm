@@ -4,6 +4,8 @@ mod client;
 mod client_state;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod loc;
+#[cfg(target_arch = "wasm32")]
+mod media_broadcast;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod messages;
 mod mp4;

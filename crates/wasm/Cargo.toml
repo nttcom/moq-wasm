@@ -11,6 +11,7 @@ default = ["console_error_panic_hook"]
 
 [dependencies]
 anyhow = "1.0.102"
+broadcast = { path = "../broadcast" }
 bytes = "1.11.1"
 console_error_panic_hook = { version = "0.1.7", optional = true }
 js-sys = "0.3.100"
@@ -27,9 +28,6 @@ wasm-bindgen-futures = "0.4.73"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 moqt = { path = "../moqt", features = ["self-signed-cert"] }
 tokio = { version = "1", features = ["macros", "rt", "time"] }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-broadcast = { path = "../broadcast" }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

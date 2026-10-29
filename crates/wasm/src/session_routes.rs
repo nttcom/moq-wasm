@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
+use broadcast::RelayConnection;
 use moqt::{
     RequestErrorCode, Session, SessionEvent,
     namespace::{NamespaceEvent, NamespaceWatchers},
@@ -14,12 +15,14 @@ pub(crate) struct PublishDone {
     pub(crate) reason: String,
 }
 
-/// `origin` answers the peer's SUBSCRIBE, FETCH and TRACK_STATUS for the
-/// tracks this session publishes; a SUBSCRIBE for any other track, and
-/// every PUBLISH, is rejected.
+/// Each event goes to the broadcasts first, then to `origin`, which they
+/// share. `origin` answers the peer's SUBSCRIBE, FETCH and TRACK_STATUS for
+/// the other tracks this session publishes. A SUBSCRIBE for any other track,
+/// and every PUBLISH, is rejected.
 #[derive(Default)]
 pub(crate) struct SessionRoutes {
     pub(crate) origin: Origin,
+    broadcasts: RefCell<Vec<RelayConnection>>,
     watchers: NamespaceWatchers,
     publish_done: RefCell<HashMap<u64, oneshot::Sender<PublishDone>>>,
 }
@@ -36,13 +39,25 @@ impl SessionRoutes {
         receiver
     }
 
+    pub(crate) fn add_broadcast(&self, connection: RelayConnection) {
+        self.broadcasts.borrow_mut().push(connection);
+    }
+
     pub(crate) fn forget(&self, request_id: u64) {
         self.publish_done.borrow_mut().remove(&request_id);
     }
 
     /// Returns once the session has ended.
     pub(crate) async fn route(&self, session: &Session) {
-        while let Ok(event) = session.receive_event().await {
+        'events: while let Ok(event) = session.receive_event().await {
+            let mut event = event;
+            let broadcasts = self.broadcasts.borrow().clone();
+            for broadcast in broadcasts {
+                let Some(unhandled) = broadcast.handle(event).await else {
+                    continue 'events;
+                };
+                event = unhandled;
+            }
             let Some(event) = self.origin.handle(event).await else {
                 continue;
             };
@@ -248,6 +263,42 @@ mod tests {
             _endpoints,
         } = connected_sessions("reject-subscribe").await;
         let routes = SessionRoutes::default();
+
+        // Act
+        let subscribed = tokio::time::timeout(TIMEOUT, async {
+            let mut subscriber = server.subscriber();
+            tokio::select! {
+                () = routes.route(&client) => panic!("the session ended"),
+                subscribed = subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()) => subscribed,
+            }
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(matches!(
+            subscribed,
+            Err(RequestFailure::Rejected {
+                code: RequestErrorCode::TrackDoesNotExist,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_outside_every_broadcast_passes_them_and_is_rejected() {
+        // Arrange
+        let Connected {
+            client,
+            server,
+            _endpoints,
+        } = connected_sessions("routes-broadcast").await;
+        let client = std::sync::Arc::new(client);
+        let routes = SessionRoutes::default();
+        routes.add_broadcast(RelayConnection::with_session(
+            client.clone(),
+            routes.origin.clone(),
+        ));
 
         // Act
         let subscribed = tokio::time::timeout(TIMEOUT, async {
