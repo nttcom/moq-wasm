@@ -27,7 +27,8 @@ class ChatMessage(DataFrame):
 
     @classmethod
     def parse(cls, chat_object: moqt.Object) -> "ChatMessage":
-        """Raises ValueError for a payload that is not `{"text", "labels": [{"name", "description"}]}`."""
+        """Raises ValueError for a payload that is not a valid `{"text", "labels": [{"name", "description"}]}`
+        within the length and count limits."""
         body = json.loads(chat_object.payload)
         if not isinstance(body, dict):
             raise ValueError("chat is not an object")

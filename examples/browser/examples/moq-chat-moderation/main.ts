@@ -35,7 +35,7 @@ const DEFAULT_LABELS: Label[] = [
   { name: 'スパム', description: '宣伝・勧誘・無関係な繰り返し' }
 ]
 
-/// `labels` is undefined until the moderator's verdict arrives.
+/// `labels` is undefined until the message is judged.
 type ChatEntry = { item: HTMLLIElement; labels?: LabelProbability[] }
 
 const session = new MoqtClientWrapper()

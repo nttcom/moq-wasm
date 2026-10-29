@@ -9,7 +9,7 @@ const ROOM = 'e2e'
 export const SYSTEM_ONE_ORIGIN = process.env.CHAT_MODERATION_E2E_SYSTEM_ONE_ORIGIN!
 
 export const LEAVE_BUTTON_TEST_ID = 'chat-moderation-leave-button'
-/// The fake System One gives a label 0.95 when the message contains `e2e-` and the label's name.
+/// The fake System One gives a label 0.95 when the message contains `e2e-<label name>`.
 export const ABUSIVE_TEXT = 'e2e-暴言'
 export const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
 
