@@ -19,9 +19,15 @@ use crate::js_error;
 
 /// An MSF broadcast of media the page encodes: it publishes the catalog, the
 /// LOC tracks and the media timeline, keeps objects for FETCH and answers
-/// SUBSCRIBE. Created with `Session.broadcast`.
+/// SUBSCRIBE. Created with `Session.broadcast`. The tracks of every source
+/// share its one catalog.
 #[wasm_bindgen]
 pub struct MediaBroadcast {
+    broadcast: Broadcast,
+}
+
+#[wasm_bindgen]
+pub struct MediaSource {
     writer: BroadcastWriter,
     tracks: SourceTracks,
     /// Reads a chunk as it reads a received LOC object: into the track's
@@ -44,26 +50,52 @@ enum RenditionCommand {
 }
 
 impl MediaBroadcast {
-    pub(crate) fn new(
-        connection: RelayConnection,
-        namespace: Vec<String>,
-        video_label: Option<String>,
-    ) -> Self {
-        let mut tracks = SourceTracks {
-            cmaf: false,
-            ..SourceTracks::default()
-        };
-        if let Some(video_label) = video_label {
-            tracks.video_label = video_label;
-        }
+    pub(crate) fn new(connection: RelayConnection, namespace: Vec<String>) -> Self {
         Self {
-            writer: BroadcastWriter::run(Broadcast::new(connection, namespace), tracks.clone()),
+            broadcast: Broadcast::new(connection, namespace),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl MediaBroadcast {
+    /// Resolves once the namespace is announced (PUBLISH_NAMESPACE).
+    pub async fn announce(&self) -> Result<(), JsValue> {
+        self.broadcast
+            .announce()
+            .await
+            .map_err(|err| js_error(format!("{err:#}")))
+    }
+
+    /// Only a source on the tracks `video` and `audio` brings the media
+    /// timeline and the chat. Its video forms a switching set of its own with
+    /// its renditions.
+    #[wasm_bindgen(js_name = addSource)]
+    pub fn add_source(
+        &self,
+        video: String,
+        video_label: String,
+        audio: String,
+        audio_label: String,
+    ) -> MediaSource {
+        let tracks = SourceTracks {
+            switching_set: video.clone(),
+            video,
+            video_label,
+            audio,
+            audio_label,
+            cmaf: false,
+        };
+        MediaSource {
+            writer: BroadcastWriter::run(self.broadcast.clone(), tracks.clone()),
             tracks,
             video: None,
             renditions: Vec::new(),
         }
     }
+}
 
+impl MediaSource {
     fn rendition(&mut self, index: usize) -> Result<&mut Rendition, JsValue> {
         self.renditions
             .get_mut(index)
@@ -78,19 +110,11 @@ impl MediaBroadcast {
 }
 
 #[wasm_bindgen]
-impl MediaBroadcast {
-    /// Resolves once the namespace is announced (PUBLISH_NAMESPACE).
-    pub async fn announce(&self) -> Result<(), JsValue> {
-        self.writer
-            .broadcast()
-            .announce()
-            .await
-            .map_err(|err| js_error(format!("{err:#}")))
-    }
-
-    /// Ends the `video` or `audio` track with PUBLISH_DONE and sends the catalog
-    /// without it; stop pushing its media first. `configureVideo` or
-    /// `configureAudio` and the media pushed after it publish the track again.
+impl MediaSource {
+    /// Ends the source's video or audio track (`kind` is `video` or `audio`)
+    /// with PUBLISH_DONE and sends the catalog without it; stop pushing its
+    /// media first. `configureVideo` or `configureAudio` and the media pushed
+    /// after it publish the track again.
     #[wasm_bindgen(js_name = removeTrack)]
     pub fn remove_track(&self, kind: String) -> Result<Promise, JsValue> {
         let track_name = match kind.as_str() {
@@ -131,7 +155,7 @@ impl MediaBroadcast {
         }))
     }
 
-    /// Adds a rendition of the video in the track `video_<name>`, in the
+    /// Adds a rendition of the video in the track `<video track>_<name>`, in the
     /// group ids of the video's keyframes on the same frames
     /// (draft-ietf-moq-cmsf-01 §3.2), and returns its index. `bitrate` is in
     /// bits per second. Removing the video removes its renditions.
