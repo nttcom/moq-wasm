@@ -12,18 +12,20 @@ use crate::{
 
 pub struct BroadcastWriter {
     broadcast: Broadcast,
+    source_tracks: SourceTracks,
     timing: SharedTiming,
     queue: PublishQueue,
     _publish_task: JoinHandle,
 }
 
 impl BroadcastWriter {
-    pub fn run(broadcast: Broadcast, tracks: SourceTracks) -> Self {
-        let tracks = TrackPublisher::new(broadcast.clone(), tracks);
+    pub fn run(broadcast: Broadcast, source_tracks: SourceTracks) -> Self {
+        let tracks = TrackPublisher::new(broadcast.clone(), source_tracks.clone());
         let timing = tracks.shared_timing();
         let (queue, consumer) = PublishQueue::open(broadcast.connection().clone());
         Self {
             broadcast,
+            source_tracks,
             timing,
             queue,
             _publish_task: executor::spawn(
@@ -49,6 +51,10 @@ impl BroadcastWriter {
     /// future does not borrow the writer, so media can be pushed meanwhile.
     pub fn remove_track(&self, track_name: &str) -> impl Future<Output = Result<()>> + 'static {
         self.queue.remove_track(track_name.to_string())
+    }
+
+    pub fn source_tracks(&self) -> &SourceTracks {
+        &self.source_tracks
     }
 
     pub fn broadcast(&self) -> &Broadcast {

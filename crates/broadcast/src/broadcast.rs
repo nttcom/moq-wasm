@@ -124,6 +124,10 @@ pub struct SourceTracks {
     /// Lists a CMAF sibling next to each LOC track and sends it while a
     /// subscriber takes it.
     pub cmaf: bool,
+    /// The video tracks of one switching set are alternates of each other
+    /// (draft-ietf-moq-msf-01 §5.2.12), so sources of the same picture, such
+    /// as the profiles of one camera, share it and a shared screen does not.
+    pub switching_set: String,
 }
 
 impl Default for SourceTracks {
@@ -134,6 +138,7 @@ impl Default for SourceTracks {
             audio: AUDIO_TRACK_NAME.to_string(),
             audio_label: "Audio".to_string(),
             cmaf: true,
+            switching_set: VIDEO_TRACK_NAME.to_string(),
         }
     }
 }
@@ -157,6 +162,8 @@ pub struct VideoTrackInfo {
     /// the track itself.
     pub bitrate: Option<u64>,
     pub cmaf: bool,
+    /// `SourceTracks::switching_set` of the track's source.
+    pub switching_set: String,
 }
 
 impl VideoTrackInfo {
@@ -179,6 +186,7 @@ impl VideoTrackInfo {
             init_segment: general_purpose::STANDARD.encode(init_segment),
             bitrate: None,
             cmaf: true,
+            switching_set: VIDEO_TRACK_NAME.to_string(),
         })
     }
 }
@@ -228,12 +236,13 @@ pub(crate) fn awaits_subscribe(catalog: &Catalog, track_name: &str) -> bool {
 pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) -> Result<Catalog> {
     let namespace = Some(namespace_path.to_string());
     let video_role = TrackRole::Known(KnownTrackRole::Video);
-    let alt_group = (metadata.video_tracks.len() > 1).then_some(1);
-    let cmaf_alt_group = alt_group.map(|group| group + 1);
+    let alt_groups = alt_groups(metadata);
 
     let mut tracks = Vec::new();
     let mut init_data_list = Vec::new();
     for (name, info) in &metadata.video_tracks {
+        let alt_group = alt_groups.get(info.switching_set.as_str()).copied();
+        let cmaf_alt_group = alt_group.map(|group| group + 1);
         let mut loc = track(&namespace, name, KnownPackaging::Loc, video_role.clone());
         loc.label = Some(info.label.clone());
         loc.alt_group = alt_group;
@@ -337,6 +346,21 @@ fn video_mime_type(codec: &str) -> &'static str {
         Some(VideoCodec::Av1) => "video/av1",
         Some(VideoCodec::H264) | None => "video/h264",
     }
+}
+
+/// The LOC `altGroup` of each switching set with more than one video track;
+/// its CMAF siblings take the next id, as each format forms its own set.
+fn alt_groups(metadata: &CatalogMetadata) -> BTreeMap<&str, u64> {
+    let mut sizes = BTreeMap::<&str, usize>::new();
+    for info in metadata.video_tracks.values() {
+        *sizes.entry(info.switching_set.as_str()).or_default() += 1;
+    }
+    sizes
+        .into_iter()
+        .filter(|(_, size)| *size > 1)
+        .zip((1..).step_by(2))
+        .map(|((switching_set, _), alt_group)| (switching_set, alt_group))
+        .collect()
 }
 
 fn cmaf_sibling(loc: &Track, mime_type: &str, alt_group: Option<u64>) -> Track {
@@ -456,6 +480,41 @@ mod tests {
         assert!(!awaits_subscribe(&catalog, "video"));
         assert!(!awaits_subscribe(&catalog, "timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
+    }
+
+    #[test]
+    fn each_switching_set_takes_its_own_alt_groups() {
+        // Arrange: the camera has a rendition, the shared screen has two tracks too
+        let video = |switching_set: &str| VideoTrackInfo {
+            label: "Video".to_string(),
+            codec: "avc1.42e01e".to_string(),
+            width: 640,
+            height: 360,
+            init_segment: String::new(),
+            bitrate: None,
+            cmaf: true,
+            switching_set: switching_set.to_string(),
+        };
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([
+                ("video".to_string(), video("video")),
+                ("video_low".to_string(), video("video")),
+                ("screen".to_string(), video("screen")),
+                ("screen_low".to_string(), video("screen")),
+            ]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let alt_group = |name: &str| track_named(&catalog, name).alt_group;
+        assert_eq!(alt_group("video"), alt_group("video_low"));
+        assert_eq!(alt_group("screen"), alt_group("screen_low"));
+        assert_ne!(alt_group("video"), alt_group("screen"));
+        assert_ne!(alt_group("video_cmaf"), alt_group("video"));
+        assert_ne!(alt_group("video_cmaf"), alt_group("screen"));
     }
 
     #[test]
