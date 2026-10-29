@@ -1,6 +1,7 @@
 use anyhow::Error;
 use broadcast::{
-    BroadcastWriter, RenditionConfig, RenditionTrack, VIDEO_TRACK_NAME, VideoTrackInfo,
+    BroadcastWriter, RenditionConfig, RenditionKeyframes, RenditionTrack, VIDEO_TRACK_NAME,
+    VideoTrackInfo,
 };
 use mediapack::VideoSample;
 use tokio::{
@@ -36,6 +37,7 @@ impl RenditionFanout {
                         label: format!("Video {}", rendition.name),
                         bitrate: Some(u64::from(rendition.bitrate_kbps) * 1000),
                         cmaf: true,
+                        keyframes: RenditionKeyframes::FollowSource,
                     },
                 )
             })
