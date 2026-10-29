@@ -17,6 +17,7 @@ pub struct TrackWriter {
     next_group_id: u64,
     group: Option<GroupSender>,
     pending_group_gap: Option<u64>,
+    opened_streams: u64,
 }
 
 impl TrackWriter {
@@ -27,6 +28,7 @@ impl TrackWriter {
             next_group_id: first_group_id,
             group: None,
             pending_group_gap: None,
+            opened_streams: 0,
         }
     }
 
@@ -144,6 +146,11 @@ impl TrackWriter {
         }
     }
 
+    /// The Stream Count of draft-ietf-moq-transport-14 §9.12.
+    pub(crate) fn opened_streams(&self) -> u64 {
+        self.opened_streams
+    }
+
     pub fn groups(&self) -> u64 {
         self.next_group_id - self.first_group_id
     }
@@ -179,10 +186,9 @@ impl TrackWriter {
 
     async fn open_group(&mut self) -> anyhow::Result<GroupSender> {
         let group_id = self.next_group_id;
-        let sender = self
-            .factory
-            .next()
-            .await?
+        let stream = self.factory.next().await?;
+        self.opened_streams += 1;
+        let sender = stream
             .start(SubgroupStart {
                 group_id,
                 subgroup_id: 0,
