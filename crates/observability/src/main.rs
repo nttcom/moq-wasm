@@ -5,6 +5,7 @@ use observability::{
     clickhouse::ClickHouse,
     config::ObservabilityConfig,
     latest_snapshots::LatestSnapshots,
+    otlp_metrics_export_task::OtlpMetricsExportTask,
     relay_subscription_task::{RelayConnectionOptions, RelaySubscriptionTask},
     schema,
     snapshot_ingest_task::SnapshotIngestTask,
@@ -29,6 +30,10 @@ async fn main() -> anyhow::Result<()> {
     let latest = LatestSnapshots::default();
     let (snapshot_sender, snapshot_receiver) = mpsc::channel(SNAPSHOT_QUEUE);
     let _ingest = SnapshotIngestTask::run(snapshot_receiver, latest.clone(), clickhouse.clone());
+    let _metrics_export = config
+        .otlp_metrics_endpoint
+        .clone()
+        .map(|endpoint| OtlpMetricsExportTask::run(latest.clone(), endpoint));
     let _subscriptions: Vec<RelaySubscriptionTask> = config
         .relays
         .iter()
@@ -48,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         relays = config.relays.len(),
         http_port = config.http_port,
+        otlp_metrics = config.otlp_metrics_endpoint.is_some(),
         "observability started"
     );
 
