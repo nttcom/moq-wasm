@@ -19,8 +19,7 @@ const PROMPT_TRACK = 'prompt'
 type Prompt = { target: string; video: string } | { target: null }
 
 const session = new MoqtClientWrapper()
-/// The player reads the camera on a session of its own until the bot side
-/// moves off MoqtClientWrapper.
+/// The player's own session; the bot side stays on MoqtClientWrapper.
 let playerSession: MoqSession | undefined
 const player = new LivePlayer({
   container: element('stage'),

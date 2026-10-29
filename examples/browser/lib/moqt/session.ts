@@ -111,8 +111,8 @@ export class MoqSession {
     return request('PUBLISH_NAMESPACE', () => this.inner.announce(namespace))
   }
 
-  /// A track this session publishes: it numbers, caches and sends what the
-  /// writer writes and answers the track's SUBSCRIBE and FETCH.
+  /// Numbers, caches and sends what the writer writes, and answers the track's
+  /// SUBSCRIBE and FETCH.
   publishTrack(namespace: string[], track: string, options: PublishTrackOptions = {}): Promise<Moqt.TrackWriter> {
     return this.inner.publishTrack(namespace, track, options.retentionMs, options.publish)
   }

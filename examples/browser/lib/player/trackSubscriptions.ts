@@ -12,7 +12,6 @@ import { getErrorMessage } from '../../utils/page'
 import type { MediaCatalogTrack } from '../msf/catalog'
 
 export type TrackSubscription = {
-  /// Keys the subscription in the delivery observer.
   id: bigint
   handle: MoqSubscription
   name: string

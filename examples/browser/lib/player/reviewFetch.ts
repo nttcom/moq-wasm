@@ -20,8 +20,6 @@ export type FetchFailure = {
   description: string
 }
 
-/// The relay resets a FETCH stream when the range it is serving loses cached
-/// objects (draft-ietf-moq-transport-14 §10.4.3 INTERNAL_ERROR).
 type FetchStreamEnd = { kind: 'fin' } | { kind: 'reset'; description: string } | { kind: 'deadline' }
 
 export function isFetchFailure(result: ReviewFrame[] | FetchFailure): result is FetchFailure {
@@ -82,6 +80,9 @@ export async function fetchFrames(
   if (!isCurrent()) {
     return undefined
   }
+  // Any reset is read as eviction: the relay resets a FETCH stream with
+  // INTERNAL_ERROR (draft-ietf-moq-transport-14 §10.4.3) when the range it is
+  // serving loses cached objects.
   if (outcome.kind === 'reset') {
     return { evicted: true, description: `fetch stream reset: ${outcome.description}` }
   }

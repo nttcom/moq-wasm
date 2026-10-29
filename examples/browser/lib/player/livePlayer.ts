@@ -240,11 +240,11 @@ export class LivePlayer {
     return this.timeline.media.elapsedMsAt(captureMicros)
   }
 
+  /// The session stays the caller's to close.
   /// Tracks given by the page replace the catalog: nothing is subscribed for
   /// them but the tracks themselves, and they never change.
   /// Resolves once the tracks are subscribed or, when nobody publishes the
   /// namespace yet, once the player has started waiting for the publisher.
-  /// Plays `namespace` over `session`; the session stays the caller's to close.
   async start(session: MoqSession, namespace: string[], tracks?: LiveTracks): Promise<void> {
     await this.queueTrackChange(async () => {
       this.context.session = session

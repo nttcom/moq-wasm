@@ -301,7 +301,7 @@ test('a second viewer joining a subscription the relay already holds gets the ca
     // Act
     await second.viewer.watchButton.click()
 
-    // Assert: the bridge sends the catalog again only every 30 s, so within the timeout only the joining FETCH brings it
+    // Assert: the catalog is resent every 30 s, so a catalog loaded within the timeout came through the joining FETCH
     await expect(second.viewer.catalogStatus).toContainText(/Catalog loaded: [1-9]/)
     await expect(second.viewer.playbackStatus).toContainText('Playing')
     await expectVideoDecoded(second.viewer.video)

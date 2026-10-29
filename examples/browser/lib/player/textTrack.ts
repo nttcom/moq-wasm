@@ -5,7 +5,7 @@ export type TextTrackHandler = (text: string, groupId: bigint) => void
 
 export type TextTrackOptions = {
   /// Reads the group the largest object is in from its first object too
-  /// (SUBSCRIBE with a joining FETCH), as MSF asks of a catalog subscriber.
+  /// (SUBSCRIBE with a joining FETCH, draft-ietf-moq-msf-01 §5).
   currentGroup?: boolean
   /// Called when the publisher ends the track with PUBLISH_DONE.
   onEnded?: (done: PublishDone) => void

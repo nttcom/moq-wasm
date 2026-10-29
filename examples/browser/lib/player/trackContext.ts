@@ -54,8 +54,8 @@ export function observedObjectHandler(
   }
 }
 
-/// Reads the subgroup streams of `subscription` concurrently, as they arrive,
-/// until the subscription has no more; a stream that fails ends only itself.
+/// Reads the subgroup streams concurrently, as they arrive; a stream that fails
+/// ends only itself.
 export async function readGroups(
   context: TrackContext,
   id: bigint,
