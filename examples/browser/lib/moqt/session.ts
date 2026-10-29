@@ -131,8 +131,8 @@ export class MoqSession {
 
   /// To publish a MediaStream, use `publish` in `lib/publish`, which feeds
   /// this broadcast.
-  broadcast(namespace: string[], videoLabel?: string): Moqt.MediaBroadcast {
-    return this.inner.broadcast(namespace, videoLabel)
+  broadcast(namespace: string[]): Moqt.MediaBroadcast {
+    return this.inner.broadcast(namespace)
   }
 
   close(): void {
