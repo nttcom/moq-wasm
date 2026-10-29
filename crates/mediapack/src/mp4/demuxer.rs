@@ -212,26 +212,15 @@ fn read_track_fragment(payload: &[u8]) -> Result<Vec<Run>> {
     if header.flags & TFHD_SAMPLE_DESCRIPTION_INDEX != 0 {
         offset += 4;
     }
-    let default_duration = optional_u32(
-        header.body,
-        &mut offset,
-        header.flags,
-        TFHD_DEFAULT_SAMPLE_DURATION,
-    )?;
-    let default_size = optional_u32(
-        header.body,
-        &mut offset,
-        header.flags,
-        TFHD_DEFAULT_SAMPLE_SIZE,
-    )?;
-    let default_flags = optional_u32(
-        header.body,
-        &mut offset,
-        header.flags,
-        TFHD_DEFAULT_SAMPLE_FLAGS,
-    )?;
+    let mut field = |flag| optional_u32(header.body, &mut offset, header.flags, flag);
+    let defaults = RunDefaults {
+        track_id,
+        duration: field(TFHD_DEFAULT_SAMPLE_DURATION)?,
+        size: field(TFHD_DEFAULT_SAMPLE_SIZE)?,
+        flags: field(TFHD_DEFAULT_SAMPLE_FLAGS)?,
+    };
 
-    let decode_time = match find_full_atom(payload, "tfdt")? {
+    let mut decode_time = match find_full_atom(payload, "tfdt")? {
         Some(header) => {
             if header.is_version_one() {
                 read_u64(header.body, 0)?
@@ -242,14 +231,7 @@ fn read_track_fragment(payload: &[u8]) -> Result<Vec<Run>> {
         None => 0,
     };
 
-    let defaults = RunDefaults {
-        track_id,
-        duration: default_duration,
-        size: default_size,
-        flags: default_flags,
-    };
     let mut runs = Vec::new();
-    let mut decode_time = decode_time;
     for trun in atoms(payload).filter(|atom| atom.kind == b"trun") {
         let run = read_run(trun.payload, &defaults, decode_time)?;
         for sample in &run.samples {
@@ -273,33 +255,23 @@ fn read_run(payload: &[u8], defaults: &RunDefaults, decode_time: u64) -> Result<
     let header = full_atom(payload, "trun")?;
     let sample_count = read_u32(header.body, 0)? as usize;
     let mut offset = 4;
-    let data_offset = optional_u32(header.body, &mut offset, header.flags, TRUN_DATA_OFFSET)?;
-    let first_sample_flags = optional_u32(
-        header.body,
-        &mut offset,
-        header.flags,
-        TRUN_FIRST_SAMPLE_FLAGS,
-    )?;
+    let mut field = |flag| optional_u32(header.body, &mut offset, header.flags, flag);
+    let data_offset = field(TRUN_DATA_OFFSET)?;
+    let first_sample_flags = field(TRUN_FIRST_SAMPLE_FLAGS)?;
 
     let mut samples = Vec::new();
     for index in 0..sample_count {
-        let duration = optional_u32(header.body, &mut offset, header.flags, TRUN_SAMPLE_DURATION)?
+        let duration = field(TRUN_SAMPLE_DURATION)?
             .or(defaults.duration)
             .unwrap_or(0);
-        let size = optional_u32(header.body, &mut offset, header.flags, TRUN_SAMPLE_SIZE)?
+        let size = field(TRUN_SAMPLE_SIZE)?
             .or(defaults.size)
             .context("trun states no sample size")?;
-        let flags = optional_u32(header.body, &mut offset, header.flags, TRUN_SAMPLE_FLAGS)?
+        let flags = field(TRUN_SAMPLE_FLAGS)?
             .or_else(|| (index == 0).then_some(first_sample_flags).flatten())
             .or(defaults.flags)
             .unwrap_or(0);
-        let composition_offset = optional_u32(
-            header.body,
-            &mut offset,
-            header.flags,
-            TRUN_COMPOSITION_OFFSET,
-        )?
-        .map_or(0, |value| {
+        let composition_offset = field(TRUN_COMPOSITION_OFFSET)?.map_or(0, |value| {
             if header.is_version_one() {
                 value as i32 as i64
             } else {
