@@ -172,7 +172,11 @@ impl SampleEntry {
                 pts,
                 dts,
             }),
-            Media::Audio(_) => MediaEvent::Audio(AudioSample { data, pts }),
+            Media::Audio(_) => MediaEvent::Audio(AudioSample {
+                data,
+                pts,
+                audio_level: None,
+            }),
         })
     }
 }
@@ -522,6 +526,7 @@ mod tests {
                 let sample = AudioSample {
                     data: frame.clone(),
                     pts: Timestamp::from_millis(frame_millis * index),
+                    audio_level: None,
                 };
                 stream.extend_from_slice(&muxer.push(&MediaEvent::Audio(sample)).unwrap());
             }

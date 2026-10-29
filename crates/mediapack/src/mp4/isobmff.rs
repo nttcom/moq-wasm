@@ -722,6 +722,7 @@ mod tests {
         let sample = AudioSample {
             data: Bytes::from(vec![0xD5; 320]),
             pts: Timestamp::from_millis(20),
+            audio_level: None,
         };
 
         // Act

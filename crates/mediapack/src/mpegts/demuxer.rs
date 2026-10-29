@@ -270,6 +270,7 @@ fn emit_audio(
         events.push(MediaEvent::Audio(AudioSample {
             data: frame.data,
             pts,
+            audio_level: None,
         }));
         pts = pts.saturating_add(frame.config.frame_duration());
     }

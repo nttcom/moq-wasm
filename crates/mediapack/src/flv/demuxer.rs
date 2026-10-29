@@ -114,6 +114,7 @@ impl Demuxer {
             PACKET_TYPE_PAYLOAD => Ok(vec![MediaEvent::Audio(AudioSample {
                 data: Bytes::copy_from_slice(body),
                 pts: timestamp,
+                audio_level: None,
             })]),
             _ => Ok(Vec::new()),
         }
@@ -231,6 +232,7 @@ mod tests {
             [MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[9, 8]),
                 pts: Timestamp::from_millis(21),
+                audio_level: None
             })]
         );
     }

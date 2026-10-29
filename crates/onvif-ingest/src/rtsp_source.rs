@@ -164,6 +164,7 @@ fn audio_events(
     events.push(MediaEvent::Audio(AudioSample {
         data: Bytes::copy_from_slice(data),
         pts: timing.pts,
+        audio_level: None,
     }));
     Ok(events)
 }
@@ -304,7 +305,8 @@ mod tests {
             events[1],
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[1, 2]),
-                pts: TIMING.pts
+                pts: TIMING.pts,
+                audio_level: None
             })
         );
     }

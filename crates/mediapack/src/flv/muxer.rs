@@ -135,6 +135,7 @@ mod tests {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[7, 7, 7]),
                 pts: Timestamp::from_millis(64),
+                audio_level: None,
             }),
             MediaEvent::Video(VideoSample {
                 data: delta_frame_annexb(),

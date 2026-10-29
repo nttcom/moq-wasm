@@ -1,6 +1,6 @@
 use crate::{
     h264::annexb::{nal_units, with_start_codes},
-    loc::object::{LocExtension, LocObject, TIMESTAMP_ID},
+    loc::object::{AUDIO_LEVEL_ID, LocExtension, LocObject, TIMESTAMP_ID},
     sample::{MediaEvent, Timestamp},
 };
 
@@ -21,20 +21,27 @@ impl Muxer {
         Self { capture_origin }
     }
 
+    /// An audio sample's level becomes the Audio Level property
+    /// (draft-ietf-moq-loc-04 §2.3.3.2).
     pub fn push(&self, event: &MediaEvent) -> Option<LocObject> {
-        let (payload, pts) = match event {
-            MediaEvent::Video(sample) => (with_start_codes(nal_units(&sample.data)), sample.pts),
-            MediaEvent::Audio(sample) => (sample.data.clone(), sample.pts),
+        let (payload, pts, audio_level) = match event {
+            MediaEvent::Video(sample) => {
+                (with_start_codes(nal_units(&sample.data)), sample.pts, None)
+            }
+            MediaEvent::Audio(sample) => (sample.data.clone(), sample.pts, sample.audio_level),
             MediaEvent::Streams(_) | MediaEvent::VideoConfig(_) | MediaEvent::AudioConfig(_) => {
                 return None;
             }
         };
 
+        let timestamp = LocExtension::varint(
+            TIMESTAMP_ID,
+            self.capture_origin.saturating_add(pts).micros(),
+        );
+        let audio_level = audio_level
+            .map(|level| LocExtension::varint(AUDIO_LEVEL_ID, u64::from(level.to_byte())));
         Some(LocObject {
-            extensions: vec![LocExtension::varint(
-                TIMESTAMP_ID,
-                self.capture_origin.saturating_add(pts).micros(),
-            )],
+            extensions: [timestamp].into_iter().chain(audio_level).collect(),
             payload,
         })
     }
@@ -46,7 +53,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        sample::{AudioSample, StreamSet, VideoSample},
+        sample::{AudioLevel, AudioSample, StreamSet, VideoSample},
         test_support::{fixture_video_config, keyframe_annexb},
     };
 
@@ -106,6 +113,7 @@ mod tests {
         let sample = AudioSample {
             data: Bytes::from_static(&[1, 2, 3]),
             pts: Timestamp::from_millis(21),
+            audio_level: None,
         };
 
         // Act
@@ -117,6 +125,26 @@ mod tests {
             object.capture_timestamp(),
             Some(Timestamp::from_micros(1_700_000_000_021_000))
         );
+    }
+
+    #[test]
+    fn writes_the_audio_level_as_its_property() {
+        // Arrange
+        let audio_level = AudioLevel {
+            level: 45,
+            voice_activity: true,
+        };
+        let sample = AudioSample {
+            data: Bytes::from_static(&[1]),
+            pts: Timestamp::ZERO,
+            audio_level: Some(audio_level),
+        };
+
+        // Act
+        let object = muxer().push(&MediaEvent::Audio(sample)).unwrap();
+
+        // Assert
+        assert_eq!(object.audio_level(), Some(audio_level));
     }
 
     #[test]

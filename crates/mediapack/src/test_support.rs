@@ -82,6 +82,7 @@ pub(crate) fn audio_event(pts_ms: u64) -> MediaEvent {
     MediaEvent::Audio(AudioSample {
         data: Bytes::from_static(&[0xDE, 0xAD]),
         pts: Timestamp::from_millis(pts_ms),
+        audio_level: None,
     })
 }
 

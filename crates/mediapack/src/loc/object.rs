@@ -2,7 +2,7 @@ use bytes::Bytes;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::sample::Timestamp;
+use crate::sample::{AudioLevel, Timestamp};
 
 // draft-ietf-moq-loc-04 §6.1 property ids.
 pub const TIMESCALE_ID: u64 = 0x08;
@@ -71,8 +71,11 @@ impl LocObject {
         self.bytes(VIDEO_CONFIG_ID)
     }
 
-    pub fn audio_level(&self) -> Option<u64> {
+    /// Decodes the property's least significant 8 bits (draft-ietf-moq-loc-04
+    /// §2.3.3.2).
+    pub fn audio_level(&self) -> Option<AudioLevel> {
         self.varint(AUDIO_LEVEL_ID)
+            .map(|value| AudioLevel::from_byte(value as u8))
     }
 
     fn varint(&self, id: u64) -> Option<u64> {
@@ -121,7 +124,13 @@ mod tests {
             object.capture_timestamp(),
             Some(Timestamp::from_micros(1_700_000_000_000_000))
         );
-        assert_eq!(object.audio_level(), Some(42));
+        assert_eq!(
+            object.audio_level(),
+            Some(AudioLevel {
+                level: 42,
+                voice_activity: false
+            })
+        );
         assert_eq!(object.video_config(), Some(Bytes::from_static(&[1, 0x42])));
     }
 
