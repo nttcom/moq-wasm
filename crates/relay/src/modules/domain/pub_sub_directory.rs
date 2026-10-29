@@ -567,6 +567,19 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
+    /// While true, this relay owns the track's route.
+    pub(crate) fn has_client_published_track(&self, track_key: &TrackKey) -> bool {
+        self.published_handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|published| {
+                published.publisher_peer == SessionPeer::Client
+                    && published.handler.track_namespace() == track_key.track_namespace
+                    && published.handler.track_name() == track_key.track_name
+            })
+    }
+
     /// Some publisher still serves the track: an upstream subscription, a
     /// client publishing its namespace, or a pending PUBLISH of it.
     pub(crate) fn has_track_publisher(&self, track_key: &TrackKey) -> bool {
@@ -1170,6 +1183,34 @@ mod tests {
 
         // Assert: Keep multiple publishers regardless of whether they came from namespace or track state.
         assert_eq!(upstream_publishers, vec![1, 2]);
+    }
+
+    #[test]
+    fn a_track_stays_client_published_while_another_client_publishes_it() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        let track_key = TrackKey::new("room/member", "video");
+        for (session_id, peer) in [
+            (1, SessionPeer::Client),
+            (2, SessionPeer::Client),
+            (3, SessionPeer::Relay),
+        ] {
+            table.register_publish(
+                session_id,
+                peer,
+                Arc::new(MockPublishHandler::new("room/member", "video", 10)),
+            );
+        }
+
+        // Act
+        table.remove_session(1);
+        let after_one_client_left = table.has_client_published_track(&track_key);
+        table.remove_session(2);
+        let after_both_clients_left = table.has_client_published_track(&track_key);
+
+        // Assert: the relay's PUBLISH does not count
+        assert!(after_one_client_left);
+        assert!(!after_both_clients_left);
     }
 
     #[test]
