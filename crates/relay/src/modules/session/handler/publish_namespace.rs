@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use moqt::RequestErrorCode;
 
+use crate::logging::mark_current_span_failed;
+
 #[async_trait]
 pub(crate) trait PublishNamespaceHandler: 'static + Send + Sync {
     fn track_namespace(&self) -> &str;
@@ -32,6 +34,7 @@ impl PublishNamespaceHandler for moqt::namespace::PublishNamespaceHandler {
         code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
+        mark_current_span_failed(format!("{code:?}"));
         self.error(code, reason_phrase).await
     }
 }

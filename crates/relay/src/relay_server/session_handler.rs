@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 
 use crate::{
-    logging::relay_hostname,
+    logging::{mark_current_span_failed, relay_hostname},
     modules::{
         auth::session_authenticator::SessionAuthenticator,
         domain::{
@@ -43,6 +43,7 @@ impl SessionIntake {
             .await
         {
             Ok(verified_token) => {
+                session_span.record("app_id", verified_token.app_id.as_str());
                 if let Some(relay_id) = &verified_token.relay_id {
                     session_span.record("peer_relay_id", relay_id.as_str());
                 }
@@ -55,6 +56,7 @@ impl SessionIntake {
                     "session rejected at CLIENT_SETUP"
                 );
                 handshake.reject(rejected.code, &rejected.reason).await;
+                mark_current_span_failed(format!("{:?}", rejected.code));
                 return;
             }
         };
@@ -146,6 +148,7 @@ impl SessionHandler {
                         session_id = session_id,
                         session_peer = session_peer,
                         relay_hostname = %relay_hostname,
+                        app_id = tracing::field::Empty,
                         peer_relay_id = tracing::field::Empty,
                     );
                     let intake = intake.clone();
