@@ -27,18 +27,12 @@ pub(crate) struct ControlMessageForwarder {
 impl ControlMessageForwarder {
     async fn publisher(&self, session_id: SessionId) -> anyhow::Result<Box<dyn Publisher>> {
         let publisher = self.repository.lock().await.publisher(session_id);
-        publisher.ok_or_else(|| {
-            tracing::error!("No publisher");
-            anyhow::anyhow!("No publisher")
-        })
+        publisher.ok_or_else(|| anyhow::anyhow!("No publisher"))
     }
 
     async fn subscriber(&self, session_id: SessionId) -> anyhow::Result<Box<dyn Subscriber>> {
         let subscriber = self.repository.lock().await.subscriber(session_id);
-        subscriber.ok_or_else(|| {
-            tracing::error!("No subscriber");
-            anyhow::anyhow!("No subscriber")
-        })
+        subscriber.ok_or_else(|| anyhow::anyhow!("No subscriber"))
     }
 
     #[tracing::instrument(
@@ -48,7 +42,9 @@ impl ControlMessageForwarder {
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
     pub(crate) async fn publish_namespace(&self, session_id: SessionId, track_namespace: String) {
-        let Ok(publisher) = self.publisher(session_id).await else {
+        let Ok(publisher) = self.publisher(session_id).await.inspect_err(|error| {
+            tracing::warn!(%error, subscriber_session_id = %session_id, %track_namespace, "PUBLISH_NAMESPACE not forwarded");
+        }) else {
             return;
         };
         match publisher.send_publish_namespace(track_namespace).await {
@@ -71,7 +67,9 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
     ) {
-        let Ok(publisher) = self.publisher(session_id).await else {
+        let Ok(publisher) = self.publisher(session_id).await.inspect_err(|error| {
+            tracing::warn!(%error, subscriber_session_id = %session_id, %track_namespace, "PUBLISH_NAMESPACE_DONE not forwarded");
+        }) else {
             return;
         };
         match publisher.send_publish_namespace_done(track_namespace).await {
