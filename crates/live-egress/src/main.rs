@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
         &args.moqt_url,
         &ClientConfig {
             verify_certificate: !args.insecure_skip_tls_verify,
-            authorization_token: args.auth_token,
+            authorization_token: args.auth_token.map(Into::into),
             ..ClientConfig::default()
         },
     )

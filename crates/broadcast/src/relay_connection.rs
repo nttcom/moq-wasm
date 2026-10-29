@@ -42,7 +42,8 @@ pub struct MoqtTarget {
     pub verify_certificate: bool,
 }
 
-/// Connects on first use; without a target nothing is ever sent.
+/// Connects on first use, or publishes on a session it is given; without
+/// either nothing is ever sent.
 #[derive(Clone)]
 pub struct RelayConnection {
     target: Option<MoqtTarget>,
@@ -86,6 +87,11 @@ impl RelayState {
             .or_insert_with(|| watch::channel(false).0)
     }
 
+    fn publishes(&self, namespace_path: &str) -> bool {
+        self.catalogs.contains_key(namespace_path)
+            || self.declared_tracks.contains_key(namespace_path)
+    }
+
     /// The catalog once the announce has started, the declared tracks, and
     /// the CMAF tracks the catalog lists.
     fn subscribable(&self, namespace_path: &str, track_name: &str) -> bool {
@@ -113,13 +119,31 @@ impl RelayState {
 }
 
 pub(crate) struct ConnectedRelay {
-    endpoint: Endpoint<RelayTransport>,
+    owned: Option<OwnedSession>,
     session: Arc<Session>,
     origin: Origin,
     state: Arc<Mutex<RelayState>>,
     catalog_send: Mutex<()>,
     ledger: StreamLedger,
+    events: RelayEvents,
+}
+
+struct OwnedSession {
+    endpoint: Endpoint<RelayTransport>,
     event_task: JoinHandle,
+}
+
+impl Drop for OwnedSession {
+    fn drop(&mut self) {
+        self.event_task.abort();
+    }
+}
+
+#[derive(Clone)]
+struct RelayEvents {
+    origin: Origin,
+    state: Arc<Mutex<RelayState>>,
+    ledger: StreamLedger,
 }
 
 impl RelayConnection {
@@ -134,6 +158,34 @@ impl RelayConnection {
         }
     }
 
+    /// Publishes on `session`, whose owner keeps reading its events and passes
+    /// each to `handle` first. The broadcasts write into `origin`, which the
+    /// owner may share with tracks of its own. `close` leaves the session open.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    pub fn with_session(session: Arc<Session>, origin: Origin) -> Self {
+        let ledger = StreamLedger::default();
+        let relay = ConnectedRelay::new(None, session, origin, ledger.clone());
+        Self {
+            target: None,
+            connected: Arc::new(Mutex::new(Some(Arc::new(relay)))),
+            ledger,
+        }
+    }
+
+    /// Answers SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS
+    /// for the broadcasts on a session given to `with_session`, and returns
+    /// every other event. That includes a SUBSCRIBE in a namespace no
+    /// broadcast here publishes and an UNSUBSCRIBE that the `origin` given to
+    /// `with_session` does not know. `Disconnected` and `ProtocolViolation`
+    /// are returned too, after they ended the broadcasts' sends.
+    pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+        let connected = self.connected.lock().await.clone();
+        match connected {
+            Some(relay) => relay.events.handle(event).await,
+            None => Some(event),
+        }
+    }
+
     pub fn streams(&self) -> Vec<StreamRecord> {
         self.ledger.snapshot()
     }
@@ -142,11 +194,13 @@ impl RelayConnection {
     /// leaves the relay to end the session only after its idle timeout.
     pub async fn close(&self) {
         let connected = self.connected.lock().await.clone();
-        if let Some(connected) = connected {
+        if let Some(connected) = connected
+            && let Some(owned) = &connected.owned
+        {
             connected
                 .session
                 .close_with_error(TerminationErrorCode::NoError, "");
-            connected.endpoint.wait_idle().await;
+            owned.endpoint.wait_idle().await;
         }
     }
 
@@ -161,13 +215,13 @@ impl RelayConnection {
     /// relay's GOAWAY (`ClientConfig::follow_go_away`).
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) async fn connected(&self) -> Result<Option<Arc<ConnectedRelay>>> {
-        let Some(target) = &self.target else {
-            return Ok(None);
-        };
         let mut connected = self.connected.lock().await;
         if let Some(relay) = connected.as_ref() {
             return Ok(Some(relay.clone()));
         }
+        let Some(target) = &self.target else {
+            return Ok(None);
+        };
         let relay = Arc::new(ConnectedRelay::connect(target, self.ledger.clone()).await?);
         *connected = Some(relay.clone());
         Ok(Some(relay))
@@ -179,7 +233,7 @@ impl ConnectedRelay {
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let endpoint = Endpoint::<RelayTransport>::create_client(&ClientConfig {
             verify_certificate: target.verify_certificate,
-            authorization_token: target.auth_token.clone(),
+            authorization_token: target.auth_token.clone().map(Into::into),
             ..ClientConfig::default()
         })?;
         let connecting = endpoint
@@ -187,69 +241,56 @@ impl ConnectedRelay {
             .await
             .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);
-        let origin = Origin::default();
+        Ok(Self::new(
+            Some(endpoint),
+            session,
+            Origin::default(),
+            ledger,
+        ))
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    fn new(
+        endpoint: Option<Endpoint<RelayTransport>>,
+        session: Arc<Session>,
+        origin: Origin,
+        ledger: StreamLedger,
+    ) -> Self {
         let state = Arc::new(Mutex::new(RelayState::default()));
-        let event_task = Self::spawn_event_loop(
-            session.clone(),
-            origin.clone(),
-            state.clone(),
-            ledger.clone(),
-        );
-        Ok(Self {
+        let events = RelayEvents {
+            origin: origin.clone(),
+            state: state.clone(),
+            ledger: ledger.clone(),
+        };
+        let owned = endpoint.map(|endpoint| OwnedSession {
             endpoint,
+            event_task: Self::spawn_event_loop(session.clone(), events.clone()),
+        });
+        Self {
+            owned,
             session,
             origin,
             state,
             catalog_send: Mutex::new(()),
             ledger,
-            event_task,
-        })
+            events,
+        }
     }
 
-    fn spawn_event_loop(
-        session: Arc<Session>,
-        origin: Origin,
-        state: Arc<Mutex<RelayState>>,
-        ledger: StreamLedger,
-    ) -> JoinHandle {
+    fn spawn_event_loop(session: Arc<Session>, events: RelayEvents) -> JoinHandle {
         executor::spawn("broadcast-relay-events", async move {
             loop {
                 let event = match session.receive_event().await {
                     Ok(event) => event,
                     Err(err) => {
                         tracing::warn!(?err, "MoQT event loop ended");
-                        state.lock().await.disconnect();
+                        events.state.lock().await.disconnect();
                         break;
                     }
                 };
-
-                // Answered here instead of by `origin.handle`: a SUBSCRIBE is checked
-                // against the catalog and raises the subscribed signal, and an
-                // UNSUBSCRIBE finishes the track in the stream ledger.
-                let event = match event {
-                    SessionEvent::Subscribe(handler) => {
-                        Self::serve_subscribe(&origin, &state, handler).await;
-                        continue;
-                    }
-                    SessionEvent::Unsubscribe(handler) => {
-                        let request_id = handler.subscribe_id();
-                        match origin.release(&handler).await {
-                            Some((namespace, track_name)) => {
-                                ledger.finish(&track_name);
-                                tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
-                            }
-                            None => {
-                                tracing::warn!(request_id, "UNSUBSCRIBE for unknown request");
-                            }
-                        }
-                        continue;
-                    }
-                    event => match origin.handle(event).await {
-                        Some(event) => event,
-                        None => continue,
-                    },
+                let Some(event) = events.handle(event).await else {
+                    continue;
                 };
-
                 match event {
                     SessionEvent::PublishNamespace(handler) => {
                         if let Err(err) = handler.ok().await {
@@ -267,9 +308,21 @@ impl ConnectedRelay {
                     SessionEvent::UnsubscribeNamespace(handler) => {
                         tracing::info!(prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
                     }
-                    SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => {
-                        state.lock().await.disconnect();
-                        break;
+                    SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
+                    SessionEvent::Subscribe(handler) => {
+                        let reason = format!("{} is not published here", handler.track_namespace);
+                        if let Err(err) = handler
+                            .error(RequestErrorCode::TrackDoesNotExist, reason)
+                            .await
+                        {
+                            tracing::warn!(?err, "failed to reject SUBSCRIBE");
+                        }
+                    }
+                    SessionEvent::Unsubscribe(handler) => {
+                        tracing::warn!(
+                            request_id = handler.subscribe_id(),
+                            "UNSUBSCRIBE for unknown request"
+                        );
                     }
                     SessionEvent::Publish(handler) => {
                         tracing::warn!(namespace = %handler.track_namespace, track = %handler.track_name, "unexpected PUBLISH received");
@@ -344,14 +397,24 @@ impl ConnectedRelay {
         }
     }
 
+    /// Returns `handler` for a namespace no broadcast here publishes.
     async fn serve_subscribe(
         origin: &Origin,
         state: &Mutex<RelayState>,
         handler: SubscribeHandler,
-    ) {
+    ) -> Option<SubscribeHandler> {
         let namespace = handler.track_namespace.clone();
         let track_name = handler.track_name.clone();
-        let subscribable = state.lock().await.subscribable(&namespace, &track_name);
+        let (publishes, subscribable) = {
+            let state = state.lock().await;
+            (
+                state.publishes(&namespace),
+                state.subscribable(&namespace, &track_name),
+            )
+        };
+        if !publishes {
+            return Some(handler);
+        }
         if !subscribable {
             if let Err(err) = handler
                 .error(
@@ -362,18 +425,19 @@ impl ConnectedRelay {
             {
                 tracing::warn!(%namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
             }
-            return;
+            return None;
         }
         ensure_origin_track(origin, &(namespace.clone(), track_name.clone())).await;
         if let Err(err) = origin.accept_subscribe(handler).await {
             tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
-            return;
+            return None;
         }
         state
             .lock()
             .await
             .subscribed_sender(&namespace)
             .send_replace(true);
+        None
     }
 
     /// Registers the tracks before the announce, after which the relay may
@@ -507,9 +571,32 @@ impl ConnectedRelay {
     }
 }
 
-impl Drop for ConnectedRelay {
-    fn drop(&mut self) {
-        self.event_task.abort();
+impl RelayEvents {
+    async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+        // Answered here instead of by `origin.handle`: a SUBSCRIBE is checked
+        // against the catalog and raises the subscribed signal, and an
+        // UNSUBSCRIBE finishes the track in the stream ledger.
+        match event {
+            SessionEvent::Subscribe(handler) => {
+                ConnectedRelay::serve_subscribe(&self.origin, &self.state, handler)
+                    .await
+                    .map(SessionEvent::Subscribe)
+            }
+            SessionEvent::Unsubscribe(handler) => {
+                let request_id = handler.subscribe_id();
+                let Some((namespace, track_name)) = self.origin.release(&handler).await else {
+                    return Some(SessionEvent::Unsubscribe(handler));
+                };
+                self.ledger.finish(&track_name);
+                tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
+                None
+            }
+            event @ (SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()) => {
+                self.state.lock().await.disconnect();
+                Some(event)
+            }
+            event => self.origin.handle(event).await,
+        }
     }
 }
 
@@ -537,7 +624,7 @@ mod tests {
     use std::path::PathBuf;
 
     use moqt::{
-        NATIVE, Subscription, TrackObject, TrackReader,
+        ClientConfig, NATIVE, Subscription, TrackObject, TrackReader,
         object::DataReceiver,
         publish::GroupBoundary,
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
@@ -745,6 +832,7 @@ mod tests {
             height: 360,
             init_segment: String::new(),
             bitrate: None,
+            cmaf: true,
         }
     }
 
@@ -954,6 +1042,89 @@ mod tests {
         // Assert
         assert!(subscribed.wait_for(|subscribed| *subscribed).await.is_ok());
         assert!(abandoned.wait_for(|subscribed| *subscribed).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_broadcast_publishes_on_a_session_its_owner_reads_and_close_leaves_it_open() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("shared-session");
+        let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
+            verify_certificate: false,
+            ..ClientConfig::default()
+        })
+        .unwrap();
+        let session = Arc::new(endpoint.connect(&relay.url).await.unwrap().await.unwrap());
+        let connection = RelayConnection::with_session(session.clone(), Origin::default());
+        let (returned_sender, mut returned) = mpsc::unbounded_channel();
+        let owner_loop = tokio::spawn({
+            let session = session.clone();
+            let connection = connection.clone();
+            async move {
+                while let Ok(event) = session.receive_event().await {
+                    if let Some(SessionEvent::Subscribe(handler)) = connection.handle(event).await {
+                        let _ = returned_sender.send(handler.track_namespace.clone());
+                        let _ = handler
+                            .error(RequestErrorCode::TrackDoesNotExist, String::new())
+                            .await;
+                    }
+                }
+            }
+        });
+        let broadcast = Broadcast::new(
+            connection.clone(),
+            vec!["live".to_string(), "cam".to_string()],
+        );
+
+        // Act
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        let catalogs = relay.received_catalogs().await;
+        let relay_session = relay.session().await;
+        let subscribed = tokio::time::timeout(
+            TEST_TIMEOUT,
+            relay_session.subscriber().subscribe(
+                "live/cam".to_string(),
+                CATALOG_TRACK_NAME.to_string(),
+                moqt::subscribe::SubscribeOption::default(),
+            ),
+        )
+        .await;
+        let mut relay_subscriber = relay_session.subscriber();
+        let foreign = relay_subscriber.subscribe(
+            "other/ns".to_string(),
+            "track".to_string(),
+            moqt::subscribe::SubscribeOption::default(),
+        );
+        let _ = tokio::time::timeout(TEST_TIMEOUT, foreign).await;
+        let returned_namespace = returned.try_recv();
+        connection.close().await;
+        let still_open = tokio::time::timeout(Duration::from_millis(300), session.closed()).await;
+
+        // Assert
+        assert_eq!(
+            relay.received_requests()[..2],
+            [
+                "PUBLISH_NAMESPACE live/cam".to_string(),
+                format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"),
+            ]
+        );
+        assert!(!catalogs.is_empty(), "the catalog must arrive");
+        assert!(
+            matches!(subscribed, Ok(Ok(_))),
+            "the SUBSCRIBE must be answered through handle"
+        );
+        assert_eq!(
+            returned_namespace.ok().as_deref(),
+            Some("other/ns"),
+            "a SUBSCRIBE in a namespace no broadcast publishes goes back to the owner"
+        );
+        assert!(
+            still_open.is_err(),
+            "close must leave the owner's session open"
+        );
+        owner_loop.abort();
     }
 
     #[tokio::test]

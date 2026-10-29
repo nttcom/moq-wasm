@@ -13,12 +13,6 @@ export type MediaVideoProfile = {
 
 export const MEDIA_DEFAULT_VIDEO_CODEC = 'avc1.640028' // H.264 High Profile Level 4.0
 
-const MEDIA_VIDEO_PROFILE_LAYOUTS: Omit<MediaVideoProfile, 'codec'>[] = [
-  { trackName: 'video_1080p', label: '1080p', width: 1920, height: 1080 },
-  { trackName: 'video_720p', label: '720p', width: 1280, height: 720 },
-  { trackName: 'video_480p', label: '480p', width: 854, height: 480 }
-]
-
 export type MediaAudioProfile = {
   trackName: string
   label: string
@@ -30,14 +24,6 @@ export type MediaAudioProfile = {
 
 export function getResolvedMediaVideoCodec(): string {
   return getMediaVideoEncodingOverrides().codec ?? MEDIA_DEFAULT_VIDEO_CODEC
-}
-
-export function getMediaVideoProfiles(): MediaVideoProfile[] {
-  const codec = getResolvedMediaVideoCodec()
-  return MEDIA_VIDEO_PROFILE_LAYOUTS.map((profile) => ({
-    ...profile,
-    codec
-  }))
 }
 
 export function buildMediaCatalogJson(

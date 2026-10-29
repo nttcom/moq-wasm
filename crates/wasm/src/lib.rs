@@ -4,6 +4,8 @@ mod client;
 mod client_state;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod loc;
+#[cfg(target_arch = "wasm32")]
+mod media_broadcast;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod messages;
 mod mp4;
@@ -12,6 +14,10 @@ mod mp4_broadcast;
 mod msf_catalog;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod request_rejection;
+#[cfg(target_arch = "wasm32")]
+mod session;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod session_routes;
 
 #[cfg(target_arch = "wasm32")]
 pub use client::MOQTClient;

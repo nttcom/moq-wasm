@@ -15,20 +15,20 @@ pub use native::{JoinHandle, now, spawn, system_time};
 pub(crate) use native::{sleep, timeout, try_spawn, yield_now};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) trait MaybeSend: Send {}
+pub trait MaybeSend: Send {}
 #[cfg(not(target_arch = "wasm32"))]
 impl<T: Send + ?Sized> MaybeSend for T {}
 #[cfg(target_arch = "wasm32")]
-pub(crate) trait MaybeSend {}
+pub trait MaybeSend {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> MaybeSend for T {}
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) trait MaybeSync: Sync {}
+pub trait MaybeSync: Sync {}
 #[cfg(not(target_arch = "wasm32"))]
 impl<T: Sync + ?Sized> MaybeSync for T {}
 #[cfg(target_arch = "wasm32")]
-pub(crate) trait MaybeSync {}
+pub trait MaybeSync {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> MaybeSync for T {}
 

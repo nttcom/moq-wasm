@@ -118,7 +118,7 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
 pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<QUIC> {
     Endpoint::<QUIC>::create_client(&ClientConfig {
         verify_certificate: false,
-        authorization_token,
+        authorization_token: authorization_token.map(Into::into),
         follow_go_away: false,
         ..ClientConfig::default()
     })

@@ -57,7 +57,7 @@ async fn publish_snapshots(
 ) -> anyhow::Result<()> {
     let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
         verify_certificate: false,
-        authorization_token: Some(config.relay_token.clone()),
+        authorization_token: Some(config.relay_token.clone().into()),
         follow_go_away: false,
         ..moqt::ClientConfig::default()
     })?;

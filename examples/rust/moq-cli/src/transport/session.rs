@@ -37,7 +37,7 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
     };
     let config = ClientConfig {
         verify_certificate: !relay.insecure,
-        authorization_token: auth_token.clone(),
+        authorization_token: auth_token.clone().map(Into::into),
         ..ClientConfig::default()
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;

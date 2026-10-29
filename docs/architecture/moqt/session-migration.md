@@ -124,6 +124,13 @@ after the last location received, up to the FETCH_OK's End Location) is
 FETCHed on the current connection and the same receiver reads on. A
 descending FETCH is not sent again.
 
+A Joining FETCH may only join a Largest Object subscription (draft-14
+§9.16.2), and a later connection holds the subscription with the filter it
+was sent again with. So `fetch_relative_joining` sends a Joining FETCH only
+on the connection the subscription was first sent on; once the session has
+moved, it FETCHes the same range (from the joined group up to the
+SUBSCRIBE_OK's Largest Location) as a Standalone FETCH.
+
 ### Publishing side
 
 PUBLISH_NAMESPACE and PUBLISH are sent again on the new connection. A
@@ -144,6 +151,26 @@ connection's Disconnected and ProtocolViolation are dropped. A
 PUBLISH_NAMESPACE the new relay sends for a namespace already announced on the
 previous one is delivered as is (the application acknowledges it again, as
 the recorder does now).
+
+### Reconnecting after a lost connection
+
+A session that follows GOAWAY also replaces a connection that ended without
+one, through the same migration to its current URL. It reconnects when the
+network or the server ended the connection without a termination code, and
+when the server closed it with EXPIRED_AUTH_TOKEN while
+`ClientConfig::authorization_token` is a provider, which hands the new
+connection a fresh token. A close this side made, and any other termination
+code, ends the session as before.
+
+Attempts start 0.5 s after the loss and double their delay up to 10 s, for at
+most 60 s, about as long as a relay keeps a track in its cache. A server that
+rejects the token at SETUP (UNAUTHORIZED, EXPIRED_AUTH_TOKEN) gets one more
+attempt only. Meanwhile `Session::closed` stays pending and no `Disconnected`
+is delivered; requests sent meanwhile fail on the lost connection. Once a new
+connection takes the requests again, the lost one is retired at once, since it
+delivers nothing more: each subscription continues from the next group start
+on the new connection, and the objects published in between are not filled
+in.
 
 ### Closing the previous connection
 
@@ -207,6 +234,6 @@ Each step is one PR, stacked:
 - The default of `follow_go_away`. `true` makes every client migrate unless it
   opts out, which is what draft-14 §3.5 recommends, but a client this
   repository does not know about changes behaviour.
-- The migration connects with the token the session started with. A client
-  that refreshes its token in-session (the recorder's `--auth-token-file`)
-  needs the current token handed to the session.
+- A client that refreshes its token in-session (the recorder's
+  `--auth-token-file`) hands `ClientConfig` an `AuthorizationTokenSource`
+  provider, which each connection calls for its CLIENT_SETUP.

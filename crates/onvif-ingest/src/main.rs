@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
 
     let client_config = ClientConfig {
         verify_certificate: !args.insecure_skip_tls_verify,
-        authorization_token: args.auth_token.clone(),
+        authorization_token: args.auth_token.clone().map(Into::into),
         ..ClientConfig::default()
     };
     let mut commands = CommandSubscriber::run(
@@ -263,6 +263,7 @@ fn profile_tracks(args: &MoqtArgs, profile_index: usize, label: &str) -> SourceT
         video_label: label.to_string(),
         audio: format!("{}/profile_{profile_index}", args.audio_track),
         audio_label: format!("{label} audio"),
+        ..SourceTracks::default()
     }
 }
 

@@ -1,15 +1,15 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
-use moqt::{TrackWriter, object::ExtensionHeaders, publish::PublishOption};
+use moqt::{Session, TrackWriter, object::ExtensionHeaders, publish::PublishOption};
 use tokio::io::AsyncReadExt;
 use tracing::info;
 
 use crate::catalog;
-use crate::cli::{Container, PublishArgs, RelayArgs};
+use crate::cli::{Container, PublishArgs};
 use crate::media::{Frame, h264::AnnexBFramer};
 use crate::track::FullTrackName;
-use crate::transport::{RelayConnection, connect_relay};
+use crate::transport::connect_relay;
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 const DRAIN_BEFORE_CLOSE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -27,12 +27,15 @@ pub async fn run(args: PublishArgs) -> Result<()> {
         anyhow::bail!("--container cmaf is not implemented yet");
     }
 
-    let publishing = Publishing::start(&args.relay, &args.track).await?;
-    publish_stdin(publishing, &args).await
+    let connection = connect_relay(&args.relay, args.track.app_id()).await?;
+    // `publish_stdin` drops every handle to the session on return, errors
+    // included, so `close` can finish.
+    let result = publish_stdin(&connection.session, &args).await;
+    connection.close().await;
+    result
 }
 
 struct Publishing {
-    connection: RelayConnection,
     media: TrackWriter,
     catalog: CatalogPublisher,
     /// Whether a media group has started; the stream starts at a keyframe.
@@ -40,9 +43,8 @@ struct Publishing {
 }
 
 impl Publishing {
-    async fn start(relay: &RelayArgs, track: &FullTrackName) -> Result<Self> {
-        let connection = connect_relay(relay, track.app_id()).await?;
-        let publisher = connection.session.publisher();
+    async fn start(session: &Session, track: &FullTrackName) -> Result<Self> {
+        let publisher = session.publisher();
         let subscription = publisher
             .publish(
                 track.namespace.clone(),
@@ -76,7 +78,6 @@ impl Publishing {
             track.name.clone(),
         );
         Ok(Self {
-            connection,
             media,
             catalog,
             started: false,
@@ -101,8 +102,6 @@ impl Publishing {
             .await
     }
 
-    /// Ends both tracks and closes the session once the relay has drained
-    /// them. Every other handle to the session must be dropped first.
     async fn finish(self) -> Result<()> {
         let groups = self.media.groups();
         self.media.finish().await?;
@@ -111,12 +110,12 @@ impl Publishing {
         // Let the relay drain in-flight stream data before the QUIC session is
         // closed; otherwise trailing objects are truncated.
         tokio::time::sleep(DRAIN_BEFORE_CLOSE).await;
-        self.connection.close().await;
         Ok(())
     }
 }
 
-async fn publish_stdin(mut publishing: Publishing, args: &PublishArgs) -> Result<()> {
+async fn publish_stdin(session: &Session, args: &PublishArgs) -> Result<()> {
+    let mut publishing = Publishing::start(session, &args.track).await?;
     let mut framer = AnnexBFramer::new(args.codec.clone());
 
     let mut reader = tokio::io::stdin();
@@ -131,7 +130,6 @@ async fn publish_stdin(mut publishing: Publishing, args: &PublishArgs) -> Result
     tokio::pin!(ctrl_c);
 
     loop {
-        let session = publishing.connection.session.clone();
         let read = tokio::select! {
             result = reader.read(&mut read_buf) => result?,
             close = session.closed() => anyhow::bail!("session closed by the relay: {close}"),

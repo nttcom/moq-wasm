@@ -92,7 +92,7 @@ const UNKNOWN_STREAM_COUNT = 2n ** 62n - 1n
 export class RequestError extends Error {
   readonly errorCode: bigint
 
-  constructor(messageType: string, response: RequestErrorMessage) {
+  constructor(messageType: string, response: Pick<RequestErrorMessage, 'errorCode' | 'reasonPhrase'>) {
     super(`${messageType} ${response.errorCode}: ${response.reasonPhrase}`)
     this.errorCode = response.errorCode
   }

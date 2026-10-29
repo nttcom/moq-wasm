@@ -1,4 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqSession } from '@moqt/session'
 import { LivePlayer } from '@player/livePlayer'
 import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
 import { element, setStatus } from '../../utils/page'
@@ -14,13 +15,13 @@ const BOT_SERVICE = {
   cloud: 'https://moq-ptz-tracking.moqt.research.skyway.io'
 }
 const PROMPT_TRACK = 'prompt'
-const AUTH_INFO = ''
 
 type Prompt = { target: string; video: string } | { target: null }
 
 const session = new MoqtClientWrapper()
+/// The player's own session; the bot side stays on MoqtClientWrapper.
+let playerSession: MoqSession | undefined
 const player = new LivePlayer({
-  client: session,
   container: element('stage'),
   callbacks: {
     onStateChange: followSelectedVideoTrack,
@@ -47,7 +48,10 @@ setUpD3FlashBotPage({
   botNamespace: TRACKER_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
-  afterConnect: () => player.start(CAMERA_NAMESPACE, AUTH_INFO),
+  afterConnect: async (relayUrl) => {
+    playerSession = await MoqSession.connect(relayUrl)
+    await player.start(playerSession, CAMERA_NAMESPACE)
+  },
   onSubscriber: async ({ requestId, trackAlias }) => {
     setPromptPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias))
     await sendPrompt(currentPrompt())
@@ -69,6 +73,8 @@ setUpD3FlashBotPage({
   },
   onReset: async () => {
     await player.stop()
+    playerSession?.close()
+    playerSession = undefined
     viewerDelayLabel.textContent = ''
     setPromptPublisher(undefined)
     sentPrompt = { target: null }

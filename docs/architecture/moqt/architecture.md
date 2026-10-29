@@ -299,8 +299,12 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   opens the bidirectional control stream, sends CLIENT_SETUP and awaits
   SERVER_SETUP, version `0xff00000e`). `ClientConfig.authorization_token`, when
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
-  `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session` is
-  created.
+  `USE_VALUE`, Token Type `0`, UTF-8 value). It is an
+  `AuthorizationTokenSource`: a fixed string, or a provider that
+  `SessionCreator::set_up` calls before each CLIENT_SETUP, on the first
+  connection and on every connection a session opens to follow GOAWAY, so a
+  client with short-lived tokens fetches a new one each time. A provider that
+  fails fails that connection. On success a `Session` is created.
 - `refuse_new_connections()` makes every later connection attempt fail at
   the transport level (QUIC CONNECTION_REFUSED, HTTP 503 for WebTransport)
   while `accept()` keeps being polled; established sessions are unaffected.
@@ -360,7 +364,9 @@ returned; requests the peer sends, on any connection, carry logical ids. A
 FETCH response stream a migration cuts off is FETCHed again on the current
 connection from the first object not delivered up to the FETCH_OK's End
 Location, and the `FetchDataReceiver` reads on from it; a descending FETCH
-is not sent again. While both
+is not sent again. A Relative Joining FETCH made after the move goes as a
+Standalone FETCH of the same range, since the current connection holds the
+subscription with the filter it was sent again with. While both
 connections deliver a subscription, the sinks of both share a `GroupCutover`
 (see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
 carried subscription is dropped; GOAWAY is never returned; `Disconnected`
@@ -511,6 +517,19 @@ forward from their own cache through the raw stream senders.
   `resolve_joining_fetch` (a Joining Fetch's Start and End Location and its
   `JoiningFetchError`) in `domains/fetch_range.rs`, shared with the relay and
   the wasm bindings.
+
+### `NamespaceWatchers` — the namespaces a peer publishes
+
+`namespace::NamespaceWatchers` (`domains/namespace_watchers.rs`) is the
+subscribing side's counterpart of `Origin` for namespaces: `watch(prefix)`
+returns a channel of `NamespaceEvent`s, and `handle(event)` in the session
+event loop answers PUBLISH_NAMESPACE with `ok`, sends it and
+PUBLISH_NAMESPACE_DONE to every watcher of a matching prefix, ends every
+watcher on `Disconnected` and hands every other event back. A watcher is
+registered before its SUBSCRIBE_NAMESPACE is sent, since the peer publishes
+the namespaces it knows right away. The Python bindings and the browser SDK's
+`Session` (`crates/wasm/src/session.rs`), which hand out one iterator per
+namespace subscription, use it.
 
 ### `SessionContext` and `Connection` — shared session state
 

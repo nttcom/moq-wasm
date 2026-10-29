@@ -57,7 +57,7 @@ async fn receive_snapshots(
 ) -> anyhow::Result<()> {
     let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
         verify_certificate: options.verify_certificate,
-        authorization_token: options.auth_token.clone(),
+        authorization_token: options.auth_token.clone().map(Into::into),
         ..moqt::ClientConfig::default()
     })?;
     let session = endpoint

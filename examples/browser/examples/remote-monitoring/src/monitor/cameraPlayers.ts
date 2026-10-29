@@ -1,9 +1,8 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqSession } from '@moqt/session'
 import { LivePlayer } from '@player/livePlayer'
 import type { CameraId } from '../types/monitoring'
 
 const CAMERA_VIDEO_CODEC = 'avc3.640028'
-const AUTH_INFO = 'secret'
 
 const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 
@@ -11,15 +10,20 @@ const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 /// into a host element the page places on the stage or in the strip; the host
 /// moves with the camera, so the player never notices the layout.
 export class CameraPlayers {
-  private readonly client = new MoqtClientWrapper()
+  private session: MoqSession | undefined
   private readonly players = new Map<CameraId, LivePlayer>()
   private readonly hosts = new Map<CameraId, HTMLDivElement>()
 
   constructor(private readonly onStateChange: (camId: CameraId) => void) {}
 
   async connect(relayUrl: string, onClosed: () => void): Promise<void> {
-    await this.client.connect(relayUrl)
-    this.client.setOnConnectionClosedHandler(onClosed)
+    const session = await MoqSession.connect(relayUrl)
+    this.session = session
+    void session.closed.then(() => {
+      if (this.session === session) {
+        onClosed()
+      }
+    })
     log('connected', { relayUrl })
   }
 
@@ -41,8 +45,10 @@ export class CameraPlayers {
     if (this.players.has(camId)) {
       return
     }
+    if (!this.session) {
+      throw new Error('not connected')
+    }
     const player = new LivePlayer({
-      client: this.client,
       container: this.host(camId),
       livePicture: 'canvas',
       keepLiveWhileReviewing: true,
@@ -54,7 +60,7 @@ export class CameraPlayers {
     })
     this.players.set(camId, player)
     try {
-      await player.start(['anon', location, camId], AUTH_INFO, {
+      await player.start(this.session, ['anon', location, camId], {
         video: [{ name: 'video', label: camId, codec: CAMERA_VIDEO_CODEC }]
       })
     } catch (error) {
@@ -64,12 +70,13 @@ export class CameraPlayers {
   }
 
   async disconnect(): Promise<void> {
-    this.client.setOnConnectionClosedHandler(null)
+    const session = this.session
+    this.session = undefined
     for (const player of this.players.values()) {
       await player.stop()
     }
     this.players.clear()
-    await this.client.disconnect()
+    session?.close()
     log('disconnected')
   }
 }

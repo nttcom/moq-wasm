@@ -335,6 +335,16 @@ export interface TrackWriter extends AsyncDisposable {
 `LivePlayer` の catalog 追従は `subscribeCurrentGroup(namespace, 'catalog')` に
 なる。
 
+wasm 側の実装は `crates/wasm/src/session.rs` の `Session`、`Subscription`、
+`FetchStream`、`NamespaceWatch` で、iterator は `next()` の Promise として出す。
+JS の `AsyncIterable` への包み直しと `groups()` は、最初の利用者である `LivePlayer` を
+載せる手順で足す。session のイベントは `crates/wasm/src/session_routes.rs` の
+`SessionRoutes` が振り分ける。配信側のリクエスト（SUBSCRIBE、UNSUBSCRIBE、FETCH、
+FETCH_CANCEL、TRACK_STATUS）は session の `moqt::Origin` へ、PUBLISH_NAMESPACE は
+`moqt::namespace::NamespaceWatchers` へ、PUBLISH_DONE は該当する `Subscription` の
+`done` へ送る。`announce` と `publishTrack` が返す `Announcement` と `TrackWriter` は、
+その `Origin` に書く。
+
 ### 認証トークン
 
 `token` は文字列か、文字列を返す非同期関数を受け取る。関数なら、最初の接続、GOAWAY に

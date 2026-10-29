@@ -68,7 +68,10 @@ beyond the codec, sample rate and channel count the catalog lists, and the video
 track carries its parameter sets in band.
 
 ## CMAF tracks
-Every media track has a CMAF sibling named with a `_cmaf` suffix, except A-law,
+A writer whose `SourceTracks::cmaf` is off publishes its tracks as LOC alone:
+the catalog lists no CMAF sibling for them, nothing is muxed into fMP4, and the
+media timeline depends on `video` only. Otherwise every media track has a CMAF
+sibling named with a `_cmaf` suffix, except A-law,
 Opus and MP3 audio, which travel as LOC alone (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
 (draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
@@ -105,6 +108,23 @@ one (draft-ietf-moq-msf-01 §5). A viewer that joins a subscription the relay
 already holds does not wait for the next one on the SUBSCRIBE, which starts
 after the largest object: it fetches the current catalog, and the relay
 completes that FETCH from here when its own cache has dropped it.
+
+## Sharing a session
+`RelayConnection::new` opens its own session to the relay on first use, reads
+its events and closes it in `close`. `RelayConnection::with_session` publishes
+on a session someone else opened instead, such as a page that publishes and
+plays on one WebTransport session: the owner keeps reading the session's
+events and passes each to `RelayConnection::handle`, which answers SUBSCRIBE,
+UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS for the broadcasts and
+returns the rest, `Disconnected` included after it ended the broadcasts'
+sends. The broadcasts write into the `Origin` the owner passes, so the owner
+can publish tracks of its own on the same session: a SUBSCRIBE in a namespace
+no broadcast here publishes, and an UNSUBSCRIBE that `Origin` does not know,
+go back to the owner, while FETCH and TRACK_STATUS are answered from the shared
+`Origin`. The stream ledger and catalog state belong to the connection; the
+session's lifetime belongs to its owner, so `close` leaves it open. A
+connection that opened its own session rejects the SUBSCRIBEs no broadcast
+takes with TRACK_DOES_NOT_EXIST.
 
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
