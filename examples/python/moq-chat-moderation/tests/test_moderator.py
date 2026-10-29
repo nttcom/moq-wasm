@@ -1,38 +1,47 @@
 from pipecat.frames.frames import TextFrame
 from pipecat.tests.utils import run_test
 
-from moq_chat_moderation.chat import ChatMessage
+from moq_chat_moderation.chat import ChatMessage, Label
 from moq_chat_moderation.event_timeline import EventTimeline
 from moq_chat_moderation.moderator import ChatModerator
 from tests.helpers import StubSystemOne, published_timeline
 
+LABELS = (Label("喜", "喜んでいる、うれしい"), Label("暴言", "相手を侮辱・攻撃・脅す"))
 
-async def moderate(system_one: StubSystemOne, chat: ChatMessage) -> list[dict]:
+
+async def test_chat_is_recorded_with_each_label_probability_at_its_location():
+    # Arrange
     timeline, publication = await published_timeline()
-    await run_test(ChatModerator(system_one, timeline), frames_to_send=[chat], expected_down_frames=[])
+    chat = ChatMessage(text="shut up", labels=LABELS, location=(7, 0))
+
+    # Act
+    await run_test(ChatModerator(StubSystemOne([0.02, 0.93]), timeline), frames_to_send=[chat], expected_down_frames=[])
+
+    # Assert
     _, records = await publication.next_write()
-    return records
+    assert records == [
+        {"l": [7, 0], "data": {"labels": [{"name": "喜", "probability": 0.02}, {"name": "暴言", "probability": 0.93}]}}
+    ]
 
 
-async def test_abusive_chat_is_recorded_at_its_location():
+async def test_chat_without_labels_is_not_judged():
+    # Arrange
+    system_one = StubSystemOne([])
+
     # Act
-    records = await moderate(StubSystemOne(probability=0.93), ChatMessage(text="shut up", location=(7, 0)))
+    await run_test(
+        ChatModerator(system_one, EventTimeline()),
+        frames_to_send=[ChatMessage(text="hello", labels=(), location=(8, 0))],
+        expected_down_frames=[],
+    )
 
     # Assert
-    assert records == [{"l": [7, 0], "data": {"abusive": True, "probability": 0.93}}]
-
-
-async def test_ordinary_chat_is_recorded_as_not_abusive():
-    # Act
-    records = await moderate(StubSystemOne(probability=0.02), ChatMessage(text="hello", location=(8, 0)))
-
-    # Assert
-    assert records == [{"l": [8, 0], "data": {"abusive": False, "probability": 0.02}}]
+    assert system_one.texts == []
 
 
 async def test_other_frames_pass_through_unjudged():
     # Arrange
-    system_one = StubSystemOne(probability=0.5)
+    system_one = StubSystemOne([0.5])
 
     # Act
     await run_test(

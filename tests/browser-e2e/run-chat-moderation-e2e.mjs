@@ -33,8 +33,12 @@ import {
 import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const botDir = resolve(repoRoot, "examples/python/moq-chat-moderation");
-const abusiveText = "e2e-abusive";
 const childProcesses = [];
+
+function labelNoul(state, question) {
+  const [, name] = question.instructions.match(/「(.+?)」/) ?? [];
+  return name !== undefined && state.includes(`e2e-${name}`) ? 0.95 : 0.02;
+}
 
 async function startFakeSystemOne() {
   let delayMs = 0;
@@ -45,11 +49,16 @@ async function startFakeSystemOne() {
       response.end();
       return;
     }
-    const { state } = await json(request);
+    const { state, questions } = await json(request);
     await setTimeout(delayMs);
-    const noul = state.includes(abusiveText) ? 0.95 : 0.02;
+    const answers = Object.fromEntries(
+      Object.entries(questions).map(([id, question]) => [
+        id,
+        { type: "noul", noul: labelNoul(state, question) },
+      ]),
+    );
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ answers: { abusive: { noul } } }));
+    response.end(JSON.stringify({ answers }));
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   return server;

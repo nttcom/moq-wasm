@@ -7,7 +7,7 @@ from tests.helpers import FakeSystemOneServer
 
 @pytest.fixture
 async def fake_system_one_server():
-    server = FakeSystemOneServer(noul=0.9)
+    server = FakeSystemOneServer(nouls=[0.9, 0.1])
     app = web.Application()
     app.router.add_post("/v1/systemone", server.handle)
     async with TestServer(app) as test_server:
