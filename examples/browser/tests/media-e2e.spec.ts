@@ -74,6 +74,9 @@ async function expectVideoMuteToLeaveAndRejoinTheCatalog(
   await publisher.muteVideoButton.click()
   // Assert: 映像 track がもう一度 catalog に載ったことを確認する。
   await expect(subscriber.catalogStatus).toContainText('video=1')
+  // Assert: 解除後も映像の送信が失敗せずに続くことを確認する。
+  await publisher.sendStatus.page().waitForTimeout(2_000)
+  await expect(publisher.sendStatus).toHaveText('Video unmuted')
 }
 
 async function expectSubscriberPlayback(subscriber: SubscriberPageModel): Promise<void> {

@@ -42,8 +42,17 @@ export async function publish(
   const broadcast = session.broadcast(namespace, options.videoLabel)
   await broadcast.announce()
   const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
-  const encode = (kind: MediaKind, track: MediaStreamTrack) =>
-    kind === 'video' ? encodeVideo(broadcast, track, options, report) : encodeAudio(broadcast, track, report)
+  // A new encoder worker stamps its first chunk 0, so the chunks of a worker
+  // started after an unmute or a replaced track are shifted by the time since
+  // the publication began: the broadcast's timestamps never run backwards,
+  // which would reuse its group ids and capture times.
+  const startedAtMs = performance.now()
+  const encode = (kind: MediaKind, track: MediaStreamTrack) => {
+    const offsetMicros = Math.round((performance.now() - startedAtMs) * 1000)
+    return kind === 'video'
+      ? encodeVideo(broadcast, track, options, offsetMicros, report)
+      : encodeAudio(broadcast, track, offsetMicros, report)
+  }
   const sources = new Map<MediaKind, Source>()
   for (const [kind, track] of [
     ['video', stream.getVideoTracks()[0]],
@@ -107,6 +116,7 @@ function encodeVideo(
   broadcast: MediaBroadcast,
   track: MediaStreamTrack,
   options: PublishOptions,
+  offsetMicros: number,
   report: (error: unknown) => void
 ): Worker {
   const worker = new Worker(new URL('../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
@@ -124,7 +134,7 @@ function encodeVideo(
         broadcast.configureVideo(codec)
         configuredCodec = codec
       }
-      broadcast.pushVideo(copied(chunk), chunk.timestamp)
+      broadcast.pushVideo(copied(chunk), chunk.timestamp + offsetMicros)
     } catch (error) {
       report(error)
     }
@@ -141,7 +151,12 @@ function encodeVideo(
   return worker
 }
 
-function encodeAudio(broadcast: MediaBroadcast, track: MediaStreamTrack, report: (error: unknown) => void): Worker {
+function encodeAudio(
+  broadcast: MediaBroadcast,
+  track: MediaStreamTrack,
+  offsetMicros: number,
+  report: (error: unknown) => void
+): Worker {
   const worker = new Worker(new URL('../../utils/media/encoders/audioEncoder.ts', import.meta.url), {
     type: 'module'
   })
@@ -165,7 +180,7 @@ function encodeAudio(broadcast: MediaBroadcast, track: MediaStreamTrack, report:
         configured = true
       }
       if (configured) {
-        broadcast.pushAudio(copied(chunk), chunk.timestamp, audioLevel?.level, audioLevel?.voiceActivity)
+        broadcast.pushAudio(copied(chunk), chunk.timestamp + offsetMicros, audioLevel?.level, audioLevel?.voiceActivity)
       }
     } catch (error) {
       report(error)
