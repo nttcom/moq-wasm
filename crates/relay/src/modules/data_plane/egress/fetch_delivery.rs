@@ -26,13 +26,13 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
                             "cached object cannot be loaded; resetting fetch stream"
                         );
                         if let Err(e) = sender.reset(DataStreamResetCode::InternalError).await {
-                            tracing::error!(?e, "failed to reset fetch stream");
+                            tracing::error!(error = ?e, "failed to reset fetch stream");
                         }
                         return;
                     }
                 };
                 if let Err(e) = sender.send(object).await {
-                    tracing::error!(?e, "failed to send fetch object");
+                    tracing::error!(error = ?e, "failed to send fetch object");
                     return;
                 }
             }
@@ -48,7 +48,7 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
                     "fetch cannot be completed from cache; resetting fetch stream"
                 );
                 if let Err(e) = sender.reset(error_code).await {
-                    tracing::error!(?e, "failed to reset fetch stream");
+                    tracing::error!(error = ?e, "failed to reset fetch stream");
                 }
                 return;
             }
@@ -56,11 +56,11 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
     }
     if request.cache.is_malformed() {
         if let Err(e) = sender.reset(DataStreamResetCode::MalformedTrack).await {
-            tracing::error!(?e, "failed to reset fetch stream");
+            tracing::error!(error = ?e, "failed to reset fetch stream");
         }
         return;
     }
     if let Err(e) = sender.close().await {
-        tracing::error!(?e, "failed to close fetch stream");
+        tracing::error!(error = ?e, "failed to close fetch stream");
     }
 }

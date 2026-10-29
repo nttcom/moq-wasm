@@ -39,7 +39,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.publish_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace)
+        fields(subscriber_session_id = %session_id, track_namespace = %track_namespace)
     )]
     pub(crate) async fn publish_namespace(&self, session_id: SessionId, track_namespace: String) {
         let Ok(publisher) = self.publisher(session_id).await.inspect_err(|error| {
@@ -60,7 +60,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.publish_namespace_done",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace)
+        fields(subscriber_session_id = %session_id, track_namespace = %track_namespace)
     )]
     pub(crate) async fn publish_namespace_done(
         &self,
@@ -82,7 +82,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.publish",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
+        fields(subscriber_session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
     )]
     pub(crate) async fn publish(
         &self,
@@ -107,7 +107,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.publish_done",
         skip_all,
-        fields(session_id = %session_id, request_id = %subscription.request_id())
+        fields(subscriber_session_id = %session_id, request_id = %subscription.request_id())
     )]
     pub(crate) async fn publish_done(
         &self,
@@ -125,7 +125,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.subscribe",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
+        fields(publisher_session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
     )]
     pub(crate) async fn subscribe(
         &self,
@@ -150,7 +150,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.fetch",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
+        fields(publisher_session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
     )]
     pub(crate) async fn fetch(
         &self,
@@ -179,7 +179,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.unsubscribe",
         skip_all,
-        fields(session_id = %session_id, request_id = %subscription.request_id())
+        fields(publisher_session_id = %session_id, request_id = %subscription.request_id())
     )]
     pub(crate) async fn unsubscribe(
         &self,
@@ -195,7 +195,7 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.unsubscribe_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+        fields(publisher_session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
     pub(crate) async fn unsubscribe_namespace(
         &self,

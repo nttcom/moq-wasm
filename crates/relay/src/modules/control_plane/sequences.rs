@@ -83,7 +83,7 @@ pub(crate) async fn connect_relay(
         .get_or_connect(relay)
         .await
         .inspect_err(
-            |err| tracing::warn!(?err, relay_id = %relay.relay_id, "failed to connect relay"),
+            |err| tracing::warn!(error = ?err, relay_id = %relay.relay_id, "failed to connect relay"),
         )
         .ok()
 }
@@ -101,7 +101,7 @@ pub(crate) async fn release_upstream(
         .await
     {
         tracing::warn!(
-            ?err,
+            error = ?err,
             publisher_session_id = %publisher_session_id,
             request_id = %upstream_request_id,
             "failed to forward upstream unsubscribe"

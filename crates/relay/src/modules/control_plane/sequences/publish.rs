@@ -143,7 +143,7 @@ impl Publish {
             return true;
         };
         tracing::warn!(
-            ?err,
+            error = ?err,
             track_namespace = %track_key.track_namespace,
             track_name = %track_key.track_name,
             "failed to register track route"
@@ -177,7 +177,7 @@ impl Publish {
         }
         if let Err(err) = route_registry.unregister_track_publisher(track_key).await {
             tracing::warn!(
-                ?err,
+                error = ?err,
                 track_namespace = %track_key.track_namespace,
                 track_name = %track_key.track_name,
                 "failed to unregister track route"
@@ -299,7 +299,7 @@ impl Publish {
         {
             Ok(routes) => routes,
             Err(err) => {
-                tracing::warn!(?err, "failed to find remote publish subscribers");
+                tracing::warn!(error = ?err, "failed to find remote publish subscribers");
                 return;
             }
         };
