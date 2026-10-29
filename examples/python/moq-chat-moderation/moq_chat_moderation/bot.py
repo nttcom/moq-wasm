@@ -8,6 +8,7 @@ from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
+from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
 from moq_system_one_bot.namespace import until_room_empty, while_published
@@ -32,8 +33,6 @@ STATUS_TRACK = "status"
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 RECONNECT_DELAY_SECONDS = 2.0
-# The System One service scales to zero; a cold start copies its weights before it answers.
-JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
@@ -143,7 +142,7 @@ async def moderate_room(
 
 async def main():
     args = parse_args()
-    async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as http:
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
         identity_token = identity_token_from_arguments(args, http, args.system_one_url)
         await serve_rooms(args, partial(moderate_room, args, http, identity_token))
 

@@ -1,8 +1,6 @@
 import base64
 
-import aiohttp
-from moq_bot_rooms.identity_token import IdentityToken
-from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot import system_one_client
 
 from moq_camera_detection.prompt import BoxesQuestion, ChoiceQuestion, Prompt, Question
 
@@ -36,19 +34,7 @@ def read_answer(question: Question, answer: dict) -> Answer:
     ]
 
 
-class SystemOneVisionClient:
-    def __init__(
-        self,
-        session: aiohttp.ClientSession,
-        url: str,
-        status: SystemOneStatus,
-        identity_token: IdentityToken | None = None,
-    ):
-        self._session = session
-        self._url = url
-        self._status = status
-        self._identity_token = identity_token
-
+class SystemOneVisionClient(system_one_client.SystemOneClient):
     async def answer(self, jpeg: bytes, prompt: Prompt) -> list[Answer]:
         """Asks every question of the prompt in one request; the answers follow the questions' order."""
         request = {
@@ -56,15 +42,5 @@ class SystemOneVisionClient:
             "images": ["data:image/jpeg;base64," + base64.b64encode(jpeg).decode()],
             "questions": {question_id(index): system_one_question(q) for index, q in enumerate(prompt.questions)},
         }
-        headers = (
-            {"Authorization": f"Bearer {await self._identity_token.value()}"}
-            if self._identity_token
-            else {}
-        )
-        async with (
-            self._status.request(),
-            self._session.post(self._url, json=request, headers=headers) as response,
-        ):
-            response.raise_for_status()
-            answers = (await response.json())["answers"]
+        answers = await self.ask(request)
         return [read_answer(q, answers[question_id(index)]) for index, q in enumerate(prompt.questions)]
