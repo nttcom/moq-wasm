@@ -1,7 +1,7 @@
 # moq-camera-detection
 
 ブラウザの MoQ Camera Detection ページ（`examples/browser/examples/moq-camera-detection`）が H.264 で配信したカメラ映像を
-pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) で
+pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、Cloud Run 上の決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) で
 ページが送った質問に選択肢から答えます。答えは MSF の event timeline として publish され、ページに表示されます。
 
 ```mermaid
@@ -9,7 +9,7 @@ sequenceDiagram
     participant B as Browser
     participant R as Relay
     participant P as pipecat bot
-    participant D as d3-flash (Cloud Run)
+    participant D as d1-2B (Cloud Run)
     B->>R: prompt (anon/moq-camera-detection/{room}/camera)、{"question": "...", "choices": ["はい", "いいえ"]}
     B->>R: video (anon/moq-camera-detection/{room}/camera)、1 キーフレーム 1 group
     R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
@@ -20,11 +20,11 @@ sequenceDiagram
     R->>B: {"l": [groupId, objectId], "data": {"prompt": [promptGroupId, 0], "answer": "はい"}}
 ```
 
-## d3-flash
+## d1-2B
 
-System One の `/v1/systemone` に画像付きで答える Cloud Run サービス `moqt-d3-flash`（asia-southeast1、MoQ Chat Moderation・MoQ PTZ Tracking と共用）です。
-IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、Cloud Run や GCE では `--metadata-auth` で ID トークンを送ります。停止後の最初の判定はコールドスタートで約 2 分 40 秒かかります。
-デプロイ手順は [d3-flash を Cloud Run にデプロイする](../d3-flash-on-cloud-run.md) にあります。
+System One の `/v1/systemone` に画像付きで答える Cloud Run サービス `moqt-system-one`（asia-southeast1、MoQ Chat Moderation・MoQ PTZ Tracking と共用）です。
+IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、Cloud Run や GCE では `--metadata-auth` で ID トークンを送ります。停止後の最初の判定はコールドスタートで待たされます。
+デプロイ手順は [d1-2B を Cloud Run にデプロイする](../system-one-on-cloud-run.md) にあります。
 
 質問は `/v1/systemone` の choice 型で送り、選択肢を criteria にします。返った choice が選択肢になければ「判定できません」と表示します。
 
@@ -52,12 +52,12 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
    ```shell
    cd examples/python/moq-camera-detection
    uv run python -m moq_camera_detection.bot --insecure \
-     --system-one-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。bot は `http://127.0.0.1:8098` で待ち受け、
-   ページが参加したルームごとに relay につなぎます。1 つのカメラで d3-flash の処理が埋まるため、既定では同時に 1 ルームです。
+   ページが参加したルームごとに relay につなぎます。1 つのカメラで d1-2B の処理が埋まるため、既定では同時に 1 ルームです。
    オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
 
 3. ページを開く
@@ -91,7 +91,7 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
 uv run pytest
 ```
 
-E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の d3-flash・bot を起動し、Playwright の偽カメラでページを操作します。
+E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の System One サーバ・bot を起動し、Playwright の偽カメラでページを操作します。
 
 ```shell
 node tests/browser-e2e/run-camera-detection-e2e.mjs

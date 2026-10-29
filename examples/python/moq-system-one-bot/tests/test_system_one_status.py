@@ -82,7 +82,7 @@ async def test_failed_request_reports_ready_again():
     with pytest.raises(RuntimeError):
         async with status.request():
             assert await next_status(publication) == "starting"
-            raise RuntimeError("d3-flash failed")
+            raise RuntimeError("System One failed")
 
     # Assert
     assert await next_status(publication) == "ready"

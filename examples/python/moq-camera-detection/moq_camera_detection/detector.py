@@ -39,7 +39,7 @@ class CameraDetector(FrameProcessor):
         if time.monotonic() - frame.decoded_at > STALE_PICTURE_SECONDS:
             return
         if len(self._judging) >= MAX_JUDGING_PICTURES:
-            logger.debug(f"d3-flash is busy, skipping camera picture {frame.location}")
+            logger.debug(f"System One is busy, skipping camera picture {frame.location}")
             return
         task = self.create_task(self._judge(frame))
         self._judging.add(task)
@@ -55,7 +55,7 @@ class CameraDetector(FrameProcessor):
         try:
             answer = await self._vision.choose(picture.jpeg, picture.prompt)
         except (aiohttp.ClientError, KeyError, IndexError) as error:
-            logger.warning(f"d3-flash could not judge camera picture {picture.location}: {error}")
+            logger.warning(f"System One could not judge camera picture {picture.location}: {error}")
             return
         logger.info(
             f"camera picture {picture.location} answer={answer}"

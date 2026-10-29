@@ -111,4 +111,4 @@ class FakeVisionServer:
 
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"model": "d3-flash", "answers": self.answers})
+        return web.json_response({"model": "d1-2B", "answers": self.answers})

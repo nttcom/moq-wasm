@@ -1,7 +1,7 @@
 # moq-ptz-tracking
 
 `onvif-ingest` が配信する ONVIF カメラの映像を pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、ブラウザの MoQ PTZ Tracking ページ
-（`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを、Cloud Run 上の決定モデル [d3-flash](https://huggingface.co/vllm-sr/d3-flash) に尋ねます。
+（`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを、Cloud Run 上の決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) に尋ねます。
 対象が中央から外れていれば、`onvif-ingest` に ContinuousMove と Stop を送ってカメラを対象の方へ向けます。
 
 ```mermaid
@@ -9,7 +9,7 @@ sequenceDiagram
     participant B as Browser
     participant R as Relay
     participant P as pipecat bot
-    participant D as d3-flash (Cloud Run)
+    participant D as d1-2B (Cloud Run)
     participant O as onvif-ingest
     B->>R: prompt (anon/moq-ptz-tracking/viewer)、{"target": "人", "video": "video/profile_1"}
     O->>R: video/profile_1 (anon/onvif/client)、1 キーフレーム 1 group
@@ -30,7 +30,7 @@ sequenceDiagram
 
 ## 追従のしかた
 
-- d3-flash には、まず「写っているか」を yes/no で 1 問だけ尋ね、0.5 未満なら「映っていない」にします。写っていれば、
+- d1-2B には、まず「写っているか」を yes/no で 1 問だけ尋ね、0.5 未満なら「映っていない」にします。写っていれば、
   画面を 5×5 に分けたマス目から 1 つを選ぶ質問をもう 1 問送り、各マスの中心を確率で重み付けした平均を対象の位置にします。
   マス目の質問に「写っていない」の選択肢を混ぜると、無い対象の確率が 25 マスに散らばって合計で「写っていない」を上回り、
   無いものを「ある」と判定したため、2 問に分けています。映っていないときは約 0.35 秒、映っているときは約 1 秒かかります。
@@ -113,12 +113,12 @@ bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動�
    ```shell
    cd examples/python/moq-ptz-tracking
    uv run python -m moq_ptz_tracking.bot --insecure \
-     --system-one-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 
    `--insecure` は手元の relay の自己署名証明書を検証しない指定です。認証は
-   [moq-camera-detection](../moq-camera-detection/README.md#d3-flash) と同じです。bot は `http://127.0.0.1:8099` で待ち受け、
+   [moq-camera-detection](../moq-camera-detection/README.md#d1-2b) と同じです。bot は `http://127.0.0.1:8099` で待ち受け、
    ページが `onvif` ルームに参加している間だけ relay につなぎます。カメラが 1 台なので、ルームは `onvif` だけです。
    オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
 
@@ -140,7 +140,7 @@ bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動�
 | `anon/onvif/client` | `video/profile_N` | `onvif-ingest` | H.264 Annex B の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
 | `anon/onvif/viewer` | `command` | bot | `onvif-ingest` の PTZ コマンド。1 回の動きを 1 group にし、`{"type": "continuous", ...}` と `{"type": "stop"}` を順に送る。ONVIF ページも同じトラックに送る |
 | `anon/moq-ptz-tracking/tracker` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す。`data.position` は対象の中心（画面に対する割合）、映っていなければ `"not visible"`、読めなければ `null` |
-| `anon/moq-ptz-tracking/tracker` | `status` | bot | d3-flash の起動状態（[moq-camera-detection](../moq-camera-detection/README.md) と同じ） |
+| `anon/moq-ptz-tracking/tracker` | `status` | bot | d1-2B の起動状態（[moq-camera-detection](../moq-camera-detection/README.md) と同じ） |
 
 - ページは自分が再生している映像トラックを prompt で伝えます。`onvif-ingest` は最初に subscribe されたプロファイルしか
   配信しないため、bot は別のプロファイルを選びません。

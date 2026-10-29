@@ -29,9 +29,9 @@ other's tokens valid. Set `VTS_PORT` when 8081 is taken.
 `node tests/browser-e2e/run-ptz-tracking-e2e.mjs` runs the PTZ tracking bot
 without a camera: `browser-e2e/fake-onvif-ingest.py` streams a synthetic H.264
 picture through `moq-cli publish` as `anon/onvif/client` and records the
-bot's `command` track, and the runner's fake d3-flash answers where the target
+bot's `command` track, and the runner's fake System One server answers where the target
 is. The specs check that the page shows the step the bot decided, that
 onvif-ingest would receive ContinuousMove then Stop, that the step turns the
-other way when the target moves, and the d3-flash status while answers are
+other way when the target moves, and the System One status while answers are
 late. Set `RELAY_PORT`, `VTS_PORT` and `MEDIA_E2E_WEB_PORT` (with
 `MEDIA_E2E_MOQT_URL`) when the defaults are taken.

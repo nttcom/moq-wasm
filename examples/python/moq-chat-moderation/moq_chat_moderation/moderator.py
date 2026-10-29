@@ -27,7 +27,7 @@ class ChatModerator(FrameProcessor):
         try:
             probability = await self._system_one.abusive_probability(chat.text)
         except (aiohttp.ClientError, KeyError, ValueError) as error:
-            logger.warning(f"d3-flash could not judge the chat message at {chat.location}: {error}")
+            logger.warning(f"System One could not judge the chat message at {chat.location}: {error}")
             return
         abusive = probability >= ABUSIVE_THRESHOLD
         logger.info(f"chat {chat.location} abusive={abusive} (p={probability:.2f})")

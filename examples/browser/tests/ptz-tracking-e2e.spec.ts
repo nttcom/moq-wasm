@@ -66,7 +66,7 @@ test.describe('MoQ PTZ Tracking', () => {
     await expect(position).toHaveText('見つかりません', { timeout: 30_000 })
   })
 
-  test('shows the d3-flash status while its answers are late', async ({ page }) => {
+  test('shows the System One status while its answers are late', async ({ page }) => {
     // Arrange
     await placeTargetAt(0.5, 0.5)
     await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, LATE_ANSWER_MS)
@@ -77,7 +77,7 @@ test.describe('MoQ PTZ Tracking', () => {
 
     // Assert
     const systemOneStatus = page.getByTestId('ptz-tracking-system-one-status')
-    await expect(systemOneStatus).toContainText('d3-flash', { timeout: 30_000 })
+    await expect(systemOneStatus).toContainText('d1-2B', { timeout: 30_000 })
     await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
     await expect(position).toHaveText('横 50%・縦 50%', { timeout: 30_000 })
     await expect(systemOneStatus).toBeHidden()

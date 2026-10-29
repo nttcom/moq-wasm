@@ -72,7 +72,7 @@ class PtzTracker(FrameProcessor):
             try:
                 answer = await self._vision.locate(picture.jpeg, picture.target.description)
             except (aiohttp.ClientError, KeyError, IndexError) as error:
-                logger.warning(f"d3-flash could not locate the target in {picture.location}: {error}")
+                logger.warning(f"System One could not locate the target in {picture.location}: {error}")
                 return
             logger.info(f"camera picture {picture.location} {answer} in {time.monotonic() - requested_at:.2f}s")
             if self._latest_target.target != picture.target:

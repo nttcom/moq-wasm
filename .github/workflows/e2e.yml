@@ -684,7 +684,7 @@ jobs:
         working-directory: examples/python/moq-bot-rooms
         run: uv run pytest
 
-      - name: Run d3-flash bot package unit tests
+      - name: Run System One bot package unit tests
         working-directory: examples/python/moq-system-one-bot
         run: uv run pytest
 

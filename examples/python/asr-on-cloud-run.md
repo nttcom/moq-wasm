@@ -11,15 +11,15 @@ vLLM の書き起こし API は、Granite Speech に言語を書かない決ま�
 | `granite-speech-5-2b` | [ibm-granite/granite-speech-5.0-2b](https://huggingface.co/ibm-granite/granite-speech-5.0-2b) | `--max-model-len 2048` |
 
 モデルごとに別のサービスにします。Qwen3-ASR のモデルカードは、そのモデルに合わせて固定した vLLM の nightly 版を求めているためです。
-d3-flash（[d3-flash を Cloud Run にデプロイする](d3-flash-on-cloud-run.md)）とも別のサービスです。d3-flash の重みだけで L4 のメモリの大半を使うためです。
+System One の判定サーバ（[d1-2B を Cloud Run にデプロイする](system-one-on-cloud-run.md)）とも別のサービスです。判定サーバは vLLM ではなく独自のサーバ（`system-one-server`）で動くためです。
 
 | 構成 | 理由 |
 | --- | --- |
 | IAM 認証必須。専用のサービスアカウントを使う | GPU の費用がかかるため |
-| 重みを GCS に置き、起動時に `/dev/shm` へコピーする | d3-flash と同じく、GCS のマウントから直接読み込むと遅いため |
+| 重みを GCS に置き、起動時に `/dev/shm` へコピーする | 判定サーバと同じく、GCS のマウントから直接読み込むと遅いため |
 | モデル名を `--served-model-name <asr>` にする | bot は `?asr=` の名前をモデル名として送るため |
 
-> この手順は、モデルカードと d3-flash の手順をもとに書いたもので、まだ GPU 上で通していません。初回のデプロイで確かめてください。
+> この手順は、モデルカードと判定サーバ（当時は d3-flash）の手順をもとに書いたもので、まだ GPU 上で通していません。初回のデプロイで確かめてください。
 > イメージは digest で固定します。Qwen3-ASR はモデルカードが求める nightly 版以降の `vllm/vllm-openai:nightly`、Granite Speech はリリース版の `vllm/vllm-openai` です。
 > Granite Speech 2b のリポジトリには、`model.safetensors` のほかに `weight` と `bias` だけを持つ `out_llm.safetensors` があり、index ファイルはありません。vLLM は index のないディレクトリの safetensors をすべて読み込み、`out_llm.safetensors` の重みを置く先がなくて起動に失敗するため、ダウンロードから除きます。
 
@@ -111,5 +111,5 @@ uv run python -m moq_meeting_transcriber.bot --asr ${ASR}=${ASR_URL} --metadata-
 
 ## 費用と起動時間
 
-- インスタンスが起きている間だけ、サービスごとに課金されます。L4 1 台（8 vCPU・32 GiB）で、d3-flash と同じく約 $1.70/h です。
+- インスタンスが起きている間だけ、サービスごとに課金されます。L4 1 台（8 vCPU・32 GiB）で約 $1.70/h です。
 - 0 台からの最初のリクエストは、重みのコピー（Qwen3-ASR は約 4 GB、Granite Speech 2b は約 5 GB）と vLLM の起動を待ちます。その間、bot は `status` トラックで `starting` を出し、ページのバッジに表示されます。

@@ -27,17 +27,17 @@ NAMESPACE_ROOT = ["anon", "moq-chat-moderation"]
 CHAT_TRACK = "chat"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
-# The verdicts and the d3-flash status are kept for FETCH as long as a room runs by default
+# The verdicts and the System One status are kept for FETCH as long as a room runs by default
 # (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 RECONNECT_DELAY_SECONDS = 2.0
-# d3-flash scales to zero; a cold start copies 17 GB of weights before it answers.
+# The System One service scales to zero; a cold start copies its weights before it answers.
 JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with d3-flash, one bot per chat room")
+    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with d1-2B, one bot per chat room")
     add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
-    parser.add_argument("--system-one-url", required=True, help="a System One /v1/systemone endpoint, such as d3-flash")
+    parser.add_argument("--system-one-url", required=True, help="a System One /v1/systemone endpoint, such as system-one-server")
     add_identity_token_arguments(parser)
     return parser.parse_args()
 
