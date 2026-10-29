@@ -133,13 +133,7 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
 
   /// Every object, status objects excepted; ordered within a subgroup only.
   async *[Symbol.asyncIterator](): AsyncIterator<ReceivedObject> {
-    for (;;) {
-      const object = await this.read(() => this.inner.next())
-      if (!object) {
-        return
-      }
-      yield received(object)
-    }
+    yield* objects(() => this.read(() => this.inner.next()))
   }
 
   /// Each subgroup stream, with its objects in order and its status objects.
@@ -209,13 +203,7 @@ export class MoqGroup implements AsyncIterable<ReceivedObject> {
   /// Ends once the stream finishes; throws when it was reset.
   async *[Symbol.asyncIterator](): AsyncIterator<ReceivedObject> {
     try {
-      for (;;) {
-        const object = await this.inner.next()
-        if (!object) {
-          return
-        }
-        yield received(object)
-      }
+      yield* objects(() => this.inner.next())
     } finally {
       this.inner.free()
     }
@@ -228,16 +216,20 @@ export class MoqFetch implements AsyncIterable<ReceivedObject> {
 
   async *[Symbol.asyncIterator](): AsyncIterator<ReceivedObject> {
     try {
-      for (;;) {
-        const object = await this.inner.next()
-        if (!object) {
-          return
-        }
-        yield received(object)
-      }
+      yield* objects(() => this.inner.next())
     } finally {
       this.inner.free()
     }
+  }
+}
+
+async function* objects(next: () => Promise<WasmObject | undefined>): AsyncGenerator<ReceivedObject> {
+  for (;;) {
+    const object = await next()
+    if (!object) {
+      return
+    }
+    yield received(object)
   }
 }
 
