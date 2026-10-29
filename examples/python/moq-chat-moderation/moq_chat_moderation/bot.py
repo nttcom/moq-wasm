@@ -59,9 +59,10 @@ async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker:
         try:
             track = await session.subscribe(chat_namespace, CHAT_TRACK)
             async for chat_object in track:
-                chat = ChatMessage.parse(chat_object)
-                if chat is None:
-                    logger.warning(f"ignoring a chat object that is not UTF-8 text in group {chat_object.group_id}")
+                try:
+                    chat = ChatMessage.parse(chat_object)
+                except ValueError as error:
+                    logger.warning(f"ignoring an invalid chat object in group {chat_object.group_id}: {error}")
                     continue
                 await worker.queue_frame(chat)
             logger.info("chat track ended")

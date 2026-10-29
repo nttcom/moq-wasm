@@ -11,8 +11,25 @@
   }
 }
 
+.chat-side {
+  display: grid;
+  gap: 20px;
+}
+
 .card h2 {
   margin: 0;
+}
+
+.label-list {
+  display: grid;
+  gap: 6px;
+}
+
+.label-row {
+  display: grid;
+  grid-template-columns: 5em 1fr auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .chat-messages {
@@ -35,6 +52,7 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
+  cursor: pointer;
 }
 
 .chat-message[data-verdict='removed'] {
@@ -60,6 +78,20 @@
   background: #f3f4f6;
 }
 
+.chat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chat-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: #fff;
+  background: var(--accent);
+}
+
 .chat-message[data-verdict='ok'] .chat-label,
 .chat-message[data-verdict='removed'] .chat-label {
   display: none;
@@ -72,4 +104,49 @@
 
 .chat-form input {
   flex: 1;
+}
+
+.chat-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(360px, 100vw);
+  padding: 20px 22px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.chat-sidebar[hidden] {
+  display: none;
+}
+
+.sidebar-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.label-scores {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.label-score {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+}
+
+.label-score meter {
+  grid-column: 1 / -1;
+  width: 100%;
 }

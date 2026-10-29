@@ -1,8 +1,9 @@
 # moq-chat-moderation
 
 ブラウザの MoQ Chat Moderation ページ（`examples/browser/examples/moq-chat-moderation`）で打ったチャットを
-pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、Cloud Run 上の決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) で暴言かどうかを判定します。
-判定結果は MSF の event timeline として publish され、ページは暴言のメッセージを「モデレーターによって削除されました」に置き換えます。
+pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、Cloud Run 上の決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) でラベルごとに当てはまる確率を判定します。
+ラベルは名前と説明の組で、ページの欄で足したり消したりでき、送信時点の欄のラベルがメッセージと一緒に送られます。既定は 喜・怒・哀・楽・暴言・スパム です。
+判定結果は MSF の event timeline として publish されます。ページは確率 0.7 以上のラベルをメッセージの横に出し、「暴言」が付いたメッセージを「モデレーターによって削除されました」に置き換えます。メッセージをクリックすると、全ラベルの確率がサイドバーに出ます。
 
 ```mermaid
 sequenceDiagram
@@ -10,12 +11,12 @@ sequenceDiagram
     participant R as Relay
     participant P as pipecat bot
     participant D as d1-2B (Cloud Run)
-    B->>R: chat (anon/moq-chat-moderation/{room}/chat)
+    B->>R: chat {"text", "labels": [{"name", "description"}]}
     R->>P: chat
-    P->>D: /v1/systemone noul "abusive"
-    D-->>P: probability
+    P->>D: /v1/systemone noul l0…ln (1 ラベル 1 問)
+    D-->>P: probabilities
     P->>R: eventtimeline (anon/moq-chat-moderation/{room}/moderator)
-    R->>B: [{"l": [groupId, objectId], "data": {"abusive": true}}]
+    R->>B: [{"l": [groupId, objectId], "data": {"labels": [{"name", "probability"}]}}]
 ```
 
 ## d1-2B
@@ -70,10 +71,12 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `anon/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | メッセージの UTF-8 テキスト。1 メッセージ 1 group |
-| `anon/moq-chat-moderation/{room}/moderator` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で chat の Location を指す |
+| `anon/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | `{"text": "...", "labels": [{"name": "喜", "description": "..."}]}` の JSON。1 メッセージ 1 group |
+| `anon/moq-chat-moderation/{room}/moderator` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で chat の Location を指し、`data` は `{"labels": [{"name": "喜", "probability": 0.91}]}` |
 | `anon/moq-chat-moderation/{room}/moderator` | `status` | bot | System One の状態 `{"system_one", "since"}`。1 状態 1 group |
 
+- ラベルは 0〜16 個で、名前は 1〜20 文字、説明は 100 文字以内、名前は重複できません。bot は 1 ラベル 1 問の noul を 1 リクエストで聞き、ラベルが 0 個のメッセージは判定しません。
+- 質問文は「このチャットメッセージは「{名前}」（{説明}）に当てはまりますか？」です。手元の d1-2B で既定ラベルに日本語と英語の質問を比べ、スパムの判定が良かった日本語にしました。
 - eventtimeline は relay につなぐたびに、それまでのすべての判定を持つ group を開き、以降の判定を 1 件 1 object で足します。
 - group id は wall clock から採番します。relay は publisher が替わっても track のキャッシュを保持し、同じ Location を
   再利用した track を隔離するためです。

@@ -5,7 +5,7 @@ MoQ Chat Moderation（`moq-chat-moderation`）、MoQ Camera Detection（`moq-cam
 
 | bot | 用途 | 質問 |
 | --- | --- | --- |
-| MoQ Chat Moderation | チャットの暴言判定（テキスト） | `noul`（暴言である確率） |
+| MoQ Chat Moderation | チャットのラベル判定（テキスト） | `noul`（ラベルごとに当てはまる確率） |
 | MoQ Camera Detection | カメラ映像への質問（画像） | `choice`（ページが送った選択肢） |
 | MoQ PTZ Tracking | 追従する対象の枠（画像） | 対象ごとの `boxes`（当てはまるものすべての枠） |
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from aiohttp import web
 
+from moq_chat_moderation.chat import Label
 from moq_chat_moderation.event_timeline import EventTimeline
 
 READ_TIMEOUT_SECONDS = 2
@@ -31,20 +32,22 @@ async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
 
 @dataclass
 class StubSystemOne:
-    probability: float
+    probabilities: list[float]
     texts: list[str] = field(default_factory=list)
 
-    async def abusive_probability(self, text: str) -> float:
+    async def label_probabilities(self, text: str, labels: tuple[Label, ...]) -> list[float]:
         self.texts.append(text)
-        return self.probability
+        return self.probabilities[: len(labels)]
 
 
 @dataclass
 class FakeSystemOneServer:
-    noul: float
+    nouls: list[float]
     url: str = ""
     requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
 
     async def handle(self, request: web.Request) -> web.Response:
-        self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"answers": {"abusive": {"noul": self.noul}}})
+        body = await request.json()
+        self.requests.append((request.headers.get("Authorization"), body))
+        answers = {question: {"type": "noul", "noul": noul} for question, noul in zip(body["questions"], self.nouls)}
+        return web.json_response({"answers": answers})

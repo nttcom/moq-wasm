@@ -7,8 +7,6 @@ from moq_chat_moderation.chat import ChatMessage
 from moq_chat_moderation.system_one import SystemOneClient
 from moq_chat_moderation.event_timeline import EventTimeline, location_record
 
-ABUSIVE_THRESHOLD = 0.5
-
 
 class ChatModerator(FrameProcessor):
     def __init__(self, system_one: SystemOneClient, timeline: EventTimeline):
@@ -24,13 +22,16 @@ class ChatModerator(FrameProcessor):
             await self.push_frame(frame, direction)
 
     async def _moderate(self, chat: ChatMessage):
+        if not chat.labels:
+            return
         try:
-            probability = await self._system_one.abusive_probability(chat.text)
+            probabilities = await self._system_one.label_probabilities(chat.text, chat.labels)
         except (aiohttp.ClientError, KeyError, ValueError) as error:
             logger.warning(f"System One could not judge the chat message at {chat.location}: {error}")
             return
-        abusive = probability >= ABUSIVE_THRESHOLD
-        logger.info(f"chat {chat.location} abusive={abusive} (p={probability:.2f})")
-        await self._timeline.append(
-            location_record(chat.location, {"abusive": abusive, "probability": probability})
-        )
+        labels = [
+            {"name": label.name, "probability": probability}
+            for label, probability in zip(chat.labels, probabilities)
+        ]
+        logger.info(f"chat {chat.location} labels={labels}")
+        await self._timeline.append(location_record(chat.location, {"labels": labels}))
