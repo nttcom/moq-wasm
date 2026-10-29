@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 
 use crate::{
-    logging::relay_hostname,
+    logging::{mark_current_span_failed, relay_hostname},
     modules::{
         auth::session_authenticator::SessionAuthenticator,
         domain::{
@@ -55,6 +55,7 @@ impl SessionIntake {
                     "session rejected at CLIENT_SETUP"
                 );
                 handshake.reject(rejected.code, &rejected.reason).await;
+                mark_current_span_failed(format!("{:?}", rejected.code));
                 return;
             }
         };

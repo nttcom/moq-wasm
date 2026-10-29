@@ -7,6 +7,7 @@ use moqt::{
     subscribe::FilterType,
 };
 
+use crate::logging::mark_current_span_failed;
 use crate::modules::session::subscription::UpstreamSubscription;
 
 #[async_trait]
@@ -106,6 +107,7 @@ impl PublishHandler for moqt::publish::PublishHandler {
         code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
+        mark_current_span_failed(format!("{code:?}"));
         self.error(code, reason_phrase).await
     }
 }
