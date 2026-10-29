@@ -1,7 +1,7 @@
 use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
 use bytes::Bytes;
 use mediapack::{
-    AudioConfig, AudioSample, MediaEvent, Timestamp, aac::AudioSpecificConfig,
+    AudioConfig, AudioLevel, AudioSample, MediaEvent, Timestamp, aac::AudioSpecificConfig,
     h264::ParameterSetTracker,
 };
 use wasm_bindgen::prelude::*;
@@ -102,13 +102,24 @@ impl MediaBroadcast {
         self.push(MediaEvent::AudioConfig(config))
     }
 
-    /// One encoded audio frame; call `configureAudio` first.
+    /// One encoded audio frame; call `configureAudio` first. `level` is the
+    /// frame's RFC 6464 level in -dBov (0 to 127), written with
+    /// `voice_activity` as its LOC Audio Level property.
     #[wasm_bindgen(js_name = pushAudio)]
-    pub fn push_audio(&mut self, data: Vec<u8>, timestamp_micros: f64) -> Result<(), JsValue> {
+    pub fn push_audio(
+        &mut self,
+        data: Vec<u8>,
+        timestamp_micros: f64,
+        level: Option<u8>,
+        voice_activity: Option<bool>,
+    ) -> Result<(), JsValue> {
         self.push(MediaEvent::Audio(AudioSample {
             data: Bytes::from(data),
             pts: Timestamp::from_micros(timestamp_micros as u64),
-            audio_level: None,
+            audio_level: level.map(|level| AudioLevel {
+                level,
+                voice_activity: voice_activity.unwrap_or(false),
+            }),
         }))
     }
 }

@@ -1,5 +1,6 @@
 import type { MoqSession } from '@moqt/session'
 import type { MediaBroadcast } from '../../pkg/moqt'
+import type { AudioLevel } from '../../utils/media/loc'
 
 export type PublishOptions = {
   /// The video's label in the catalog.
@@ -87,11 +88,13 @@ function encodeAudio(broadcast: MediaBroadcast, track: MediaStreamTrack, report:
     type: 'module'
   })
   let configured = false
-  worker.onmessage = (event: MessageEvent<ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata>>) => {
+  worker.onmessage = (
+    event: MessageEvent<ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel }>
+  ) => {
     if (event.data.type !== 'chunk') {
       return
     }
-    const { chunk, metadata } = event.data
+    const { chunk, metadata, audioLevel } = event.data
     try {
       const config = metadata?.decoderConfig
       if (config) {
@@ -104,7 +107,7 @@ function encodeAudio(broadcast: MediaBroadcast, track: MediaStreamTrack, report:
         configured = true
       }
       if (configured) {
-        broadcast.pushAudio(copied(chunk), chunk.timestamp)
+        broadcast.pushAudio(copied(chunk), chunk.timestamp, audioLevel?.level, audioLevel?.voiceActivity)
       }
     } catch (error) {
       report(error)
