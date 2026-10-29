@@ -46,7 +46,7 @@ VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Pan and tilt the ONVIF camera so the MoQ PTZ tracking page's target stays centered"
+        description="Pan and tilt the ONVIF camera so every box of the MoQ PTZ tracking page's targets stays in the picture"
     )
     add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=1)
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
@@ -71,10 +71,16 @@ def parse_args() -> argparse.Namespace:
         help="fraction of the picture height a one-second tilt up shifts the view; negative for a camera that tilts down",
     )
     parser.add_argument(
+        "--margin",
+        type=float,
+        default=0.1,
+        help="share of the picture width and height on each side the targets' boxes must stay out of before the camera turns",
+    )
+    parser.add_argument(
         "--dead-zone",
         type=float,
         default=0.05,
-        help="largest offset of the target from the center, as a fraction of the picture, that leaves the camera still",
+        help="largest offset of the boxes' center from the picture's, as a fraction of it, that leaves an axis still",
     )
     add_identity_token_arguments(parser)
     return parser.parse_args()
@@ -223,7 +229,7 @@ async def track_in_room(
     commands = PtzCommands()
     latest_target = LatestTarget()
     vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
-    calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.dead_zone)
+    calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.margin, args.dead_zone)
     tracker = PtzTracker(vision, timeline, commands, calibration, latest_target)
     worker = PipelineWorker(Pipeline([tracker]), enable_rtvi=False, idle_timeout_secs=None)
     # The room server owns SIGINT and SIGTERM; it stops every room before it exits.

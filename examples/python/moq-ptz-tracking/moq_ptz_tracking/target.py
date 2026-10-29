@@ -4,12 +4,15 @@ from dataclasses import dataclass
 
 from moq_ptz_tracking.event_timeline import Location
 
+MAX_DESCRIPTIONS = 16
 MAX_DESCRIPTION_CHARS = 100
 
 
 @dataclass(frozen=True)
 class Target:
-    description: str
+    """What the page asked to keep in the picture: every instance of each description."""
+
+    descriptions: tuple[str, ...]
     video_track: str
     location: Location
 
@@ -19,15 +22,20 @@ def parse_prompt(payload: bytes, location: Location) -> Target | None:
     body = json.loads(payload)
     if not isinstance(body, dict):
         raise ValueError("prompt is not an object")
-    description = body.get("target")
-    if description is None:
+    descriptions = body.get("targets")
+    if not isinstance(descriptions, list):
+        raise ValueError("targets is not a list")
+    if not descriptions:
         return None
+    if not all(isinstance(text, str) and 0 < len(text) <= MAX_DESCRIPTION_CHARS for text in descriptions):
+        raise ValueError("a target is not a short text")
+    unique = tuple(dict.fromkeys(descriptions))
+    if len(unique) > MAX_DESCRIPTIONS:
+        raise ValueError(f"more than {MAX_DESCRIPTIONS} targets")
     video_track = body.get("video")
-    if not isinstance(description, str) or not 0 < len(description) <= MAX_DESCRIPTION_CHARS:
-        raise ValueError("target is not a short text")
     if not isinstance(video_track, str) or not video_track:
         raise ValueError("video is not a track name")
-    return Target(description, video_track, location)
+    return Target(unique, video_track, location)
 
 
 class LatestTarget:

@@ -1,8 +1,8 @@
 # moq-ptz-tracking
 
 `onvif-ingest` が配信する ONVIF カメラの映像を pipecat の bot がこのリポジトリの Python バインディング [`moqt`](../../../crates/python) で受け取り、ブラウザの MoQ PTZ Tracking ページ
-（`examples/browser/examples/moq-ptz-tracking`）で指定した対象が映像のどこにあるかを、Cloud Run 上の決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) に尋ねます。
-対象が中央から外れていれば、`onvif-ingest` に ContinuousMove と Stop を送ってカメラを対象の方へ向けます。
+（`examples/browser/examples/moq-ptz-tracking`）で指定した対象（最大 16）がそれぞれ映像のどこにあるかを、Cloud Run 上の決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) に枠（bounding box）で尋ねます。
+ページは枠を映像に重ねて描きます。枠のどれかが画面の端からはみ出しそうになると、bot は `onvif-ingest` に ContinuousMove と Stop を送り、すべての枠が画面に収まるようにカメラを向けます。
 
 ```mermaid
 sequenceDiagram
@@ -11,29 +11,30 @@ sequenceDiagram
     participant P as pipecat bot
     participant D as d1-2B (Cloud Run)
     participant O as onvif-ingest
-    B->>R: prompt (anon/moq-ptz-tracking/viewer)、{"target": "人", "video": "video/profile_1"}
+    B->>R: prompt (anon/moq-ptz-tracking/viewer)、{"targets": ["人", "椅子"], "video": "video/profile_1"}
     O->>R: video/profile_1 (anon/onvif/client)、1 キーフレーム 1 group
     R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
     P->>P: PyAV で H.264 をデコードし、幅 640 の JPEG に
-    P->>D: /v1/systemone 画像 + 対象が写っているか（yes/no）
-    D-->>P: 写っている確率
-    P->>D: 写っていれば、画像 + 5×5 のマス目のどこか
-    D-->>P: マスごとの確率
+    P->>D: /v1/systemone 画像 + 対象ごとの boxes（「Every 人.」「Every 椅子.」）
+    D-->>P: 対象ごとの枠
     P->>R: eventtimeline (anon/moq-ptz-tracking/tracker)
-    R->>B: {"l": [groupId, objectId], "data": {"prompt": [promptGroupId, 0], "position": [0.75, 0.25], "pan_seconds": 0.93, "tilt_seconds": 0.66}}
+    R->>B: {"l": [groupId, objectId], "data": {"prompt": [promptGroupId, 0], "boxes": [[0, [0.7, 0.1, 0.95, 0.9]], [1, [0.5, 0.5, 0.7, 0.9]]], "pan_seconds": 0.93, "tilt_seconds": 0.0}}
     P->>R: command (anon/onvif/viewer)、{"type": "continuous", "pan": 0.5, "tilt": 0.0, ...}
     R->>O: ContinuousMove
     P->>R: 0.93 秒後に {"type": "stop"}
     R->>O: Stop
-    Note over P,O: チルトも同じく ContinuousMove → 0.66 秒後に Stop
+    Note over P,O: チルトも動かすときは同じく ContinuousMove → Stop
 ```
 
 ## 追従のしかた
 
-- d1-2B には、まず「写っているか」を yes/no で 1 問だけ尋ね、0.5 未満なら「映っていない」にします。写っていれば、
-  画面を 5×5 に分けたマス目から 1 つを選ぶ質問をもう 1 問送り、各マスの中心を確率で重み付けした平均を対象の位置にします。
-  マス目の質問に「写っていない」の選択肢を混ぜると、無い対象の確率が 25 マスに散らばって合計で「写っていない」を上回り、
-  無いものを「ある」と判定したため、2 問に分けています。映っていないときは約 0.35 秒、映っているときは約 1 秒かかります。
+- d1-2B には、対象ごとに `boxes` の質問（「Every 人.」）を 1 問ずつ、1 回のリクエストにまとめて送ります。
+  1 つの対象につき最大 8 個の枠が返り、写っている確率（`found`）が 0.5 未満の枠は d1-2B が落とします。
+  どの対象の枠も 1 つも無ければ「見つからない」にします。
+- 1 回の判定は、Apple M1 Pro（MPS）で対象 1 つなら約 0.9 秒、16 個なら約 7.4 秒でした。対象 1 つにつき約 0.45 秒増えます。
+- 全部の枠を囲む枠（囲み枠）が、画面の各辺から `--margin`（既定 0.1）より内側に収まっている軸は動かしません。
+  はみ出した軸は、囲み枠の中心を画面の中央へ寄せます。Tapo には光学ズームが無いため、囲み枠が内側より大きいときも中央へ寄せ、
+  中心のずれが `--dead-zone` 未満になったら止めます。
 - 対象を見失ったら、直前の 2 回の検出（bot が回した分を差し引く）から対象の動いた向きを求め、パンとチルトを
   合わせてその向きへ 3 秒回しながら判定します。動きが小さければ、最後に見えた側へ回します。
 - それでも見つからなければ、AbsoluteMove で (0, 0)（パン中央、チルト 0）に戻してから、止まらずに横へパンし
@@ -43,8 +44,8 @@ sequenceDiagram
 - カメラは 360 度より先へは回りません。対象へ向けてパンしても、映像の中の対象が予想の 3 割も動かないことが 2 回続いたら、
   パンの端に当たったとみなし、反対向きに回り込みます。対象がいったん映らなくなってから再び映れば止めて追従に戻り、
   約 1 周分（14 秒）回っても見つからなければ、(0, 0) に戻して探索に移ります。
-- 中心からのずれに比例した時間だけ、速度 0.5 の ContinuousMove でパン、続いてチルトを動かし、Stop で止めます。
-  ずれ ÷ `--pan-per-second`（`--tilt-per-second`）秒動かします。ずれが `--dead-zone` 未満の軸は動かしません。
+- 囲み枠の中心のずれに比例した時間だけ、速度 0.5 の ContinuousMove でパン、続いてチルトを動かし、Stop で止めます。
+  ずれ ÷ `--pan-per-second`（`--tilt-per-second`）秒動かします。
   ONVIF では正のパンが右、正のチルトが上です。
 - 判定は 1 枚ずつ行い、カメラを動かしている間は判定しません。Stop から 1 秒たってからデコードした画像だけを
   次の判定に使います。カメラは Stop から 0.3 秒以内に止まり、撮影から bot のデコードまで約 0.4 秒かかるため、
@@ -130,16 +131,16 @@ bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動�
    ```
 
    `make chrome` で起動した Chrome でハブから MoQ PTZ Tracking を開き、Local relay-a を選んで Join します。
-   追従する対象を入力して「追従」を押すと bot がカメラを動かし始め、「停止」かページを閉じると止まります。
+   追従する対象を入力して（「＋ 対象」で欄を足すと最大 16 個）「追従」を押すと bot がカメラを動かし始め、「停止」かページを閉じると止まります。
 
 ## トラック
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `anon/moq-ptz-tracking/viewer` | `prompt` | ブラウザ | `{"target": "...", "video": "<映像トラック名>"}` で追従を始め、`{"target": null}` で止める。1 件 1 group。対象は 100 文字以内 |
+| `anon/moq-ptz-tracking/viewer` | `prompt` | ブラウザ | `{"targets": ["...", ...], "video": "<映像トラック名>"}` で追従を始め、`{"targets": []}` で止める。1 件 1 group。対象は 1〜16 個、それぞれ 100 文字以内。重複は 1 つにまとめる |
 | `anon/onvif/client` | `video/profile_N` | `onvif-ingest` | H.264 Annex B の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
 | `anon/onvif/viewer` | `command` | bot | `onvif-ingest` の PTZ コマンド。1 回の動きを 1 group にし、`{"type": "continuous", ...}` と `{"type": "stop"}` を順に送る。ONVIF ページも同じトラックに送る |
-| `anon/moq-ptz-tracking/tracker` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す。`data.position` は対象の中心（画面に対する割合）、映っていなければ `"not visible"`、読めなければ `null` |
+| `anon/moq-ptz-tracking/tracker` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す。`data.boxes` は `[[対象の番号, [left, top, right, bottom]], ...]`（prompt の `targets` の順番、画面に対する割合）、どの対象も映っていなければ `"not visible"` |
 | `anon/moq-ptz-tracking/tracker` | `status` | bot | d1-2B の起動状態（[moq-camera-detection](../moq-camera-detection/README.md) と同じ） |
 
 - ページは自分が再生している映像トラックを prompt で伝えます。`onvif-ingest` は最初に subscribe されたプロファイルしか

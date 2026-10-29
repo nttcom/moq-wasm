@@ -37,11 +37,11 @@ const botDir = resolve(repoRoot, "examples/python/moq-ptz-tracking");
 const moqCliBinary = resolve(repoRoot, "target/debug/moq-cli");
 const childProcesses = [];
 
-/// Answers the bot's two d3-flash questions: whether the target is visible, and which cell of
-/// the 5x5 grid holds it. `PUT /position` with "x,y" (fractions of the picture) or "not visible"
-/// sets the answer; `PUT /delay` delays every answer by the given milliseconds.
+/// Answers the bot's boxes questions, reading each target from its `Every <target>.` instructions.
+/// `PUT /boxes` with `{"<target>": [[left, top, right, bottom], ...]}` (fractions of the picture) sets
+/// each target's boxes; a target left out has none. `PUT /delay` delays every answer by the given milliseconds.
 async function startFakeSystemOne() {
-  let position = "0.5,0.5";
+  let boxes = { 人: [[0.4, 0.4, 0.6, 0.6]] };
   let delayMs = 0;
   const server = createServer(async (request, response) => {
     if (request.method === "PUT" && request.url === "/delay") {
@@ -50,8 +50,8 @@ async function startFakeSystemOne() {
       response.end();
       return;
     }
-    if (request.method === "PUT" && request.url === "/position") {
-      position = await text(request);
+    if (request.method === "PUT" && request.url === "/boxes") {
+      boxes = JSON.parse(await text(request));
       response.statusCode = 204;
       response.end();
       return;
@@ -60,37 +60,24 @@ async function startFakeSystemOne() {
     await setTimeout(delayMs);
     response.setHeader("content-type", "application/json");
     response.end(
-      JSON.stringify({ answers: answerQuestions(questions, position) }),
+      JSON.stringify({ answers: answerQuestions(questions, boxes) }),
     );
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   return server;
 }
 
-function answerQuestions(questions, position) {
-  const visible = position !== "not visible";
-  const cell = visible ? cellOf(position) : undefined;
+function answerQuestions(questions, boxes) {
   return Object.fromEntries(
-    Object.entries(questions).map(([id, question]) => [
-      id,
-      question.type === "noul"
-        ? { noul: visible ? 0.9 : 0.1 }
-        : {
-            probabilities: Object.fromEntries(
-              Object.keys(question.criteria).map((key) => [
-                key,
-                key === cell ? 1 : 0,
-              ]),
-            ),
-          },
-    ]),
+    Object.entries(questions).map(([id, question]) => {
+      const target = question.instructions.replace(/^Every (.*)\.$/, "$1");
+      const found = (boxes[target] ?? []).map(([left, top, right, bottom]) => ({
+        box: { left, top, right, bottom },
+        found: 0.9,
+      }));
+      return [id, { type: "boxes", boxes: found, count: found.length }];
+    }),
   );
-}
-
-function cellOf(position) {
-  const [x, y] = position.split(",").map(Number);
-  const index = (fraction) => Math.min(4, Math.floor(fraction * 5));
-  return `r${index(y)}c${index(x)}`;
 }
 
 async function main() {
