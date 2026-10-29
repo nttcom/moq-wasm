@@ -8,6 +8,7 @@ const form = document.getElementById('form') as HTMLFormElement
 let mediaStream: MediaStream | undefined
 let session: MoqSession | undefined
 let publication: Publication | undefined
+let videoMuted = false
 
 function initializeStatuses(): void {
   setStatusText('publisher-connection-status', 'Not connected')
@@ -69,8 +70,19 @@ async function startPublishing(): Promise<void> {
   setStatusText('publisher-send-status', `Publishing started: ${namespace.join('/')}`)
 }
 
+async function toggleVideoMute(): Promise<void> {
+  if (!publication) {
+    setStatusText('publisher-send-status', 'Not publishing')
+    return
+  }
+  videoMuted = !videoMuted
+  await publication.setMuted('video', videoMuted)
+  setStatusText('publisher-send-status', videoMuted ? 'Video muted' : 'Video unmuted')
+}
+
 async function close(): Promise<void> {
-  publication?.stop()
+  videoMuted = false
+  await publication?.close()
   publication = undefined
   session?.close()
   session = undefined
@@ -91,6 +103,7 @@ initializeStatuses()
 onClick('connectBtn', connect, 'publisher-connection-status')
 onClick('startGetUserMediaBtn', startCapture, 'publisher-capture-status')
 onClick('publishBtn', startPublishing, 'publisher-send-status')
+onClick('muteVideoBtn', toggleVideoMute, 'publisher-send-status')
 onClick(
   'closeBtn',
   async () => {
