@@ -36,12 +36,13 @@ impl Default for ClientConfig {
     }
 }
 
-/// Whether a `DUAL` client falls back to QMux over WebSocket (`wss://`, same
-/// host and port) when it cannot open the transport a `moqt://` or `https://`
-/// URL names. Only opening the transport falls back; a failed SETUP does
-/// not. Once a host and port fell back, the endpoint's later connections to
-/// it, GOAWAY migrations included, go straight to WebSocket. `QUIC`,
-/// `WEBTRANSPORT` and `BROWSER` ignore this.
+/// Whether a `DUAL` or `BROWSER` client falls back to QMux over WebSocket
+/// (`wss://`, same host and port) when it cannot open the transport a
+/// `moqt://` or `https://` URL names; a browser falls back from `https://`
+/// only. Only opening the transport falls back; a failed SETUP does not.
+/// Once a host and port fell back, the endpoint's later connections to it,
+/// GOAWAY migrations included, go straight to WebSocket. `QUIC` and
+/// `WEBTRANSPORT` ignore this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebSocketFallback {
     Disabled,

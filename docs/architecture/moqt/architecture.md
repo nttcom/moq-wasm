@@ -83,7 +83,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `DUAL` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
-| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport whose `ready` the fallback stopped waiting for is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 `T: TransportProtocol`, because the creator's constructors are static
@@ -108,8 +108,9 @@ Client-side helpers shared by the three creators:
   `ClientConfig::web_socket_fallback` (5 s by default) and, failing that,
   opens `wss://` on the same host and port (`ConnectTarget::web_socket_fallback`;
   `moqt://` has no path, so `/`). Only creators with
-  `FALLS_BACK_TO_WEB_SOCKET` do this: `DUAL` today, so `QUIC` links between
-  relays never move to TCP. A host and port that fell back is remembered for
+  `FALLS_BACK_TO_WEB_SOCKET` do this, `DUAL` and `BROWSER`, so `QUIC` links
+  between relays never move to TCP. A browser without the WebTransport API
+  fails the first attempt at once and so does not wait. A host and port that fell back is remembered for
   the endpoint's lifetime and opened over WebSocket at once, which covers
   GOAWAY migrations and reconnects, since they go through the same function.
   The host is resolved once before the wait starts, so a slow DNS server

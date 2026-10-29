@@ -4,7 +4,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{WebTransport, WebTransportOptions};
 
-use super::{browser_connection::BrowserConnection, js_value::js_error};
+use super::{browser_connection::BrowserConnection, browser_web_socket, js_value::js_error};
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
@@ -18,6 +18,8 @@ pub struct BrowserConnectionCreator {
 
 #[async_trait(?Send)]
 impl TransportConnectionCreator for BrowserConnectionCreator {
+    const FALLS_BACK_TO_WEB_SOCKET: bool = true;
+
     fn client(
         _port_num: u16,
         verify_certificate: bool,
@@ -54,16 +56,25 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
         &self,
         target: &ConnectTarget,
     ) -> anyhow::Result<BoxedConnection> {
-        if target.transport != ClientTransport::WebTransport {
-            anyhow::bail!(
-                "browser endpoint requires an https:// url, got {}",
+        match target.transport {
+            ClientTransport::WebTransport => {}
+            ClientTransport::WebSocket => {
+                let connection = browser_web_socket::connect(target, self.protocols).await?;
+                return Ok(Box::new(connection));
+            }
+            ClientTransport::Quic => anyhow::bail!(
+                "browser endpoint requires an https:// or wss:// url, got {}",
                 target.url
-            );
+            ),
         }
         let options = web_transport_options(self.protocols.web_transport)?;
+        // A browser without WebTransport throws here, so the fallback starts at once.
         let transport =
             WebTransport::new_with_options(target.url.as_str(), &options).map_err(js_error)?;
+        let pending = CloseUnlessReady(Some(transport));
+        let transport = pending.0.as_ref().expect("set above");
         JsFuture::from(transport.ready()).await.map_err(js_error)?;
+        let transport = pending.into_ready();
         Ok(Box::new(BrowserConnection::new(transport)?))
     }
 
@@ -77,6 +88,25 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
 
     fn local_port(&self) -> anyhow::Result<u16> {
         anyhow::bail!("a browser endpoint has no local socket")
+    }
+}
+
+/// Closes the WebTransport when dropped before `ready` resolves, as when the
+/// fallback times out; otherwise the browser keeps connecting and later holds
+/// a session nobody reads.
+struct CloseUnlessReady(Option<WebTransport>);
+
+impl CloseUnlessReady {
+    fn into_ready(mut self) -> WebTransport {
+        self.0.take().expect("taken once")
+    }
+}
+
+impl Drop for CloseUnlessReady {
+    fn drop(&mut self) {
+        if let Some(transport) = self.0.take() {
+            transport.close();
+        }
     }
 }
 

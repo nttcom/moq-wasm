@@ -122,6 +122,7 @@ impl QmuxConnection {
     }
 
     /// Becomes `true` once both tasks have returned (`TransportEnded`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn transport_ended(&self) -> tokio::sync::watch::Receiver<bool> {
         self.session.transport_ended()
     }

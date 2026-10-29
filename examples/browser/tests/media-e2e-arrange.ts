@@ -5,12 +5,29 @@ const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const namespace = process.env.MEDIA_E2E_NAMESPACE ?? 'anon/e2e/moqt-media'
 const videoCodec = process.env.MEDIA_E2E_VIDEO_CODEC ?? 'vp8'
 const videoEncoderHardwareAcceleration = process.env.MEDIA_E2E_VIDEO_HARDWARE_ACCELERATION ?? 'prefer-software'
+// `run-media-e2e.mjs --through-tcp-proxy` sets `websocket`.
+const expectedTransport = process.env.MEDIA_E2E_EXPECTED_TRANSPORT ?? 'webtransport'
 
 export const mediaE2EConfig = {
   moqtUrl,
   namespace,
   videoCodec,
-  videoEncoderHardwareAcceleration
+  videoEncoderHardwareAcceleration,
+  expectedTransport
+}
+
+const SESSION_TRANSPORT_LOG = /^\[moqt\] session established over (\w+)$/
+
+/** Fills as `MoqtClientWrapper` logs each established session. */
+function recordSessionTransports(page: Page): string[] {
+  const transports: string[] = []
+  page.on('console', (message) => {
+    const match = SESSION_TRANSPORT_LOG.exec(message.text())
+    if (match) {
+      transports.push(match[1])
+    }
+  })
+  return transports
 }
 
 function buildPagePath(path: string): string {
@@ -29,6 +46,7 @@ async function openExamplePage(page: Page, path: string): Promise<void> {
 
 function createPublisherPageModel(page: Page) {
   return {
+    sessionTransports: recordSessionTransports(page),
     urlInput: page.getByTestId('publisher-url-input'),
     namespaceInput: page.getByTestId('publisher-namespace-input'),
     connectButton: page.getByTestId('publisher-connect-button'),
@@ -46,6 +64,7 @@ function createPublisherPageModel(page: Page) {
 
 function createSubscriberPageModel(page: Page) {
   return {
+    sessionTransports: recordSessionTransports(page),
     urlInput: page.getByTestId('subscriber-url-input'),
     namespaceInput: page.getByTestId('subscriber-namespace-input'),
     connectButton: page.getByTestId('subscriber-connect-button'),

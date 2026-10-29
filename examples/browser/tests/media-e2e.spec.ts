@@ -30,6 +30,8 @@ async function connectPublisherForStreaming(publisher: PublisherPageModel): Prom
   await publisher.setupButton.click()
   // Assert: setup が受理され、後続の announce に進める状態になったことを確認する。
   await expect(publisher.setupStatus).toContainText('Setup acknowledged')
+  // Assert: 期待した transport（既定は WebTransport、TCP proxy 経由なら WebSocket）で繋がったことを確認する。
+  await expect.poll(() => publisher.sessionTransports).toEqual([mediaE2EConfig.expectedTransport])
 
   // Act: テスト用 namespace を announce して購読可能な状態にする。
   await publisher.announceButton.click()
@@ -50,6 +52,8 @@ async function connectSubscriberForPlayback(
   await subscriber.setupButton.click()
   // Assert: setup が受理され、catalog 購読に進める状態になったことを確認する。
   await expect(subscriber.setupStatus).toContainText('Setup acknowledged')
+  // Assert: Subscriber も期待した transport で繋がったことを確認する。
+  await expect.poll(() => subscriber.sessionTransports).toEqual([mediaE2EConfig.expectedTransport])
 
   // Act: catalog を購読して配信中トラックの一覧を取得する。
   await subscriber.catalogSubscribeButton.click()

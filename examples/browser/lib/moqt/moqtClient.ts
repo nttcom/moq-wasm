@@ -57,6 +57,8 @@ export interface ConnectOptions {
   versions?: BigUint64Array
   maxRequestId?: bigint
   authToken?: string
+  /** Falls back to QMux over WebSocket when WebTransport does not open within `webTransportTimeoutMs` (default 5000); `false` disables it. */
+  fallback?: false | { webTransportTimeoutMs?: number }
 }
 
 export interface PublishNamespaceOptions {
@@ -232,6 +234,11 @@ export class MoqtClientWrapper {
     let wtConnectStartedAtMs: number | null = null
     try {
       this.client = await this.createRawClient(url)
+      if (options.fallback === false) {
+        this.client.setWebSocketFallback(undefined)
+      } else if (options.fallback?.webTransportTimeoutMs !== undefined) {
+        this.client.setWebSocketFallback(options.fallback.webTransportTimeoutMs)
+      }
       wtConnectStartedAtMs = performance.now()
       await this.client.start()
       console.info('[moqt][wt] connected', {
@@ -264,6 +271,7 @@ export class MoqtClientWrapper {
     const receiveServerSetup = this.waitForServerSetup()
     await client.sendClientSetup(versions, maxRequestId, authToken)
     await receiveServerSetup
+    this.logTransport(client)
   }
 
   private async sendSetup(client: MOQTClient, options: ConnectOptions): Promise<void> {
@@ -272,6 +280,11 @@ export class MoqtClientWrapper {
     const maxRequestId = options.maxRequestId ?? 100n
     await client.sendClientSetup(versions, maxRequestId, options.authToken)
     await receiveServerSetup
+    this.logTransport(client)
+  }
+
+  private logTransport(client: MOQTClient): void {
+    console.info(`[moqt] session established over ${client.transport}`)
   }
 
   private waitForServerSetup(): Promise<void> {

@@ -3,14 +3,11 @@
 //! WT-Protocol) of a WebTransport session, or the WebSocket subprotocol
 //! (Sec-WebSocket-Protocol) of a QMux session.
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::modules::transport::qmux::subprotocol;
 
 /// What a client offers and a server accepts, most preferred first.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ApplicationProtocols {
-    // wasm32 has no raw QUIC transport.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) quic_alpns: &'static [&'static str],
     pub(crate) web_transport: &'static [&'static str],
 }
@@ -35,7 +32,6 @@ impl ApplicationProtocols {
 
     /// The WebSocket subprotocols, most preferred first: QMux with each ALPN,
     /// then QMux without an application protocol.
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn web_socket_subprotocols(&self) -> Vec<String> {
         self.quic_alpns
             .iter()
@@ -64,8 +60,6 @@ pub(crate) enum NegotiatedProtocol {
         protocol: Option<String>,
     },
     /// QMux over WebSocket; `alpn` is what the subprotocol named.
-    // Nothing on wasm32 constructs this variant.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     WebSocket {
         alpn: Option<String>,
     },

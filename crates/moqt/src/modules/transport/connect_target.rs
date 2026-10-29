@@ -103,16 +103,22 @@ impl ConnectTarget {
         format!("{host}:{}", self.port)
     }
 
-    /// Never called, like `authority` below: `BROWSER` leaves
-    /// `FALLS_BACK_TO_WEB_SOCKET` false.
+    /// The browser cannot open raw QUIC, so only `https://` falls back.
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn web_socket_fallback(&self) -> Option<Self> {
-        None
+        if self.transport != ClientTransport::WebTransport {
+            return None;
+        }
+        let url = web_sys::Url::new(&self.url).ok()?;
+        url.set_protocol("wss:");
+        Self::parse(&url.href()).ok()
     }
 
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn authority(&self) -> String {
-        String::new()
+        web_sys::Url::new(&self.url)
+            .map(|url| url.host())
+            .unwrap_or_default()
     }
 
     /// Host and port resolution is left to the browser's `WebTransport`.

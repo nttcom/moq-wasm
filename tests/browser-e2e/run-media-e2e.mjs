@@ -21,6 +21,7 @@ import {
   getDefaultWebPort,
   jsDir,
   mediaIndexPath,
+  startTcpProxy,
   waitForHttpOk,
 } from "./helpers.mjs";
 import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
@@ -34,9 +35,13 @@ async function main() {
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const namespace = process.env.MEDIA_E2E_NAMESPACE ?? `anon/e2e/${Date.now()}`;
-  const moqtUrl = getDefaultMoqtUrl();
+  const throughTcpProxy = process.argv.includes("--through-tcp-proxy");
+  let moqtUrl = getDefaultMoqtUrl();
+  let expectedTransport = "webtransport";
+  let proxy = null;
 
   const cleanup = async () => {
+    proxy?.close();
     await Promise.allSettled(
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
@@ -60,6 +65,12 @@ async function main() {
       waitForHttpOk(`${baseUrl}${mediaIndexPath}`, 120_000),
     ]);
 
+    if (throughTcpProxy) {
+      proxy = await startTcpProxy(Number(new URL(moqtUrl).port));
+      moqtUrl = `https://127.0.0.1:${proxy.port}`;
+      expectedTransport = "websocket";
+    }
+
     await runCommand(resolveCommandName("npm"), ["run", "e2e:media"], {
       cwd: jsDir,
       env: {
@@ -67,6 +78,7 @@ async function main() {
         MEDIA_E2E_BASE_URL: baseUrl,
         MEDIA_E2E_MOQT_URL: moqtUrl,
         MEDIA_E2E_NAMESPACE: namespace,
+        MEDIA_E2E_EXPECTED_TRANSPORT: expectedTransport,
       },
     });
   } finally {

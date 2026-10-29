@@ -300,10 +300,12 @@ export function connect(url: string, options?: ConnectOptions): Promise<Session>
 export interface ConnectOptions {
   token?: string | (() => Promise<string>)       // CLIENT_SETUP の AUTHORIZATION TOKEN
   reconnect?: false | { maxDurationMs?: number } // 既定は有効。60秒で諦める
+  fallback?: false | { webTransportTimeoutMs?: number } // 既定は有効。WebTransport を 5 秒待って wss:// へ
 }
 
 export interface Session extends EventTarget {
   readonly state: 'connected' | 'reconnecting' | 'closed'
+  readonly transport: 'webtransport' | 'websocket'
   readonly closed: Promise<CloseInfo>
   subscribe(namespace: string[], track: string, options?: SubscribeOptions): Promise<Subscription>
   subscribeCurrentGroup(namespace: string[], track: string): Promise<Subscription>  // SUBSCRIBE + joining FETCH

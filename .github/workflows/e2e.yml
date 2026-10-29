@@ -415,6 +415,11 @@ jobs:
           CI: "true"
         run: node tests/browser-e2e/run-media-e2e.mjs
 
+      - name: Run media E2E through a TCP-only proxy (WebSocket fallback)
+        env:
+          CI: "true"
+        run: node tests/browser-e2e/run-media-e2e.mjs --through-tcp-proxy
+
       - name: Upload Playwright artifacts
         if: failure()
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1

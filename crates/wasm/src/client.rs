@@ -11,7 +11,7 @@ use std::{
 use bytes::Bytes;
 use moqt::{
     AuthorizationToken, BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session,
-    Subscription, TerminationErrorCode, TransportSendError,
+    Subscription, TerminationErrorCode, TransportSendError, WebSocketFallback,
     fetch::{FetchDataSender, FetchHandle, FetchHandler, FetchOption},
     namespace::PublishNamespaceHandler,
     object::DataStreamResetCode,
@@ -132,6 +132,7 @@ impl ClientShared {
 #[wasm_bindgen]
 pub struct MOQTClient {
     url: String,
+    web_socket_fallback: Cell<WebSocketFallback>,
     shared: Rc<ClientShared>,
 }
 
@@ -141,8 +142,34 @@ impl MOQTClient {
     pub fn new(url: String) -> Self {
         Self {
             url,
+            web_socket_fallback: Cell::new(WebSocketFallback::default()),
             shared: Rc::new(ClientShared::default()),
         }
+    }
+
+    /// How long `sendClientSetup` gives WebTransport (5 s unless set) before it
+    /// tries QMux over WebSocket on the same host and port; `undefined` turns the
+    /// fallback off. Call before `sendClientSetup`.
+    #[wasm_bindgen(js_name = setWebSocketFallback)]
+    pub fn set_web_socket_fallback(&self, web_transport_timeout_ms: Option<u32>) {
+        self.web_socket_fallback
+            .set(match web_transport_timeout_ms {
+                Some(ms) => {
+                    WebSocketFallback::After(std::time::Duration::from_millis(u64::from(ms)))
+                }
+                None => WebSocketFallback::Disabled,
+            });
+    }
+
+    /// `"webtransport"` or `"websocket"` once `sendClientSetup` has connected.
+    #[wasm_bindgen(getter)]
+    pub fn transport(&self) -> Option<String> {
+        let session = self.shared.session.borrow();
+        let transport = match session.as_ref()?.url_scheme() {
+            "wss" => "websocket",
+            _ => "webtransport",
+        };
+        Some(transport.to_string())
     }
 
     #[wasm_bindgen(js_name = onServerSetup)]
@@ -273,7 +300,7 @@ impl MOQTClient {
         self.shared.in_use.get()
     }
 
-    /// The WebTransport session is opened together with the SETUP exchange in
+    /// The session is opened together with the SETUP exchange in
     /// `sendClientSetup`, because the authorization token travels in
     /// CLIENT_SETUP; `start` only marks the client as in use.
     pub async fn start(&self) -> Result<(), JsValue> {
@@ -305,6 +332,7 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
             authorization_token: auth_token,
+            web_socket_fallback: self.web_socket_fallback.get(),
             ..ClientConfig::default()
         })
         .map_err(anyhow_error)?;
