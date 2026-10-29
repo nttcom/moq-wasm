@@ -93,6 +93,40 @@ pub(crate) fn subscribe_initiated(
     }
 }
 
+/// Ends the registered upstream subscription and its ingress when the
+/// publisher session has left the repository; returns true in that case.
+/// Call it after `register_upstream_subscription`: a session leaves the
+/// repository before its cleanup reads the directory, so either this check or
+/// the cleanup sees the subscription.
+pub(crate) async fn end_if_publisher_gone(
+    table: &InMemoryLocalPubSubDirectory,
+    forwarder: &ControlMessageForwarder,
+    ingress_sender: &mpsc::Sender<IngressCommand>,
+    track_key: &TrackKey,
+    publisher_session_id: SessionId,
+    upstream_request_id: u64,
+) -> bool {
+    let publisher_session_gone = !forwarder
+        .repository
+        .lock()
+        .await
+        .has_session(publisher_session_id);
+    if publisher_session_gone {
+        tracing::debug!(
+            publisher_session_id = %publisher_session_id,
+            request_id = %upstream_request_id,
+            "publisher session closed before its upstream subscription was registered"
+        );
+        table.end_upstream_subscription(
+            publisher_session_id,
+            upstream_request_id,
+            PublishDoneReason::publisher_session_closed(),
+        );
+        stop_ingress(ingress_sender, publisher_session_id, track_key).await;
+    }
+    publisher_session_gone
+}
+
 pub(crate) struct UpstreamJoin {
     pub(crate) track_key: TrackKey,
     pub(crate) subscriber_session_id: SessionId,
@@ -203,19 +237,16 @@ async fn join_track(
         stop_ingress(&deps.ingress_sender, publisher_session_id, track_key).await;
         return;
     }
-    let publisher_session_gone = !deps
-        .forwarder
-        .repository
-        .lock()
-        .await
-        .has_session(publisher_session_id);
-    if publisher_session_gone {
-        deps.table.end_upstream_subscription(
-            publisher_session_id,
-            upstream_request_id,
-            PublishDoneReason::publisher_session_closed(),
-        );
-        stop_ingress(&deps.ingress_sender, publisher_session_id, track_key).await;
+    if end_if_publisher_gone(
+        &deps.table,
+        &deps.forwarder,
+        &deps.ingress_sender,
+        track_key,
+        publisher_session_id,
+        upstream_request_id,
+    )
+    .await
+    {
         return;
     }
     tracing::info!(
