@@ -68,7 +68,7 @@ Application and integration components (draft reference is normally not required
 - Build: `cargo build`
 - Test: `cargo test`
 - Lint (Rust): `cargo clippy && cargo fmt --check`
-- Lint (JavaScript): `npx prettier --check`
+- Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore`
 - Test (browser unit): `npm --prefix examples/browser test`
 - Wasm: `wasm-pack build crates/wasm --out-name moqt`
 - Console web: `npm --prefix crates/console/web run lint && npm --prefix crates/console/web run build`
