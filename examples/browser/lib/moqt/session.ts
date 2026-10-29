@@ -159,7 +159,12 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
       if (!group) {
         return
       }
-      yield new MoqGroup(group)
+      const received = new MoqGroup(group)
+      console.debug('[moqt] received subgroup header', {
+        groupId: received.groupId.toString(),
+        subgroupId: received.subgroupId.toString()
+      })
+      yield received
     }
   }
 
