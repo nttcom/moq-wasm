@@ -21,6 +21,8 @@ pub struct ObservabilityConfig {
     pub verify_relay_certificate: bool,
     pub clickhouse: ClickHouseConfig,
     pub http_port: u16,
+    /// The full OTLP/HTTP metrics URL (`.../v1/metrics`); `None` exports no metrics.
+    pub otlp_metrics_endpoint: Option<String>,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -70,6 +72,7 @@ impl ObservabilityConfig {
                 password: env("CLICKHOUSE_PASSWORD"),
             },
             http_port,
+            otlp_metrics_endpoint: env("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"),
         })
     }
 }

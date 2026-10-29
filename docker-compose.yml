@@ -132,11 +132,14 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: observability
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-observability}
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://clickstack-otel-collector:4318/v1/metrics
     ports:
       - "8095:8095"
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickstack-otel-collector:
+        condition: service_started
       relay-a:
         condition: service_started
       relay-b:
@@ -144,9 +147,10 @@ services:
       hyperdx:
         condition: service_started
 
-  # ClickStack: its collector writes relay OTLP logs and traces into the
-  # `otel` database of the clickhouse service. HyperDX (http://localhost:8080)
-  # searches them. Both start with observability.
+  # ClickStack: its collector writes the relays' OTLP logs and traces and
+  # observability's relay metrics into the `otel` database of the clickhouse
+  # service. HyperDX (http://localhost:8080) searches them. Both start with
+  # observability.
   # Relays export only with OTEL_SDK_DISABLED=false.
   clickstack-otel-collector:
     image: docker.clickhouse.com/clickhouse/clickstack-otel-collector:2.42.0@sha256:90ca453137798285871190722fcd7c79e7731e9376cf23a922d6f855bf94f3c7
@@ -178,7 +182,7 @@ services:
       SERVER_URL: http://127.0.0.1:8000
       USAGE_STATS_ENABLED: "false"
       DEFAULT_CONNECTIONS: '[{"name":"ClickHouse","host":"http://clickhouse:8123","username":"observability","password":"${CLICKHOUSE_PASSWORD:-observability}"}]'
-      DEFAULT_SOURCES: '[{"from":{"databaseName":"otel","tableName":"otel_logs"},"kind":"log","timestampValueExpression":"Timestamp","name":"Logs","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"Body","serviceNameExpression":"ServiceName","bodyExpression":"Body","eventAttributesExpression":"LogAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,SeverityText,Body","severityTextExpression":"SeverityText","severityNumberExpression":"SeverityNumber","eventNameExpression":"EventName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","connection":"ClickHouse","traceSourceId":"Traces"},{"from":{"databaseName":"otel","tableName":"otel_traces"},"kind":"trace","timestampValueExpression":"Timestamp","name":"Traces","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"SpanName","serviceNameExpression":"ServiceName","eventAttributesExpression":"SpanAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","durationExpression":"Duration","durationPrecision":9,"parentSpanIdExpression":"ParentSpanId","spanNameExpression":"SpanName","spanKindExpression":"SpanKind","statusCodeExpression":"StatusCode","statusMessageExpression":"StatusMessage","spanEventsValueExpression":"Events","spanLinksValueExpression":"Links","connection":"ClickHouse","logSourceId":"Logs"}]'
+      DEFAULT_SOURCES: '[{"from":{"databaseName":"otel","tableName":"otel_logs"},"kind":"log","timestampValueExpression":"Timestamp","name":"Logs","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"Body","serviceNameExpression":"ServiceName","bodyExpression":"Body","eventAttributesExpression":"LogAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,SeverityText,Body","severityTextExpression":"SeverityText","severityNumberExpression":"SeverityNumber","eventNameExpression":"EventName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","connection":"ClickHouse","traceSourceId":"Traces","metricSourceId":"Metrics"},{"from":{"databaseName":"otel","tableName":"otel_traces"},"kind":"trace","timestampValueExpression":"Timestamp","name":"Traces","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"SpanName","serviceNameExpression":"ServiceName","eventAttributesExpression":"SpanAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","durationExpression":"Duration","durationPrecision":9,"parentSpanIdExpression":"ParentSpanId","spanNameExpression":"SpanName","spanKindExpression":"SpanKind","statusCodeExpression":"StatusCode","statusMessageExpression":"StatusMessage","spanEventsValueExpression":"Events","spanLinksValueExpression":"Links","connection":"ClickHouse","logSourceId":"Logs","metricSourceId":"Metrics"},{"from":{"databaseName":"otel","tableName":""},"kind":"metric","timestampValueExpression":"TimeUnix","name":"Metrics","serviceNameExpression":"ServiceName","resourceAttributesExpression":"ResourceAttributes","metricTables":{"gauge":"otel_metrics_gauge","sum":"otel_metrics_sum","histogram":"otel_metrics_histogram"},"minAutoGranularity":"10 second","connection":"ClickHouse","logSourceId":"Logs"}]'
     ports:
       - "8080:8080"
     depends_on:

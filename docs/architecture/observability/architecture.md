@@ -169,6 +169,7 @@ directly, so losing inter-relay routing does not hide the relays it affects.
 | `CLICKHOUSE_DATABASE` | `observability` | Created at startup with its tables |
 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | none | Basic auth |
 | `OBSERVABILITY_HTTP_PORT` | `8095` | API port |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | none | OTLP/HTTP metrics URL (`…/v1/metrics`); relay metrics are exported only when set |
 
 The recommended deployment connects to each relay's inner endpoint with
 `AUTH_RELAY_TOKEN`: relay tokens do not expire and have full access, while a
@@ -184,6 +185,8 @@ out of the topology page.
 - `SnapshotIngestTask`: keeps the newest snapshot per relay in
   `LatestSnapshots` and buffers every snapshot's rows for the periodic
   ClickHouse INSERT (`snapshot_rows::SnapshotRows`, see Storage).
+- `OtlpMetricsExportTask` (only with `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`):
+  posts `LatestSnapshots` as OTLP metrics every 10 s (see Storage).
 - `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
   - `GET /api/snapshots` — the newest snapshot of every relay that sent one
     in the last 10 s (`RELAY_SILENCE`, timed by arrival here), from memory, so
@@ -268,8 +271,19 @@ ClickHouse runs as a `docker-compose.yml` service next to the relays.
 The relays' OTLP logs and traces are a separate path: the ClickStack
 services start with `observability`, and with `OTEL_SDK_DISABLED=false` the
 ClickStack collector writes them into the `otel` database of the same ClickHouse (7-day
-TTL) and HyperDX serves a search UI on port 8080. The snapshots above stay on
-the MoQT track; OTLP carries no metrics.
+TTL) and HyperDX serves a search UI on port 8080.
+
+The relays export no metrics themselves: `OtlpMetricsExportTask` converts
+each relay's newest snapshot into OTLP/JSON and posts it to the collector,
+so the stats track stays the one place a relay measures. Each relay is a
+`service.name = relay` resource with the same `relay.id` as its traces and
+logs. Session points carry `session_id`, `session_peer` and `app_id`, the
+log field names, so a session found in a trace filters its metrics.
+
+Only process and session statistics are exported: track and subscription
+points would multiply the rows by the subscriber count. Session counters
+are cumulative monotonic sums without a start time, because the snapshot
+does not say when a session started.
 
 ## Browser page (`examples/browser/examples/observability`)
 
