@@ -15,7 +15,7 @@ use crate::modules::{
 };
 
 use super::{
-    group_sender::GroupSender,
+    group_sender::{GroupSender, subscriber_left_reason},
     scheduler::{EgressScheduler, SchedulerExit},
 };
 
@@ -137,6 +137,11 @@ impl EgressRunner {
             )
             .await
         {
+            // A subscriber whose connection closed before its runner was stopped is routine.
+            if subscriber_left_reason(&error).is_some() {
+                tracing::debug!(%error, "subscriber left before PUBLISH_DONE");
+                return;
+            }
             tracing::error!(
                 ?error,
                 track_namespace = %track_key.track_namespace, track_name = %track_key.track_name,
