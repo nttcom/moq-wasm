@@ -217,6 +217,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   (`relay.session.disconnected` or `relay.session.protocol_violation` ends
   it) and a request's trace holds only that request's work. A span that
   outlives its request (`relay.dataplane.egress.track`,
+  `relay.upstream.ingress`,
   `relay.inter_relay.session`) roots its own trace too, linked to the
   request: a tracing span closes only after its children, so a long-lived
   child would hold the request's trace open, unexported, for as long as it
