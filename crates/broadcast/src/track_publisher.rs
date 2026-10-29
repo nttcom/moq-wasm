@@ -98,6 +98,7 @@ impl TrackPublisher {
                     .then(|| Fmp4TrackMuxer::video(config.clone()));
                 let info = VideoTrackInfo {
                     cmaf: self.tracks.cmaf,
+                    switching_set: self.tracks.switching_set.clone(),
                     ..VideoTrackInfo::from_config(config, self.tracks.video_label.clone())?
                 };
                 self.broadcast
