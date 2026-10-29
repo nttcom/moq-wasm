@@ -124,6 +124,13 @@ after the last location received, up to the FETCH_OK's End Location) is
 FETCHed on the current connection and the same receiver reads on. A
 descending FETCH is not sent again.
 
+A Joining FETCH may only join a Largest Object subscription (draft-14
+§9.16.2), and a later connection holds the subscription with the filter it
+was sent again with. So `fetch_relative_joining` sends a Joining FETCH only
+on the connection the subscription was first sent on; once the session has
+moved, it FETCHes the same range (from the joined group up to the
+SUBSCRIBE_OK's Largest Location) as a Standalone FETCH.
+
 ### Publishing side
 
 PUBLISH_NAMESPACE and PUBLISH are sent again on the new connection. A

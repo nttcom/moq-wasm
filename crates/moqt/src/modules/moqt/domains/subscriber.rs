@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::Instrument;
 
 use crate::{
-    RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
+    RequestErrorCode, RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
     fetch::FetchOption,
     modules::moqt::{
         control_plane::{
@@ -22,7 +22,7 @@ use crate::{
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
         domains::{
-            connection::{Connection, logical_id},
+            connection::{Connection, generation_of, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
             session_context::{CarriedSubscription, SessionContext},
@@ -257,7 +257,10 @@ impl Subscriber {
     )]
     /// Sends a Relative Joining FETCH for `subscription` (draft-14 §9.16.2):
     /// the range starts at object 0 of the group `joining_start` groups
-    /// before the subscription's Largest Location.
+    /// before the subscription's Largest Location. On a connection after the one
+    /// the subscription was first sent on (the session followed a GOAWAY), the
+    /// same range goes as a Standalone FETCH instead; there, a subscription with
+    /// no Largest Location fails with INVALID_RANGE without sending a request.
     pub async fn fetch_relative_joining(
         &mut self,
         subscription: &Subscription,
@@ -279,9 +282,29 @@ impl Subscriber {
             }),
             ContentExists::False => None,
         };
-        let fetch_params = FetchParams::RelativeJoining {
-            joining_request_id,
-            joining_start,
+        // A later connection holds the subscription with a `resumed_filter`, never
+        // Largest Object, so a Joining FETCH may not join it.
+        let fetch_params = if connection.generation == generation_of(subscription.request_id()) {
+            FetchParams::RelativeJoining {
+                joining_request_id,
+                joining_start,
+            }
+        } else {
+            let (ContentExists::True { location }, Some(remainder)) =
+                (subscription.content_exists(), &remainder)
+            else {
+                return Err(RequestFailure::Rejected {
+                    request_id: subscription.request_id(),
+                    code: RequestErrorCode::InvalidRange,
+                    reason: "no objects were published before the SUBSCRIBE".to_string(),
+                });
+            };
+            FetchParams::Standalone {
+                track_namespace: namespace_tuple(&remainder.track_namespace),
+                track_name: remainder.track_name.clone(),
+                start_location: remainder.start,
+                end_location: location.next(),
+            }
         };
         self.send_fetch(connection, fetch_params, option, remainder)
             .await

@@ -683,10 +683,17 @@ mod tests {
     async fn serve_subscribe(
         server: &Session,
     ) -> (StreamDataSenderFactory, FilterType, Subscription) {
+        serve_subscribe_with_content(server, ContentExists::False).await
+    }
+
+    async fn serve_subscribe_with_content(
+        server: &Session,
+        content_exists: ContentExists,
+    ) -> (StreamDataSenderFactory, FilterType, Subscription) {
         let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
             panic!("expected SUBSCRIBE");
         };
-        let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+        let track_alias = handler.ok(0, content_exists).await.unwrap();
         let subscription = handler.into_subscription(track_alias);
         (
             server.publisher().create_stream(&subscription),
@@ -1362,6 +1369,66 @@ mod tests {
             }
         );
         assert_eq!(rest.unwrap(), vec![Bytes::from("o2")]);
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_after_go_away_asks_the_new_server_for_the_joined_range() {
+        // Arrange
+        let (port_a, accept_a) = spawn_native_server("session-migration-joining-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-joining-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let largest = Location {
+            group_id: 3,
+            object_id: 2,
+        };
+        let mut subscriber = client.subscriber();
+        let (subscription, _) = tokio::join!(
+            subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            serve_subscribe_with_content(&server_a, ContentExists::True { location: largest })
+        );
+        let subscription = subscription.unwrap();
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let (_, filter_b, _) = serve_subscribe(&server_b).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while client.connection_generation() == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the session moves to B");
+
+        // Act
+        let (handle, fetch_params) = tokio::join!(
+            subscriber.fetch_relative_joining(&subscription, 0, FetchOption::default()),
+            async {
+                let SessionEvent::Fetch(handler) = server_b.receive_event().await.unwrap() else {
+                    panic!("expected FETCH");
+                };
+                handler.ok(false, largest.next()).await.unwrap();
+                handler.fetch.fetch_params
+            }
+        );
+
+        // Assert: a Joining FETCH may not join B's Next Group Start subscription
+        assert_eq!(filter_b, FilterType::NextGroupStart);
+        handle.unwrap();
+        assert_eq!(
+            fetch_params,
+            FetchParams::Standalone {
+                track_namespace: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                start_location: Location {
+                    group_id: 3,
+                    object_id: 0,
+                },
+                end_location: largest.next(),
+            }
+        );
     }
 
     #[tokio::test]
