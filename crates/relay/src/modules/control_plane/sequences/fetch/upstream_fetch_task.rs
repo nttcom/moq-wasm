@@ -71,7 +71,7 @@ impl UpstreamFetchTask {
             )
             .await
         {
-            tracing::error!(?e, "Failed to send FETCH_OK to downstream");
+            tracing::error!(error = ?e, "Failed to send FETCH_OK to downstream");
             return;
         }
 

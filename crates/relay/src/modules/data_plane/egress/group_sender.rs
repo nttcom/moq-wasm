@@ -246,7 +246,7 @@ impl GroupSender {
         let mut sender = match opened {
             Ok(sender) => sender,
             Err(e) => {
-                tracing::error!(?e, "failed to open stream sender");
+                tracing::error!(error = ?e, "failed to open stream sender");
                 return (0, "open_failed");
             }
         };

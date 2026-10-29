@@ -39,7 +39,7 @@ impl WatchedNamespaceRoutes {
             .register_watched_namespace(track_namespace)
             .await
         {
-            tracing::warn!(?err, %track_namespace, "failed to register the watched namespace");
+            tracing::warn!(error = ?err, %track_namespace, "failed to register the watched namespace");
             self.unwatched_at_last_pass
                 .lock()
                 .await
@@ -75,7 +75,7 @@ impl WatchedNamespaceRoutes {
                 .unregister_watched_namespace(&track_namespace)
                 .await
             {
-                tracing::warn!(?err, %track_namespace, "failed to unregister the watched namespace");
+                tracing::warn!(error = ?err, %track_namespace, "failed to unregister the watched namespace");
             }
         }
     }

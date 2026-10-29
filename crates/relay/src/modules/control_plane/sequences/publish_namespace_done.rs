@@ -93,7 +93,7 @@ impl PublishNamespaceDone {
             .await
         {
             tracing::warn!(
-                ?err,
+                error = ?err,
                 track_namespace = %track_namespace,
                 "failed to unregister namespace publisher route"
             );
@@ -106,7 +106,7 @@ impl PublishNamespaceDone {
             Ok(relays) => relays,
             Err(err) => {
                 tracing::warn!(
-                    ?err,
+                    error = ?err,
                     track_namespace = %track_namespace,
                     "failed to find remote namespace subscribers for PUBLISH_NAMESPACE_DONE"
                 );

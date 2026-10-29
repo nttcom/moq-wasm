@@ -124,7 +124,7 @@ impl EgressCoordinator {
             let sender = match publisher.new_fetch_sender(request.request_id).await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::error!(?e, "failed to create fetch sender");
+                    tracing::error!(error = ?e, "failed to create fetch sender");
                     return;
                 }
             };

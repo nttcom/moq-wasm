@@ -119,8 +119,9 @@ impl IngressCoordinator {
                                 }
                                 receiver = subscriber.create_data_receiver(&subscription) => receiver,
                             };
-                            let Ok(receiver) = receiver_result else {
-                                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to start upstream ingress");
+                            let Ok(receiver) = receiver_result.inspect_err(|error| {
+                                tracing::warn!(%error, track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to start upstream ingress");
+                            }) else {
                                 return (track_key, publisher_session_id, create_id);
                             };
                             tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "track ingress started");

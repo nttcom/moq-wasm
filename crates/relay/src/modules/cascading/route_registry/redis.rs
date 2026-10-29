@@ -92,10 +92,10 @@ impl RedisRelayRouteRegistry {
                 loop {
                     interval.tick().await;
                     if let Err(err) = registry.register_relay().await {
-                        tracing::warn!(?err, relay_id = %registry.relay.relay_id, "failed to refresh relay heartbeat");
+                        tracing::warn!(error = ?err, relay_id = %registry.relay.relay_id, "failed to refresh relay heartbeat");
                     }
                     if let Err(err) = registry.refresh_owned_routes().await {
-                        tracing::warn!(?err, relay_id = %registry.relay.relay_id, "failed to refresh owned routes");
+                        tracing::warn!(error = ?err, relay_id = %registry.relay.relay_id, "failed to refresh owned routes");
                     }
                 }
             })
@@ -159,7 +159,7 @@ impl RedisRelayRouteRegistry {
             match self.invoke_register_script(*kind, key).await {
                 Ok(()) => tracing::warn!(route_key = %key, "restored route lost from redis"),
                 Err(err) => {
-                    tracing::warn!(?err, route_key = %key, "failed to restore route lost from redis")
+                    tracing::warn!(error = ?err, route_key = %key, "failed to restore route lost from redis")
                 }
             }
         }

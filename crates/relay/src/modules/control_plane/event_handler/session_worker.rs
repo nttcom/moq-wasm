@@ -162,12 +162,9 @@ impl SessionWorker {
                     .await;
             }
             EventKind::ProtocolViolationDetected { reason } => {
-                tracing::error!(
-                    parent: &self.session_span,
-                    session_id,
-                    %reason,
-                    "protocol violation detected; closing session"
-                );
+                self.session_span.in_scope(|| {
+                    tracing::error!(session_id, %reason, "protocol violation detected; closing session");
+                });
                 self.deps
                     .repo
                     .lock()
@@ -383,7 +380,7 @@ impl SessionWorker {
                     if matches!(event, MoqtSessionEvent::Disconnected()) {
                         tracing::info!(session_id, "session disconnected");
                     } else {
-                        tracing::error!(session_id, "session protocol violation");
+                        tracing::info!(session_id, "session closed for a protocol violation");
                     }
                 });
                 cleanup_session(session_id, deps)

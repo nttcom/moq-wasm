@@ -85,7 +85,7 @@ impl UpstreamPublisherResolver {
         {
             Ok(found) => relays.extend(found),
             Err(err) => {
-                tracing::warn!(?err, track_namespace = %track_key.track_namespace, "failed to find publisher relays")
+                tracing::warn!(error = ?err, track_namespace = %track_key.track_namespace, "failed to find publisher relays")
             }
         }
         match self
@@ -101,7 +101,7 @@ impl UpstreamPublisherResolver {
                 }
             }
             Err(err) => tracing::warn!(
-                ?err,
+                error = ?err,
                 track_namespace = %track_key.track_namespace,
                 track_name = %track_key.track_name,
                 "failed to find track publisher relays"
