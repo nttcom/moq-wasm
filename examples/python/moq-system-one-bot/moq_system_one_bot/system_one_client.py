@@ -21,7 +21,7 @@ class SystemOneClient:
         self._identity_token = identity_token
 
     async def ask(self, request: dict) -> dict:
-        """Posts one /v1/systemone request and returns its answers by question id."""
+        """Returns the answers keyed by question id."""
         headers = (
             {"Authorization": f"Bearer {await self._identity_token.value()}"}
             if self._identity_token
