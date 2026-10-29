@@ -49,7 +49,7 @@ impl Subscriber {
         level = "info",
         name = "moqt.subscriber.subscribe_namespace",
         skip_all,
-        fields(namespace = %namespace)
+        fields(track_namespace_prefix = %namespace)
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
         let mut carried = self.session.lock_carried().await;
@@ -452,7 +452,7 @@ impl Subscriber {
         level = "info",
         name = "moqt.subscriber.unsubscribe_namespace",
         skip_all,
-        fields(namespace = %namespace)
+        fields(track_namespace_prefix = %namespace)
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         if let Some(carried) = self.session.lock_carried().await.as_mut() {

@@ -328,7 +328,7 @@ impl Origin {
                     return Some(SessionEvent::Subscribe(handler));
                 }
                 if let Err(err) = self.accept_subscribe(handler).await {
-                    tracing::warn!(namespace = %key.0, track_name = %key.1, ?err, "failed to accept SUBSCRIBE");
+                    tracing::warn!(track_namespace = %key.0, track_name = %key.1, error = ?err, "failed to accept SUBSCRIBE");
                 }
             }
             SessionEvent::Unsubscribe(handler) => {
@@ -339,14 +339,14 @@ impl Origin {
             SessionEvent::Fetch(handler) => {
                 let request_id = handler.request_id;
                 if let Err(err) = self.serve_fetch(handler).await {
-                    tracing::warn!(request_id, ?err, "failed to answer FETCH");
+                    tracing::warn!(request_id, error = ?err, "failed to answer FETCH");
                 }
             }
             SessionEvent::FetchCancel(handler) => self.cancel_fetch(&handler).await,
             SessionEvent::TrackStatus(handler) => {
                 let request_id = handler.request_id();
                 if let Err(err) = self.answer_track_status(handler).await {
-                    tracing::warn!(request_id, ?err, "failed to answer TRACK_STATUS");
+                    tracing::warn!(request_id, error = ?err, "failed to answer TRACK_STATUS");
                 }
             }
             event => return Some(event),
@@ -571,7 +571,7 @@ impl Origin {
                     stopped = true;
                 }
                 Err(error) => {
-                    tracing::debug!(namespace = %key.0, track_name = %key.1, %error, "send failed on one session");
+                    tracing::debug!(track_namespace = %key.0, track_name = %key.1, %error, "send failed on one session");
                     failure.get_or_insert(error);
                 }
             }
