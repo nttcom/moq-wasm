@@ -13,15 +13,23 @@ export type PublishOptions = {
   onError?: (error: unknown) => void
 }
 
+export type MediaKind = 'video' | 'audio'
+
 export type Publication = {
-  /// Stops encoding. The session stays open, and the relay keeps the
-  /// broadcast's tracks until the session ends.
-  stop(): void
+  /// A muted kind is not encoded and its track leaves the catalog with
+  /// PUBLISH_DONE; unmuting publishes it again from a new group.
+  setMuted(kind: MediaKind, muted: boolean): Promise<void>
+  /// A muted kind stays muted. Does nothing once the publication is closed.
+  replaceTrack(kind: MediaKind, track: MediaStreamTrack): void
+  /// Ends the tracks with PUBLISH_DONE. The session stays open.
+  close(): Promise<void>
 }
 
 const DEFAULT_KEYFRAME_INTERVAL_FRAMES = 60
 
 type ChunkMessage<Chunk, Metadata> = { type: 'chunk'; chunk: Chunk; metadata: Metadata | undefined }
+
+type Source = { track: MediaStreamTrack; muted: boolean; worker?: Worker }
 
 /// Publishes `stream` as an MSF broadcast in `namespace`, encoding its first
 /// video track as H.264 by default and its first audio track as Opus.
@@ -34,20 +42,63 @@ export async function publish(
   const broadcast = session.broadcast(namespace, options.videoLabel)
   await broadcast.announce()
   const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
-  const workers: Worker[] = []
-  const [video] = stream.getVideoTracks()
-  if (video) {
-    workers.push(encodeVideo(broadcast, video, options, report))
+  const encode = (kind: MediaKind, track: MediaStreamTrack) =>
+    kind === 'video' ? encodeVideo(broadcast, track, options, report) : encodeAudio(broadcast, track, report)
+  const sources = new Map<MediaKind, Source>()
+  for (const [kind, track] of [
+    ['video', stream.getVideoTracks()[0]],
+    ['audio', stream.getAudioTracks()[0]]
+  ] as const) {
+    if (track) {
+      sources.set(kind, { track, muted: false, worker: encode(kind, track) })
+    }
   }
-  const [audio] = stream.getAudioTracks()
-  if (audio) {
-    workers.push(encodeAudio(broadcast, audio, report))
+  // An unmute that publishes the track before the mute's removal finishes
+  // would leave it removed, so mutes, unmutes and the close run one at a time.
+  let closed = false
+  let queue: Promise<void> = Promise.resolve()
+  const serialized = (operation: () => Promise<void>) => (queue = queue.then(operation, operation))
+  const stop = async (kind: MediaKind) => {
+    const source = sources.get(kind)
+    if (!source?.worker) {
+      return
+    }
+    source.worker.terminate()
+    source.worker = undefined
+    await broadcast.removeTrack(kind)
   }
   return {
-    stop: () => {
-      for (const worker of workers) {
-        worker.terminate()
+    setMuted: (kind, muted) =>
+      serialized(async () => {
+        const source = sources.get(kind)
+        if (closed || !source || source.muted === muted) {
+          return
+        }
+        source.muted = muted
+        if (muted) {
+          await stop(kind)
+        } else {
+          source.worker = encode(kind, source.track)
+        }
+      }),
+    replaceTrack: (kind, track) => {
+      if (closed) {
+        return
       }
+      const source = sources.get(kind) ?? { track, muted: false }
+      source.track = track
+      sources.set(kind, source)
+      if (!source.muted) {
+        source.worker?.terminate()
+        source.worker = encode(kind, track)
+      }
+    },
+    close: () => {
+      closed = true
+      return serialized(async () => {
+        await Promise.all([...sources.keys()].map(stop))
+        sources.clear()
+      })
     }
   }
 }
