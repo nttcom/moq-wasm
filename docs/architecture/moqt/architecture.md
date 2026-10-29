@@ -527,8 +527,9 @@ event loop answers PUBLISH_NAMESPACE with `ok`, sends it and
 PUBLISH_NAMESPACE_DONE to every watcher of a matching prefix, ends every
 watcher on `Disconnected` and hands every other event back. A watcher is
 registered before its SUBSCRIBE_NAMESPACE is sent, since the peer publishes
-the namespaces it knows right away. The Python bindings, which hand out one
-iterator per `subscribe_namespace`, use it.
+the namespaces it knows right away. The Python bindings and the browser SDK's
+`Session` (`crates/wasm/src/session.rs`), which hand out one iterator per
+namespace subscription, use it.
 
 ### `SessionContext` and `Connection` — shared session state
 
