@@ -5,14 +5,32 @@ use std::sync::{
 
 use async_trait::async_trait;
 
-use crate::modules::cascading::route_registry::{
-    NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry,
+use crate::modules::{
+    cascading::route_registry::{
+        NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry,
+    },
+    domain::track_key::TrackKey,
 };
 
 pub(crate) enum PublisherLookup {
     NotFound,
+    Found {
+        namespace_relay_ids: Vec<&'static str>,
+        track_relay_ids: Vec<&'static str>,
+    },
     Fails,
     MustNotBeCalled,
+}
+
+fn relays(relay_ids: &[&str]) -> Vec<RelayInfo> {
+    relay_ids
+        .iter()
+        .map(|relay_id| RelayInfo {
+            relay_id: relay_id.to_string(),
+            host: relay_id.to_string(),
+            port: 4434,
+        })
+        .collect()
 }
 
 pub(crate) struct StubRouteRegistry {
@@ -46,6 +64,20 @@ impl StubRouteRegistry {
     pub(crate) fn is_draining(&self) -> bool {
         self.draining.load(Ordering::SeqCst)
     }
+
+    fn publisher_relay_ids(&self) -> anyhow::Result<(&[&'static str], &[&'static str])> {
+        match &self.publisher_lookup {
+            PublisherLookup::NotFound => Ok((&[], &[])),
+            PublisherLookup::Found {
+                namespace_relay_ids,
+                track_relay_ids,
+            } => Ok((namespace_relay_ids, track_relay_ids)),
+            PublisherLookup::Fails => Err(anyhow::anyhow!("route registry down")),
+            PublisherLookup::MustNotBeCalled => {
+                panic!("a relay requester must not be routed to another relay")
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -54,13 +86,24 @@ impl RelayRouteRegistry for StubRouteRegistry {
         &self,
         _track_namespace: &str,
     ) -> anyhow::Result<Vec<RelayInfo>> {
-        match self.publisher_lookup {
-            PublisherLookup::NotFound => Ok(Vec::new()),
-            PublisherLookup::Fails => Err(anyhow::anyhow!("route registry down")),
-            PublisherLookup::MustNotBeCalled => {
-                panic!("a relay requester must not be routed to another relay")
-            }
-        }
+        let (namespace_relay_ids, _) = self.publisher_relay_ids()?;
+        Ok(relays(namespace_relay_ids))
+    }
+
+    async fn find_active_track_publishers(
+        &self,
+        _track_key: &TrackKey,
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        let (_, track_relay_ids) = self.publisher_relay_ids()?;
+        Ok(relays(track_relay_ids))
+    }
+
+    async fn register_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
+        unimplemented!("not used with the stub route registry")
+    }
+
+    async fn unregister_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
+        unimplemented!("not used with the stub route registry")
     }
 
     async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {

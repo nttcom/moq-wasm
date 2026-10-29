@@ -1,7 +1,7 @@
 use super::WorkerDeps;
 use crate::modules::{
     control_plane::sequences::{
-        publish_namespace_done::PublishNamespaceDone, stop_ingress,
+        publish::Publish, publish_namespace_done::PublishNamespaceDone, stop_ingress,
         unsubscribe_namespace::UnsubscribeNamespace,
     },
     domain::{pub_sub_directory::entry::RemovedSessionSubscriptions, session_id::SessionId},
@@ -58,6 +58,9 @@ async fn cleanup_removed_session(
         stop_ingress(&deps.ingress_sender, removed_session_id, &track_key).await;
         if !table.has_track_publisher(&track_key) {
             deps.cache_store.publisher_left(&track_key);
+        }
+        if was_client {
+            Publish::withdraw_track_route(table, deps.route_registry.as_ref(), &track_key).await;
         }
     }
 

@@ -9,7 +9,7 @@ use crate::modules::{
     control_plane::sequences::connect_relay,
     domain::{
         pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer,
+        session_peer::SessionPeer, track_key::TrackKey,
     },
 };
 
@@ -41,9 +41,9 @@ impl UpstreamPublisherResolver {
 
     /// Every publisher of the track: the local client publishers newest first
     /// (session ids grow with time), then, for a client requester, every
-    /// remote relay publishing the namespace. A relay requester is served
-    /// from local client publishers only, so a request never travels from
-    /// relay to relay and subscriptions cannot form a loop.
+    /// remote relay publishing the namespace or the track. A relay requester
+    /// is served from local client publishers only, so a request never
+    /// travels from relay to relay and subscriptions cannot form a loop.
     #[tracing::instrument(
         level = "info",
         name = "relay.upstream_publisher_resolver.resolve",
@@ -66,15 +66,48 @@ impl UpstreamPublisherResolver {
         if requester == SessionPeer::Relay {
             return publishers;
         }
+        publishers.extend(
+            self.find_publisher_relays(&TrackKey::new(track_namespace, track_name))
+                .await
+                .into_iter()
+                .map(UpstreamPublisher::Relay),
+        );
+        publishers
+    }
+
+    /// A relay holding both routes is one publisher: one session leads to it.
+    async fn find_publisher_relays(&self, track_key: &TrackKey) -> Vec<RelayInfo> {
+        let mut relays = Vec::new();
         match self
             .route_registry
-            .find_active_namespace_publishers(track_namespace)
+            .find_active_namespace_publishers(&track_key.track_namespace)
             .await
         {
-            Ok(relays) => publishers.extend(relays.into_iter().map(UpstreamPublisher::Relay)),
-            Err(err) => tracing::warn!(?err, %track_namespace, "failed to find publisher relays"),
+            Ok(found) => relays.extend(found),
+            Err(err) => {
+                tracing::warn!(?err, track_namespace = %track_key.track_namespace, "failed to find publisher relays")
+            }
         }
-        publishers
+        match self
+            .route_registry
+            .find_active_track_publishers(track_key)
+            .await
+        {
+            Ok(found) => {
+                for relay in found {
+                    if !relays.iter().any(|known| known.relay_id == relay.relay_id) {
+                        relays.push(relay);
+                    }
+                }
+            }
+            Err(err) => tracing::warn!(
+                ?err,
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                "failed to find track publisher relays"
+            ),
+        }
+        relays
     }
 
     pub(crate) async fn session_of(&self, publisher: &UpstreamPublisher) -> Option<SessionId> {
@@ -174,6 +207,34 @@ mod tests {
 
         // Assert
         assert!(resolved.is_empty());
+    }
+
+    fn relay_ids(publishers: &[UpstreamPublisher]) -> Vec<String> {
+        publishers
+            .iter()
+            .filter_map(|publisher| match publisher {
+                UpstreamPublisher::Relay(relay) => Some(relay.relay_id.clone()),
+                UpstreamPublisher::Session(_) => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn resolves_relays_publishing_the_namespace_or_the_track_once_each() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        let resolver = make_resolver(PublisherLookup::Found {
+            namespace_relay_ids: vec!["relay-a", "relay-b"],
+            track_relay_ids: vec!["relay-b", "relay-c"],
+        });
+
+        // Act
+        let resolved = resolver
+            .resolve(&table, "ns", "track", SessionPeer::Client)
+            .await;
+
+        // Assert
+        assert_eq!(relay_ids(&resolved), vec!["relay-a", "relay-b", "relay-c"]);
     }
 
     #[tokio::test]

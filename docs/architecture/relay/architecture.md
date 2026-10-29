@@ -339,7 +339,7 @@ Each sequence owns the relay-side protocol logic for one message
 2. **Publisher resolution** (`UpstreamPublisherResolver`): every local client
    publisher, newest first (session ids grow with time), and, for a SUBSCRIBE
    from a client, every remote relay the route registry lists as publishing the
-   namespace (see "Cascading relays"). Resolution dials nothing: each upstream
+   namespace or the track, once per relay (see "Cascading relays"). Resolution dials nothing: each upstream
    SUBSCRIBE task reaches its relay through `InterRelayConnectionManager`
    itself, with a 3 s connect timeout, so an unreachable relay holds back no
    other publisher. A SUBSCRIBE from a relay is served from local client
@@ -379,17 +379,19 @@ relays"). A PUBLISH for a track the relay already receives adds its publisher
 to the track the same way.
 
 ### PUBLISH sequence
-1. Add the publisher to the track's `UpstreamTrack` as an
+1. For a client-origin PUBLISH, register the track-publisher route; a failure
+   answers PUBLISH_ERROR INTERNAL_ERROR, like PUBLISH_NAMESPACE.
+2. Add the publisher to the track's `UpstreamTrack` as an
    `ActiveUpstreamSubscription` of origin `Publish` (it survives without
    downstream subscribers), register the PUBLISH for namespace lookups, and
    start ingress.
-2. Forward PUBLISH to every local session whose SUBSCRIBE_NAMESPACE prefix
+3. Forward PUBLISH to every local session whose SUBSCRIBE_NAMESPACE prefix
    matches (draft-14 §8.4) and, for a client-origin PUBLISH, to every remote
    relay holding a namespace-subscriber route, dialled via
    `InterRelayConnectionManager`.
-3. PUBLISH_OK to the publisher.
+4. PUBLISH_OK to the publisher.
 
-Each forward in step 2 is a `DownstreamPublish`
+Each forward in step 3 is a `DownstreamPublish`
 (`control_plane/sequences/downstream_publish.rs`), which treats the forwarded
 PUBLISH as a downstream subscription of the track (§5.1: a PUBLISH_OK
 establishes a subscription):
@@ -866,7 +868,8 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 
 - `RelayRouteRegistry` trait: `NoopRelayRouteRegistry` (single-relay, no
   `REDIS_URL`) or `RedisRelayRouteRegistry` (relay info hash and
-  namespace-publisher / namespace-subscriber routes with a 15 s TTL). The
+  namespace-publisher / track-publisher / namespace-subscriber routes with a
+  15 s TTL). The
   registry keeps the routes it registered in memory, and its 5 s heartbeat
   rewrites the relay info hash and re-registers any owned route whose entry is
   missing, so state that expired while the relay, its host or Redis was
@@ -888,6 +891,13 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   subscriber for a prefix appears. Any number of relays may hold the publisher
   route of one namespace (draft-14 §8.2), and the notification reaches every
   subscriber relay.
+- **Track-publisher routes**: a track a client publishes with PUBLISH alone
+  has no namespace route, so `Publish` registers
+  `route:publisher:track:<namespace>:<name>` for it. The key lies outside the
+  namespace-publisher prefix, so `SubscribeNamespace` never announces a
+  namespace no publisher announced. The route is withdrawn when no client
+  publishes the track with PUBLISH on this relay any more: at the publisher's
+  PUBLISH_DONE or session close.
 - **Watched namespaces**: a relay receiving a track for a client must learn
   about publishers of its namespace announcing later, on any relay. Before
   resolving the publishers of a track a client asked for, the relay registers
@@ -1012,8 +1022,8 @@ so cache, fan-out, FETCH and authorization need no separate path.
   exactly that location.
 - **Cache lifetime**: a track cache lives while referenced or until TTL
   eviction empties it with `strong_count == 1`.
-- **Client-owned routes**: Redis namespace routes are registered/withdrawn
-  only for client-origin sessions, and watched-namespace routes only while a
+- **Client-owned routes**: Redis namespace and track routes are
+  registered/withdrawn only for client-origin sessions, and watched-namespace routes only while a
   client watches the namespace; relay-learned namespaces are purged locally
   when the last client subscriber for the prefix leaves.
 - **Relay subscriptions serve clients**: an upstream subscription to another
