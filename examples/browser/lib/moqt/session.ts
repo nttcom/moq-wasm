@@ -7,7 +7,7 @@ export type ReceivedObject = {
   readonly groupId: bigint
   readonly subgroupId: bigint
   readonly objectId: bigint
-  /// The draft-14 Object Status of an object without a payload.
+  /// The draft-14 Object Status (§10.2.1.1); `undefined` for an object with a payload.
   readonly objectStatus: number | undefined
   readonly objectPayload: Uint8Array
   readonly objectPayloadLength: number
@@ -21,8 +21,7 @@ export type PublishDone = { readonly code: bigint; readonly reason: string }
 export type CloseInfo = { readonly code: number | undefined; readonly reason: string }
 
 export type MoqConnectOptions = {
-  /// Called before each CLIENT_SETUP, so a short-lived token can be fetched
-  /// for every connection, a reconnect or a GOAWAY move included.
+  /// Called before each CLIENT_SETUP, a reconnect or a GOAWAY move included.
   token?: string | (() => Promise<string>)
 }
 
@@ -31,8 +30,6 @@ export type MoqSubscribeOptions = {
   forward?: boolean
 }
 
-/// The parts of the wasm classes this module uses, so tests can stand in for
-/// them.
 type WasmSession = Pick<
   Moqt.Session,
   'closed' | 'subscribe' | 'subscribeCurrentGroup' | 'fetch' | 'trackStatus' | 'close'
@@ -48,8 +45,7 @@ type WasmObject = Pick<
 >
 type WasmStream = Pick<Moqt.FetchStream, 'next' | 'free'>
 
-/// A MoQT session to a relay. Each request resolves to a handle; a request
-/// the relay rejects throws a `RequestError` with the draft-14 code.
+/// A request the relay rejects throws a `RequestError` with the draft-14 code.
 export class MoqSession {
   readonly closed: Promise<CloseInfo>
   private open = true
@@ -79,8 +75,8 @@ export class MoqSession {
     return new MoqSubscription(subscription)
   }
 
-  /// SUBSCRIBE with a joining FETCH: the objects of the group the largest
-  /// object is in come first.
+  /// SUBSCRIBE with a joining FETCH (draft-14 §9.16.2): the objects of the group
+  /// the largest object is in come first.
   async subscribeCurrentGroup(namespace: string[], track: string): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () => this.inner.subscribeCurrentGroup(namespace, track))
     return new MoqSubscription(subscription)
@@ -136,7 +132,7 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     yield* objects(() => this.read(() => this.inner.next()))
   }
 
-  /// Each subgroup stream, with its objects in order and its status objects.
+  /// Each subgroup stream, status objects included.
   async *groups(): AsyncIterable<MoqGroup> {
     for (;;) {
       const group = await this.read(() => this.inner.nextGroup())

@@ -18,7 +18,6 @@ function wasmObject(objectId: bigint, payload: number[], freed: Freed, status?: 
   }
 }
 
-/// Hands out `items` one per `next()`, then `undefined`.
 function sequence<T>(items: T[]): () => Promise<T | undefined> {
   return async () => items.shift()
 }
