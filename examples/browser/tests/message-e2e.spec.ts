@@ -41,8 +41,8 @@ test.describe('control messages sent from client to relay', () => {
 
       // Act: relay へ接続する。
       await client.connectButton.click()
-      // Assert: WebTransport の接続完了を待ってから制御メッセージを送る。
-      await expect(client.logPanel).toContainText('[moqt][wt] connected')
+      // Assert
+      await expect(client.sendStatus).toHaveText('Ready to send CLIENT_SETUP')
 
       // CLIENT_SETUP は SERVER_SETUP の受信まで待ってから成功扱いになる。
       await send(client, client.setupButton, 'CLIENT_SETUP')

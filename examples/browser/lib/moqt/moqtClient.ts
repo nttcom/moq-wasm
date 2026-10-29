@@ -231,7 +231,6 @@ export class MoqtClientWrapper {
       return
     }
 
-    let wtConnectStartedAtMs: number | null = null
     try {
       this.client = await this.createRawClient(url)
       if (options.fallback === false) {
@@ -239,12 +238,7 @@ export class MoqtClientWrapper {
       } else if (options.fallback?.webTransportTimeoutMs !== undefined) {
         this.client.setWebSocketFallback(options.fallback.webTransportTimeoutMs)
       }
-      wtConnectStartedAtMs = performance.now()
       await this.client.start()
-      console.info('[moqt][wt] connected', {
-        url,
-        elapsedMs: Math.round((performance.now() - wtConnectStartedAtMs) * 100) / 100
-      })
       this.setupCallbacks(this.client)
 
       if (options.sendSetup === false) {
@@ -252,39 +246,36 @@ export class MoqtClientWrapper {
         return
       }
 
-      await this.sendSetup(this.client, options)
+      await this.setUp(
+        this.client,
+        options.versions ?? new BigUint64Array([0xff00000en]),
+        options.maxRequestId ?? 100n,
+        options.authToken
+      )
     } catch (error) {
       this.cleanupClient()
-      if (wtConnectStartedAtMs !== null) {
-        console.error('[moqt][wt] connect failed', {
-          url,
-          elapsedMs: Math.round((performance.now() - wtConnectStartedAtMs) * 100) / 100
-        })
-      }
       console.error('Failed to connect MoQT client:', error)
       throw error
     }
   }
 
   async sendClientSetup(versions: BigUint64Array, maxRequestId: bigint, authToken?: string): Promise<void> {
-    const client = this.requireConnectedClient()
+    await this.setUp(this.requireConnectedClient(), versions, maxRequestId, authToken)
+  }
+
+  /** `sendClientSetup` opens the transport, falling back to WebSocket if needed, so the logged time covers the connect. */
+  private async setUp(
+    client: MOQTClient,
+    versions: BigUint64Array,
+    maxRequestId: bigint,
+    authToken?: string
+  ): Promise<void> {
+    const startedAtMs = performance.now()
     const receiveServerSetup = this.waitForServerSetup()
     await client.sendClientSetup(versions, maxRequestId, authToken)
     await receiveServerSetup
-    this.logTransport(client)
-  }
-
-  private async sendSetup(client: MOQTClient, options: ConnectOptions): Promise<void> {
-    const receiveServerSetup = this.waitForServerSetup()
-    const versions = options.versions ?? new BigUint64Array([0xff00000en])
-    const maxRequestId = options.maxRequestId ?? 100n
-    await client.sendClientSetup(versions, maxRequestId, options.authToken)
-    await receiveServerSetup
-    this.logTransport(client)
-  }
-
-  private logTransport(client: MOQTClient): void {
-    console.info(`[moqt] session established over ${client.transport}`)
+    const elapsedMs = Math.round(performance.now() - startedAtMs)
+    console.info(`[moqt] session established over ${client.transport} in ${elapsedMs} ms`)
   }
 
   private waitForServerSetup(): Promise<void> {
