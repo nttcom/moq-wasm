@@ -1,11 +1,13 @@
 use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
 use bytes::Bytes;
+use js_sys::Promise;
 use mediapack::{
     AudioConfig, AudioLevel, AudioSample, MediaEvent, Timestamp,
     aac::AudioSpecificConfig,
     loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
 };
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::future_to_promise;
 
 use crate::js_error;
 
@@ -15,6 +17,7 @@ use crate::js_error;
 #[wasm_bindgen]
 pub struct MediaBroadcast {
     writer: BroadcastWriter,
+    tracks: SourceTracks,
     /// Reads a chunk as it reads a received LOC object: into the track's
     /// configuration changes and a sample.
     video: Option<LocDemuxer>,
@@ -34,7 +37,8 @@ impl MediaBroadcast {
             tracks.video_label = video_label;
         }
         Self {
-            writer: BroadcastWriter::run(Broadcast::new(connection, namespace), tracks),
+            writer: BroadcastWriter::run(Broadcast::new(connection, namespace), tracks.clone()),
+            tracks,
             video: None,
         }
     }
@@ -55,6 +59,27 @@ impl MediaBroadcast {
             .announce()
             .await
             .map_err(|err| js_error(format!("{err:#}")))
+    }
+
+    /// Ends the `video` or `audio` track with PUBLISH_DONE and sends the catalog
+    /// without it; stop pushing its media first. `configureVideo` or
+    /// `configureAudio` and the media pushed after it publish the track again.
+    #[wasm_bindgen(js_name = removeTrack)]
+    pub fn remove_track(&self, kind: String) -> Result<Promise, JsValue> {
+        let track_name = match kind.as_str() {
+            "video" => &self.tracks.video,
+            "audio" => &self.tracks.audio,
+            other => return Err(js_error(format!("unknown track kind: {other}"))),
+        };
+        // Not an async method: wasm-bindgen would hold the borrow of `self`
+        // until it resolved, failing every push of the other kind meanwhile.
+        let removal = self.writer.remove_track(track_name);
+        Ok(future_to_promise(async move {
+            removal
+                .await
+                .map(|()| JsValue::UNDEFINED)
+                .map_err(|err| js_error(format!("{err:#}")))
+        }))
     }
 
     /// `codec` is the WebCodecs codec string: `avc1.*` or `avc3.*` with
