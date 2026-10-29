@@ -6,6 +6,8 @@ export type PublishOptions = {
   videoLabel?: string
   /// Frames between keyframes; each keyframe starts a group.
   keyframeIntervalFrames?: number
+  /// Replaces the encoder's H.264 default; the broadcast takes H.264 only.
+  videoEncoderConfig?: VideoEncoderConfig
   onError?: (error: unknown) => void
 }
 
@@ -72,6 +74,9 @@ function encodeVideo(
     type: 'keyframeInterval',
     keyframeInterval: options.keyframeIntervalFrames ?? DEFAULT_KEYFRAME_INTERVAL_FRAMES
   })
+  if (options.videoEncoderConfig) {
+    worker.postMessage({ type: 'encoderConfig', config: options.videoEncoderConfig })
+  }
   const videoStream = new MediaStreamTrackProcessor({ track }).readable
   worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
   return worker
