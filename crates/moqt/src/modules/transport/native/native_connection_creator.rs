@@ -17,7 +17,7 @@ use crate::modules::transport::{
         client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
     },
     connect_target::{ClientTransport, ConnectTarget},
-    dual_stack_bind::bind_dual_stack,
+    dual_stack_bind::{EPHEMERAL_PORT_ATTEMPTS, bind_dual_stack},
     quic::quic_connection::{QUICConnection, negotiated_alpn},
     server_transport_config::quic_server_config,
     transport_connection_creator::TransportConnectionCreator,
@@ -57,9 +57,6 @@ struct NativeClient {
     web_transport_config: quinn::ClientConfig,
     web_socket_crypto: Arc<rustls::ClientConfig>,
 }
-
-/// How many ephemeral UDP ports are drawn when the number is taken on TCP.
-const EPHEMERAL_PORT_ATTEMPTS: u32 = 8;
 
 pub struct NativeConnectionCreator {
     endpoint: NativeEndpoint,
@@ -138,11 +135,10 @@ impl TransportConnectionCreator for NativeConnectionCreator {
         let refusing = Arc::new(AtomicBool::new(false));
         // Port 0 lets UDP pick the number and TCP then takes the same one. The
         // number UDP picks is often held on TCP already, so a new one is drawn.
-        let mut attempts = 0;
+        let mut attempts = 1;
         let (quic, web_socket) = loop {
-            let server_config = server_config.clone();
             let quic = bind_dual_stack(port_num, |address| {
-                let endpoint = quinn::Endpoint::server(server_config, address)?;
+                let endpoint = quinn::Endpoint::server(server_config.clone(), address)?;
                 tracing::info!(%address, "QUIC and WebTransport server ready");
                 Ok(endpoint)
             })?;
