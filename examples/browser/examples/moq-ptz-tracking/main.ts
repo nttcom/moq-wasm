@@ -2,6 +2,7 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { MoqSession } from '@moqt/session'
 import { LivePlayer } from '@player/livePlayer'
 import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpSystemOneBotPage } from '../../utils/systemOneBot'
+import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
@@ -16,12 +17,10 @@ const BOT_SERVICE = {
 }
 const PROMPT_TRACK = 'prompt'
 const MAX_TARGETS = 16
-// About one label's height as a share of the picture's.
-const LABEL_HEIGHT_SHARE = 0.05
 
 type Prompt = { targets: string[]; video?: string }
-/// [target index, [left, top, right, bottom]] as fractions of the picture.
-type TargetBox = [number, [number, number, number, number]]
+/// [index into the prompt's targets, edges]
+type TargetBox = [number, BoxEdges]
 
 const session = new MoqtClientWrapper()
 /// The player's own session; the bot side stays on MoqtClientWrapper.
@@ -133,11 +132,6 @@ function updateTargetRows(): void {
   addTargetButton.disabled = rows.length >= MAX_TARGETS
 }
 
-/// Golden-angle hues keep neighboring targets' colors far apart.
-function boxColor(target: number): string {
-  return `hsl(${(target * 137) % 360} 70% 45%)`
-}
-
 function setPromptPublisher(publisher: SingleObjectGroupPublisher | undefined): void {
   promptPublisher = publisher
   setStatus('tracker-status', publisher ? 'bot 接続済み' : 'bot 未接続', publisher ? 'ok' : 'idle')
@@ -187,7 +181,7 @@ function showRecord(record: TrackerRecord | undefined): void {
   const boxes = record && record.boxes !== 'not visible' ? record.boxes : []
   positionLabel.dataset.position = !record ? 'pending' : boxes.length === 0 ? 'unknown' : 'answer'
   positionLabel.textContent = !record ? pendingText() : boxes.length === 0 ? '見つかりません' : countText(boxes)
-  drawBoxes(boxes)
+  drawTargetBoxes(boxes)
   moveLabel.textContent =
     record && (record.panSeconds !== 0 || record.tiltSeconds !== 0)
       ? `パン ${formatSeconds(record.panSeconds)}・チルト ${formatSeconds(record.tiltSeconds)}`
@@ -200,24 +194,11 @@ function countText(boxes: TargetBox[]): string {
     .join('・')
 }
 
-/// The picture fills the stage's width at its own aspect ratio, so percentages of the
-/// stage are fractions of the picture.
-function drawBoxes(boxes: TargetBox[]): void {
-  boxOverlay.replaceChildren(
-    ...boxes.map(([target, [left, top, right, bottom]]) => {
-      const box = document.createElement('div')
-      box.className = 'target-box'
-      box.dataset.testid = 'ptz-tracking-box'
-      box.style.cssText = `left: ${left * 100}%; top: ${top * 100}%; width: ${(right - left) * 100}%; height: ${(bottom - top) * 100}%`
-      box.style.setProperty('--box-color', boxColor(target))
-      if (top < LABEL_HEIGHT_SHARE) {
-        box.dataset.label = 'below'
-      }
-      const label = document.createElement('span')
-      label.textContent = sentPrompt.targets[target] ?? ''
-      box.append(label)
-      return box
-    })
+function drawTargetBoxes(boxes: TargetBox[]): void {
+  drawBoxes(
+    boxOverlay,
+    boxes.map(([target, edges]) => ({ edges, label: sentPrompt.targets[target] ?? '', color: boxColor(target) })),
+    'ptz-tracking-box'
   )
 }
 
