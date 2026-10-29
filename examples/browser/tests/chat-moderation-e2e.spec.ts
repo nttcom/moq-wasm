@@ -83,7 +83,7 @@ test.describe('MoQ Chat Moderation', () => {
     await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT)
   })
 
-  test('shows the d3-flash status while its answers are late', async ({ page }) => {
+  test('shows the System One status while its answers are late', async ({ page }) => {
     // Arrange
     const chat = await joinChat(page)
     await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, LATE_ANSWER_MS)
@@ -93,18 +93,18 @@ test.describe('MoQ Chat Moderation', () => {
 
     // Assert
     const systemOneStatus = page.getByTestId('chat-moderation-system-one-status')
-    await expect(systemOneStatus).toContainText('d3-flash')
+    await expect(systemOneStatus).toContainText('d1-2B')
     await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT, { timeout: 30_000 })
     await expect(systemOneStatus).toBeHidden()
   })
 
-  test('shows the d3-flash status to a page that joins while answers are late', async ({ browser, page }) => {
+  test('shows the System One status to a page that joins while answers are late', async ({ browser, page }) => {
     // Arrange
     const earlierPage = await browser.newPage()
     const earlierChat = await joinChat(earlierPage)
     await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, LATE_JOIN_ANSWER_MS)
     await earlierChat.send(ABUSIVE_TEXT)
-    await expect(earlierPage.getByTestId('chat-moderation-system-one-status')).toContainText('d3-flash', {
+    await expect(earlierPage.getByTestId('chat-moderation-system-one-status')).toContainText('d1-2B', {
       timeout: 10_000
     })
 
@@ -112,6 +112,6 @@ test.describe('MoQ Chat Moderation', () => {
     await clickJoin(page)
 
     // Assert
-    await expect(page.getByTestId('chat-moderation-system-one-status')).toContainText('d3-flash')
+    await expect(page.getByTestId('chat-moderation-system-one-status')).toContainText('d1-2B')
   })
 })

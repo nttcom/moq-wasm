@@ -6,8 +6,8 @@ from contextlib import asynccontextmanager
 
 from moq_system_one_bot.publication import Publication
 
-# Cloud Run stops an idle d3-flash after about ten minutes, so a request after a longer pause waits for
-# a cold start. A warm d3-flash answers within a second, so a request still pending after
+# Cloud Run stops an idle System One service after about ten minutes, so a request after a longer pause
+# waits for a cold start. A warm one answers within a second, so a request still pending after
 # COLD_START_SECONDS is a cold start too.
 IDLE_STOP_SECONDS = 10 * 60
 SLOW_SECONDS = 5.0

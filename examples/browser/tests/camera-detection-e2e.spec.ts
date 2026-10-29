@@ -78,7 +78,7 @@ test.describe('MoQ Camera Detection', () => {
     await expect(verdict).toHaveText('判定できません')
   })
 
-  test('shows the d3-flash status while its answers are late', async ({ page }) => {
+  test('shows the System One status while its answers are late', async ({ page }) => {
     // Arrange
     await answerDetectorWith('はい')
     await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, LATE_ANSWER_MS)
@@ -88,7 +88,7 @@ test.describe('MoQ Camera Detection', () => {
 
     // Assert
     const systemOneStatus = page.getByTestId('camera-detection-system-one-status')
-    await expect(systemOneStatus).toContainText('d3-flash')
+    await expect(systemOneStatus).toContainText('d1-2B')
     await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
     await expect(verdict).toHaveText('はい', { timeout: 30_000 })
     await expect(systemOneStatus).toBeHidden()

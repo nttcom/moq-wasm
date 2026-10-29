@@ -96,7 +96,7 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
           await subscribeTimeline()
           await systemOneStatus
             .follow(session, botNamespace)
-            .catch((error) => console.warn(`[${logTag}] d3-flash status subscribe failed`, error))
+            .catch((error) => console.warn(`[${logTag}] System One status subscribe failed`, error))
         }
       })
       await session.publishNamespace(ownNamespace, AUTH_INFO)

@@ -125,12 +125,12 @@ The chat moderation bot is the second:
   stays published;
 - the chat is plain UTF-8 text, one message per group, instead of moq-rs's
   compressed JSON stream; a verdict names a message by its object's Location;
-- the verdicts and the d3-flash status are published through `session.track`
+- the verdicts and the System One status are published through `session.track`
   instead of the broadcast inside pipecat's `MOQTransport`.
 
 Camera detection and PTZ tracking follow: each subscribes to its page's
 prompt and the camera's video while their namespaces are published, and
-publishes its event timeline, d3-flash status and, for PTZ, the ONVIF
+publishes its event timeline, System One status and, for PTZ, the ONVIF
 commands through `session.track`. A video subscription that joins a group in
 the middle decodes nothing until the next group, which starts at a keyframe.
 

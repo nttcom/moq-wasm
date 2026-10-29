@@ -24,20 +24,21 @@ from moq_camera_detection.vision import SystemOneVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8098
-# d3-flash answers one batch at a time, and one camera already sends it a picture every SAMPLE_INTERVAL_SECONDS.
+# system-one-server answers one request at a time, and one camera already sends it a picture every
+# SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
 NAMESPACE_ROOT = ["anon", "moq-camera-detection"]
 VIDEO_TRACK = "video"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
-# The event timeline and the d3-flash status are kept for FETCH as long as a room runs by default
+# The event timeline and the System One status are kept for FETCH as long as a room runs by default
 # (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
-# d3-flash scales to zero; a cold start copies 17 GB of weights before it answers.
+# The System One service scales to zero; a cold start copies its weights before it answers.
 VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
@@ -53,7 +54,7 @@ def parse_args() -> argparse.Namespace:
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
     parser.add_argument(
-        "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
+        "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"
     )
     add_identity_token_arguments(parser)
     return parser.parse_args()

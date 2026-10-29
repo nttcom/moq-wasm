@@ -46,9 +46,9 @@ export class SystemOneStatusView {
     this.element.style.display = this.state === 'ready' ? 'none' : ''
     this.element.textContent =
       this.state === 'starting'
-        ? `d3-flash を起動しています（約 2 分 40 秒、経過 ${elapsedSeconds} 秒）`
+        ? `d1-2B を起動しています（経過 ${elapsedSeconds} 秒）`
         : this.state === 'slow'
-          ? `d3-flash の応答に時間がかかっています（経過 ${elapsedSeconds} 秒）`
+          ? `d1-2B の応答に時間がかかっています（経過 ${elapsedSeconds} 秒）`
           : ''
   }
 }

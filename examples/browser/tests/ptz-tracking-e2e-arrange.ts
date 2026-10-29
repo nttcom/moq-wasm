@@ -8,7 +8,7 @@ export const SYSTEM_ONE_ORIGIN = process.env.PTZ_TRACKING_E2E_SYSTEM_ONE_ORIGIN!
 
 export type PtzCommand = { type: string }
 
-/// Where the fake d3-flash sees the target, as fractions of the picture from its top-left corner.
+/// Where the fake System One server sees the target, as fractions of the picture from its top-left corner.
 export async function placeTargetAt(x: number, y: number): Promise<void> {
   await answerDetectorWith(`${x},${y}`)
 }
