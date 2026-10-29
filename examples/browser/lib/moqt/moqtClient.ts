@@ -112,6 +112,7 @@ export interface SubscribeOptions {
   startGroup?: bigint
   startObject?: bigint
   endGroup?: bigint
+  /** `false` asks the publisher to send no objects until `setSubscriptionForward` turns Forward on. Defaults to `true`. */
   forward?: boolean
   deliveryTimeout?: bigint
   /**
@@ -479,7 +480,7 @@ export class MoqtClientWrapper {
         options.startObject,
         options.endGroup,
         authInfo,
-        options.forward ?? false,
+        options.forward ?? true,
         options.deliveryTimeout
       )
       return { requestId, subscribeOk: await response }
