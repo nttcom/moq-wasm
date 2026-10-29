@@ -6,17 +6,25 @@ from moq_ptz_tracking.target import LatestTarget, Target, parse_prompt
 from tests.helpers import MUG_TARGET, READ_TIMEOUT_SECONDS, tracking
 
 
-def test_prompt_with_a_target_starts_tracking_on_its_video_track():
+def test_prompt_with_targets_starts_tracking_them_on_its_video_track():
     # Act
-    target = parse_prompt(b'{"target": "a red mug", "video": "video/profile_1"}', (7, 0))
+    target = parse_prompt(b'{"targets": ["a red mug"], "video": "video/profile_1"}', (7, 0))
 
     # Assert
     assert target == MUG_TARGET
 
 
-def test_prompt_without_a_target_stops_tracking():
+def test_repeated_targets_are_asked_for_once():
+    # Act
+    target = parse_prompt('{"targets": ["人", "椅子", "人"], "video": "video/profile_1"}'.encode(), (7, 0))
+
+    # Assert
+    assert target.descriptions == ("人", "椅子")
+
+
+def test_prompt_without_targets_stops_tracking():
     # Act / Assert
-    assert parse_prompt(b'{"target": null}', (8, 0)) is None
+    assert parse_prompt(b'{"targets": []}', (8, 0)) is None
 
 
 @pytest.mark.parametrize(
@@ -24,10 +32,13 @@ def test_prompt_without_a_target_stops_tracking():
     [
         b"not json",
         b'["a red mug"]',
-        b'{"target": "", "video": "video/profile_1"}',
-        b'{"target": "' + b"x" * 101 + b'", "video": "video/profile_1"}',
-        b'{"target": "a red mug"}',
-        b'{"target": "a red mug", "video": ""}',
+        b'{"target": "a red mug", "video": "video/profile_1"}',
+        b'{"targets": "a red mug", "video": "video/profile_1"}',
+        b'{"targets": [""], "video": "video/profile_1"}',
+        b'{"targets": ["' + b"x" * 101 + b'"], "video": "video/profile_1"}',
+        b'{"targets": [' + b",".join(b'"%d"' % n for n in range(17)) + b'], "video": "video/profile_1"}',
+        b'{"targets": ["a red mug"]}',
+        b'{"targets": ["a red mug"], "video": ""}',
     ],
 )
 def test_invalid_prompt_is_rejected(payload):
@@ -43,7 +54,7 @@ async def test_a_new_target_on_the_same_video_track_keeps_watching_it():
     await asyncio.sleep(0)
 
     # Act
-    latest_target.set(Target("a blue cap", MUG_TARGET.video_track, (8, 0)))
+    latest_target.set(Target(("a blue cap",), MUG_TARGET.video_track, (8, 0)))
     await asyncio.sleep(0)
 
     # Assert
@@ -51,7 +62,7 @@ async def test_a_new_target_on_the_same_video_track_keeps_watching_it():
     leaving.cancel()
 
 
-@pytest.mark.parametrize("next_target", [None, Target("a red mug", "video/profile_2", (8, 0))])
+@pytest.mark.parametrize("next_target", [None, Target(("a red mug",), "video/profile_2", (8, 0))])
 async def test_stopping_or_switching_video_tracks_leaves_the_watched_track(next_target):
     # Arrange
     latest_target = tracking(MUG_TARGET)

@@ -1,4 +1,4 @@
-"""Identity tokens for a bot that calls a Cloud Run service requiring IAM, such as d3-flash or an ASR service."""
+"""Identity tokens for a bot that calls a Cloud Run service requiring IAM, such as d1-2B or an ASR service."""
 
 import asyncio
 import time

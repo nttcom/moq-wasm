@@ -1,7 +1,7 @@
 import pytest
 
-from moq_d3_flash_bot import d3_flash_status
-from moq_d3_flash_bot.d3_flash_status import IDLE_STOP_SECONDS, D3FlashStatus
+from moq_system_one_bot import system_one_status
+from moq_system_one_bot.system_one_status import IDLE_STOP_SECONDS, SystemOneStatus
 from tests.helpers import next_status, published_status
 
 
@@ -15,18 +15,18 @@ class FakeClock:
 
 @pytest.fixture
 def short_escalation(monkeypatch):
-    monkeypatch.setattr(d3_flash_status, "SLOW_SECONDS", 0.05)
-    monkeypatch.setattr(d3_flash_status, "COLD_START_SECONDS", 0.1)
+    monkeypatch.setattr(system_one_status, "SLOW_SECONDS", 0.05)
+    monkeypatch.setattr(system_one_status, "COLD_START_SECONDS", 0.1)
 
 
-async def answered_once(status: D3FlashStatus) -> None:
+async def answered_once(status: SystemOneStatus) -> None:
     async with status.request():
         pass
 
 
-async def test_first_request_reports_a_cold_start_until_d3_flash_answers():
+async def test_first_request_reports_a_cold_start_until_system_one_answers():
     # Arrange
-    status = D3FlashStatus()
+    status = SystemOneStatus()
     publication = await published_status(status)
     assert await next_status(publication) == "ready"
 
@@ -41,7 +41,7 @@ async def test_first_request_reports_a_cold_start_until_d3_flash_answers():
 
 async def test_late_answer_while_warm_reports_slow_then_a_cold_start(short_escalation):
     # Arrange
-    status = D3FlashStatus()
+    status = SystemOneStatus()
     await answered_once(status)
     publication = await published_status(status)
     assert await next_status(publication) == "ready"
@@ -58,7 +58,7 @@ async def test_late_answer_while_warm_reports_slow_then_a_cold_start(short_escal
 async def test_request_after_an_idle_stop_reports_a_cold_start():
     # Arrange
     clock = FakeClock()
-    status = D3FlashStatus(clock)
+    status = SystemOneStatus(clock)
     await answered_once(status)
     publication = await published_status(status)
     assert await next_status(publication) == "ready"
@@ -74,7 +74,7 @@ async def test_request_after_an_idle_stop_reports_a_cold_start():
 
 async def test_failed_request_reports_ready_again():
     # Arrange
-    status = D3FlashStatus()
+    status = SystemOneStatus()
     publication = await published_status(status)
     assert await next_status(publication) == "ready"
 
@@ -82,7 +82,7 @@ async def test_failed_request_reports_ready_again():
     with pytest.raises(RuntimeError):
         async with status.request():
             assert await next_status(publication) == "starting"
-            raise RuntimeError("d3-flash failed")
+            raise RuntimeError("System One failed")
 
     # Assert
     assert await next_status(publication) == "ready"

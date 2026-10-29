@@ -1,0 +1,25 @@
+[project]
+name = "system-one-server"
+version = "0.1.0"
+description = "HTTP server answering the MoQ bots' System One questions with a decision model such as d1-2B"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.11",
+    "pillow>=13",
+    "torch>=2.13",
+    "torchvision>=0.28",
+    "transformers>=5.19",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[project.scripts]
+system-one-server = "system_one_server.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

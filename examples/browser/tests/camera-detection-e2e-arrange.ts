@@ -5,10 +5,10 @@ const moqtUrl = process.env.CAMERA_DETECTION_E2E_MOQT_URL ?? 'https://127.0.0.1:
 const botUrl = process.env.CAMERA_DETECTION_E2E_BOT_URL!
 /// The bot runs one room at a time, so every test shares this room.
 const ROOM = 'e2e'
-export const D3_FLASH_ORIGIN = process.env.CAMERA_DETECTION_E2E_D3_FLASH_ORIGIN!
+export const SYSTEM_ONE_ORIGIN = process.env.CAMERA_DETECTION_E2E_SYSTEM_ONE_ORIGIN!
 
 export async function answerDetectorWith(choice: string): Promise<void> {
-  const response = await fetch(`${D3_FLASH_ORIGIN}/answer`, { method: 'PUT', body: choice })
+  const response = await fetch(`${SYSTEM_ONE_ORIGIN}/answer`, { method: 'PUT', body: choice })
   expect(response.ok).toBe(true)
 }
 

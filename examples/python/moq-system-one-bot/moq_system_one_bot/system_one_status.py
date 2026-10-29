@@ -4,10 +4,10 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
-from moq_d3_flash_bot.publication import Publication
+from moq_system_one_bot.publication import Publication
 
-# Cloud Run stops an idle d3-flash after about ten minutes, so a request after a longer pause waits for
-# a cold start. A warm d3-flash answers within a second, so a request still pending after
+# Cloud Run stops an idle System One service after about ten minutes, so a request after a longer pause
+# waits for a cold start. A warm one answers within a second, so a request still pending after
 # COLD_START_SECONDS is a cold start too.
 IDLE_STOP_SECONDS = 10 * 60
 SLOW_SECONDS = 5.0
@@ -23,7 +23,7 @@ def epoch_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
-class D3FlashStatus:
+class SystemOneStatus:
     def __init__(self, clock: Callable[[], float] = time.monotonic):
         self._clock = clock
         self._last_answer_at: float | None = None
@@ -77,6 +77,6 @@ class D3FlashStatus:
         if self._publication is None:
             return
         await self._publication.write(
-            json.dumps({"d3_flash": self._state, "since": self._since_ms}, separators=(",", ":")).encode(),
+            json.dumps({"system_one": self._state, "since": self._since_ms}, separators=(",", ":")).encode(),
             new_group=True,
         )

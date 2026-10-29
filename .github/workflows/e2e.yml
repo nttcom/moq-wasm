@@ -19,7 +19,7 @@ on:
       - "examples/python/moq-camera-detection/**"
       - "examples/python/moq-ptz-tracking/**"
       - "examples/python/moq-bot-rooms/**"
-      - "examples/python/moq-d3-flash-bot/**"
+      - "examples/python/moq-system-one-bot/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "crates/python/**"
       - "examples/rust/moq-cli/**"
@@ -73,7 +73,7 @@ on:
       - "examples/python/moq-camera-detection/**"
       - "examples/python/moq-ptz-tracking/**"
       - "examples/python/moq-bot-rooms/**"
-      - "examples/python/moq-d3-flash-bot/**"
+      - "examples/python/moq-system-one-bot/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "crates/python/**"
       - "examples/rust/moq-cli/**"
@@ -213,7 +213,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-chat-moderation/*|examples/browser/examples/media/*|examples/browser/tests/chat-moderation-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-chat-moderation/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-chat-moderation/*|examples/browser/examples/media/*|examples/browser/tests/chat-moderation-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-chat-moderation/*|examples/python/moq-bot-rooms/*|examples/python/moq-system-one-bot/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   chat_moderation=true
                   ;;
               esac
@@ -225,13 +225,13 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-camera-detection/*|examples/browser/examples/media/*|examples/browser/tests/camera-detection-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-camera-detection/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-camera-detection/*|examples/browser/examples/media/*|examples/browser/tests/camera-detection-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-camera-detection/*|examples/python/moq-bot-rooms/*|examples/python/moq-system-one-bot/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   camera_detection=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-ptz-tracking-e2e.mjs|tests/browser-e2e/fake-onvif-ingest.py|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-ptz-tracking/*|examples/browser/examples/media/*|examples/browser/tests/ptz-tracking-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-ptz-tracking/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|examples/rust/moq-cli/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-ptz-tracking-e2e.mjs|tests/browser-e2e/fake-onvif-ingest.py|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-ptz-tracking/*|examples/browser/examples/media/*|examples/browser/tests/ptz-tracking-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-ptz-tracking/*|examples/python/moq-bot-rooms/*|examples/python/moq-system-one-bot/*|examples/rust/moq-cli/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   ptz_tracking=true
                   ;;
               esac
@@ -684,8 +684,8 @@ jobs:
         working-directory: examples/python/moq-bot-rooms
         run: uv run pytest
 
-      - name: Run d3-flash bot package unit tests
-        working-directory: examples/python/moq-d3-flash-bot
+      - name: Run System One bot package unit tests
+        working-directory: examples/python/moq-system-one-bot
         run: uv run pytest
 
       - name: Prepare browser E2E environment

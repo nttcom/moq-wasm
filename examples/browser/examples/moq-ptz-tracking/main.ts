@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { MoqSession } from '@moqt/session'
 import { LivePlayer } from '@player/livePlayer'
-import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
+import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
@@ -15,8 +15,13 @@ const BOT_SERVICE = {
   cloud: 'https://moq-ptz-tracking.moqt.research.skyway.io'
 }
 const PROMPT_TRACK = 'prompt'
+const MAX_TARGETS = 16
+// About one label's height as a share of the picture's.
+const LABEL_HEIGHT_SHARE = 0.05
 
-type Prompt = { target: string; video: string } | { target: null }
+type Prompt = { targets: string[]; video?: string }
+/// [target index, [left, top, right, bottom]] as fractions of the picture.
+type TargetBox = [number, [number, number, number, number]]
 
 const session = new MoqtClientWrapper()
 /// The player's own session; the bot side stays on MoqtClientWrapper.
@@ -30,17 +35,19 @@ const player = new LivePlayer({
   }
 })
 let promptPublisher: SingleObjectGroupPublisher | undefined
-let trackingTarget: string | undefined
-let sentPrompt: Prompt = { target: null }
+let trackingTargets: string[] = []
+let sentPrompt: Prompt = { targets: [] }
 
 const targetForm = element<HTMLFormElement>('targetForm')
-const targetInput = element<HTMLInputElement>('target')
+const targetList = element<HTMLDivElement>('targets')
+const addTargetButton = element<HTMLButtonElement>('addTargetBtn')
 const stopButton = element<HTMLButtonElement>('stopBtn')
+const boxOverlay = element<HTMLDivElement>('boxes')
 const positionLabel = element<HTMLSpanElement>('position')
 const moveLabel = element<HTMLSpanElement>('move')
 const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 
-setUpD3FlashBotPage({
+setUpSystemOneBotPage({
   session,
   logTag: 'moq-ptz-tracking',
   ownNamespace: VIEWER_NAMESPACE,
@@ -63,12 +70,12 @@ setUpD3FlashBotPage({
   },
   onTimelineObject: (payload) => {
     const data = latestRecordForPrompt<{
-      position: TrackerRecord['position']
+      boxes: TrackerRecord['boxes']
       pan_seconds: number
       tilt_seconds: number
     }>(payload, promptPublisher?.latestGroupId)
     if (data) {
-      showRecord({ position: data.position, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
+      showRecord({ boxes: data.boxes, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
     }
   },
   onReset: async () => {
@@ -77,17 +84,59 @@ setUpD3FlashBotPage({
     playerSession = undefined
     viewerDelayLabel.textContent = ''
     setPromptPublisher(undefined)
-    sentPrompt = { target: null }
+    sentPrompt = { targets: [] }
   }
 })
+addTargetRow('人')
 targetForm.addEventListener('submit', (event) => {
   event.preventDefault()
-  targetInput.setCustomValidity(targetInput.value.trim() ? '' : '追従する対象を入力してください')
+  const inputs = [...targetList.querySelectorAll('input')]
+  const targets = [...new Set(inputs.map((input) => input.value.trim()).filter((text) => text))]
+  inputs[0].setCustomValidity(targets.length > 0 ? '' : '追従する対象を入力してください')
   if (targetForm.reportValidity()) {
-    setTrackingTarget(targetInput.value.trim())
+    setTrackingTargets(targets)
   }
 })
-stopButton.addEventListener('click', () => setTrackingTarget(undefined))
+addTargetButton.addEventListener('click', () => addTargetRow('').focus())
+stopButton.addEventListener('click', () => setTrackingTargets([]))
+
+function addTargetRow(value: string): HTMLInputElement {
+  const row = document.createElement('div')
+  row.className = 'target-row'
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.value = value
+  input.maxLength = 100
+  input.autocomplete = 'off'
+  input.setAttribute('aria-label', '追従する対象')
+  input.dataset.testid = 'ptz-tracking-target-input'
+  const remove = document.createElement('button')
+  remove.type = 'button'
+  remove.textContent = '削除'
+  remove.dataset.testid = 'ptz-tracking-remove-target-button'
+  remove.addEventListener('click', () => {
+    row.remove()
+    updateTargetRows()
+  })
+  row.append(input, remove)
+  targetList.append(row)
+  updateTargetRows()
+  return input
+}
+
+function updateTargetRows(): void {
+  const rows = [...targetList.children] as HTMLElement[]
+  rows.forEach((row, index) => {
+    row.style.setProperty('--box-color', boxColor(index))
+    row.querySelector('button')!.disabled = rows.length === 1
+  })
+  addTargetButton.disabled = rows.length >= MAX_TARGETS
+}
+
+/// Golden-angle hues keep neighboring targets' colors far apart.
+function boxColor(target: number): string {
+  return `hsl(${(target * 137) % 360} 70% 45%)`
+}
 
 function setPromptPublisher(publisher: SingleObjectGroupPublisher | undefined): void {
   promptPublisher = publisher
@@ -95,15 +144,15 @@ function setPromptPublisher(publisher: SingleObjectGroupPublisher | undefined): 
   showRecord(undefined)
 }
 
-function setTrackingTarget(target: string | undefined): void {
-  trackingTarget = target
-  stopButton.disabled = target === undefined
+function setTrackingTargets(targets: string[]): void {
+  trackingTargets = targets
+  stopButton.disabled = targets.length === 0
   void sendPrompt(currentPrompt())
 }
 
 function currentPrompt(): Prompt {
   const video = player.state.selectedVideoTrack
-  return trackingTarget && video ? { target: trackingTarget, video } : { target: null }
+  return trackingTargets.length > 0 && video ? { targets: trackingTargets, video } : { targets: [] }
 }
 
 /// The bot watches the video track named in the prompt, so a prompt follows the
@@ -129,36 +178,54 @@ async function sendPrompt(prompt: Prompt): Promise<void> {
 }
 
 type TrackerRecord = {
-  position: [number, number] | 'not visible' | null
+  boxes: TargetBox[] | 'not visible'
   panSeconds: number
   tiltSeconds: number
 }
 
 function showRecord(record: TrackerRecord | undefined): void {
-  positionLabel.dataset.position = !record ? 'pending' : record.position === null ? 'unknown' : 'answer'
-  positionLabel.textContent = !record ? pendingText() : positionText(record.position)
+  const boxes = record && record.boxes !== 'not visible' ? record.boxes : []
+  positionLabel.dataset.position = !record ? 'pending' : boxes.length === 0 ? 'unknown' : 'answer'
+  positionLabel.textContent = !record ? pendingText() : boxes.length === 0 ? '見つかりません' : countText(boxes)
+  drawBoxes(boxes)
   moveLabel.textContent =
     record && (record.panSeconds !== 0 || record.tiltSeconds !== 0)
       ? `パン ${formatSeconds(record.panSeconds)}・チルト ${formatSeconds(record.tiltSeconds)}`
       : ''
 }
 
-function positionText(position: TrackerRecord['position']): string {
-  if (position === null) {
-    return '判定できません'
-  }
-  if (position === 'not visible') {
-    return '見つかりません'
-  }
-  const [x, y] = position
-  return `横 ${Math.round(x * 100)}%・縦 ${Math.round(y * 100)}%`
+function countText(boxes: TargetBox[]): string {
+  return sentPrompt.targets
+    .map((target, index) => `${target} ${boxes.filter(([found]) => found === index).length}`)
+    .join('・')
+}
+
+/// The picture fills the stage's width at its own aspect ratio, so percentages of the
+/// stage are fractions of the picture.
+function drawBoxes(boxes: TargetBox[]): void {
+  boxOverlay.replaceChildren(
+    ...boxes.map(([target, [left, top, right, bottom]]) => {
+      const box = document.createElement('div')
+      box.className = 'target-box'
+      box.dataset.testid = 'ptz-tracking-box'
+      box.style.cssText = `left: ${left * 100}%; top: ${top * 100}%; width: ${(right - left) * 100}%; height: ${(bottom - top) * 100}%`
+      box.style.setProperty('--box-color', boxColor(target))
+      if (top < LABEL_HEIGHT_SHARE) {
+        box.dataset.label = 'below'
+      }
+      const label = document.createElement('span')
+      label.textContent = sentPrompt.targets[target] ?? ''
+      box.append(label)
+      return box
+    })
+  )
 }
 
 function pendingText(): string {
-  if (trackingTarget === undefined) {
+  if (trackingTargets.length === 0) {
     return '停止中'
   }
-  return sentPrompt.target === null ? '映像を待っています' : '判定待ち'
+  return sentPrompt.targets.length === 0 ? '映像を待っています' : '判定待ち'
 }
 
 function renderViewerDelay(): void {

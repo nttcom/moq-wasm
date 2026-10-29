@@ -160,15 +160,15 @@ recognizers:
   Whisper's.
 - `qwen3-asr` and `granite-speech-5-2b`: the bot posts each segment as a
   WAV file to the service, with an identity token from the metadata server,
-  as the other bots call d3-flash. Qwen3-ASR takes it on the OpenAI-compatible
+  as the other bots call the System One service. Qwen3-ASR takes it on the OpenAI-compatible
   `/v1/audio/transcriptions` with `language=ja`. vLLM's transcription API
   gives Granite Speech a fixed prompt that names no language and drops the
   request's, so the bot sends Granite Speech the WAV on `/v1/chat/completions`
   with the model card's prompt for Japanese speech. Each model has a service
   of its own, since Qwen3-ASR needs a vLLM nightly pinned for it and a
   service then runs the official vLLM image with arguments only. Neither is
-  d3-flash: d3-flash already fills most of an L4's 24 GB with its own
-  weights, and it runs its own server rather than vLLM.
+  the System One service, which runs its own server (`system-one-server`)
+  rather than vLLM.
 - None of the models transcribes while a participant speaks: each takes a
   whole utterance, so a caption follows the end of the utterance.
 
@@ -269,10 +269,11 @@ saves an instance only when two rooms use different models at once, and ties
 both to one vLLM build. Whisper `small` on the CPU covers the case of a
 transcriber that needs no GPU.
 
-### Qwen3-ASR and the d3-flash models in one service
-The weights would not fit one L4 together, so the service would have to swap
-models by request path, reloading d3-flash's 17 GB whenever chat moderation and
-captions run at once.
+### Qwen3-ASR and the decision model in one service
+When this was decided the decision model was d3-flash, whose 17 GB of weights
+would not fit one L4 together with Qwen3-ASR, so the service would have had to
+swap models by request path. d1-2B takes about 4 GB, but one service would
+still have to run both vLLM and `system-one-server`.
 
 ### MOSS-Transcribe-Diarize
 vLLM checks the request's `language` against a list and leaves it out of the

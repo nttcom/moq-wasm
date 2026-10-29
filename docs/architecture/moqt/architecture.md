@@ -504,6 +504,14 @@ forward from their own cache through the raw stream senders.
   reported no content, and closes the session with PROTOCOL_VIOLATION when the
   filter is not Largest Object (`FetchHandler::close_for_protocol_violation`);
   `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.
+- `end_track(namespace, name)` ends every outlet of the track with
+  PUBLISH_DONE (TRACK_ENDED, draft-14 §9.12) and keeps its numbering and
+  cache, so a later `publish` or SUBSCRIBE takes it up again at the next
+  group without reusing a location. Each outlet's open group is finished with
+  End of Group before PUBLISH_DONE, which may not precede the close of any
+  stream of the subscription, and its Stream Count is the number of streams
+  the outlet's `TrackWriter` opened. An outlet whose writer a write holds is
+  marked ending and ended when the write puts the writer back.
 - `handle(event)` is the session event loop's shortcut to all of the above:
   it accepts a SUBSCRIBE to a registered track, releases on UNSUBSCRIBE,
   serves FETCH, aborts on FETCH_CANCEL and answers TRACK_STATUS, and hands

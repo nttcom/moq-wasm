@@ -1,60 +1,61 @@
 import aiohttp
 import pytest
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_system_one_bot.system_one_status import SystemOneStatus
 
-from moq_ptz_tracking.vision import Answer, D3FlashVisionClient, Position, read_position
-from tests.helpers import grid_probabilities
+from moq_ptz_tracking.vision import Answer, Box, Sighting, SystemOneVisionClient, TargetBox
+
+MUG = {"left": 0.6, "top": 0.2, "right": 0.8, "bottom": 0.4}
+CAP = {"left": 0.1, "top": 0.5, "right": 0.3, "bottom": 0.9}
 
 
 async def identity_token_value() -> str:
     return "identity-token"
 
 
-@pytest.mark.parametrize(
-    ("given", "answer"),
-    [
-        ({"r1c3": 1.0}, Position(0.7, 0.3)),
-        ({"r0c0": 0.5, "r0c1": 0.5}, Position(0.2, 0.1)),
-        ({"r4c4": 0.3}, Position(0.9, 0.9)),
-    ],
-)
-def test_position_is_the_probability_weighted_center_of_the_grid_cells(given, answer):
-    # Act
-    position = read_position(grid_probabilities(given))
-
-    # Assert
-    assert (position.x, position.y) == pytest.approx((answer.x, answer.y))
-
-
-async def locate_with(server, description: str = "a red mug"):
+async def locate_with(server, descriptions: tuple[str, ...] = ("red mug", "blue cap")):
     async with aiohttp.ClientSession() as session:
         token = IdentityToken(identity_token_value)
-        client = D3FlashVisionClient(session, server.url, D3FlashStatus(), token)
-        return await client.locate(b"jpeg", description)
+        client = SystemOneVisionClient(session, server.url, SystemOneStatus(), token)
+        return await client.locate(b"jpeg", descriptions)
 
 
-async def test_visible_target_is_asked_whether_then_where(fake_vision_server):
-    # Act
-    answer = await locate_with(fake_vision_server)
-
-    # Assert
-    [(authorization, visible), (_, where)] = fake_vision_server.requests
-    assert answer == Position(0.7, 0.3)
-    assert authorization == "Bearer identity-token"
-    assert visible["images"] == where["images"] == ["data:image/jpeg;base64,anBlZw=="]
-    assert visible["questions"] == {"visible": {"type": "noul", "instructions": "Is a red mug in this picture?"}}
-    assert where["questions"]["where"]["instructions"] == "Where is a red mug in this picture?"
-    assert len(where["questions"]["where"]["criteria"]) == 25
-
-
-async def test_target_judged_absent_is_not_asked_where(fake_vision_server):
+async def test_every_target_is_asked_for_all_its_boxes_in_one_request(fake_vision_server):
     # Arrange
-    fake_vision_server.answers["visible"] = {"noul": 0.04}
+    fake_vision_server.answers = {"t0": {"boxes": [{"box": MUG}]}, "t1": {"boxes": [{"box": CAP}, {"box": MUG}]}}
 
     # Act
     answer = await locate_with(fake_vision_server)
 
     # Assert
-    assert answer is Answer.NOT_VISIBLE
-    assert len(fake_vision_server.requests) == 1
+    [(authorization, request)] = fake_vision_server.requests
+    assert authorization == "Bearer identity-token"
+    assert request == {
+        "images": ["data:image/jpeg;base64,anBlZw=="],
+        "questions": {
+            "t0": {"type": "boxes", "instructions": "Every red mug.", "max": 8},
+            "t1": {"type": "boxes", "instructions": "Every blue cap.", "max": 8},
+        },
+    }
+    assert answer == Sighting((TargetBox(0, Box(**MUG)), TargetBox(1, Box(**CAP)), TargetBox(1, Box(**MUG))))
+
+
+async def test_no_box_for_any_target_is_not_visible(fake_vision_server):
+    # Act / Assert
+    assert await locate_with(fake_vision_server) is Answer.NOT_VISIBLE
+
+
+def test_union_encloses_every_box():
+    # Arrange
+    sighting = Sighting((TargetBox(0, Box(**MUG)), TargetBox(1, Box(**CAP))))
+
+    # Act / Assert
+    assert sighting.union() == Box(0.1, 0.2, 0.8, 0.9)
+
+
+@pytest.mark.parametrize(
+    ("box", "center"), [(Box(0.6, 0.2, 0.8, 0.4), (0.7, 0.3)), (Box(0.0, 0.0, 1.0, 0.5), (0.5, 0.25))]
+)
+def test_center_is_halfway_between_the_edges(box, center):
+    # Act / Assert
+    assert (box.center.x, box.center.y) == pytest.approx(center)

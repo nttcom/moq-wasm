@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupWriter } from '@moqt/subgroupWriter'
 import { pageRoomId } from '../../utils/botRoom'
-import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
+import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { timeSeededGroupId } from '../../utils/media/clock'
 import { element, setStatus } from '../../utils/page'
 
@@ -69,7 +69,7 @@ const questionInput = element<HTMLInputElement>('question')
 const choicesInput = element<HTMLInputElement>('choices')
 let appliedPrompt = readPrompt()
 
-setUpD3FlashBotPage({
+setUpSystemOneBotPage({
   session,
   logTag: 'moq-camera-detection',
   ownNamespace: CAMERA_NAMESPACE,

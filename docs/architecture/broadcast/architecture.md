@@ -77,8 +77,9 @@ A producer may add fields of its own to the catalog and to its track objects,
 as long as their names are not the draft's (draft-ietf-moq-msf-01 §5).
 `Broadcast::set_catalog_fields` and `Broadcast::set_track_fields` fail, and
 send nothing, when a name is in `msf::ROOT_FIELD_NAMES` or
-`msf::TRACK_FIELD_NAMES`; otherwise they send the catalog with the fields. A track's fields also go on its CMAF sibling, which
-describes the same media; a parser that does not know a field ignores it.
+`msf::TRACK_FIELD_NAMES`; otherwise they send the catalog with the fields. A
+track's fields also go on its CMAF sibling, which describes the same media; a
+parser that does not know a field ignores it.
 
 ## CMAF tracks
 A writer whose `SourceTracks::cmaf` is off publishes its tracks as LOC alone:

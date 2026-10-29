@@ -1,6 +1,6 @@
 import { FilterType, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { BOT_ROOM_END_TEXT, BotRoomRequest } from './botRoom'
-import { D3FlashStatusView } from './d3FlashStatus'
+import { SystemOneStatusView } from './systemOneStatus'
 import { timeSeededGroupId } from './media/clock'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
 import { setUpRelayUrlControls } from './relayPresets'
@@ -11,7 +11,7 @@ const EVENT_TIMELINE_TRACK = 'eventtimeline'
 
 type BotSubscriber = { trackName: string; requestId: bigint; trackAlias: bigint }
 
-export type D3FlashBotPageOptions = {
+export type SystemOneBotPageOptions = {
   session: MoqtClientWrapper
   logTag: string
   ownNamespace: string[]
@@ -28,12 +28,12 @@ export type D3FlashBotPageOptions = {
   afterConnect?(relayUrl: string): Promise<void>
 }
 
-export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
+export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
   const { session, logTag, ownNamespace, ownTracks, botNamespace } = options
   const urlInput = element<HTMLInputElement>('url')
   const joinButton = element<HTMLButtonElement>('joinBtn')
   const leaveButton = element<HTMLButtonElement>('leaveBtn')
-  const d3FlashStatus = new D3FlashStatusView(element('d3-flash-status'))
+  const systemOneStatus = new SystemOneStatusView(element('system-one-status'))
   const botRoomNotice = element<HTMLSpanElement>('bot-room')
   const botRoom = new BotRoomRequest((reason) => {
     botRoomNotice.textContent = BOT_ROOM_END_TEXT[reason]
@@ -44,7 +44,7 @@ export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
 
   const reset = async (connectionText: string, connectionState: StatusState): Promise<void> => {
     botRoom.close()
-    d3FlashStatus.reset()
+    systemOneStatus.reset()
     await options.onReset()
     setStatus('connection-status', connectionText, connectionState)
     joinButton.disabled = false
@@ -94,9 +94,9 @@ export function setUpD3FlashBotPage(options: D3FlashBotPageOptions): void {
         await respondOk()
         if (sameNamespace(publishNamespace.trackNamespace, botNamespace)) {
           await subscribeTimeline()
-          await d3FlashStatus
+          await systemOneStatus
             .follow(session, botNamespace)
-            .catch((error) => console.warn(`[${logTag}] d3-flash status subscribe failed`, error))
+            .catch((error) => console.warn(`[${logTag}] System One status subscribe failed`, error))
         }
       })
       await session.publishNamespace(ownNamespace, AUTH_INFO)

@@ -16,9 +16,9 @@ The three pipecat bots under `examples/python/`, their browser pages under
 | `moq-camera-detection` | MoQ Camera Detection | `anon/moq-camera-detection/camera` | `anon/moq-camera-detection/detector` |
 | `moq-ptz-tracking` | MoQ PTZ Tracking | `anon/moq-ptz-tracking/viewer`, `anon/onvif/client` | `anon/moq-ptz-tracking/tracker`, `anon/onvif/viewer` |
 
-d3-flash, the model server the bots call, stays as it is: a Cloud Run service
+The System One service, the model server the bots call, stays as it is: a Cloud Run service
 that answers `/v1/systemone` and knows nothing about MoQ
-(see [d3-flash-on-cloud-run.md](../../../examples/python/d3-flash-on-cloud-run.md)).
+(see [system-one-on-cloud-run.md](../../../examples/python/system-one-on-cloud-run.md)).
 
 ## Context
 Each bot is a process that connects to relay-1 when it starts and stays
@@ -96,8 +96,8 @@ when the room is empty (below).
 
 The page needs no new state for the bot itself. It already sends
 SUBSCRIBE_NAMESPACE for the bot's namespace and starts the event timeline and
-the d3-flash status on the PUBLISH_NAMESPACE that follows, whenever that
-arrives (`setUpD3FlashBotPage` in `examples/browser/utils/d3FlashBot.ts`).
+the System One status on the PUBLISH_NAMESPACE that follows, whenever that
+arrives (`setUpSystemOneBotPage` in `examples/browser/utils/systemOneBot.ts`).
 The stream carries the server's own events, each of which ends the response:
 
 | Event | Sent when |
@@ -117,7 +117,7 @@ sequenceDiagram
     participant P as Page
     participant S as Bot service (Cloud Run)
     participant R as Relay
-    participant D as d3-flash (Cloud Run)
+    participant D as System One (Cloud Run)
     P->>S: GET /rooms/abc (event-stream, held open)
     Note over S: first request for abc: start the room's bot
     S->>R: connect, PUBLISH_NAMESPACE anon/moq-chat-moderation/abc/moderator, SUBSCRIBE_NAMESPACE .../abc
@@ -164,7 +164,7 @@ requests for it.
   slot instead of holding it until `--max-room-seconds`.
 - A room stops by itself `--max-room-seconds` (1 h) after its bot started,
   counted from the first request, so a tab left open does not keep a bot, and
-  through it d3-flash, running for the rest of the day. Every open request gets `expired`.
+  through it the System One service, running for the rest of the day. Every open request gets `expired`.
   The expired room stays in the map, answering `expired` at once, until its
   last request has been gone for the grace period. An `EventSource` that
   reconnects in that window therefore does not start the room again. A page
@@ -188,7 +188,7 @@ are concurrent (`concurrency` well above the expected number of open pages).
 | Instances | min 0, max 1 | Zero rooms means zero instances. The room map needs a single instance. |
 | Request timeout | 3600 s (the maximum) | A request is held for the whole time a page stays in the room, which `--max-room-seconds` keeps within this. If a request still drops, `EventSource` opens a new one and the grace period covers the gap. |
 | Ingress | all, unauthenticated | A browser opens the request directly. See "Limits" for abuse. |
-| Service account | own, with `roles/run.invoker` on d3-flash | The bot keeps sending the identity token it gets from the metadata server (`--metadata-auth`), which Cloud Run provides as GCE does. |
+| Service account | own, with `roles/run.invoker` on the System One service | The bot keeps sending the identity token it gets from the metadata server (`--metadata-auth`), which Cloud Run provides as GCE does. |
 
 Request-based billing does not bill an instance's idle tail, the up to
 about 15 minutes it may stay up with no open request before Cloud Run stops
@@ -204,15 +204,15 @@ cause, as `recorder serve` does:
 
 - `--max-rooms`. A request for a new room beyond it gets the `full` event and
   the response ends. The camera bot starts at 1: one camera room already
-  sends d3-flash a picture every 0.1 s, and d3-flash answers one batch at a
+  sends the System One service a picture every 0.1 s, and it answers one request at a
   time. Chat starts at 10.
 - `--max-room-seconds` (1 h) and `--open-hours` (weekdays 9:00–17:30
   Asia/Tokyo in the deployment), described above.
 - A request whose `Origin` is not an `--allowed-origin` is refused.
-- The relay URL and the d3-flash URL are server settings, so a request cannot
+- The relay URL and the System One URL are server settings, so a request cannot
   point a bot at another relay or model server.
 
-`max-instances 1` on both the bot service and d3-flash also bounds the cost.
+`max-instances 1` on both the bot service and the System One service also bounds the cost.
 
 ### Where the page finds the service
 The page derives the bot service URL from the relay URL, as the meeting page
@@ -238,7 +238,7 @@ the way it does today.
 ### Positive
 - Within the opening hours, bots run exactly while someone uses a room, and
   the cost follows use. Outside them, nothing runs.
-- A forgotten tab costs at most one hour of bot and d3-flash time.
+- A forgotten tab costs at most one hour of bot and System One time.
 - Several rooms can run at once, so two people trying the camera page no
   longer collide.
 - Container stdout reaches Cloud Logging, which it does not on the VM.
@@ -247,7 +247,7 @@ the way it does today.
 - Each bot package gets an HTTP server and a room map. `aiohttp` is already a
   dependency of all three, so `aiohttp.web` adds no new package.
 - The first page in a room after a quiet period waits for a container start
-  (seconds) on top of d3-flash's own cold start (minutes), as it does today.
+  (seconds) on top of the System One service's own cold start, as it does today.
 - Anyone can keep a bot running by holding the request open. The limits
   above bound how much that costs.
 
@@ -267,15 +267,15 @@ Cloud Scheduler can switch it between 0 and 1 instances on the current
 schedule. It keeps all three problems above. It also costs more than the VM:
 about $13–38 a month for the scheduled hours against about $7.
 
-### Embed pipecat in the d3-flash container
+### Embed pipecat in the System One container
 This removes the JPEG and HTTP hop between the bot and the model, but the
-model server runs one batch at a time, so throughput does not improve. In
+model server runs one request at a time, so throughput does not improve. In
 exchange:
 - The GPU instance (about $1.70/h) stays up for as long as a room is open,
   including a quiet chat room.
 - Every change to a prompt or to bot logic rebuilds the CUDA image, and each
   deploy waits through a cold start of about five minutes.
-- d3-flash sends all egress through a VPC subnet with no route to the
+- The System One service sends all egress through a VPC subnet with no route to the
   internet, so it cannot reach the relay's public name.
 
 ### An always-on dispatcher that finds rooms through the relay

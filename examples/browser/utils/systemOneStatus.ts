@@ -3,10 +3,10 @@ import type { MoqtClientWrapper } from '@moqt/moqtClient'
 const STATUS_TRACK = 'status'
 const AUTH_INFO = ''
 
-type D3FlashState = 'ready' | 'slow' | 'starting'
+type SystemOneState = 'ready' | 'slow' | 'starting'
 
-export class D3FlashStatusView {
-  private state: D3FlashState = 'ready'
+export class SystemOneStatusView {
+  private state: SystemOneState = 'ready'
   private sinceMs = 0
   private ticker: ReturnType<typeof setInterval> | undefined
 
@@ -20,7 +20,7 @@ export class D3FlashStatusView {
       STATUS_TRACK,
       AUTH_INFO,
       (payload) => {
-        const { d3_flash: state, since }: { d3_flash: D3FlashState; since: number } = JSON.parse(
+        const { system_one: state, since }: { system_one: SystemOneState; since: number } = JSON.parse(
           new TextDecoder().decode(payload)
         )
         this.show(state, since)
@@ -33,7 +33,7 @@ export class D3FlashStatusView {
     this.show('ready', 0)
   }
 
-  private show(state: D3FlashState, sinceMs: number): void {
+  private show(state: SystemOneState, sinceMs: number): void {
     this.state = state
     this.sinceMs = sinceMs
     clearInterval(this.ticker)
@@ -46,9 +46,9 @@ export class D3FlashStatusView {
     this.element.style.display = this.state === 'ready' ? 'none' : ''
     this.element.textContent =
       this.state === 'starting'
-        ? `d3-flash を起動しています（約 2 分 40 秒、経過 ${elapsedSeconds} 秒）`
+        ? `d1-2B を起動しています（経過 ${elapsedSeconds} 秒）`
         : this.state === 'slow'
-          ? `d3-flash の応答に時間がかかっています（経過 ${elapsedSeconds} 秒）`
+          ? `d1-2B の応答に時間がかかっています（経過 ${elapsedSeconds} 秒）`
           : ''
   }
 }
