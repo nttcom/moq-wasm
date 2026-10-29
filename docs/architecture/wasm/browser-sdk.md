@@ -53,10 +53,8 @@ const broadcast = await publish(session, ['room-1', 'alice'], stream, {
       { label: '720p', width: 1280, height: 720, bitrate: 2_500_000 },
       { label: '360p', width: 640, height: 360, bitrate: 600_000 },
     ],
-    catalog: { 'com.example.role': 'camera' }, // track ごとの独自フィールド
   },
   audio: { codec: 'opus', label: 'Mic' },
-  catalog: { 'com.example.room': 'room-1' }, // catalog ルートの独自フィールド
 })
 
 broadcast.replaceTrack('video', screenStream.getVideoTracks()[0])
@@ -176,8 +174,8 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
   採番、リプレイ用キャッシュ、SUBSCRIBE/FETCH への応答を、2か所ではなく Rust の
   1か所で行う。
 - `meetingCatalog.ts` の catalog 組み立て。catalog は `broadcast::build_catalog`
-  が作り、meeting が独自に載せている役割や bitrate は、`publish()` の独自フィールド
-  （下記の変更7）で載せる。
+  が作る。meeting が載せている役割と bitrate は MSF の `role` と `bitrate` で、
+  独自フィールドは要らない（下記の変更7）。
 
 このために、下の層で次の変更が要る。それぞれ別の PR にする。
 
@@ -215,13 +213,13 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    `decoderConfig.description`（AudioSpecificConfig）から `AudioConfig::Aac` を作れば、
    既存の経路にそのまま乗る。プレイヤー側は catalog の codec 文字列で WebCodecs の
    decoder を設定するので、`VideoDecoder.isConfigSupported` で弾くだけでよい。
-7. **catalog の独自フィールド。** MSF は、仕様のフィールドと衝突しない独自フィールドを
-   producer が足すことを認め、parser には知らないフィールドを無視することを求めている
-   （draft-ietf-moq-msf-01 §5）。役割も、仕様の役割と衝突しなければ独自のものを使って
-   よい（§5.1）。`Broadcast` に、track ごとと catalog ルートの独自フィールド
-   （JSON のオブジェクト）を受け取る口を足し、`build_catalog` がそれを出力に混ぜる。
-   MSF が定めるフィールド名と衝突するキーは、`publish()` の時点でエラーにする。
-   label と role は独自フィールドではなく、MSF の `label`、`role` に入れる。
+7. **catalog の独自フィールド（見送り）。** MSF は、仕様のフィールドと衝突しない独自
+   フィールドを producer が足すことを認め（MAY）、parser には知らないフィールドを
+   無視することを求めている（MUST、draft-ietf-moq-msf-01 §5）。parser 側の要件は
+   msf の読み込みがすでに満たしている。producer 側は、仕様のフィールドで表せない
+   情報（参加者の表示名など）を載せる用途が出るまで足さない。足すときは、MSF の
+   フィールド名と衝突するキーをエラーにする（MUST NOT）。label と role は独自
+   フィールドではなく、MSF の `label`、`role` に入れる。
 8. **CMAF の opt-in。** 今の `broadcast` は、すべての media track に `_cmaf` の兄弟
    track を作る。`SourceTracks` に CMAF を作るかどうかのフラグを足す。既定は今のまま
    にして live-ingest などは変えず、`publish()` だけ既定で切る。
@@ -438,13 +436,13 @@ example を1つずつ別の PR で移し、最後の1つと一緒に callback �
 6. **refactor(browser): `LivePlayer` を新しい `Session` に載せる。** Live Viewer と
    ONVIF の example もあとに続く。ブラウザ E2E（`run-media-e2e.mjs`）で守る。
 7. **feat(broadcast): Annex-B の parameter set、`remove_track`、Audio Level、
-   VP8/VP9/AV1 の映像、catalog の独自フィールド、CMAF の opt-in**（PR 6本）。
+   VP8/VP9/AV1 の映像、CMAF の opt-in**（PR 5本）。
 8. **feat(wasm): `MediaBroadcast`**（`Mp4Broadcast` の一般化）と、
    **feat(browser): 既存の encoder を使う `publish(session, namespace, MediaStream)`。**
    media example の publisher をこれに移し、その経路から `serveSubscribes.ts`、
    `SubgroupWriter`、`fetchReplay` を消す。
-9. **feat(browser): `publish()` に rendition、画面共有、codec の選択、catalog の
-   独自フィールドを足す。** そのあと meeting
+9. **feat(browser): `publish()` に rendition、画面共有、codec の選択を足す。**
+   そのあと meeting
    example を移し、`mediaPublisher.ts` のプロトコル部分と `meetingCatalog.ts` の
    catalog 組み立てを消す。
 10. **feat(browser): Safari 対応。** capture の代替経路、encoder 設定の機能検出、
@@ -469,9 +467,8 @@ example を1つずつ別の PR で移し、最後の1つと一緒に callback �
 3. **再接続: 自動。** GOAWAY 無しの切断でも session が接続し直し、handle はそのまま
    使える。relay のキャッシュにある範囲は FETCH で埋め、上限（既定60秒）を過ぎたら
    諦める（「core API」の「再接続」）。
-4. **catalog: `publish()` で指定できる。** track ごとの label、role、rendition と、
-   track ごと・catalog ルートの独自フィールドを渡せる。MSF のフィールド名と衝突する
-   キーはエラーにする（変更7）。
+4. **catalog: `publish()` で指定できる。** track ごとの label、role、rendition を
+   渡せる。独自フィールドは、使う用途が出るまで見送る（変更7）。
 5. **Audio Level: 含める。** `publish()` は音声の object ごとにレベルを計算し、LOC の
    Audio Level property として送る（変更5）。
 6. **CMAF の兄弟 track: opt-in。** `publish()` は既定で CMAF を作らず、
