@@ -194,9 +194,11 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    CMSF の switching set である。`live-ingest` は、transcode した rendition を
    `GroupAlignment` を使って `Broadcast::send_object` で書いている。ブラウザでは、
    rendition ごとに別の `VideoEncoder` へ同じ `VideoFrame` を渡し、同じフレームで
-   全員に keyframe を要求するので、group id は完全に揃う。`MediaBroadcast` は、
-   新しい経路を作らず、既存の rendition の経路の上に `addRendition(track, label)` を
-   出す。
+   全員に keyframe を要求するので、group id は完全に揃う。live-ingest の経路は
+   `broadcast` の `RenditionTrack` に移し、`MediaBroadcast` はその上に
+   `addRendition(name, label, bitrate)` を出す。encoder の出力は順不同で届くので、
+   ブラウザの rendition は `RenditionKeyframes::SameFrames` で、source より先に
+   来た keyframe でもその時刻の group id を割り当てる。
 4. **track のライフサイクル。** ミュート、ソースの差し替え、画面共有では、track が
    catalog から抜けて戻る必要がある。今の `Broadcast` は track を足すことしかできない。
    追加するのは `Broadcast::remove_track`（catalog の更新と PUBLISH_DONE）だけ。

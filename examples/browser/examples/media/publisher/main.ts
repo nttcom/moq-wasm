@@ -65,6 +65,7 @@ async function startPublishing(): Promise<void> {
       framerate: typeof settings.frameRate === 'number' ? settings.frameRate : 30,
       hardwareAcceleration
     },
+    renditions: [{ name: 'low', label: 'Low', width: 320, height: 180, bitrate: 150_000 }],
     onError: (error) => setStatusText('publisher-send-status', `Publish failed: ${getErrorMessage(error)}`)
   })
   setStatusText('publisher-send-status', `Publishing started: ${namespace.join('/')}`)
