@@ -51,6 +51,14 @@ subscriber knows by name before any catalog lists them, such as the camera
 video a tracking bot subscribes to directly. A SUBSCRIBE for any other track is rejected with
 TRACK_DOES_NOT_EXIST.
 
+A source that stops, such as a muted microphone or an ended screen share,
+leaves with `Broadcast::remove_track`: the catalog without the track is sent
+first, then every track that catalog no longer lists, the CMAF sibling and,
+with the last default track, the audio placeholder, the media timeline and
+the chat, ends with PUBLISH_DONE through `Origin::end_track`. The numbering
+stays in `Origin`, so a track whose catalog is updated again is published
+again from the next group, without reusing a location.
+
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-04): the payload is the
 codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law, Opus or MP3 frames,
