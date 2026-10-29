@@ -116,9 +116,30 @@ impl SessionHandler {
         let join_handle = tokio::task::Builder::new()
             .spawn(async move {
                 let relay_hostname = relay_hostname();
+                let session_peer = intake.accepted_peer.kind();
                 loop {
+                    let connecting = tokio::select! {
+                        biased;
+                        _ = &mut stop_receiver => {
+                            tracing::info!(session_peer, relay_hostname, "stopped accepting sessions; refusing new connections");
+                            endpoint.refuse_new_connections();
+                            break;
+                        }
+                        connecting = endpoint.accept() => connecting,
+                    };
+                    let connecting = match connecting {
+                        Ok(connecting) => connecting,
+                        Err(error @ AcceptError::EndpointClosing) => {
+                            tracing::info!(%error, session_peer, relay_hostname, "transport endpoint closed");
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, session_peer, relay_hostname, "failed to accept transport connection");
+                            continue;
+                        }
+                    };
+
                     let session_id = generate_session_id();
-                    let session_peer = intake.accepted_peer.kind();
                     let session_span = tracing::info_span!(
                         parent: None,
                         "relay.session",
@@ -127,30 +148,6 @@ impl SessionHandler {
                         relay_hostname = %relay_hostname,
                         peer_relay_id = tracing::field::Empty,
                     );
-                    let accept = async {
-                        endpoint.accept().await.inspect_err(|error| match error {
-                            AcceptError::EndpointClosing => {
-                                tracing::info!(%error, "transport endpoint closed");
-                            }
-                            _ => tracing::warn!(%error, "failed to accept transport connection"),
-                        })
-                    }
-                    .instrument(session_span.clone());
-                    let connecting = tokio::select! {
-                        biased;
-                        _ = &mut stop_receiver => {
-                            tracing::info!(session_peer, "stopped accepting sessions; refusing new connections");
-                            endpoint.refuse_new_connections();
-                            break;
-                        }
-                        connecting = accept => connecting,
-                    };
-                    let connecting = match connecting {
-                        Ok(connecting) => connecting,
-                        Err(AcceptError::EndpointClosing) => break,
-                        Err(_) => continue,
-                    };
-
                     let intake = intake.clone();
                     tokio::spawn(async move {
                         intake
