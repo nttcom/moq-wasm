@@ -7,7 +7,8 @@ import av
 from aiohttp import web
 
 from moq_camera_detection.event_timeline import EventTimeline
-from moq_camera_detection.prompt import Prompt
+from moq_camera_detection.prompt import ChoiceQuestion, Prompt
+from moq_camera_detection.vision import Answer
 
 READ_TIMEOUT_SECONDS = 2
 
@@ -49,25 +50,25 @@ async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
     return timeline, publication
 
 
-YES_NO_PROMPT = Prompt("Is there a person?", ("yes", "no"), (7, 0))
+YES_NO_PROMPT = Prompt((ChoiceQuestion("Is there a person?", ("yes", "no")),), (7, 0))
 
 
 @dataclass
 class StubVision:
-    answer: str | None
+    answers: list[Answer]
     images: list[bytes] = field(default_factory=list)
 
-    async def choose(self, jpeg: bytes, prompt: Prompt) -> str | None:
+    async def answer(self, jpeg: bytes, prompt: Prompt) -> list[Answer]:
         self.images.append(jpeg)
-        return self.answer
+        return self.answers
 
 
 @dataclass
 class FakeVisionServer:
-    choice: str
+    answers: dict[str, Any]
     url: str = ""
     requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
 
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"answers": {"answer": {"choice": self.choice}}})
+        return web.json_response({"answers": self.answers})

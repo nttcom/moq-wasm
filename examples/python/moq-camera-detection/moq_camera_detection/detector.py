@@ -53,17 +53,17 @@ class CameraDetector(FrameProcessor):
     async def _judge(self, picture: CameraPicture):
         requested_at = time.monotonic()
         try:
-            answer = await self._vision.choose(picture.jpeg, picture.prompt)
-        except (aiohttp.ClientError, KeyError, IndexError) as error:
+            answers = await self._vision.answer(picture.jpeg, picture.prompt)
+        except (aiohttp.ClientError, KeyError, IndexError, TypeError) as error:
             logger.warning(f"System One could not judge camera picture {picture.location}: {error}")
             return
         logger.info(
-            f"camera picture {picture.location} answer={answer}"
+            f"camera picture {picture.location} answers={answers}"
             f" in {time.monotonic() - requested_at:.2f}s"
         )
         if picture.location <= self._latest_recorded:
             return
         self._latest_recorded = picture.location
         await self._timeline.append(
-            location_record(picture.location, {"prompt": picture.prompt.location, "answer": answer})
+            location_record(picture.location, {"prompt": picture.prompt.location, "answers": answers})
         )

@@ -12,6 +12,12 @@ export async function answerDetectorWith(choice: string): Promise<void> {
   expect(response.ok).toBe(true)
 }
 
+/// The boxes the fake System One server finds for each target, as [left, top, right, bottom].
+export async function placeBoxes(boxes: Record<string, [number, number, number, number][]>): Promise<void> {
+  const response = await fetch(`${SYSTEM_ONE_ORIGIN}/boxes`, { method: 'PUT', body: JSON.stringify(boxes) })
+  expect(response.ok).toBe(true)
+}
+
 export async function askCamera(page: Page, question: string, choices: string): Promise<void> {
   await page.getByTestId('camera-detection-question-input').fill(question)
   await page.getByTestId('camera-detection-choices-input').fill(choices)

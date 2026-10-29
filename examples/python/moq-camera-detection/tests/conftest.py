@@ -7,7 +7,7 @@ from tests.helpers import FakeVisionServer
 
 @pytest.fixture
 async def fake_vision_server():
-    server = FakeVisionServer(choice="no")
+    server = FakeVisionServer(answers={"q0": {"choice": "no"}})
     app = web.Application()
     app.router.add_post("/v1/systemone", server.handle)
     async with TestServer(app) as test_server:
