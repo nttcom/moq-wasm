@@ -28,7 +28,7 @@ impl ControlMessageForwarder {
     async fn publisher(&self, session_id: SessionId) -> anyhow::Result<Box<dyn Publisher>> {
         let publisher = self.repository.lock().await.publisher(session_id);
         publisher.ok_or_else(|| {
-            tracing::error!("No publisher");
+            tracing::debug!(session_id = %session_id, "No publisher");
             anyhow::anyhow!("No publisher")
         })
     }
@@ -36,7 +36,7 @@ impl ControlMessageForwarder {
     async fn subscriber(&self, session_id: SessionId) -> anyhow::Result<Box<dyn Subscriber>> {
         let subscriber = self.repository.lock().await.subscriber(session_id);
         subscriber.ok_or_else(|| {
-            tracing::error!("No subscriber");
+            tracing::debug!(session_id = %session_id, "No subscriber");
             anyhow::anyhow!("No subscriber")
         })
     }
