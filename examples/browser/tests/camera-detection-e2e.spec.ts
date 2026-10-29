@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test'
 import {
-  D3_FLASH_ORIGIN,
+  SYSTEM_ONE_ORIGIN,
   answerDetectorWith,
   askCamera,
   clickJoinCamera,
   joinCamera
 } from './camera-detection-e2e-arrange'
-import { delayD3FlashAnswers } from './fake-d3-flash'
+import { delaySystemOneAnswers } from './fake-system-one'
 import { leaveAllPages } from './leave-all-pages'
 
 const LATE_ANSWER_MS = 6_000
@@ -14,7 +14,7 @@ const LATE_ANSWER_MS = 6_000
 test.describe('MoQ Camera Detection', () => {
   test.afterEach(async ({ browser }) => {
     await leaveAllPages(browser, 'camera-detection-leave-button')
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
   })
 
   test('tells a page in a second room that no bot is free', async ({ browser, page }) => {
@@ -81,16 +81,16 @@ test.describe('MoQ Camera Detection', () => {
   test('shows the d3-flash status while its answers are late', async ({ page }) => {
     // Arrange
     await answerDetectorWith('はい')
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, LATE_ANSWER_MS)
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, LATE_ANSWER_MS)
 
     // Act
     const verdict = await joinCamera(page)
 
     // Assert
-    const d3FlashStatus = page.getByTestId('camera-detection-d3-flash-status')
-    await expect(d3FlashStatus).toContainText('d3-flash')
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
+    const systemOneStatus = page.getByTestId('camera-detection-system-one-status')
+    await expect(systemOneStatus).toContainText('d3-flash')
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
     await expect(verdict).toHaveText('はい', { timeout: 30_000 })
-    await expect(d3FlashStatus).toBeHidden()
+    await expect(systemOneStatus).toBeHidden()
   })
 })

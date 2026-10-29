@@ -1,6 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { pageRoomId } from '../../utils/botRoom'
-import { SingleObjectGroupPublisher, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
+import { SingleObjectGroupPublisher, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
 import { type Location, type ModerationVerdict, parseModerationVerdicts } from './chatWire'
 
@@ -24,7 +24,7 @@ const chatForm = element<HTMLFormElement>('chatForm')
 const chatInput = element<HTMLInputElement>('chatInput')
 const sendButton = element<HTMLButtonElement>('sendBtn')
 
-setUpD3FlashBotPage({
+setUpSystemOneBotPage({
   session,
   logTag: 'moq-chat-moderation',
   ownNamespace: CHAT_NAMESPACE,

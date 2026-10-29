@@ -1,6 +1,6 @@
 import asyncio
 
-from moq_d3_flash_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.namespace import until_room_empty, while_published
 from tests.helpers import FakeNamespaceSession, FakeRun, settle
 
 CAMERA_NAMESPACE = ["anon", "moq-camera-detection", "room-1", "camera"]

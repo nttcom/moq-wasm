@@ -1,9 +1,9 @@
 import aiohttp
 import pytest
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_system_one_bot.system_one_status import SystemOneStatus
 
-from moq_ptz_tracking.vision import Answer, D3FlashVisionClient, Position, read_position
+from moq_ptz_tracking.vision import Answer, SystemOneVisionClient, Position, read_position
 from tests.helpers import grid_probabilities
 
 
@@ -30,7 +30,7 @@ def test_position_is_the_probability_weighted_center_of_the_grid_cells(given, an
 async def locate_with(server, description: str = "a red mug"):
     async with aiohttp.ClientSession() as session:
         token = IdentityToken(identity_token_value)
-        client = D3FlashVisionClient(session, server.url, D3FlashStatus(), token)
+        client = SystemOneVisionClient(session, server.url, SystemOneStatus(), token)
         return await client.locate(b"jpeg", description)
 
 

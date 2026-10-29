@@ -9,9 +9,9 @@ from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
-from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_d3_flash_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_system_one_bot.namespace import until_room_empty, while_published
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
@@ -21,7 +21,7 @@ from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
 from moq_ptz_tracking.video import GroupDecoder, picture_to_jpeg
-from moq_ptz_tracking.vision import D3FlashVisionClient
+from moq_ptz_tracking.vision import SystemOneVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8099
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
     parser.add_argument(
-        "--d3-flash-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
+        "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
     )
     parser.add_argument(
         "--pan-per-second",
@@ -154,7 +154,7 @@ async def forward_camera(session: moqt.Session, latest_target: LatestTarget, wor
 async def track_in_session(
     session: moqt.Session,
     timeline: EventTimeline,
-    status: D3FlashStatus,
+    status: SystemOneStatus,
     commands: PtzCommands,
     latest_target: LatestTarget,
     worker: PipelineWorker,
@@ -191,7 +191,7 @@ async def track_in_session(
 async def stay_connected(
     args: argparse.Namespace,
     timeline: EventTimeline,
-    status: D3FlashStatus,
+    status: SystemOneStatus,
     commands: PtzCommands,
     latest_target: LatestTarget,
     worker: PipelineWorker,
@@ -219,10 +219,10 @@ async def track_in_room(
     args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, _room_id: str
 ) -> None:
     timeline = EventTimeline()
-    status = D3FlashStatus()
+    status = SystemOneStatus()
     commands = PtzCommands()
     latest_target = LatestTarget()
-    vision = D3FlashVisionClient(http, args.d3_flash_url, status, identity_token)
+    vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
     calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.dead_zone)
     tracker = PtzTracker(vision, timeline, commands, calibration, latest_target)
     worker = PipelineWorker(Pipeline([tracker]), enable_rtvi=False, idle_timeout_secs=None)
@@ -238,7 +238,7 @@ async def track_in_room(
 async def main():
     args = parse_args()
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as http:
-        identity_token = identity_token_from_arguments(args, http, args.d3_flash_url)
+        identity_token = identity_token_from_arguments(args, http, args.system_one_url)
         await serve_rooms(args, partial(track_in_room, args, http, identity_token), only_room=ROOM_ID)
 
 

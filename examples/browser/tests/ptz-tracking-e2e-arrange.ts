@@ -4,7 +4,7 @@ import { PTZ_TRACKING_PATH } from '../playwright.helpers'
 const moqtUrl = process.env.PTZ_TRACKING_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const botUrl = process.env.PTZ_TRACKING_E2E_BOT_URL!
 const cameraOrigin = process.env.PTZ_TRACKING_E2E_CAMERA_ORIGIN!
-export const D3_FLASH_ORIGIN = process.env.PTZ_TRACKING_E2E_D3_FLASH_ORIGIN!
+export const SYSTEM_ONE_ORIGIN = process.env.PTZ_TRACKING_E2E_SYSTEM_ONE_ORIGIN!
 
 export type PtzCommand = { type: string }
 
@@ -18,7 +18,7 @@ export async function hideTarget(): Promise<void> {
 }
 
 async function answerDetectorWith(position: string): Promise<void> {
-  const response = await fetch(`${D3_FLASH_ORIGIN}/position`, { method: 'PUT', body: position })
+  const response = await fetch(`${SYSTEM_ONE_ORIGIN}/position`, { method: 'PUT', body: position })
   expect(response.ok).toBe(true)
 }
 

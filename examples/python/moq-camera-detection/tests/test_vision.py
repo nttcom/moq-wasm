@@ -1,8 +1,8 @@
 import aiohttp
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_system_one_bot.system_one_status import SystemOneStatus
 
-from moq_camera_detection.vision import D3FlashVisionClient
+from moq_camera_detection.vision import SystemOneVisionClient
 from tests.helpers import YES_NO_PROMPT
 
 
@@ -14,7 +14,7 @@ async def test_image_is_asked_as_a_choice_between_the_prompt_choices(fake_vision
     # Arrange
     async with aiohttp.ClientSession() as session:
         token = IdentityToken(identity_token_value)
-        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus(), token)
+        client = SystemOneVisionClient(session, fake_vision_server.url, SystemOneStatus(), token)
 
         # Act
         choice = await client.choose(b"jpeg", YES_NO_PROMPT)
@@ -35,7 +35,7 @@ async def test_answer_outside_the_prompt_choices_is_no_choice(fake_vision_server
     # Arrange
     fake_vision_server.choice = "maybe"
     async with aiohttp.ClientSession() as session:
-        client = D3FlashVisionClient(session, fake_vision_server.url, D3FlashStatus())
+        client = SystemOneVisionClient(session, fake_vision_server.url, SystemOneStatus())
 
         # Act
         choice = await client.choose(b"jpeg", YES_NO_PROMPT)

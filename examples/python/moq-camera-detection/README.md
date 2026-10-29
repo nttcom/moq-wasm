@@ -52,7 +52,7 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
    ```shell
    cd examples/python/moq-camera-detection
    uv run python -m moq_camera_detection.bot --insecure \
-     --d3-flash-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --system-one-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 

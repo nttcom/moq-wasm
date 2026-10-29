@@ -7,7 +7,7 @@ dependencies = [
     "aiohttp>=3.11",
     "av>=14",
     "moq-bot-rooms",
-    "moq-d3-flash-bot",
+    "moq-system-one-bot",
     "moqt",
     "pipecat-ai>=1.12",
 ]
@@ -22,7 +22,7 @@ override-dependencies = ["pillow>=13"]
 
 [tool.uv.sources]
 moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
-moq-d3-flash-bot = { path = "../moq-d3-flash-bot", editable = true }
+moq-system-one-bot = { path = "../moq-system-one-bot", editable = true }
 moqt = { path = "../../../crates/python" }
 
 [tool.pytest.ini_options]

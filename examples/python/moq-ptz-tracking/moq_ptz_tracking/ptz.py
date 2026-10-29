@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from moq_d3_flash_bot.publication import Publication
+from moq_system_one_bot.publication import Publication
 
 from moq_ptz_tracking.vision import Position
 

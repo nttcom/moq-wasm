@@ -1,5 +1,5 @@
 import aiohttp
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
+from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_bot_rooms.identity_token import IdentityToken
 
 ABUSIVE_QUESTION_ID = "abusive"
@@ -13,12 +13,12 @@ ABUSIVE_QUESTION = {
 }
 
 
-class D3FlashClient:
+class SystemOneClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
         url: str,
-        status: D3FlashStatus,
+        status: SystemOneStatus,
         identity_token: IdentityToken | None = None,
     ):
         self._session = session

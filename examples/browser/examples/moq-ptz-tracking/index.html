@@ -40,8 +40,8 @@
                 <span class="setup-node setup-node-cloud hub-bot"
                   ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Cloud Run</small></span
                 >
-                <span class="setup-arrow hub-d3-flash-link" aria-hidden="true">↔</span>
-                <span class="setup-node setup-node-cloud hub-d3-flash"
+                <span class="setup-arrow hub-system-one-link" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud hub-system-one"
                   ><svg aria-hidden="true"><use href="/icons.svg#icon-cloud" /></svg>Cloud Run<small>d3-flash</small></span
                 >
               </h3>
@@ -76,8 +76,8 @@
                 <span class="setup-node setup-node-local hub-bot"
                   ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Python</small></span
                 >
-                <span class="setup-arrow hub-d3-flash-link" aria-hidden="true">↔</span>
-                <span class="setup-node setup-node-cloud hub-d3-flash"
+                <span class="setup-arrow hub-system-one-link" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud hub-system-one"
                   ><svg aria-hidden="true"><use href="/icons.svg#icon-cloud" /></svg>Cloud Run<small>d3-flash</small></span
                 >
               </h3>
@@ -111,7 +111,7 @@
                 <h4>pipecat bot を起動する</h4>
                 <pre><code>cd examples/python/moq-ptz-tracking
 uv run python -m moq_ptz_tracking.bot --insecure \
-  --d3-flash-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+  --system-one-url "$(gcloud run services describe moqt-d3-flash --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
   --gcloud-auth</code></pre>
                 <p class="hint">gcloud のアカウントに roles/run.invoker が必要です</p>
               </li>
@@ -138,7 +138,7 @@ uv run python -m moq_ptz_tracking.bot --insecure \
           <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
           <span id="tracker-status" class="status-dot" data-state="idle">bot 未接続</span>
           <span id="bot-room" class="status-dot" data-state="review"></span>
-          <span id="d3-flash-status" class="status-dot" data-state="review" data-testid="ptz-tracking-d3-flash-status"></span>
+          <span id="system-one-status" class="status-dot" data-state="review" data-testid="ptz-tracking-system-one-status"></span>
         </section>
         <section class="card stack">
           <h2>Camera</h2>

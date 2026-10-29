@@ -40,7 +40,7 @@ const childProcesses = [];
 /// Answers the bot's two d3-flash questions: whether the target is visible, and which cell of
 /// the 5x5 grid holds it. `PUT /position` with "x,y" (fractions of the picture) or "not visible"
 /// sets the answer; `PUT /delay` delays every answer by the given milliseconds.
-async function startFakeD3Flash() {
+async function startFakeSystemOne() {
   let position = "0.5,0.5";
   let delayMs = 0;
   const server = createServer(async (request, response) => {
@@ -104,14 +104,14 @@ async function main() {
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
-  const fakeD3Flash = await startFakeD3Flash();
-  const fakeD3FlashOrigin = `http://127.0.0.1:${fakeD3Flash.address().port}`;
+  const fakeSystemOne = await startFakeSystemOne();
+  const fakeSystemOneOrigin = `http://127.0.0.1:${fakeSystemOne.address().port}`;
 
   const cleanup = async () => {
     await Promise.allSettled(
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
-    fakeD3Flash.close();
+    fakeSystemOne.close();
   };
 
   registerSignalHandlers(cleanup);
@@ -169,8 +169,8 @@ async function main() {
         "--relay-url",
         moqtUrl,
         "--insecure",
-        "--d3-flash-url",
-        `${fakeD3FlashOrigin}/v1/systemone`,
+        "--system-one-url",
+        `${fakeSystemOneOrigin}/v1/systemone`,
       ],
       { cwd: botDir },
     );
@@ -184,7 +184,7 @@ async function main() {
         MEDIA_E2E_BASE_URL: baseUrl,
         PTZ_TRACKING_E2E_MOQT_URL: moqtUrl,
         PTZ_TRACKING_E2E_BOT_URL: `http://127.0.0.1:${botPort}`,
-        PTZ_TRACKING_E2E_D3_FLASH_ORIGIN: fakeD3FlashOrigin,
+        PTZ_TRACKING_E2E_SYSTEM_ONE_ORIGIN: fakeSystemOneOrigin,
         PTZ_TRACKING_E2E_CAMERA_ORIGIN: `http://127.0.0.1:${cameraPort}`,
       },
     });
