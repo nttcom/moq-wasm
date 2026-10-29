@@ -8,18 +8,19 @@ from pipecat.tests.utils import SleepFrame, run_test
 from moq_ptz_tracking.ptz import PtzCalibration
 from moq_ptz_tracking.target import LatestTarget
 from moq_ptz_tracking.tracker import SETTLE_SECONDS, CameraPicture, PtzTracker
-from moq_ptz_tracking.vision import Answer, Position
+from moq_ptz_tracking.vision import Answer, Box, Sighting, TargetBox
 from tests.helpers import (
     MUG_TARGET,
     StubVision,
     next_records,
     published_commands,
     published_timeline,
+    sighting,
     tracking,
 )
 
-CALIBRATION = PtzCalibration(pan_per_second=10.0, tilt_per_second=10.0, dead_zone=0.05)
-OFF_CENTER = Position(0.75, 0.5)
+CALIBRATION = PtzCalibration(pan_per_second=10.0, tilt_per_second=10.0, margin=0.1, dead_zone=0.05)
+OFF_CENTER = sighting(Box(0.7, 0.4, 0.95, 0.6))
 NOTHING_MORE_WAIT_SECONDS = 0.2
 
 
@@ -36,7 +37,7 @@ def picture(location: tuple[int, int], decoded_at: float | None = None):
 class StoppingVision:
     latest_target: LatestTarget
 
-    async def locate(self, jpeg: bytes, description: str) -> Position:
+    async def locate(self, jpeg: bytes, descriptions: tuple[str, ...]) -> Sighting:
         self.latest_target.set(None)
         return OFF_CENTER
 
@@ -48,7 +49,7 @@ async def tracker_with(vision, latest_target: LatestTarget | None = None):
     return PtzTracker(vision, timeline, commands, CALIBRATION, latest_target), timeline_publication, command_publication
 
 
-async def test_off_center_target_moves_the_camera_and_records_where_it_was():
+async def test_box_leaving_the_margin_moves_the_camera_and_is_recorded():
     # Arrange
     tracker, group, command_track = await tracker_with(StubVision(OFF_CENTER))
 
@@ -62,7 +63,7 @@ async def test_off_center_target_moves_the_camera_and_records_where_it_was():
             "l": [42, 3],
             "data": {
                 "prompt": [7, 0],
-                "position": [0.75, 0.5],
+                "boxes": [[0, [0.7, 0.4, 0.95, 0.6]]],
                 "pan_seconds": 0.03,
                 "tilt_seconds": 0.0,
                 "sweep": None,
@@ -71,15 +72,16 @@ async def test_off_center_target_moves_the_camera_and_records_where_it_was():
     ]
 
 
-async def test_target_near_the_center_leaves_the_camera_still():
+async def test_boxes_of_every_target_inside_the_margin_leave_the_camera_still():
     # Arrange
-    tracker, group, command_track = await tracker_with(StubVision(Position(0.52, 0.47)))
+    boxes = Sighting((TargetBox(0, Box(0.15, 0.2, 0.3, 0.8)), TargetBox(1, Box(0.7, 0.5, 0.85, 0.85))))
+    tracker, group, command_track = await tracker_with(StubVision(boxes))
 
     # Act
     await run_test(tracker, frames_to_send=[picture((42, 3)), SleepFrame()], expected_down_frames=[])
 
     # Assert
-    assert (await next_records(group))[0]["data"]["position"] == [0.52, 0.47]
+    assert (await next_records(group))[0]["data"]["boxes"] == [[0, [0.15, 0.2, 0.3, 0.8]], [1, [0.7, 0.5, 0.85, 0.85]]]
     with pytest.raises(TimeoutError):
         await command_track.next_write(NOTHING_MORE_WAIT_SECONDS)
 
@@ -93,7 +95,7 @@ async def test_target_never_seen_returns_the_camera_to_home_before_searching():
 
     # Assert
     assert await command_track.next_group() == [{"type": "center", "speed": 1.0}]
-    assert (await next_records(group))[0]["data"]["position"] == "not visible"
+    assert (await next_records(group))[0]["data"]["boxes"] == "not visible"
 
 
 async def test_after_a_move_pictures_are_located_only_once_the_camera_has_settled():
@@ -120,7 +122,7 @@ async def test_after_a_move_pictures_are_located_only_once_the_camera_has_settle
 
 async def test_picture_arriving_while_another_is_located_is_skipped():
     # Arrange
-    vision = StubVision(Position(0.5, 0.5))
+    vision = StubVision(sighting(Box(0.4, 0.4, 0.6, 0.6)))
     tracker, _, _ = await tracker_with(vision)
 
     # Act

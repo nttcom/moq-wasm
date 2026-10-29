@@ -3,25 +3,30 @@ import asyncio
 import pytest
 
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands, PtzMove
-from moq_ptz_tracking.vision import Position
+from moq_ptz_tracking.vision import Box
 from tests.helpers import published_commands
 
-TAPO = PtzCalibration(pan_per_second=0.27, tilt_per_second=0.4, dead_zone=0.05)
+TAPO = PtzCalibration(pan_per_second=0.27, tilt_per_second=0.4, margin=0.1, dead_zone=0.05)
 SHORT_TURN_SECONDS = 0.02
 
 
 @pytest.mark.parametrize(
-    ("position", "move"),
+    ("box", "move"),
     [
-        (Position(0.54, 0.46), PtzMove(0.0, 0.0)),
-        (Position(0.77, 0.5), PtzMove(1.0, 0.0)),
-        (Position(0.5, 0.1), PtzMove(0.0, 1.0)),
-        (Position(0.2, 0.7), PtzMove(-1.11, -0.5)),
+        (Box(0.6, 0.2, 0.85, 0.8), PtzMove(0.0, 0.0)),
+        (Box(0.7, 0.3, 0.95, 0.7), PtzMove(1.2, 0.0)),
+        (Box(0.4, 0.0, 0.6, 0.2), PtzMove(0.0, 1.0)),
+        (Box(0.05, 0.6, 0.35, 0.95), PtzMove(-1.11, -0.69)),
     ],
 )
-def test_turn_lasts_in_proportion_to_the_offset_outside_the_dead_zone(position, move):
+def test_box_leaving_the_margin_turns_that_axis_until_it_is_centered(box, move):
     # Act / Assert
-    assert TAPO.toward(position) == move
+    assert TAPO.toward(box) == move
+
+
+def test_box_too_large_to_fit_stays_still_once_centered():
+    # Act / Assert
+    assert TAPO.toward(Box(0.0, 0.02, 0.96, 1.0)) == PtzMove(0.0, 0.0)
 
 
 async def test_move_is_one_group_turning_each_axis_at_the_move_velocity_until_its_own_stop():

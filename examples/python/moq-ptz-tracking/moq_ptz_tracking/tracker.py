@@ -11,7 +11,7 @@ from moq_ptz_tracking.event_timeline import EventTimeline, Location, location_re
 from moq_ptz_tracking.pan_planner import Home, PanPlanner, Sweeping
 from moq_ptz_tracking.ptz import CENTER_SECONDS, Heading, PtzCalibration, PtzCommands, PtzMove, Sweep
 from moq_ptz_tracking.target import LatestTarget, Target
-from moq_ptz_tracking.vision import Answer, SystemOneVisionClient, Position
+from moq_ptz_tracking.vision import Answer, Box, Sighting, SystemOneVisionClient
 
 # The camera stops within 0.3 s of a Stop command, and a picture reaches the bot about 0.4 s after
 # the camera captured it.
@@ -28,7 +28,7 @@ class CameraPicture(SystemFrame):
 
 
 class PtzTracker(FrameProcessor):
-    """Locates the target in one picture at a time. After a step it only uses pictures decoded once the
+    """Locates the targets in one picture at a time. After a step it only uses pictures decoded once the
     camera has settled, so a step never reacts to a mid-turn position; while sweeping it locates every
     picture and stops on sight."""
 
@@ -70,11 +70,12 @@ class PtzTracker(FrameProcessor):
         try:
             requested_at = time.monotonic()
             try:
-                answer = await self._vision.locate(picture.jpeg, picture.target.description)
-            except (aiohttp.ClientError, KeyError, IndexError) as error:
-                logger.warning(f"System One could not locate the target in {picture.location}: {error}")
+                answer = await self._vision.locate(picture.jpeg, picture.target.descriptions)
+            except (aiohttp.ClientError, KeyError, IndexError, TypeError) as error:
+                logger.warning(f"System One could not locate the targets in {picture.location}: {error}")
                 return
-            logger.info(f"camera picture {picture.location} {answer} in {time.monotonic() - requested_at:.2f}s")
+            seconds = time.monotonic() - requested_at
+            logger.info(f"camera picture {picture.location} {boxes_record(answer)} in {seconds:.2f}s")
             if self._latest_target.target != picture.target:
                 await self._stop_sweep()
                 return
@@ -85,7 +86,7 @@ class PtzTracker(FrameProcessor):
                     picture.location,
                     {
                         "prompt": picture.target.location,
-                        "position": position_record(answer),
+                        "boxes": boxes_record(answer),
                         "pan_seconds": move.pan_seconds,
                         "tilt_seconds": move.tilt_seconds,
                         "sweep": [decision.heading.pan, decision.heading.tilt]
@@ -122,7 +123,12 @@ class PtzTracker(FrameProcessor):
         self._stopped_at = time.monotonic()
 
 
-def position_record(answer: Position | Answer) -> list[float] | str:
-    if isinstance(answer, Position):
-        return [round(answer.x, 3), round(answer.y, 3)]
+def boxes_record(answer: Sighting | Answer) -> list | str:
+    """`[[target index, [left, top, right, bottom]], ...]`, or "not visible"."""
+    if isinstance(answer, Sighting):
+        return [[found.target, edges_record(found.box)] for found in answer.boxes]
     return answer.value
+
+
+def edges_record(box: Box) -> list[float]:
+    return [round(edge, 3) for edge in (box.left, box.top, box.right, box.bottom)]

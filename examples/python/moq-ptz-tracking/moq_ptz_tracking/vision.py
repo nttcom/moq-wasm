@@ -3,12 +3,10 @@ import enum
 from dataclasses import dataclass
 
 import aiohttp
-from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_bot_rooms.identity_token import IdentityToken
+from moq_system_one_bot.system_one_status import SystemOneStatus
 
-COLUMNS = ("far left", "left", "center", "right", "far right")
-ROWS = ("top", "upper middle", "middle", "lower middle", "bottom")
-VISIBLE_THRESHOLD = 0.5
+MAX_BOXES_PER_TARGET = 8
 
 
 @dataclass(frozen=True)
@@ -19,40 +17,53 @@ class Position:
     y: float
 
 
+@dataclass(frozen=True)
+class Box:
+    """Fractions of the picture's width and height, from its top-left corner."""
+
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+    @property
+    def center(self) -> Position:
+        return Position((self.left + self.right) / 2, (self.top + self.bottom) / 2)
+
+
+@dataclass(frozen=True)
+class TargetBox:
+    """`target` is the index of the description in `Target.descriptions`."""
+
+    target: int
+    box: Box
+
+
+@dataclass(frozen=True)
+class Sighting:
+    """Every box found in one picture, for any of the target's descriptions; never empty."""
+
+    boxes: tuple[TargetBox, ...]
+
+    def union(self) -> Box:
+        return Box(
+            min(found.box.left for found in self.boxes),
+            min(found.box.top for found in self.boxes),
+            max(found.box.right for found in self.boxes),
+            max(found.box.bottom for found in self.boxes),
+        )
+
+
 class Answer(enum.Enum):
     NOT_VISIBLE = "not visible"
 
 
-def cell_key(row: int, column: int) -> str:
-    return f"r{row}c{column}"
+def question_id(target: int) -> str:
+    return f"t{target}"
 
 
-def visible_question(description: str) -> dict:
-    return {"type": "noul", "instructions": f"Is {description} in this picture?"}
-
-
-def locate_question(description: str) -> dict:
-    """Asks only where: offering "not in the picture" among the 25 cells let an absent target's spread
-    probability outweigh that option."""
-    return {
-        "type": "choice",
-        "instructions": f"Where is {description} in this picture?",
-        "criteria": {
-            cell_key(row, column): f"Its center is in the {row_name} row, {column_name} column"
-            for row, row_name in enumerate(ROWS)
-            for column, column_name in enumerate(COLUMNS)
-        },
-    }
-
-
-def read_position(probabilities: dict[str, float]) -> Position:
-    cells = [
-        (probabilities[cell_key(row, column)], (column + 0.5) / len(COLUMNS), (row + 0.5) / len(ROWS))
-        for row in range(len(ROWS))
-        for column in range(len(COLUMNS))
-    ]
-    total = sum(p for p, _, _ in cells)
-    return Position(sum(p * x for p, x, _ in cells) / total, sum(p * y for p, _, y in cells) / total)
+def boxes_question(description: str) -> dict:
+    return {"type": "boxes", "instructions": f"Every {description}.", "max": MAX_BOXES_PER_TARGET}
 
 
 class SystemOneVisionClient:
@@ -68,19 +79,13 @@ class SystemOneVisionClient:
         self._status = status
         self._identity_token = identity_token
 
-    async def locate(self, jpeg: bytes, description: str) -> Position | Answer:
-        """Asks visibility first and location only when visible, so a search sweep costs one question
-        per picture."""
-        image = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
-        visible = await self._ask(image, "A camera picture.", "visible", visible_question(description))
-        if visible["noul"] < VISIBLE_THRESHOLD:
-            return Answer.NOT_VISIBLE
-        state = f"A PTZ camera picture divided into a {len(ROWS)} by {len(COLUMNS)} grid."
-        where = await self._ask(image, state, "where", locate_question(description))
-        return read_position(where["probabilities"])
-
-    async def _ask(self, image: str, state: str, question_id: str, question: dict) -> dict:
-        request = {"state": state, "images": [image], "questions": {question_id: question}}
+    async def locate(self, jpeg: bytes, descriptions: tuple[str, ...]) -> Sighting | Answer:
+        """Asks for every instance of every description in one request, so more descriptions cost one
+        forward pass, not one request each."""
+        request = {
+            "images": ["data:image/jpeg;base64," + base64.b64encode(jpeg).decode()],
+            "questions": {question_id(index): boxes_question(text) for index, text in enumerate(descriptions)},
+        }
         headers = (
             {"Authorization": f"Bearer {await self._identity_token.value()}"}
             if self._identity_token
@@ -91,5 +96,10 @@ class SystemOneVisionClient:
             self._session.post(self._url, json=request, headers=headers) as response,
         ):
             response.raise_for_status()
-            body = await response.json()
-        return body["answers"][question_id]
+            answers = (await response.json())["answers"]
+        boxes = tuple(
+            TargetBox(index, Box(**found["box"]))
+            for index in range(len(descriptions))
+            for found in answers[question_id(index)]["boxes"]
+        )
+        return Sighting(boxes) if boxes else Answer.NOT_VISIBLE
