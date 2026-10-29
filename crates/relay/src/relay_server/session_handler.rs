@@ -43,6 +43,7 @@ impl SessionIntake {
             .await
         {
             Ok(verified_token) => {
+                session_span.record("app_id", verified_token.app_id.as_str());
                 if let Some(relay_id) = &verified_token.relay_id {
                     session_span.record("peer_relay_id", relay_id.as_str());
                 }
@@ -147,6 +148,7 @@ impl SessionHandler {
                         session_id = session_id,
                         session_peer = session_peer,
                         relay_hostname = %relay_hostname,
+                        app_id = tracing::field::Empty,
                         peer_relay_id = tracing::field::Empty,
                     );
                     let intake = intake.clone();
