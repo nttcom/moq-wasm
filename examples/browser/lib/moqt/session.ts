@@ -41,7 +41,15 @@ export type MoqSubscribeOptions = {
 
 type WasmSession = Pick<
   Moqt.Session,
-  'closed' | 'subscribe' | 'subscribeCurrentGroup' | 'fetch' | 'trackStatus' | 'announce' | 'publishTrack' | 'close'
+  | 'closed'
+  | 'subscribe'
+  | 'subscribeCurrentGroup'
+  | 'fetch'
+  | 'trackStatus'
+  | 'announce'
+  | 'publishTrack'
+  | 'broadcast'
+  | 'close'
 >
 type WasmSubscription = Pick<
   Moqt.Subscription,
@@ -115,6 +123,12 @@ export class MoqSession {
   /// SUBSCRIBE and FETCH.
   publishTrack(namespace: string[], track: string, options: PublishTrackOptions = {}): Promise<Moqt.TrackWriter> {
     return this.inner.publishTrack(namespace, track, options.retentionMs, options.publish)
+  }
+
+  /// To publish a MediaStream, use `publish` in `lib/publish`, which feeds
+  /// this broadcast.
+  broadcast(namespace: string[], videoLabel?: string): Moqt.MediaBroadcast {
+    return this.inner.broadcast(namespace, videoLabel)
   }
 
   close(): void {

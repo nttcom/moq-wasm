@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Duration};
+use std::{rc::Rc, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use js_sys::{Function, Promise, Uint8Array};
@@ -21,9 +21,12 @@ use tokio::sync::{Mutex, mpsc};
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::{JsFuture, future_to_promise, spawn_local};
 
+use broadcast::RelayConnection;
+
 use crate::{
     js_error,
     loc::{encode_loc_header, parse_loc_header},
+    media_broadcast::MediaBroadcast,
     request_rejection::request_failure_code,
     session_routes::SessionRoutes,
 };
@@ -36,7 +39,7 @@ const DEFAULT_RETENTION: Duration = Duration::from_secs(60);
 /// code.
 #[wasm_bindgen]
 pub struct Session {
-    session: Rc<MoqtSession>,
+    session: Arc<MoqtSession>,
     routes: Rc<SessionRoutes>,
     closed: Promise,
     _endpoint: Endpoint<BROWSER>,
@@ -47,6 +50,9 @@ impl Session {
     /// `token` is a string, a function returning a promise of one, which is
     /// called before each CLIENT_SETUP, or `undefined`. The session follows
     /// GOAWAY and reconnects by itself.
+    // The browser session is !Send, but wasm32 runs on one thread; `broadcast`
+    // takes the session as an Arc.
+    #[allow(clippy::arc_with_non_send_sync)]
     pub async fn connect(url: String, token: JsValue) -> Result<Session, JsValue> {
         let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
             authorization_token: token_source(token)?,
@@ -59,7 +65,7 @@ impl Session {
             .map_err(anyhow_error)?
             .await
             .map_err(anyhow_error)?;
-        let session = Rc::new(session);
+        let session = Arc::new(session);
         let routes = Rc::new(SessionRoutes::default());
         spawn_local({
             let session = session.clone();
@@ -257,6 +263,15 @@ impl Session {
         })
     }
 
+    /// The broadcast lists LOC tracks only; `video_label` names the video in
+    /// the catalog.
+    pub fn broadcast(&self, namespace: Vec<String>, video_label: Option<String>) -> MediaBroadcast {
+        let connection =
+            RelayConnection::with_session(self.session.clone(), self.routes.origin.clone());
+        self.routes.add_broadcast(connection.clone());
+        MediaBroadcast::new(connection, namespace, video_label)
+    }
+
     pub fn close(&self) {
         self.session
             .close_with_error(TerminationErrorCode::NoError, "closed by the application");
@@ -265,7 +280,7 @@ impl Session {
 
 #[wasm_bindgen]
 pub struct Announcement {
-    session: Rc<MoqtSession>,
+    session: Arc<MoqtSession>,
     namespace: String,
 }
 
@@ -335,7 +350,7 @@ impl TrackWriter {
 /// One SUBSCRIBE (draft-14 §9.7).
 #[wasm_bindgen]
 pub struct Subscription {
-    session: Rc<MoqtSession>,
+    session: Arc<MoqtSession>,
     routes: Rc<SessionRoutes>,
     subscription: MoqtSubscription,
     reading: Rc<Mutex<Reading>>,
@@ -546,7 +561,7 @@ impl Group {
 /// The namespaces published under one SUBSCRIBE_NAMESPACE prefix.
 #[wasm_bindgen]
 pub struct NamespaceWatch {
-    session: Rc<MoqtSession>,
+    session: Arc<MoqtSession>,
     prefix: Vec<String>,
     events: Rc<Mutex<mpsc::UnboundedReceiver<NamespaceEvent>>>,
 }
