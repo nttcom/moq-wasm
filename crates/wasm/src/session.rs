@@ -341,8 +341,6 @@ pub struct Subscription {
     done: Promise,
 }
 
-/// A subscription is read either object by object or subgroup stream by
-/// subgroup stream, whichever is asked first.
 enum Reading {
     Unstarted,
     Objects(TrackReader),
@@ -402,9 +400,9 @@ impl Subscription {
         Ok(object.map(MoqObject::from))
     }
 
-    /// The next subgroup stream, with its objects in order, status objects
-    /// included; `undefined` once the track has no more streams. Rejects for a
-    /// track delivered in datagrams, and once `next` read the subscription.
+    /// The next subgroup stream; `undefined` once the track has no more
+    /// streams. Rejects for a track delivered in datagrams, and once `next` read
+    /// the subscription.
     #[wasm_bindgen(js_name = nextGroup)]
     pub async fn next_group(&self) -> Result<Option<Group>, JsValue> {
         let reading = self.reading.clone();
@@ -611,8 +609,8 @@ impl MoqObject {
         self.object_id
     }
 
-    /// The draft-14 Object Status (§10.2.1.1) of an object without a
-    /// payload, `undefined` for an object with one.
+    /// The draft-14 Object Status (§10.2.1.1); `undefined` for an object with a
+    /// payload.
     #[wasm_bindgen(getter)]
     pub fn status(&self) -> Option<u8> {
         self.status
