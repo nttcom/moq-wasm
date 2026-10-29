@@ -57,8 +57,8 @@ export interface ConnectOptions {
   versions?: BigUint64Array
   maxRequestId?: bigint
   authToken?: string
-  /** Falls back to QMux over WebSocket when WebTransport does not open within `webTransportTimeoutMs` (default 5000); `false` disables it. */
-  fallback?: false | { webTransportTimeoutMs?: number }
+  /** Races QMux over WebSocket against WebTransport once WebTransport has had `webTransportHeadStartMs` (default 500); `false` disables it. */
+  fallback?: false | { webTransportHeadStartMs?: number }
 }
 
 export interface PublishNamespaceOptions {
@@ -235,8 +235,8 @@ export class MoqtClientWrapper {
       this.client = await this.createRawClient(url)
       if (options.fallback === false) {
         this.client.setWebSocketFallback(undefined)
-      } else if (options.fallback?.webTransportTimeoutMs !== undefined) {
-        this.client.setWebSocketFallback(options.fallback.webTransportTimeoutMs)
+      } else if (options.fallback?.webTransportHeadStartMs !== undefined) {
+        this.client.setWebSocketFallback(options.fallback.webTransportHeadStartMs)
       }
       await this.client.start()
       this.setupCallbacks(this.client)

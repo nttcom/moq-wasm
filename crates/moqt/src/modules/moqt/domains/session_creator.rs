@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{pin::pin, sync::Arc};
 
 use crate::SessionEvent;
 use crate::modules::executor::{self, BoxFuture, MaybeSend, MaybeSync};
@@ -24,9 +24,6 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) authorization_token: Option<String>,
     pub(crate) follow_go_away: bool,
     web_socket_fallback: WebSocketFallback,
-    /// The hosts and ports that fell back to WebSocket; never tried with
-    /// QUIC or WebTransport again.
-    fell_back: std::sync::Mutex<HashSet<String>>,
 }
 
 /// Opens another connection of a session that follows GOAWAY, on the same
@@ -70,7 +67,6 @@ impl<T: TransportProtocol> SessionCreator<T> {
             authorization_token,
             follow_go_away,
             web_socket_fallback,
-            fell_back: std::sync::Mutex::new(HashSet::new()),
         }
     }
 
@@ -122,62 +118,94 @@ impl<T: TransportProtocol> SessionCreator<T> {
 
     async fn open_transport(&self, url: &str) -> anyhow::Result<BoxedConnection> {
         let target = ConnectTarget::parse(url)?;
-        let wait = match self.web_socket_fallback {
-            WebSocketFallback::After(wait) if T::ConnectionCreator::FALLS_BACK_TO_WEB_SOCKET => {
-                wait
-            }
+        let head_start = match (
+            self.web_socket_fallback,
+            T::ConnectionCreator::WEB_SOCKET_HEAD_START,
+        ) {
+            (WebSocketFallback::Enabled, Some(head_start))
+            | (WebSocketFallback::HeadStart(head_start), Some(_)) => head_start,
             _ => return self.transport_creator.create_new_transport(&target).await,
         };
-        let Some(web_socket) = target.web_socket_fallback() else {
+        if target.web_socket_fallback().is_none() {
             return self.transport_creator.create_new_transport(&target).await;
-        };
-        let authority = target.authority();
-        if self
-            .fell_back
-            .lock()
-            .expect("fallback lock")
-            .contains(&authority)
-        {
-            return self
-                .transport_creator
-                .create_new_transport(&web_socket)
-                .await;
         }
         let target = target.resolved().await?;
         let web_socket = target
             .web_socket_fallback()
             .expect("a target that falls back still does once resolved");
-        let error =
-            match executor::timeout(wait, self.transport_creator.create_new_transport(&target))
-                .await
-            {
-                Ok(Ok(connection)) => return Ok(connection),
-                Ok(Err(error)) => error,
-                Err(()) => anyhow::anyhow!("no answer within {wait:?}"),
-            };
-        tracing::warn!(
-            %url,
-            fallback_url = %web_socket.url,
-            error = %format!("{error:#}"),
-            "falling back to WebSocket"
-        );
-        match self
-            .transport_creator
-            .create_new_transport(&web_socket)
-            .await
-        {
+        self.race(&target, &web_socket, head_start).await
+    }
+
+    /// Happy Eyeballs (RFC 8305) between `target` and `web_socket`. Dropping the
+    /// losing dial cancels it.
+    async fn race(
+        &self,
+        target: &ConnectTarget,
+        web_socket: &ConnectTarget,
+        head_start: Duration,
+    ) -> anyhow::Result<BoxedConnection> {
+        let mut primary = pin!(self.transport_creator.create_new_transport(target));
+        let early_failure = match executor::timeout(head_start, primary.as_mut()).await {
+            Ok(Ok(connection)) => return Ok(connection),
+            Ok(Err(error)) => Some(error),
+            Err(()) => None,
+        };
+        let mut fallback = pin!(self.transport_creator.create_new_transport(web_socket));
+        let primary_error = match early_failure {
+            Some(error) => error,
+            None => tokio::select! {
+                biased;
+                result = primary.as_mut() => match result {
+                    Ok(connection) => return Ok(connection),
+                    Err(error) => error,
+                },
+                result = fallback.as_mut() => match result {
+                    Ok(connection) => {
+                        tracing::warn!(
+                            url = %target.url,
+                            fallback_url = %web_socket.url,
+                            "WebSocket won the transport race"
+                        );
+                        return Ok(connection);
+                    }
+                    Err(web_socket_error) => {
+                        return primary.await.map_err(|error| {
+                            Self::both_failed(target, &error, web_socket, &web_socket_error)
+                        });
+                    }
+                },
+            },
+        };
+        match fallback.await {
             Ok(connection) => {
-                self.fell_back
-                    .lock()
-                    .expect("fallback lock")
-                    .insert(authority);
+                tracing::warn!(
+                    url = %target.url,
+                    fallback_url = %web_socket.url,
+                    error = %format!("{primary_error:#}"),
+                    "falling back to WebSocket"
+                );
                 Ok(connection)
             }
-            Err(web_socket_error) => Err(anyhow::anyhow!(
-                "{url} failed: {error:#}; {} failed: {web_socket_error:#}",
-                web_socket.url
+            Err(web_socket_error) => Err(Self::both_failed(
+                target,
+                &primary_error,
+                web_socket,
+                &web_socket_error,
             )),
         }
+    }
+
+    fn both_failed(
+        target: &ConnectTarget,
+        error: &anyhow::Error,
+        web_socket: &ConnectTarget,
+        web_socket_error: &anyhow::Error,
+    ) -> anyhow::Error {
+        anyhow::anyhow!(
+            "{} failed: {error:#}; {} failed: {web_socket_error:#}",
+            target.url,
+            web_socket.url
+        )
     }
 
     /// The CLIENT_SETUP / SERVER_SETUP exchange on a new transport.
@@ -244,8 +272,8 @@ mod tests {
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{
                 HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, dual_client, dual_client_with_config,
-                self_signed_server_config, spawn_connected_dual_sessions,
-                spawn_dual_server_handshake, udp_blocked_server, unreachable_port, within,
+                self_signed_server_config, slow_udp_path, spawn_connected_dual_sessions,
+                spawn_dual_server, spawn_dual_server_handshake, udp_blocked_server, within,
             },
         },
     };
@@ -257,6 +285,15 @@ mod tests {
             web_socket_fallback: fallback,
             ..ClientConfig::default()
         })
+    }
+
+    /// A server that turns QUIC away and answers WebSocket with 503, both at once.
+    fn refusing_server(name: &str) -> u16 {
+        let server = Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
+        let port = server.local_port().unwrap();
+        server.refuse_new_connections();
+        tokio::spawn(async move { while server.accept().await.is_ok() {} });
+        port
     }
 
     /// Accepts sessions on `server` until the test ends, keeping them open.
@@ -280,7 +317,7 @@ mod tests {
         // Arrange
         let blocked = udp_blocked_server("fallback-moqt");
         let mut accepted = accept_sessions(blocked.server);
-        let client = falling_back_client(WebSocketFallback::After(Duration::from_millis(300)));
+        let client = falling_back_client(WebSocketFallback::HeadStart(Duration::from_millis(100)));
 
         // Act
         let session = within(async {
@@ -303,7 +340,7 @@ mod tests {
         // Arrange
         let blocked = udp_blocked_server("fallback-https");
         let mut accepted = accept_sessions(blocked.server);
-        let client = falling_back_client(WebSocketFallback::After(Duration::from_millis(300)));
+        let client = falling_back_client(WebSocketFallback::HeadStart(Duration::from_millis(100)));
 
         // Act
         let session = within(async {
@@ -321,42 +358,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_host_that_fell_back_is_opened_over_web_socket_at_once() {
-        // Arrange: the first connection waits out the whole fallback delay
-        let wait = Duration::from_secs(1);
-        let blocked = udp_blocked_server("fallback-remembered");
-        let mut accepted = accept_sessions(blocked.server);
-        let client = falling_back_client(WebSocketFallback::After(wait));
-        let url = format!("moqt://127.0.0.1:{}", blocked.port);
-        let _first = tokio::time::timeout(2 * wait + HANDSHAKE_TIMEOUT, async {
-            client.connect(&url).await?.await
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    async fn quic_that_opens_after_its_head_start_still_beats_a_web_socket_that_does_not() {
+        // Arrange
+        let (server_port, accept) = spawn_dual_server("race-quic-wins");
+        let path = slow_udp_path(server_port, Duration::from_millis(300)).await;
+        let client = falling_back_client(WebSocketFallback::HeadStart(Duration::from_millis(50)));
 
         // Act
-        let started = std::time::Instant::now();
-        let second = within(async { client.connect(&url).await?.await })
-            .await
-            .unwrap();
-        let elapsed = started.elapsed();
+        let session = within(async {
+            client
+                .connect(&format!("moqt://127.0.0.1:{}", path.port))
+                .await?
+                .await
+        })
+        .await
+        .unwrap();
 
         // Assert
-        assert!(elapsed < wait, "the second connection waited {elapsed:?}");
-        assert_eq!(second.url_scheme(), "wss");
-        within(accepted.recv()).await.unwrap();
+        assert_eq!(session.url_scheme(), "moqt");
+        within(accept).await.unwrap();
     }
 
     #[tokio::test]
     async fn a_disabled_fallback_returns_the_quic_failure_alone() {
-        // Arrange: a refusing server turns QUIC away at once
-        let server =
-            Endpoint::<DUAL>::create_server(&self_signed_server_config("fallback-disabled"))
-                .unwrap();
-        let port = server.local_port().unwrap();
-        server.refuse_new_connections();
-        let _accept = tokio::spawn(async move { while server.accept().await.is_ok() {} });
+        // Arrange
+        let port = refusing_server("fallback-disabled");
         let client = falling_back_client(WebSocketFallback::Disabled);
 
         // Act
@@ -373,14 +399,14 @@ mod tests {
     #[tokio::test]
     async fn both_failures_are_reported_when_web_socket_fails_too() {
         // Arrange
-        let (port, _udp) = unreachable_port();
-        let client = falling_back_client(WebSocketFallback::After(Duration::from_millis(200)));
+        let port = refusing_server("fallback-both-fail");
+        let client = falling_back_client(WebSocketFallback::Enabled);
 
         // Act
         let error = within(client.connect(&format!("moqt://127.0.0.1:{port}")))
             .await
             .err()
-            .expect("nothing listens on the port");
+            .expect("the server refuses both");
 
         // Assert
         let message = format!("{error:#}");

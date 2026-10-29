@@ -58,7 +58,8 @@ impl ConnectTarget {
         })
     }
 
-    /// Resolves the host now, so DNS time does not count against the fallback wait.
+    /// Resolves the host once, so DNS time does not count against the head start
+    /// and both dials of the race use the same address.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn resolved(mut self) -> anyhow::Result<Self> {
         self.resolved = Some(self.resolve_remote_address().await?);
@@ -93,16 +94,6 @@ impl ConnectTarget {
         Some(web_socket)
     }
 
-    /// The host and port a fallback is remembered for.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn authority(&self) -> String {
-        let host = self
-            .url
-            .host_str()
-            .expect("ConnectTarget::parse rejects urls without a host");
-        format!("{host}:{}", self.port)
-    }
-
     /// The browser cannot open raw QUIC, so only `https://` falls back.
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn web_socket_fallback(&self) -> Option<Self> {
@@ -112,13 +103,6 @@ impl ConnectTarget {
         let url = web_sys::Url::new(&self.url).ok()?;
         url.set_protocol("wss:");
         Self::parse(&url.href()).ok()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn authority(&self) -> String {
-        web_sys::Url::new(&self.url)
-            .map(|url| url.host())
-            .unwrap_or_default()
     }
 
     /// Host and port resolution is left to the browser's `WebTransport`.
@@ -253,7 +237,6 @@ mod tests {
             "wss://[::1]:4433/moq"
         );
         assert!(web_socket.web_socket_fallback().is_none());
-        assert_eq!(quic.authority(), "relay.example:4433");
     }
 
     #[test]
