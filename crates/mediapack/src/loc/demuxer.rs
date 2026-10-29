@@ -135,6 +135,7 @@ impl Demuxer {
                 events.push(MediaEvent::Audio(AudioSample {
                     data: payload.clone(),
                     pts,
+                    audio_level: object.audio_level(),
                 }));
                 return Ok(events);
             }
@@ -206,7 +207,8 @@ mod tests {
     use super::*;
     use crate::{
         h264::annexb::{annexb_to_avcc, with_start_codes},
-        loc::object::{LocExtension, TIMESTAMP_ID, VIDEO_CONFIG_ID},
+        loc::object::{AUDIO_LEVEL_ID, LocExtension, TIMESTAMP_ID, VIDEO_CONFIG_ID},
+        sample::AudioLevel,
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, NON_IDR_SLICE, delta_frame_annexb,
             fixture_record, fixture_video_config, ivf_frames, keyframe_annexb, mono_48k,
@@ -535,6 +537,34 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_audio_level_property_into_the_sample() {
+        // Arrange
+        let mut demuxer = Demuxer::audio(AudioConfig::Aac(mono_48k()));
+        let object = LocObject {
+            extensions: vec![
+                LocExtension::varint(TIMESTAMP_ID, 2_000_000),
+                LocExtension::varint(AUDIO_LEVEL_ID, 0x80 | 20),
+            ],
+            payload: Bytes::from_static(&[7]),
+        };
+
+        // Act
+        let events = demuxer.push(&object).unwrap();
+
+        // Assert
+        let Some(MediaEvent::Audio(sample)) = events.last() else {
+            panic!("expected an audio sample: {events:?}");
+        };
+        assert_eq!(
+            sample.audio_level,
+            Some(AudioLevel {
+                level: 20,
+                voice_activity: true
+            })
+        );
+    }
+
+    #[test]
     fn reports_the_audio_configuration_the_caller_supplied() {
         // Arrange
         let mut demuxer = Demuxer::audio(AudioConfig::Aac(mono_48k()));
@@ -559,7 +589,8 @@ mod tests {
                 MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
                 MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[7, 7]),
-                    pts: Timestamp::ZERO
+                    pts: Timestamp::ZERO,
+                    audio_level: None
                 })
             ]
         );

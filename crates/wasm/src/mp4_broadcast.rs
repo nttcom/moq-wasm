@@ -106,6 +106,7 @@ impl Mp4Broadcast {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from(data),
                 pts: Timestamp::from_micros(pts_micros as u64),
+                audio_level: None,
             }),
         )
     }

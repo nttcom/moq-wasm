@@ -108,6 +108,7 @@ impl MediaBroadcast {
         self.push(MediaEvent::Audio(AudioSample {
             data: Bytes::from(data),
             pts: Timestamp::from_micros(timestamp_micros as u64),
+            audio_level: None,
         }))
     }
 }

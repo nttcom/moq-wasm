@@ -475,6 +475,7 @@ mod tests {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[0x21]),
                 pts: Timestamp::from_millis(millis),
+                audio_level: None,
             })
         };
 
@@ -554,6 +555,7 @@ mod tests {
                 .push(&MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[0x21, 0x10]),
                     pts: Timestamp::from_millis(1_000),
+                    audio_level: None,
                 }))
                 .unwrap(),
         );
@@ -638,10 +640,12 @@ mod tests {
         let frame = MediaEvent::Audio(AudioSample {
             data: Bytes::from(vec![0xD5; 2_400]),
             pts: Timestamp::from_millis(1_000),
+            audio_level: None,
         });
         let next = MediaEvent::Audio(AudioSample {
             data: Bytes::from(vec![0xD5; 160]),
             pts: Timestamp::from_millis(1_150),
+            audio_level: None,
         });
 
         // Act
@@ -677,6 +681,7 @@ mod tests {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from(vec![0x78; 1_400]),
                 pts: Timestamp::from_millis(millis),
+                audio_level: None,
             })
         };
 
@@ -740,6 +745,7 @@ mod tests {
                 .push(&MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[0x21]),
                     pts: Timestamp::ZERO,
+                    audio_level: None
                 }))
                 .is_err()
         );

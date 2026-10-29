@@ -185,6 +185,7 @@ mod tests {
         MediaEvent::Audio(AudioSample {
             data: Bytes::from_static(b"aac"),
             pts: Timestamp::ZERO,
+            audio_level: None,
         })
     }
 

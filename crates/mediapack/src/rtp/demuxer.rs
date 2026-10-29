@@ -244,9 +244,11 @@ impl Stream {
                 match &mut self.codec {
                     StreamCodec::H264(video) => video.packet(&header, &payload, pts, events)?,
                     StreamCodec::Aac(audio) => audio.packet(&header, &payload, pts, events)?,
-                    StreamCodec::WholeFrames => {
-                        events.push(MediaEvent::Audio(AudioSample { data: payload, pts }))
-                    }
+                    StreamCodec::WholeFrames => events.push(MediaEvent::Audio(AudioSample {
+                        data: payload,
+                        pts,
+                        audio_level: None,
+                    })),
                 }
                 Ok(0)
             }
@@ -342,6 +344,7 @@ impl AudioStream {
             events.push(MediaEvent::Audio(AudioSample {
                 data: unit.data,
                 pts: pts.saturating_add(offset),
+                audio_level: None,
             }));
         }
         Ok(())
@@ -391,6 +394,7 @@ mod tests {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[0x21, 0x10, 0x04]),
                 pts: Timestamp::from_millis(1_000),
+                audio_level: None,
             }),
             MediaEvent::Video(VideoSample {
                 data: delta_frame_annexb(),
@@ -401,6 +405,7 @@ mod tests {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[0xDE, 0x02]),
                 pts: Timestamp::from_millis(1_021),
+                audio_level: None,
             }),
             MediaEvent::Video(VideoSample {
                 data: keyframe_annexb(),
@@ -595,10 +600,12 @@ mod tests {
                 MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[0xD5; 160]),
                     pts: Timestamp::from_millis(500),
+                    audio_level: None,
                 }),
                 MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[0x55; 160]),
                     pts: Timestamp::from_millis(520),
+                    audio_level: None,
                 }),
             ];
             let (packets, description) = mux(&source);

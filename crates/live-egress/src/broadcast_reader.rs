@@ -463,6 +463,7 @@ mod tests {
             AudioSample {
                 data: Bytes::from_static(&OPUS_20_MS_FRAME),
                 pts: Timestamp::from_micros(20_000),
+                audio_level: None
             }
         );
         drop(reader);

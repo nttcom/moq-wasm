@@ -16,6 +16,7 @@ pub mod vp8;
 pub mod vp9;
 
 pub use sample::{
-    AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample,
+    AudioConfig, AudioLevel, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig,
+    VideoSample,
 };
 pub use transmux::{InputFormat, OutputFormat, Transmuxer, transmux};

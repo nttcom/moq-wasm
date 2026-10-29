@@ -70,10 +70,42 @@ pub struct VideoSample {
 
 /// `data` is one encoded frame: a raw AAC access unit without an ADTS header,
 /// A-law bytes, an Opus packet or an MP3 frame, as the `AudioConfig` says.
+/// `audio_level` is known when the source measured the frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioSample {
     pub data: Bytes,
     pub pts: Timestamp,
+    pub audio_level: Option<AudioLevel>,
+}
+
+/// An RFC 6464 §3 audio level indication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioLevel {
+    /// -dBov, from 0 (loudest) to 127 (silence).
+    pub level: u8,
+    pub voice_activity: bool,
+}
+
+impl AudioLevel {
+    const MAX_LEVEL: u8 = 127;
+    const VOICE_ACTIVITY_BIT: u8 = 0x80;
+
+    /// A `level` above 127 is clamped to 127.
+    pub fn to_byte(self) -> u8 {
+        let flag = if self.voice_activity {
+            Self::VOICE_ACTIVITY_BIT
+        } else {
+            0
+        };
+        flag | self.level.min(Self::MAX_LEVEL)
+    }
+
+    pub fn from_byte(byte: u8) -> Self {
+        Self {
+            level: byte & Self::MAX_LEVEL,
+            voice_activity: byte & Self::VOICE_ACTIVITY_BIT != 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +204,30 @@ pub enum MediaEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_audio_level_is_one_byte_with_voice_activity_in_the_top_bit() {
+        // Arrange
+        let level = AudioLevel {
+            level: 33,
+            voice_activity: true,
+        };
+
+        // Act
+        let byte = level.to_byte();
+
+        // Assert
+        assert_eq!(byte, 0x80 | 33);
+        assert_eq!(AudioLevel::from_byte(byte), level);
+        assert_eq!(
+            AudioLevel {
+                level: 200,
+                voice_activity: false
+            }
+            .to_byte(),
+            127
+        );
+    }
 
     #[test]
     fn converts_between_ticks_and_micros() {
