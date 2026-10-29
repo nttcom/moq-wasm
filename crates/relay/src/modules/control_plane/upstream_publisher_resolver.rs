@@ -45,7 +45,7 @@ impl UpstreamPublisherResolver {
     /// is served from local client publishers only, so a request never
     /// travels from relay to relay and subscriptions cannot form a loop.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "relay.upstream_publisher_resolver.resolve",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)

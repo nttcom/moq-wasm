@@ -46,7 +46,7 @@ pub struct Subscriber {
 
 impl Subscriber {
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.subscribe_namespace",
         skip_all,
         fields(namespace = %namespace)
@@ -61,7 +61,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.subscribe",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name, subscriber_priority = option.subscriber_priority, forward = option.forward)
@@ -134,7 +134,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.track_status",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
@@ -197,7 +197,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.fetch",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
@@ -232,7 +232,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.fetch_cancel",
         skip_all,
         fields(request_id = %fetch.request_id)
@@ -250,7 +250,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.fetch_relative_joining",
         skip_all,
         fields(joining_request_id = %subscription.request_id(), joining_start = %joining_start)
@@ -370,7 +370,7 @@ impl Subscriber {
     /// The draft defines no response, so this returns once the message is
     /// written.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.subscribe_update",
         skip_all,
         fields(subscription_request_id = subscription.request_id(), forward = option.forward)
@@ -450,7 +450,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.unsubscribe",
         skip_all,
         fields(request_id = %subscription.request_id())
@@ -472,7 +472,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.unsubscribe_namespace",
         skip_all,
         fields(namespace = %namespace)
@@ -548,7 +548,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.accept_fetch_receiver",
         skip_all,
         fields(request_id = fetch_handle.request_id)
@@ -586,7 +586,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.accept_data_receiver",
         skip_all,
         fields(track_alias = subscription.track_alias())
@@ -604,7 +604,7 @@ impl Subscriber {
             .remove(&track_alias)
             .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?;
         let stream_with_object = {
-            let span = tracing::info_span!(
+            let span = tracing::debug_span!(
                 "moqt.subscriber.wait_first_object",
                 track_alias = track_alias,
                 object_kind = tracing::field::Empty,
