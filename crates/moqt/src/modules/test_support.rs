@@ -21,8 +21,8 @@ use crate::modules::transport::{
 };
 
 use crate::{
-    ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
-    TransportProtocol,
+    ClientConfig, Endpoint, NATIVE, RequestFailure, Session, SessionEvent, Subscription,
+    TrackReader, TransportProtocol,
     fetch::{Fetch, FetchDataReceiver, FetchDataSender, FetchOption},
     modules::moqt::{
         data_plane::object::{
@@ -93,21 +93,23 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
     .unwrap()
 }
 
-/// Starts a DUAL server on a free port whose accept loop resolves the first
+/// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
-pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
+pub(crate) fn spawn_native_server_handshake(
+    name: &str,
+) -> (u16, tokio::task::JoinHandle<Handshake>) {
     let server_config = self_signed_server_config(name);
-    let server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
+    let server = Endpoint::<NATIVE>::create_server(&server_config).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)
 }
 
-/// Starts a DUAL server on a free port whose accept loop resolves the first
+/// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming session; returns the port and the accept task.
-pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_dual_server_handshake(name);
+pub(crate) fn spawn_native_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
+    let (port, handshake) = spawn_native_server_handshake(name);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
 }
@@ -272,8 +274,8 @@ async fn forward_late(
     replies.abort();
 }
 
-pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
-    Endpoint::<DUAL>::create_client(&config).unwrap()
+pub(crate) fn native_client_with_config(config: ClientConfig) -> Endpoint<NATIVE> {
+    Endpoint::<NATIVE>::create_client(&config).unwrap()
 }
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
@@ -284,17 +286,17 @@ pub(crate) fn insecure_client_config() -> ClientConfig {
     }
 }
 
-pub(crate) fn dual_client() -> Endpoint<DUAL> {
-    dual_client_with_config(insecure_client_config())
+pub(crate) fn native_client() -> Endpoint<NATIVE> {
+    native_client_with_config(insecure_client_config())
 }
 
-/// Connects a DUAL client to the server started by `spawn_dual_server` and
+/// Connects a NATIVE client to the server started by `spawn_native_server` and
 /// returns both established sessions as (client, server).
 pub(crate) async fn connect_sessions(
     url: &str,
     accept: tokio::task::JoinHandle<Session>,
 ) -> anyhow::Result<(Session, Session)> {
-    connect_sessions_from(&dual_client(), url, accept).await
+    connect_sessions_from(&native_client(), url, accept).await
 }
 
 pub(crate) async fn connect_sessions_from<T: TransportProtocol>(
@@ -350,8 +352,8 @@ pub(crate) async fn receive_disconnected(session: &Session) -> anyhow::Result<()
     .await?
 }
 
-pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Session) {
-    let (port, accept) = spawn_dual_server(name);
+pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Session) {
+    let (port, accept) = spawn_native_server(name);
     connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
         .await
         .unwrap()
@@ -376,7 +378,7 @@ pub(crate) struct PublishedTrack {
 }
 
 pub(crate) async fn published_track(name: &str) -> PublishedTrack {
-    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let (client, server) = spawn_connected_native_sessions(name).await;
     let publisher = client.publisher();
     let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         tokio::join!(
@@ -649,7 +651,7 @@ pub(crate) struct FetchedStream {
 }
 
 pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
-    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let (client, server) = spawn_connected_native_sessions(name).await;
     let mut subscriber = client.subscriber();
     // Matches the EndOfTrack location in the FETCH round-trip test.
     let end = location(16_385, 0);

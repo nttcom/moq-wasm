@@ -145,14 +145,14 @@ mod tests {
     use crate::subscribe::SubscribeOption;
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::test_support::{connect_sessions, spawn_native_server},
         object::{ContentExists, GroupOrder},
     };
 
     #[tokio::test]
     async fn subscribe_ok_states_ascending_when_the_subscriber_leaves_the_order_to_the_publisher() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-group-order");
+        let (port, accept) = spawn_native_server("subscribe-handler-group-order");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -184,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_ok_hands_its_max_cache_duration_to_the_subscriber() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-max-cache-duration");
+        let (port, accept) = spawn_native_server("subscribe-handler-max-cache-duration");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -214,7 +214,7 @@ mod tests {
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-namespace");
+        let (port, accept) = spawn_native_server("subscribe-handler-namespace");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

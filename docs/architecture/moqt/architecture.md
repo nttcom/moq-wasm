@@ -22,7 +22,7 @@ modules/moqt/runtime      ← background tasks + incoming-object dispatch
 modules/moqt/control_plane← control messages, handlers, session events
 modules/moqt/version      ← per-draft adapter: control channel, SETUP, control receive loop
 modules/moqt/data_plane   ← object formats, stream/datagram send/receive, codecs
-modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL markers
+modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/NATIVE markers
         │
         ▼
 modules/transport         ← transport abstraction + quinn/web-transport-quinn impls + QMux over WebSocket
@@ -46,7 +46,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   Implementation files under `modules/` are not arranged by these modules;
   each public module only re-exports.
 - The whole stack compiles for `wasm32` as well; the quinn-based transports
-  and their markers (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`
+  and their markers (`QUIC`, `WEBTRANSPORT`, `NATIVE`) are `#[cfg(not(target_arch = "wasm32"))]`
   and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
   `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
   API; it also uses the message codecs for the JavaScript message types.
@@ -82,7 +82,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | --- | --- | --- |
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
+| `NATIVE` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport that loses the race, to WebSocket or to the hedged second WebTransport, is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
@@ -90,7 +90,7 @@ Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 (`T::ConnectionCreator::client` / `server`). Everything an endpoint produces
 (`Connecting`, `Accepting`, `Handshake`, `Session`, the handlers and the data
 stream types) is a plain type over the boxed transport, so one process can hold
-sessions of different transports in one collection and the `DUAL` creator
+sessions of different transports in one collection and the `NATIVE` creator
 simply boxes a `QUICConnection` or a `WtConnection` per connection.
 
 Client-side helpers shared by the three creators:
@@ -100,7 +100,7 @@ Client-side helpers shared by the three creators:
   default port 443; `wss://` → QMux over WebSocket, default port 443) and
   resolves the host, preferring IPv4 because the client endpoint binds an IPv4
   socket. `QUIC` / `WEBTRANSPORT` creators reject a URL for another transport;
-  only `DUAL` connects over WebSocket. The wasm build parses with the browser's `URL`
+  only `NATIVE` connects over WebSocket. The wasm build parses with the browser's `URL`
   (`web_sys::Url`) instead of the `url` crate and leaves host and port to
   `WebTransport`.
 - WebSocket fallback — `SessionCreator::open_transport` (shared by every
@@ -110,7 +110,7 @@ Client-side helpers shared by the three creators:
   first gets a head start, then `wss://` is dialed alongside it, the first
   to open is used and the other is dropped. A failure within the head start
   dials `wss://` at once, so a browser without the WebTransport API does not
-  wait. Only creators with a `WEB_SOCKET_HEAD_START` do this, `DUAL` (200 ms)
+  wait. Only creators with a `WEB_SOCKET_HEAD_START` do this, `NATIVE` (200 ms)
   and `BROWSER` (500 ms), so `QUIC` links between relays never move to TCP;
   `ClientConfig::web_socket_fallback` turns it off or sets another head
   start. Which transport won is not remembered: each connect races again,
@@ -212,7 +212,7 @@ alike; only the message transport under it differs.
   TLS with the server's certificate (ALPN `http/1.1`), runs the HTTP/1.1
   upgrade with the subprotocol selection in a task per connection (10 s
   limit) and answers 503 while the endpoint refuses new connections. The
-  `DUAL` creator counts every WebSocket session it hands out, accepted or
+  `NATIVE` creator counts every WebSocket session it hands out, accepted or
   connected, until both its send and receive tasks have returned
   (`TransportEnded`): the last CONNECTION_CLOSE and WebSocket Close are
   written and the receive task has drained until the peer's Close, so

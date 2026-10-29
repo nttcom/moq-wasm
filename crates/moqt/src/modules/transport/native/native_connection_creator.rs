@@ -30,12 +30,12 @@ use crate::modules::transport::{
     },
 };
 
-enum DualEndpoint {
-    Server(Box<DualServer>),
-    Client(Box<DualClient>),
+enum NativeEndpoint {
+    Server(Box<NativeServer>),
+    Client(Box<NativeClient>),
 }
 
-impl DualEndpoint {
+impl NativeEndpoint {
     fn quinn_endpoint(&self) -> &quinn::Endpoint {
         match self {
             Self::Server(server) => &server.quic,
@@ -46,12 +46,12 @@ impl DualEndpoint {
 
 /// QUIC and WebTransport on the UDP port, QMux over WebSocket on the TCP
 /// port of the same number.
-struct DualServer {
+struct NativeServer {
     quic: quinn::Endpoint,
     web_socket: WebSocketListener,
 }
 
-struct DualClient {
+struct NativeClient {
     endpoint: quinn::Endpoint,
     quic_config: quinn::ClientConfig,
     web_transport_config: quinn::ClientConfig,
@@ -61,14 +61,14 @@ struct DualClient {
 /// How many ephemeral UDP ports are drawn when the number is taken on TCP.
 const EPHEMERAL_PORT_ATTEMPTS: u32 = 8;
 
-pub struct DualProtocolCreator {
-    endpoint: DualEndpoint,
+pub struct NativeConnectionCreator {
+    endpoint: NativeEndpoint,
     protocols: ApplicationProtocols,
     refusing: Arc<AtomicBool>,
     web_socket_sessions: Arc<LiveConnections>,
 }
 
-impl DualProtocolCreator {
+impl NativeConnectionCreator {
     fn create_client(
         port_num: u16,
         crypto: rustls::ClientConfig,
@@ -82,9 +82,9 @@ impl DualProtocolCreator {
         )?;
         let mut web_socket_crypto = crypto;
         web_socket_crypto.alpn_protocols = vec![HTTP11_ALPN.to_vec()];
-        tracing::debug!(local_addr = ?endpoint.local_addr()?, "Dual Protocol client endpoint ready");
-        Ok(DualProtocolCreator {
-            endpoint: DualEndpoint::Client(Box::new(DualClient {
+        tracing::debug!(local_addr = ?endpoint.local_addr()?, "native client endpoint ready");
+        Ok(NativeConnectionCreator {
+            endpoint: NativeEndpoint::Client(Box::new(NativeClient {
                 endpoint,
                 quic_config,
                 web_transport_config,
@@ -98,7 +98,7 @@ impl DualProtocolCreator {
 }
 
 #[async_trait]
-impl TransportConnectionCreator for DualProtocolCreator {
+impl TransportConnectionCreator for NativeConnectionCreator {
     const WEB_SOCKET_HEAD_START: Option<Duration> = Some(Duration::from_millis(200));
 
     fn client(
@@ -162,8 +162,8 @@ impl TransportConnectionCreator for DualProtocolCreator {
             }
         };
 
-        Ok(DualProtocolCreator {
-            endpoint: DualEndpoint::Server(Box::new(DualServer { quic, web_socket })),
+        Ok(NativeConnectionCreator {
+            endpoint: NativeEndpoint::Server(Box::new(NativeServer { quic, web_socket })),
             protocols,
             refusing,
             web_socket_sessions: Arc::default(),
@@ -175,8 +175,8 @@ impl TransportConnectionCreator for DualProtocolCreator {
         target: &ConnectTarget,
     ) -> anyhow::Result<BoxedConnection> {
         let client = match &self.endpoint {
-            DualEndpoint::Client(client) => client,
-            DualEndpoint::Server(_) => {
+            NativeEndpoint::Client(client) => client,
+            NativeEndpoint::Server(_) => {
                 anyhow::bail!("Cannot create_new_transport on a server endpoint")
             }
         };
@@ -209,8 +209,8 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
     async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
         let server = match &self.endpoint {
-            DualEndpoint::Server(server) => server,
-            DualEndpoint::Client(_) => Err(anyhow::anyhow!(
+            NativeEndpoint::Server(server) => server,
+            NativeEndpoint::Client(_) => Err(anyhow::anyhow!(
                 "Cannot accept_new_transport on a client endpoint"
             ))?,
         };
@@ -264,12 +264,12 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
 #[cfg(test)]
 mod tests {
-    use super::DualProtocolCreator;
+    use super::NativeConnectionCreator;
     use crate::modules::{
         moqt::version::APPLICATION_PROTOCOLS,
         test_support::{
-            HANDSHAKE_TIMEOUT, connect_sessions, dual_client, self_signed_server_config,
-            server_transport_creator, spawn_dual_server,
+            HANDSHAKE_TIMEOUT, connect_sessions, native_client, self_signed_server_config,
+            server_transport_creator, spawn_native_server,
         },
         transport::{
             accept_error::AcceptError,
@@ -289,7 +289,7 @@ mod tests {
         client: ApplicationProtocols,
     ) -> (BoxedConnection, BoxedConnection) {
         let config = self_signed_server_config(name);
-        let server = DualProtocolCreator::server(
+        let server = NativeConnectionCreator::server(
             &config.cert_path,
             &config.key_path,
             0,
@@ -301,7 +301,7 @@ mod tests {
             "{scheme}://127.0.0.1:{}{path}",
             server.local_port().unwrap()
         );
-        let client = DualProtocolCreator::client(0, false, client).unwrap();
+        let client = NativeConnectionCreator::client(0, false, client).unwrap();
         let target = ConnectTarget::parse(&url).unwrap();
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             let (client, server) = tokio::join!(
@@ -318,7 +318,7 @@ mod tests {
     async fn raw_quic_connections_report_the_alpn_they_negotiated() {
         // Act
         let (client, server) = connect_transports(
-            "dual-alpn",
+            "native-alpn",
             "moqt",
             "",
             ApplicationProtocols {
@@ -344,7 +344,7 @@ mod tests {
     async fn web_transport_sessions_carry_the_subprotocol_the_server_prefers() {
         // Act
         let (client, server) = connect_transports(
-            "dual-wt-protocol",
+            "native-wt-protocol",
             "https",
             "/moq",
             ApplicationProtocols {
@@ -370,7 +370,7 @@ mod tests {
     async fn web_transport_sessions_without_a_shared_subprotocol_carry_none() {
         // Act
         let (client, server) = connect_transports(
-            "dual-wt-no-protocol",
+            "native-wt-no-protocol",
             "https",
             "/moq",
             ApplicationProtocols {
@@ -391,9 +391,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dual_client_connects_over_raw_quic_with_moqt_scheme() {
+    async fn native_client_connects_over_raw_quic_with_moqt_scheme() {
         // Arrange
-        let (port, accept) = spawn_dual_server("dual-quic");
+        let (port, accept) = spawn_native_server("native-quic");
 
         // Act
         let result = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept).await;
@@ -403,9 +403,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dual_client_connects_over_web_transport_with_https_scheme() {
+    async fn native_client_connects_over_web_transport_with_https_scheme() {
         // Arrange
-        let (port, accept) = spawn_dual_server("dual-wt");
+        let (port, accept) = spawn_native_server("native-wt");
 
         // Act
         let result = connect_sessions(&format!("https://127.0.0.1:{port}/moq"), accept).await;
@@ -418,7 +418,7 @@ mod tests {
     async fn web_socket_sessions_carry_the_alpn_the_subprotocol_names() {
         // Act
         let (client, server) = connect_transports(
-            "dual-ws-alpn",
+            "native-ws-alpn",
             "wss",
             "/moq",
             ApplicationProtocols {
@@ -442,9 +442,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dual_client_connects_over_web_socket_with_wss_scheme() {
+    async fn native_client_connects_over_web_socket_with_wss_scheme() {
         // Arrange
-        let (port, accept) = spawn_dual_server("dual-ws");
+        let (port, accept) = spawn_native_server("native-ws");
 
         // Act
         let result = connect_sessions(&format!("wss://127.0.0.1:{port}/moq"), accept).await;
@@ -454,9 +454,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dual_client_connects_over_web_socket_to_a_host_name() {
+    async fn native_client_connects_over_web_socket_to_a_host_name() {
         // Arrange
-        let (port, accept) = spawn_dual_server("dual-ws-localhost");
+        let (port, accept) = spawn_native_server("native-ws-localhost");
 
         // Act
         let result = connect_sessions(&format!("wss://localhost:{port}/moq"), accept).await;
@@ -468,8 +468,8 @@ mod tests {
     #[tokio::test]
     async fn a_dropped_server_frees_its_web_socket_port() {
         // Arrange
-        let config = self_signed_server_config("dual-ws-rebind");
-        let server = DualProtocolCreator::server(
+        let config = self_signed_server_config("native-ws-rebind");
+        let server = NativeConnectionCreator::server(
             &config.cert_path,
             &config.key_path,
             0,
@@ -482,7 +482,7 @@ mod tests {
         // Act: the aborted accept task releases the listener on its next poll
         drop(server);
         tokio::task::yield_now().await;
-        let rebound = DualProtocolCreator::server(
+        let rebound = NativeConnectionCreator::server(
             &config.cert_path,
             &config.key_path,
             port,
@@ -497,10 +497,10 @@ mod tests {
     #[tokio::test]
     async fn a_refusing_server_answers_the_web_socket_upgrade_with_503() {
         // Arrange
-        let server: DualProtocolCreator = server_transport_creator("dual-ws-refuse");
+        let server: NativeConnectionCreator = server_transport_creator("native-ws-refuse");
         let port = server.local_port().unwrap();
         server.refuse_new_connections();
-        let client = DualProtocolCreator::client(0, false, APPLICATION_PROTOCOLS).unwrap();
+        let client = NativeConnectionCreator::client(0, false, APPLICATION_PROTOCOLS).unwrap();
         let target = ConnectTarget::parse(&format!("wss://127.0.0.1:{port}/moq")).unwrap();
 
         // Act
@@ -514,9 +514,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dual_client_connects_over_web_transport_to_a_host_name() {
+    async fn native_client_connects_over_web_transport_to_a_host_name() {
         // Arrange
-        let (port, accept) = spawn_dual_server("dual-wt-localhost");
+        let (port, accept) = spawn_native_server("native-wt-localhost");
 
         // Act
         let result = connect_sessions(&format!("https://localhost:{port}/moq"), accept).await;
@@ -526,9 +526,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dual_client_rejects_unknown_scheme() {
+    async fn native_client_rejects_unknown_scheme() {
         // Act
-        let result = dual_client().connect("http://127.0.0.1:1").await;
+        let result = native_client().connect("http://127.0.0.1:1").await;
 
         // Assert
         assert!(result.is_err());
@@ -537,7 +537,7 @@ mod tests {
     #[tokio::test]
     async fn accept_on_a_closed_endpoint_reports_endpoint_closing() {
         // Arrange
-        let server: DualProtocolCreator = server_transport_creator("dual-closed");
+        let server: NativeConnectionCreator = server_transport_creator("native-closed");
         server.endpoint.quinn_endpoint().close(0u32.into(), b"");
 
         // Act

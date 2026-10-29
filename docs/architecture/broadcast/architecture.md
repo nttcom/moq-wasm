@@ -30,7 +30,7 @@ arrives, only while a default track exists.
 
 Tasks are spawned and clocks read only through `moqt::executor`, so the crate
 also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
-the relay through moqt's `BROWSER` transport (WebTransport) instead of `DUAL`.
+the relay through moqt's `BROWSER` transport (WebTransport) instead of `NATIVE`.
 
 ## Publishing without subscribers
 Every track the catalog lists except the CMAF tracks is published with PUBLISH

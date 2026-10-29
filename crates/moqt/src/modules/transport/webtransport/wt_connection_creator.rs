@@ -190,7 +190,7 @@ mod tests {
         modules::{
             test_support::{
                 HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config,
-                server_transport_creator, spawn_dual_server,
+                server_transport_creator, spawn_native_server,
             },
             transport::{
                 accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
@@ -201,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn web_transport_client_connects_to_a_host_name() {
         // Arrange
-        let (port, accept) = spawn_dual_server("wt-localhost");
+        let (port, accept) = spawn_native_server("wt-localhost");
         let client = Endpoint::<WEBTRANSPORT>::create_client(&insecure_client_config()).unwrap();
 
         // Act

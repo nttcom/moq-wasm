@@ -8,9 +8,9 @@ pub(crate) mod connect_target;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod crypto_provider;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod dual;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod dual_stack_bind;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod native;
 pub(crate) mod qmux;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod quic;

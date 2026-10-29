@@ -6,7 +6,7 @@ use moqt::{
     publish::PublishHandler,
     subscribe::{FilterType, SubscribeOption},
     ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session, SessionEvent, Subscriber,
-    Subscription, TrackReader, DUAL,
+    Subscription, TrackReader, NATIVE,
 };
 use tokio::task::JoinHandle;
 
@@ -23,7 +23,7 @@ pub struct CommandTrack {
 /// viewer announces the namespace or publishes the track; either way the
 /// track is subscribed again whenever a new viewer takes over.
 pub struct CommandSubscriber {
-    _endpoint: Endpoint<DUAL>,
+    _endpoint: Endpoint<NATIVE>,
     task: JoinHandle<Result<()>>,
 }
 
@@ -34,7 +34,7 @@ impl CommandSubscriber {
         command_track: CommandTrack,
         command_sender: Sender<Command>,
     ) -> Result<Self> {
-        let endpoint = Endpoint::<DUAL>::create_client(client_config)?;
+        let endpoint = Endpoint::<NATIVE>::create_client(client_config)?;
         let connecting = endpoint
             .connect(url)
             .await

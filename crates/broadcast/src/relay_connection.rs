@@ -31,7 +31,7 @@ const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// A browser reaches the relay over WebTransport only.
 #[cfg(not(target_arch = "wasm32"))]
-type RelayTransport = moqt::DUAL;
+type RelayTransport = moqt::NATIVE;
 #[cfg(target_arch = "wasm32")]
 type RelayTransport = moqt::BROWSER;
 
@@ -537,7 +537,7 @@ mod tests {
     use std::path::PathBuf;
 
     use moqt::{
-        DUAL, Subscription, TrackObject, TrackReader,
+        NATIVE, Subscription, TrackObject, TrackReader,
         object::DataReceiver,
         publish::GroupBoundary,
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
@@ -590,7 +590,7 @@ mod tests {
             catalog_gate: Option<oneshot::Receiver<()>>,
         ) -> Self {
             let endpoint =
-                Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
+                Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
             let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
             let (session_sender, session) = oneshot::channel();
             let (request_sender, requests) = mpsc::unbounded_channel();

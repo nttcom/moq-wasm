@@ -65,13 +65,13 @@ impl SubscribeNamespaceHandler {
 mod tests {
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::test_support::{connect_sessions, spawn_native_server},
     };
 
     #[tokio::test]
     async fn exposes_track_namespace_prefix_as_tuple_and_joined_string() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-namespace-handler-namespace");
+        let (port, accept) = spawn_native_server("subscribe-namespace-handler-namespace");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

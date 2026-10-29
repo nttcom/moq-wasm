@@ -708,7 +708,7 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            accept_publish, read_fetch_objects, rejection, spawn_connected_dual_sessions,
+            accept_publish, read_fetch_objects, rejection, spawn_connected_native_sessions,
             subscribed_track_reader, within,
         },
         object::{DataReceiver, GroupOrder, Object, Subgroup},
@@ -727,7 +727,7 @@ mod tests {
     }
 
     async fn origin_with_track(name: &str, retention: Retention) -> Peers {
-        let (client, server) = spawn_connected_dual_sessions(name).await;
+        let (client, server) = spawn_connected_native_sessions(name).await;
         let client = Arc::new(client);
         let origin = Origin::default();
         origin
@@ -1486,7 +1486,7 @@ mod tests {
     async fn a_track_taken_on_two_sessions_is_written_to_both_until_one_releases_it() {
         // Arrange
         let first = origin_with_track("origin-two-sessions-a", RETENTION).await;
-        let (client, server) = spawn_connected_dual_sessions("origin-two-sessions-b").await;
+        let (client, server) = spawn_connected_native_sessions("origin-two-sessions-b").await;
         let second = Peers {
             origin: first.origin.clone(),
             client: Arc::new(client),

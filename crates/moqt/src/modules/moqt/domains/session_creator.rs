@@ -267,19 +267,19 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        ClientConfig, DUAL, Endpoint, Session, TerminationErrorCode, WebSocketFallback,
+        ClientConfig, Endpoint, NATIVE, Session, TerminationErrorCode, WebSocketFallback,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{
-                HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, dual_client, dual_client_with_config,
-                self_signed_server_config, slow_udp_path, spawn_connected_dual_sessions,
-                spawn_dual_server, spawn_dual_server_handshake, udp_blocked_server, within,
+                HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, native_client, native_client_with_config,
+                self_signed_server_config, slow_udp_path, spawn_connected_native_sessions,
+                spawn_native_server, spawn_native_server_handshake, udp_blocked_server, within,
             },
         },
     };
 
-    fn falling_back_client(fallback: WebSocketFallback) -> Endpoint<DUAL> {
-        dual_client_with_config(ClientConfig {
+    fn falling_back_client(fallback: WebSocketFallback) -> Endpoint<NATIVE> {
+        native_client_with_config(ClientConfig {
             verify_certificate: false,
             follow_go_away: false,
             web_socket_fallback: fallback,
@@ -289,7 +289,7 @@ mod tests {
 
     /// A server that turns QUIC away and answers WebSocket with 503, both at once.
     fn refusing_server(name: &str) -> u16 {
-        let server = Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
+        let server = Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
         let port = server.local_port().unwrap();
         server.refuse_new_connections();
         tokio::spawn(async move { while server.accept().await.is_ok() {} });
@@ -360,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn quic_that_opens_after_its_head_start_still_beats_a_web_socket_that_does_not() {
         // Arrange
-        let (server_port, accept) = spawn_dual_server("race-quic-wins");
+        let (server_port, accept) = spawn_native_server("race-quic-wins");
         let path = slow_udp_path(server_port, Duration::from_millis(300)).await;
         let client = falling_back_client(WebSocketFallback::HeadStart(Duration::from_millis(50)));
 
@@ -423,10 +423,10 @@ mod tests {
     #[tokio::test]
     async fn connect_sends_authorization_token_in_client_setup() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("client-setup-with-token");
+        let (port, accept) = spawn_native_server_handshake("client-setup-with-token");
         let url = format!("moqt://127.0.0.1:{port}");
         let client = tokio::spawn(async move {
-            dual_client_with_config(ClientConfig {
+            native_client_with_config(ClientConfig {
                 verify_certificate: false,
                 authorization_token: Some("jwt".to_string()),
                 follow_go_away: false,
@@ -454,9 +454,9 @@ mod tests {
     #[tokio::test]
     async fn connect_without_token_sends_no_authorization_token() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("client-setup-without-token");
+        let (port, accept) = spawn_native_server_handshake("client-setup-without-token");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
 
         // Act
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
@@ -472,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn client_request_ids_are_even_from_zero_and_server_ids_odd_from_one() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-parity").await;
+        let (client, server) = spawn_connected_native_sessions("request-id-parity").await;
         let client_context = client.publisher().session;
         let server_context = server.publisher().session;
 
@@ -498,9 +498,9 @@ mod tests {
     #[tokio::test]
     async fn a_rejected_client_setup_reports_the_peer_close_code_and_reason() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("session-creator-rejected-setup");
+        let (port, accept) = spawn_native_server_handshake("session-creator-rejected-setup");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
             .await
             .unwrap()

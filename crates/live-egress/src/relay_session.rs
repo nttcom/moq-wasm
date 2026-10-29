@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, DUAL, Endpoint, Session, Subscription, TrackReader,
+    ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
     object::{DataReceiver, GroupOrder},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -12,12 +12,12 @@ const SUBSCRIBER_PRIORITY: u8 = 128;
 
 pub struct RelaySession {
     pub session: Arc<Session>,
-    endpoint: Endpoint<DUAL>,
+    endpoint: Endpoint<NATIVE>,
 }
 
 impl RelaySession {
     pub async fn connect(url: &str, config: &ClientConfig) -> Result<Self> {
-        let endpoint = Endpoint::<DUAL>::create_client(config)?;
+        let endpoint = Endpoint::<NATIVE>::create_client(config)?;
         tracing::info!(relay = %url, "connecting to relay");
         let connecting = endpoint
             .connect(url)
