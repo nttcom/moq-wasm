@@ -1,8 +1,8 @@
 import type { MoqSession } from '@moqt/session'
-import type { MediaBroadcast } from '../../pkg/moqt'
+import type { MediaSource } from '../../pkg/moqt'
 import type { AudioLevel } from '../../utils/media/loc'
 
-export type PublishOptions = {
+export type SourceOptions = {
   /// The video's label in the catalog.
   videoLabel?: string
   /// Frames between keyframes; each keyframe starts a group.
@@ -10,9 +10,12 @@ export type PublishOptions = {
   /// Replaces the encoder's H.264 default; the broadcast takes H.264, VP8, VP9
   /// and AV1.
   videoEncoderConfig?: VideoEncoderConfig
-  /// Renditions of the video, each in the track `video_<name>` and encoded
-  /// from the video's frames.
+  /// Renditions of the video, each in the track `<video track>_<name>` and
+  /// encoded from the video's frames.
   renditions?: Rendition[]
+}
+
+export type PublishOptions = SourceOptions & {
   onError?: (error: unknown) => void
 }
 
@@ -30,7 +33,7 @@ const DEFAULT_VIDEO_CODEC = 'avc1.640028'
 
 export type MediaKind = 'video' | 'audio'
 
-export type Publication = {
+export type SourcePublication = {
   /// A muted kind is not encoded and its track leaves the catalog with
   /// PUBLISH_DONE; unmuting publishes it again from a new group.
   setMuted(kind: MediaKind, muted: boolean): Promise<void>
@@ -40,11 +43,18 @@ export type Publication = {
   close(): Promise<void>
 }
 
+export type Publication = SourcePublication & {
+  /// Publishes `stream` in the tracks `name` and `<name>_audio`. `close` on the
+  /// publication closes it too. Fails once the publication is closed, and for a
+  /// name already published.
+  addSource(name: string, stream: MediaStream, options?: SourceOptions): SourcePublication
+}
+
 const DEFAULT_KEYFRAME_INTERVAL_FRAMES = 60
 
 type ChunkMessage<Chunk, Metadata> = { type: 'chunk'; chunk: Chunk; metadata: Metadata | undefined }
 
-type Source = { track: MediaStreamTrack; muted: boolean; worker?: Worker }
+type Encoding = { track: MediaStreamTrack; muted: boolean; worker?: Worker }
 
 /// Publishes `stream` as an MSF broadcast in `namespace`, encoding its first
 /// video track as H.264 by default and its first audio track as Opus.
@@ -54,30 +64,72 @@ export async function publish(
   stream: MediaStream,
   options: PublishOptions = {}
 ): Promise<Publication> {
-  const broadcast = session.broadcast(namespace, options.videoLabel)
+  const broadcast = session.broadcast(namespace)
   await broadcast.announce()
   const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
-  const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
-    broadcast.addRendition(name, label, bitrate)
-  )
   // A new encoder worker stamps its first chunk 0, so the chunks of a worker
   // started after an unmute or a replaced track are shifted by the time since
-  // the publication began: the broadcast's timestamps never run backwards,
-  // which would reuse its group ids and capture times.
+  // the publication began: a source's timestamps never run backwards, which
+  // would reuse its group ids and capture times.
   const startedAtMs = performance.now()
+  const camera = publishSource(
+    broadcast.addSource('video', options.videoLabel ?? 'Video', 'audio', 'Audio'),
+    stream,
+    options,
+    startedAtMs,
+    report
+  )
+  const added = new Map<string, SourcePublication>()
+  let closed = false
+  return {
+    ...camera,
+    addSource: (name, sourceStream, sourceOptions = {}) => {
+      if (closed) {
+        throw new Error('the publication is closed')
+      }
+      if (name === 'video' || added.has(name)) {
+        throw new Error(`a source named ${name} is already published`)
+      }
+      const source = publishSource(
+        broadcast.addSource(name, sourceOptions.videoLabel ?? name, `${name}_audio`, `${name} audio`),
+        sourceStream,
+        sourceOptions,
+        startedAtMs,
+        report
+      )
+      added.set(name, source)
+      return source
+    },
+    close: async () => {
+      closed = true
+      await Promise.all([camera, ...added.values()].map((source) => source.close()))
+    }
+  }
+}
+
+function publishSource(
+  source: MediaSource,
+  stream: MediaStream,
+  options: SourceOptions,
+  startedAtMs: number,
+  report: (error: unknown) => void
+): SourcePublication {
+  const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
+    source.addRendition(name, label, bitrate)
+  )
   const encode = (kind: MediaKind, track: MediaStreamTrack) => {
     const offsetMicros = Math.round((performance.now() - startedAtMs) * 1000)
     return kind === 'video'
-      ? encodeVideo(broadcast, track, options, renditionIndices, offsetMicros, report)
-      : encodeAudio(broadcast, track, offsetMicros, report)
+      ? encodeVideo(source, track, options, renditionIndices, offsetMicros, report)
+      : encodeAudio(source, track, offsetMicros, report)
   }
-  const sources = new Map<MediaKind, Source>()
+  const kinds = new Map<MediaKind, Encoding>()
   for (const [kind, track] of [
     ['video', stream.getVideoTracks()[0]],
     ['audio', stream.getAudioTracks()[0]]
   ] as const) {
     if (track) {
-      sources.set(kind, { track, muted: false, worker: encode(kind, track) })
+      kinds.set(kind, { track, muted: false, worker: encode(kind, track) })
     }
   }
   // An unmute that publishes the track before the mute's removal finishes
@@ -86,54 +138,54 @@ export async function publish(
   let queue: Promise<void> = Promise.resolve()
   const serialized = (operation: () => Promise<void>) => (queue = queue.then(operation, operation))
   const stop = async (kind: MediaKind) => {
-    const source = sources.get(kind)
-    if (!source?.worker) {
+    const encoding = kinds.get(kind)
+    if (!encoding?.worker) {
       return
     }
-    source.worker.terminate()
-    source.worker = undefined
-    await broadcast.removeTrack(kind)
+    encoding.worker.terminate()
+    encoding.worker = undefined
+    await source.removeTrack(kind)
   }
   return {
     setMuted: (kind, muted) =>
       serialized(async () => {
-        const source = sources.get(kind)
-        if (closed || !source || source.muted === muted) {
+        const encoding = kinds.get(kind)
+        if (closed || !encoding || encoding.muted === muted) {
           return
         }
-        source.muted = muted
+        encoding.muted = muted
         if (muted) {
           await stop(kind)
         } else {
-          source.worker = encode(kind, source.track)
+          encoding.worker = encode(kind, encoding.track)
         }
       }),
     replaceTrack: (kind, track) => {
       if (closed) {
         return
       }
-      const source = sources.get(kind) ?? { track, muted: false }
-      source.track = track
-      sources.set(kind, source)
-      if (!source.muted) {
-        source.worker?.terminate()
-        source.worker = encode(kind, track)
+      const encoding = kinds.get(kind) ?? { track, muted: false }
+      encoding.track = track
+      kinds.set(kind, encoding)
+      if (!encoding.muted) {
+        encoding.worker?.terminate()
+        encoding.worker = encode(kind, track)
       }
     },
     close: () => {
       closed = true
       return serialized(async () => {
-        await Promise.all([...sources.keys()].map(stop))
-        sources.clear()
+        await Promise.all([...kinds.keys()].map(stop))
+        kinds.clear()
       })
     }
   }
 }
 
 function encodeVideo(
-  broadcast: MediaBroadcast,
+  source: MediaSource,
   track: MediaStreamTrack,
-  options: PublishOptions,
+  options: SourceOptions,
   renditionIndices: number[],
   offsetMicros: number,
   report: (error: unknown) => void
@@ -162,16 +214,16 @@ function encodeVideo(
       const codec = metadata?.decoderConfig?.codec
       if (codec && codec !== configuredCodecs[rendition]) {
         if (renditionIndex === undefined) {
-          broadcast.configureVideo(codec)
+          source.configureVideo(codec)
         } else {
-          broadcast.configureRendition(renditionIndex, codec)
+          source.configureRendition(renditionIndex, codec)
         }
         configuredCodecs[rendition] = codec
       }
       if (renditionIndex === undefined) {
-        broadcast.pushVideo(copied(chunk), chunk.timestamp + offsetMicros)
+        source.pushVideo(copied(chunk), chunk.timestamp + offsetMicros)
       } else {
-        broadcast.pushRenditionVideo(renditionIndex, copied(chunk), chunk.timestamp + offsetMicros)
+        source.pushRenditionVideo(renditionIndex, copied(chunk), chunk.timestamp + offsetMicros)
       }
     } catch (error) {
       report(error)
@@ -204,7 +256,7 @@ function encodeVideo(
 }
 
 function encodeAudio(
-  broadcast: MediaBroadcast,
+  source: MediaSource,
   track: MediaStreamTrack,
   offsetMicros: number,
   report: (error: unknown) => void
@@ -223,7 +275,7 @@ function encodeAudio(
     try {
       const config = metadata?.decoderConfig
       if (config) {
-        broadcast.configureAudio(
+        source.configureAudio(
           config.codec,
           config.sampleRate,
           config.numberOfChannels,
@@ -232,7 +284,7 @@ function encodeAudio(
         configured = true
       }
       if (configured) {
-        broadcast.pushAudio(copied(chunk), chunk.timestamp + offsetMicros, audioLevel?.level, audioLevel?.voiceActivity)
+        source.pushAudio(copied(chunk), chunk.timestamp + offsetMicros, audioLevel?.level, audioLevel?.voiceActivity)
       }
     } catch (error) {
       report(error)

@@ -55,6 +55,7 @@ function createPublisherPageModel(page: Page) {
     captureStatus: page.getByTestId('publisher-capture-status'),
     sendButton: page.getByTestId('publisher-send-button'),
     muteVideoButton: page.getByTestId('publisher-mute-video-button'),
+    shareScreenButton: page.getByTestId('publisher-share-screen-button'),
     sendStatus: page.getByTestId('publisher-send-status')
   }
 }
