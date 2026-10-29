@@ -253,12 +253,14 @@ Safari 26 は WebTransport と WebCodecs を持つが、Chrome と違う点が�
 ## `MediaBroadcast`
 
 `MediaBroadcast`（wasm）は `Mp4Broadcast` を一般化したものである。`Session` と
-namespace から作り、ソースごとに `BroadcastWriter` を1つ持つ。onvif-ingest が
-カメラの profile ごとにそうしているのと同じく、`SourceTracks` で、カメラとマイクを
-`video`/`audio`、画面共有を `screen`/`screen_audio` と名付ける。公開するのは
-`pushVideo`、`pushAudio`、`addRendition`、`removeTrack`、`streams()`、`close()`。
-JS の `publish()` は `MediaStream` をこれにつなぎ、「目標の利用コード」の
-`broadcast` handle を返す。
+namespace から作り、`addSource` でソースごとに `MediaSource` を作る。
+`MediaSource` は `BroadcastWriter` を1つ持ち、onvif-ingest がカメラの profile
+ごとにそうしているのと同じく、`SourceTracks` で、カメラとマイクを `video`/`audio`、
+画面共有を `screen`/`screen_audio` と名付ける。どのソースの track も、broadcast の
+1つの catalog に載る。`MediaSource` が公開するのは `configureVideo`・`pushVideo`、
+`configureAudio`・`pushAudio`、`addRendition`・`configureRendition`・
+`pushRenditionVideo`、`removeTrack`。JS の `publish()` は
+`MediaStream` をカメラのソースにつなぎ、画面共有は `addSource` で足す。
 
 メディアを使わない配信（チャット、データ）には `broadcast` は要らない。
 `moqt::Origin` を直接使う `Session.publishTrack` で行う。catalog がすでに載せて
