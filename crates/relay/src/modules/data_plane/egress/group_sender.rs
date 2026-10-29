@@ -377,26 +377,27 @@ impl GroupSender {
     }
 }
 
-/// Logs a failed egress write and returns the stream's end reason.
-/// A subscriber that stops the stream or loses its connection is routine.
-/// Any other failure is a relay fault and ends the stream with `fault_reason`.
+pub(super) fn subscriber_left_reason(error: &anyhow::Error) -> Option<&'static str> {
+    match TransportSendError::in_chain(error)? {
+        TransportSendError::Stopped { .. } => Some("peer_stopped"),
+        TransportSendError::ConnectionLost { .. } | TransportSendError::SessionError { .. } => {
+            Some("connection_lost")
+        }
+        _ => None,
+    }
+}
+
 fn send_failure_reason(
     error: &anyhow::Error,
     object_id: Option<u64>,
     fault_reason: &'static str,
 ) -> &'static str {
-    match TransportSendError::in_chain(error) {
-        Some(TransportSendError::Stopped { .. }) => {
-            tracing::debug!(?object_id, %error, "subscriber stopped the egress stream");
-            "peer_stopped"
+    match subscriber_left_reason(error) {
+        Some(reason) => {
+            tracing::debug!(?object_id, %error, "subscriber left during egress");
+            reason
         }
-        Some(
-            TransportSendError::ConnectionLost { .. } | TransportSendError::SessionError { .. },
-        ) => {
-            tracing::debug!(?object_id, %error, "subscriber connection ended during egress");
-            "connection_lost"
-        }
-        _ => {
+        None => {
             tracing::error!(?object_id, %error, fault_reason, "failed to send on an egress stream");
             fault_reason
         }
