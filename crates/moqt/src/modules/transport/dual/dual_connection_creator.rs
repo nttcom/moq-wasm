@@ -1,5 +1,8 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use async_trait::async_trait;
 use quinn::rustls::{self};
@@ -15,6 +18,9 @@ use crate::modules::transport::{
     quic::quic_connection::{QUICConnection, negotiated_alpn},
     server_transport_config::quic_server_config,
     transport_connection_creator::TransportConnectionCreator,
+    websocket::{
+        HTTP11_ALPN, LiveConnections, websocket_client, websocket_listener::WebSocketListener,
+    },
     webtransport::{
         wt_connection::WtConnection,
         wt_connection_creator::{accept_session, connect_session},
@@ -22,29 +28,41 @@ use crate::modules::transport::{
 };
 
 enum DualEndpoint {
-    Server(quinn::Endpoint),
+    Server(Box<DualServer>),
     Client(Box<DualClient>),
 }
 
 impl DualEndpoint {
     fn quinn_endpoint(&self) -> &quinn::Endpoint {
         match self {
-            Self::Server(endpoint) => endpoint,
+            Self::Server(server) => &server.quic,
             Self::Client(client) => &client.endpoint,
         }
     }
+}
+
+/// QUIC and WebTransport on the UDP port, QMux over WebSocket on the TCP
+/// port of the same number.
+struct DualServer {
+    quic: quinn::Endpoint,
+    web_socket: WebSocketListener,
 }
 
 struct DualClient {
     endpoint: quinn::Endpoint,
     quic_config: quinn::ClientConfig,
     web_transport_config: quinn::ClientConfig,
+    web_socket_crypto: Arc<rustls::ClientConfig>,
 }
+
+/// How many ephemeral UDP ports are drawn when the number is taken on TCP.
+const EPHEMERAL_PORT_ATTEMPTS: u32 = 8;
 
 pub struct DualProtocolCreator {
     endpoint: DualEndpoint,
     protocols: ApplicationProtocols,
-    refusing: AtomicBool,
+    refusing: Arc<AtomicBool>,
+    web_socket_sessions: Arc<LiveConnections>,
 }
 
 impl DualProtocolCreator {
@@ -55,17 +73,23 @@ impl DualProtocolCreator {
     ) -> anyhow::Result<Self> {
         let endpoint = client_endpoint(port_num)?;
         let quic_config = quic_client_config(crypto.clone(), protocols.quic_alpn_list())?;
-        let web_transport_config =
-            quic_client_config(crypto, vec![web_transport_quinn::ALPN.as_bytes().to_vec()])?;
+        let web_transport_config = quic_client_config(
+            crypto.clone(),
+            vec![web_transport_quinn::ALPN.as_bytes().to_vec()],
+        )?;
+        let mut web_socket_crypto = crypto;
+        web_socket_crypto.alpn_protocols = vec![HTTP11_ALPN.to_vec()];
         tracing::debug!(local_addr = ?endpoint.local_addr()?, "Dual Protocol client endpoint ready");
         Ok(DualProtocolCreator {
             endpoint: DualEndpoint::Client(Box::new(DualClient {
                 endpoint,
                 quic_config,
                 web_transport_config,
+                web_socket_crypto: Arc::new(web_socket_crypto),
             })),
             protocols,
-            refusing: AtomicBool::new(false),
+            refusing: Arc::new(AtomicBool::new(false)),
+            web_socket_sessions: Arc::default(),
         })
     }
 }
@@ -106,16 +130,38 @@ impl TransportConnectionCreator for DualProtocolCreator {
         let server_config =
             quic_server_config(cert_path, key_path, keep_alive_sec, alpn_protocols)?;
 
-        let endpoint = bind_dual_stack(port_num, |address| {
-            let endpoint = quinn::Endpoint::server(server_config, address)?;
-            tracing::info!(%address, "QUIC and WebTransport server ready");
-            Ok(endpoint)
-        })?;
+        let refusing = Arc::new(AtomicBool::new(false));
+        // Port 0 lets UDP pick the number and TCP then takes the same one. The
+        // number UDP picks is often held on TCP already, so a new one is drawn.
+        let mut attempts = 0;
+        let (quic, web_socket) = loop {
+            let server_config = server_config.clone();
+            let quic = bind_dual_stack(port_num, |address| {
+                let endpoint = quinn::Endpoint::server(server_config, address)?;
+                tracing::info!(%address, "QUIC and WebTransport server ready");
+                Ok(endpoint)
+            })?;
+            match WebSocketListener::bind(
+                quic.local_addr()?.port(),
+                cert_path,
+                key_path,
+                protocols,
+                refusing.clone(),
+            ) {
+                Ok(web_socket) => break (quic, web_socket),
+                Err(error) if port_num == 0 && attempts < EPHEMERAL_PORT_ATTEMPTS => {
+                    tracing::debug!(%error, "drawing another ephemeral port for WebSocket");
+                    attempts += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        };
 
         Ok(DualProtocolCreator {
-            endpoint: DualEndpoint::Server(endpoint),
+            endpoint: DualEndpoint::Server(Box::new(DualServer { quic, web_socket })),
             protocols,
-            refusing: AtomicBool::new(false),
+            refusing,
+            web_socket_sessions: Arc::default(),
         })
     }
 
@@ -143,26 +189,42 @@ impl TransportConnectionCreator for DualProtocolCreator {
                 let session = connect_session(connection, target, self.protocols).await?;
                 Ok(Box::new(WtConnection::new(session)))
             }
+            ClientTransport::WebSocket => {
+                let connection = websocket_client::connect(
+                    target,
+                    client.web_socket_crypto.clone(),
+                    self.protocols,
+                )
+                .await?;
+                self.web_socket_sessions.track(connection.transport_ended());
+                Ok(Box::new(connection))
+            }
         }
     }
 
     async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
-        let endpoint = match &self.endpoint {
-            DualEndpoint::Server(endpoint) => endpoint,
+        let server = match &self.endpoint {
+            DualEndpoint::Server(server) => server,
             DualEndpoint::Client(_) => Err(anyhow::anyhow!(
                 "Cannot accept_new_transport on a client endpoint"
             ))?,
         };
         let connection = loop {
-            let incoming = endpoint
-                .accept()
-                .await
-                .ok_or(AcceptError::EndpointClosing)?;
-            if self.refusing.load(Ordering::SeqCst) {
-                incoming.refuse();
-                continue;
+            tokio::select! {
+                incoming = server.quic.accept() => {
+                    let incoming = incoming.ok_or(AcceptError::EndpointClosing)?;
+                    if self.refusing.load(Ordering::SeqCst) {
+                        incoming.refuse();
+                        continue;
+                    }
+                    break incoming.await.map_err(anyhow::Error::from)?;
+                }
+                accepted = server.web_socket.accept() => {
+                    let connection = accepted?;
+                    self.web_socket_sessions.track(connection.transport_ended());
+                    return Ok(Box::new(connection));
+                }
             }
-            break incoming.await.map_err(anyhow::Error::from)?;
         };
 
         let alpn = negotiated_alpn(&connection)
@@ -187,6 +249,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
     async fn wait_idle(&self) {
         self.endpoint.quinn_endpoint().wait_idle().await;
+        self.web_socket_sessions.wait_idle().await;
     }
 
     fn local_port(&self) -> anyhow::Result<u16> {
@@ -198,6 +261,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
 mod tests {
     use super::DualProtocolCreator;
     use crate::modules::{
+        moqt::version::APPLICATION_PROTOCOLS,
         test_support::{
             HANDSHAKE_TIMEOUT, connect_sessions, dual_client, self_signed_server_config,
             server_transport_creator, spawn_dual_server,
@@ -343,6 +407,105 @@ mod tests {
 
         // Assert
         result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn web_socket_sessions_carry_the_alpn_the_subprotocol_names() {
+        // Act
+        let (client, server) = connect_transports(
+            "dual-ws-alpn",
+            "wss",
+            "/moq",
+            ApplicationProtocols {
+                quic_alpns: &["moq-00"],
+                web_transport: &[],
+            },
+            ApplicationProtocols {
+                quic_alpns: &["moq-00"],
+                web_transport: &[],
+            },
+        )
+        .await;
+
+        // Assert
+        let expected = NegotiatedProtocol::WebSocket {
+            alpn: Some("moq-00".to_string()),
+        };
+        assert_eq!(client.negotiated_protocol(), expected);
+        assert_eq!(server.negotiated_protocol(), expected);
+        assert!(client.addresses().remote.is_some());
+    }
+
+    #[tokio::test]
+    async fn dual_client_connects_over_web_socket_with_wss_scheme() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("dual-ws");
+
+        // Act
+        let result = connect_sessions(&format!("wss://127.0.0.1:{port}/moq"), accept).await;
+
+        // Assert
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dual_client_connects_over_web_socket_to_a_host_name() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("dual-ws-localhost");
+
+        // Act
+        let result = connect_sessions(&format!("wss://localhost:{port}/moq"), accept).await;
+
+        // Assert
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_dropped_server_frees_its_web_socket_port() {
+        // Arrange
+        let config = self_signed_server_config("dual-ws-rebind");
+        let server = DualProtocolCreator::server(
+            &config.cert_path,
+            &config.key_path,
+            0,
+            config.keep_alive_interval_sec,
+            APPLICATION_PROTOCOLS,
+        )
+        .unwrap();
+        let port = server.local_port().unwrap();
+
+        // Act: the aborted accept task releases the listener on its next poll
+        drop(server);
+        tokio::task::yield_now().await;
+        let rebound = DualProtocolCreator::server(
+            &config.cert_path,
+            &config.key_path,
+            port,
+            config.keep_alive_interval_sec,
+            APPLICATION_PROTOCOLS,
+        );
+
+        // Assert
+        rebound.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refusing_server_answers_the_web_socket_upgrade_with_503() {
+        // Arrange
+        let server: DualProtocolCreator = server_transport_creator("dual-ws-refuse");
+        let port = server.local_port().unwrap();
+        server.refuse_new_connections();
+        let client = DualProtocolCreator::client(0, false, APPLICATION_PROTOCOLS).unwrap();
+        let target = ConnectTarget::parse(&format!("wss://127.0.0.1:{port}/moq")).unwrap();
+
+        // Act
+        let error = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.create_new_transport(&target))
+            .await
+            .unwrap()
+            .unwrap_err();
+
+        // Assert
+        assert!(format!("{error:#}").contains("503"), "{error:#}");
     }
 
     #[tokio::test]

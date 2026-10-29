@@ -7,6 +7,8 @@ use url::Url;
 pub(crate) enum ClientTransport {
     Quic,
     WebTransport,
+    /// QMux over WebSocket.
+    WebSocket,
 }
 
 impl ClientTransport {
@@ -14,8 +16,9 @@ impl ClientTransport {
         match scheme {
             "moqt" => Ok(Self::Quic),
             "https" => Ok(Self::WebTransport),
+            "wss" => Ok(Self::WebSocket),
             scheme => anyhow::bail!(
-                "unsupported connect url scheme {scheme:?}: expected moqt:// (QUIC) or https:// (WebTransport)"
+                "unsupported connect url scheme {scheme:?}: expected moqt:// (QUIC), https:// (WebTransport) or wss:// (WebSocket)"
             ),
         }
     }
@@ -42,7 +45,7 @@ impl ConnectTarget {
         }
         let port = url.port().unwrap_or(match transport {
             ClientTransport::Quic => 4433,
-            ClientTransport::WebTransport => 443,
+            ClientTransport::WebTransport | ClientTransport::WebSocket => 443,
         });
         Ok(Self {
             transport,
@@ -145,6 +148,16 @@ mod tests {
         assert_eq!(target.transport, ClientTransport::WebTransport);
         assert_eq!(target.port, 443);
         assert_eq!(target.url.path(), "/moq");
+    }
+
+    #[test]
+    fn wss_scheme_selects_web_socket_with_default_port() {
+        // Act
+        let target = ConnectTarget::parse("wss://relay.example/moq").unwrap();
+
+        // Assert
+        assert_eq!(target.transport, ClientTransport::WebSocket);
+        assert_eq!(target.port, 443);
     }
 
     #[test]

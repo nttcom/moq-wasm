@@ -93,6 +93,10 @@ impl Version {
         match protocol {
             NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Ok(Self::Draft14),
             NegotiatedProtocol::WebTransport { protocol: None } => Ok(Self::Draft14),
+            NegotiatedProtocol::WebSocket { alpn: None } => Ok(Self::Draft14),
+            NegotiatedProtocol::WebSocket { alpn: Some(alpn) } if alpn == DRAFT14_ALPN => {
+                Ok(Self::Draft14)
+            }
             other => anyhow::bail!("no supported MoQT version negotiated: {other:?}"),
         }
     }
