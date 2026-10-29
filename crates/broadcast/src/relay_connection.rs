@@ -796,6 +796,7 @@ mod tests {
             height: 360,
             init_segment: String::new(),
             bitrate: None,
+            cmaf: true,
         }
     }
 

@@ -108,6 +108,9 @@ pub struct SourceTracks {
     pub video_label: String,
     pub audio: String,
     pub audio_label: String,
+    /// Lists a CMAF sibling next to each LOC track and sends it while a
+    /// subscriber takes it.
+    pub cmaf: bool,
 }
 
 impl Default for SourceTracks {
@@ -117,6 +120,7 @@ impl Default for SourceTracks {
             video_label: "Video".to_string(),
             audio: AUDIO_TRACK_NAME.to_string(),
             audio_label: "Audio".to_string(),
+            cmaf: true,
         }
     }
 }
@@ -125,6 +129,8 @@ impl Default for SourceTracks {
 pub struct AudioTrackInfo {
     pub label: String,
     pub config: AudioConfig,
+    /// Lists a CMAF sibling, for AAC only.
+    pub cmaf: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +143,7 @@ pub struct VideoTrackInfo {
     /// Target bitrate in bits per second, known when the publisher encodes
     /// the track itself.
     pub bitrate: Option<u64>,
+    pub cmaf: bool,
 }
 
 impl VideoTrackInfo {
@@ -150,6 +157,7 @@ impl VideoTrackInfo {
             height: sps.height,
             init_segment: general_purpose::STANDARD.encode(init_segment),
             bitrate: None,
+            cmaf: true,
         })
     }
 }
@@ -201,10 +209,13 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         loc.width = Some(info.width);
         loc.height = Some(info.height);
         loc.bitrate = info.bitrate;
-        let mut cmaf = cmaf_sibling(&loc, "video/mp4", cmaf_alt_group);
-        init_data_list.push(cmaf.set_inline_init_data(info.init_segment.clone()));
+        let cmaf = info.cmaf.then(|| {
+            let mut cmaf = cmaf_sibling(&loc, "video/mp4", cmaf_alt_group);
+            init_data_list.push(cmaf.set_inline_init_data(info.init_segment.clone()));
+            cmaf
+        });
         tracks.push(loc);
-        tracks.push(cmaf);
+        tracks.extend(cmaf);
     }
 
     for (name, info) in &metadata.audio_tracks {
@@ -217,6 +228,8 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         if let AudioConfig::Aac(config) = &info.config {
             let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
             init_data_list.push(audio.set_inline_init_data(audio_specific_config));
+        }
+        if let (AudioConfig::Aac(_), true) = (&info.config, info.cmaf) {
             let mut cmaf = cmaf_sibling(&audio, "audio/mp4", None);
             let init_segment = Fmp4TrackMuxer::audio(info.config.clone()).init_segment()?;
             init_data_list
@@ -254,10 +267,15 @@ fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec
         TrackRole::Known(KnownTrackRole::MediaTimeline),
     );
     timeline.label = Some("Media timeline".to_string());
-    timeline.depends = Some(vec![
-        VIDEO_TRACK_NAME.to_string(),
-        cmaf_track_name(VIDEO_TRACK_NAME),
-    ]);
+    let mut depends = vec![VIDEO_TRACK_NAME.to_string()];
+    if metadata
+        .video_tracks
+        .get(VIDEO_TRACK_NAME)
+        .is_none_or(|video| video.cmaf)
+    {
+        depends.push(cmaf_track_name(VIDEO_TRACK_NAME));
+    }
+    timeline.depends = Some(depends);
     timeline.mime_type = Some("application/json".to_string());
     tracks.push(timeline);
 
@@ -355,6 +373,7 @@ mod tests {
                 AudioTrackInfo {
                     label: "Audio".to_string(),
                     config: AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1)),
+                    cmaf: true,
                 },
             )]),
         }
@@ -391,6 +410,38 @@ mod tests {
         assert!(!awaits_subscribe(&catalog, "video"));
         assert!(!awaits_subscribe(&catalog, "timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
+    }
+
+    #[test]
+    fn tracks_without_cmaf_list_no_cmaf_sibling_and_the_timeline_depends_on_loc_only() {
+        // Arrange
+        let mut metadata = metadata_with_video_and_audio();
+        for video in metadata.video_tracks.values_mut() {
+            video.cmaf = false;
+        }
+        for audio in metadata.audio_tracks.values_mut() {
+            audio.cmaf = false;
+        }
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let names: Vec<&str> = catalog
+            .tracks
+            .iter()
+            .flatten()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert!(
+            !names.iter().any(|name| name.ends_with("_cmaf")),
+            "{names:?}"
+        );
+        assert_eq!(
+            track_named(&catalog, TIMELINE_TRACK_NAME).depends,
+            Some(vec![VIDEO_TRACK_NAME.to_string()])
+        );
+        assert!(init_data_of(&catalog, track_named(&catalog, AUDIO_TRACK_NAME)).is_some());
     }
 
     #[test]
@@ -509,6 +560,7 @@ mod tests {
                     sample_rate: 8_000,
                     channels: 1,
                 },
+                cmaf: true,
             },
         );
 

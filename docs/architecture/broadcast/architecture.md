@@ -68,7 +68,10 @@ beyond the codec, sample rate and channel count the catalog lists, and the video
 track carries its parameter sets in band.
 
 ## CMAF tracks
-Every media track has a CMAF sibling named with a `_cmaf` suffix, except A-law,
+A writer whose `SourceTracks::cmaf` is off publishes its tracks as LOC alone:
+the catalog lists no CMAF sibling for them, nothing is muxed into fMP4, and the
+media timeline depends on `video` only. Otherwise every media track has a CMAF
+sibling named with a `_cmaf` suffix, except A-law,
 Opus and MP3 audio, which travel as LOC alone (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
 (draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
