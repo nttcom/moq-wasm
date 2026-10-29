@@ -16,7 +16,7 @@ use crate::{
                 connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
                 publisher::{send_publish, send_publish_namespace},
                 session_context::{CarriedSubscription, PublicationTarget, SessionContext},
-                session_creator::Reconnect,
+                session_creator::{Reconnect, SetupRejected},
                 subscriber::{send_subscribe, send_subscribe_namespace},
             },
             runtime::tasks::connection_tasks::ConnectionTasks,
@@ -35,6 +35,13 @@ const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Publishers move on the same GOAWAY as their subscribers, so a request the
 /// new server rejects is sent again at this interval.
 const RETRY_INTERVAL: Duration = Duration::from_millis(500);
+/// About as long as a relay keeps a track in its cache.
+#[cfg(not(test))]
+const RECONNECT_LIMIT: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const RECONNECT_LIMIT: Duration = Duration::from_secs(2);
+const RECONNECT_FIRST_DELAY: Duration = Duration::from_millis(500);
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(10);
 /// How long the previous connection waits for a subscription that has not
 /// cut over, such as one that delivers nothing on the new connection.
 const CUTOVER_LIMIT: Duration = Duration::from_secs(10);
@@ -48,7 +55,7 @@ const PREVIOUS_CONNECTION_GRACE: Duration = Duration::from_millis(300);
 /// What a client session that follows GOAWAY needs to open its next
 /// connection.
 pub(crate) struct Follow {
-    pub(crate) reconnect: Box<dyn Reconnect>,
+    pub(crate) reconnect: Arc<dyn Reconnect>,
     pub(crate) url: String,
     /// The events of the first connection.
     pub(crate) connection_events: mpsc::UnboundedReceiver<SessionEvent>,
@@ -121,7 +128,7 @@ struct Migrated {
 
 struct Router {
     session: Arc<SessionContext>,
-    reconnect: Box<dyn Reconnect>,
+    reconnect: Arc<dyn Reconnect>,
     url: String,
     closed_sender: watch::Sender<Option<TransportClose>>,
     session_span: Span,
@@ -131,6 +138,7 @@ impl Router {
     async fn route(mut self, mut current: Live) {
         let mut previous: Option<Previous> = None;
         let mut migration: Option<BoxFuture<anyhow::Result<Migrated>>> = None;
+        let mut reconnecting = false;
         let mut current_closed = false;
         loop {
             tokio::select! {
@@ -160,8 +168,20 @@ impl Router {
                     Some(SessionEvent::Disconnected()) | None => {
                         current_closed = true;
                         if migration.is_none() {
-                            self.finish(&current).await;
-                            return;
+                            let close = current.connection.transport.closed().await;
+                            if !self.reconnects(&current.connection, &close) {
+                                self.finish(&current).await;
+                                return;
+                            }
+                            tracing::info!(%close, url = %self.url, "connection lost; reconnecting");
+                            reconnecting = true;
+                            migration = Some(Box::pin(reconnect(
+                                self.session.clone(),
+                                self.reconnect.clone(),
+                                self.url.clone(),
+                                current.connection.generation + 1,
+                                self.session_span.clone(),
+                            )));
                         }
                     }
                     Some(SessionEvent::PublishDone(handler)) => {
@@ -213,15 +233,23 @@ impl Router {
                                 self.retire(older);
                             }
                             self.url = migrated.url;
-                            previous = Some(Previous {
+                            let moved_from = Previous {
                                 live: std::mem::replace(&mut current, migrated.live),
                                 released: migrated.released,
                                 cutovers: migrated.cutovers,
-                            });
+                            };
+                            if std::mem::take(&mut reconnecting) {
+                                // A lost connection delivers nothing more.
+                                self.retire(moved_from);
+                                tracing::info!("reconnected");
+                            } else {
+                                previous = Some(moved_from);
+                                tracing::info!("moved to the new connection");
+                            }
                             current_closed = false;
-                            tracing::info!("moved to the new connection");
                         }
                         Err(error) => {
+                            reconnecting = false;
                             tracing::warn!(error = format!("{error:#}"), "migration failed; staying on the current connection");
                             if current_closed {
                                 self.finish(&current).await;
@@ -230,6 +258,23 @@ impl Router {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn reconnects(&self, connection: &Connection, close: &TransportClose) -> bool {
+        if connection.closed_locally() {
+            return false;
+        }
+        match close.code {
+            None => true,
+            Some(code) => {
+                self.reconnect.refreshes_token()
+                    && code
+                        == connection
+                            .control
+                            .version()
+                            .termination_code(TerminationErrorCode::ExpiredAuthToken)
             }
         }
     }
@@ -303,6 +348,61 @@ async fn optional<F: Future + Unpin>(future: Option<&mut F>) -> F::Output {
         Some(future) => future.await,
         None => std::future::pending().await,
     }
+}
+
+async fn reconnect(
+    session: Arc<SessionContext>,
+    reconnect: Arc<dyn Reconnect>,
+    url: String,
+    generation: u64,
+    session_span: Span,
+) -> anyhow::Result<Migrated> {
+    let deadline = executor::now() + RECONNECT_LIMIT;
+    let mut delay = RECONNECT_FIRST_DELAY;
+    let mut token_retried = false;
+    loop {
+        let (event_sender, events) = mpsc::unbounded_channel();
+        let connecting = reconnect.connect(url.clone(), generation, event_sender);
+        let attempt = migrate(
+            session.clone(),
+            connecting,
+            events,
+            url.clone(),
+            session_span.clone(),
+        );
+        let remaining = deadline.saturating_sub(executor::now());
+        let error = match executor::timeout(remaining, attempt).await {
+            Ok(Ok(migrated)) => return Ok(migrated),
+            Ok(Err(error)) => error,
+            Err(()) => anyhow::anyhow!("gave up reconnecting to {url}"),
+        };
+        if rejects_token(&session, &error) {
+            if token_retried {
+                return Err(error);
+            }
+            token_retried = true;
+        }
+        if executor::now() + delay >= deadline {
+            return Err(error.context("gave up reconnecting"));
+        }
+        tracing::debug!(error = format!("{error:#}"), "reconnect attempt failed");
+        executor::sleep(delay).await;
+        delay = (delay * 2).min(RECONNECT_MAX_DELAY);
+    }
+}
+
+fn rejects_token(session: &SessionContext, error: &anyhow::Error) -> bool {
+    let version = session.connection().control.version();
+    error
+        .downcast_ref::<SetupRejected>()
+        .is_some_and(|rejected| {
+            [
+                TerminationErrorCode::Unauthorized,
+                TerminationErrorCode::ExpiredAuthToken,
+            ]
+            .into_iter()
+            .any(|code| version.termination_code(code) == rejected.code)
+        })
 }
 
 /// Opens the next connection, sends the namespace and track subscriptions
@@ -644,13 +744,13 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use crate::{
-        AuthorizationToken, AuthorizationTokenSource, ClientConfig, Session, SessionEvent,
-        Subscription, TerminationErrorCode, TrackReader, TrackWriter,
+        AuthorizationToken, AuthorizationTokenSource, ClientConfig, Endpoint, NATIVE, Session,
+        SessionEvent, Subscription, TerminationErrorCode, TrackReader, TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::test_support::{
             DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
-            open_subgroup, send_payload, spawn_native_server, spawn_native_server_handshake,
-            subscribed_track_reader,
+            open_subgroup, self_signed_server_config, send_payload, spawn_native_server,
+            spawn_native_server_handshake, subscribed_track_reader,
         },
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
@@ -1508,5 +1608,130 @@ mod tests {
             [AuthorizationToken::use_value_utf8("token-1")]
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    type AcceptedSessions = mpsc::UnboundedReceiver<(Vec<AuthorizationToken>, Session)>;
+
+    fn spawn_reconnectable_server(
+        name: &str,
+    ) -> (u16, AcceptedSessions, tokio::task::JoinHandle<()>) {
+        let server = Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
+        let port = server.local_port().unwrap();
+        let (session_sender, sessions) = mpsc::unbounded_channel();
+        let accept = tokio::spawn(async move {
+            while let Ok(accepting) = server.accept().await {
+                let Ok(handshake) = accepting.await else {
+                    continue;
+                };
+                let tokens = handshake.authorization_tokens().to_vec();
+                if let Ok(session) = handshake.accept().await {
+                    let _ = session_sender.send((tokens, session));
+                }
+            }
+        });
+        (port, sessions, accept)
+    }
+
+    fn numbered_tokens(calls: Arc<AtomicU64>) -> AuthorizationTokenSource {
+        AuthorizationTokenSource::provider(move || {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(format!("token-{call}")) }
+        })
+    }
+
+    async fn connect_with(port: u16, token: AuthorizationTokenSource) -> Session {
+        let endpoint = native_client_with_config(ClientConfig {
+            verify_certificate: false,
+            authorization_token: Some(token),
+            ..ClientConfig::default()
+        });
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            endpoint
+                .connect(&format!("moqt://127.0.0.1:{port}"))
+                .await?
+                .await
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    }
+
+    async fn next_session(sessions: &mut AcceptedSessions) -> (Vec<AuthorizationToken>, Session) {
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, sessions.recv())
+            .await
+            .expect("a connection within timeout")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_close_for_an_expired_token_reconnects_with_a_new_token_and_resubscribes() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-reconnect");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let (subscription, _, _) = subscribe(&client, &first).await;
+        let mut reader = client.subscriber().track_reader(&subscription);
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let (tokens, second) = next_session(&mut sessions).await;
+        let (sender, filter_type, _) = serve_subscribe(&second).await;
+        let mut group_5 = open_subgroup(&sender, 5, SubgroupId::None).await;
+        send_payload(&mut group_5, b"b5-0").await;
+        let delivered = next_payload(&mut reader).await;
+
+        // Assert
+        assert_eq!(tokens, [AuthorizationToken::use_value_utf8("token-1")]);
+        assert_eq!(filter_type, FilterType::NextGroupStart);
+        assert_eq!(delivered, payload(5, b"b5-0"));
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_close_for_an_expired_token_ends_a_session_with_a_fixed_token() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-no-reconnect");
+        let client = connect_with(port, "jwt".to_string().into()).await;
+        let (_, first) = next_session(&mut sessions).await;
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed()).await;
+        let reconnected = tokio::time::timeout(NO_EVENT_TIMEOUT, sessions.recv()).await;
+
+        // Assert
+        assert!(close.expect("session closed").code.is_some());
+        assert!(reconnected.is_err(), "the session must not reconnect");
+    }
+
+    #[tokio::test]
+    async fn a_session_that_cannot_reconnect_ends_after_the_reconnect_limit() {
+        // Arrange
+        let (port, mut sessions, accept) = spawn_reconnectable_server("session-reconnect-limit");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        accept.abort();
+        let _ = accept.await;
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, client.closed()).await;
+        let close =
+            tokio::time::timeout(RECONNECT_LIMIT + DISCONNECT_TIMEOUT, client.closed()).await;
+        let event = tokio::time::timeout(DISCONNECT_TIMEOUT, client.receive_event()).await;
+
+        // Assert
+        assert!(
+            still_open.is_err(),
+            "the session must try to reconnect first"
+        );
+        assert!(
+            close.is_ok(),
+            "the session must end once reconnecting gives up"
+        );
+        assert!(matches!(
+            event.unwrap().unwrap(),
+            SessionEvent::Disconnected()
+        ));
     }
 }

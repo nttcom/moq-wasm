@@ -48,6 +48,10 @@ impl AuthorizationTokenSource {
         Self(TokenSource::Provider(Arc::new(provider)))
     }
 
+    pub(crate) fn is_provider(&self) -> bool {
+        matches!(self.0, TokenSource::Provider(_))
+    }
+
     pub(crate) async fn token(&self) -> anyhow::Result<String> {
         match &self.0 {
             TokenSource::Fixed(token) => Ok(token.clone()),
@@ -69,8 +73,10 @@ pub struct ClientConfig {
     /// A session follows the server's GOAWAY by itself (draft-14 §3.5):
     /// it connects to the New Session URI, sends its subscriptions there
     /// again and keeps the request ids and track aliases the application
-    /// knows. With `false`, GOAWAY arrives as a `SessionEvent` and the session
-    /// stays on its connection.
+    /// knows. Such a session also reconnects to its URL, the same way, when its
+    /// connection ends without a termination code, or when the server closes it
+    /// for an expired token and `authorization_token` is a provider. With `false`,
+    /// GOAWAY arrives as a `SessionEvent` and the session stays on its connection.
     pub follow_go_away: bool,
     pub web_socket_fallback: WebSocketFallback,
 }
