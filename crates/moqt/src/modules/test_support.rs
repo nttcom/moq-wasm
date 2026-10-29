@@ -1,6 +1,10 @@
 use std::{
+    net::Ipv4Addr,
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -189,11 +193,83 @@ pub(crate) fn udp_blocked_server(name: &str) -> UdpBlockedServer {
     }
 }
 
-/// A port nothing answers on over UDP while the returned socket is held.
-pub(crate) fn unreachable_port() -> (u16, std::net::UdpSocket) {
-    let udp = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let port = udp.local_addr().unwrap().port();
-    (port, udp)
+/// Forwards to UDP `server_port`, delivering each client datagram `delay` late
+/// so QUIC opens only after `delay`. Its TCP port of the same number accepts
+/// connections and never answers, so WebSocket never opens.
+pub(crate) struct SlowUdpPath {
+    pub(crate) port: u16,
+    _tcp: std::net::TcpListener,
+    forward: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for SlowUdpPath {
+    fn drop(&mut self) {
+        self.forward.abort();
+    }
+}
+
+pub(crate) async fn slow_udp_path(server_port: u16, delay: Duration) -> SlowUdpPath {
+    loop {
+        let client_side = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = client_side.local_addr().unwrap().port();
+        // Retry: the port UDP picked may already be taken on TCP.
+        let Ok(tcp) = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)) else {
+            continue;
+        };
+        let server_side = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        server_side
+            .connect((Ipv4Addr::LOCALHOST, server_port))
+            .await
+            .unwrap();
+        let forward = tokio::spawn(forward_late(
+            Arc::new(client_side),
+            Arc::new(server_side),
+            delay,
+        ));
+        return SlowUdpPath {
+            port,
+            _tcp: tcp,
+            forward,
+        };
+    }
+}
+
+async fn forward_late(
+    client_side: Arc<tokio::net::UdpSocket>,
+    server_side: Arc<tokio::net::UdpSocket>,
+    delay: Duration,
+) {
+    let mut buffer = vec![0; 65536];
+    let Ok((len, client)) = client_side.recv_from(&mut buffer).await else {
+        return;
+    };
+    let replies = {
+        let client_side = client_side.clone();
+        let server_side = server_side.clone();
+        tokio::spawn(async move {
+            let mut buffer = vec![0; 65536];
+            while let Ok(len) = server_side.recv(&mut buffer).await {
+                let _ = client_side.send_to(&buffer[..len], client).await;
+            }
+        })
+    };
+    let mut datagram = buffer[..len].to_vec();
+    loop {
+        let server_side = server_side.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = server_side.send(&datagram).await;
+        });
+        let Ok((len, _)) = client_side.recv_from(&mut buffer).await else {
+            break;
+        };
+        datagram = buffer[..len].to_vec();
+    }
+    replies.abort();
 }
 
 pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {

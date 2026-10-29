@@ -36,25 +36,20 @@ impl Default for ClientConfig {
     }
 }
 
-/// Whether a `DUAL` or `BROWSER` client falls back to QMux over WebSocket
-/// (`wss://`, same host and port) when it cannot open the transport a
-/// `moqt://` or `https://` URL names; a browser falls back from `https://`
-/// only. Only opening the transport falls back; a failed SETUP does not.
-/// Once a host and port fell back, the endpoint's later connections to it,
-/// GOAWAY migrations included, go straight to WebSocket. `QUIC` and
-/// `WEBTRANSPORT` ignore this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Whether a `DUAL` or `BROWSER` client also dials QMux over WebSocket
+/// (`wss://`, same host and port) for a `moqt://` or `https://` URL; a browser
+/// does so for `https://` only. QUIC or WebTransport gets a head start, then
+/// WebSocket is dialed alongside it and the first to open is used; a failure
+/// within the head start dials WebSocket at once. Only opening the transport
+/// races; a failed SETUP does not fall back. `QUIC` and `WEBTRANSPORT` ignore
+/// this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WebSocketFallback {
     Disabled,
-    /// Gives QUIC or WebTransport this long to open before trying WebSocket;
-    /// a failure within it tries WebSocket at once.
-    After(Duration),
-}
-
-impl Default for WebSocketFallback {
-    fn default() -> Self {
-        Self::After(Duration::from_secs(5))
-    }
+    /// The endpoint's own head start: 200 ms for `DUAL`, 500 ms for `BROWSER`.
+    #[default]
+    Enabled,
+    HeadStart(Duration),
 }
 
 #[derive(Clone)]

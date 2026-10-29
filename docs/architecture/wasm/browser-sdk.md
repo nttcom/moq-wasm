@@ -300,7 +300,7 @@ export function connect(url: string, options?: ConnectOptions): Promise<Session>
 export interface ConnectOptions {
   token?: string | (() => Promise<string>)       // CLIENT_SETUP の AUTHORIZATION TOKEN
   reconnect?: false | { maxDurationMs?: number } // 既定は有効。60秒で諦める
-  fallback?: false | { webTransportTimeoutMs?: number } // 既定は有効。WebTransport を 5 秒待って wss:// へ
+  fallback?: false | { webTransportHeadStartMs?: number } // 既定は有効。WebTransport に 500 ms 先行させて wss:// と並走
 }
 
 export interface Session extends EventTarget {

@@ -147,15 +147,15 @@ impl MOQTClient {
         }
     }
 
-    /// How long `sendClientSetup` gives WebTransport (5 s unless set) before it
-    /// tries QMux over WebSocket on the same host and port; `undefined` turns the
-    /// fallback off. Call before `sendClientSetup`.
+    /// The head start `sendClientSetup` gives WebTransport (500 ms unless set)
+    /// before it also dials QMux over WebSocket on the same host and port;
+    /// `undefined` turns the fallback off. Call before `sendClientSetup`.
     #[wasm_bindgen(js_name = setWebSocketFallback)]
-    pub fn set_web_socket_fallback(&self, web_transport_timeout_ms: Option<u32>) {
+    pub fn set_web_socket_fallback(&self, web_transport_head_start_ms: Option<u32>) {
         self.web_socket_fallback
-            .set(match web_transport_timeout_ms {
+            .set(match web_transport_head_start_ms {
                 Some(ms) => {
-                    WebSocketFallback::After(std::time::Duration::from_millis(u64::from(ms)))
+                    WebSocketFallback::HeadStart(std::time::Duration::from_millis(u64::from(ms)))
                 }
                 None => WebSocketFallback::Disabled,
             });

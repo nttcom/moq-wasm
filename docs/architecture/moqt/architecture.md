@@ -83,7 +83,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `DUAL` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
-| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport whose `ready` the fallback stopped waiting for is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport that loses the race is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 `T: TransportProtocol`, because the creator's constructors are static
@@ -104,20 +104,22 @@ Client-side helpers shared by the three creators:
   (`web_sys::Url`) instead of the `url` crate and leaves host and port to
   `WebTransport`.
 - WebSocket fallback — `SessionCreator::open_transport` (shared by every
-  marker and target) gives the transport of a `moqt://` or `https://` URL
-  `ClientConfig::web_socket_fallback` (5 s by default) and, failing that,
-  opens `wss://` on the same host and port (`ConnectTarget::web_socket_fallback`;
-  `moqt://` has no path, so `/`). Only creators with
-  `FALLS_BACK_TO_WEB_SOCKET` do this, `DUAL` and `BROWSER`, so `QUIC` links
-  between relays never move to TCP. A browser without the WebTransport API
-  fails the first attempt at once and so does not wait. A host and port that fell back is remembered for
-  the endpoint's lifetime and opened over WebSocket at once, which covers
-  GOAWAY migrations and reconnects, since they go through the same function.
-  The host is resolved once before the wait starts, so a slow DNS server
-  does not use up the wait, and both attempts go to the same address.
-  Only opening the transport falls back; a failed SETUP is returned as is.
-  The fallback is logged at WARN with `url` and `fallback_url`. When
-  WebSocket fails too, the error names both attempts.
+  marker and target) races the transport of a `moqt://` or `https://` URL
+  against `wss://` on the same host and port (`ConnectTarget::web_socket_fallback`;
+  `moqt://` has no path, so `/`), as Happy Eyeballs (RFC 8305) does: the
+  first gets a head start, then `wss://` is dialed alongside it, the first
+  to open is used and the other is dropped. A failure within the head start
+  dials `wss://` at once, so a browser without the WebTransport API does not
+  wait. Only creators with a `WEB_SOCKET_HEAD_START` do this, `DUAL` (200 ms)
+  and `BROWSER` (500 ms), so `QUIC` links between relays never move to TCP;
+  `ClientConfig::web_socket_fallback` turns it off or sets another head
+  start. Which transport won is not remembered: each connect races again,
+  and a session that landed on WebSocket stays there until it ends. The
+  host is resolved once before the head start, so a slow DNS server does
+  not use it up, and both dials go to the same address. Only opening the
+  transport falls back; a failed SETUP is returned as is. A WebSocket that
+  wins is logged at WARN with `url` and `fallback_url`. When both fail, the
+  error names both.
 - `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
   custom CA file), the `quinn::ClientConfig` per ALPN, and the client
   `quinn::Endpoint`.
@@ -217,7 +219,7 @@ alike; only the message transport under it differs.
   `wss://` client; it fails the handshake when the server selects no
   offered subprotocol.
 - `Session::url_scheme` is `wss` for a WebSocket session, so a GOAWAY's New
-  Session URI takes a client that already fell back straight to WebSocket.
+  Session URI keeps a session that landed on WebSocket there.
 
 ## Version adapter (`modules/moqt/version`)
 

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::modules::transport::transport_connection::BoxedConnection;
 use async_trait::async_trait;
 use wasm_bindgen::JsValue;
@@ -18,7 +20,7 @@ pub struct BrowserConnectionCreator {
 
 #[async_trait(?Send)]
 impl TransportConnectionCreator for BrowserConnectionCreator {
-    const FALLS_BACK_TO_WEB_SOCKET: bool = true;
+    const WEB_SOCKET_HEAD_START: Option<Duration> = Some(Duration::from_millis(500));
 
     fn client(
         _port_num: u16,
@@ -91,9 +93,9 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
     }
 }
 
-/// Closes the WebTransport when dropped before `ready` resolves, as when the
-/// fallback times out; otherwise the browser keeps connecting and later holds
-/// a session nobody reads.
+/// Closes the WebTransport when dropped before `ready` resolves, as when it
+/// loses the race; otherwise the browser keeps connecting and later holds a
+/// session nobody reads.
 struct CloseUnlessReady(Option<WebTransport>);
 
 impl CloseUnlessReady {

@@ -1,7 +1,10 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -96,7 +99,7 @@ impl DualProtocolCreator {
 
 #[async_trait]
 impl TransportConnectionCreator for DualProtocolCreator {
-    const FALLS_BACK_TO_WEB_SOCKET: bool = true;
+    const WEB_SOCKET_HEAD_START: Option<Duration> = Some(Duration::from_millis(200));
 
     fn client(
         port_num: u16,
