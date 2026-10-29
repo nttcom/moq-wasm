@@ -3,15 +3,12 @@ use std::{sync::Arc, time::Duration};
 use moqt::{
     ClientConfig, Endpoint, NATIVE, RequestErrorCode, SessionEvent, TerminationErrorCode,
     executor::{self, JoinHandle},
+    namespace::NamespaceWatchers,
     publish::{Origin, Retention},
 };
 use pyo3::prelude::*;
 
-use crate::{
-    namespaces::{NamespaceEvents, NamespaceWatchers},
-    publication::TrackPublication,
-    track::Track,
-};
+use crate::{namespaces::NamespaceEvents, publication::TrackPublication, track::Track};
 
 /// Connects to a relay: `moqt://` for raw QUIC, `https://` for WebTransport.
 /// The session follows the relay's GOAWAY by itself.
@@ -30,7 +27,7 @@ pub fn connect(
         })?;
         let session = Arc::new(endpoint.connect(&url).await?.await?);
         let origin = Origin::default();
-        let watchers = Arc::new(NamespaceWatchers::default());
+        let watchers = NamespaceWatchers::default();
         let event_loop = executor::spawn(
             "python-session-events",
             route_events(session.clone(), origin.clone(), watchers.clone()),
@@ -47,11 +44,7 @@ pub fn connect(
 
 /// A session has one event receiver: the origin answers what concerns the
 /// tracks this session publishes, and namespace events go to the iterators.
-async fn route_events(
-    session: Arc<moqt::Session>,
-    origin: Origin,
-    watchers: Arc<NamespaceWatchers>,
-) {
+async fn route_events(session: Arc<moqt::Session>, origin: Origin, watchers: NamespaceWatchers) {
     loop {
         let event = match session.receive_event().await {
             Ok(event) => event,
@@ -63,16 +56,10 @@ async fn route_events(
         let Some(event) = origin.handle(event).await else {
             continue;
         };
+        let Some(event) = watchers.handle(event).await else {
+            continue;
+        };
         match event {
-            SessionEvent::PublishNamespace(handler) => {
-                if let Err(err) = handler.ok().await {
-                    tracing::warn!(namespace = %handler.track_namespace, ?err, "failed to ack PUBLISH_NAMESPACE");
-                }
-                watchers.notify(handler.track_namespace_tuple.clone(), true);
-            }
-            SessionEvent::PublishNamespaceDone(handler) => {
-                watchers.notify(handler.track_namespace_tuple, false);
-            }
             SessionEvent::SubscribeNameSpace(handler) => {
                 if let Err(err) = handler.ok().await {
                     tracing::warn!(prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
@@ -105,7 +92,7 @@ pub struct Session {
     session: Arc<moqt::Session>,
     endpoint: Arc<Endpoint<NATIVE>>,
     origin: Origin,
-    watchers: Arc<NamespaceWatchers>,
+    watchers: NamespaceWatchers,
     event_loop: JoinHandle,
 }
 
@@ -127,7 +114,7 @@ impl Session {
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
         // Registered before the request, since the relay answers with the namespaces it knows at once.
-        let events: NamespaceEvents = self.watchers.watch(prefix.clone());
+        let events = NamespaceEvents::from(self.watchers.watch(prefix.clone()));
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session
                 .subscriber()

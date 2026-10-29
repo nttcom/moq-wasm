@@ -1,5 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use moqt::namespace;
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*};
 use tokio::sync::mpsc;
 
@@ -12,37 +13,17 @@ pub struct NamespaceEvent {
     pub active: bool,
 }
 
-/// Every `subscribe_namespace` iterator of a session, fed by its event loop.
-#[derive(Default)]
-pub(crate) struct NamespaceWatchers {
-    watchers: Mutex<Vec<(Vec<String>, mpsc::UnboundedSender<NamespaceEvent>)>>,
+#[pyclass(module = "moqt")]
+pub struct NamespaceEvents {
+    receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<namespace::NamespaceEvent>>>,
 }
 
-impl NamespaceWatchers {
-    pub(crate) fn watch(&self, prefix: Vec<String>) -> NamespaceEvents {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        self.watchers.lock().unwrap().push((prefix, sender));
-        NamespaceEvents {
+impl From<mpsc::UnboundedReceiver<namespace::NamespaceEvent>> for NamespaceEvents {
+    fn from(receiver: mpsc::UnboundedReceiver<namespace::NamespaceEvent>) -> Self {
+        Self {
             receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
         }
     }
-
-    pub(crate) fn notify(&self, namespace: Vec<String>, active: bool) {
-        let event = NamespaceEvent { namespace, active };
-        self.watchers.lock().unwrap().retain(|(prefix, sender)| {
-            !event.namespace.starts_with(prefix) || sender.send(event.clone()).is_ok()
-        });
-    }
-
-    /// Ends every iterator, once the session is gone.
-    pub(crate) fn close(&self) {
-        self.watchers.lock().unwrap().clear();
-    }
-}
-
-#[pyclass(module = "moqt")]
-pub struct NamespaceEvents {
-    receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<NamespaceEvent>>>,
 }
 
 #[pymethods]
@@ -55,7 +36,10 @@ impl NamespaceEvents {
         let receiver = self.receiver.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             match receiver.lock().await.recv().await {
-                Some(event) => Ok(event),
+                Some(event) => Ok(NamespaceEvent {
+                    namespace: event.namespace,
+                    active: event.active,
+                }),
                 None => Err(PyStopAsyncIteration::new_err("the session closed")),
             }
         })

@@ -85,7 +85,8 @@ A session has one event receiver, so the module runs one loop per session:
 - SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS go to the
   session's `Origin` through `Origin::handle`. A SUBSCRIBE for a track the
   origin does not have is rejected with TRACK_DOES_NOT_EXIST.
-- PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go to every `subscribe_namespace`
+- PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go through
+  `moqt::namespace::NamespaceWatchers` to every `subscribe_namespace`
   iterator whose prefix they match. PUBLISH_NAMESPACE is answered `ok`. An
   iterator is registered before its SUBSCRIBE_NAMESPACE is sent, since the
   relay answers with the namespaces it already knows.
