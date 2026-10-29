@@ -66,43 +66,18 @@ impl Drop for SnapshotIngestTask {
 
 #[cfg(test)]
 mod tests {
-    use http_body_util::{BodyExt, Empty};
-    use hyper::{
-        Request, Response,
-        body::{Bytes, Incoming},
-        server::conn::http1,
-        service::service_fn,
-    };
-    use hyper_util::rt::TokioIo;
-    use tokio::{net::TcpListener, sync::mpsc, time};
+    use tokio::{sync::mpsc, time};
 
     use super::{FLUSH_INTERVAL, SnapshotIngestTask};
     use crate::{
-        clickhouse::ClickHouse, config::ClickHouseConfig, latest_snapshots::LatestSnapshots,
-        test_support::snapshot,
+        clickhouse::ClickHouse,
+        config::ClickHouseConfig,
+        latest_snapshots::LatestSnapshots,
+        test_support::{fake_http_server, snapshot},
     };
 
     async fn fake_clickhouse() -> (ClickHouse, mpsc::UnboundedReceiver<(String, String)>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let (insert_sender, insert_receiver) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                let insert_sender = insert_sender.clone();
-                let service = service_fn(move |request: Request<Incoming>| {
-                    let insert_sender = insert_sender.clone();
-                    async move {
-                        let uri = request.uri().to_string();
-                        let body = request.into_body().collect().await?.to_bytes();
-                        let body = String::from_utf8(body.to_vec()).unwrap();
-                        insert_sender.send((uri, body)).unwrap();
-                        Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::new()))
-                    }
-                });
-                tokio::spawn(http1::Builder::new().serve_connection(TokioIo::new(stream), service));
-            }
-        });
+        let (url, insert_receiver) = fake_http_server().await;
         let clickhouse = ClickHouse::new(ClickHouseConfig {
             url,
             database: "obs".to_string(),
