@@ -10,7 +10,8 @@
     "forceConsistentCasingInFileNames": true,
     "paths": {
       "@moqt/*": ["./lib/moqt/*"],
-      "@player/*": ["./lib/player/*"]
+      "@player/*": ["./lib/player/*"],
+      "@publish/*": ["./lib/publish/*"]
     },
     "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom", "vite/client"],
     "lib": ["esnext", "webworker", "dom"]
