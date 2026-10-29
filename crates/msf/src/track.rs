@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::catalog::InitData;
 use crate::types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole};
@@ -63,7 +64,63 @@ pub struct Track {
     pub max_grp_sap_starting_type: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_obj_sap_starting_type: Option<u32>,
+    /// Fields the producer adds (draft-ietf-moq-msf-01 §5), whose names must
+    /// not be in `TRACK_FIELD_NAMES`, and every field of a parsed track that
+    /// this struct has no member for, draft fields such as `buffers`
+    /// included.
+    #[serde(flatten)]
+    pub custom_fields: Map<String, Value>,
 }
+
+/// The track object fields of draft-ietf-moq-msf-01 §5.2 and
+/// draft-ietf-moq-cmsf-01 §3.5.2 and §4.1.2.
+pub const TRACK_FIELD_NAMES: [&str; 45] = [
+    "namespace",
+    "name",
+    "packaging",
+    "eventType",
+    "role",
+    "isLive",
+    "targetLatency",
+    "buffers",
+    "label",
+    "renderGroup",
+    "altGroup",
+    "initRef",
+    "depends",
+    "template",
+    "temporalId",
+    "spatialId",
+    "codec",
+    "mimeType",
+    "framerate",
+    "timescale",
+    "bitrate",
+    "avgBitrate",
+    "maxGopDuration",
+    "maxGroupDuration",
+    "width",
+    "height",
+    "samplerate",
+    "channelConfig",
+    "displayWidth",
+    "displayHeight",
+    "lang",
+    "parentName",
+    "parentNamespace",
+    "trackDuration",
+    "connectionUri",
+    "token",
+    "encryptionScheme",
+    "cipherSuite",
+    "keyId",
+    "trackBaseKey",
+    "authInfo",
+    "accessibility",
+    "maxGrpSapStartingType",
+    "maxObjSapStartingType",
+    "contentProtectionRefIDs",
+];
 
 impl Track {
     pub fn has_role(&self, role: KnownTrackRole) -> bool {
@@ -103,6 +160,7 @@ impl Track {
             track_duration: None,
             max_grp_sap_starting_type: None,
             max_obj_sap_starting_type: None,
+            custom_fields: Map::new(),
         }
     }
 

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::track::{Track, TrackRef};
 use crate::types::{KnownPackaging, Packaging};
@@ -30,7 +31,29 @@ pub struct Catalog {
     /// tracks array.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init_data_list: Option<Vec<InitData>>,
+    /// Fields the producer adds (draft-ietf-moq-msf-01 §5), whose names must
+    /// not be in `ROOT_FIELD_NAMES`, and every field of a parsed catalog that
+    /// this struct has no member for, draft fields such as `publishTracks`
+    /// included.
+    #[serde(flatten)]
+    pub custom_fields: Map<String, Value>,
 }
+
+/// The root fields of draft-ietf-moq-msf-01 §5.1 and draft-ietf-moq-cmsf-01
+/// §4.1.1, and the delta update fields this crate reads.
+pub const ROOT_FIELD_NAMES: [&str; 11] = [
+    "version",
+    "generatedAt",
+    "isComplete",
+    "tracks",
+    "publishTracks",
+    "deltaUpdate",
+    "initDataList",
+    "contentProtections",
+    "addTracks",
+    "removeTracks",
+    "cloneTracks",
+];
 
 /// An entry of `initDataList` (draft-ietf-moq-msf-01 §5.1.7), named by the
 /// `initRef` of the tracks it initializes (§5.2.13).
@@ -56,6 +79,7 @@ impl Catalog {
             is_complete: None,
             tracks: Some(tracks),
             init_data_list: None,
+            custom_fields: Map::new(),
         }
     }
 
@@ -82,6 +106,50 @@ impl Catalog {
 mod tests {
     use super::*;
     use crate::types::KnownPackaging;
+
+    #[test]
+    fn custom_fields_follow_the_known_fields_and_init_data_list_follows_tracks() {
+        // Arrange
+        let mut track = Track::new("video", KnownPackaging::Loc, true);
+        track
+            .custom_fields
+            .insert("com.example.speaker".to_string(), Value::from("alice"));
+        let mut catalog = Catalog::new(vec![track], 1);
+        catalog.init_data_list = Some(Vec::new());
+        catalog
+            .custom_fields
+            .insert("com.example.room".to_string(), Value::from(7));
+
+        // Act
+        let json = serde_json::to_string(&catalog).unwrap();
+
+        // Assert
+        let position = |key: &str| json.find(&format!("\"{key}\"")).unwrap();
+        assert!(
+            position("isLive") < position("com.example.speaker"),
+            "{json}"
+        );
+        assert!(position("tracks") < position("initDataList"), "{json}");
+        assert!(
+            position("initDataList") < position("com.example.room"),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn a_parsed_catalog_keeps_the_fields_it_does_not_know() {
+        // Arrange
+        let json = r#"{"version":1,"com.example.room":"lobby","tracks":[{"name":"video","packaging":"loc","isLive":true,"com.example.speaker":true}]}"#;
+
+        // Act
+        let catalog: Catalog = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(catalog.custom_fields["com.example.room"], "lobby");
+        let track = &catalog.tracks.as_ref().unwrap()[0];
+        assert_eq!(track.custom_fields["com.example.speaker"], true);
+        assert!(track.is_live);
+    }
 
     #[test]
     fn new_is_an_independent_version_1_catalog_without_is_complete() {
