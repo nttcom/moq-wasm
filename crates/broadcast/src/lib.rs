@@ -14,7 +14,7 @@ pub use broadcast::{
 pub use group_alignment::GroupAlignment;
 pub use moqt::publish::{GroupBoundary, OutgoingObject};
 pub use relay_connection::{MoqtTarget, RelayConnection};
-pub use rendition_track::{RenditionConfig, RenditionTrack};
+pub use rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack};
 pub use stream_ledger::{StreamLedger, StreamRecord};
 pub use track_publisher::SharedTiming;
 pub use writer::BroadcastWriter;
