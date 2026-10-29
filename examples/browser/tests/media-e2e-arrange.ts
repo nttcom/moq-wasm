@@ -16,7 +16,7 @@ export const mediaE2EConfig = {
   expectedTransport
 }
 
-const SESSION_TRANSPORT_LOG = /^\[moqt\] session established over (\w+)$/
+const SESSION_TRANSPORT_LOG = /^\[moqt\] session established over (\w+) in \d+ ms$/
 
 /** Fills as `MoqtClientWrapper` logs each established session. */
 function recordSessionTransports(page: Page): string[] {

@@ -234,7 +234,7 @@ test('a FETCH reaching before the relay cache is answered by the browser MP4 pub
     await expect(viewer.playbackStatus).toContainText('Playing video')
     fetcher = await openMessagePage(session.context, liveViewerE2EConfig.moqtUrl)
     await fetcher.connectButton.click()
-    await expect(fetcher.logPanel).toContainText('[moqt][wt] connected')
+    await expect(fetcher.sendStatus).toHaveText('Ready to send CLIENT_SETUP')
     await fetcher.setupButton.click()
     await expect(fetcher.sendStatus).toHaveText('Sent CLIENT_SETUP')
     await fetcher.fetchRequestIdInput.fill('0')

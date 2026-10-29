@@ -346,6 +346,7 @@ function setupSessionButtons(): void {
   onClick('connectBtn', async () => {
     await moqtClient.connect(field('url').value, { sendSetup: false })
     registerClientCallbacks()
+    setSendStatus('Ready to send CLIENT_SETUP')
   })
 
   onClick('closeBtn', async () => {
