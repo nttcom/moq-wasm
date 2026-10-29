@@ -161,15 +161,9 @@ impl Subscribe {
             {
                 Ok(upstream_subscription) => upstream_subscription,
                 Err(err) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "failed to get or create upstream subscription"
-                    );
                     let (code, reason_phrase) = err.subscribe_error_response();
                     if let Err(send_error) = self
-                        .response_error(handler.as_ref(), code, reason_phrase)
+                        .response_error(session_id, handler.as_ref(), code, reason_phrase)
                         .await
                     {
                         tracing::error!(
@@ -231,7 +225,7 @@ impl Subscribe {
                 "upstream subscription ended before the downstream subscription was accepted; retrying"
             );
         }
-        self.response_track_gone(handler.as_ref()).await;
+        self.response_track_gone(session_id, handler.as_ref()).await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -467,6 +461,7 @@ impl Subscribe {
         {
             let _ = self
                 .response_error(
+                    session_id,
                     handler,
                     RequestErrorCode::TrackDoesNotExist,
                     "malformed track".to_string(),
@@ -574,9 +569,10 @@ impl Subscribe {
         Acceptance::Answered
     }
 
-    async fn response_track_gone(&self, handler: &dyn SubscribeHandler) {
+    async fn response_track_gone(&self, session_id: SessionId, handler: &dyn SubscribeHandler) {
         let _ = self
             .response_error(
+                session_id,
                 handler,
                 RequestErrorCode::TrackDoesNotExist,
                 "track is no longer available".to_string(),
@@ -591,6 +587,7 @@ impl Subscribe {
     )]
     async fn response_error(
         &self,
+        session_id: SessionId,
         handler: &dyn SubscribeHandler,
         code: RequestErrorCode,
         reason_phrase: String,
@@ -598,6 +595,7 @@ impl Subscribe {
         let track_namespace = handler.track_namespace();
         let track_name = handler.track_name();
         tracing::warn!(
+            session_id,
             request_id = handler.subscribe_id(),
             track_namespace = %track_namespace,
             track_name = %track_name,
