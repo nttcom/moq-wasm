@@ -171,6 +171,10 @@ assigned to that presentation time, so the same group id names the same
 instant on every track. A rendition that misses a source keyframe keeps writing into its current
 group and announces the skipped ids with the Prior Group ID Gap header when it
 catches up.
+A browser encodes every rendition from the same frames and keyframes them
+together, so its renditions use `RenditionKeyframes::SameFrames`: a rendition
+keyframe that arrives before the source's takes the id for that presentation
+time itself, and the source's keyframe finds the same id.
 
 The audio tracks follow the same boundaries: an audio sample belongs to the
 group of the latest video keyframe at or before it, so audio groups start at

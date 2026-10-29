@@ -13,17 +13,31 @@ use crate::{
     writer::BroadcastWriter,
 };
 
+/// How a rendition finds the group id of its keyframes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenditionKeyframes {
+    /// A keyframe takes the group id the source took at its presentation
+    /// time, and one the source has not taken stays in the current group: for
+    /// a transcoder asked to keyframe on the source's keyframes.
+    FollowSource,
+    /// A keyframe takes the group id for its presentation time, whether the
+    /// source or the rendition reaches that time first, and the rendition may
+    /// seed the LOC capture origin: for renditions encoded from the source's
+    /// frames and keyframed on the same frames.
+    SameFrames,
+}
+
 pub struct RenditionConfig {
     pub track: String,
     pub label: String,
     pub bitrate: Option<u64>,
     pub cmaf: bool,
+    pub keyframes: RenditionKeyframes,
 }
 
 /// Writes one rendition of a writer's source video into its own track, in the
-/// group ids the source took at the same presentation times
-/// (draft-ietf-moq-cmsf-01 §3.2). Frames before its first keyframe aligned
-/// with a source keyframe are dropped.
+/// group ids of the source's keyframes at the same presentation times
+/// (draft-ietf-moq-cmsf-01 §3.2).
 pub struct RenditionTrack {
     broadcast: Broadcast,
     timing: SharedTiming,
@@ -43,8 +57,9 @@ impl RenditionTrack {
         }
     }
 
-    /// Ignores events other than video. Fails on a sample pushed before the
-    /// writer took its first source sample, which seeds the LOC capture origin.
+    /// Ignores events other than video. Under `FollowSource`, fails on a
+    /// sample pushed before the writer took its first source sample, which
+    /// seeds the LOC capture origin.
     pub async fn push(&mut self, event: MediaEvent) -> Result<()> {
         match event {
             MediaEvent::VideoConfig(config) => {
@@ -66,7 +81,10 @@ impl RenditionTrack {
                 let track = &self.config.track;
                 tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
                 let alignment = &self.timing.alignment;
-                if sample.is_keyframe && alignment.aligned(sample.pts.micros()).is_none() {
+                if self.config.keyframes == RenditionKeyframes::FollowSource
+                    && sample.is_keyframe
+                    && alignment.aligned(sample.pts.micros()).is_none()
+                {
                     tracing::warn!(
                         %track,
                         pts_us = sample.pts.micros(),
@@ -78,13 +96,14 @@ impl RenditionTrack {
                     Some(muxer) => muxer.push(&MediaEvent::Video(sample.clone()))?,
                     None => None,
                 };
-                let group = aligned_boundary(alignment, sample.is_keyframe, sample.pts.micros());
-                let muxer = self
-                    .timing
-                    .loc
-                    .get()
-                    .context("rendition sample before the source seeded the LOC capture origin")?
-                    .with_video_codec(self.video_codec);
+                let group = self.boundary(sample.is_keyframe, sample.pts.micros());
+                let muxer = match self.config.keyframes {
+                    RenditionKeyframes::FollowSource => *self.timing.loc.get().context(
+                        "rendition sample before the source seeded the LOC capture origin",
+                    )?,
+                    RenditionKeyframes::SameFrames => *self.timing.loc_muxer(sample.pts),
+                }
+                .with_video_codec(self.video_codec);
                 if let Some(object) = muxer.push(&MediaEvent::Video(sample)) {
                     self.broadcast
                         .send_object(
@@ -100,11 +119,8 @@ impl RenditionTrack {
                 let Some(fragment) = fragment else {
                     return Ok(());
                 };
-                let group = aligned_boundary(
-                    &self.timing.alignment,
-                    fragment.is_keyframe,
-                    fragment.presentation_time.micros(),
-                );
+                let group =
+                    self.boundary(fragment.is_keyframe, fragment.presentation_time.micros());
                 self.broadcast
                     .send_object(
                         &cmaf_track_name(track),
@@ -118,13 +134,58 @@ impl RenditionTrack {
     }
 }
 
-fn aligned_boundary(
-    alignment: &GroupAlignment,
-    is_keyframe: bool,
-    presentation_us: u64,
-) -> GroupBoundary {
-    match (is_keyframe, alignment.aligned(presentation_us)) {
-        (true, Some(group_id)) => GroupBoundary::At(group_id),
-        _ => GroupBoundary::Within,
+impl RenditionTrack {
+    fn boundary(&self, is_keyframe: bool, presentation_us: u64) -> GroupBoundary {
+        if !is_keyframe {
+            return GroupBoundary::Within;
+        }
+        let alignment: &GroupAlignment = &self.timing.alignment;
+        let group_id = match self.config.keyframes {
+            RenditionKeyframes::FollowSource => alignment.aligned(presentation_us),
+            RenditionKeyframes::SameFrames => Some(alignment.keyframe(presentation_us)),
+        };
+        group_id.map_or(GroupBoundary::Within, GroupBoundary::At)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{broadcast::SourceTracks, relay_connection::RelayConnection};
+
+    fn rendition(writer: &BroadcastWriter, keyframes: RenditionKeyframes) -> RenditionTrack {
+        RenditionTrack::new(
+            writer,
+            RenditionConfig {
+                track: "video_low".to_string(),
+                label: "Low".to_string(),
+                bitrate: None,
+                cmaf: false,
+                keyframes,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn a_same_frames_keyframe_takes_the_id_the_source_takes_whichever_comes_first() {
+        // Arrange
+        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
+        let writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+        let same_frames = rendition(&writer, RenditionKeyframes::SameFrames);
+        let follow_source = rendition(&writer, RenditionKeyframes::FollowSource);
+
+        // Act
+        let before_source = follow_source.boundary(true, 40_000);
+        let rendition_first = same_frames.boundary(true, 40_000);
+        let source = writer.shared_timing().alignment.keyframe(40_000);
+
+        // Assert
+        assert_eq!(before_source, GroupBoundary::Within);
+        assert_eq!(rendition_first, GroupBoundary::At(source));
+        assert_eq!(
+            follow_source.boundary(true, 40_000),
+            GroupBoundary::At(source)
+        );
+        assert_eq!(same_frames.boundary(false, 80_000), GroupBoundary::Within);
     }
 }
