@@ -29,7 +29,8 @@ impl IngestPublisher {
     pub fn push(&mut self, event: MediaEvent) -> Result<()> {
         match &event {
             MediaEvent::VideoConfig(config) if self.transcode && self.renditions.is_none() => {
-                let source = VideoTrackInfo::from_record(config.avc()?, "Video".to_string())?;
+                config.avc()?;
+                let source = VideoTrackInfo::from_config(config, "Video".to_string())?;
                 self.renditions = RenditionFanout::run(&self.writer, &source);
             }
             MediaEvent::Video(sample) => {
