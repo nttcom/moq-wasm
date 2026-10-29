@@ -263,6 +263,7 @@ fn profile_tracks(args: &MoqtArgs, profile_index: usize, label: &str) -> SourceT
         video_label: label.to_string(),
         audio: format!("{}/profile_{profile_index}", args.audio_track),
         audio_label: format!("{label} audio"),
+        ..SourceTracks::default()
     }
 }
 

@@ -86,20 +86,29 @@ impl TrackPublisher {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
                 let config = config.avc()?;
-                self.video_cmaf = Some(Fmp4TrackMuxer::video(config.clone()));
-                let info = VideoTrackInfo::from_record(config, self.tracks.video_label.clone())?;
+                self.video_cmaf = self
+                    .tracks
+                    .cmaf
+                    .then(|| Fmp4TrackMuxer::video(config.clone()));
+                let info = VideoTrackInfo {
+                    cmaf: self.tracks.cmaf,
+                    ..VideoTrackInfo::from_record(config, self.tracks.video_label.clone())?
+                };
                 self.broadcast
                     .update_video_catalog(&self.tracks.video, info)
                     .await
             }
             MediaEvent::AudioConfig(config) => {
                 self.audio_cmaf = match config {
-                    AudioConfig::Aac(_) => Some(Fmp4TrackMuxer::audio(config.clone())),
+                    AudioConfig::Aac(_) if self.tracks.cmaf => {
+                        Some(Fmp4TrackMuxer::audio(config.clone()))
+                    }
                     _ => None,
                 };
                 let info = AudioTrackInfo {
                     label: self.tracks.audio_label.clone(),
                     config: config.clone(),
+                    cmaf: self.tracks.cmaf,
                 };
                 self.broadcast
                     .update_audio_catalog(&self.tracks.audio, info)
