@@ -64,7 +64,7 @@ impl RenditionFanout {
                 "transcoding renditions started"
             );
             let feeder = feed(transcoder.input(), sample_receiver);
-            publisher.run(transcoder, renditions).await;
+            publisher.run(transcoder, renditions, &namespace_path).await;
             let _ = feeder.await;
         });
         Some(Self {
@@ -100,19 +100,24 @@ struct RenditionPublisher {
 }
 
 impl RenditionPublisher {
-    async fn run(mut self, mut transcoder: Transcoder, renditions: Vec<Rendition>) {
+    async fn run(
+        mut self,
+        mut transcoder: Transcoder,
+        renditions: Vec<Rendition>,
+        namespace_path: &str,
+    ) {
         while let Some(output) = transcoder.next().await {
             let output = match output {
                 Ok(output) => output,
                 Err(err) => {
-                    tracing::error!(?err, "transcoder failed");
+                    tracing::error!(namespace = %namespace_path, ?err, "transcoder failed");
                     break;
                 }
             };
             let rendition = &renditions[output.rendition];
             let track = &mut self.tracks[output.rendition];
             if let Err(err) = track.push(output.event).await {
-                tracing::warn!(rendition = %rendition.name, ?err, "failed to publish rendition");
+                tracing::warn!(namespace = %namespace_path, rendition = %rendition.name, ?err, "failed to publish rendition");
             }
         }
     }
