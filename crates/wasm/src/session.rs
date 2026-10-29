@@ -9,7 +9,10 @@ use moqt::{
     TrackReader, executor,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     namespace::NamespaceEvent,
-    object::{ContentExists, ExtensionHeaders, Location},
+    object::{
+        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, Location,
+        MalformedTrackError, Object, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
+    },
     publish::{GroupBoundary, OutgoingObject, Retention, WriteOutcome},
     subscribe::{FilterType, SubscribeOption},
     wire::{RequestKind, request_error_code_to_wire},
@@ -106,8 +109,7 @@ impl Session {
             .subscribe(namespace.join("/"), track, option)
             .await
             .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
-        let reader = subscriber.track_reader(&subscription);
-        Ok(Subscription::new(self, subscription, reader))
+        Ok(Subscription::new(self, subscription, Reading::Unstarted))
     }
 
     /// Subscribes and reads the group the largest object is in from its first
@@ -124,7 +126,11 @@ impl Session {
             .subscribe_current_group(namespace.join("/"), track)
             .await
             .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
-        Ok(Subscription::new(self, subscription, reader))
+        Ok(Subscription::new(
+            self,
+            subscription,
+            Reading::Objects(reader),
+        ))
     }
 
     /// A Standalone FETCH (draft-14 §9.16.1). `end_object` is the End
@@ -331,18 +337,24 @@ pub struct Subscription {
     session: Rc<MoqtSession>,
     routes: Rc<SessionRoutes>,
     subscription: MoqtSubscription,
-    reader: Rc<Mutex<TrackReader>>,
+    reading: Rc<Mutex<Reading>>,
     done: Promise,
 }
 
+enum Reading {
+    Unstarted,
+    Objects(TrackReader),
+    Groups(StreamDataReceiverFactory),
+}
+
 impl Subscription {
-    fn new(session: &Session, subscription: MoqtSubscription, reader: TrackReader) -> Self {
+    fn new(session: &Session, subscription: MoqtSubscription, reading: Reading) -> Self {
         let done = session.routes.publish_done(subscription.request_id());
         Self {
             session: session.session.clone(),
             routes: session.routes.clone(),
             subscription,
-            reader: Rc::new(Mutex::new(reader)),
+            reading: Rc::new(Mutex::new(reading)),
             done: future_to_promise(async move {
                 Ok(match done.await {
                     Ok(done) => PublishDoneInfo {
@@ -373,12 +385,60 @@ impl Subscription {
     }
 
     /// The next object; `undefined` once the track has no more streams.
-    /// Objects of one subgroup come in order.
+    /// Objects of one subgroup come in order; status objects are skipped.
+    /// Rejects once `nextGroup` read the subscription.
     pub async fn next(&self) -> Result<Option<MoqObject>, JsValue> {
-        let reader = self.reader.clone();
-        let mut reader = reader.lock().await;
+        let reading = self.reading.clone();
+        let mut reading = reading.lock().await;
+        if let Reading::Unstarted = *reading {
+            *reading = Reading::Objects(self.session.subscriber().track_reader(&self.subscription));
+        }
+        let Reading::Objects(reader) = &mut *reading else {
+            return Err(js_error("the subscription is read by group"));
+        };
         let object = reader.next_object().await.map_err(anyhow_error)?;
         Ok(object.map(MoqObject::from))
+    }
+
+    /// The next subgroup stream; `undefined` once the track has no more
+    /// streams. Rejects for a track delivered in datagrams, and once `next` read
+    /// the subscription.
+    #[wasm_bindgen(js_name = nextGroup)]
+    pub async fn next_group(&self) -> Result<Option<Group>, JsValue> {
+        let reading = self.reading.clone();
+        let mut reading = reading.lock().await;
+        if let Reading::Unstarted = *reading {
+            let mut subscriber = self.session.subscriber();
+            match subscriber.accept_data_receiver(&self.subscription).await {
+                Ok(DataReceiver::Stream(factory)) => *reading = Reading::Groups(factory),
+                Ok(DataReceiver::Datagram(_)) => {
+                    return Err(anyhow_error(MalformedTrackError.into()));
+                }
+                Err(_) => return Ok(None),
+            }
+        }
+        let Reading::Groups(factory) = &mut *reading else {
+            return Err(js_error("the subscription is read by object"));
+        };
+        let mut receiver = match factory.next().await {
+            Ok(receiver) => receiver,
+            Err(error) if error.is::<MalformedTrackError>() => return Err(anyhow_error(error)),
+            Err(_) => return Ok(None),
+        };
+        match receiver
+            .receive()
+            .await
+            .map_err(|error| js_error(error.to_string()))?
+        {
+            Some(Subgroup::Header(start)) => Ok(Some(Group {
+                group_id: start.group_id,
+                subgroup_id: start.subgroup_id,
+                receiver: Rc::new(Mutex::new(receiver)),
+            })),
+            Some(Subgroup::Object(_)) | None => {
+                Err(js_error("a subgroup stream did not start with its header"))
+            }
+        }
     }
 
     /// SUBSCRIBE_UPDATE with the Forward flag (draft-14 §9.10).
@@ -424,13 +484,59 @@ impl FetchStream {
         let receiver = self.receiver.clone();
         let mut receiver = receiver.lock().await;
         loop {
-            match receiver.receive().await.map_err(anyhow_error)? {
+            match receiver
+                .receive()
+                .await
+                .map_err(|error| js_error(error.to_string()))?
+            {
                 Fetch::Object(object) => {
                     if let Some(object) = TrackObject::from_object(object) {
                         return Ok(Some(object.into()));
                     }
                 }
                 Fetch::End => return Ok(None),
+            }
+        }
+    }
+}
+
+/// One subgroup stream of a subscription (draft-14 §10.4).
+#[wasm_bindgen]
+pub struct Group {
+    group_id: u64,
+    subgroup_id: u64,
+    receiver: Rc<Mutex<StreamDataReceiver>>,
+}
+
+#[wasm_bindgen]
+impl Group {
+    #[wasm_bindgen(getter, js_name = groupId)]
+    pub fn group_id(&self) -> u64 {
+        self.group_id
+    }
+
+    #[wasm_bindgen(getter, js_name = subgroupId)]
+    pub fn subgroup_id(&self) -> u64 {
+        self.subgroup_id
+    }
+
+    /// The next object, a status object such as End of Group included;
+    /// `undefined` once the publisher finished the stream. Rejects when the
+    /// stream was reset.
+    pub async fn next(&self) -> Result<Option<MoqObject>, JsValue> {
+        let receiver = self.receiver.clone();
+        let mut receiver = receiver.lock().await;
+        loop {
+            match receiver
+                .receive()
+                .await
+                .map_err(|error| js_error(error.to_string()))?
+            {
+                Some(Subgroup::Object(object)) => {
+                    return Ok(Some(MoqObject::from_subgroup(object)));
+                }
+                Some(Subgroup::Header(_)) => continue,
+                None => return Ok(None),
             }
         }
     }
@@ -481,6 +587,7 @@ pub struct MoqObject {
     group_id: u64,
     subgroup_id: u64,
     object_id: u64,
+    status: Option<u8>,
     payload: Bytes,
     extension_headers: ExtensionHeaders,
 }
@@ -502,6 +609,13 @@ impl MoqObject {
         self.object_id
     }
 
+    /// The draft-14 Object Status (§10.2.1.1); `undefined` for an object with a
+    /// payload.
+    #[wasm_bindgen(getter)]
+    pub fn status(&self) -> Option<u8> {
+        self.status
+    }
+
     #[wasm_bindgen(getter)]
     pub fn payload(&self) -> Uint8Array {
         Uint8Array::from(&self.payload[..])
@@ -521,6 +635,24 @@ impl From<TrackObject> for MoqObject {
             group_id: object.group_id,
             subgroup_id: object.subgroup_id,
             object_id: object.object_id,
+            status: None,
+            payload: object.payload,
+            extension_headers: object.extension_headers,
+        }
+    }
+}
+
+impl MoqObject {
+    fn from_subgroup(object: Object) -> Self {
+        let subgroup_id = match object.forwarding {
+            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+            ForwardingPreference::Datagram => 0,
+        };
+        Self {
+            group_id: object.location.group_id,
+            subgroup_id,
+            object_id: object.location.object_id,
+            status: object.payload.is_empty().then_some(object.status as u8),
             payload: object.payload,
             extension_headers: object.extension_headers,
         }
