@@ -16,16 +16,14 @@ use crate::{
 pub struct RenditionConfig {
     pub track: String,
     pub label: String,
-    /// Target bitrate in bits per second.
     pub bitrate: Option<u64>,
-    /// Muxes a CMAF sibling next to the LOC track.
     pub cmaf: bool,
 }
 
-/// One rendition of a writer's source video in a track of its own, with the
-/// group ids the source took for the same presentation times, so the two form
-/// a switching set (draft-ietf-moq-cmsf-01 §3.2). Its frames are dropped until
-/// a keyframe lands on a source keyframe's presentation time.
+/// Writes one rendition of a writer's source video into its own track, in the
+/// group ids the source took at the same presentation times
+/// (draft-ietf-moq-cmsf-01 §3.2). Frames before its first keyframe aligned
+/// with a source keyframe are dropped.
 pub struct RenditionTrack {
     broadcast: Broadcast,
     timing: SharedTiming,
@@ -45,8 +43,8 @@ impl RenditionTrack {
         }
     }
 
-    /// Takes the rendition's video configuration and samples; push the source
-    /// into the writer first, since the source seeds the capture origin.
+    /// Ignores events other than video. Fails on a sample pushed before the
+    /// writer took its first source sample, which seeds the LOC capture origin.
     pub async fn push(&mut self, event: MediaEvent) -> Result<()> {
         match event {
             MediaEvent::VideoConfig(config) => {
