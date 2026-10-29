@@ -55,7 +55,10 @@ impl Session {
     ) -> Self {
         let inner = Arc::new(inner);
         let parent_span = Span::current();
-        let session_span = tracing::info_span!(parent: &parent_span, "moqt.session");
+        // The caller's span already names the session.
+        let session_span = Some(tracing::debug_span!(parent: &parent_span, "moqt.session"))
+            .filter(|span| !span.is_disabled())
+            .unwrap_or(parent_span);
         let tasks =
             ConnectionTasks::run(&inner, &inner.connection(), control_receiver, &session_span);
         let (driver, closed) = match follow {
