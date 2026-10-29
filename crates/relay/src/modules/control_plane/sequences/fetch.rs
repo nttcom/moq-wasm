@@ -440,7 +440,7 @@ impl Fetch {
                 resolve_joining_fetch(joining_start, sub.join_point).map(|range| (sub, range))
             })
             .map_err(|error| {
-                tracing::warn!(joining_request_id, %error, "Joining fetch rejected");
+                tracing::warn!(session_id, joining_request_id, %error, "Joining fetch rejected");
                 FetchError::Joining(error)
             })?;
 
