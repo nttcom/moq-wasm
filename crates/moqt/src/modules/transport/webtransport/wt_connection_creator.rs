@@ -109,7 +109,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let server = bind_dual_stack(port_num, |address| {
             Ok(web_transport_quinn::ServerBuilder::new()
                 .with_addr(address)
-                .with_certificate(certs, key)?)
+                .with_certificate(certs.clone(), key.clone_key())?)
         })?;
 
         tracing::info!(port = port_num, "WebTransport server ready");

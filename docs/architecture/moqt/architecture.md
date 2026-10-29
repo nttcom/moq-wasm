@@ -129,7 +129,10 @@ Client-side helpers shared by the three creators:
 The three creators bind server endpoints to `[::]:port` through
 `bind_dual_stack` (`dual_stack_bind.rs`). On Apple targets it holds
 `0.0.0.0:port` during the bind, because XNU lets `[::]:port` bind while
-another socket holds `0.0.0.0:port`.
+another socket holds `0.0.0.0:port`. XNU picks that IPv4 port without regard
+to sockets bound to a specific IPv6 address, such as a browser's QUIC
+connections, so for port 0 a `[::]:port` already in use draws another number,
+up to `EPHEMERAL_PORT_ATTEMPTS` times.
 
 The creators do not know MoQT versions. Each takes an
 `ApplicationProtocols` (`application_protocol.rs`): the ALPNs a raw QUIC
