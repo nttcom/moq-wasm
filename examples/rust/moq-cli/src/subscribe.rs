@@ -1,52 +1,41 @@
 use anyhow::Result;
-use moqt::{TrackReader, subscribe::FilterType};
+use moqt::{Session, TrackReader, subscribe::FilterType};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 use crate::catalog;
 use crate::cli::SubscribeArgs;
-use crate::transport::{RelayConnection, connect_relay, read_catalog, subscribe, track_reader};
+use crate::track::FullTrackName;
+use crate::transport::{connect_relay, read_catalog, subscribe, track_reader};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
-    let mut watching = watch(&args).await?;
-    let session = watching.connection.session.clone();
+    let connection = connect_relay(&args.relay, args.track.app_id()).await?;
+    // `watch` drops every handle to the session on return, errors included,
+    // so `close` can finish.
+    let result = watch(&connection.session, &args.track).await;
+    connection.close().await;
+    result
+}
+
+async fn watch(session: &Session, track: &FullTrackName) -> Result<()> {
+    let mut media_reader = subscribe_media(session, track).await?;
     let mut out = tokio::io::stdout();
     loop {
         tokio::select! {
-            object = watching.media_reader.next_object() => match object {
+            object = media_reader.next_object() => match object {
                 Ok(Some(object)) => {
                     out.write_all(&object.payload).await?;
                     out.flush().await?;
                 }
-                Ok(None) => break,
+                Ok(None) => return Ok(()),
                 Err(error) => return Err(error.context("the track is malformed")),
             },
             close = session.closed() => anyhow::bail!("session closed by the relay: {close}"),
         }
     }
-    drop(session);
-    watching.close().await;
-    Ok(())
 }
 
-struct Watching {
-    connection: RelayConnection,
-    media_reader: TrackReader,
-}
-
-impl Watching {
-    /// Every other handle to the session must be dropped first.
-    async fn close(self) {
-        drop(self.media_reader);
-        self.connection.close().await;
-    }
-}
-
-async fn watch(args: &SubscribeArgs) -> Result<Watching> {
-    let track = &args.track;
-    let connection = connect_relay(&args.relay, track.app_id()).await?;
-    let session = &connection.session;
-
+async fn subscribe_media(session: &Session, track: &FullTrackName) -> Result<TrackReader> {
     // Subscribe to both tracks before reading either so NextGroupStart
     // catches the first media group of a burst publisher. The catalog's
     // joining FETCH may only join a Largest Object subscription (draft-14
@@ -74,11 +63,7 @@ async fn watch(args: &SubscribeArgs) -> Result<Watching> {
 
     let catalog = read_catalog(session, &catalog_subscription).await?;
     describe_catalog(&catalog::parse(&catalog)?);
-    let media_reader = track_reader(session, &media_subscription).await?;
-    Ok(Watching {
-        connection,
-        media_reader,
-    })
+    track_reader(session, &media_subscription).await
 }
 
 fn describe_catalog(catalog: &msf::Catalog) {
