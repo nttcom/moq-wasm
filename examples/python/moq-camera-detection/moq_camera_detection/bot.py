@@ -13,6 +13,7 @@ from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
 from moq_system_one_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.relay import add_relay_arguments, stay_connected
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
@@ -23,7 +24,6 @@ from moq_camera_detection.prompt import Prompt, parse_prompt
 from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
 from moq_camera_detection.vision import SystemOneVisionClient
 
-DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8098
 # system-one-server answers one request at a time, and one camera already sends it a picture every
 # SAMPLE_INTERVAL_SECONDS.
@@ -37,7 +37,6 @@ STATUS_TRACK = "status"
 # (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
-RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
 
 
@@ -46,12 +45,7 @@ def parse_args() -> argparse.Namespace:
         description="Answer the MoQ camera page's question about its camera, one bot per camera room"
     )
     add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
-    parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="skip TLS verification, for a local relay with a self-signed certificate",
-    )
+    add_relay_arguments(parser)
     parser.add_argument(
         "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"
     )
@@ -152,28 +146,6 @@ async def detect_in_session(
         following.cancel()
 
 
-async def stay_connected(
-    args: argparse.Namespace, room_id: str, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
-) -> None:
-    while True:
-        try:
-            session = await moqt.connect(args.relay_url, verify_certificate=not args.insecure)
-        except RuntimeError as error:
-            logger.warning(f"room {room_id}: cannot connect to {args.relay_url}: {error}")
-            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-            continue
-        logger.info(f"room {room_id}: connected to {args.relay_url}")
-        try:
-            if await detect_in_session(session, room_id, timeline, status, worker):
-                return
-            logger.warning(f"room {room_id}: relay session closed")
-        except RuntimeError as error:
-            logger.warning(f"room {room_id}: relay session failed: {error}")
-        finally:
-            await session.close()
-        await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-
-
 async def detect_in_room(
     args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
 ) -> None:
@@ -190,7 +162,8 @@ async def detect_in_room(
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
-        await stay_connected(args, room_id, timeline, status, worker)
+        in_session = partial(detect_in_session, room_id=room_id, timeline=timeline, status=status, worker=worker)
+        await stay_connected(args, in_session, f"room {room_id}: ")
         await runner.cancel()
 
 
