@@ -106,6 +106,17 @@ already holds does not wait for the next one on the SUBSCRIBE, which starts
 after the largest object: it fetches the current catalog, and the relay
 completes that FETCH from here when its own cache has dropped it.
 
+## Sharing a session
+`RelayConnection::new` opens its own session to the relay on first use, reads
+its events and closes it in `close`. `RelayConnection::with_session` publishes
+on a session someone else opened instead, such as a page that publishes and
+plays on one WebTransport session: the owner keeps reading the session's
+events and passes each to `RelayConnection::handle`, which answers SUBSCRIBE,
+UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS for the broadcasts and
+returns the rest, `Disconnected` included after it ended the broadcasts'
+sends. The stream ledger, catalog state and `Origin` belong to the connection;
+the session's lifetime belongs to its owner, so `close` leaves it open.
+
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
 an empty URI meaning the same one (draft-ietf-moq-transport-14 §3.5, §9.4).
