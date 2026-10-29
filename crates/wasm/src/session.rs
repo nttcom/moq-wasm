@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
 use bytes::Bytes;
 use js_sys::{Function, Promise, Uint8Array};
@@ -6,10 +6,11 @@ use mediapack::loc::from_extension_headers;
 use moqt::{
     AuthorizationTokenSource, BROWSER, ClientConfig, Endpoint, RequestFailure,
     Session as MoqtSession, Subscription as MoqtSubscription, TerminationErrorCode, TrackObject,
-    TrackReader,
+    TrackReader, executor,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     namespace::NamespaceEvent,
     object::{ContentExists, ExtensionHeaders, Location},
+    publish::{GroupBoundary, OutgoingObject, Retention, WriteOutcome},
     subscribe::{FilterType, SubscribeOption},
     wire::{RequestKind, request_error_code_to_wire},
 };
@@ -18,9 +19,15 @@ use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::{JsFuture, future_to_promise, spawn_local};
 
 use crate::{
-    js_error, loc::encode_loc_header, request_rejection::request_failure_code,
+    js_error,
+    loc::{encode_loc_header, parse_loc_header},
+    request_rejection::request_failure_code,
     session_routes::SessionRoutes,
 };
+
+/// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
+/// forwards for a range it never cached can still be answered here.
+const DEFAULT_RETENTION: Duration = Duration::from_secs(60);
 
 /// Requests reject with an `Error` whose `code` is the draft-14 request error
 /// code.
@@ -190,9 +197,131 @@ impl Session {
         })
     }
 
+    /// PUBLISH_NAMESPACE (draft-14 §9.23).
+    pub async fn announce(&self, namespace: Vec<String>) -> Result<Announcement, JsValue> {
+        let namespace = namespace.join("/");
+        self.session
+            .publisher()
+            .publish_namespace(namespace.clone())
+            .await
+            .map_err(|error| request_error(RequestKind::PublishNamespace, &error))?;
+        Ok(Announcement {
+            session: self.session.clone(),
+            namespace,
+        })
+    }
+
+    /// Registers a track to publish. The cache keeps objects for `retention_ms`
+    /// (60 s by default), or only the newest one when it is 0. With `publish`,
+    /// the track is also sent with PUBLISH (draft-14 §9.13); announce the
+    /// namespace first.
+    #[wasm_bindgen(js_name = publishTrack)]
+    pub async fn publish_track(
+        &self,
+        namespace: Vec<String>,
+        track: String,
+        retention_ms: Option<f64>,
+        publish: Option<bool>,
+    ) -> Result<TrackWriter, JsValue> {
+        let namespace = namespace.join("/");
+        let retention = match retention_ms {
+            None => Retention::For(DEFAULT_RETENTION),
+            Some(0.0) => Retention::NewestOnly,
+            Some(ms) => Retention::For(Duration::from_secs_f64(ms / 1000.0)),
+        };
+        let origin = &self.routes.origin;
+        origin
+            .ensure_track(
+                &namespace,
+                &track,
+                executor::system_time().as_micros() as u64,
+                retention,
+            )
+            .await;
+        if publish.unwrap_or(false) {
+            origin
+                .publish(&self.session, &namespace, &track)
+                .await
+                .map_err(anyhow_error)?;
+        }
+        Ok(TrackWriter {
+            routes: self.routes.clone(),
+            namespace,
+            track,
+        })
+    }
+
     pub fn close(&self) {
         self.session
             .close_with_error(TerminationErrorCode::NoError, "closed by the application");
+    }
+}
+
+#[wasm_bindgen]
+pub struct Announcement {
+    session: Rc<MoqtSession>,
+    namespace: String,
+}
+
+#[wasm_bindgen]
+impl Announcement {
+    /// PUBLISH_NAMESPACE_DONE (draft-14 §9.26).
+    pub async fn close(&self) -> Result<(), JsValue> {
+        self.session
+            .publisher()
+            .publish_namespace_done(self.namespace.clone())
+            .await
+            .map_err(anyhow_error)
+    }
+}
+
+#[wasm_bindgen]
+pub struct TrackWriter {
+    routes: Rc<SessionRoutes>,
+    namespace: String,
+    track: String,
+}
+
+#[wasm_bindgen]
+impl TrackWriter {
+    /// `loc_header` is the object's LOC properties (draft-ietf-moq-loc-04).
+    /// Resolves to whether a subscriber took the object; it is cached either
+    /// way. An object within a group that was never started is dropped.
+    pub async fn write(
+        &self,
+        payload: Vec<u8>,
+        new_group: bool,
+        loc_header: JsValue,
+    ) -> Result<bool, JsValue> {
+        let group = if new_group {
+            GroupBoundary::Next
+        } else {
+            GroupBoundary::Within
+        };
+        let object = OutgoingObject {
+            group,
+            extension_headers: parse_loc_header(loc_header)?,
+            payload: Bytes::from(payload),
+        };
+        let outcome = self
+            .routes
+            .origin
+            .write(&self.namespace, &self.track, object)
+            .await
+            .map_err(anyhow_error)?;
+        Ok(matches!(outcome, WriteOutcome::Sent(_)))
+    }
+
+    /// Sends `payload` as a group of its own, the layout of an MSF catalog
+    /// (draft-ietf-moq-msf-01 §5).
+    #[wasm_bindgen(js_name = writeGroup)]
+    pub async fn write_group(&self, payload: Vec<u8>) -> Result<(), JsValue> {
+        self.routes
+            .origin
+            .write_group(&self.namespace, &self.track, Bytes::from(payload))
+            .await
+            .map(|_| ())
+            .map_err(anyhow_error)
     }
 }
 

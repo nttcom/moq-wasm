@@ -3,6 +3,7 @@ use std::{cell::RefCell, collections::HashMap};
 use moqt::{
     RequestErrorCode, Session, SessionEvent,
     namespace::{NamespaceEvent, NamespaceWatchers},
+    publish::Origin,
     wire::publish_done_code_to_wire,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -13,10 +14,12 @@ pub(crate) struct PublishDone {
     pub(crate) reason: String,
 }
 
-/// The session publishes nothing, so the peer's SUBSCRIBE, FETCH,
-/// TRACK_STATUS and PUBLISH are rejected.
+/// `origin` answers the peer's SUBSCRIBE, FETCH and TRACK_STATUS for the
+/// tracks this session publishes; a SUBSCRIBE for any other track, and
+/// every PUBLISH, is rejected.
 #[derive(Default)]
 pub(crate) struct SessionRoutes {
+    pub(crate) origin: Origin,
     watchers: NamespaceWatchers,
     publish_done: RefCell<HashMap<u64, oneshot::Sender<PublishDone>>>,
 }
@@ -40,6 +43,9 @@ impl SessionRoutes {
     /// Returns once the session has ended.
     pub(crate) async fn route(&self, session: &Session) {
         while let Ok(event) = session.receive_event().await {
+            let Some(event) = self.origin.handle(event).await else {
+                continue;
+            };
             let Some(event) = self.watchers.handle(event).await else {
                 continue;
             };
@@ -64,22 +70,6 @@ impl SessionRoutes {
                         .error(RequestErrorCode::TrackDoesNotExist, reason)
                         .await;
                 }
-                SessionEvent::Fetch(handler) => {
-                    let _ = handler
-                        .error(
-                            RequestErrorCode::TrackDoesNotExist,
-                            "no track is published here".to_string(),
-                        )
-                        .await;
-                }
-                SessionEvent::TrackStatus(handler) => {
-                    let _ = handler
-                        .error(
-                            RequestErrorCode::TrackDoesNotExist,
-                            "no track is published here".to_string(),
-                        )
-                        .await;
-                }
                 SessionEvent::Publish(handler) => {
                     let _ = handler
                         .error(
@@ -101,10 +91,11 @@ impl SessionRoutes {
 mod tests {
     use std::time::Duration;
 
+    use bytes::Bytes;
     use moqt::{
         ClientConfig, Endpoint, NATIVE, RequestFailure,
         object::ContentExists,
-        publish::PublishDoneCode,
+        publish::{GroupBoundary, OutgoingObject, PublishDoneCode, Retention},
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
         subscribe::SubscribeOption,
     };
@@ -201,6 +192,51 @@ mod tests {
                 reason: "finished".to_string(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_for_a_published_track_receives_what_the_origin_writes() {
+        // Arrange
+        let Connected {
+            client,
+            server,
+            _endpoints,
+        } = connected_sessions("origin-subscribe").await;
+        let routes = SessionRoutes::default();
+        routes
+            .origin
+            .ensure_track("ns", "track", 0, Retention::NewestOnly)
+            .await;
+        let mut subscriber = server.subscriber();
+
+        // Act
+        let payload = tokio::time::timeout(TIMEOUT, async {
+            tokio::select! {
+                () = routes.route(&client) => panic!("the session ended"),
+                payload = async {
+                    let subscription = subscriber
+                        .subscribe("ns".into(), "track".into(), SubscribeOption::default())
+                        .await
+                        .unwrap();
+                    let mut reader = subscriber.track_reader(&subscription);
+                    routes
+                        .origin
+                        .write(
+                            "ns",
+                            "track",
+                            OutgoingObject::plain(GroupBoundary::Next, Bytes::from_static(b"o0")),
+                        )
+                        .await
+                        .unwrap();
+                    reader.next_object().await.unwrap().unwrap().payload
+                } => payload,
+            }
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert_eq!(payload, Bytes::from_static(b"o0"));
     }
 
     #[tokio::test]
