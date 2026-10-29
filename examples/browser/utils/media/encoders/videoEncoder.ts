@@ -3,14 +3,9 @@ import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
 import { fitEncodeSize } from './encodeSize'
 
-let videoEncoder: VideoEncoder | undefined
 // Default keeps periodic keyframes alive even before the first keyframeInterval message.
 let keyframeInterval: number = 30
-let encoderConfig: VideoEncoderConfig | null = null
-// null makes the next frame reconfigure the encoder.
-let configuredFrameSize: string | null = null
 let forceNextKeyframe = false
-const captureTimestamps = new CaptureTimestamps()
 
 // H264 プロファイル
 // Baseline: 42 Main: 4D High: 64
@@ -23,80 +18,119 @@ const videoBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
 })
 
-function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
-  videoBitrateLogger.addBytes(chunk.byteLength)
+/// One encoder of the stream's frames. Rendition 0 takes `encoderConfig`;
+/// `renditionConfigs`, which must arrive before `videoStream`, adds the others.
+/// All encode the same frames with the same keyframes, so the outputs of one
+/// frame share a timestamp.
+class Rendition {
+  encoder: VideoEncoder | undefined
+  // null makes the next frame reconfigure the encoder.
+  configuredFrameSize: string | null = null
+  readonly captureTimestamps = new CaptureTimestamps()
 
-  const { init, captureTimestampMicros } = captureTimestamps.restamp(chunk)
-  const encodeDoneTimestampMicros = monotonicUnixMicros()
-  self.postMessage({
-    type: 'chunk',
-    chunk: new EncodedVideoChunk(init),
-    metadata,
-    captureTimestampMicros,
-    encodeDoneTimestampMicros,
-    encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0
-  })
+  constructor(
+    readonly index: number,
+    public config: VideoEncoderConfig | null
+  ) {}
+
+  async initialize(): Promise<boolean> {
+    const init: VideoEncoderInit = {
+      output: (chunk, metadata) => this.send(chunk, metadata),
+      error: (e: DOMException) => {
+        console.error('[videoEncoder] encoder error', e)
+        self.postMessage({ type: 'encoderError', message: e.message, rendition: this.index })
+      }
+    }
+    const config = this.config ?? buildDefaultConfig()
+    try {
+      const supported = await VideoEncoder.isConfigSupported(config)
+      if (!supported.supported) {
+        console.error('[videoEncoder] unsupported encoder config', config)
+        self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
+        return false
+      }
+    } catch (e) {
+      console.error('[videoEncoder] failed to check encoder config support', e, config)
+      self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
+      return false
+    }
+    const encoder = new VideoEncoder(init)
+    try {
+      encoder.configure(config)
+    } catch (e) {
+      console.error('[videoEncoder] configure failed', e)
+      self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
+      return false
+    }
+    this.encoder = encoder
+    this.configuredFrameSize = null
+    return true
+  }
+
+  /// Whether the encoder was reconfigured for a new frame size, which needs a keyframe.
+  configureForFrame(frame: VideoFrame): boolean {
+    const frameSize = `${frame.displayWidth}x${frame.displayHeight}`
+    if (!this.encoder || frameSize === this.configuredFrameSize) {
+      return false
+    }
+    this.configuredFrameSize = frameSize
+    const requested = this.config ?? buildDefaultConfig()
+    const config = {
+      ...requested,
+      ...fitEncodeSize(requested, { width: frame.displayWidth, height: frame.displayHeight })
+    }
+    try {
+      this.encoder.configure(config)
+    } catch (e) {
+      console.error('[videoEncoder] reconfigure failed', e)
+      self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config, rendition: this.index })
+      return false
+    }
+    return true
+  }
+
+  private send(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
+    videoBitrateLogger.addBytes(chunk.byteLength)
+    const { init, captureTimestampMicros } = this.captureTimestamps.restamp(chunk)
+    const encodeDoneTimestampMicros = monotonicUnixMicros()
+    self.postMessage({
+      type: 'chunk',
+      chunk: new EncodedVideoChunk(init),
+      metadata,
+      captureTimestampMicros,
+      encodeDoneTimestampMicros,
+      encodeQueueSize: this.encoder?.encodeQueueSize ?? 0,
+      rendition: this.index
+    })
+  }
 }
 
-async function initializeVideoEncoder() {
-  const init: VideoEncoderInit = {
-    output: sendVideoChunkMessage,
-    error: (e: DOMException) => {
-      console.error('[videoEncoder] encoder error', e)
-      self.postMessage({ type: 'encoderError', message: e.message })
-    }
-  }
-  const config = encoderConfig ?? buildDefaultConfig()
-  try {
-    const supported = await VideoEncoder.isConfigSupported(config)
-    if (!supported.supported) {
-      console.error('[videoEncoder] unsupported encoder config', config)
-      self.postMessage({ type: 'configError', reason: 'unsupported', config })
-      return undefined
-    }
-  } catch (e) {
-    console.error('[videoEncoder] failed to check encoder config support', e, config)
-    self.postMessage({ type: 'configError', reason: 'unsupported', config })
-    return undefined
-  }
-  const encoder = new VideoEncoder(init)
-  try {
-    encoder.configure(config)
-  } catch (e) {
-    console.error('[videoEncoder] configure failed', e)
-    self.postMessage({ type: 'configError', reason: 'unsupported', config })
-    return undefined
-  }
-  configuredFrameSize = null
-  return encoder
+let renditions: Rendition[] = [new Rendition(0, null)]
+
+function needsEncoder(rendition: Rendition): boolean {
+  return !rendition.encoder || rendition.encoder.state === 'closed'
 }
 
-function configureForFrame(encoder: VideoEncoder, frame: VideoFrame) {
-  const frameSize = `${frame.displayWidth}x${frame.displayHeight}`
-  if (frameSize === configuredFrameSize) {
-    return
-  }
-  configuredFrameSize = frameSize
-  const requested = encoderConfig ?? buildDefaultConfig()
-  const config = {
-    ...requested,
-    ...fitEncodeSize(requested, { width: frame.displayWidth, height: frame.displayHeight })
-  }
-  try {
-    encoder.configure(config)
-  } catch (e) {
-    console.error('[videoEncoder] reconfigure failed', e)
-    self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config })
-    return
-  }
-  forceNextKeyframe = true
+/// Whether rendition 0 has an encoder. A rendition whose encoder fails is
+/// dropped, after its `configError`, so the video goes on without it.
+async function initializeEncoders(): Promise<boolean> {
+  const pending = renditions.filter(needsEncoder)
+  const initialized = await Promise.all(pending.map((rendition) => rendition.initialize()))
+  const failed = new Set(pending.filter((_, index) => !initialized[index]))
+  renditions = renditions.filter((rendition) => rendition.index === 0 || !failed.has(rendition))
+  return !needsEncoder(renditions[0])
 }
 
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
-  captureTimestamps.reset()
-  videoEncoder = await initializeVideoEncoder()
-  if (!videoEncoder) {
+  for (const rendition of renditions) {
+    if (rendition.encoder && rendition.encoder.state !== 'closed') {
+      rendition.encoder.close()
+    }
+    rendition.encoder = undefined
+    rendition.captureTimestamps.reset()
+  }
+  if (!(await initializeEncoders())) {
     return
   }
   const videoReader = videoReadableStream.getReader()
@@ -114,34 +148,38 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     }
     const videoFrame = videoResult.value
 
-    // Check if encoder needs re-initialization
-    if (!videoEncoder || videoEncoder.state === 'closed') {
+    if (renditions.some(needsEncoder)) {
       console.log('Re-initialize video encoder')
-      videoEncoder = await initializeVideoEncoder()
       frameCounter = 0
-      if (!videoEncoder) {
+      if (!(await initializeEncoders())) {
         console.error('Failed to initialize video encoder, dropping frame')
         videoFrame.close()
         continue
       }
     }
 
-    // Too many frames in flight, encoder is overwhelmed. let's drop this frame.
-    if (videoEncoder.encodeQueueSize > 5) {
-      console.error('videoEncoder.encodeQueueSize > 5', videoEncoder.encodeQueueSize)
+    // A frame any encoder cannot take is dropped for all, so the renditions keep the same frames.
+    const busiest = Math.max(...renditions.map((rendition) => rendition.encoder?.encodeQueueSize ?? 0))
+    if (busiest > 5) {
+      console.error('videoEncoder.encodeQueueSize > 5', busiest)
       videoFrame.close()
       continue
     }
 
-    configureForFrame(videoEncoder, videoFrame)
-    const forced = forceNextKeyframe
+    let reconfigured = false
+    for (const rendition of renditions) {
+      reconfigured = rendition.configureForFrame(videoFrame) || reconfigured
+    }
+    const forced = forceNextKeyframe || reconfigured
     const keyFrame = forced || frameCounter % keyframeInterval === 0
     if (forced) {
       forceNextKeyframe = false
       frameCounter = 0
     }
-    captureTimestamps.recordCapture(videoFrame.timestamp)
-    videoEncoder.encode(videoFrame, { keyFrame })
+    for (const rendition of renditions) {
+      rendition.captureTimestamps.recordCapture(videoFrame.timestamp)
+      rendition.encoder?.encode(videoFrame, { keyFrame })
+    }
     frameCounter++
     videoFrame.close()
   }
@@ -153,8 +191,14 @@ self.onmessage = async (event) => {
   } else if (event.data.type === 'forceKeyframe') {
     forceNextKeyframe = true
   } else if (event.data.type === 'encoderConfig') {
-    encoderConfig = buildConfigFromMessage(event.data.config)
-    configuredFrameSize = null
+    renditions[0].config = buildConfigFromMessage(event.data.config)
+    renditions[0].configuredFrameSize = null
+  } else if (event.data.type === 'renditionConfigs') {
+    const configs: Parameters<typeof buildConfigFromMessage>[0][] = event.data.configs
+    renditions = [
+      renditions[0],
+      ...configs.map((config, index) => new Rendition(index + 1, buildConfigFromMessage(config)))
+    ]
   } else if (event.data.type === 'videoStream') {
     const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream
     if (!videoReadableStream) {
