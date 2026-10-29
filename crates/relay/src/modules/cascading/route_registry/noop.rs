@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
+use crate::modules::domain::track_key::TrackKey;
 
 #[derive(Debug)]
 pub(crate) struct NoopRelayRouteRegistry;
@@ -29,6 +30,21 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
     async fn find_active_namespace_publishers(
         &self,
         _track_namespace: &str,
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        Ok(Vec::new())
+    }
+
+    async fn register_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn unregister_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn find_active_track_publishers(
+        &self,
+        _track_key: &TrackKey,
     ) -> anyhow::Result<Vec<RelayInfo>> {
         Ok(Vec::new())
     }

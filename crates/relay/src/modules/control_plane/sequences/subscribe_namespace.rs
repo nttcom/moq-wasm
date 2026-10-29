@@ -99,7 +99,7 @@ impl SubscribeNameSpace {
                 false
             }
             Err(err) => {
-                tracing::warn!(?err, track_namespace_prefix = %track_namespace_prefix, "failed to register namespace subscription route");
+                tracing::warn!(error = ?err, track_namespace_prefix = %track_namespace_prefix, "failed to register namespace subscription route");
                 false
             }
         }
@@ -159,7 +159,7 @@ impl SubscribeNameSpace {
             Ok(routes) => routes,
             Err(err) => {
                 tracing::warn!(
-                    ?err,
+                    error = ?err,
                     session_id = session_id,
                     track_namespace_prefix = %track_namespace_prefix,
                     "failed to find remote namespace routes"

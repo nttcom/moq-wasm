@@ -1,4 +1,6 @@
 use crate::modules::{
+    cascading::route_registry::RelayRouteRegistry,
+    control_plane::sequences::publish::Publish,
     data_plane::{cache::store::TrackCacheStore, ingress::ingress_coordinator::IngressCommand},
     domain::{
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
@@ -18,6 +20,7 @@ impl UpstreamPublishDone {
         table: &InMemoryLocalPubSubDirectory,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         cache_store: &TrackCacheStore,
+        route_registry: &dyn RelayRouteRegistry,
     ) {
         let Some(track_key) =
             table.end_upstream_subscription(publisher_session_id, upstream_request_id, end)
@@ -29,6 +32,7 @@ impl UpstreamPublishDone {
         if !table.has_track_publisher(&track_key) {
             cache_store.publisher_left(&track_key);
         }
+        Publish::withdraw_track_route(table, route_registry, &track_key).await;
     }
 }
 
@@ -37,6 +41,7 @@ mod tests {
     use super::*;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
+        cascading::route_registry::NoopRelayRouteRegistry,
         domain::{
             pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer,
             track_key::TrackKey,
@@ -60,6 +65,7 @@ mod tests {
                 &ctx.table,
                 &ctx.ingress_sender,
                 &TrackCacheStore::new(),
+                &NoopRelayRouteRegistry,
             )
             .await;
     }

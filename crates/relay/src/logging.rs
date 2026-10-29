@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use opentelemetry::trace::TraceContextExt as _;
+use opentelemetry::trace::{Status, TraceContextExt as _};
 use telemetry::{LogOutput, TelemetryConfig, TelemetryGuard};
 use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -10,6 +10,11 @@ use crate::config::{non_empty_env, relay_id};
 /// For a span that roots its own trace but starts from another span's work.
 pub(crate) fn link_span(span: &Span, linked: &Span) {
     span.add_link(linked.context().span().span_context().clone());
+}
+
+/// The trace exporter drops log events, so an ERROR log alone leaves its span OK.
+pub(crate) fn mark_current_span_failed(description: String) {
+    Span::current().set_status(Status::error(description));
 }
 
 pub(crate) fn relay_hostname() -> &'static str {

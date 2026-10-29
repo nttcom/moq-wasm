@@ -48,6 +48,7 @@ struct PubSubResult {
 enum PublisherSetup {
     PublishNamespaceOnly,
     PublishNamespaceAndTrack,
+    TrackOnly,
 }
 
 impl Drop for PubSubResult {
@@ -167,6 +168,16 @@ async fn run(config: Config) -> anyhow::Result<()> {
     )
     .await?;
 
+    run_publish_only_scenario(
+        &config.redis_url,
+        "relay-a",
+        &config.relay_a_url,
+        &config.relay_b_url,
+        &scenario_namespace(&config.track_namespace, &run_id, "publish-only-a-to-b"),
+        &config.track_name,
+    )
+    .await?;
+
     run_namespace_catalog_track_scenario(
         "dual relay namespace -> catalog -> track relay-a to relay-b",
         &config.relay_a_url,
@@ -273,6 +284,67 @@ async fn run_namespace_cleanup_scenario(
     Ok(())
 }
 
+/// A track published with PUBLISH alone is found from the other relay through
+/// a track route, removed when the publisher leaves; PUBLISH registers no
+/// namespace route.
+async fn run_publish_only_scenario(
+    redis_url: &str,
+    publisher_relay_id: &str,
+    publisher_url: &str,
+    subscriber_url: &str,
+    track_namespace: &str,
+    track_name: &str,
+) -> anyhow::Result<()> {
+    let route_key = track_publisher_key(track_namespace, track_name);
+    let result = run_pub_sub_scenario(
+        "dual relay pub/sub publish only relay-a to relay-b",
+        publisher_url,
+        subscriber_url,
+        track_namespace,
+        track_name,
+        None,
+        PublisherSetup::TrackOnly,
+    )
+    .await?;
+
+    wait_for_hash_field(
+        redis_url,
+        &route_key,
+        publisher_relay_id,
+        Some("active"),
+        Duration::from_secs(5),
+    )
+    .await
+    .context("publisher relay did not register PUBLISH route")?;
+    if let Some(status) = hash_field(
+        redis_url,
+        &namespace_publisher_key(track_namespace),
+        publisher_relay_id,
+    )
+    .await?
+    {
+        bail!("PUBLISH registered a namespace route ({status})");
+    }
+
+    tracing::info!(
+        relay_id = publisher_relay_id,
+        %route_key,
+        "dropping publisher session and waiting for PUBLISH route cleanup"
+    );
+    drop(result);
+
+    wait_for_hash_field(
+        redis_url,
+        &route_key,
+        publisher_relay_id,
+        None,
+        Duration::from_secs(15),
+    )
+    .await
+    .context("publisher relay did not remove PUBLISH route after session close")?;
+    Ok(())
+}
+
 async fn run_lost_route_restore_scenario(
     redis_url: &str,
     publisher_relay_id: &str,
@@ -350,11 +422,13 @@ async fn run_pub_sub_scenario(
 
     let publisher_session = Arc::new(connect_with_retry(publisher_url).await?);
     let publisher = publisher_session.publisher();
-    publisher
-        .publish_namespace(track_namespace.to_string())
-        .await
-        .context("publisher failed to publish namespace")?;
-    let published_resource = if let PublisherSetup::PublishNamespaceAndTrack = publisher_setup {
+    if !matches!(publisher_setup, PublisherSetup::TrackOnly) {
+        publisher
+            .publish_namespace(track_namespace.to_string())
+            .await
+            .context("publisher failed to publish namespace")?;
+    }
+    let published_resource = if !matches!(publisher_setup, PublisherSetup::PublishNamespaceOnly) {
         let subscription = publisher
             .publish(
                 track_namespace.to_string(),
@@ -1181,6 +1255,10 @@ fn namespace_subscription_key(prefix: &str) -> String {
 
 fn namespace_publisher_key(track_namespace: &str) -> String {
     format!("route:publisher:namespace:{track_namespace}")
+}
+
+fn track_publisher_key(track_namespace: &str, track_name: &str) -> String {
+    format!("route:publisher:track:{track_namespace}:{track_name}")
 }
 
 fn relay_key(relay_id: &str) -> String {

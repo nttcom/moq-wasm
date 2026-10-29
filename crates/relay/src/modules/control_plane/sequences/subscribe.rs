@@ -29,8 +29,8 @@ use tracing::Span;
 pub(crate) mod upstream_join_task;
 
 use upstream_join_task::{
-    UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, next_answered, send_upstream_subscribes,
-    subscribe_initiated,
+    UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, end_if_publisher_gone, next_answered,
+    send_upstream_subscribes, subscribe_initiated,
 };
 
 pub(crate) struct Subscribe;
@@ -161,15 +161,9 @@ impl Subscribe {
             {
                 Ok(upstream_subscription) => upstream_subscription,
                 Err(err) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "failed to get or create upstream subscription"
-                    );
                     let (code, reason_phrase) = err.subscribe_error_response();
                     if let Err(send_error) = self
-                        .response_error(handler.as_ref(), code, reason_phrase)
+                        .response_error(session_id, handler.as_ref(), code, reason_phrase)
                         .await
                     {
                         tracing::error!(
@@ -231,7 +225,7 @@ impl Subscribe {
                 "upstream subscription ended before the downstream subscription was accepted; retrying"
             );
         }
-        self.response_track_gone(handler.as_ref()).await;
+        self.response_track_gone(session_id, handler.as_ref()).await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -353,64 +347,77 @@ impl Subscribe {
             publishers,
         );
         let mut last_error = None;
-        let (pub_session_id, publisher_peer, subscription) = loop {
+        let mut publisher_left = false;
+        let (pub_session_id, active_upstream) = loop {
             let Some(answered) = next_answered(&mut pending).await else {
-                return Err(UpstreamSubscriptionError::SubscribeFailed(
-                    last_error.unwrap_or_else(|| {
-                        anyhow::anyhow!("no upstream publisher could be reached")
-                    }),
-                ));
+                return Err(match last_error {
+                    Some(error) => UpstreamSubscriptionError::SubscribeFailed(error),
+                    None if publisher_left => UpstreamSubscriptionError::PublisherNotFound,
+                    None => UpstreamSubscriptionError::SubscribeFailed(anyhow::anyhow!(
+                        "no upstream publisher could be reached"
+                    )),
+                });
             };
-            match answered.subscribed {
-                Ok(subscription) => {
-                    break (
-                        answered.publisher_session_id,
-                        answered.publisher_peer,
-                        subscription,
-                    );
-                }
+            let pub_session_id = answered.publisher_session_id;
+            let subscription = match answered.subscribed {
+                Ok(subscription) => subscription,
                 Err(error) => {
                     tracing::warn!(
                         %error,
-                        publisher_session_id = %answered.publisher_session_id,
+                        publisher_session_id = %pub_session_id,
                         track_namespace = %track_namespace,
                         track_name = %track_name,
                         "upstream SUBSCRIBE failed"
                     );
                     last_error = Some(error);
+                    continue;
                 }
+            };
+            tracing::debug!(
+                publisher_session_id = %pub_session_id,
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                track_alias = subscription.track_alias(),
+                expires = subscription.expires().unwrap_or(0),
+                "upstream SUBSCRIBE_OK received"
+            );
+
+            let active_upstream = subscribe_initiated(&subscription, answered.publisher_peer);
+            let upstream_request_id = subscription.request_id();
+            if !super::start_ingress(
+                ingress_sender,
+                IngressStartRequest {
+                    subscriber_session_id: session_id,
+                    publisher_session_id: pub_session_id,
+                    track_key: track_key.clone(),
+                    subscription,
+                    parent_span: Span::current(),
+                },
+            )
+            .await
+            {
+                return Err(UpstreamSubscriptionError::IngressStartFailed);
             }
+            table.register_upstream_subscription(
+                track_key.clone(),
+                pub_session_id,
+                active_upstream.clone(),
+            );
+            if end_if_publisher_gone(
+                table,
+                forwarder,
+                ingress_sender,
+                &track_key,
+                pub_session_id,
+                upstream_request_id,
+            )
+            .await
+            {
+                publisher_left = true;
+                continue;
+            }
+            break (pub_session_id, active_upstream);
         };
-        tracing::debug!(
-            publisher_session_id = %pub_session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name,
-            track_alias = subscription.track_alias(),
-            expires = subscription.expires().unwrap_or(0),
-            "upstream SUBSCRIBE_OK received"
-        );
-
-        let active_upstream = subscribe_initiated(&subscription, publisher_peer);
-
-        if !super::start_ingress(
-            ingress_sender,
-            IngressStartRequest {
-                subscriber_session_id: session_id,
-                publisher_session_id: pub_session_id,
-                track_key: track_key.clone(),
-                subscription,
-                parent_span: Span::current(),
-            },
-        )
-        .await
-        {
-            return Err(UpstreamSubscriptionError::IngressStartFailed);
-        }
-        table.register_upstream_subscription(
-            track_key.clone(),
-            pub_session_id,
-            active_upstream.clone(),
-        );
         tracing::debug!(
             publisher_session_id = %pub_session_id,
             track_namespace = %track_namespace,
@@ -467,6 +474,7 @@ impl Subscribe {
         {
             let _ = self
                 .response_error(
+                    session_id,
                     handler,
                     RequestErrorCode::TrackDoesNotExist,
                     "malformed track".to_string(),
@@ -574,9 +582,10 @@ impl Subscribe {
         Acceptance::Answered
     }
 
-    async fn response_track_gone(&self, handler: &dyn SubscribeHandler) {
+    async fn response_track_gone(&self, session_id: SessionId, handler: &dyn SubscribeHandler) {
         let _ = self
             .response_error(
+                session_id,
                 handler,
                 RequestErrorCode::TrackDoesNotExist,
                 "track is no longer available".to_string(),
@@ -591,6 +600,7 @@ impl Subscribe {
     )]
     async fn response_error(
         &self,
+        session_id: SessionId,
         handler: &dyn SubscribeHandler,
         code: RequestErrorCode,
         reason_phrase: String,
@@ -598,6 +608,7 @@ impl Subscribe {
         let track_namespace = handler.track_namespace();
         let track_name = handler.track_name();
         tracing::warn!(
+            session_id,
             request_id = handler.subscribe_id(),
             track_namespace = %track_namespace,
             track_name = %track_name,
@@ -611,6 +622,8 @@ impl Subscribe {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::OnceLock;
+
     use super::*;
     use crate::modules::auth::verified_token::VerifiedToken;
     use crate::modules::cascading::inter_relay_connection_manager::InterRelayConnectionManager;
@@ -620,6 +633,7 @@ mod tests {
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
         session_peer::SessionPeer,
     };
+    use crate::modules::session::session_repository::SessionRepository;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, active_upstream, local_publisher_resolver, track_key, upstream_track,
@@ -752,17 +766,28 @@ mod tests {
         Arc<InMemoryLocalPubSubDirectory>,
         Result<UpstreamTrackAccess, UpstreamSubscriptionError>,
     ) {
+        let publisher_session_ids = publishers.iter().map(|(id, _)| *id).collect();
+        let repository =
+            session_repository_with_sessions(publishers, VerifiedToken::full_access()).await;
+        subscribe_through(repository, publisher_session_ids).await
+    }
+
+    async fn subscribe_through(
+        repository: Arc<tokio::sync::Mutex<SessionRepository>>,
+        publisher_session_ids: Vec<SessionId>,
+    ) -> (
+        Arc<InMemoryLocalPubSubDirectory>,
+        Result<UpstreamTrackAccess, UpstreamSubscriptionError>,
+    ) {
         const SUBSCRIBER_SESSION: SessionId = 2;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        for (publisher_session_id, _) in &publishers {
+        for publisher_session_id in publisher_session_ids {
             table.register_publish_namespace(
-                *publisher_session_id,
+                publisher_session_id,
                 "ns".to_string(),
                 SessionPeer::Client,
             );
         }
-        let repository =
-            session_repository_with_sessions(publishers, VerifiedToken::full_access()).await;
         let forwarder = ControlMessageForwarder { repository };
         let resolver = Arc::new(local_publisher_resolver());
         let (ingress_sender, mut ingress_receiver) = tokio::sync::mpsc::channel(4);
@@ -877,6 +902,41 @@ mod tests {
             wait_track_publishers(&table, vec![DEAD_PUBLISHER_SESSION, NEW_PUBLISHER_SESSION])
                 .await,
             vec![DEAD_PUBLISHER_SESSION, NEW_PUBLISHER_SESSION]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publisher_closing_while_answering_is_not_registered() {
+        // Arrange: the session leaves the repository as it sends SUBSCRIBE_OK
+        let cell = Arc::new(OnceLock::<Arc<tokio::sync::Mutex<SessionRepository>>>::new());
+        let closing_cell = cell.clone();
+        let closing_session = mock_session_answering_subscribe(move || {
+            let repository = closing_cell.get().unwrap();
+            repository
+                .try_lock()
+                .unwrap()
+                .remove(DEAD_PUBLISHER_SESSION);
+            moqt::object::ContentExists::False
+        });
+        let repository = session_repository_with_sessions(
+            vec![(DEAD_PUBLISHER_SESSION, closing_session)],
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let _ = cell.set(repository.clone());
+
+        // Act
+        let (table, created) = subscribe_through(repository, vec![DEAD_PUBLISHER_SESSION]).await;
+
+        // Assert
+        assert!(matches!(
+            created,
+            Err(UpstreamSubscriptionError::PublisherNotFound)
+        ));
+        assert!(
+            table
+                .get_upstream_track(&TrackKey::new("ns", "track"))
+                .is_none()
         );
     }
 

@@ -124,7 +124,7 @@ impl PublishNamespace {
         {
             Ok(relays) => relays,
             Err(err) => {
-                tracing::warn!(?err, %track_namespace, "failed to find publisher relays to join");
+                tracing::warn!(error = ?err, %track_namespace, "failed to find publisher relays to join");
                 return;
             }
         };
@@ -219,7 +219,7 @@ impl PublishNamespace {
         else {
             return true;
         };
-        tracing::warn!(?err, track_namespace = %track_namespace, "failed to register namespace route");
+        tracing::warn!(error = ?err, track_namespace = %track_namespace, "failed to register namespace route");
         if handler
             .error(
                 RequestErrorCode::InternalError,
@@ -253,7 +253,7 @@ impl PublishNamespace {
             Ok(routes) => routes,
             Err(err) => {
                 tracing::warn!(
-                    ?err,
+                    error = ?err,
                     track_namespace = %track_namespace,
                     "failed to find remote namespace subscribers"
                 );

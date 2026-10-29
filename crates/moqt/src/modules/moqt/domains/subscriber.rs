@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::Instrument;
 
 use crate::{
-    RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
+    RequestErrorCode, RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
     fetch::FetchOption,
     modules::moqt::{
         control_plane::{
@@ -22,7 +22,7 @@ use crate::{
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
         domains::{
-            connection::{Connection, logical_id},
+            connection::{Connection, generation_of, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
             session_context::{CarriedSubscription, SessionContext},
@@ -46,10 +46,10 @@ pub struct Subscriber {
 
 impl Subscriber {
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.subscribe_namespace",
         skip_all,
-        fields(namespace = %namespace)
+        fields(track_namespace_prefix = %namespace)
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
         let mut carried = self.session.lock_carried().await;
@@ -61,7 +61,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.subscribe",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name, subscriber_priority = option.subscriber_priority, forward = option.forward)
@@ -134,7 +134,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.track_status",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
@@ -197,7 +197,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.fetch",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
@@ -232,7 +232,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.fetch_cancel",
         skip_all,
         fields(request_id = %fetch.request_id)
@@ -250,14 +250,17 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.fetch_relative_joining",
         skip_all,
         fields(joining_request_id = %subscription.request_id(), joining_start = %joining_start)
     )]
     /// Sends a Relative Joining FETCH for `subscription` (draft-14 §9.16.2):
     /// the range starts at object 0 of the group `joining_start` groups
-    /// before the subscription's Largest Location.
+    /// before the subscription's Largest Location. On a connection after the one
+    /// the subscription was first sent on (the session followed a GOAWAY), the
+    /// same range goes as a Standalone FETCH instead; there, a subscription with
+    /// no Largest Location fails with INVALID_RANGE without sending a request.
     pub async fn fetch_relative_joining(
         &mut self,
         subscription: &Subscription,
@@ -279,9 +282,29 @@ impl Subscriber {
             }),
             ContentExists::False => None,
         };
-        let fetch_params = FetchParams::RelativeJoining {
-            joining_request_id,
-            joining_start,
+        // A later connection holds the subscription with a `resumed_filter`, never
+        // Largest Object, so a Joining FETCH may not join it.
+        let fetch_params = if connection.generation == generation_of(subscription.request_id()) {
+            FetchParams::RelativeJoining {
+                joining_request_id,
+                joining_start,
+            }
+        } else {
+            let (ContentExists::True { location }, Some(remainder)) =
+                (subscription.content_exists(), &remainder)
+            else {
+                return Err(RequestFailure::Rejected {
+                    request_id: subscription.request_id(),
+                    code: RequestErrorCode::InvalidRange,
+                    reason: "no objects were published before the SUBSCRIBE".to_string(),
+                });
+            };
+            FetchParams::Standalone {
+                track_namespace: namespace_tuple(&remainder.track_namespace),
+                track_name: remainder.track_name.clone(),
+                start_location: remainder.start,
+                end_location: location.next(),
+            }
         };
         self.send_fetch(connection, fetch_params, option, remainder)
             .await
@@ -347,7 +370,7 @@ impl Subscriber {
     /// The draft defines no response, so this returns once the message is
     /// written.
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.subscribe_update",
         skip_all,
         fields(subscription_request_id = subscription.request_id(), forward = option.forward)
@@ -427,7 +450,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.unsubscribe",
         skip_all,
         fields(request_id = %subscription.request_id())
@@ -449,10 +472,10 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.unsubscribe_namespace",
         skip_all,
-        fields(namespace = %namespace)
+        fields(track_namespace_prefix = %namespace)
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         if let Some(carried) = self.session.lock_carried().await.as_mut() {
@@ -525,7 +548,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.accept_fetch_receiver",
         skip_all,
         fields(request_id = fetch_handle.request_id)
@@ -563,7 +586,7 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "info",
+        level = "debug",
         name = "moqt.subscriber.accept_data_receiver",
         skip_all,
         fields(track_alias = subscription.track_alias())
@@ -581,7 +604,7 @@ impl Subscriber {
             .remove(&track_alias)
             .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?;
         let stream_with_object = {
-            let span = tracing::info_span!(
+            let span = tracing::debug_span!(
                 "moqt.subscriber.wait_first_object",
                 track_alias = track_alias,
                 object_kind = tracing::field::Empty,

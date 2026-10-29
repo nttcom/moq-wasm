@@ -58,8 +58,11 @@ impl IngressCoordinator {
                 tokio::select! {
                     Some(command) = command_receiver.recv() => {
                         match command {
-                        IngressCommand::Start(command) => {
+                        IngressCommand::Start(mut command) => {
                         let track_key = command.track_key.clone();
+                        // The task waits for the first object, so holding the request
+                        // span would keep its trace unexported until then.
+                        let request_span = std::mem::replace(&mut command.parent_span, Span::none());
                         tracing::debug!(
                             subscriber_session_id = %command.subscriber_session_id,
                             publisher_session_id = %command.publisher_session_id,
@@ -76,7 +79,7 @@ impl IngressCoordinator {
                             };
                             let publisher_session_span = session_repo
                                 .session_span(command.publisher_session_id)
-                                .unwrap_or_else(|| command.parent_span.clone());
+                                .unwrap_or_else(Span::none);
                             // Only the relay a client publishes to keeps the
                             // payloads on disk; downstream relays fetch from it.
                             let persist = session_repo.is_client_session(command.publisher_session_id);
@@ -94,7 +97,7 @@ impl IngressCoordinator {
                         let (create_stop_sender, mut create_stop_receiver) = watch::channel(false);
                         create_stop_senders.insert(create_key, (create_id, create_stop_sender));
                         let create_receiver_span = tracing::info_span!(
-                            parent: &command.parent_span,
+                            parent: None,
                             "relay.upstream.ingress",
                             subscriber_session_id = command.subscriber_session_id,
                             publisher_session_id = command.publisher_session_id,
@@ -103,6 +106,7 @@ impl IngressCoordinator {
                             track_namespace = %track_key.track_namespace,
                             track_name = %track_key.track_name,
                         );
+                        link_span(&create_receiver_span, &request_span);
                         link_span(&create_receiver_span, &publisher_session_span);
                         join_set.spawn(async move {
                             let subscription = command.subscription;
@@ -115,8 +119,9 @@ impl IngressCoordinator {
                                 }
                                 receiver = subscriber.create_data_receiver(&subscription) => receiver,
                             };
-                            let Ok(receiver) = receiver_result else {
-                                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to start upstream ingress");
+                            let Ok(receiver) = receiver_result.inspect_err(|error| {
+                                tracing::warn!(%error, track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to start upstream ingress");
+                            }) else {
                                 return (track_key, publisher_session_id, create_id);
                             };
                             tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "track ingress started");
@@ -132,7 +137,7 @@ impl IngressCoordinator {
                                         track_namespace = %track_key.track_namespace,
                                         track_name = %track_key.track_name,
                                     );
-                                    link_span(&dataplane_track_span, &command.parent_span);
+                                    link_span(&dataplane_track_span, &Span::current());
                                     IngestSource::Stream { factory, track_span: dataplane_track_span }
                                 }
                                 DataReceiver::Datagram(datagram_receiver) => IngestSource::Datagram(datagram_receiver),

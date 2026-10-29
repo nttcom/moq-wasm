@@ -67,7 +67,7 @@ impl UnsubscribeNamespace {
             .await
         {
             tracing::warn!(
-                ?err,
+                error = ?err,
                 track_namespace_prefix = %track_namespace_prefix,
                 "failed to unregister namespace subscription route"
             );
@@ -86,7 +86,7 @@ impl UnsubscribeNamespace {
                 .await
             {
                 tracing::warn!(
-                    ?err,
+                    error = ?err,
                     relay_id = %route.relay_id,
                     session_id = session_id,
                     track_namespace_prefix = %track_namespace_prefix,
@@ -107,7 +107,7 @@ impl UnsubscribeNamespace {
             Ok(routes) => routes,
             Err(err) => {
                 tracing::warn!(
-                    ?err,
+                    error = ?err,
                     track_namespace_prefix = %track_namespace_prefix,
                     "failed to find namespace routes for UNSUBSCRIBE_NAMESPACE"
                 );
@@ -125,7 +125,7 @@ impl UnsubscribeNamespace {
                 Ok(publisher_relays) => publisher_relays,
                 Err(err) => {
                     tracing::warn!(
-                        ?err,
+                        error = ?err,
                         track_namespace = %namespace_route.track_namespace,
                         "failed to find publisher relays for UNSUBSCRIBE_NAMESPACE"
                     );

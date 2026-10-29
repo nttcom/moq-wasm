@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use moqt::RequestErrorCode;
 
+use crate::logging::mark_current_span_failed;
+
 #[async_trait]
 pub(crate) trait FetchHandler: 'static + Send + Sync {
     fn request_id(&self) -> u64;
@@ -51,6 +53,7 @@ impl FetchHandler for moqt::fetch::FetchHandler {
         code: RequestErrorCode,
         reason: String,
     ) -> Result<(), moqt::TransportSendError> {
+        mark_current_span_failed(format!("{code:?}"));
         self.error(code, reason).await
     }
 }

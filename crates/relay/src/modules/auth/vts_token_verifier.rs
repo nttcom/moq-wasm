@@ -41,8 +41,20 @@ impl VtsTokenVerifier {
 
 #[async_trait]
 impl TokenVerifier for VtsTokenVerifier {
-    #[tracing::instrument(name = "relay.vts.verify", skip_all)]
+    #[tracing::instrument(
+        name = "relay.vts.verify",
+        skip_all,
+        fields(outcome = tracing::field::Empty)
+    )]
     async fn verify(&self, token: &str) -> Result<VerifiedToken, VerifyError> {
+        let result = self.request_verification(token).await;
+        tracing::Span::current().record("outcome", outcome(&result));
+        result
+    }
+}
+
+impl VtsTokenVerifier {
+    async fn request_verification(&self, token: &str) -> Result<VerifiedToken, VerifyError> {
         let mut headers = HeaderMap::new();
         telemetry::inject_trace_context(&tracing::Span::current(), &mut headers);
         let response = self
@@ -77,9 +89,35 @@ impl TokenVerifier for VtsTokenVerifier {
     }
 }
 
+fn outcome(result: &Result<VerifiedToken, VerifyError>) -> &'static str {
+    match result {
+        Ok(_) => "verified",
+        Err(VerifyError::Unauthorized(_)) => "unauthorized",
+        Err(VerifyError::Unavailable(_)) => "unavailable",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::modules::auth::token_claims::SignedToken;
+    use super::outcome;
+    use crate::modules::auth::{
+        token_claims::SignedToken, token_verifier::VerifyError, verified_token::VerifiedToken,
+    };
+
+    #[test]
+    fn outcome_names_each_verification_result() {
+        // Arrange
+        let verified = Ok(VerifiedToken::full_access());
+        let rejected = Err(VerifyError::Unauthorized("token expired".to_string()));
+        let unreachable = Err(VerifyError::Unavailable(anyhow::anyhow!(
+            "connection refused"
+        )));
+
+        // Act / Assert
+        assert_eq!(outcome(&verified), "verified");
+        assert_eq!(outcome(&rejected), "unauthorized");
+        assert_eq!(outcome(&unreachable), "unavailable");
+    }
 
     #[test]
     fn response_carries_the_raw_claims_and_the_relay_flag() {

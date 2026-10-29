@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use moqt::RequestErrorCode;
 use moqt::{AuthorizationToken, object::ContentExists};
 
+use crate::logging::mark_current_span_failed;
+
 #[async_trait]
 pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
     fn request_id(&self) -> u64;
@@ -56,6 +58,7 @@ impl TrackStatusHandler for moqt::subscribe::TrackStatusHandler {
         code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
+        mark_current_span_failed(format!("{code:?}"));
         self.error(code, reason_phrase).await
     }
 }

@@ -138,7 +138,7 @@ impl Fetch {
                     .get_upstream_track(&target.track_key)
                     .and_then(|upstream_track| upstream_track.max_cache_duration());
                 if let Err(e) = handler.ok(false, end_location, max_cache_duration).await {
-                    tracing::error!(?e, "Failed to send FETCH_OK");
+                    tracing::error!(error = ?e, "Failed to send FETCH_OK");
                     return;
                 }
 
@@ -154,7 +154,7 @@ impl Fetch {
                     .send(EgressCommand::StartFetch(fetch_request))
                     .await
                 {
-                    tracing::error!(?e, "Failed to send fetch request to egress");
+                    tracing::error!(error = ?e, "Failed to send fetch request to egress");
                 }
             }
             FetchSource::Upstream => {
@@ -440,7 +440,7 @@ impl Fetch {
                 resolve_joining_fetch(joining_start, sub.join_point).map(|range| (sub, range))
             })
             .map_err(|error| {
-                tracing::warn!(joining_request_id, %error, "Joining fetch rejected");
+                tracing::warn!(session_id, joining_request_id, %error, "Joining fetch rejected");
                 FetchError::Joining(error)
             })?;
 

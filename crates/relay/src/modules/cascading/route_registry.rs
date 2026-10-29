@@ -6,6 +6,8 @@ pub(crate) use redis::RedisRelayRouteRegistry;
 
 use async_trait::async_trait;
 
+use crate::modules::domain::track_key::TrackKey;
+
 #[derive(Clone, Debug)]
 pub(crate) struct RelayInfo {
     pub(crate) relay_id: String,
@@ -42,6 +44,14 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
     async fn find_active_namespace_publishers(
         &self,
         track_namespace: &str,
+    ) -> anyhow::Result<Vec<RelayInfo>>;
+    /// A track published with PUBLISH alone has no namespace route; other
+    /// relays find it by its Full Track Name (draft-14 §8.4).
+    async fn register_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()>;
+    async fn unregister_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()>;
+    async fn find_active_track_publishers(
+        &self,
+        track_key: &TrackKey,
     ) -> anyhow::Result<Vec<RelayInfo>>;
     /// A relay watching a namespace (receiving one of its tracks for a client)
     /// is told about every publisher that later announces it, like a

@@ -12,6 +12,7 @@ use redis::AsyncCommands;
 use tokio::sync::watch;
 
 use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
+use crate::modules::domain::track_key::TrackKey;
 
 #[derive(Clone, Copy)]
 enum RouteKind {
@@ -91,10 +92,10 @@ impl RedisRelayRouteRegistry {
                 loop {
                     interval.tick().await;
                     if let Err(err) = registry.register_relay().await {
-                        tracing::warn!(?err, relay_id = %registry.relay.relay_id, "failed to refresh relay heartbeat");
+                        tracing::warn!(error = ?err, relay_id = %registry.relay.relay_id, "failed to refresh relay heartbeat");
                     }
                     if let Err(err) = registry.refresh_owned_routes().await {
-                        tracing::warn!(?err, relay_id = %registry.relay.relay_id, "failed to refresh owned routes");
+                        tracing::warn!(error = ?err, relay_id = %registry.relay.relay_id, "failed to refresh owned routes");
                     }
                 }
             })
@@ -158,7 +159,7 @@ impl RedisRelayRouteRegistry {
             match self.invoke_register_script(*kind, key).await {
                 Ok(()) => tracing::warn!(route_key = %key, "restored route lost from redis"),
                 Err(err) => {
-                    tracing::warn!(?err, route_key = %key, "failed to restore route lost from redis")
+                    tracing::warn!(error = ?err, route_key = %key, "failed to restore route lost from redis")
                 }
             }
         }
@@ -260,6 +261,15 @@ impl RedisRelayRouteRegistry {
         format!("{}{track_namespace}", Self::PUBLISHER_NAMESPACE_KEY_PREFIX)
     }
 
+    /// Outside `PUBLISHER_NAMESPACE_KEY_PREFIX`, so a namespace subscriber
+    /// is not told about a namespace no publisher announced.
+    fn publisher_track_key(track_key: &TrackKey) -> String {
+        format!(
+            "route:publisher:track:{}:{}",
+            track_key.track_namespace, track_key.track_name
+        )
+    }
+
     fn subscriber_namespace_key(track_namespace_prefix: &str) -> String {
         format!("route:subscriber:namespace:{track_namespace_prefix}")
     }
@@ -324,6 +334,25 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         track_namespace: &str,
     ) -> anyhow::Result<Vec<RelayInfo>> {
         self.find_active_routes(Self::publisher_namespace_key(track_namespace))
+            .await
+    }
+
+    async fn register_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()> {
+        Ok(self
+            .register_route(RouteKind::Upsert, Self::publisher_track_key(track_key))
+            .await?)
+    }
+
+    async fn unregister_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()> {
+        self.unregister_route(&Self::publisher_track_key(track_key))
+            .await
+    }
+
+    async fn find_active_track_publishers(
+        &self,
+        track_key: &TrackKey,
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        self.find_active_routes(Self::publisher_track_key(track_key))
             .await
     }
 
