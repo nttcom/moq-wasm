@@ -55,7 +55,10 @@ async function subscribeForPlayback(subscriber: SubscriberPageModel): Promise<vo
   // Act: catalog を購読して配信中トラックの一覧を取得する。
   await subscriber.catalogSubscribeButton.click()
   // Assert: catalog が読み込まれ、購読候補のトラック情報が表示されることを確認する。
-  await expect(subscriber.catalogStatus).toContainText('Catalog loaded:')
+  await expect(subscriber.catalogStatus).toContainText('Catalog loaded: video=2')
+
+  // Act: 映像には source と同じフレームから作る rendition を選ぶ。
+  await subscriber.videoTrackSelect.selectOption('video_low')
 
   // Act: 映像トラックの subscribe を開始する。
   await subscriber.trackSubscribeButton.click()
@@ -67,13 +70,13 @@ async function expectVideoMuteToLeaveAndRejoinTheCatalog(
 ): Promise<void> {
   // Act: Publisher の映像をミュートする。
   await publisher.muteVideoButton.click()
-  // Assert: 映像 track が catalog から外れ、Subscriber の catalog に映像が無くなったことを確認する。
+  // Assert: 映像と rendition の track が catalog から外れたことを確認する。
   await expect(subscriber.catalogStatus).toContainText('video=0')
 
   // Act: ミュートを解除する。
   await publisher.muteVideoButton.click()
-  // Assert: 映像 track がもう一度 catalog に載ったことを確認する。
-  await expect(subscriber.catalogStatus).toContainText('video=1')
+  // Assert: 映像と rendition の track がもう一度 catalog に載ったことを確認する。
+  await expect(subscriber.catalogStatus).toContainText('video=2')
   // Assert: 解除後も映像の送信が失敗せずに続くことを確認する。
   await publisher.sendStatus.page().waitForTimeout(2_000)
   await expect(publisher.sendStatus).toHaveText('Video unmuted')

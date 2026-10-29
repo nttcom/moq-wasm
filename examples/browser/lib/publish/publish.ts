@@ -10,8 +10,23 @@ export type PublishOptions = {
   /// Replaces the encoder's H.264 default; the broadcast takes H.264, VP8, VP9
   /// and AV1.
   videoEncoderConfig?: VideoEncoderConfig
+  /// Renditions of the video, each in the track `video_<name>` and encoded
+  /// from the video's frames.
+  renditions?: Rendition[]
   onError?: (error: unknown) => void
 }
+
+export type Rendition = {
+  name: string
+  label: string
+  width: number
+  height: number
+  /// Bits per second.
+  bitrate: number
+}
+
+/// The codec of the video encoder worker's `buildDefaultConfig`.
+const DEFAULT_VIDEO_CODEC = 'avc1.640028'
 
 export type MediaKind = 'video' | 'audio'
 
@@ -42,6 +57,9 @@ export async function publish(
   const broadcast = session.broadcast(namespace, options.videoLabel)
   await broadcast.announce()
   const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
+  const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
+    broadcast.addRendition(name, label, bitrate)
+  )
   // A new encoder worker stamps its first chunk 0, so the chunks of a worker
   // started after an unmute or a replaced track are shifted by the time since
   // the publication began: the broadcast's timestamps never run backwards,
@@ -50,7 +68,7 @@ export async function publish(
   const encode = (kind: MediaKind, track: MediaStreamTrack) => {
     const offsetMicros = Math.round((performance.now() - startedAtMs) * 1000)
     return kind === 'video'
-      ? encodeVideo(broadcast, track, options, offsetMicros, report)
+      ? encodeVideo(broadcast, track, options, renditionIndices, offsetMicros, report)
       : encodeAudio(broadcast, track, offsetMicros, report)
   }
   const sources = new Map<MediaKind, Source>()
@@ -116,25 +134,45 @@ function encodeVideo(
   broadcast: MediaBroadcast,
   track: MediaStreamTrack,
   options: PublishOptions,
+  renditionIndices: number[],
   offsetMicros: number,
   report: (error: unknown) => void
 ): Worker {
   const worker = new Worker(new URL('../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
     type: 'module'
   })
-  let configuredCodec: string | undefined
-  worker.onmessage = (event: MessageEvent<ChunkMessage<EncodedVideoChunk, EncodedVideoChunkMetadata>>) => {
+  const configuredCodecs: (string | undefined)[] = []
+  worker.onmessage = (
+    event: MessageEvent<
+      (ChunkMessage<EncodedVideoChunk, EncodedVideoChunkMetadata> | { type: 'configError' | 'encoderError' }) & {
+        rendition: number
+      }
+    >
+  ) => {
+    if (event.data.type === 'configError' || event.data.type === 'encoderError') {
+      report(new Error(`video encoder ${event.data.rendition}: ${event.data.type}`))
+      return
+    }
     if (event.data.type !== 'chunk') {
       return
     }
-    const { chunk, metadata } = event.data
+    const { chunk, metadata, rendition } = event.data
+    const renditionIndex = rendition === 0 ? undefined : renditionIndices[rendition - 1]
     try {
       const codec = metadata?.decoderConfig?.codec
-      if (codec && codec !== configuredCodec) {
-        broadcast.configureVideo(codec)
-        configuredCodec = codec
+      if (codec && codec !== configuredCodecs[rendition]) {
+        if (renditionIndex === undefined) {
+          broadcast.configureVideo(codec)
+        } else {
+          broadcast.configureRendition(renditionIndex, codec)
+        }
+        configuredCodecs[rendition] = codec
       }
-      broadcast.pushVideo(copied(chunk), chunk.timestamp + offsetMicros)
+      if (renditionIndex === undefined) {
+        broadcast.pushVideo(copied(chunk), chunk.timestamp + offsetMicros)
+      } else {
+        broadcast.pushRenditionVideo(renditionIndex, copied(chunk), chunk.timestamp + offsetMicros)
+      }
     } catch (error) {
       report(error)
     }
@@ -145,6 +183,20 @@ function encodeVideo(
   })
   if (options.videoEncoderConfig) {
     worker.postMessage({ type: 'encoderConfig', config: options.videoEncoderConfig })
+  }
+  if (options.renditions?.length) {
+    const codec = options.videoEncoderConfig?.codec ?? DEFAULT_VIDEO_CODEC
+    worker.postMessage({
+      type: 'renditionConfigs',
+      configs: options.renditions.map(({ width, height, bitrate }) => ({
+        codec,
+        width,
+        height,
+        bitrate,
+        framerate: options.videoEncoderConfig?.framerate,
+        hardwareAcceleration: options.videoEncoderConfig?.hardwareAcceleration
+      }))
+    })
   }
   const videoStream = new MediaStreamTrackProcessor({ track }).readable
   worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
