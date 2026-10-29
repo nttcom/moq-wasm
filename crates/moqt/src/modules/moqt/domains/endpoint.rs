@@ -36,7 +36,7 @@ impl Default for ClientConfig {
     }
 }
 
-/// Whether a `DUAL` or `BROWSER` client also dials QMux over WebSocket
+/// Whether a `NATIVE` or `BROWSER` client also dials QMux over WebSocket
 /// (`wss://`, same host and port) for a `moqt://` or `https://` URL; a browser
 /// does so for `https://` only. QUIC or WebTransport gets a head start, then
 /// WebSocket is dialed alongside it and the first to open is used; a failure
@@ -46,7 +46,7 @@ impl Default for ClientConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WebSocketFallback {
     Disabled,
-    /// The endpoint's own head start: 200 ms for `DUAL`, 500 ms for `BROWSER`.
+    /// The endpoint's own head start: 200 ms for `NATIVE`, 500 ms for `BROWSER`.
     #[default]
     Enabled,
     HeadStart(Duration),
@@ -116,7 +116,7 @@ impl<T: TransportProtocol> Endpoint<T> {
     /// QUIC (default port 4433), `https://host[:port][/path]` for
     /// WebTransport and `wss://host[:port][/path]` for QMux over WebSocket
     /// (both default port 443). `QUIC` and `WEBTRANSPORT` endpoints accept
-    /// only their own scheme; `DUAL` accepts all three.
+    /// only their own scheme; `NATIVE` accepts all three.
     pub async fn connect(&self, url: &str) -> anyhow::Result<Connecting> {
         self.session_creator.create_new_connection(url).await
     }
@@ -154,17 +154,17 @@ impl<T: TransportProtocol> Endpoint<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        DUAL, Endpoint,
+        Endpoint, NATIVE,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, dual_client, receive_disconnected, self_signed_server_config,
-            spawn_dual_server,
+            HANDSHAKE_TIMEOUT, native_client, receive_disconnected, self_signed_server_config,
+            spawn_native_server,
         },
     };
 
     async fn run_client_that_drops_its_session_and_exits_after_wait_idle(url: String) {
         tokio::task::spawn_blocking(move || {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let endpoint = dual_client();
+                let endpoint = native_client();
                 let connecting = endpoint.connect(&url).await.unwrap();
                 let session = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
                     .await
@@ -182,7 +182,7 @@ mod tests {
     async fn a_refusing_server_turns_new_clients_away_at_once() {
         // Arrange
         let server_config = self_signed_server_config("refuse");
-        let server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
+        let server = Endpoint::<NATIVE>::create_server(&server_config).unwrap();
         let port = server.local_port().unwrap();
         server.refuse_new_connections();
         let accept = tokio::spawn(async move {
@@ -191,7 +191,7 @@ mod tests {
 
         // Act
         let connect = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            dual_client()
+            native_client()
                 .connect(&format!("moqt://127.0.0.1:{port}"))
                 .await?
                 .await
@@ -207,7 +207,7 @@ mod tests {
     #[tokio::test]
     async fn server_observes_quic_client_exit_after_wait_idle() {
         // Arrange
-        let (port, accept) = spawn_dual_server("wait-idle-quic");
+        let (port, accept) = spawn_native_server("wait-idle-quic");
 
         // Act
         run_client_that_drops_its_session_and_exits_after_wait_idle(format!(
@@ -223,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn server_observes_web_socket_client_exit_after_wait_idle() {
         // Arrange
-        let (port, accept) = spawn_dual_server("wait-idle-ws");
+        let (port, accept) = spawn_native_server("wait-idle-ws");
 
         // Act
         run_client_that_drops_its_session_and_exits_after_wait_idle(format!(
@@ -239,7 +239,7 @@ mod tests {
     #[tokio::test]
     async fn server_observes_web_transport_client_exit_after_wait_idle() {
         // Arrange
-        let (port, accept) = spawn_dual_server("wait-idle-wt");
+        let (port, accept) = spawn_native_server("wait-idle-wt");
 
         // Act
         run_client_that_drops_its_session_and_exits_after_wait_idle(format!(

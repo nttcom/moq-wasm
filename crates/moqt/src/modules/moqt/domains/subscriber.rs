@@ -779,7 +779,7 @@ mod tests {
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, first_subgroup_stream, location,
                 notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                send_subgroup_object, send_without_waiting, spawn_connected_dual_sessions,
+                send_subgroup_object, send_without_waiting, spawn_connected_native_sessions,
                 subgroup_receiver, subscription, wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
@@ -952,7 +952,7 @@ mod tests {
     #[tokio::test]
     async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-sender").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-fetch-sender").await;
         let (request, handler) = start_fetch(&client, &server, TRACK).await;
         handler.ok(false, END).await.unwrap();
         let fetch_sender = server
@@ -995,7 +995,7 @@ mod tests {
     async fn fetch_receiver_fails_when_the_peer_disconnects_before_the_stream() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-disconnect-before-stream").await;
+            spawn_connected_native_sessions("subscriber-fetch-disconnect-before-stream").await;
         let (request, handler) = start_fetch(&client, &server, TRACK).await;
         handler.ok(false, END).await.unwrap();
         let fetch_handle = request.await.unwrap().unwrap();
@@ -1018,7 +1018,7 @@ mod tests {
     async fn fetch_ok_hands_its_max_cache_duration_to_the_fetch_handle() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-max-cache-duration").await;
+            spawn_connected_native_sessions("subscriber-fetch-max-cache-duration").await;
         let (request, mut handler) = start_fetch(&client, &server, TRACK).await;
         handler.max_cache_duration = Some(2_000);
 
@@ -1033,7 +1033,7 @@ mod tests {
     #[tokio::test]
     async fn rejected_fetch_releases_its_pending_state() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-rejected").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-fetch-rejected").await;
         let (request, handler) = start_fetch(&client, &server, TRACK).await;
 
         // Act
@@ -1051,7 +1051,7 @@ mod tests {
     #[tokio::test]
     async fn abandoned_fetch_releases_its_pending_state() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-abandoned").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-fetch-abandoned").await;
         let (request, handler) = start_fetch(&client, &server, TRACK).await;
 
         // Act
@@ -1065,7 +1065,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_fetches_on_one_session_each_end_and_release_their_state() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-repeated").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-fetch-repeated").await;
         let with_objects = [
             fetch_object(location(0, 0), b"first"),
             fetch_object(location(0, 1), b"second"),
@@ -1103,7 +1103,7 @@ mod tests {
     async fn fetch_ok_after_the_caller_stopped_waiting_cancels_the_fetch_and_later_fetches_succeed()
     {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-late-ok").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-fetch-late-ok").await;
         let (request, handler) = start_fetch(&client, &server, TRACK).await;
         request.abort();
         let _ = request.await;
@@ -1134,7 +1134,7 @@ mod tests {
     async fn fetches_answered_in_reverse_order_each_get_their_own_response_and_objects() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-reverse-order").await;
+            spawn_connected_native_sessions("subscriber-fetch-reverse-order").await;
         let tracks = ["track-0", "track-1", "track-2"];
         let mut requests = Vec::new();
         for track in tracks {
@@ -1173,7 +1173,7 @@ mod tests {
     #[tokio::test]
     async fn cancelling_one_fetch_leaves_the_other_fetches_on_the_session_running() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-cancel-one").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-fetch-cancel-one").await;
         let firsts = [b"a0", b"b0", b"c0"].map(|payload| fetch_object(location(0, 0), payload));
         let seconds = [b"a1", b"c1"].map(|payload| fetch_object(location(0, 1), payload));
         let mut kept_a = open_fetch(&client, &server, &firsts[0]).await;
@@ -1210,7 +1210,7 @@ mod tests {
     async fn fetch_fails_as_soon_as_the_peer_disconnects_without_answering() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-disconnect-response").await;
+            spawn_connected_native_sessions("subscriber-fetch-disconnect-response").await;
         let (request, _handler) = start_fetch(&client, &server, TRACK).await;
 
         // Act
@@ -1231,7 +1231,7 @@ mod tests {
     async fn fetch_stream_fails_instead_of_ending_when_the_peer_disconnects_mid_stream() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-disconnect-mid-stream").await;
+            spawn_connected_native_sessions("subscriber-fetch-disconnect-mid-stream").await;
         let mut open = open_fetch(&client, &server, &fetch_object(START, b"first")).await;
         let Fetch::Object(_) = within(open.receiver.receive()).await.unwrap() else {
             panic!("expected the first object of the FETCH");
@@ -1279,7 +1279,8 @@ mod tests {
     #[tokio::test]
     async fn subscribe_ok_after_cancellation_unsubscribes_and_later_subscribe_delivers() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-subscribe-late-ok").await;
+        let (client, server) =
+            spawn_connected_native_sessions("subscriber-subscribe-late-ok").await;
         let (request, handler) = start_subscribe(&client, &server, "cancelled").await;
         let mut object = object_with_extensions();
         object.payload = Bytes::from_static(b"later subscription");
@@ -1318,7 +1319,7 @@ mod tests {
     #[tokio::test]
     async fn unsubscribing_one_track_leaves_the_other_delivering_on_the_same_session() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-unsubscribe-one").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-unsubscribe-one").await;
         let (cancelled_request, cancelled_handler) =
             start_subscribe(&client, &server, "cancelled").await;
         let cancelled_alias = within(cancelled_handler.ok(0, ContentExists::False))
@@ -1381,7 +1382,7 @@ mod tests {
     async fn subscribes_answered_in_reverse_order_receive_their_own_metadata_alias_and_objects() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-subscribe-reverse-order").await;
+            spawn_connected_native_sessions("subscriber-subscribe-reverse-order").await;
         let tracks = ["track-0", "track-1", "track-2"];
         let mut requests = Vec::new();
         for track in tracks {
@@ -1470,7 +1471,7 @@ mod tests {
     #[tokio::test]
     async fn update_forward_repeats_the_subscription_fields_with_the_new_forward_flag() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-update-forward").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-update-forward").await;
         let (subscription, handler) = subscribe_after_group_3(&client, &server).await;
 
         // Act
@@ -1498,7 +1499,7 @@ mod tests {
     #[tokio::test]
     async fn end_before_group_sends_the_group_as_end_group_plus_one() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-end-before-group").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-end-before-group").await;
         let (subscription, handler) = subscribe_after_group_3(&client, &server).await;
 
         // Act
@@ -1526,7 +1527,7 @@ mod tests {
     async fn update_forward_after_end_before_group_repeats_that_end_group() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-update-forward-after-end").await;
+            spawn_connected_native_sessions("subscriber-update-forward-after-end").await;
         let (subscription, _handler) = subscribe_after_group_3(&client, &server).await;
         client
             .subscriber()
@@ -1559,7 +1560,7 @@ mod tests {
     async fn update_forward_after_subscribe_update_repeats_its_start_location_and_priority() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-update-forward-after-update").await;
+            spawn_connected_native_sessions("subscriber-update-forward-after-update").await;
         let (subscription, _handler) = subscribe_after_group_3(&client, &server).await;
         let narrowed_start = Location {
             group_id: 5,
@@ -1598,7 +1599,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_update_sends_the_given_fields_for_the_given_subscription() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-subscribe-update").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-subscribe-update").await;
         let option = SubscribeUpdateOption {
             start_location: Location {
                 group_id: 4,
@@ -1637,7 +1638,7 @@ mod tests {
     async fn fetch_dropped_after_its_fetch_ok_arrived_cancels_the_fetch() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("subscriber-fetch-drop-after-ok").await;
+            spawn_connected_native_sessions("subscriber-fetch-drop-after-ok").await;
         let mut subscriber = client.subscriber();
         let mut request = Box::pin(subscriber.fetch(
             "ns".to_string(),
@@ -1663,7 +1664,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_dropped_after_its_subscribe_ok_arrived_unsubscribes() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-drop-after-ok").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-drop-after-ok").await;
         let mut subscriber = client.subscriber();
         let mut request = Box::pin(subscriber.subscribe(
             "ns".to_string(),
@@ -1691,7 +1692,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_dropped_while_registering_its_receiver_unsubscribes() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-drop-registering").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-drop-registering").await;
         let session = client.subscriber().session;
         let mut subscriber = client.subscriber();
         let mut request = Box::pin(subscriber.subscribe(
@@ -1728,7 +1729,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_fails_as_soon_as_the_peer_disconnects_without_answering() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-peer-disconnects").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-peer-disconnects").await;
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
@@ -1785,7 +1786,7 @@ mod tests {
     async fn subscribe_current_group_yields_the_fetched_group_before_a_live_object_that_arrived_first()
      {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-current-group").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-current-group").await;
         let (mut reader, served) = start_subscribe_current_group(
             &client,
             &server,
@@ -1826,7 +1827,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_current_group_yields_live_objects_when_the_joining_fetch_is_refused() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-current-refused").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-current-refused").await;
         let (mut reader, served) = start_subscribe_current_group(
             &client,
             &server,
@@ -1854,7 +1855,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_current_group_sends_no_fetch_for_a_track_without_content() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("subscriber-current-empty").await;
+        let (client, server) = spawn_connected_native_sessions("subscriber-current-empty").await;
         let (mut reader, served) =
             start_subscribe_current_group(&client, &server, ContentExists::False).await;
 

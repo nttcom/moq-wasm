@@ -160,7 +160,7 @@ mod tests {
         modules::{
             moqt::domains::connection::IncomingObjectNotification,
             test_support::{
-                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
+                notify_datagram, register_and_take_data_receiver, spawn_connected_native_sessions,
             },
         },
     };
@@ -171,7 +171,7 @@ mod tests {
     async fn publish_hands_its_max_cache_duration_to_both_subscriptions() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("publish-handler-max-cache-duration").await;
+            spawn_connected_native_sessions("publish-handler-max-cache-duration").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()
@@ -202,7 +202,7 @@ mod tests {
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-handler-namespace").await;
+        let (client, server) = spawn_connected_native_sessions("publish-handler-namespace").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()
@@ -228,7 +228,8 @@ mod tests {
     #[tokio::test]
     async fn publish_error_drops_the_objects_buffered_for_its_track_alias() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-handler-error-buffer").await;
+        let (client, server) =
+            spawn_connected_native_sessions("publish-handler-error-buffer").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()

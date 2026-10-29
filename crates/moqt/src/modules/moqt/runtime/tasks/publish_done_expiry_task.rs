@@ -74,7 +74,7 @@ mod tests {
                 runtime::dispatch::incoming_object::IncomingObjectReceiver,
             },
             test_support::{
-                register_and_take_data_receiver, spawn_connected_dual_sessions, subscription,
+                register_and_take_data_receiver, spawn_connected_native_sessions, subscription,
             },
         },
     };
@@ -94,7 +94,7 @@ mod tests {
     /// Returns with tokio time paused, so the test's sleeps advance the clock
     /// without waiting.
     async fn subscription_ended_by_publish_done(name: &str) -> EndedSubscription {
-        let (client, server) = spawn_connected_dual_sessions(name).await;
+        let (client, server) = spawn_connected_native_sessions(name).await;
         let object_receiver =
             register_and_take_data_receiver(&server.subscriber().session, REQUEST_ID, TRACK_ALIAS)
                 .await;

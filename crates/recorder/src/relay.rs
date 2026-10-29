@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use moqt::{
-    ClientConfig, DUAL, Endpoint, Session, Subscription, TerminationErrorCode, TrackObject,
+    ClientConfig, Endpoint, NATIVE, Session, Subscription, TerminationErrorCode, TrackObject,
     TrackReader,
     fetch::{FetchDataReceiver, FetchOption},
     object::{ContentExists, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
@@ -15,7 +15,7 @@ const SUBSCRIBER_PRIORITY: u8 = 128;
 /// a relay drain.
 pub(crate) struct RelayConnection {
     pub(crate) session: Arc<Session>,
-    endpoint: Endpoint<DUAL>,
+    endpoint: Endpoint<NATIVE>,
 }
 
 impl RelayConnection {
@@ -24,7 +24,7 @@ impl RelayConnection {
         verify_certificate: bool,
         authorization_token: Option<String>,
     ) -> Result<Self> {
-        let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
+        let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
             verify_certificate,
             authorization_token,
             ..ClientConfig::default()

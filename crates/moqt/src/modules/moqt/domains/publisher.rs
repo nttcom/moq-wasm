@@ -311,7 +311,7 @@ mod tests {
             test_support::{
                 HANDSHAKE_TIMEOUT, first_subgroup_stream, object_with_extensions,
                 read_subgroup_objects, send_subgroup_object, send_without_waiting,
-                spawn_connected_dual_sessions, subgroup_receiver, wait_for_control_delivery,
+                spawn_connected_native_sessions, subgroup_receiver, wait_for_control_delivery,
                 within,
             },
         },
@@ -325,7 +325,7 @@ mod tests {
     #[tokio::test]
     async fn publish_takes_its_track_alias_from_the_counter_subscribe_ok_uses() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publisher-track-alias").await;
+        let (client, server) = spawn_connected_native_sessions("publisher-track-alias").await;
         let session = client.publisher().session;
         let request = tokio::spawn(async move {
             client
@@ -353,7 +353,7 @@ mod tests {
     async fn pending_publish_namespace_is_accepted_by_publish_namespace_ok() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("publisher-pending-publish-namespace").await;
+            spawn_connected_native_sessions("publisher-pending-publish-namespace").await;
         let pending = tokio::time::timeout(
             WAIT_TIMEOUT,
             client
@@ -380,7 +380,7 @@ mod tests {
     #[tokio::test]
     async fn publish_namespace_cancel_reaches_the_peer_with_its_code_and_reason() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publisher-namespace-cancel").await;
+        let (client, server) = spawn_connected_native_sessions("publisher-namespace-cancel").await;
 
         // Act
         client
@@ -438,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_publish_sends_done_for_late_ok_and_allows_later_publication() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-cancel-late-ok").await;
+        let (client, server) = spawn_connected_native_sessions("publish-cancel-late-ok").await;
         let (request, handler) = pending_publish(&client, &server, "cancelled").await;
         let expected = object_with_extensions();
 
@@ -469,7 +469,7 @@ mod tests {
     #[tokio::test]
     async fn publish_dropped_after_its_publish_ok_arrived_sends_publish_done() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-drop-after-ok").await;
+        let (client, server) = spawn_connected_native_sessions("publish-drop-after-ok").await;
         let publisher = client.publisher();
         let mut request = Box::pin(publisher.publish(
             "ns".to_string(),
@@ -498,7 +498,7 @@ mod tests {
     #[tokio::test]
     async fn publish_done_ends_only_its_publication() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-done-isolation").await;
+        let (client, server) = spawn_connected_native_sessions("publish-done-isolation").await;
         let (ended, ended_peer) = within(active_publish(&client, &server, "ended")).await;
         let (kept, kept_peer) = within(active_publish(&client, &server, "kept")).await;
         let mut ended_reader = server.subscriber().track_reader(&ended_peer);
@@ -564,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn reverse_publish_responses_keep_metadata_and_objects_with_their_requests() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-response-order").await;
+        let (client, server) = spawn_connected_native_sessions("publish-response-order").await;
         let (first_request, first_handler) = pending_publish(&client, &server, "first").await;
         let (second_request, second_handler) = pending_publish(&client, &server, "second").await;
         first_handler.accept_data_receiver().await;

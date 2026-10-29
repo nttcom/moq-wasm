@@ -188,7 +188,7 @@ mod tests {
         SessionEvent, TerminationErrorCode,
         modules::test_support::{
             DISCONNECT_TIMEOUT, connect_sessions, receive_disconnected,
-            spawn_connected_dual_sessions, spawn_dual_server,
+            spawn_connected_native_sessions, spawn_native_server,
         },
         wire::MOQ_TRANSPORT_VERSION,
     };
@@ -196,7 +196,7 @@ mod tests {
     #[tokio::test]
     async fn transport_stats_reports_the_established_quic_path() {
         // Arrange
-        let (port, accept) = spawn_dual_server("transport-stats");
+        let (port, accept) = spawn_native_server("transport-stats");
         let (client, _server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -216,7 +216,7 @@ mod tests {
     #[tokio::test]
     async fn transport_addresses_name_the_peer_of_the_quic_path() {
         // Arrange
-        let (port, accept) = spawn_dual_server("transport-addresses");
+        let (port, accept) = spawn_native_server("transport-addresses");
         let (client, _server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -233,9 +233,9 @@ mod tests {
     #[tokio::test]
     async fn url_scheme_is_the_one_the_client_connected_with() {
         // Arrange
-        let (quic_port, quic_accept) = spawn_dual_server("url-scheme-quic");
-        let (wt_port, wt_accept) = spawn_dual_server("url-scheme-wt");
-        let (ws_port, ws_accept) = spawn_dual_server("url-scheme-ws");
+        let (quic_port, quic_accept) = spawn_native_server("url-scheme-quic");
+        let (wt_port, wt_accept) = spawn_native_server("url-scheme-wt");
+        let (ws_port, ws_accept) = spawn_native_server("url-scheme-ws");
 
         // Act
         let (quic_client, quic_server) =
@@ -263,7 +263,7 @@ mod tests {
     #[tokio::test]
     async fn client_session_keeps_the_server_setup_it_received() {
         // Arrange
-        let (port, accept) = spawn_dual_server("session-server-setup");
+        let (port, accept) = spawn_native_server("session-server-setup");
 
         // Act
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
@@ -283,7 +283,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_the_client_session_disconnects_the_server_session() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-drop").await;
+        let (client, server) = spawn_connected_native_sessions("session-drop").await;
 
         // Act
         drop(client);
@@ -295,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn closed_reports_the_peers_termination_code_and_leaves_the_events_unread() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-closed").await;
+        let (client, server) = spawn_connected_native_sessions("session-closed").await;
 
         // Act
         server.close_with_error(TerminationErrorCode::GoawayTimeout, "bye");
@@ -312,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn server_go_away_names_the_new_session_uri_to_the_client() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-uri").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away-uri").await;
 
         // Act
         server
@@ -330,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn second_go_away_is_a_protocol_violation() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-twice").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away-twice").await;
         server.go_away(String::new()).await.unwrap();
         assert!(matches!(
             client.receive_event().await.unwrap(),
@@ -351,7 +351,7 @@ mod tests {
     #[tokio::test]
     async fn go_away_with_a_uri_sent_to_a_server_is_a_protocol_violation() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-to-server").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away-to-server").await;
 
         // Act
         client
@@ -374,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn closing_with_a_non_violation_code_reports_disconnected_locally() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("session-local-close").await;
+        let (_client, server) = spawn_connected_native_sessions("session-local-close").await;
 
         // Act
         server.close_with_error(TerminationErrorCode::GoawayTimeout, "drain timed out");
@@ -390,7 +390,7 @@ mod tests {
     #[tokio::test]
     async fn closing_for_a_protocol_violation_reports_it_locally() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("session-local-violation").await;
+        let (_client, server) = spawn_connected_native_sessions("session-local-violation").await;
 
         // Act
         server.close_with_error(TerminationErrorCode::ProtocolViolation, "bad peer");
@@ -409,7 +409,7 @@ mod tests {
     #[tokio::test]
     async fn go_away_reaches_the_peer_with_its_uri() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away").await;
 
         // Act
         client.go_away(String::new()).await.unwrap();

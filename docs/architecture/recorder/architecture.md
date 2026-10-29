@@ -30,7 +30,7 @@ both tracks into one init segment and one fragment stream.
 
 ## Flow
 1. `relay::RelayConnection` opens one session; the URL scheme selects QUIC
-   or WebTransport (`Endpoint<DUAL>`), as `broadcast` does on the publishing
+   or WebTransport (`Endpoint<NATIVE>`), as `broadcast` does on the publishing
    side. The session follows the relay's GOAWAY (`follow_go_away`): when the
    relay drains, every subscription moves to the relay it names, keeping its
    ids, and the files continue without a gap (see the `moqt` architecture,

@@ -34,7 +34,7 @@ pub use crate::modules::moqt::domains::track_writer::TrackWriter;
 #[cfg(target_arch = "wasm32")]
 pub use crate::modules::moqt::protocol::BROWSER;
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::modules::moqt::protocol::DUAL;
+pub use crate::modules::moqt::protocol::NATIVE;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::modules::moqt::protocol::QUIC;
 pub use crate::modules::moqt::protocol::TransportProtocol;

@@ -133,7 +133,7 @@ mod tests {
         RequestFailure, Session, SessionEvent,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
-            test_support::{connect_sessions, rejection, spawn_dual_server},
+            test_support::{connect_sessions, rejection, spawn_native_server},
         },
         object::{ContentExists, Location},
         wire::TrackStatusOk,
@@ -148,7 +148,7 @@ mod tests {
     }
 
     async fn track_status_exchange(name: &str) -> TrackStatusExchange {
-        let (port, accept) = spawn_dual_server(name);
+        let (port, accept) = spawn_native_server(name);
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

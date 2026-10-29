@@ -52,7 +52,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    eviction job, the disk cache task and FETCH ingest through
    `DataPlaneConfig`; the data plane reads no environment variable itself.
 4. `RelayServer::new_with_config(...)` then:
-   - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
+   - `spawn_client_transport::<moqt::NATIVE>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
    - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint.
    - `spawn_stats_publisher(relay_id, inner_port)` — see "Observability".

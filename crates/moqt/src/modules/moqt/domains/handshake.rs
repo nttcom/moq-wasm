@@ -71,16 +71,16 @@ mod tests {
         TerminationErrorCode,
         modules::{
             moqt::control_plane::constants::MOQ_TRANSPORT_VERSION,
-            test_support::{HANDSHAKE_TIMEOUT, dual_client, spawn_dual_server_handshake},
+            test_support::{HANDSHAKE_TIMEOUT, native_client, spawn_native_server_handshake},
         },
     };
 
     #[tokio::test]
     async fn client_setup_is_exposed_before_server_setup() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("handshake-client-setup");
+        let (port, accept) = spawn_native_server_handshake("handshake-client-setup");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
 
         // Act
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
@@ -101,9 +101,9 @@ mod tests {
     #[tokio::test]
     async fn accept_establishes_session() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("handshake-accept");
+        let (port, accept) = spawn_native_server_handshake("handshake-accept");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
             .await
             .unwrap()
@@ -124,9 +124,9 @@ mod tests {
     #[tokio::test]
     async fn reject_closes_connection_before_server_setup() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("handshake-reject");
+        let (port, accept) = spawn_native_server_handshake("handshake-reject");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
             .await
             .unwrap()

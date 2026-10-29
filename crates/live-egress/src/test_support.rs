@@ -1,5 +1,5 @@
 use moqt::{
-    DUAL, Endpoint, SessionEvent,
+    Endpoint, NATIVE, SessionEvent,
     publish::Origin,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
 };
@@ -20,7 +20,7 @@ impl FakePublisher {
             cert_path,
             key_path,
         } = write_self_signed_cert(&cert_dir(), &["localhost", "127.0.0.1"]).unwrap();
-        let endpoint = Endpoint::<DUAL>::create_server(&ServerConfig {
+        let endpoint = Endpoint::<NATIVE>::create_server(&ServerConfig {
             port: 0,
             cert_path,
             key_path,

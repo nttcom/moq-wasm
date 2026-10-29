@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use moqt::{
-    ClientConfig, DUAL, Endpoint, RequestErrorCode, SessionEvent, TerminationErrorCode,
+    ClientConfig, Endpoint, NATIVE, RequestErrorCode, SessionEvent, TerminationErrorCode,
     executor::{self, JoinHandle},
     publish::{Origin, Retention},
 };
@@ -24,7 +24,7 @@ pub fn connect(
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         // quinn binds the endpoint's socket through the ambient runtime, which this future runs on.
-        let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
+        let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
             verify_certificate,
             ..ClientConfig::default()
         })?;
@@ -103,7 +103,7 @@ async fn route_events(
 #[pyclass(module = "moqt")]
 pub struct Session {
     session: Arc<moqt::Session>,
-    endpoint: Arc<Endpoint<DUAL>>,
+    endpoint: Arc<Endpoint<NATIVE>>,
     origin: Origin,
     watchers: Arc<NamespaceWatchers>,
     event_loop: JoinHandle,

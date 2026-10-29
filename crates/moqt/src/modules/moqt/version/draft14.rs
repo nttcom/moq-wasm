@@ -729,7 +729,7 @@ mod tests {
             },
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, notify_datagram,
-                register_and_take_data_receiver, spawn_connected_dual_sessions,
+                register_and_take_data_receiver, spawn_connected_native_sessions,
             },
         },
         object::{GroupOrder, Location},
@@ -788,7 +788,7 @@ mod tests {
     #[tokio::test]
     async fn late_subscribe_ok_drops_the_objects_buffered_for_its_track_alias() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("sinks-late-subscribe-ok").await;
+        let (_client, server) = spawn_connected_native_sessions("sinks-late-subscribe-ok").await;
         let context = server.subscriber().session;
         notify_datagram(&context, TRACK_ALIAS).await;
 
@@ -821,7 +821,7 @@ mod tests {
     async fn late_subscribe_ok_keeps_the_receiver_of_another_subscription() {
         // Arrange
         let (_client, server) =
-            spawn_connected_dual_sessions("sinks-late-subscribe-ok-other").await;
+            spawn_connected_native_sessions("sinks-late-subscribe-ok-other").await;
         let context = server.subscriber().session;
         context
             .register_data_receiver(&context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
@@ -849,7 +849,7 @@ mod tests {
     #[tokio::test]
     async fn late_publish_ok_is_withdrawn_with_publish_done() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("late-publish-ok").await;
+        let (client, server) = spawn_connected_native_sessions("late-publish-ok").await;
         let context = server.publisher().session;
 
         // Act
@@ -874,7 +874,7 @@ mod tests {
     #[tokio::test]
     async fn late_fetch_ok_is_withdrawn_with_fetch_cancel() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("late-fetch-ok").await;
+        let (client, server) = spawn_connected_native_sessions("late-fetch-ok").await;
         let context = server.subscriber().session;
 
         // Act
@@ -897,7 +897,7 @@ mod tests {
     #[tokio::test]
     async fn late_track_status_ok_for_another_request_kind_closes_the_session() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("late-track-status-ok").await;
+        let (_client, server) = spawn_connected_native_sessions("late-track-status-ok").await;
         let context = server.subscriber().session;
 
         // Act
@@ -984,7 +984,7 @@ mod tests {
     #[tokio::test]
     async fn request_id_with_the_receivers_parity_closes_the_session() {
         // Arrange
-        let (client, _server) = spawn_connected_dual_sessions("request-id-wrong-parity").await;
+        let (client, _server) = spawn_connected_native_sessions("request-id-wrong-parity").await;
 
         // Act
         send_track_status(&client, 1).await;
@@ -1000,7 +1000,7 @@ mod tests {
     #[tokio::test]
     async fn reused_request_id_closes_the_session() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-reused").await;
+        let (client, server) = spawn_connected_native_sessions("request-id-reused").await;
         send_track_status(&client, 0).await;
         let first = receive_track_status(&server).await;
         assert_eq!(first.request_id(), 0);
@@ -1019,7 +1019,7 @@ mod tests {
     #[tokio::test]
     async fn request_id_skipping_unused_ids_is_accepted() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-gap").await;
+        let (client, server) = spawn_connected_native_sessions("request-id-gap").await;
         send_track_status(&client, 0).await;
         let first = receive_track_status(&server).await;
         assert_eq!(first.request_id(), 0);
@@ -1034,7 +1034,7 @@ mod tests {
     #[tokio::test]
     async fn request_id_check_applies_to_requests_from_the_server() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-server-parity").await;
+        let (client, server) = spawn_connected_native_sessions("request-id-server-parity").await;
 
         // Act
         send_track_status(&server, 0).await;
@@ -1051,7 +1051,7 @@ mod tests {
     #[tokio::test]
     async fn request_id_at_the_maximum_request_id_closes_the_session() {
         // Arrange
-        let (client, _server) = spawn_connected_dual_sessions("request-id-too-many").await;
+        let (client, _server) = spawn_connected_native_sessions("request-id-too-many").await;
 
         // Act
         send_track_status(&client, REQUEST_ID_WINDOW).await;
@@ -1063,7 +1063,7 @@ mod tests {
     #[tokio::test]
     async fn peer_past_half_the_window_gets_a_raised_maximum_request_id() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-raised").await;
+        let (client, server) = spawn_connected_native_sessions("request-id-raised").await;
         let mut client_limit = ControlChannel::of(&connection_of(&client))
             .peer_request_id_limit
             .subscribe();
@@ -1092,7 +1092,7 @@ mod tests {
     #[tokio::test]
     async fn max_request_id_that_does_not_increase_closes_the_session() {
         // Arrange
-        let (client, _server) = spawn_connected_dual_sessions("max-request-id-not-raised").await;
+        let (client, _server) = spawn_connected_native_sessions("max-request-id-not-raised").await;
 
         // Act
         ControlChannel::of(&connection_of(&client))
@@ -1116,7 +1116,7 @@ mod tests {
     #[tokio::test]
     async fn request_at_the_peers_limit_waits_for_max_request_id() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-blocked").await;
+        let (client, server) = spawn_connected_native_sessions("request-id-blocked").await;
         let client_connection = connection_of(&client);
         let client_channel = ControlChannel::of(&client_connection);
         let reservation = blocked_reservation(client_channel).await;
@@ -1139,7 +1139,7 @@ mod tests {
     #[tokio::test]
     async fn closed_control_stream_releases_a_blocked_request() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("request-id-blocked-closed").await;
+        let (client, server) = spawn_connected_native_sessions("request-id-blocked-closed").await;
         let client_connection = connection_of(&client);
         let client_channel = ControlChannel::of(&client_connection);
         let reservation = blocked_reservation(client_channel).await;

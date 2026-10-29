@@ -5,7 +5,7 @@ use crate::modules::transport::browser::browser_connection_creator::BrowserConne
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::modules::transport::{
-    dual::dual_connection_creator::DualProtocolCreator,
+    native::native_connection_creator::NativeConnectionCreator,
     quic::quic_connection_creator::QUICConnectionCreator,
     webtransport::wt_connection_creator::WtConnectionCreator,
 };
@@ -40,11 +40,11 @@ impl TransportProtocol for WEBTRANSPORT {
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(warnings)]
 #[derive(Debug)]
-pub struct DUAL;
+pub struct NATIVE;
 
 #[cfg(not(target_arch = "wasm32"))]
-impl TransportProtocol for DUAL {
-    type ConnectionCreator = DualProtocolCreator;
+impl TransportProtocol for NATIVE {
+    type ConnectionCreator = NativeConnectionCreator;
 }
 
 #[cfg(target_arch = "wasm32")]

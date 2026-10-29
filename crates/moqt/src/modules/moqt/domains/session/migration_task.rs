@@ -646,8 +646,8 @@ mod tests {
         TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::test_support::{
-            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, dual_client_with_config,
-            open_subgroup, send_payload, spawn_dual_server, subscribed_track_reader,
+            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
+            open_subgroup, send_payload, spawn_native_server, subscribed_track_reader,
         },
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
@@ -663,7 +663,7 @@ mod tests {
     use super::*;
 
     async fn connect(port: u16) -> Session {
-        let client = dual_client_with_config(ClientConfig {
+        let client = native_client_with_config(ClientConfig {
             verify_certificate: false,
             ..ClientConfig::default()
         });
@@ -744,8 +744,8 @@ mod tests {
     #[tokio::test]
     async fn go_away_moves_a_subscription_to_the_named_server_at_a_group_boundary() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -791,8 +791,8 @@ mod tests {
     #[tokio::test]
     async fn go_away_moves_an_absolute_range_from_the_cutover_group_to_its_end_group() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-range-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-range-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-range-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-range-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) =
@@ -826,8 +826,8 @@ mod tests {
     #[tokio::test]
     async fn go_away_keeps_the_end_group_a_subscribe_update_narrowed_to() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-update-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-update-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-update-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-update-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -865,8 +865,8 @@ mod tests {
     #[tokio::test]
     async fn an_absolute_range_whose_end_group_arrives_on_the_old_server_stays_there() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-range-end-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-range-end-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-range-end-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-range-end-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) =
@@ -897,8 +897,8 @@ mod tests {
     #[tokio::test]
     async fn a_subscription_with_no_group_arriving_lets_the_old_server_go_at_once() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-quiet-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-quiet-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-quiet-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-quiet-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -930,8 +930,8 @@ mod tests {
     #[tokio::test]
     async fn the_old_server_is_kept_until_the_group_arriving_there_ends() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-open-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-open-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-open-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-open-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -965,8 +965,8 @@ mod tests {
     #[tokio::test]
     async fn publish_done_keeps_the_ids_the_application_knows_and_drops_the_drained_one() {
         // Arrange: a group still arriving on A keeps A open after the migration
-        let (port_a, accept_a) = spawn_dual_server("session-migration-done-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-done-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-done-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-done-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, served_a) = subscribe(&client, &server_a).await;
@@ -1009,8 +1009,8 @@ mod tests {
     #[tokio::test]
     async fn go_away_subscribes_the_namespaces_again_and_forwards_the_new_events() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-namespace-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-namespace-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-namespace-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-namespace-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let subscriber = client.subscriber();
@@ -1055,8 +1055,8 @@ mod tests {
     #[tokio::test]
     async fn requests_of_the_new_server_get_ids_apart_from_those_of_the_first() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-ids-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-ids-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-ids-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-ids-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let first = async {
@@ -1111,8 +1111,8 @@ mod tests {
     #[tokio::test]
     async fn tracks_served_for_the_new_server_get_aliases_apart_from_those_of_the_first() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-aliases-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-aliases-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-aliases-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-aliases-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let mut subscriber_a = server_a.subscriber();
@@ -1180,8 +1180,8 @@ mod tests {
     async fn go_away_publishes_on_the_new_server_and_sends_to_both_until_the_old_one_unsubscribes()
     {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-publish-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-publish-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-publish-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-publish-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (published, accepted_a) = publish(&client, &server_a).await;
@@ -1225,8 +1225,8 @@ mod tests {
     #[tokio::test]
     async fn a_subscription_served_on_the_old_server_ends_when_that_server_closes() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-served-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-served-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-served-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-served-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let mut subscriber_a = server_a.subscriber();
@@ -1287,8 +1287,8 @@ mod tests {
     #[tokio::test]
     async fn a_fetch_cut_off_by_the_old_server_continues_on_the_new_one() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-fetch-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-fetch-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-fetch-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-fetch-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let end = Location {
@@ -1367,7 +1367,7 @@ mod tests {
     #[tokio::test]
     async fn a_go_away_to_an_unreachable_server_keeps_the_current_connection() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-unreachable");
+        let (port_a, accept_a) = spawn_native_server("session-migration-unreachable");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;

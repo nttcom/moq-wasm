@@ -6,7 +6,7 @@ use mediapack::{
     mp4, mpegts,
 };
 use moqt::{
-    DUAL, Endpoint, SessionEvent, TrackObject,
+    Endpoint, NATIVE, SessionEvent, TrackObject,
     publish::Origin,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
 };
@@ -209,7 +209,7 @@ impl FakePublisher {
             cert_path,
             key_path,
         } = write_self_signed_cert(&scratch_dir(), &["localhost", "127.0.0.1"]).unwrap();
-        let endpoint = Endpoint::<DUAL>::create_server(&ServerConfig {
+        let endpoint = Endpoint::<NATIVE>::create_server(&ServerConfig {
             port: 0,
             cert_path,
             key_path,

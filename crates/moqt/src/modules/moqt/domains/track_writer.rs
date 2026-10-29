@@ -256,7 +256,7 @@ mod tests {
     use crate::{
         TrackWriter,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
+            HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_native_server,
             subscribed_track_reader,
         },
         object::{DataReceiver, ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
@@ -266,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn objects_arrive_with_their_immutable_extensions_and_ids() {
         // Arrange
-        let (port, accept) = spawn_dual_server("track-writer");
+        let (port, accept) = spawn_native_server("track-writer");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -335,7 +335,7 @@ mod tests {
     #[tokio::test]
     async fn chosen_group_ids_announce_the_ids_they_skip() {
         // Arrange
-        let (port, accept) = spawn_dual_server("track-writer-groups");
+        let (port, accept) = spawn_native_server("track-writer-groups");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -385,7 +385,7 @@ mod tests {
     #[tokio::test]
     async fn a_group_the_subscriber_stopped_does_not_keep_the_next_group_from_opening() {
         // Arrange
-        let (port, accept) = spawn_dual_server("track-writer-stopped-group");
+        let (port, accept) = spawn_native_server("track-writer-stopped-group");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
