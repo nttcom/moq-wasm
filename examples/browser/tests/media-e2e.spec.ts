@@ -20,29 +20,26 @@ async function expectInitialConfiguration(
   await expect(subscriber.namespaceInput).toHaveValue(mediaE2EConfig.namespace)
 }
 
-async function connectPublisherForStreaming(publisher: PublisherPageModel): Promise<void> {
+async function startPublisherBroadcast(publisher: PublisherPageModel): Promise<void> {
   // Act: Publisher を MoQT サーバーへ接続する。
   await publisher.connectButton.click()
   // Assert: Publisher 側で接続完了ステータスが表示されることを確認する。
   await expect(publisher.connectionStatus).toContainText('Connected:')
-
-  // Act: Publisher の setup を送信してセッション初期化を進める。
-  await publisher.setupButton.click()
-  // Assert: setup が受理され、後続の announce に進める状態になったことを確認する。
-  await expect(publisher.setupStatus).toContainText('Setup acknowledged')
   // Assert: 期待した transport（既定は WebTransport、TCP proxy 経由なら WebSocket）で繋がったことを確認する。
   await expect.poll(() => publisher.sessionTransports).toEqual([mediaE2EConfig.expectedTransport])
 
-  // Act: テスト用 namespace を announce して購読可能な状態にする。
-  await publisher.announceButton.click()
-  // Assert: announce 完了ステータスに対象 namespace が反映されることを確認する。
-  await expect(publisher.announceStatus).toContainText(`Announced: ${mediaE2EConfig.namespace}`)
+  // Act: fake media を使って Publisher の getUserMedia を開始する。
+  await publisher.getUserMediaButton.click()
+  // Assert: キャプチャ準備が整い、送信に使えるメディアが取得できたことを確認する。
+  await expect(publisher.captureStatus).toContainText('Media ready')
+
+  // Act: 取得したメディアを broadcast として publish する。
+  await publisher.sendButton.click()
+  // Assert: 対象 namespace の publish が始まったことを確認する。
+  await expect(publisher.sendStatus).toContainText(`Publishing started: ${mediaE2EConfig.namespace}`)
 }
 
-async function connectSubscriberForPlayback(
-  publisher: PublisherPageModel,
-  subscriber: SubscriberPageModel
-): Promise<void> {
+async function subscribeForPlayback(subscriber: SubscriberPageModel): Promise<void> {
   // Act: Subscriber を同じ MoQT サーバーへ接続する。
   await subscriber.connectButton.click()
   // Assert: Subscriber 側でも接続完了ステータスが表示されることを確認する。
@@ -62,20 +59,6 @@ async function connectSubscriberForPlayback(
 
   // Act: 映像トラックの subscribe を開始する。
   await subscriber.trackSubscribeButton.click()
-  // Assert: Publisher 側で購読者の準備完了が見え、送信開始可能になったことを確認する。
-  await expect(publisher.sendStatus).toContainText('Subscriber ready:')
-}
-
-async function startPublisherMediaStream(publisher: PublisherPageModel): Promise<void> {
-  // Act: fake media を使って Publisher の getUserMedia を開始する。
-  await publisher.getUserMediaButton.click()
-  // Assert: キャプチャ準備が整い、送信に使えるメディアが取得できたことを確認する。
-  await expect(publisher.captureStatus).toContainText('Media ready')
-
-  // Act: Publisher から映像送信を開始する。
-  await publisher.sendButton.click()
-  // Assert: 送信開始または映像ストリーミング中の状態が表示されることを確認する。
-  await expect(publisher.sendStatus).toHaveText(/Publishing started|Streaming video/)
 }
 
 async function expectSubscriberPlayback(subscriber: SubscriberPageModel): Promise<void> {
@@ -108,14 +91,11 @@ test('publisher streams video to subscriber over local MoQT server', async ({ br
     // Assert: 2 画面ともローカル E2E 用の初期値で立ち上がっていることを確認する。
     await expectInitialConfiguration(session.publisher, session.subscriber)
 
-    // Act / Assert: Publisher 側で接続から announce までを完了し、送信準備を整える。
-    await connectPublisherForStreaming(session.publisher)
+    // Act / Assert: Publisher 側で接続からメディアの publish 開始までを完了する。
+    await startPublisherBroadcast(session.publisher)
 
-    // Act / Assert: Subscriber 側で接続から track subscribe までを完了し、受信準備を整える。
-    await connectSubscriberForPlayback(session.publisher, session.subscriber)
-
-    // Act / Assert: fake media の取得と Publisher の送信開始を完了する。
-    await startPublisherMediaStream(session.publisher)
+    // Act / Assert: Subscriber 側で接続から track subscribe までを完了する。
+    await subscribeForPlayback(session.subscriber)
 
     // Assert: Subscriber が映像を受信し、video 要素の再生が進行していることを確認する。
     await expectSubscriberPlayback(session.subscriber)

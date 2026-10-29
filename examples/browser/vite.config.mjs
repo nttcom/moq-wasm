@@ -9,7 +9,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@moqt': resolve(import.meta.dirname, 'lib/moqt'),
-      '@player': resolve(import.meta.dirname, 'lib/player')
+      '@player': resolve(import.meta.dirname, 'lib/player'),
+      '@publish': resolve(import.meta.dirname, 'lib/publish')
     }
   },
   server: {

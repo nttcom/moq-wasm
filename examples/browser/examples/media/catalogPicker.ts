@@ -89,31 +89,33 @@ export function setUpCatalogPicker(
       setStatusText(STATUS_ID, 'Catalog track is required')
       return
     }
-    const { trackAlias } = (
-      await moqtClient.subscribe(trackNamespace, catalogTrackName, 'secret', {
-        requestId: BigInt(form['catalog-subscribe-id'].value),
+    // The publisher sends its catalog when it changes and every 30 s, so a
+    // SUBSCRIBE alone would wait for the next one; the joining FETCH brings
+    // the current one.
+    const { subscribeOk } = await moqtClient.subscribeLatest(
+      trackNamespace,
+      catalogTrackName,
+      'secret',
+      (payload) => {
+        try {
+          const catalog = parse_msf_catalog_json(new TextDecoder().decode(payload))
+          pick.video.tracks = extractCatalogTracks(catalog, 'video')
+          pick.audio.tracks = extractCatalogTracks(catalog, 'audio')
+          render()
+        } catch (error) {
+          console.error('[CatalogPicker] failed to parse catalog', error)
+          setStatusText(STATUS_ID, 'Catalog parse failed')
+        }
+      },
+      {
         onPublishDone: () => {
           reset()
           setStatusText(STATUS_ID, 'Publisher ended the catalog track')
         }
-      })
-    ).subscribeOk
-    form['catalog-track-alias'].value = trackAlias.toString()
+      }
+    )
+    form['catalog-track-alias'].value = subscribeOk.trackAlias.toString()
     setStatusText(STATUS_ID, `Catalog subscribe requested: ${catalogTrackName}`)
-    moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, object) => {
-      if (object.objectStatus !== undefined) {
-        return
-      }
-      try {
-        const catalog = parse_msf_catalog_json(new TextDecoder().decode(object.objectPayload))
-        pick.video.tracks = extractCatalogTracks(catalog, 'video')
-        pick.audio.tracks = extractCatalogTracks(catalog, 'audio')
-        render()
-      } catch (error) {
-        console.error('[CatalogPicker] failed to parse catalog', error)
-        setStatusText(STATUS_ID, 'Catalog parse failed')
-      }
-    })
   })
 
   render()

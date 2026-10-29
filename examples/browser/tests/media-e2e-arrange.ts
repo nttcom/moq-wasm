@@ -3,7 +3,7 @@ import { MEDIA_PUBLISHER_PATH, MEDIA_SUBSCRIBER_PATH } from '../playwright.helpe
 
 const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const namespace = process.env.MEDIA_E2E_NAMESPACE ?? 'anon/e2e/moqt-media'
-const videoCodec = process.env.MEDIA_E2E_VIDEO_CODEC ?? 'vp8'
+const videoCodec = process.env.MEDIA_E2E_VIDEO_CODEC ?? 'avc1.42001F'
 const videoEncoderHardwareAcceleration = process.env.MEDIA_E2E_VIDEO_HARDWARE_ACCELERATION ?? 'prefer-software'
 // `run-media-e2e.mjs --through-tcp-proxy` sets `websocket`.
 const expectedTransport = process.env.MEDIA_E2E_EXPECTED_TRANSPORT ?? 'webtransport'
@@ -18,7 +18,7 @@ export const mediaE2EConfig = {
 
 const SESSION_TRANSPORT_LOG = /^\[moqt\] session established over (\w+) in \d+ ms$/
 
-/** Fills as `MoqtClientWrapper` logs each established session. */
+/** Fills as `MoqSession` and `MoqtClientWrapper` log each established session. */
 function recordSessionTransports(page: Page): string[] {
   const transports: string[] = []
   page.on('console', (message) => {
@@ -51,10 +51,6 @@ function createPublisherPageModel(page: Page) {
     namespaceInput: page.getByTestId('publisher-namespace-input'),
     connectButton: page.getByTestId('publisher-connect-button'),
     connectionStatus: page.getByTestId('publisher-connection-status'),
-    setupButton: page.getByTestId('publisher-setup-button'),
-    setupStatus: page.getByTestId('publisher-setup-status'),
-    announceButton: page.getByTestId('publisher-announce-button'),
-    announceStatus: page.getByTestId('publisher-announce-status'),
     getUserMediaButton: page.getByTestId('publisher-get-user-media-button'),
     captureStatus: page.getByTestId('publisher-capture-status'),
     sendButton: page.getByTestId('publisher-send-button'),

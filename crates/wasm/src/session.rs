@@ -91,6 +91,17 @@ impl Session {
         })
     }
 
+    /// `"webtransport"`, or `"websocket"` once the session fell back to QMux
+    /// over WebSocket.
+    #[wasm_bindgen(getter)]
+    pub fn transport(&self) -> String {
+        match self.session.url_scheme() {
+            "wss" => "websocket",
+            _ => "webtransport",
+        }
+        .to_string()
+    }
+
     /// Resolves to a `CloseInfo` once the session has ended.
     #[wasm_bindgen(getter)]
     pub fn closed(&self) -> Promise {

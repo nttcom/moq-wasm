@@ -78,7 +78,11 @@ export class MoqSession {
 
   static async connect(url: string, options: MoqConnectOptions = {}): Promise<MoqSession> {
     const moqt = await loadMoqt()
-    return new MoqSession(await moqt.Session.connect(url, options.token))
+    const startedAtMs = performance.now()
+    const session = await moqt.Session.connect(url, options.token)
+    const elapsedMs = Math.round(performance.now() - startedAtMs)
+    console.info(`[moqt] session established over ${session.transport} in ${elapsedMs} ms`)
+    return new MoqSession(session)
   }
 
   get isOpen(): boolean {
