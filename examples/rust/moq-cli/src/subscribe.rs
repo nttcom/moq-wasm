@@ -20,6 +20,10 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
 async fn watch(session: &Session, track: &FullTrackName) -> Result<()> {
     let mut media_reader = subscribe_media(session, track).await?;
     let mut out = tokio::io::stdout();
+    // Keeps the listener registered while the loop body writes objects: tokio
+    // drops a SIGINT that arrives while none is registered.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
     loop {
         tokio::select! {
             object = media_reader.next_object() => match object {
@@ -31,6 +35,10 @@ async fn watch(session: &Session, track: &FullTrackName) -> Result<()> {
                 Err(error) => return Err(error.context("the track is malformed")),
             },
             close = session.closed() => anyhow::bail!("session closed by the relay: {close}"),
+            _ = &mut ctrl_c => {
+                info!("received ctrl-c, shutting down");
+                return Ok(());
+            }
         }
     }
 }
