@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{pin::pin, time::Duration};
 
-use crate::modules::transport::transport_connection::BoxedConnection;
+use crate::modules::{executor, transport::transport_connection::BoxedConnection};
 use async_trait::async_trait;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
@@ -14,13 +14,19 @@ use crate::modules::transport::{
     transport_connection_creator::TransportConnectionCreator,
 };
 
+/// Both the delay before a second WebTransport is dialed and WebTransport's
+/// head start over WebSocket. A first dial whose initial packet is lost waits
+/// about a second for QUIC to resend it, so a second dial started together
+/// with WebSocket keeps that loss from handing the race to WebSocket.
+const WEB_TRANSPORT_HEDGE: Duration = Duration::from_millis(500);
+
 pub struct BrowserConnectionCreator {
     protocols: ApplicationProtocols,
 }
 
 #[async_trait(?Send)]
 impl TransportConnectionCreator for BrowserConnectionCreator {
-    const WEB_SOCKET_HEAD_START: Option<Duration> = Some(Duration::from_millis(500));
+    const WEB_SOCKET_HEAD_START: Option<Duration> = Some(WEB_TRANSPORT_HEDGE);
 
     fn client(
         _port_num: u16,
@@ -69,14 +75,25 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
                 target.url
             ),
         }
-        let options = web_transport_options(self.protocols.web_transport)?;
-        // A browser without WebTransport throws here, so the fallback starts at once.
-        let transport =
-            WebTransport::new_with_options(target.url.as_str(), &options).map_err(js_error)?;
-        let pending = CloseUnlessReady(Some(transport));
-        let transport = pending.0.as_ref().expect("set above");
-        JsFuture::from(transport.ready()).await.map_err(js_error)?;
-        let transport = pending.into_ready();
+        let mut first = pin!(self.open_web_transport(&target.url));
+        let transport = match executor::timeout(WEB_TRANSPORT_HEDGE, first.as_mut()).await {
+            Ok(opened) => opened?,
+            Err(()) => {
+                tracing::debug!(url = %target.url, "dialing a second WebTransport");
+                let mut second = pin!(self.open_web_transport(&target.url));
+                tokio::select! {
+                    biased;
+                    opened = first.as_mut() => match opened {
+                        Ok(transport) => transport,
+                        Err(error) => second.await.map_err(|_| error)?,
+                    },
+                    opened = second.as_mut() => match opened {
+                        Ok(transport) => transport,
+                        Err(_) => first.await?,
+                    },
+                }
+            }
+        };
         Ok(Box::new(BrowserConnection::new(transport)?))
     }
 
@@ -90,6 +107,18 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
 
     fn local_port(&self) -> anyhow::Result<u16> {
         anyhow::bail!("a browser endpoint has no local socket")
+    }
+}
+
+impl BrowserConnectionCreator {
+    async fn open_web_transport(&self, url: &str) -> anyhow::Result<WebTransport> {
+        let options = web_transport_options(self.protocols.web_transport)?;
+        // A browser without WebTransport throws here, so the fallback starts at once.
+        let transport = WebTransport::new_with_options(url, &options).map_err(js_error)?;
+        let pending = CloseUnlessReady(Some(transport));
+        let transport = pending.0.as_ref().expect("set above");
+        JsFuture::from(transport.ready()).await.map_err(js_error)?;
+        Ok(pending.into_ready())
     }
 }
 
