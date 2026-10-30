@@ -359,6 +359,19 @@ pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Ses
         .unwrap()
 }
 
+pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Session, prefix: &str) {
+    let subscriber = client.subscriber();
+    let (subscribed, ()) = tokio::join!(subscriber.subscribe_namespace(prefix.into()), async {
+        let SessionEvent::SubscribeNameSpace(handler) =
+            within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+    });
+    subscribed.unwrap();
+}
+
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
 pub(crate) async fn accept_publish(server: &Session) -> Subscription {
