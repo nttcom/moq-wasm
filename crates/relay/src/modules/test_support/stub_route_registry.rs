@@ -38,6 +38,9 @@ pub(crate) struct StubRouteRegistry {
     watched_namespace_calls: Mutex<Vec<String>>,
     migration_target: Option<String>,
     draining: AtomicBool,
+    /// The namespaces other relays publish; `None` leaves the namespace routes
+    /// unused, so a call fails the test.
+    namespace_routes: Option<Vec<String>>,
 }
 
 impl StubRouteRegistry {
@@ -47,6 +50,19 @@ impl StubRouteRegistry {
             watched_namespace_calls: Mutex::new(Vec::new()),
             migration_target: None,
             draining: AtomicBool::new(false),
+            namespace_routes: None,
+        }
+    }
+
+    pub(crate) fn with_namespace_routes(track_namespaces: &[&str]) -> Self {
+        Self {
+            namespace_routes: Some(
+                track_namespaces
+                    .iter()
+                    .map(|namespace| namespace.to_string())
+                    .collect(),
+            ),
+            ..Self::new(PublisherLookup::MustNotBeCalled)
         }
     }
 
@@ -139,14 +155,27 @@ impl RelayRouteRegistry for StubRouteRegistry {
         &self,
         _track_namespace_prefix: &str,
     ) -> Result<(), RegisterRouteError> {
-        unimplemented!("not used with the stub route registry")
+        assert!(
+            self.namespace_routes.is_some(),
+            "not used with the stub route registry"
+        );
+        Ok(())
     }
 
     async fn find_namespace_publishers_by_prefix(
         &self,
         _track_namespace_prefix: &str,
     ) -> anyhow::Result<Vec<NamespaceRoute>> {
-        unimplemented!("not used with the stub route registry")
+        let routes = self
+            .namespace_routes
+            .as_ref()
+            .expect("not used with the stub route registry");
+        Ok(routes
+            .iter()
+            .map(|track_namespace| NamespaceRoute {
+                track_namespace: track_namespace.clone(),
+            })
+            .collect())
     }
 
     async fn unregister_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
