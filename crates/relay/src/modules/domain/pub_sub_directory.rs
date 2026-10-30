@@ -638,6 +638,19 @@ impl InMemoryLocalPubSubDirectory {
         replaced
     }
 
+    pub(crate) fn published_upstream_subscription(
+        &self,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+    ) -> Option<ActiveUpstreamSubscription> {
+        self.upstream_tracks
+            .get(track_key)?
+            .subscriptions
+            .get(&publisher_session_id)
+            .filter(|active| active.origin == UpstreamSubscriptionOrigin::Publish)
+            .cloned()
+    }
+
     /// Returns false, adding nothing, when the track is gone, the publisher
     /// already feeds it, or the track does not want it.
     pub(crate) fn add_upstream_subscription_to_track(

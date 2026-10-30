@@ -143,7 +143,8 @@ mod tests {
         let (mut departing, _) = mock_new_session(DEPARTING_RELAY, VerifiedToken::full_access());
         departing.peer = departing_peer;
         repository.add(departing, event_sender.clone()).await;
-        let (other, recorded) = recorded_session_answering_subscribe();
+        let (other, recorded) =
+            recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         repository
             .add(
                 NewSession {

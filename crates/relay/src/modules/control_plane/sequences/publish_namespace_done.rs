@@ -161,7 +161,8 @@ mod tests {
         table: &InMemoryLocalPubSubDirectory,
         publisher_session_id: SessionId,
     ) -> RecordedControlMessages {
-        let (subscriber_session, recorded) = recorded_session_answering_subscribe();
+        let (subscriber_session, recorded) =
+            recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         let repository = session_repository_with_sessions(
             vec![
                 (
