@@ -616,17 +616,26 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
+    /// Returns the subscription from the same publisher that this one replaces.
     pub(crate) fn register_upstream_subscription(
         &self,
         track_key: TrackKey,
         publisher_session_id: SessionId,
         subscription: ActiveUpstreamSubscription,
-    ) {
-        self.upstream_tracks
-            .entry(track_key)
+    ) -> Option<ActiveUpstreamSubscription> {
+        let replaced = self
+            .upstream_tracks
+            .entry(track_key.clone())
             .or_default()
             .subscriptions
             .insert(publisher_session_id, subscription);
+        if replaced
+            .as_ref()
+            .is_some_and(|replaced| replaced.origin == UpstreamSubscriptionOrigin::Publish)
+        {
+            self.forget_published_handler(publisher_session_id, &track_key);
+        }
+        replaced
     }
 
     /// Returns false, adding nothing, when the track is gone, the publisher
