@@ -94,3 +94,41 @@ async fn cleanup_removed_session(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use moqt::TerminationErrorCode;
+
+    use crate::modules::{
+        auth::test_support::{app_token, connect_client, spawn_relay},
+        test_support::{
+            relay_clients::{subscribe_namespace, within},
+            stub_route_registry::StubRouteRegistry,
+        },
+    };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disconnect_of_the_last_namespace_subscriber_removes_its_route() {
+        // Arrange
+        let route_registry = Arc::new(StubRouteRegistry::with_namespace_routes(&[]));
+        let relay = spawn_relay(app_token(Some(""), Some("")), route_registry.clone()).await;
+        let watcher = connect_client(&relay).await;
+        subscribe_namespace(&watcher, "APP/room").await;
+
+        // Act
+        watcher.close_with_error(TerminationErrorCode::NoError, "leaving");
+
+        // Assert
+        within(async {
+            while !route_registry
+                .namespace_subscriber_calls()
+                .contains(&"unregister APP/room".to_string())
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+    }
+}
