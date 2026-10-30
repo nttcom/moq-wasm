@@ -2,9 +2,7 @@ import base64
 import enum
 from dataclasses import dataclass
 
-import aiohttp
-from moq_bot_rooms.identity_token import IdentityToken
-from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot import system_one_client
 
 MAX_BOXES_PER_TARGET = 8
 
@@ -66,19 +64,7 @@ def boxes_question(description: str) -> dict:
     return {"type": "boxes", "instructions": f"Every {description}.", "max": MAX_BOXES_PER_TARGET}
 
 
-class SystemOneVisionClient:
-    def __init__(
-        self,
-        session: aiohttp.ClientSession,
-        url: str,
-        status: SystemOneStatus,
-        identity_token: IdentityToken | None = None,
-    ):
-        self._session = session
-        self._url = url
-        self._status = status
-        self._identity_token = identity_token
-
+class SystemOneVisionClient(system_one_client.SystemOneClient):
     async def locate(self, jpeg: bytes, descriptions: tuple[str, ...]) -> Sighting | Answer:
         """Asks for every instance of every description in one request, so more descriptions cost one
         forward pass, not one request each."""
@@ -86,17 +72,7 @@ class SystemOneVisionClient:
             "images": ["data:image/jpeg;base64," + base64.b64encode(jpeg).decode()],
             "questions": {question_id(index): boxes_question(text) for index, text in enumerate(descriptions)},
         }
-        headers = (
-            {"Authorization": f"Bearer {await self._identity_token.value()}"}
-            if self._identity_token
-            else {}
-        )
-        async with (
-            self._status.request(),
-            self._session.post(self._url, json=request, headers=headers) as response,
-        ):
-            response.raise_for_status()
-            answers = (await response.json())["answers"]
+        answers = await self.ask(request)
         boxes = tuple(
             TargetBox(index, Box(**found["box"]))
             for index in range(len(descriptions))

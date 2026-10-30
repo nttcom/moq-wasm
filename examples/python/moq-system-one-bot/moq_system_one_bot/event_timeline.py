@@ -13,17 +13,21 @@ def location_record(location: Location, data: dict[str, Any]) -> EventRecord:
 
 
 class EventTimeline:
-    """draft-ietf-moq-msf-01 §8 event timeline: each relay session's group opens with an empty
-    record list, and later objects in the group carry one new record each."""
+    """draft-ietf-moq-msf-01 §8 event timeline: each relay session's group opens with a record list,
+    and later objects in the group carry one new record each. With `replay` the list holds every
+    record so far; without it the list is empty."""
 
-    def __init__(self):
+    def __init__(self, replay: bool = False):
         self._publication: Publication | None = None
+        self._records: list[EventRecord] | None = [] if replay else None
 
     async def publish_on(self, publication: Publication) -> None:
         self._publication = publication
-        await publication.write(_encode([]), new_group=True)
+        await publication.write(_encode(self._records or []), new_group=True)
 
     async def append(self, record: EventRecord) -> None:
+        if self._records is not None:
+            self._records.append(record)
         if self._publication is not None:
             await self._publication.write(_encode([record]))
 

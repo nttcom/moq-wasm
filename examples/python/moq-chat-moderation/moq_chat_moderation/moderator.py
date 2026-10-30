@@ -5,7 +5,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from moq_chat_moderation.chat import ChatMessage
 from moq_chat_moderation.system_one import SystemOneClient
-from moq_chat_moderation.event_timeline import EventTimeline, location_record
+from moq_system_one_bot.event_timeline import EventTimeline, location_record
 
 
 class ChatModerator(FrameProcessor):

@@ -7,7 +7,7 @@ from loguru import logger
 from pipecat.frames.frames import Frame, SystemFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from moq_camera_detection.event_timeline import EventTimeline, Location, location_record
+from moq_system_one_bot.event_timeline import EventTimeline, Location, location_record
 from moq_camera_detection.prompt import Prompt
 from moq_camera_detection.vision import SystemOneVisionClient
 

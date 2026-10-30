@@ -9,21 +9,22 @@ from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
+from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
 from moq_system_one_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.relay import add_relay_arguments, stay_connected
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from moq_ptz_tracking.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
 from moq_ptz_tracking.video import GroupDecoder, picture_to_jpeg
 from moq_ptz_tracking.vision import SystemOneVisionClient
 
-DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8099
 # There is one ONVIF camera, so there is one room.
 ROOM_ID = "onvif"
@@ -38,10 +39,7 @@ STATUS_TRACK = "status"
 # What the bot publishes is kept for FETCH as long as a room runs by default (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
-RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
-# The System One service scales to zero; a cold start copies its weights before it answers.
-VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,12 +47,7 @@ def parse_args() -> argparse.Namespace:
         description="Pan and tilt the ONVIF camera so every box of the MoQ PTZ tracking page's targets stays in the picture"
     )
     add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=1)
-    parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="skip TLS verification, for a local relay with a self-signed certificate",
-    )
+    add_relay_arguments(parser)
     parser.add_argument(
         "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"
     )
@@ -194,33 +187,6 @@ async def track_in_session(
         forwarding.cancel()
 
 
-async def stay_connected(
-    args: argparse.Namespace,
-    timeline: EventTimeline,
-    status: SystemOneStatus,
-    commands: PtzCommands,
-    latest_target: LatestTarget,
-    worker: PipelineWorker,
-):
-    while True:
-        try:
-            session = await moqt.connect(args.relay_url, verify_certificate=not args.insecure)
-        except RuntimeError as error:
-            logger.warning(f"cannot connect to {args.relay_url}: {error}")
-            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-            continue
-        logger.info(f"connected to {args.relay_url}")
-        try:
-            if await track_in_session(session, timeline, status, commands, latest_target, worker):
-                return
-            logger.warning("relay session closed")
-        except RuntimeError as error:
-            logger.warning(f"relay session failed: {error}")
-        finally:
-            await session.close()
-        await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-
-
 async def track_in_room(
     args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, _room_id: str
 ) -> None:
@@ -237,13 +203,21 @@ async def track_in_room(
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
-        await stay_connected(args, timeline, status, commands, latest_target, worker)
+        in_session = partial(
+            track_in_session,
+            timeline=timeline,
+            status=status,
+            commands=commands,
+            latest_target=latest_target,
+            worker=worker,
+        )
+        await stay_connected(args, in_session)
         await runner.cancel()
 
 
 async def main():
     args = parse_args()
-    async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as http:
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
         identity_token = identity_token_from_arguments(args, http, args.system_one_url)
         await serve_rooms(args, partial(track_in_room, args, http, identity_token), only_room=ROOM_ID)
 

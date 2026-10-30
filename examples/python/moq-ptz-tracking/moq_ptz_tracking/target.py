@@ -2,7 +2,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 
-from moq_ptz_tracking.event_timeline import Location
+from moq_system_one_bot.event_timeline import Location
 
 MAX_DESCRIPTIONS = 16
 MAX_DESCRIPTION_CHARS = 100

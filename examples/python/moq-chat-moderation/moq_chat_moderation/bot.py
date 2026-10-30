@@ -8,19 +8,20 @@ from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
+from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
 from moq_system_one_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.relay import add_relay_arguments, stay_connected
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from moq_chat_moderation.chat import ChatMessage
 from moq_chat_moderation.system_one import SystemOneClient
-from moq_chat_moderation.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 from moq_chat_moderation.moderator import ChatModerator
 
-DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8097
 DEFAULT_MAX_ROOMS = 10
 NAMESPACE_ROOT = ["anon", "moq-chat-moderation"]
@@ -31,20 +32,12 @@ STATUS_TRACK = "status"
 # (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
-RECONNECT_DELAY_SECONDS = 2.0
-# The System One service scales to zero; a cold start copies its weights before it answers.
-JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Judge MoQ chat messages with d1-2B, one bot per chat room")
     add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
-    parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="skip TLS verification, for a local relay with a self-signed certificate",
-    )
+    add_relay_arguments(parser)
     parser.add_argument("--system-one-url", required=True, help="a System One /v1/systemone endpoint, such as system-one-server")
     add_identity_token_arguments(parser)
     return parser.parse_args()
@@ -99,32 +92,10 @@ async def moderate_session(
         following.cancel()
 
 
-async def stay_connected(
-    args: argparse.Namespace, room_id: str, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
-) -> None:
-    while True:
-        try:
-            session = await moqt.connect(args.relay_url, verify_certificate=not args.insecure)
-        except RuntimeError as error:
-            logger.warning(f"room {room_id}: cannot connect to {args.relay_url}: {error}")
-            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-            continue
-        logger.info(f"room {room_id}: connected to {args.relay_url}")
-        try:
-            if await moderate_session(session, room_id, timeline, status, worker):
-                return
-            logger.warning(f"room {room_id}: relay session closed")
-        except RuntimeError as error:
-            logger.warning(f"room {room_id}: relay session failed: {error}")
-        finally:
-            await session.close()
-        await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-
-
 async def moderate_room(
     args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
 ) -> None:
-    timeline = EventTimeline()
+    timeline = EventTimeline(replay=True)
     status = SystemOneStatus()
     system_one = SystemOneClient(http, args.system_one_url, status, identity_token)
     worker = PipelineWorker(
@@ -137,13 +108,14 @@ async def moderate_room(
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
-        await stay_connected(args, room_id, timeline, status, worker)
+        in_session = partial(moderate_session, room_id=room_id, timeline=timeline, status=status, worker=worker)
+        await stay_connected(args, in_session, f"room {room_id}: ")
         await runner.cancel()
 
 
 async def main():
     args = parse_args()
-    async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as http:
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
         identity_token = identity_token_from_arguments(args, http, args.system_one_url)
         await serve_rooms(args, partial(moderate_room, args, http, identity_token))
 
