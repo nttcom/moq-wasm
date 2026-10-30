@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
+import { Dispatch, SetStateAction, useEffect } from 'react'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { isTranscriberNamespace, parseTrackNamespace } from '../session/trackNamespace'
 import { Room } from '../types/room'
@@ -24,8 +24,6 @@ export function useSessionEventHandlers({
   setChatMessages,
   setTranscriberPresent
 }: EventHandlerParams) {
-  const subscribedNamespacesRef = useRef<LocalSession | null>(null)
-
   useEffect(() => {
     const handlePublishNamespace = createPublishNamespaceHandler({
       session,
@@ -45,19 +43,7 @@ export function useSessionEventHandlers({
     })
     session.setOnPublishNamespaceDoneHandler(handlePublishNamespaceDone)
 
-    const ensureSubscribeNamespace = async () => {
-      if (subscribedNamespacesRef.current === session) {
-        return
-      }
-      try {
-        await session.subscribeNamespace(session.trackNamespacePrefix)
-        subscribedNamespacesRef.current = session
-      } catch (error) {
-        console.error('Failed to subscribe namespace:', error)
-      }
-    }
-
-    void ensureSubscribeNamespace()
+    session.subscribeNamespace().catch((error) => console.error('Failed to subscribe namespace:', error))
     return () => {
       session.setOnPublishNamespaceHandler(null)
       session.setOnPublishNamespaceDoneHandler(null)

@@ -57,7 +57,7 @@ export class LocalSession {
   readonly localMember: LocalMember
   /// Publishes the member's media and chat and subscribes to the others.
   private session: MoqSession | null = null
-  private namespaceWatch: MoqNamespaceWatch | null = null
+  private namespaceWatch: Promise<MoqNamespaceWatch> | null = null
   private chatWriter: Promise<TrackWriter> | null = null
   private readonly mediaController: MeetingMediaController
   private state: LocalSessionState = LocalSessionState.Idle
@@ -137,7 +137,7 @@ export class LocalSession {
     try {
       await this.unsubscribeAllActiveSubscriptions()
       await this.namespaceWatch
-        ?.close()
+        ?.then((watch) => watch.close())
         .catch((error) => console.warn('[meeting] failed to unsubscribe the namespace', error))
       await this.mediaController.dispose().catch((error) => console.warn('[meeting] failed to stop the media', error))
     } finally {
@@ -160,11 +160,23 @@ export class LocalSession {
     return this.session
   }
 
-  /// Calls the namespace handlers for every member and bot published under
-  /// `trackNamespacePrefix`, those already present included.
-  async subscribeNamespace(trackNamespacePrefix: string[]): Promise<void> {
-    const watch = await this.connected('subscribe namespace').watchNamespaces(trackNamespacePrefix)
-    this.namespaceWatch = watch
+  /// Calls the namespace handlers for every member and bot published in the
+  /// room, those already present included. Only the first call sends
+  /// SUBSCRIBE_NAMESPACE (draft-14 §9.28 rejects an overlapping one on the
+  /// session); later calls wait for it.
+  async subscribeNamespace(): Promise<void> {
+    if (this.namespaceWatch) {
+      await this.namespaceWatch
+      return
+    }
+    const watching = this.connected('subscribe namespace').watchNamespaces(this.trackNamespacePrefix)
+    this.namespaceWatch = watching
+    const watch = await watching.catch((error: unknown) => {
+      if (this.namespaceWatch === watching) {
+        this.namespaceWatch = null
+      }
+      throw error
+    })
     void (async () => {
       for await (const { kind, namespace } of watch) {
         console.info(
