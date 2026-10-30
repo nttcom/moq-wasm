@@ -8,7 +8,6 @@ use moqt::{
     Session as MoqtSession, Subscription as MoqtSubscription, TerminationErrorCode, TrackObject,
     TrackReader, executor,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
-    namespace::NamespaceEvent,
     object::{
         ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, Location,
         MalformedTrackError, Object, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
@@ -17,7 +16,7 @@ use moqt::{
     subscribe::{FilterType, SubscribeOption},
     wire::{RequestKind, request_error_code_to_wire},
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::{JsFuture, future_to_promise, spawn_local};
 
@@ -28,7 +27,7 @@ use crate::{
     loc::{encode_loc_header, parse_loc_header},
     media_broadcast::MediaBroadcast,
     request_rejection::request_failure_code,
-    session_routes::SessionRoutes,
+    session_routes::{NamespaceEvents, SessionRoutes},
 };
 
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
@@ -221,7 +220,7 @@ impl Session {
         Ok(NamespaceWatch {
             session: self.session.clone(),
             prefix,
-            events: Rc::new(Mutex::new(events)),
+            events: Rc::new(events),
         })
     }
 
@@ -578,24 +577,25 @@ impl Group {
 pub struct NamespaceWatch {
     session: Arc<MoqtSession>,
     prefix: Vec<String>,
-    events: Rc<Mutex<mpsc::UnboundedReceiver<NamespaceEvent>>>,
+    events: Rc<NamespaceEvents>,
 }
 
 #[wasm_bindgen]
 impl NamespaceWatch {
     /// The next namespace published or withdrawn; `undefined` once the
-    /// session ends.
+    /// session ends or `close` is called.
     pub async fn next(&self) -> Option<NamespaceChange> {
         let events = self.events.clone();
-        let event = events.lock().await.recv().await?;
+        let event = events.next().await?;
         Some(NamespaceChange {
             namespace: event.namespace,
             active: event.active,
         })
     }
 
+    /// UNSUBSCRIBE_NAMESPACE; a `next` that waits resolves to `undefined`.
     pub async fn close(&self) -> Result<(), JsValue> {
-        self.events.lock().await.close();
+        self.events.close().await;
         self.session
             .subscriber()
             .unsubscribe_namespace(self.prefix.join("/"))
