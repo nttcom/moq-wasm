@@ -21,4 +21,4 @@ export {
   LivePlayer
 } from './player/livePlayer'
 export { PlayerControls } from './controls/playerControls'
-export { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from './catalog'
+export { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from './catalog'

@@ -1,4 +1,4 @@
-import { parse_msf_catalog_json } from 'moq-wasm/internal/wasm'
+import { parseCatalog } from 'moq-wasm/media/catalog'
 import type { Rendition } from 'moq-wasm/media/publish'
 import { resolveInitData, type MsfTrack } from 'moq-wasm/media/catalog'
 import {
@@ -108,7 +108,7 @@ export const SCREEN_SHARE_RENDITIONS: Rendition[] = [
 ]
 
 export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[] {
-  const catalog: { tracks?: MsfTrack[] } = parse_msf_catalog_json(payload)
+  const catalog: { tracks?: MsfTrack[] } = parseCatalog(payload) as { tracks?: MsfTrack[] }
   return (catalog.tracks ?? []).flatMap((track) => {
     const role = resolveRole(track)
     if (!role) {
