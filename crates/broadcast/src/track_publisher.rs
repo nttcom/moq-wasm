@@ -26,6 +26,9 @@ use crate::{
 /// sees), so that what a viewer received can be checked against
 /// what was sent: `RUST_LOG=broadcast::delivery=debug`.
 const DELIVERY_LOG_TARGET: &str = "broadcast::delivery";
+/// A late joiner starts at a group, so this bounds how far it joins behind the
+/// live edge.
+const AUDIO_ONLY_GROUP_DURATION_US: u64 = 1_000_000;
 
 /// The clocks every track of one switching set stamps from, so renditions of
 /// the source video carry the same capture timestamp and group id for the same
@@ -49,9 +52,13 @@ pub(crate) struct TrackPublisher {
     broadcast: Broadcast,
     tracks: SourceTracks,
     announced: bool,
-    /// The video keyframe group the audio is being written into, so that the
-    /// audio tracks start a group exactly when the video tracks do.
+    /// The group the audio is being written into: the latest video keyframe
+    /// group, so the audio tracks start a group when the video tracks do, or,
+    /// while the source publishes no video, one the audio started itself.
     audio_group_id: Option<u64>,
+    audio_only_group_start_us: Option<u64>,
+    /// Between the video's configuration and its removal.
+    video_published: bool,
     audio_config: Option<AudioConfig>,
     timeline: MediaTimeline,
     timing: SharedTiming,
@@ -67,6 +74,8 @@ impl TrackPublisher {
             tracks,
             announced: false,
             audio_group_id: None,
+            audio_only_group_start_us: None,
+            video_published: false,
             audio_config: None,
             timeline: MediaTimeline::default(),
             timing: SharedTiming {
@@ -79,8 +88,16 @@ impl TrackPublisher {
         }
     }
 
-    pub(crate) fn broadcast(&self) -> &Broadcast {
-        &self.broadcast
+    pub(crate) async fn remove_track(&mut self, track_name: &str) -> Result<()> {
+        if track_name == self.tracks.video {
+            self.video_published = false;
+        }
+        // Audio published again starts a group at once instead of writing into
+        // the group the removal ended.
+        if track_name == self.tracks.audio {
+            self.audio_only_group_start_us = None;
+        }
+        self.broadcast.remove_track(track_name).await
     }
 
     pub(crate) fn shared_timing(&self) -> SharedTiming {
@@ -91,6 +108,7 @@ impl TrackPublisher {
         match event {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
+                self.video_published = true;
                 self.video_codec = VideoCodec::from(config);
                 self.video_cmaf = self
                     .tracks
@@ -233,8 +251,9 @@ impl TrackPublisher {
         Ok(())
     }
 
-    /// Audio before the first video keyframe has no group to belong to and is
-    /// dropped, as the video before its first keyframe is.
+    /// Audio pushed after the video's configuration and before its first
+    /// keyframe has no group to belong to and is dropped, as the video before
+    /// its first keyframe is.
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
         self.audio_config
             .as_ref()
@@ -314,7 +333,22 @@ impl TrackPublisher {
         Ok(())
     }
 
+    /// Without video the audio takes its group ids from the video's alignment,
+    /// so they keep increasing when video starts.
     fn audio_group(&mut self, presentation_us: u64) -> Option<GroupBoundary> {
+        if !self.video_published {
+            let due = self.audio_only_group_start_us.is_none_or(|start| {
+                presentation_us.saturating_sub(start) >= AUDIO_ONLY_GROUP_DURATION_US
+            });
+            if !due {
+                return Some(GroupBoundary::Within);
+            }
+            self.audio_only_group_start_us = Some(presentation_us);
+            let group_id = self.timing.alignment.keyframe(presentation_us);
+            self.audio_group_id = Some(group_id);
+            return Some(GroupBoundary::At(group_id));
+        }
+        self.audio_only_group_start_us = None;
         let group_id = self.timing.alignment.group_covering(presentation_us)?;
         if self.audio_group_id == Some(group_id) {
             return Some(GroupBoundary::Within);
@@ -326,4 +360,57 @@ impl TrackPublisher {
 
 fn wall_clock() -> Timestamp {
     Timestamp::from_micros(executor::system_time().as_micros() as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::relay_connection::RelayConnection;
+
+    fn publisher() -> TrackPublisher {
+        TrackPublisher::new(
+            Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]),
+            SourceTracks::default(),
+        )
+    }
+
+    #[test]
+    fn audio_without_video_starts_a_group_every_second() {
+        // Arrange
+        let mut publisher = publisher();
+
+        // Act
+        let groups: Vec<_> = [0, 20_000, 1_000_000, 1_020_000]
+            .map(|pts| publisher.audio_group(pts))
+            .into();
+
+        // Assert
+        let first = publisher.timing.alignment.aligned(0).unwrap();
+        assert_eq!(
+            groups,
+            [
+                Some(GroupBoundary::At(first)),
+                Some(GroupBoundary::Within),
+                Some(GroupBoundary::At(first + 1)),
+                Some(GroupBoundary::Within)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn audio_follows_the_video_keyframes_until_the_video_is_removed() {
+        // Arrange: video is published and has a keyframe at 0
+        let mut publisher = publisher();
+        publisher.video_published = true;
+        let keyframe = publisher.timing.alignment.keyframe(0);
+
+        // Act
+        let with_video = publisher.audio_group(1_500_000);
+        publisher.remove_track(VIDEO_TRACK_NAME).await.unwrap();
+        let without_video = publisher.audio_group(1_520_000);
+
+        // Assert
+        assert_eq!(with_video, Some(GroupBoundary::At(keyframe)));
+        assert_eq!(without_video, Some(GroupBoundary::At(keyframe + 1)));
+    }
 }

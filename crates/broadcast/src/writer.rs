@@ -79,7 +79,7 @@ async fn publish_queued_events(mut consumer: QueueConsumer, mut tracks: TrackPub
                 track_name,
                 done_sender,
             } => {
-                let _ = done_sender.send(tracks.broadcast().remove_track(&track_name).await);
+                let _ = done_sender.send(tracks.remove_track(&track_name).await);
             }
         }
     }
