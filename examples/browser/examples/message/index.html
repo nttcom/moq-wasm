@@ -324,7 +324,7 @@
       <header class="hero">
         <span class="pill">Message</span>
         <h1>MoQT Message Test</h1>
-        <p>MoQT control messages and object flows can be tested from one screen.</p>
+        <p>Each MoqSession request can be sent one at a time from one screen.</p>
       </header>
 
       <div id="app">
@@ -335,7 +335,7 @@
             <div id="logPanel"></div>
           </section>
 
-          <section class="card">
+          <section class="card span-2">
             <h2>Connection</h2>
             <label for="url">URL:</label>
             <input type="url" name="url" id="url" value="https://relay-1.moqt.research.skyway.io:443" />
@@ -346,450 +346,91 @@
             </div>
           </section>
 
-          <section class="card">
-            <h2>Forwarding</h2>
-            <label>
-              <input type="radio" name="forwarding" value="false" checked />
-              Off
-            </label>
-            <label>
-              <input type="radio" name="forwarding" value="true" />
-              On
-            </label>
-            <p class="hint warn">Use this as the SUBSCRIBE forward flag.</p>
-          </section>
-
           <section class="card span-2">
-            <h2>Message</h2>
-            <label>AuthInfo: <input type="text" name="auth-info" value="secret" /></label>
-
+            <h2>Requests</h2>
             <div class="message-grid">
               <section class="panel">
-                <h3>CLIENT_SETUP</h3>
-                <label>Supported Version: <input type="text" name="versions" value="0xff00000E" /></label>
-                <label>Max Request ID: <input type="text" name="max-subscribe-id" value="1" /></label>
+                <h3>announce</h3>
+                <p class="hint">PUBLISH_NAMESPACE, withdrawn with PUBLISH_NAMESPACE_DONE</p>
+                <label>Track Namespace: <input type="text" id="announce-namespace" value="anon/vc/aa" /></label>
                 <div class="button-row action-row">
-                  <button type="button" id="sendSetupBtn">Send</button>
+                  <button type="button" id="announceBtn">Announce</button>
+                  <button type="button" id="withdrawBtn">Withdraw</button>
                 </div>
               </section>
 
               <section class="panel">
-                <h3>PUBLISH_NAMESPACE</h3>
-                <label>
-                  Track Namespace:
-                  <input type="text" name="publish-track-namespace" id="publish-track-namespace" value="anon/vc/aa" />
-                </label>
+                <h3>watchNamespaces</h3>
+                <p class="hint">SUBSCRIBE_NAMESPACE, stopped with UNSUBSCRIBE_NAMESPACE</p>
+                <label>Track Namespace Prefix: <input type="text" id="watch-prefix" value="anon/vc" /></label>
                 <div class="button-row action-row">
-                  <button type="button" id="sendPublishNamespaceBtn">Send</button>
+                  <button type="button" id="watchBtn">Watch</button>
+                  <button type="button" id="unwatchBtn">Stop</button>
+                </div>
+              </section>
+
+              <section class="panel wide">
+                <h3>publishTrack</h3>
+                <p class="hint">Answers the track's SUBSCRIBE, FETCH and TRACK_STATUS; PUBLISH when checked</p>
+                <label>Track Namespace: <input type="text" id="publish-namespace" value="anon/vc/aa" /></label>
+                <label>Track Name: <input type="text" id="publish-track" value="track" /></label>
+                <label>Retention (ms): <input type="text" id="publish-retention" value="60000" /></label>
+                <label class="inline-group"><input type="checkbox" id="publish-publish" /> Send PUBLISH</label>
+                <div class="button-row action-row">
+                  <button type="button" id="publishTrackBtn">Publish track</button>
+                </div>
+                <label>Payload: <input type="text" id="write-payload" value="hello" /></label>
+                <label class="inline-group"><input type="checkbox" id="write-new-group" checked /> New group</label>
+                <div class="button-row action-row">
+                  <button type="button" id="writeBtn">write</button>
+                  <button type="button" id="writeGroupBtn">writeGroup</button>
+                </div>
+              </section>
+
+              <section class="panel wide">
+                <h3>subscribe</h3>
+                <p class="hint">SUBSCRIBE; forward is changed with SUBSCRIBE_UPDATE, ended with UNSUBSCRIBE</p>
+                <label>Track Namespace: <input type="text" id="subscribe-namespace" value="anon/vc/aa" /></label>
+                <label>Track Name: <input type="text" id="subscribe-track" value="track" /></label>
+                <label
+                  >Filter:
+                  <select id="subscribe-filter">
+                    <option value="largestObject" selected>Largest Object</option>
+                    <option value="nextGroupStart">Next Group Start</option>
+                  </select>
+                </label>
+                <label>Subscriber Priority: <input type="text" id="subscribe-priority" value="128" /></label>
+                <label class="inline-group"><input type="checkbox" id="subscribe-forward" checked /> Forward</label>
+                <div class="button-row action-row">
+                  <button type="button" id="subscribeBtn">Subscribe</button>
+                  <button type="button" id="setForwardBtn">Set forward</button>
+                  <button type="button" id="unsubscribeBtn">Unsubscribe</button>
+                </div>
+              </section>
+
+              <section class="panel wide">
+                <h3>fetch</h3>
+                <p class="hint">FETCH; End Object 0 means the whole end group</p>
+                <label>Track Namespace: <input type="text" id="fetch-namespace" value="anon/vc/aa" /></label>
+                <label>Track Name: <input type="text" id="fetch-track" value="track" /></label>
+                <div class="inline-group">
+                  <label>Start Group: <input type="text" id="fetch-start-group" value="0" /></label>
+                  <label>Start Object: <input type="text" id="fetch-start-object" value="0" /></label>
+                  <label>End Group: <input type="text" id="fetch-end-group" value="0" /></label>
+                  <label>End Object: <input type="text" id="fetch-end-object" value="0" /></label>
+                </div>
+                <div class="button-row action-row">
+                  <button type="button" id="fetchBtn">Fetch</button>
                 </div>
               </section>
 
               <section class="panel">
-                <h3>SUBSCRIBE_NAMESPACE</h3>
-                <label>
-                  Track Namespace Prefix:
-                  <input type="text" name="track-namespace-prefix" id="track-namespace-prefix" value="anon/vc" />
-                </label>
+                <h3>trackStatus</h3>
+                <p class="hint">TRACK_STATUS</p>
+                <label>Track Namespace: <input type="text" id="track-status-namespace" value="anon/vc/aa" /></label>
+                <label>Track Name: <input type="text" id="track-status-track" value="track" /></label>
                 <div class="button-row action-row">
-                  <button type="button" id="sendSubscribeNamespaceBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel">
-                <h3>UNSUBSCRIBE</h3>
-                <label>Request ID: <input type="text" name="unsubscribe-subscribe-id" value="" /></label>
-                <div class="button-row action-row">
-                  <button type="button" id="sendUnsubscribeBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>SUBSCRIBE</h3>
-                <label>Request ID: <input type="text" name="subscribe-request-id" value="0" /></label>
-                <label>
-                  Assigned Track Alias:
-                  <input type="text" name="subscribe-assigned-track-alias" value="" readonly />
-                </label>
-                <label>
-                  Track Namespace:
-                  <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="anon/vc/aa" />
-                </label>
-                <label>Track Name: <input type="text" name="track-name" value="vc_track" /></label>
-                <label>Subscriber Priority: <input type="text" name="subscriber-priority" value="0" /></label>
-
-                <div>
-                  <p class="subheading">Group Order:</p>
-                  <div class="inline-group">
-                    <label><input type="radio" name="group-order" value="0" checked />Original</label>
-                    <label><input type="radio" name="group-order" value="1" />Ascending</label>
-                    <label><input type="radio" name="group-order" value="2" />Descending</label>
-                  </div>
-                </div>
-
-                <div>
-                  <p class="subheading">Filter Type:</p>
-                  <div class="inline-group">
-                    <label><input type="radio" name="filter-type" value="1" checked />Latest Group</label>
-                    <label><input type="radio" name="filter-type" value="2" />Latest Object</label>
-                    <label><input type="radio" name="filter-type" value="3" />Absolute Start</label>
-                    <label><input type="radio" name="filter-type" value="4" />Absolute Range</label>
-                  </div>
-                </div>
-
-                <div class="inline-group">
-                  <label>Start Group: <input type="text" name="start-group" value="0" /></label>
-                  <label>Start Object: <input type="text" name="start-object" value="0" /></label>
-                </div>
-                <div class="inline-group">
-                  <label>End Group: <input type="text" name="end-group" value="10000" /></label>
-                  <label>End Object: <input type="text" name="end-object" value="10000" /></label>
-                </div>
-                <div class="button-row action-row">
-                  <button type="button" id="sendSubscribeBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>OBJECT</h3>
-                <div id="headerField" style="display: block">
-                  <h4>Header</h4>
-                </div>
-                <label>
-                  Active Track Alias:
-                  <select name="object-track-alias" id="object-track-alias"></select>
-                </label>
-
-                <div id="subgroupHeaderContents" style="display: block">
-                  <div class="inline-group">
-                    <span>Group ID:</span>
-                    <span id="subgroupGroupId" class="counter">0</span>
-                    <button type="button" id="descendSubgroupGroupIdBtn">&lt;</button>
-                    <button type="button" id="ascendSubgroupGroupIdBtn">&gt;</button>
-                  </div>
-                  <div class="inline-group">
-                    <span>Subgroup ID:</span>
-                    <span id="subgroupId" class="counter">0</span>
-                    <button type="button" id="descendSubgroupIdBtn">&lt;</button>
-                    <button type="button" id="ascendSubgroupIdBtn">&gt;</button>
-                  </div>
-                </div>
-
-                <label>Publisher Priority: <input type="text" name="publisher-priority" value="0" /></label>
-
-                <div id="objectField" style="display: block">
-                  <h4>Object</h4>
-                </div>
-
-                <div id="datagramObjectContents" style="display: none">
-                  <div class="inline-group">
-                    <span>Group ID:</span>
-                    <span id="datagramGroupId" class="counter">0</span>
-                    <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
-                    <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
-                  </div>
-                </div>
-
-                <div class="inline-group">
-                  <span>Object ID:</span>
-                  <span id="objectId" class="counter">0</span>
-                </div>
-
-                <div>
-                  <p class="subheading">Object Status:</p>
-                  <div class="inline-group">
-                    <label><input type="radio" name="object-status" id="normal" value="0" checked />Normal</label>
-                    <label>
-                      <input type="radio" name="object-status" id="does-not-exist" value="1" />
-                      DoesNotExist
-                    </label>
-                    <label><input type="radio" name="object-status" id="end-of-group" value="3" />EndOfGroup</label>
-                    <label>
-                      <input type="radio" name="object-status" id="end-of-track-and-group" value="4" />
-                      EndOfTrackAndGroup
-                    </label>
-                    <label><input type="radio" name="object-status" id="end-of-track" value="5" />EndOfTrack</label>
-                  </div>
-                </div>
-
-                <label>
-                  Payload:
-                  <textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea>
-                </label>
-
-                <div id="sendDatagramObject" style="display: none" class="button-row">
-                  <button type="button" id="sendDatagramObjectBtn">Send with Payload</button>
-                </div>
-                <div id="sendDatagramObjectWithStatus" style="display: none" class="button-row">
-                  <button type="button" id="sendDatagramObjectWithStatusBtn">Send with Status</button>
-                </div>
-                <div id="sendSubgroupObject" style="display: block" class="button-row">
-                  <button type="button" id="sendSubgroupObjectBtn">Send with Payload</button>
-                </div>
-                <div id="sendSubgroupObjectWithStatus" style="display: block" class="button-row action-row">
-                  <button type="button" id="sendSubgroupObjectWithStatusBtn">Send with Status</button>
-                </div>
-              </section>
-
-              <section class="panel">
-                <h3>PUBLISH_NAMESPACE_DONE</h3>
-                <label>
-                  Track Namespace:
-                  <input
-                    type="text"
-                    name="publish-namespace-done-track-namespace"
-                    id="publish-namespace-done-track-namespace"
-                    value="anon/vc/aa"
-                  />
-                </label>
-                <div class="button-row action-row">
-                  <button type="button" id="sendPublishNamespaceDoneBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel">
-                <h3>UNSUBSCRIBE_NAMESPACE</h3>
-                <label>
-                  Track Namespace Prefix:
-                  <input type="text" name="unsubscribe-namespace-prefix" id="unsubscribe-namespace-prefix" value="anon/vc" />
-                </label>
-                <div class="button-row action-row">
-                  <button type="button" id="sendUnsubscribeNamespaceBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>PUBLISH</h3>
-                <div class="inline-group">
-                  <label>
-                    Request ID:
-                    <input type="text" name="publish-request-id" id="publish-request-id" value="3" />
-                  </label>
-                  <label>
-                    Track Namespace:
-                    <input type="text" name="publish-track-namespace-2" id="publish-track-namespace-2" value="anon/vc/aa" />
-                  </label>
-                  <label>
-                    Track Name:
-                    <input type="text" name="publish-track-name" id="publish-track-name" value="track" />
-                  </label>
-                </div>
-                <div class="inline-group">
-                  <label>
-                    Track Alias:
-                    <input type="text" name="publish-track-alias" id="publish-track-alias" value="100" />
-                  </label>
-                  <label>
-                    Group Order:
-                    <input type="text" name="publish-group-order" id="publish-group-order" value="1" />
-                  </label>
-                </div>
-                <p class="hint">Content Exists は false、Forward は true で送信します。</p>
-                <div class="button-row action-row">
-                  <button type="button" id="sendPublishBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>FETCH</h3>
-                <div class="inline-group">
-                  <label>
-                    Request ID:
-                    <input type="text" name="fetch-request-id" id="fetch-request-id" value="4" />
-                  </label>
-                  <label>
-                    Track Namespace:
-                    <input type="text" name="fetch-track-namespace" id="fetch-track-namespace" value="anon/vc/aa" />
-                  </label>
-                  <label>
-                    Track Name:
-                    <input type="text" name="fetch-track-name" id="fetch-track-name" value="track" />
-                  </label>
-                </div>
-                <div class="inline-group">
-                  <label
-                    >Start Group: <input type="text" name="fetch-start-group" id="fetch-start-group" value="0"
-                  /></label>
-                  <label>
-                    Start Object:
-                    <input type="text" name="fetch-start-object" id="fetch-start-object" value="0" />
-                  </label>
-                  <label>End Group: <input type="text" name="fetch-end-group" id="fetch-end-group" value="1" /></label>
-                  <label
-                    >End Object: <input type="text" name="fetch-end-object" id="fetch-end-object" value="1"
-                  /></label>
-                </div>
-                <div class="button-row action-row">
-                  <button type="button" id="sendFetchBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel">
-                <h3>GOAWAY</h3>
-                <label>
-                  New Session URI:
-                  <input type="text" name="goaway-new-session-uri" id="goaway-new-session-uri" value="" />
-                </label>
-                <div class="button-row action-row">
-                  <button type="button" id="sendGoAwayBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel">
-                <h3>FETCH_CANCEL</h3>
-                <label>
-                  Request ID:
-                  <input type="text" name="fetch-cancel-request-id" id="fetch-cancel-request-id" value="0" />
-                </label>
-                <div class="button-row action-row">
-                  <button type="button" id="sendFetchCancelBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>SUBSCRIBE_UPDATE</h3>
-                <div class="inline-group">
-                  <label>
-                    Request ID:
-                    <input type="text" name="subscribe-update-request-id" id="subscribe-update-request-id" value="1" />
-                  </label>
-                  <label>
-                    Subscription Request ID:
-                    <input
-                      type="text"
-                      name="subscribe-update-subscription-request-id"
-                      id="subscribe-update-subscription-request-id"
-                      value="0"
-                    />
-                  </label>
-                </div>
-                <div class="inline-group">
-                  <label>
-                    Start Group:
-                    <input
-                      type="text"
-                      name="subscribe-update-start-group"
-                      id="subscribe-update-start-group"
-                      value="0"
-                    />
-                  </label>
-                  <label>
-                    Start Object:
-                    <input
-                      type="text"
-                      name="subscribe-update-start-object"
-                      id="subscribe-update-start-object"
-                      value="0"
-                    />
-                  </label>
-                  <label>
-                    End Group:
-                    <input type="text" name="subscribe-update-end-group" id="subscribe-update-end-group" value="0" />
-                  </label>
-                  <label>
-                    Subscriber Priority:
-                    <input
-                      type="text"
-                      name="subscribe-update-subscriber-priority"
-                      id="subscribe-update-subscriber-priority"
-                      value="0"
-                    />
-                  </label>
-                </div>
-                <p class="hint">Forward flag は Forwarding の設定を使用します。</p>
-                <div class="button-row action-row">
-                  <button type="button" id="sendSubscribeUpdateBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>PUBLISH_DONE</h3>
-                <div class="inline-group">
-                  <label>
-                    Request ID:
-                    <input type="text" name="publish-done-request-id" id="publish-done-request-id" value="0" />
-                  </label>
-                  <label>
-                    Status Code:
-                    <input type="text" name="publish-done-status-code" id="publish-done-status-code" value="2" />
-                  </label>
-                  <label>
-                    Stream Count:
-                    <input type="text" name="publish-done-stream-count" id="publish-done-stream-count" value="0" />
-                  </label>
-                </div>
-                <label>
-                  Error Reason:
-                  <input
-                    type="text"
-                    name="publish-done-error-reason"
-                    id="publish-done-error-reason"
-                    value="track ended"
-                  />
-                </label>
-                <div class="button-row action-row">
-                  <button type="button" id="sendPublishDoneBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>PUBLISH_NAMESPACE_CANCEL</h3>
-                <label>
-                  Track Namespace:
-                  <input
-                    type="text"
-                    name="publish-namespace-cancel-track-namespace"
-                    id="publish-namespace-cancel-track-namespace"
-                    value="anon/vc/aa"
-                  />
-                </label>
-                <div class="inline-group">
-                  <label>
-                    Error Code:
-                    <input
-                      type="text"
-                      name="publish-namespace-cancel-error-code"
-                      id="publish-namespace-cancel-error-code"
-                      value="0"
-                    />
-                  </label>
-                  <label>
-                    Error Reason:
-                    <input
-                      type="text"
-                      name="publish-namespace-cancel-error-reason"
-                      id="publish-namespace-cancel-error-reason"
-                      value="cancelled"
-                    />
-                  </label>
-                </div>
-                <div class="button-row action-row">
-                  <button type="button" id="sendPublishNamespaceCancelBtn">Send</button>
-                </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>TRACK_STATUS</h3>
-                <div class="inline-group">
-                  <label>
-                    Request ID:
-                    <input type="text" name="track-status-request-id" id="track-status-request-id" value="2" />
-                  </label>
-                  <label>
-                    Track Namespace:
-                    <input
-                      type="text"
-                      name="track-status-track-namespace"
-                      id="track-status-track-namespace"
-                      value="anon/vc/aa"
-                    />
-                  </label>
-                  <label>
-                    Track Name:
-                    <input type="text" name="track-status-track-name" id="track-status-track-name" value="track" />
-                  </label>
-                </div>
-                <div class="button-row action-row">
-                  <button type="button" id="sendTrackStatusBtn">Send</button>
+                  <button type="button" id="trackStatusBtn">Track status</button>
                 </div>
               </section>
 
