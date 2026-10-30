@@ -438,3 +438,159 @@ impl SessionWorker {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use moqt::{
+        Session, SessionEvent, Subscription,
+        object::Location,
+        publish::PublishDoneCode,
+        subscribe::{FilterType, SubscribeOption},
+    };
+
+    use crate::modules::{
+        auth::test_support::{app_token, connect_client, spawn_relay_and_connect_client},
+        test_support::relay_clients::{
+            NAMESPACE, TRACK, TrackPublisher, next_event, publish_namespace, subscribe_namespace,
+            subscribe_track,
+        },
+    };
+
+    /// Starts at group 1 so that `end_before_start` leaves nothing to deliver.
+    fn from_group_1() -> SubscribeOption {
+        SubscribeOption {
+            filter_type: FilterType::AbsoluteStart {
+                location: Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            },
+            ..SubscribeOption::default()
+        }
+    }
+
+    async fn end_before_start(subscriber: &Session, subscription: &Subscription) {
+        subscriber
+            .subscriber()
+            .end_before_group(subscription, 1, true)
+            .await
+            .unwrap();
+    }
+
+    async fn next_publish_done(session: &Session) -> (u64, PublishDoneCode) {
+        let event = next_event(session).await;
+        let SessionEvent::PublishDone(done) = event else {
+            panic!("expected PUBLISH_DONE, got {event:?}");
+        };
+        (done.request_id(), done.status_code())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn publish_namespace_done_reaches_the_namespace_subscribers() {
+        // Arrange
+        let (relay, watcher) = spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let announcer = connect_client(&relay).await;
+        subscribe_namespace(&watcher, "APP/room").await;
+        publish_namespace(&announcer, "APP/room/x").await;
+        let SessionEvent::PublishNamespace(_) = next_event(&watcher).await else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+
+        // Act
+        announcer
+            .publisher()
+            .publish_namespace_done("APP/room/x".to_string())
+            .await
+            .unwrap();
+        let event = next_event(&watcher).await;
+
+        // Assert
+        let SessionEvent::PublishNamespaceDone(done) = event else {
+            panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
+        };
+        assert_eq!(done.track_namespace, "APP/room/x");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unsubscribe_of_the_only_subscriber_releases_the_upstream_subscription() {
+        // Arrange
+        let (relay, subscriber) =
+            spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let mut publisher = TrackPublisher::run(&relay).await;
+        let subscription = subscribe_track(&subscriber, SubscribeOption::default()).await;
+
+        // Act
+        subscriber
+            .subscriber()
+            .unsubscribe(&subscription)
+            .await
+            .unwrap();
+        let unsubscribed = publisher.next_unsubscribe().await;
+
+        // Assert
+        assert!(
+            unsubscribed.is_some(),
+            "the relay kept its upstream subscription"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn publish_done_of_the_publisher_ends_the_downstream_subscription() {
+        // Arrange
+        let (relay, subscriber) =
+            spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let publisher = TrackPublisher::run(&relay).await;
+        let subscription = subscribe_track(&subscriber, SubscribeOption::default()).await;
+
+        // Act
+        publisher.origin.end_track(NAMESPACE, TRACK).await.unwrap();
+        let done = next_publish_done(&subscriber).await;
+
+        // Assert
+        assert_eq!(
+            done,
+            (subscription.request_id(), PublishDoneCode::TrackEnded)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn subscribe_update_that_leaves_nothing_to_deliver_ends_the_subscription() {
+        // Arrange
+        let (relay, subscriber) =
+            spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let _publisher = TrackPublisher::run(&relay).await;
+        let subscription = subscribe_track(&subscriber, from_group_1()).await;
+
+        // Act
+        end_before_start(&subscriber, &subscription).await;
+        let done = next_publish_done(&subscriber).await;
+
+        // Assert
+        assert_eq!(
+            done,
+            (
+                subscription.request_id(),
+                PublishDoneCode::SubscriptionEnded
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_subscription_whose_range_is_delivered_releases_the_upstream_subscription() {
+        // Arrange
+        let (relay, subscriber) =
+            spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let mut publisher = TrackPublisher::run(&relay).await;
+        let subscription = subscribe_track(&subscriber, from_group_1()).await;
+
+        // Act
+        end_before_start(&subscriber, &subscription).await;
+        let unsubscribed = publisher.next_unsubscribe().await;
+
+        // Assert
+        assert!(
+            unsubscribed.is_some(),
+            "the relay kept its upstream subscription"
+        );
+    }
+}
