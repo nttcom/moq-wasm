@@ -1,4 +1,5 @@
 import type { MoqSession } from 'moq-wasm'
+import { latestObjects } from './latestObjects'
 
 const STATUS_TRACK = 'status'
 
@@ -18,7 +19,7 @@ export class SystemOneStatusView {
     const status = await session.subscribeCurrentGroup(botNamespace, STATUS_TRACK)
     void status.done.then(() => this.reset())
     void (async () => {
-      for await (const { objectPayload } of status) {
+      for await (const { objectPayload } of latestObjects(status)) {
         const { system_one: state, since }: { system_one: SystemOneState; since: number } = JSON.parse(
           new TextDecoder().decode(objectPayload)
         )
