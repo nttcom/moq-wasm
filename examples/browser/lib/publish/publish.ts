@@ -16,6 +16,9 @@ export type SourceOptions = {
 }
 
 export type PublishOptions = SourceOptions & {
+  /// Lists the `chat` track in the catalog even while nothing is published on
+  /// `video` or `audio`.
+  offerChat?: boolean
   onError?: (error: unknown) => void
 }
 
@@ -67,6 +70,9 @@ export async function publish(
 ): Promise<Publication> {
   const broadcast = session.broadcast(namespace)
   await broadcast.announce()
+  if (options.offerChat) {
+    await broadcast.offerChat()
+  }
   const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
   // A new encoder worker stamps its first chunk 0, so the chunks of a worker
   // started after an unmute or a replaced track are shifted by the time since

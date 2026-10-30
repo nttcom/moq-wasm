@@ -27,7 +27,9 @@ adds its transcoded renditions this way. A writer writes into `video` and
 broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
 The media timeline and the chat describe the default `video` and `audio`, so
 the catalog lists them, and the `audio` placeholder sent before the AAC config
-arrives, only while a default track exists.
+arrives, only while a default track exists. `Broadcast::offer_chat` lists the chat
+without one, for a broadcast whose publisher writes the chat while it sends no
+media.
 
 Tasks are spawned and clocks read only through `moqt::executor`, so the crate
 also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
