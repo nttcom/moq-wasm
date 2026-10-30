@@ -1,5 +1,5 @@
-import { MoqtClientWrapper, type SubgroupSender } from '../../../lib/moqt/moqtClient'
-import { MediaTransportState } from '../../../utils/media/transportState'
+import { MoqSession, type TrackWriter } from 'moq-wasm'
+import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'
 import {
@@ -9,14 +9,13 @@ import {
   MediaStreamVideoTrackSource,
   MediaStreamAudioTrackSource
 } from 'mediabunny'
-import { getTrackAliases, serveSubscribes } from '../../media/serveSubscribes'
 import { setUpVisualizerToggle } from '../../media/visualizerToggle'
 import { element, parseTrackNamespace, initializeMediaExamplePage } from '../../../utils/page'
 
 let mediaStream: MediaStream | null = null
-const moqtClient = new MoqtClientWrapper()
+let session: MoqSession | undefined
+const writers: Record<'video' | 'audio', TrackWriter[]> = { video: [], audio: [] }
 const form = element<HTMLFormElement>('form')
-const transportState = new MediaTransportState()
 const videoTrackNames = MEDIA_VIDEO_PROFILES.map((profile) => profile.trackName)
 const audioTrackNames = MEDIA_AUDIO_PROFILES.map((profile) => profile.trackName)
 
@@ -46,17 +45,6 @@ const setUpStartGetUserMediaButton = () => {
   })
 }
 
-const sendMoqObject = async (
-  trackAlias: bigint,
-  groupId: bigint,
-  objectId: bigint,
-  data: Uint8Array,
-  client: SubgroupSender,
-  objectStatus?: number
-): Promise<void> => {
-  await client.sendSubgroupObject(trackAlias, groupId, 0n, objectId, objectStatus, data, undefined)
-}
-
 const setMoqSendVisualizationState = (type: 'video' | 'audio', groupId: bigint, objectId: bigint): void => {
   moqSendVisualization[type] = { groupId, objectId }
   if (isMoqSendVisualizerVisible()) {
@@ -84,20 +72,25 @@ const isMoqSendVisualizerVisible = setUpVisualizerToggle(
   renderMoqSendVisualization
 )
 
-const sendSetupButtonClickHandler = (): void => {
-  const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
-  sendSetupBtn.addEventListener('click', async () => {
-    const versions = new BigUint64Array([0xff00000en])
-    const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
-    await moqtClient.sendClientSetup(versions, maxSubscribeId)
-  })
-}
-
 const sendPublishNamespaceButtonClickHandler = (): void => {
   const sendPublishNamespaceBtn = document.getElementById('sendPublishNamespaceBtn') as HTMLButtonElement
   sendPublishNamespaceBtn.addEventListener('click', async () => {
+    const connected = session
+    if (!connected) {
+      console.error('[CmafPublisher] not connected')
+      return
+    }
     const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
-    await moqtClient.publishNamespace(trackNamespace, 'secret')
+    await connected.announce(trackNamespace)
+    writers.video = await Promise.all(videoTrackNames.map((name) => connected.publishTrack(trackNamespace, name)))
+    writers.audio = await Promise.all(audioTrackNames.map((name) => connected.publishTrack(trackNamespace, name)))
+    // Keeping only the newest object leaves the catalog for each joining FETCH.
+    const catalog = await connected.publishTrack(trackNamespace, CATALOG_TRACK_NAME, { retentionMs: 0 })
+    await catalog.writeGroup(
+      new TextEncoder().encode(
+        buildMediaCatalogJson(trackNamespace, 'cmaf', MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES)
+      )
+    )
   })
 }
 
@@ -108,26 +101,17 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
       console.error('mediaStream is null')
       return
     }
-    try {
-      moqtClient.requireConnectedClient()
-    } catch (error) {
-      console.error(error)
+    if (!writers.video.length) {
+      console.error('[CmafPublisher] send PUBLISH_NAMESPACE first')
       return
     }
 
     const keyFrameIntervalSec = Number(form['keyframe-interval'].value)
 
-    const getTrackNamespace = () => parseTrackNamespace(form['publish-track-namespace'].value)
-
     // --- fMP4 fragment コールバック生成 ---
     // mediabunny はキーフレーム境界でフラグメントを切るため、
     // 各フラグメント = 1 MoQ Group（Object 0 = init, Object 1 = moof+mdat）
-    const buildMp4Callbacks = (
-      type: 'video' | 'audio',
-      getAliases: () => bigint[],
-      advanceGroup: () => void,
-      getGroupId: () => bigint
-    ) => {
+    const buildMp4Callbacks = (type: 'video' | 'audio') => {
       let initSegment: Uint8Array | null = null
       const initParts: Uint8Array[] = []
       let lastMoof: Uint8Array | null = null
@@ -159,23 +143,12 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
           fragment.set(lastMoof, 0)
           fragment.set(data, lastMoof.byteLength)
 
-          const publisherPriority = Number(form['video-publisher-priority'].value)
-          const trackAliases = getAliases()
-          if (!trackAliases.length) {
-            return
-          }
-
-          advanceGroup()
-          const groupId = getGroupId()
-          for (const alias of trackAliases) {
-            await moqtClient.sendSubgroupHeader(alias, groupId, 0n, publisherPriority)
-            setMoqSendVisualizationState(type, groupId, 0n)
-            await sendMoqObject(alias, groupId, 0n, initSegment, moqtClient)
-            setMoqSendVisualizationState(type, groupId, 1n)
-            await sendMoqObject(alias, groupId, 1n, fragment, moqtClient)
-            // Explicitly terminate each group stream so the stream writer can be closed.
-            setMoqSendVisualizationState(type, groupId, 2n)
-            await sendMoqObject(alias, groupId, 2n, new Uint8Array(0), moqtClient, 3)
+          for (const writer of writers[type]) {
+            const groupId = await writer.write(initSegment, true, undefined)
+            await writer.write(fragment, false, undefined)
+            if (groupId !== undefined) {
+              setMoqSendVisualizationState(type, groupId, 1n)
+            }
           }
         }
       }
@@ -186,12 +159,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
       target: new NullTarget(),
       format: new Mp4OutputFormat({
         fastStart: 'fragmented',
-        ...buildMp4Callbacks(
-          'video',
-          () => getTrackAliases(moqtClient, getTrackNamespace(), videoTrackNames),
-          () => transportState.video.advanceGroup(),
-          () => transportState.video.groupId
-        )
+        ...buildMp4Callbacks('video')
       })
     })
 
@@ -200,12 +168,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
       target: new NullTarget(),
       format: new Mp4OutputFormat({
         fastStart: 'fragmented',
-        ...buildMp4Callbacks(
-          'audio',
-          () => getTrackAliases(moqtClient, getTrackNamespace(), audioTrackNames),
-          () => transportState.audio.advanceGroup(),
-          () => transportState.audio.groupId
-        )
+        ...buildMp4Callbacks('audio')
       })
     })
 
@@ -239,28 +202,13 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
   })
 }
 
-const setupClientCallbacks = (): void => {
-  moqtClient.setOnServerSetupHandler((serverSetup: any) => {
-    console.log({ serverSetup })
-  })
-
-  moqtClient.setOnSubscribeResponseHandler((subscribeResponseMessage) => {
-    console.log({ subscribeResponseMessage })
-  })
-
-  serveSubscribes(moqtClient, {
-    trackNamespace: () => parseTrackNamespace(form['publish-track-namespace'].value),
-    catalogJson: (trackNamespace) =>
-      buildMediaCatalogJson(trackNamespace, 'cmaf', MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES),
-    mediaTrackNames: [...videoTrackNames, ...audioTrackNames],
-    onStatus: (text) => console.info('[CmafPublisher]', text)
-  })
-}
-
 const setupCloseButtonHandler = (): void => {
   const closeBtn = document.getElementById('closeBtn') as HTMLButtonElement
   closeBtn.addEventListener('click', async () => {
-    await moqtClient.disconnect()
+    session?.close()
+    session = undefined
+    writers.video = []
+    writers.audio = []
     resetMoqSendVisualizationState()
     if (isMoqSendVisualizerVisible()) {
       renderMoqSendVisualization()
@@ -270,20 +218,18 @@ const setupCloseButtonHandler = (): void => {
 
 initializeMediaExamplePage('publish-track-namespace')
 setUpStartGetUserMediaButton()
-setupClientCallbacks()
 setupCloseButtonHandler()
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
   const url = form.url.value
 
-  await moqtClient.connect(url, { sendSetup: false })
+  session = await MoqSession.connect(url)
   resetMoqSendVisualizationState()
   if (isMoqSendVisualizerVisible()) {
     renderMoqSendVisualization()
   }
 })
 
-sendSetupButtonClickHandler()
 sendPublishNamespaceButtonClickHandler()
 sendSubgroupObjectButtonClickHandler()

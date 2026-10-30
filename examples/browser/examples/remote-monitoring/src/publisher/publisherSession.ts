@@ -1,10 +1,11 @@
-import { MoqtClientWrapper, type SubgroupSender } from '../../../../lib/moqt/moqtClient'
+import { MoqSession, type TrackWriter } from 'moq-wasm'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)
 
 export class PublisherSession {
-  private readonly client = new MoqtClientWrapper()
+  private session: MoqSession | undefined
+  video: TrackWriter | undefined
   readonly namespace: string[]
 
   constructor(location: string, camId: CameraId) {
@@ -13,41 +14,27 @@ export class PublisherSession {
   }
 
   async connect(relayUrl: string): Promise<void> {
-    await this.client.connect(relayUrl)
+    const session = await MoqSession.connect(relayUrl)
+    this.session = session
     log('connected', { relayUrl })
+    void session.closed.then(() => log('connection closed'))
 
-    await this.client.publishNamespace(this.namespace, 'secret')
+    await session.announce(this.namespace)
     log('publishNamespace done', { namespace: this.namespace })
-
-    this.client.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
-      if (subscribe.trackName === 'video') {
-        const trackAlias = await respondOk()
-        const subscriberCount = this.getVideoTrackAliases().length
-        log('subscriber joined', { trackAlias: trackAlias.toString(), subscriberCount })
-      } else {
-        log('rejected unknown track', { trackName: subscribe.trackName })
-        await respondError(0n, 'unknown track')
+    const video = await session.publishTrack(this.namespace, 'video')
+    this.video = video
+    void (async () => {
+      while (await video.nextSubscriber()) {
+        log('subscriber joined')
       }
-    })
-
-    this.client.setOnConnectionClosedHandler(() => {
-      log('connection closed')
-    })
+    })()
   }
 
-  getVideoTrackAliases(): bigint[] {
-    return this.client.trackSubscribers(this.namespace, 'video')
-  }
-
-  get sender(): SubgroupSender {
-    return this.client
-  }
-
-  async disconnect(): Promise<void> {
+  disconnect(): void {
     log('disconnecting...')
-    this.client.setOnIncomingSubscribeHandler(null)
-    this.client.setOnConnectionClosedHandler(null)
-    await this.client.disconnect()
+    this.session?.close()
+    this.session = undefined
+    this.video = undefined
     log('disconnected')
   }
 }
