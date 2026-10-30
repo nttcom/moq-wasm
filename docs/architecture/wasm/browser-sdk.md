@@ -22,7 +22,7 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 | namespace の再生 | `new LivePlayer({ client, container })`、`start(namespace, authInfo)` | 同じ形で、`Session` の上で動く |
 | メディアの配信 | `moq-wasm/media` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
 | track 単位の PubSub | request id と track alias をキーにした callback、`sendSubgroupHeader` / `sendSubgroupObject`、JS が振る request id | `Subscription` / `TrackWriter` の handle と async iteration |
-| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読み、`MOQTClient` は `moq-wasm/internal/wasm` から読む。ビルド済みの成果物はまだ無い | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
+| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読み、`MOQTClient` は `moq-wasm/internal/wasm` から読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
 
 ## 目標の利用コード
 
@@ -401,7 +401,15 @@ example を1つずつ別の PR で移し、最後の1つと一緒に callback �
   ファイルにバンドルし、
   `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })` で起動
   する。これを書き換えない bundler のために、オプションで `workerUrl` を上書き
-  できる。
+  できる。パッケージは Vite の app build（library mode は wasm と worker を data URL に
+  埋め込む）で作り、出力の URL を `new URL('<相対パス>', import.meta.url)` の形に
+  そろえる。
+- **AudioWorklet**: Safari の音声 capture の module は、ソースを文字列として取り込み、
+  Blob URL から `addModule` する。小さい asset は利用者の bundler が data URL に埋め込む
+  ので、asset にはしない。
+- **CSS**: JS は CSS を読み込まない。`LivePlayer` を出すページは
+  `moq-wasm/media/player.css`、`PlayerControls` も出すページは
+  `moq-wasm/media/controls.css` を読み込む。
 - `init()` は single-flight で、何度呼んでも同じ結果になる。`connect()` が内部で
   呼ぶ。
 - パッケージに実行時の依存は無い。React は examples に残す。
