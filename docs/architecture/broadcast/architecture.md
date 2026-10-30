@@ -58,6 +58,9 @@ with the last default track, the audio placeholder, the media timeline and
 the chat, ends with PUBLISH_DONE through `Origin::end_track`. The numbering
 stays in `Origin`, so a track whose catalog is updated again is published
 again from the next group, without reusing a location.
+`BroadcastWriter::remove_track` takes the removal after the media pushed
+before it, so a configuration still in the queue does not publish the track
+again.
 
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-04): the payload is the

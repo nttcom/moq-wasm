@@ -61,6 +61,24 @@ async function subscribeForPlayback(subscriber: SubscriberPageModel): Promise<vo
   await subscriber.trackSubscribeButton.click()
 }
 
+async function expectVideoMuteToLeaveAndRejoinTheCatalog(
+  publisher: PublisherPageModel,
+  subscriber: SubscriberPageModel
+): Promise<void> {
+  // Act: Publisher の映像をミュートする。
+  await publisher.muteVideoButton.click()
+  // Assert: 映像 track が catalog から外れ、Subscriber の catalog に映像が無くなったことを確認する。
+  await expect(subscriber.catalogStatus).toContainText('video=0')
+
+  // Act: ミュートを解除する。
+  await publisher.muteVideoButton.click()
+  // Assert: 映像 track がもう一度 catalog に載ったことを確認する。
+  await expect(subscriber.catalogStatus).toContainText('video=1')
+  // Assert: 解除後も映像の送信が失敗せずに続くことを確認する。
+  await publisher.sendStatus.page().waitForTimeout(2_000)
+  await expect(publisher.sendStatus).toHaveText('Video unmuted')
+}
+
 async function expectSubscriberPlayback(subscriber: SubscriberPageModel): Promise<void> {
   // Assert: Subscriber が少なくとも 1 つ以上の video object を受信したことを確認する。
   await expect(subscriber.receiveStatus).toHaveText(/Received video objects: [1-9]/)
@@ -99,6 +117,9 @@ test('publisher streams video to subscriber over local MoQT server', async ({ br
 
     // Assert: Subscriber が映像を受信し、video 要素の再生が進行していることを確認する。
     await expectSubscriberPlayback(session.subscriber)
+
+    // Act / Assert: 映像のミュートで track が catalog から外れ、解除で戻ることを確認する。
+    await expectVideoMuteToLeaveAndRejoinTheCatalog(session.publisher, session.subscriber)
   } finally {
     await session.context.close()
   }

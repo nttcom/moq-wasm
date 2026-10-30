@@ -1,10 +1,12 @@
+use std::future::Future;
+
 use anyhow::Result;
 use mediapack::{AudioSample, MediaEvent, VideoSample};
 use moqt::executor::{self, JoinHandle};
 
 use crate::{
     broadcast::{Broadcast, SourceTracks},
-    publish_queue::{PublishQueue, QueueConsumer},
+    publish_queue::{PublishQueue, QueueConsumer, Queued},
     track_publisher::{SharedTiming, TrackPublisher},
 };
 
@@ -43,6 +45,12 @@ impl BroadcastWriter {
         self.queue.push(event)
     }
 
+    /// `Broadcast::remove_track`, taken after the media pushed before it. The
+    /// future does not borrow the writer, so media can be pushed meanwhile.
+    pub fn remove_track(&self, track_name: &str) -> impl Future<Output = Result<()>> + 'static {
+        self.queue.remove_track(track_name.to_string())
+    }
+
     pub fn broadcast(&self) -> &Broadcast {
         &self.broadcast
     }
@@ -53,10 +61,20 @@ impl BroadcastWriter {
 }
 
 async fn publish_queued_events(mut consumer: QueueConsumer, mut tracks: TrackPublisher) {
-    while let Some(event) = consumer.event_receiver.recv().await {
-        if let Err(err) = tracks.push(&event).await {
-            let _ = consumer.failure_sender.send(err);
-            return;
+    while let Some(queued) = consumer.event_receiver.recv().await {
+        match queued {
+            Queued::Event(event) => {
+                if let Err(err) = tracks.push(&event).await {
+                    let _ = consumer.failure_sender.send(err);
+                    return;
+                }
+            }
+            Queued::RemoveTrack {
+                track_name,
+                done_sender,
+            } => {
+                let _ = done_sender.send(tracks.broadcast().remove_track(&track_name).await);
+            }
         }
     }
 }
