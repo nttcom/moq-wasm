@@ -24,7 +24,7 @@ cargo run -p recorder -- \
 | --- | --- | --- |
 | `--relay` (`MOQT_URL`) | — | `moqt://` for QUIC, `https://` for WebTransport |
 | `--namespace` | — | Namespace of the broadcast |
-| `--video-track` | by `--max-video-height` | LOC video track to record (`video_720p`, `camera_main_720p`, ...); H.264, VP8, VP9 or AV1, as the catalog's `codec` names it |
+| `--video-track` | by `--max-video-height` | LOC video track to record (`video_720p`, `video_480p`, ...); H.264, VP8, VP9 or AV1, as the catalog's `codec` names it |
 | `--max-video-height` | `480` | Without `--video-track`, the tallest video track at most this high, or the shortest one when all are taller |
 | `--audio-track` | highest bitrate | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--list-tracks` | off | Print the catalog's LOC tracks (name, role, codec, size, bitrate, sample rate) and exit |

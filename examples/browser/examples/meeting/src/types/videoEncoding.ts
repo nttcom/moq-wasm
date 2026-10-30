@@ -109,7 +109,7 @@ export const DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS: VideoEncodingSettings = {
   codec: 'av01.0.08M.08',
   width: 1920,
   height: 1080,
-  bitrate: 1_000_000,
+  bitrate: 2_000_000,
   framerate: 30,
   hardwareAcceleration: 'prefer-software'
 }

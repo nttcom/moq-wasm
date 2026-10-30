@@ -43,8 +43,8 @@ both tracks into one init segment and one fragment stream.
    `track_selection::select_tracks` picks the LOC track named by
    `--video-track` and `--audio-track`. Without a name it ranks the LOC
    tracks by their catalog role and quality fields instead of guessing names
-   the publisher chose (a meeting participant lists `camera_main_720p` and
-   `audio_128kbps`): among the video tracks whose codec can be recorded,
+   the publisher chose (a meeting participant lists `video`, `video_720p`,
+   `video_480p` and `audio`): among the video tracks whose codec can be recorded,
    leaving out the screen share (below), the tallest at or below `--max-video-height` (480 by default; the shortest when
    all are taller), then the lowest `bitrate`, and the audio track with the
    highest `bitrate` among those that can be decoded; remaining ties go to

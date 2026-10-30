@@ -11,6 +11,7 @@ import type { MediaKind } from '@player/trackContext'
 import type { TrackMediaConfig } from '../types/catalog'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { sameCodecIgnoringLevel } from '../utils/codecLevel'
 
 export type RemoteVideoSource = 'camera' | 'screenshare'
 export type RemotePlaybackStats = Partial<Record<RemoteVideoSource, LiveStats>>
@@ -22,7 +23,8 @@ const SWITCH_WAIT_MS = 3_000
 /// The capture-to-display delay a picture is kept within.
 const TARGET_DELAY_MS = 250
 
-export type VideoAdaptation = { ladder: Rung[]; onPreferred: (trackName: string) => void }
+/// `ladder` is read at every choice, so a rendition the catalog lists later joins it.
+export type VideoAdaptation = { ladder: () => Rung[]; onPreferred: (trackName: string) => void }
 
 export interface MediaSubscriberHandlers {
   onRemotePicture?: (userId: string, source: RemoteVideoSource, picture: HTMLElement) => void
@@ -158,7 +160,7 @@ export class MediaSubscriber {
   /// so only a track of the same codec can take over a playing picture.
   canReplaceVideo(trackAlias: bigint, config: TrackMediaConfig | undefined): boolean {
     const registration = this.registrations.get(trackAlias)
-    return registration?.kind === 'video' && registration.config?.codec === config?.codec
+    return registration?.kind === 'video' && sameCodecIgnoringLevel(registration.config?.codec, config?.codec)
   }
 
   registerAudioTrack(userId: string, trackName: string, trackAlias: bigint, config?: TrackMediaConfig): void {
@@ -312,10 +314,11 @@ export class MediaSubscriber {
     }
     picture.nextChoiceAtMs = arrivedAtMs + ADAPT_INTERVAL_MS
     const current = registration.trackName
-    if (!adaptation.ladder.some((rung) => rung.name === current)) {
+    const fullLadder = adaptation.ladder()
+    if (!fullLadder.some((rung) => rung.name === current)) {
       return
     }
-    const ladder = capLadderToHeight(adaptation.ladder, picture.heightPx)
+    const ladder = capLadderToHeight(fullLadder, picture.heightPx)
     const ceilingBitrate = ladder.at(-1)?.bitrate
     const raised =
       picture.ceilingBitrate !== undefined && ceilingBitrate !== undefined && ceilingBitrate > picture.ceilingBitrate
