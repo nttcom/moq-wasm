@@ -44,8 +44,8 @@ Name and a User Name and join. `?jwt=<token>` connects with an app-scoped JWT
 
 1. `CLIENT_SETUP` / `SERVER_SETUP` with the relay.
 2. `SUBSCRIBE_NAMESPACE` on `/{RoomName}/`; `PUBLISH_NAMESPACE` arrives for every present and later participant.
-3. On a second session, `publish()` announces `/{RoomName}/{UserName}` and `PUBLISH`es the catalog and every track it lists; a muted device's track leaves the catalog with `PUBLISH_DONE`. The renditions of the camera and of the screen share are encoded from the same frames and share group ids; audio follows the video's groups, or starts a group every second while the camera is off.
-4. Receiving mirrors this: catalog `SUBSCRIBE`, then per-track `SUBSCRIBE` and `UNSUBSCRIBE`; audio playback is reset on resubscribe. A quality switch sends the `SUBSCRIBE` of the new track first and the `UNSUBSCRIBE` of the old one once the new one has taken over. A viewer joining a track the relay already receives starts at its next keyframe, since draft-14 gives the relay no way to ask the publisher for one.
+3. `publish()` announces `/{RoomName}/{UserName}` and `PUBLISH`es the catalog and every track it lists; a muted device's track leaves the catalog with `PUBLISH_DONE`. The renditions of the camera and of the screen share are encoded from the same frames and share group ids; audio follows the video's groups, or starts a group every second while the camera is off.
+4. Receiving mirrors this: catalog `SUBSCRIBE`, then per-track `SUBSCRIBE` and `UNSUBSCRIBE`; audio playback is reset on resubscribe. A quality switch sends the `SUBSCRIBE` of the new track first and the `UNSUBSCRIBE` of the old one once the new one has taken over. A new picture starts at the current group's keyframe through a joining `FETCH`; a track that takes over a playing picture starts at its next group.
 
 ## Stack
 
