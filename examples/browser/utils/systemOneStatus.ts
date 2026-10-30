@@ -1,7 +1,7 @@
-import type { MoqtClientWrapper } from '../lib/moqt/moqtClient'
+import type { MoqSession } from 'moq-wasm'
+import { latestObjects } from './latestObjects'
 
 const STATUS_TRACK = 'status'
-const AUTH_INFO = ''
 
 type SystemOneState = 'ready' | 'slow' | 'starting'
 
@@ -14,19 +14,18 @@ export class SystemOneStatusView {
     this.render()
   }
 
-  async follow(session: MoqtClientWrapper, botNamespace: string[]): Promise<void> {
-    await session.subscribeLatest(
-      botNamespace,
-      STATUS_TRACK,
-      AUTH_INFO,
-      (payload) => {
+  /// The bot writes one status object per group, so the current group holds the latest.
+  async follow(session: MoqSession, botNamespace: string[]): Promise<void> {
+    const status = await session.subscribeCurrentGroup(botNamespace, STATUS_TRACK)
+    void status.done.then(() => this.reset())
+    void (async () => {
+      for await (const { objectPayload } of latestObjects(status)) {
         const { system_one: state, since }: { system_one: SystemOneState; since: number } = JSON.parse(
-          new TextDecoder().decode(payload)
+          new TextDecoder().decode(objectPayload)
         )
         this.show(state, since)
-      },
-      { onPublishDone: () => this.reset() }
-    )
+      }
+    })().catch((error: unknown) => console.warn('[systemOneStatus] status read ended', error))
   }
 
   reset(): void {

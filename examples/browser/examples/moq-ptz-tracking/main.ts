@@ -1,7 +1,6 @@
-import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
-import { MoqSession } from 'moq-wasm'
+import type { TrackWriter } from 'moq-wasm'
 import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
-import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpSystemOneBotPage } from '../../utils/systemOneBot'
+import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'
 import 'moq-wasm/media/player.css'
@@ -23,9 +22,6 @@ type Prompt = { targets: string[]; video?: string }
 /// [index into the prompt's targets, edges]
 type TargetBox = [number, BoxEdges]
 
-const session = new MoqtClientWrapper()
-/// The player's own session; the bot side stays on MoqtClientWrapper.
-let playerSession: MoqSession | undefined
 const player = new LivePlayer({
   container: element('stage'),
   callbacks: {
@@ -34,7 +30,8 @@ const player = new LivePlayer({
     onLog: (level, message) => console[level](`[moq-ptz-tracking] ${message}`)
   }
 })
-let promptPublisher: SingleObjectGroupPublisher | undefined
+let promptWriter: TrackWriter | undefined
+let promptGroupId: bigint | undefined
 let trackingTargets: string[] = []
 let sentPrompt: Prompt = { targets: [] }
 
@@ -48,42 +45,36 @@ const moveLabel = element<HTMLSpanElement>('move')
 const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 
 setUpSystemOneBotPage({
-  session,
   logTag: 'moq-ptz-tracking',
   ownNamespace: VIEWER_NAMESPACE,
-  ownTracks: [PROMPT_TRACK],
   botNamespace: TRACKER_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
-  afterConnect: async (relayUrl) => {
-    playerSession = await MoqSession.connect(relayUrl)
-    await player.start(playerSession, CAMERA_NAMESPACE)
+  onConnect: async (session) => {
+    promptWriter = await session.publishTrack(VIEWER_NAMESPACE, PROMPT_TRACK)
+    onEachSubscriber(promptWriter, async () => {
+      setTrackerStatus(true)
+      await sendPrompt(currentPrompt())
+    })
   },
-  onSubscriber: async ({ requestId, trackAlias }) => {
-    setPromptPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias))
-    await sendPrompt(currentPrompt())
-  },
-  onUnsubscribe: (requestId) => {
-    if (promptPublisher?.requestId === requestId) {
-      setPromptPublisher(undefined)
-    }
-  },
+  afterConnect: (session) => player.start(session, CAMERA_NAMESPACE),
+  onBotLeft: () => setTrackerStatus(false),
   onTimelineObject: (payload) => {
     const data = latestRecordForPrompt<{
       boxes: TrackerRecord['boxes']
       pan_seconds: number
       tilt_seconds: number
-    }>(payload, promptPublisher?.latestGroupId)
+    }>(payload, promptGroupId)
     if (data) {
       showRecord({ boxes: data.boxes, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
     }
   },
   onReset: async () => {
     await player.stop()
-    playerSession?.close()
-    playerSession = undefined
     viewerDelayLabel.textContent = ''
-    setPromptPublisher(undefined)
+    promptWriter = undefined
+    promptGroupId = undefined
+    setTrackerStatus(false)
     sentPrompt = { targets: [] }
   }
 })
@@ -133,9 +124,8 @@ function updateTargetRows(): void {
   addTargetButton.disabled = rows.length >= MAX_TARGETS
 }
 
-function setPromptPublisher(publisher: SingleObjectGroupPublisher | undefined): void {
-  promptPublisher = publisher
-  setStatus('tracker-status', publisher ? 'bot 接続済み' : 'bot 未接続', publisher ? 'ok' : 'idle')
+function setTrackerStatus(joined: boolean): void {
+  setStatus('tracker-status', joined ? 'bot 接続済み' : 'bot 未接続', joined ? 'ok' : 'idle')
   showRecord(undefined)
 }
 
@@ -162,11 +152,11 @@ function followSelectedVideoTrack(): void {
 async function sendPrompt(prompt: Prompt): Promise<void> {
   sentPrompt = prompt
   showRecord(undefined)
-  if (!promptPublisher) {
+  if (!promptWriter) {
     return
   }
   try {
-    await promptPublisher.send(new TextEncoder().encode(JSON.stringify(prompt)))
+    promptGroupId = await promptWriter.writeGroup(new TextEncoder().encode(JSON.stringify(prompt)))
   } catch (error) {
     console.error('[moq-ptz-tracking] prompt send failed', error)
   }

@@ -105,7 +105,7 @@ async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void
         : { type: command, pan, tilt, zoom, speed }
 
   const bytes = new TextEncoder().encode(JSON.stringify(payload))
-  if (!(await commandWriter.writeGroup(bytes))) {
+  if ((await commandWriter.writeGroup(bytes)) === undefined) {
     updateCommandTrack('not subscribed')
     updateStatus('command track not subscribed', false)
     return
