@@ -21,7 +21,12 @@ use crate::modules::{
     },
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+    domain::{
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::ActiveUpstreamSubscription},
+        session_id::SessionId,
+        session_peer::SessionPeer,
+        track_key::TrackKey,
+    },
     session::subscription::UpstreamSubscription,
 };
 
@@ -117,6 +122,36 @@ pub(crate) async fn release_upstream(
     stop_ingress(ingress_sender, publisher_session_id, track_key).await;
 }
 
+/// Unsubscribes the subscription from the same publisher that this one
+/// replaces, e.g. the SUBSCRIBE this relay sent before the publisher sent
+/// PUBLISH for the track: the publisher would otherwise keep serving it.
+/// The caller has already started this subscription's ingress, which stopped
+/// the replaced one's.
+pub(crate) async fn register_upstream_subscription(
+    table: &InMemoryLocalPubSubDirectory,
+    forwarder: &ControlMessageForwarder,
+    track_key: TrackKey,
+    publisher_session_id: SessionId,
+    active_upstream: ActiveUpstreamSubscription,
+) {
+    let Some(replaced) =
+        table.register_upstream_subscription(track_key, publisher_session_id, active_upstream)
+    else {
+        return;
+    };
+    if let Err(error) = forwarder
+        .unsubscribe(publisher_session_id, &replaced.subscription)
+        .await
+    {
+        tracing::warn!(
+            ?error,
+            publisher_session_id = %publisher_session_id,
+            request_id = %replaced.subscription.request_id(),
+            "failed to unsubscribe the replaced upstream subscription"
+        );
+    }
+}
+
 pub(crate) async fn start_ingress(
     ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
     request: IngressStartRequest,
@@ -147,5 +182,93 @@ pub(crate) async fn stop_ingress(
         .is_err()
     {
         tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "failed to send ingress stop request");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::{
+        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        test_support::{
+            directory_fixtures::{
+                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, delivery_control,
+                track_key, upstream_release_context,
+            },
+            relay_harness::fixtures::subscription::upstream_subscription,
+        },
+    };
+    use moqt::fetch::JoinPoint;
+
+    const PUBLISH_REQUEST_ID: u64 = 43;
+
+    fn published() -> ActiveUpstreamSubscription {
+        ActiveUpstreamSubscription {
+            subscription: upstream_subscription(PUBLISH_REQUEST_ID),
+            ..active_upstream(UpstreamSubscriptionOrigin::Publish)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_of_a_subscribed_track_unsubscribes_the_subscribe() {
+        // Arrange
+        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+
+        // Act
+        register_upstream_subscription(
+            &ctx.table,
+            &ctx.forwarder,
+            track_key(),
+            PUBLISHER_SESSION,
+            published(),
+        )
+        .await;
+
+        // Assert: the PUBLISH's ingress already replaced the SUBSCRIBE's, so none is stopped
+        assert_eq!(
+            ctx.recorded.unsubscribed_request_ids(),
+            vec![UPSTREAM_REQUEST_ID]
+        );
+        assert!(ctx.ingress_receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn the_last_subscriber_leaving_a_draining_relay_leaves_the_publisher_unsubscribed() {
+        // Arrange
+        let ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+        ctx.table
+            .register_downstream_subscription(
+                100,
+                10,
+                SessionPeer::Client,
+                track_key(),
+                JoinPoint::Largest(None),
+                delivery_control(true),
+            )
+            .unwrap();
+        register_upstream_subscription(
+            &ctx.table,
+            &ctx.forwarder,
+            track_key(),
+            PUBLISHER_SESSION,
+            published(),
+        )
+        .await;
+        ctx.table.begin_draining(0);
+
+        // Act
+        let removed = ctx.table.remove_downstream_subscription(100, 10).unwrap();
+        for released in removed.released_upstream_subscriptions {
+            ctx.forwarder
+                .unsubscribe(released.publisher_session_id, &released.subscription)
+                .await
+                .unwrap();
+        }
+
+        // Assert: neither the SUBSCRIBE the relay sent first nor the PUBLISH is left
+        assert_eq!(
+            ctx.recorded.unsubscribed_request_ids(),
+            vec![UPSTREAM_REQUEST_ID, PUBLISH_REQUEST_ID]
+        );
     }
 }

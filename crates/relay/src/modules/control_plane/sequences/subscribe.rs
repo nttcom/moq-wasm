@@ -398,11 +398,14 @@ impl Subscribe {
             {
                 return Err(UpstreamSubscriptionError::IngressStartFailed);
             }
-            table.register_upstream_subscription(
+            super::register_upstream_subscription(
+                table,
+                forwarder,
                 track_key.clone(),
                 pub_session_id,
                 active_upstream.clone(),
-            );
+            )
+            .await;
             if end_if_publisher_gone(
                 table,
                 forwarder,

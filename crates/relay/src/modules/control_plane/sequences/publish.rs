@@ -78,6 +78,7 @@ impl Publish {
                 session_id,
                 publisher_peer,
                 table,
+                forwarder,
                 ingress_sender,
                 handler.clone(),
                 &upstream_subscription,
@@ -240,11 +241,13 @@ impl Publish {
         skip_all,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
         publisher_peer: SessionPeer,
         table: &InMemoryLocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
@@ -275,7 +278,14 @@ impl Publish {
             anyhow::bail!("failed to send ingress start request");
         }
 
-        table.register_upstream_subscription(track_key, session_id, active_upstream);
+        super::register_upstream_subscription(
+            table,
+            forwarder,
+            track_key,
+            session_id,
+            active_upstream,
+        )
+        .await;
         table.register_publish(session_id, publisher_peer, handler);
         Ok(())
     }
