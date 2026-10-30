@@ -25,7 +25,7 @@ import { catalogTracksForRole, pickHighestBitrateTrack, pickLowestBitrateTrack }
 import { sameCodecIgnoringLevel } from '../utils/codecLevel'
 import { checkCodecSupport } from '../utils/codecSupport'
 import type { VideoAdaptation } from '../media/mediaSubscriber'
-import type { LocalStatsSample, RemoteStatsSample } from '../types/stats'
+import type { RemoteStatsSample } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 import { type StageView, arrangeStage, tileKey } from '../utils/stageLayout'
 import { type Rung, capLadderToHeight } from '@player/adaptiveBitrate'
@@ -62,7 +62,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       setTileHeights((prev) => (prev.get(key) === heightPx ? prev : new Map(prev).set(key, heightPx))),
     []
   )
-  const [localStatsHistory, setLocalStatsHistory] = useState<LocalStatsSample[]>([])
   const [remoteStatsHistory, setRemoteStatsHistory] = useState<Map<string, RemoteStatsSample[]>>(new Map())
   const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, MeetingCatalogTrack[]>>(new Map())
   const [remoteCatalogSelections, setRemoteCatalogSelections] = useState<Map<string, CatalogSelections>>(new Map())
@@ -90,24 +89,18 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     microphoneBusy,
     localVideoStream,
     localScreenShareStream,
-    localSendStats,
     remotePictures,
     toggleCamera,
     toggleScreenShare,
     toggleMicrophone,
     playoutSettings,
     setPlayoutSettings,
-    videoCodecOptions,
     videoResolutionOptions,
-    videoBitrateOptions,
     videoHardwareAccelerationOptions,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,
     selectScreenShareEncoding,
-    audioCodecOptions,
-    audioBitrateOptions,
-    audioChannelOptions,
     videoDevices,
     audioDevices,
     selectedVideoDeviceId,
@@ -171,7 +164,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setCatalogSubscribedMemberIds(new Set())
     setCatalogUnsubscribingTrackKeys(new Set())
     setIsSidebarOpen(false)
-    setLocalStatsHistory([])
     setRemoteStatsHistory(new Map())
   }, [session])
 
@@ -194,8 +186,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     const timer = window.setInterval(() => {
       const sampledAt = Date.now()
       const { subscriber } = session.getMediaController()
-      const localSample: LocalStatsSample = { timestamp: sampledAt, ...localSendStats.current }
-      setLocalStatsHistory((prev) => appendStatsSample(prev, localSample))
       setRemoteStatsHistory(
         (prev) =>
           new Map(
@@ -208,7 +198,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     }, SIDEBAR_STATS_SAMPLE_INTERVAL_MS)
 
     return () => window.clearInterval(timer)
-  }, [session, localSendStats])
+  }, [session])
 
   useSessionEventHandlers({
     session,
@@ -690,21 +680,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             selectedAudioDeviceId={selectedAudioDeviceId}
             onSelectVideoDevice={selectVideoDevice}
             onSelectAudioDevice={selectAudioDevice}
-            videoEncodingOptions={{
-              codecOptions: videoCodecOptions,
-              resolutionOptions: videoResolutionOptions,
-              bitrateOptions: videoBitrateOptions
-            }}
+            videoResolutionOptions={videoResolutionOptions}
             videoHardwareAccelerationOptions={videoHardwareAccelerationOptions}
             selectedVideoEncoding={selectedVideoEncoding}
             onSelectVideoEncoding={selectVideoEncoding}
             selectedScreenShareEncoding={selectedScreenShareEncoding}
             onSelectScreenShareEncoding={selectScreenShareEncoding}
-            audioEncodingOptions={{
-              codecOptions: audioCodecOptions,
-              bitrateOptions: audioBitrateOptions,
-              channelOptions: audioChannelOptions
-            }}
             captureSettings={captureSettings}
             onChangeCaptureSettings={updateCaptureSettings}
             onApplyCaptureSettings={applyCaptureSettings}
@@ -715,7 +696,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             catalogSubscribedMemberIds={catalogSubscribedMemberIds}
             catalogUnsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
             onSelectCatalogTrack={handleSelectCatalogTrack}
-            localStatsHistory={localStatsHistory}
             remoteStatsHistory={remoteStatsHistory}
             stage={stage}
             speakingMemberIds={speakingMemberIds}
