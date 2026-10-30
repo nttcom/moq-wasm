@@ -178,23 +178,16 @@ pub(crate) async fn session_repository_with_upstream_session_token(
 pub(crate) fn mock_session_answering_subscribe(
     answer_subscribe: impl Fn() -> ContentExists + Send + Sync + 'static,
 ) -> Box<dyn Session> {
-    Box::new(MockUpstreamSession {
-        recorded: RecordedControlMessages::default(),
-        answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(answer_subscribe))),
-        answer_fetch: FetchAnswer::Never,
-        transport_stats: moqt::TransportStats::default(),
-        answer_publish: None,
-    })
+    recorded_session_answering_subscribe(answer_subscribe).0
 }
 
-pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, RecordedControlMessages)
-{
+pub(crate) fn recorded_session_answering_subscribe(
+    answer_subscribe: impl Fn() -> ContentExists + Send + Sync + 'static,
+) -> (Box<dyn Session>, RecordedControlMessages) {
     let recorded = RecordedControlMessages::default();
     let session = Box::new(MockUpstreamSession {
         recorded: recorded.clone(),
-        answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(|| {
-            ContentExists::False
-        }))),
+        answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(answer_subscribe))),
         answer_fetch: FetchAnswer::Never,
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
