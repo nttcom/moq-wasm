@@ -382,7 +382,11 @@ impl Origin {
     /// Serves the SUBSCRIBE on the session it arrived on.
     pub async fn accept_subscribe(&self, handler: SubscribeHandler) -> Result<()> {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
-        let largest = self.state.lock().await.track_mut(&key)?.numbering.largest();
+        // Hold the lock until the outlet is registered: the peer can act on
+        // SUBSCRIBE_OK before then, and an `end_track` or `write` in that gap
+        // would miss this subscription.
+        let mut state = self.state.lock().await;
+        let largest = state.track_mut(&key)?.numbering.largest();
         let track_alias = handler
             .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists(largest))
             .await
@@ -392,7 +396,6 @@ impl Origin {
         let publisher = Publisher {
             session: context.clone(),
         };
-        let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
         let start = handler

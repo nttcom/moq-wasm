@@ -750,7 +750,7 @@ mod tests {
         modules::test_support::{
             DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
             open_subgroup, self_signed_server_config, send_payload, spawn_native_server,
-            spawn_native_server_handshake, subscribed_track_reader,
+            spawn_native_server_handshake, subscribe_namespace_accepted, subscribed_track_reader,
         },
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
@@ -1123,15 +1123,7 @@ mod tests {
         let (port_b, accept_b) = spawn_native_server("session-migration-namespace-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
-        let subscriber = client.subscriber();
-        let (subscribed, ()) = tokio::join!(subscriber.subscribe_namespace("room".into()), async {
-            let SessionEvent::SubscribeNameSpace(handler) = server_a.receive_event().await.unwrap()
-            else {
-                panic!("expected SUBSCRIBE_NAMESPACE");
-            };
-            handler.ok().await.unwrap();
-        });
-        subscribed.unwrap();
+        subscribe_namespace_accepted(&client, &server_a, "room").await;
 
         // Act
         server_a
@@ -1160,6 +1152,39 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE, got {event:?}");
         };
         assert_eq!(announced.track_namespace, "room/alice");
+    }
+
+    #[tokio::test]
+    async fn go_away_does_not_subscribe_again_to_an_unsubscribed_namespace() {
+        // Arrange: "room" is subscribed before "lobby", so a renewed "room" would reach server B first
+        let (port_a, accept_a) = spawn_native_server("session-migration-unsubscribed-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-unsubscribed-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        subscribe_namespace_accepted(&client, &server_a, "room").await;
+        subscribe_namespace_accepted(&client, &server_a, "lobby").await;
+        client
+            .subscriber()
+            .unsubscribe_namespace("room".into())
+            .await
+            .unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        let SessionEvent::SubscribeNameSpace(handler) = event else {
+            panic!("expected SUBSCRIBE_NAMESPACE on the new connection, got {event:?}");
+        };
+        assert_eq!(handler.track_namespace_prefix, "lobby");
     }
 
     #[tokio::test]
