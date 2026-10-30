@@ -70,6 +70,7 @@ function createSubscriberPageModel(page: Page) {
     setupStatus: page.getByTestId('subscriber-setup-status'),
     catalogSubscribeButton: page.getByTestId('subscriber-catalog-subscribe-button'),
     catalogStatus: page.getByTestId('subscriber-catalog-status'),
+    videoTrackSelect: page.getByTestId('subscriber-video-track-select'),
     trackSubscribeButton: page.getByTestId('subscriber-track-subscribe-button'),
     receiveStatus: page.getByTestId('subscriber-receive-status'),
     playbackStatus: page.getByTestId('subscriber-playback-status'),
