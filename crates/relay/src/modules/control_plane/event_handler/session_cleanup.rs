@@ -105,14 +105,14 @@ mod tests {
         auth::test_support::{app_token, connect_client, spawn_relay},
         test_support::{
             relay_clients::{subscribe_namespace, within},
-            stub_route_registry::{PublisherLookup, StubRouteRegistry},
+            stub_route_registry::StubRouteRegistry,
         },
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disconnect_of_the_last_namespace_subscriber_removes_its_route() {
         // Arrange
-        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::NotFound));
+        let route_registry = Arc::new(StubRouteRegistry::with_namespace_routes(&[]));
         let relay = spawn_relay(app_token(Some(""), Some("")), route_registry.clone()).await;
         let watcher = connect_client(&relay).await;
         subscribe_namespace(&watcher, "APP/room").await;

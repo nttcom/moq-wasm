@@ -156,7 +156,7 @@ mod tests {
         },
         test_support::{
             relay_clients::{next_event, publish_namespace, subscribe_namespace},
-            stub_route_registry::{PublisherLookup, StubRouteRegistry},
+            stub_route_registry::StubRouteRegistry,
         },
     };
 
@@ -188,7 +188,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_last_unsubscribe_namespace_of_a_prefix_removes_its_route() {
         // Arrange
-        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::NotFound));
+        let route_registry = Arc::new(StubRouteRegistry::with_namespace_routes(&[]));
         let relay = spawn_relay(app_token(Some(""), Some("")), route_registry.clone()).await;
         let watcher = connect_client(&relay).await;
         subscribe_namespace(&watcher, "APP/room").await;
@@ -215,7 +215,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn unsubscribe_namespace_keeps_the_route_while_another_client_watches_the_prefix() {
         // Arrange
-        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::NotFound));
+        let route_registry = Arc::new(StubRouteRegistry::with_namespace_routes(&[]));
         let relay = spawn_relay(app_token(Some(""), Some("")), route_registry.clone()).await;
         let leaving = connect_client(&relay).await;
         let staying = connect_client(&relay).await;
