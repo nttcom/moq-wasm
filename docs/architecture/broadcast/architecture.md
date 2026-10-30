@@ -185,6 +185,9 @@ the same keyframes with the same ids as the video groups. Audio before the
 first keyframe is dropped as the video before it is. A viewer therefore replays
 the audio of a video group range by fetching the same range on the audio
 track, and a subscriber joining late starts both tracks at the same keyframe.
+A source that publishes no video, because it has none or removed it, has no
+keyframes to follow: its audio starts a group of its own every second, taking
+the ids from the same alignment so they keep increasing when video starts.
 
 Group ids are seeded from the wall clock rather than counted from zero. The
 relay keeps a track's cache when its publisher is replaced and treats a track
