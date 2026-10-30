@@ -20,28 +20,15 @@ import {
 } from '../types/catalog'
 import { catalogTracksForRole } from '../media/meetingCatalog'
 import { buildTrackActionKey } from '../utils/state/roomState'
-import type { LocalStatsSample, RemoteStatsSample } from '../types/stats'
-import { MeetingStats, RemoteMemberStatsCharts, SendStatsCharts } from './StatsCharts'
+import type { RemoteStatsSample } from '../types/stats'
+import { MeetingStats, RemoteMemberStatsCharts } from './StatsCharts'
 import type { RemotePictures } from '../media/mediaSubscriber'
 import { formatLiveStats } from '@player/locLive'
 import type {
-  VideoCodecOption,
   VideoHardwareAccelerationOption,
   VideoResolutionOption,
   VideoEncodingSettings
 } from '../types/videoEncoding'
-
-type VideoEncodingOptionSet = {
-  codecOptions: VideoCodecOption[]
-  resolutionOptions: VideoResolutionOption[]
-  bitrateOptions: { id: string; label: string; bitrate: number }[]
-}
-
-type AudioEncodingOptionSet = {
-  codecOptions: { id: string; label: string; codec: string }[]
-  bitrateOptions: { id: string; label: string; bitrate: number }[]
-  channelOptions: { id: string; label: string; channels: number }[]
-}
 
 const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-blue-50'
 
@@ -67,13 +54,12 @@ interface MemberGridProps {
   selectedAudioDeviceId: string | null
   onSelectVideoDevice: (deviceId: string) => void
   onSelectAudioDevice: (deviceId: string) => void
-  videoEncodingOptions: VideoEncodingOptionSet
+  videoResolutionOptions: VideoResolutionOption[]
   videoHardwareAccelerationOptions: VideoHardwareAccelerationOption[]
   selectedVideoEncoding: VideoEncodingSettings
   onSelectVideoEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
   selectedScreenShareEncoding: VideoEncodingSettings
   onSelectScreenShareEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
-  audioEncodingOptions: AudioEncodingOptionSet
   captureSettings: CaptureSettingsState
   onChangeCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
   onApplyCaptureSettings: () => void
@@ -84,7 +70,6 @@ interface MemberGridProps {
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
   onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
-  localStatsHistory: LocalStatsSample[]
   remoteStatsHistory: Map<string, RemoteStatsSample[]>
   stage: StageArrangement
   speakingMemberIds: Set<string>
@@ -122,13 +107,12 @@ export function MemberGrid({
   selectedAudioDeviceId,
   onSelectVideoDevice,
   onSelectAudioDevice,
-  videoEncodingOptions,
+  videoResolutionOptions,
   videoHardwareAccelerationOptions,
   selectedVideoEncoding,
   onSelectVideoEncoding,
   selectedScreenShareEncoding,
   onSelectScreenShareEncoding,
-  audioEncodingOptions,
   captureSettings,
   onChangeCaptureSettings,
   onApplyCaptureSettings,
@@ -139,7 +123,6 @@ export function MemberGrid({
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
   onSelectCatalogTrack,
-  localStatsHistory,
   remoteStatsHistory,
   stage,
   speakingMemberIds,
@@ -172,7 +155,6 @@ export function MemberGrid({
           label={share ? 'Screen' : 'You'}
           speaking={false}
           caption={share ? undefined : captions?.captions.get(localMember.name)}
-          onOpenDetails={() => setDetailsTarget(LOCAL_MEMBER_ID)}
         />
       )
     }
@@ -293,7 +275,7 @@ export function MemberGrid({
               onApply={onApplyCaptureSettings}
               cameraBusy={cameraBusy}
               microphoneBusy={microphoneBusy}
-              resolutionOptions={videoEncodingOptions.resolutionOptions}
+              resolutionOptions={videoResolutionOptions}
             />
             <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
               <div className="text-sm font-semibold text-white">Video encoder hardware acceleration</div>
@@ -318,20 +300,12 @@ export function MemberGrid({
       {isStatsModalOpen && (
         <DeviceModal title="Stats" onClose={() => setIsStatsModalOpen(false)} size="wide">
           <MeetingStats
-            localSamples={localStatsHistory}
             remoteMembers={remoteMembers.map((member) => ({
               id: member.id,
               name: member.name,
               samples: remoteStatsHistory.get(member.id) ?? []
             }))}
           />
-        </DeviceModal>
-      )}
-      {detailsTarget === LOCAL_MEMBER_ID && (
-        <DeviceModal title={`${localMember.name} (You)`} onClose={() => setDetailsTarget(null)} size="wide">
-          <div className="space-y-4">
-            <SendStatsCharts samples={localStatsHistory} />
-          </div>
         </DeviceModal>
       )}
       {detailsMember && (
