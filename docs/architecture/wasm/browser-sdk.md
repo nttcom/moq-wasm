@@ -534,8 +534,8 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
    GitHub Release に添付する。changelog の該当部分を Release の本文にする。
 
 3 は `.github/workflows/sdk-release.yml` が行う。tag がパッケージの version を指して
-いなければ止まり、`CHANGELOG.md` にその version の節が無くても止まる。ビルドの確認は
-手順11の CI と同じ（`npm pack` の tarball で Vite プロジェクトをビルドする）。
+いなければ止まり、`CHANGELOG.md` にその version の節が無くても止まる。添付する前に、手順11の CI と同じ
+`check:pack` を通す。
 
 tarball 配布の制約: `^0.1.0` のような範囲指定、`npm update`、Dependabot や Renovate に
 よる更新は効かず、利用者は URL を書き換えて更新する。jsDelivr や unpkg からも使えない。

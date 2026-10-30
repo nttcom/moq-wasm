@@ -1,5 +1,4 @@
-// Prints the CHANGELOG.md section of the version given, the body of its
-// GitHub Release; fails when the changelog has no such section.
+// Prints the CHANGELOG.md section of the version given, the body of its GitHub Release.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 

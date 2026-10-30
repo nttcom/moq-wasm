@@ -1,14 +1,9 @@
 # Changelog
 
-A `sdk-v<version>` tag releases the section of its version as the body of the
-GitHub Release (`.github/workflows/sdk-release.yml`).
-
 ## 0.1.0
 
-The first release, as a tarball attached to the GitHub Release.
-
-- `moq-wasm`: `MoqSession` connects to a relay over WebTransport, or WebSocket
-  where WebTransport is unavailable, and sends SUBSCRIBE, FETCH, TRACK_STATUS,
+- `moq-wasm`: `MoqSession` connects to a relay over WebTransport, falling back
+  to WebSocket when WebTransport does not connect, and sends SUBSCRIBE, FETCH, TRACK_STATUS,
   SUBSCRIBE_NAMESPACE and PUBLISH_NAMESPACE (draft-ietf-moq-transport-14).
   `publishTrack` returns a `TrackWriter` that numbers, caches and sends objects
   and answers the track's requests.
