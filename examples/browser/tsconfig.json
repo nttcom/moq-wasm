@@ -9,9 +9,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "customConditions": ["source"],
-    "paths": {
-      "@moqt/*": ["./lib/moqt/*"]
-    },
     "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom", "vite/client"],
     "lib": ["esnext", "webworker", "dom"]
   },
