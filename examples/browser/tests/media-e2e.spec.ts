@@ -82,6 +82,21 @@ async function expectVideoMuteToLeaveAndRejoinTheCatalog(
   await expect(publisher.sendStatus).toHaveText('Video unmuted')
 }
 
+async function expectScreenShareToJoinAndLeaveTheCatalog(
+  publisher: PublisherPageModel,
+  subscriber: SubscriberPageModel
+): Promise<void> {
+  // Act: Publisher が画面共有を始める。
+  await publisher.shareScreenButton.click()
+  // Assert: 画面の映像 track が同じ broadcast の catalog に加わったことを確認する。
+  await expect(subscriber.catalogStatus).toContainText('video=3')
+
+  // Act: 画面共有を止める。
+  await publisher.shareScreenButton.click()
+  // Assert: 画面の track だけが catalog から外れたことを確認する。
+  await expect(subscriber.catalogStatus).toContainText('video=2')
+}
+
 async function expectSubscriberPlayback(subscriber: SubscriberPageModel): Promise<void> {
   // Assert: Subscriber が少なくとも 1 つ以上の video object を受信したことを確認する。
   await expect(subscriber.receiveStatus).toHaveText(/Received video objects: [1-9]/)
@@ -123,6 +138,9 @@ test('publisher streams video to subscriber over local MoQT server', async ({ br
 
     // Act / Assert: 映像のミュートで track が catalog から外れ、解除で戻ることを確認する。
     await expectVideoMuteToLeaveAndRejoinTheCatalog(session.publisher, session.subscriber)
+
+    // Act / Assert: 画面共有の track が catalog に加わり、止めると外れることを確認する。
+    await expectScreenShareToJoinAndLeaveTheCatalog(session.publisher, session.subscriber)
   } finally {
     await session.context.close()
   }

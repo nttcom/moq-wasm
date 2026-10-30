@@ -274,13 +274,12 @@ impl Session {
         })
     }
 
-    /// The broadcast lists LOC tracks only; `video_label` names the video in
-    /// the catalog.
-    pub fn broadcast(&self, namespace: Vec<String>, video_label: Option<String>) -> MediaBroadcast {
+    /// The broadcast lists LOC tracks only.
+    pub fn broadcast(&self, namespace: Vec<String>) -> MediaBroadcast {
         let connection =
             RelayConnection::with_session(self.session.clone(), self.routes.origin.clone());
         self.routes.add_broadcast(connection.clone());
-        MediaBroadcast::new(connection, namespace, video_label)
+        MediaBroadcast::new(connection, namespace)
     }
 
     pub fn close(&self) {
