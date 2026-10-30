@@ -879,19 +879,12 @@ draft:
   parses them, in `Version::accept_uni_stream`. Guarded by
   `uni_stream_receive_task::tests::a_stream_without_its_header_does_not_hold_back_later_streams`,
   which writes draft-14 header bytes through `open_subgroup`, so it covers
-  draft-14 only, and by the meeting E2E below, which bounds the longest gap
-  between consecutive audio or video arrivals across audio group boundaries.
+  draft-14 only.
 - **Closing a send stream does not wait for the peer to acknowledge the FIN**
   (`TransportSendStream::close`). quinn and WebTransport call `finish()`; the
   browser transport does not await `writer.close()`. Awaiting the ACK stalls
-  every send queued behind a stream close. Guarded by the meeting E2E
-  `rotating the audio group neither stalls the sender nor gaps the receiver`
-  (`examples/browser/tests/meeting-e2e.spec.ts`), which bounds how long the
-  publisher's audio EndOfGroup and stream close take. On Linux the runner
-  (`tests/browser-e2e/run-meeting-e2e.mjs`) delays every relay reply with
-  `tc netem`, so a close that awaits the ACK exceeds the bound even though CI
-  runs the relays on the same host. The measurement lives in
-  `examples/browser/utils/media/audioTransport.ts`, which every draft shares.
+  every send queued behind a stream close. No test guards the browser
+  transport's close.
 
 ## Testing conventions
 Unit tests live in `#[cfg(test)] mod tests` inside the module under test
