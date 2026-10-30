@@ -1,12 +1,9 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { FetchObjectMessage } from '../../../../pkg/moqt'
-import { type LiveStats, LocLive } from '@player/locLive'
+import { type LiveStats, type LocObject, LocLive } from '@player/locLive'
 import { createPictureCanvas, createPictureVideo } from '@player/pictureElements'
 import { AdaptiveBitrate, type Rung, capLadderToHeight } from '@player/adaptiveBitrate'
 import { RenditionSplice } from '@player/renditionSplice'
 import { monotonicUnixMicros } from '../../../../utils/media/clock'
 import { type AudioLevel, readLocHeader } from '../../../../utils/media/loc'
-import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import type { MediaKind } from '@player/trackContext'
 import type { TrackMediaConfig } from '../types/catalog'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
@@ -42,9 +39,9 @@ type TrackRegistration = {
   retire?: () => void
   adaptation?: VideoAdaptation
   newestGroupId?: bigint
-  /// Held back because the decoder needs the joining FETCH's group first.
-  liveWhileJoining?: [bigint, SubgroupObjectMessageWithLoc][]
 }
+
+type ObjectHandler = (groupId: bigint, object: LocObject, cached: boolean) => void
 
 type PictureAdaptation = {
   bitrate: AdaptiveBitrate
@@ -70,8 +67,7 @@ export class MediaSubscriber {
   private readonly videoSwitches = new Map<string, VideoSwitch>()
   private readonly pictureAdaptations = new Map<string, PictureAdaptation>()
   private readonly playoutSettingsByUserId = new Map<string, PlayoutSettings>()
-
-  constructor(private readonly client: MoqtClientWrapper) {}
+  private readonly objectHandlers = new Map<bigint, ObjectHandler>()
 
   setHandlers(handlers: MediaSubscriberHandlers): void {
     this.handlers = handlers
@@ -84,96 +80,57 @@ export class MediaSubscriber {
   /// the picture, lower when the capture-to-arrival lag rises, or when the
   /// largest lag, keyframes included, plus the output latency exceeds
   /// `TARGET_DELAY_MS` (see `AdaptiveBitrate`).
-  ///
-  /// Returns true when the track starts its picture while the relay has
-  /// content: the caller then fetches the current group with a joining FETCH,
-  /// hands its objects to `pushJoiningVideo` and calls `endJoining` once the
-  /// FETCH ends, and the live objects wait until then.
   registerVideoTrack(
     userId: string,
     trackName: string,
-    trackAlias: bigint,
+    trackId: bigint,
     config: TrackMediaConfig | undefined,
-    contentExists: boolean,
     retire: () => void,
     adaptation?: VideoAdaptation
-  ): boolean {
-    const source: RemoteVideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
+  ): void {
+    const source = videoSource(trackName)
     const outgoing = this.videoRegistration(userId, source)
-    if (outgoing && !this.registrations.has(trackAlias)) {
-      const [outgoingAlias, outgoingRegistration] = outgoing
+    if (outgoing && !this.registrations.has(trackId)) {
+      const [outgoingId, outgoingRegistration] = outgoing
       this.videoSwitches.set(pictureKey(userId, source), {
         splice: new RenditionSplice(outgoingRegistration.newestGroupId),
-        outgoing: outgoingAlias,
-        incoming: trackAlias
+        outgoing: outgoingId,
+        incoming: trackId
       })
     }
-    const joining = contentExists && !outgoing
-    this.register(trackAlias, {
-      userId,
-      source,
-      kind: 'video',
-      trackName,
-      config,
-      retire,
-      adaptation,
-      liveWhileJoining: joining ? [] : undefined
-    })
-    return joining
+    this.register(trackId, { userId, source, kind: 'video', trackName, config, retire, adaptation })
   }
 
-  pushJoiningVideo(trackAlias: bigint, object: FetchObjectMessage): void {
-    const registration = this.registrations.get(trackAlias)
-    const pipeline = registration && this.pipelines.get(registration.userId)?.[registration.source]
-    if (!registration?.liveWhileJoining || !pipeline) {
-      return
-    }
-    const { groupId, objectId, objectPayload, locHeader } = object
-    const message = {
-      subgroupId: 0n,
-      objectId,
-      objectPayloadLength: objectPayload.length,
-      objectPayload,
-      objectStatus: undefined,
-      locHeader
-    }
-    pipeline.push('video', groupId, message, true)
+  /// Whether `trackName` would start a picture of its own, rather than take
+  /// over one that plays: its first objects then need a keyframe.
+  startsPicture(userId: string, trackName: string): boolean {
+    return this.videoRegistration(userId, videoSource(trackName)) === undefined
   }
 
-  endJoining(trackAlias: bigint): void {
-    const registration = this.registrations.get(trackAlias)
-    const live = registration?.liveWhileJoining
-    if (!registration || !live) {
-      return
-    }
-    registration.liveWhileJoining = undefined
-    const pipeline = this.pipelines.get(registration.userId)?.[registration.source]
-    if (!pipeline) {
-      return
-    }
-    for (const [groupId, message] of live) {
-      this.pushVideo(trackAlias, registration, pipeline, groupId, message)
-    }
+  /// `cached` marks an object the joining FETCH brought rather than the live
+  /// SUBSCRIBE; ignored once the track is unregistered.
+  receive(trackId: bigint, groupId: bigint, object: LocObject, cached: boolean): void {
+    this.objectHandlers.get(trackId)?.(groupId, object, cached)
   }
 
   /// The video decoder keeps the configuration of the first track it decodes,
   /// so only a track of the same codec can take over a playing picture.
-  canReplaceVideo(trackAlias: bigint, config: TrackMediaConfig | undefined): boolean {
-    const registration = this.registrations.get(trackAlias)
+  canReplaceVideo(trackId: bigint, config: TrackMediaConfig | undefined): boolean {
+    const registration = this.registrations.get(trackId)
     return registration?.kind === 'video' && sameCodecIgnoringLevel(registration.config?.codec, config?.codec)
   }
 
-  registerAudioTrack(userId: string, trackName: string, trackAlias: bigint, config?: TrackMediaConfig): void {
-    this.register(trackAlias, { userId, source: 'camera', kind: 'audio', trackName, config })
+  registerAudioTrack(userId: string, trackName: string, trackId: bigint, config?: TrackMediaConfig): void {
+    this.register(trackId, { userId, source: 'camera', kind: 'audio', trackName, config })
   }
 
-  unregisterTrack(trackAlias: bigint): void {
-    this.client.clearSubgroupObjectHandler(trackAlias)
-    const registration = this.registrations.get(trackAlias)
+  unregisterTrack(trackId: bigint): void {
+    this.objectHandlers.delete(trackId)
+    const registration = this.registrations.get(trackId)
     if (!registration) {
       return
     }
-    this.registrations.delete(trackAlias)
+    this.registrations.delete(trackId)
     const { userId, source, kind } = registration
     const remaining = Array.from(this.registrations).filter(
       ([, other]) => other.userId === userId && other.source === source
@@ -182,15 +139,15 @@ export class MediaSubscriber {
       this.closePipeline(userId, source)
       return
     }
-    if (kind === 'video' && this.settleVideoSwitch(userId, source, trackAlias)) {
+    if (kind === 'video' && this.settleVideoSwitch(userId, source, trackId)) {
       return
     }
     // The video worker keeps the decoder state of the track that left, so the
     // next video track starts on a fresh pipeline; only the audio warm-up repeats.
     if (kind === 'video') {
       this.closePipeline(userId, source)
-      for (const [alias, remainingRegistration] of remaining) {
-        this.attach(alias, remainingRegistration)
+      for (const [id, remainingRegistration] of remaining) {
+        this.attach(id, remainingRegistration)
       }
     }
   }
@@ -211,9 +168,7 @@ export class MediaSubscriber {
   }
 
   dispose(): void {
-    for (const trackAlias of Array.from(this.registrations.keys())) {
-      this.client.clearSubgroupObjectHandler(trackAlias)
-    }
+    this.objectHandlers.clear()
     this.registrations.clear()
     for (const [userId, pipelines] of this.pipelines) {
       for (const source of Object.keys(pipelines) as RemoteVideoSource[]) {
@@ -224,29 +179,29 @@ export class MediaSubscriber {
     this.handlers = {}
   }
 
-  private register(trackAlias: bigint, registration: TrackRegistration): void {
-    if (this.registrations.has(trackAlias)) {
+  private register(trackId: bigint, registration: TrackRegistration): void {
+    if (this.registrations.has(trackId)) {
       return
     }
-    this.registrations.set(trackAlias, registration)
+    this.registrations.set(trackId, registration)
     const pipeline = this.pipelines.get(registration.userId)?.[registration.source]
     // Audio joining a running picture warms up again so the relay's cached
     // burst does not drag the clock back as the new master.
     if (pipeline && registration.kind === 'audio') {
       pipeline.reset()
     }
-    this.attach(trackAlias, registration)
+    this.attach(trackId, registration)
   }
 
-  private attach(trackAlias: bigint, registration: TrackRegistration): void {
+  private attach(trackId: bigint, registration: TrackRegistration): void {
     const { userId, source, kind } = registration
     const pipeline = this.ensurePipeline(userId, source)
-    if (this.videoSwitches.get(pictureKey(userId, source))?.incoming !== trackAlias) {
+    if (this.videoSwitches.get(pictureKey(userId, source))?.incoming !== trackId) {
       configurePipeline(pipeline, registration)
     }
     if (kind === 'audio') {
-      this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => {
-        pipeline.push(kind, groupId, message)
+      this.objectHandlers.set(trackId, (groupId, message, cached) => {
+        pipeline.push(kind, groupId, message, cached)
         const audioLevel = readLocHeader(message.locHeader).audioLevel
         if (audioLevel) {
           this.handlers.onAudioLevel?.(userId, audioLevel)
@@ -254,29 +209,26 @@ export class MediaSubscriber {
       })
       return
     }
-    this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      this.pushVideo(trackAlias, registration, pipeline, groupId, message)
+    this.objectHandlers.set(trackId, (groupId, message, cached) =>
+      this.pushVideo(trackId, registration, pipeline, groupId, message, cached)
     )
   }
 
   private pushVideo(
-    trackAlias: bigint,
+    trackId: bigint,
     registration: TrackRegistration,
     pipeline: LocLive,
     groupId: bigint,
-    message: SubgroupObjectMessageWithLoc
+    message: LocObject,
+    cached: boolean
   ): void {
-    if (registration.liveWhileJoining) {
-      registration.liveWhileJoining.push([groupId, message])
-      return
-    }
     const key = pictureKey(registration.userId, registration.source)
     const videoSwitch = this.videoSwitches.get(key)
-    if (videoSwitch?.outgoing === trackAlias && videoSwitch.splice.acceptOutgoing(groupId) === 'retire') {
+    if (videoSwitch?.outgoing === trackId && videoSwitch.splice.acceptOutgoing(groupId) === 'retire') {
       this.retireOutgoing(key, videoSwitch)
       return
     }
-    if (videoSwitch?.incoming === trackAlias) {
+    if (videoSwitch?.incoming === trackId) {
       const verdict = videoSwitch.splice.acceptIncoming(groupId, message.objectId)
       if (verdict.start) {
         configurePipeline(pipeline, registration)
@@ -292,11 +244,14 @@ export class MediaSubscriber {
     if (registration.newestGroupId === undefined || groupId > registration.newestGroupId) {
       registration.newestGroupId = groupId
     }
-    pipeline.push('video', groupId, message)
-    this.adapt(key, registration, message)
+    pipeline.push('video', groupId, message, cached)
+    // A cached object's lag is its age, not the delivery delay.
+    if (!cached) {
+      this.adapt(key, registration, message)
+    }
   }
 
-  private adapt(key: string, registration: TrackRegistration, message: SubgroupObjectMessageWithLoc): void {
+  private adapt(key: string, registration: TrackRegistration, message: LocObject): void {
     const picture = this.pictureAdaptations.get(key)
     const adaptation = registration.adaptation
     if (!picture || !adaptation) {
@@ -344,14 +299,14 @@ export class MediaSubscriber {
   /// Returns true when the pipeline stays: the track that left took part in a
   /// switch, or another video track already plays on it. An incoming track
   /// that had not started is configured now.
-  private settleVideoSwitch(userId: string, source: RemoteVideoSource, trackAlias: bigint): boolean {
+  private settleVideoSwitch(userId: string, source: RemoteVideoSource, trackId: bigint): boolean {
     const key = pictureKey(userId, source)
     const videoSwitch = this.videoSwitches.get(key)
     if (videoSwitch) {
       this.videoSwitches.delete(key)
       const incoming = this.registrations.get(videoSwitch.incoming)
       const pipeline = this.pipelines.get(userId)?.[source]
-      if (videoSwitch.outgoing === trackAlias && incoming && pipeline && videoSwitch.splice.start === undefined) {
+      if (videoSwitch.outgoing === trackId && incoming && pipeline && videoSwitch.splice.start === undefined) {
         configurePipeline(pipeline, incoming)
       }
       return true
@@ -427,6 +382,10 @@ export class MediaSubscriber {
 
 function nowMs(): number {
   return monotonicUnixMicros() / 1_000
+}
+
+function videoSource(trackName: string): RemoteVideoSource {
+  return isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
 }
 
 function pictureKey(userId: string, source: RemoteVideoSource): string {
