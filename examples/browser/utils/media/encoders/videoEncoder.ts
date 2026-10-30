@@ -3,6 +3,8 @@ import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
 import { fitEncodeSize } from './encodeSize'
 
+/// The track a `videoTrack` message transferred; `stop` stops it.
+let capturedTrack: MediaStreamTrack | undefined
 // Default keeps periodic keyframes alive even before the first keyframeInterval message.
 let keyframeInterval: number = 30
 let forceNextKeyframe = false
@@ -206,6 +208,13 @@ self.onmessage = async (event) => {
       return
     }
     await startVideoEncode(videoReadableStream)
+  } else if (event.data.type === 'videoTrack') {
+    // A page without MediaStreamTrackProcessor (Safari) transfers the track to read it here.
+    capturedTrack = event.data.track
+    await startVideoEncode(new MediaStreamTrackProcessor({ track: event.data.track }).readable)
+  } else if (event.data.type === 'stop') {
+    capturedTrack?.stop()
+    self.close()
   }
 }
 
