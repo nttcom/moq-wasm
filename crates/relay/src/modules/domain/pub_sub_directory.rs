@@ -616,8 +616,7 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
-    /// Returns the subscription from the same publisher that it replaces, as
-    /// a track takes one upstream subscription per publisher.
+    /// Returns the subscription from the same publisher that this one replaces.
     pub(crate) fn register_upstream_subscription(
         &self,
         track_key: TrackKey,

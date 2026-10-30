@@ -122,11 +122,10 @@ pub(crate) async fn release_upstream(
     stop_ingress(ingress_sender, publisher_session_id, track_key).await;
 }
 
-/// Unsubscribes the subscription from the same publisher that this one
+/// Also unsubscribes the subscription from the same publisher that this one
 /// replaces, e.g. the SUBSCRIBE this relay sent before the publisher sent
-/// PUBLISH for the track: the publisher would otherwise keep serving it.
-/// The caller has already started this subscription's ingress, which stopped
-/// the replaced one's.
+/// PUBLISH for the track. Call it after starting this subscription's
+/// ingress, which stops the replaced one's.
 pub(crate) async fn register_upstream_subscription(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
@@ -265,7 +264,7 @@ mod tests {
                 .unwrap();
         }
 
-        // Assert: neither the SUBSCRIBE the relay sent first nor the PUBLISH is left
+        // Assert: both the SUBSCRIBE the relay sent first and the PUBLISH are unsubscribed
         assert_eq!(
             ctx.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID, PUBLISH_REQUEST_ID]
