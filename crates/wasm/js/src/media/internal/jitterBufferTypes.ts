@@ -1,8 +1,8 @@
-import type { SubgroupObjectMessage } from '../../../pkg/moqt'
+import type { ReceivedObject } from '../../core/session'
 import type { LocHeader } from './loc'
 
 export type SubgroupObjectWithLoc = Pick<
-  SubgroupObjectMessage,
+  ReceivedObject,
   'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus'
 > & {
   locHeader?: LocHeader

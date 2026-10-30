@@ -1,5 +1,3 @@
-import type { RequestErrorMessage } from '../../pkg/moqt'
-
 export const RequestErrorCode = {
   InternalError: 0x0n,
   Timeout: 0x2n,
@@ -14,7 +12,7 @@ export const RequestErrorCode = {
 export class RequestError extends Error {
   readonly errorCode: bigint
 
-  constructor(messageType: string, response: Pick<RequestErrorMessage, 'errorCode' | 'reasonPhrase'>) {
+  constructor(messageType: string, response: { errorCode: bigint; reasonPhrase: string }) {
     super(`${messageType} ${response.errorCode}: ${response.reasonPhrase}`)
     this.errorCode = response.errorCode
   }

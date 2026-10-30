@@ -18,11 +18,11 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 
 | 項目 | 現状 | SDK |
 | --- | --- | --- |
-| 接続 | `new MoqtClientWrapper()`、`connect(url, { authToken })`。`sendClientSetup` が露出している | `connect(url, options)` が `Session` を返す |
-| namespace の再生 | `new LivePlayer({ client, container })`、`start(namespace, authInfo)` | 同じ形で、`Session` の上で動く |
+| 接続 | `MoqSession.connect(url, { token })` | `connect(url, options)` が `Session` を返す |
+| namespace の再生 | `moq-wasm/media` の `new LivePlayer({ container })`、`start(session, namespace)` | 同じ形で、`Session` の上で動く |
 | メディアの配信 | `moq-wasm/media` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
-| track 単位の PubSub | request id と track alias をキーにした callback、`sendSubgroupHeader` / `sendSubgroupObject`、JS が振る request id | `Subscription` / `TrackWriter` の handle と async iteration |
-| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読み、`MOQTClient` は `moq-wasm/internal/wasm` から読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
+| track 単位の PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack` が返す `MoqSubscription` / `TrackWriter` の handle と async iteration | `Subscription` / `TrackWriter` の handle と async iteration |
+| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
 
 ## 目標の利用コード
 
