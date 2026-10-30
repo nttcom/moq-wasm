@@ -526,14 +526,16 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 
 リリースの手順:
 
-1. パッケージの `package.json` の version を上げる。
+1. パッケージの `package.json` の version を上げ、`CHANGELOG.md` にその version の
+   節を足す。
 2. `sdk-v<version>` の tag を push する。crate とは別に版を刻むので、tag には `sdk-`
    を付ける。
 3. CI がその tag で wasm と TS をビルドし、`npm pack` の tarball を作り、同じ名前の
    GitHub Release に添付する。changelog の該当部分を Release の本文にする。
 
-移行計画の手順11の CI（`npm pack` の tarball で Vite プロジェクトをビルドする確認）が
-3 のビルドを兼ねる。この Release の workflow は手順12のあとの PR で足す。
+3 は `.github/workflows/sdk-release.yml` が行う。tag がパッケージの version を指して
+いなければ止まり、`CHANGELOG.md` にその version の節が無くても止まる。添付する前に、手順11の CI と同じ
+`check:pack` を通す。
 
 tarball 配布の制約: `^0.1.0` のような範囲指定、`npm update`、Dependabot や Renovate に
 よる更新は効かず、利用者は URL を書き換えて更新する。jsDelivr や unpkg からも使えない。
