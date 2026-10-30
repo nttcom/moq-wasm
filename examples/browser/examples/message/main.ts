@@ -1,204 +1,60 @@
-import { MOQTClient, SubgroupObjectMessage } from 'moq-wasm/internal/wasm'
-import { FilterType, GroupOrder, MoqtClientWrapper, isRequestError } from '../../lib/moqt/moqtClient'
+import {
+  type Announcement,
+  MoqSession,
+  type MoqNamespaceWatch,
+  type MoqSubscription,
+  type ReceivedObject,
+  type TrackWriter
+} from 'moq-wasm'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
-import { element, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'
+import { element, getErrorMessage, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'
 
-interface TrackMetadata {
-  trackNamespace: string[]
-  trackName?: string
+let session: MoqSession | undefined
+let announcement: Announcement | undefined
+let watch: MoqNamespaceWatch | undefined
+let writer: TrackWriter | undefined
+let subscription: MoqSubscription | undefined
+
+function value(id: string): string {
+  return element<HTMLInputElement>(id).value.trim()
 }
 
-const moqtClient = new MoqtClientWrapper()
-const subgroupHeaderSent = new Set<string>()
-const requestTrackAliases = new Map<bigint, bigint>()
-const requestTrackMetadata = new Map<bigint, TrackMetadata>()
-let objectId = 0n
-let groupId = 0n
-let subgroupId = 0n
-
-const form = element<HTMLFormElement>('form')
-const aliasSelect = element<HTMLSelectElement>('object-track-alias')
-const receivedTextElement = element('received-text')
-
-function field(name: string): HTMLInputElement {
-  return form.elements.namedItem(name) as HTMLInputElement
+function checked(id: string): boolean {
+  return element<HTMLInputElement>(id).checked
 }
 
-function radioValue(name: string): string {
-  return (form.elements.namedItem(name) as RadioNodeList).value
-}
-
-function toBigUint64Array(input: string): BigUint64Array {
-  const values = input
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => BigInt(part))
-  return new BigUint64Array(values)
-}
-
-function describeReceivedObject(payload: ArrayBuffer | Uint8Array): void {
-  const brElement = document.createElement('br')
-  receivedTextElement.prepend(brElement)
-
-  const receivedArray = payload instanceof Uint8Array ? payload : new Uint8Array(payload)
-  const receivedText = new TextDecoder().decode(receivedArray)
-
-  const receivedElement = document.createElement('p')
-  receivedElement.textContent = receivedText
-  receivedTextElement.prepend(receivedElement)
-}
-
-function buildAliasLabel(trackAlias: bigint, metadata?: TrackMetadata): string {
-  if (!metadata) {
-    return `${trackAlias.toString()}`
-  }
-
-  const namespace = metadata.trackNamespace.join('/')
-  const trackPath = metadata.trackName ? `${namespace}/${metadata.trackName}` : namespace
-  return `${trackAlias.toString()} :: ${trackPath}`
-}
-
-function registerTrackAlias(requestId: bigint, trackAlias: bigint, metadata?: TrackMetadata): void {
-  const aliasValue = trackAlias.toString()
-
-  requestTrackAliases.set(requestId, trackAlias)
-  if (metadata) {
-    requestTrackMetadata.set(requestId, metadata)
-  }
-
-  let option = Array.from(aliasSelect.options).find((candidate) => candidate.value === aliasValue)
-  if (!option) {
-    option = document.createElement('option')
-    option.value = aliasValue
-    aliasSelect.appendChild(option)
-  }
-  option.textContent = buildAliasLabel(trackAlias, metadata ?? requestTrackMetadata.get(requestId))
-  aliasSelect.value = aliasValue
-  field('subscribe-assigned-track-alias').value = aliasValue
-  field('unsubscribe-subscribe-id').value = requestId.toString()
-}
-
-function pruneAliasState(trackAlias: bigint): void {
-  const prefix = `${trackAlias.toString()}:`
-  for (const key of subgroupHeaderSent) {
-    if (key.startsWith(prefix)) {
-      subgroupHeaderSent.delete(key)
-    }
-  }
-}
-
-function unregisterTrackAliasByRequestId(requestId: bigint): void {
-  const trackAlias = requestTrackAliases.get(requestId)
-
-  requestTrackAliases.delete(requestId)
-  requestTrackMetadata.delete(requestId)
-
-  if (trackAlias === undefined) {
-    return
-  }
-
-  const option = Array.from(aliasSelect.options).find((candidate) => candidate.value === trackAlias.toString())
-  if (option) {
-    option.remove()
-  }
-
-  pruneAliasState(trackAlias)
-  moqtClient.clearSubgroupObjectHandler(trackAlias)
-
-  const nextValue = aliasSelect.options[0]?.value ?? ''
-  aliasSelect.value = nextValue
-  field('subscribe-assigned-track-alias').value = nextValue
-}
-
-function getSelectedTrackAlias(): bigint {
-  const aliasValue = aliasSelect.value
-  if (!aliasValue) {
-    throw new Error('No active track alias selected')
-  }
-  return BigInt(aliasValue)
-}
-
-function attachSubgroupObjectHandler(trackAlias: bigint): void {
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (receivedGroupId, subgroupObject: SubgroupObjectMessage) => {
-    console.info({ groupId: receivedGroupId, subgroupObject })
-    if (subgroupObject.objectPayload.length > 0) {
-      describeReceivedObject(subgroupObject.objectPayload)
-    }
-  })
-}
-
-function registerClientCallbacks(): void {
-  moqtClient.setOnServerSetupHandler((serverSetup) => console.info({ serverSetup }))
-  moqtClient.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-    console.info({ publishNamespace })
-    await respondOk()
-  })
-  moqtClient.setOnPublishNamespaceResponseHandler((response) => console.info({ publishNamespaceResponse: response }))
-  moqtClient.setOnSubscribeNamespaceResponseHandler((response) =>
-    console.info({ subscribeNamespaceResponse: response })
-  )
-  moqtClient.setOnTrackStatusResponseHandler((response) => {
-    if (isRequestError(response)) {
-      console.info(
-        `TrackStatusError requestId=${response.requestId} code=${response.errorCode} reason=${response.reasonPhrase}`
-      )
-      return
-    }
-    console.info(`TrackStatusOk requestId=${response.requestId}`)
-  })
-  moqtClient.setOnSubscribeResponseHandler((response) => {
-    console.info({ subscribeResponse: response })
-    if (isRequestError(response)) {
-      requestTrackMetadata.delete(response.requestId)
-      return
-    }
-
-    registerTrackAlias(response.requestId, response.trackAlias, requestTrackMetadata.get(response.requestId))
-    attachSubgroupObjectHandler(response.trackAlias)
-  })
-  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk }) => {
-    console.info({ subscribeMessage: subscribe })
-    const trackAlias = await respondOk(0n)
-    registerTrackAlias(subscribe.requestId, trackAlias, {
-      trackNamespace: [...subscribe.trackNamespace],
-      trackName: subscribe.trackName
-    })
-  })
-  moqtClient.setOnIncomingUnsubscribeHandler((requestId) => {
-    console.info({ unsubscribeMessage: { requestId } })
-    unregisterTrackAliasByRequestId(requestId)
-  })
-  moqtClient.setOnObjectDatagramHandler((message) => {
-    console.info({ objectDatagram: message })
-    if (message.objectPayload.length > 0) {
-      describeReceivedObject(message.objectPayload)
-    }
-  })
-  moqtClient.setOnObjectDatagramStatusHandler((message) => console.info({ objectDatagramStatus: message }))
-  moqtClient.setOnSubgroupHeaderHandler((message) => console.info({ subgroupHeader: message }))
-  moqtClient.setOnConnectionClosedHandler(() => {
-    console.info('connection closed')
-    subgroupHeaderSent.clear()
-    requestTrackAliases.clear()
-    requestTrackMetadata.clear()
-    moqtClient.clearSubgroupObjectHandlers()
-    field('subscribe-assigned-track-alias').value = ''
-    field('unsubscribe-subscribe-id').value = ''
-    aliasSelect.innerHTML = ''
-  })
+function namespace(id: string): string[] {
+  return parseTrackNamespace(value(id))
 }
 
 function setSendStatus(message: string): void {
   element('send-status').textContent = message
 }
 
-async function sendControlMessage(label: string, send: () => Promise<unknown>): Promise<void> {
+function showReceived(text: string): void {
+  const line = document.createElement('p')
+  line.textContent = text
+  element('received-text').prepend(line)
+}
+
+function describeObject({ groupId, objectId, objectPayload }: ReceivedObject): string {
+  return `${groupId}/${objectId}: ${new TextDecoder().decode(objectPayload.subarray(0, 80))}`
+}
+
+function connected(): MoqSession {
+  if (!session) {
+    throw new Error('not connected')
+  }
+  return session
+}
+
+/// Shows `Sent <label>` once the relay accepts the request, or why it failed.
+async function send(label: string, request: () => Promise<unknown>): Promise<void> {
   try {
-    await send()
+    await request()
     setSendStatus(`Sent ${label}`)
   } catch (error) {
-    setSendStatus(`Failed ${label}: ${error instanceof Error ? error.message : String(error)}`)
+    setSendStatus(`Failed ${label}: ${getErrorMessage(error)}`)
   }
 }
 
@@ -206,317 +62,191 @@ function onClick(id: string, handler: () => unknown): void {
   element(id).addEventListener('click', handler)
 }
 
-function setupControlMessageButtons(): void {
-  onClick('sendPublishNamespaceDoneBtn', async () => {
-    const trackNamespace = parseTrackNamespace(field('publish-namespace-done-track-namespace').value)
-    await sendControlMessage('PUBLISH_NAMESPACE_DONE', () =>
-      moqtClient.requireConnectedClient().sendPublishNamespaceDone(trackNamespace)
-    )
-  })
-
-  onClick('sendUnsubscribeNamespaceBtn', async () => {
-    const trackNamespacePrefix = parseTrackNamespace(field('unsubscribe-namespace-prefix').value)
-    await sendControlMessage('UNSUBSCRIBE_NAMESPACE', () =>
-      moqtClient.requireConnectedClient().sendUnsubscribeNamespace(trackNamespacePrefix)
-    )
-  })
-
-  onClick('sendPublishBtn', async () => {
-    const requestId = BigInt(field('publish-request-id').value)
-    const trackNamespace = parseTrackNamespace(field('publish-track-namespace-2').value)
-    const trackName = field('publish-track-name').value
-    const trackAlias = BigInt(field('publish-track-alias').value)
-    const groupOrder = Number(field('publish-group-order').value)
-    const authInfo = field('auth-info').value
-    await sendControlMessage('PUBLISH', () =>
-      moqtClient
-        .requireConnectedClient()
-        .sendPublish(
-          requestId,
-          trackNamespace,
-          trackName,
-          trackAlias,
-          groupOrder,
-          false,
-          undefined,
-          undefined,
-          true,
-          authInfo
-        )
-    )
-  })
-
-  onClick('sendFetchBtn', async () => {
-    const requestId = BigInt(field('fetch-request-id').value)
-    const trackNamespace = parseTrackNamespace(field('fetch-track-namespace').value)
-    const trackName = field('fetch-track-name').value
-    const startGroup = BigInt(field('fetch-start-group').value)
-    const startObject = BigInt(field('fetch-start-object').value)
-    const endGroup = BigInt(field('fetch-end-group').value)
-    const endObject = BigInt(field('fetch-end-object').value)
-    let objects = 0
-    moqtClient.watchFetch(
-      requestId,
-      () => {
-        objects += 1
-      },
-      ({ isReset }) =>
-        console.info(`FETCH ${requestId} stream ${isReset ? 'reset' : 'finished'} after ${objects} objects`)
-    )
-    await sendControlMessage('FETCH', () =>
-      moqtClient
-        .requireConnectedClient()
-        .sendFetch(
-          requestId,
-          trackNamespace,
-          trackName,
-          startGroup,
-          startObject,
-          endGroup,
-          endObject,
-          GroupOrder.Ascending
-        )
-    )
-  })
-
-  onClick('sendGoAwayBtn', async () => {
-    const newSessionUri = field('goaway-new-session-uri').value
-    await sendControlMessage('GOAWAY', () => moqtClient.requireConnectedClient().sendGoAway(newSessionUri))
-  })
-
-  onClick('sendFetchCancelBtn', async () => {
-    const requestId = BigInt(field('fetch-cancel-request-id').value)
-    await sendControlMessage('FETCH_CANCEL', () => moqtClient.requireConnectedClient().sendFetchCancel(requestId))
-  })
-
-  onClick('sendSubscribeUpdateBtn', async () => {
-    const requestId = BigInt(field('subscribe-update-request-id').value)
-    const subscriptionRequestId = BigInt(field('subscribe-update-subscription-request-id').value)
-    const startGroup = BigInt(field('subscribe-update-start-group').value)
-    const startObject = BigInt(field('subscribe-update-start-object').value)
-    const endGroup = BigInt(field('subscribe-update-end-group').value)
-    const subscriberPriority = Number(field('subscribe-update-subscriber-priority').value)
-    const forward = radioValue('forwarding') === 'true'
-    await sendControlMessage('SUBSCRIBE_UPDATE', () =>
-      moqtClient
-        .requireConnectedClient()
-        .sendSubscribeUpdate(
-          requestId,
-          subscriptionRequestId,
-          startGroup,
-          startObject,
-          endGroup,
-          subscriberPriority,
-          forward
-        )
-    )
-  })
-
-  onClick('sendPublishDoneBtn', async () => {
-    const requestId = BigInt(field('publish-done-request-id').value)
-    const statusCode = BigInt(field('publish-done-status-code').value)
-    const streamCount = BigInt(field('publish-done-stream-count').value)
-    const errorReason = field('publish-done-error-reason').value
-    await sendControlMessage('PUBLISH_DONE', () =>
-      moqtClient.requireConnectedClient().sendPublishDone(requestId, statusCode, streamCount, errorReason)
-    )
-  })
-
-  onClick('sendPublishNamespaceCancelBtn', async () => {
-    const trackNamespace = parseTrackNamespace(field('publish-namespace-cancel-track-namespace').value)
-    const errorCode = BigInt(field('publish-namespace-cancel-error-code').value)
-    const errorReason = field('publish-namespace-cancel-error-reason').value
-    await sendControlMessage('PUBLISH_NAMESPACE_CANCEL', () =>
-      moqtClient.requireConnectedClient().sendPublishNamespaceCancel(trackNamespace, errorCode, errorReason)
-    )
-  })
-
-  onClick('sendTrackStatusBtn', async () => {
-    const requestId = BigInt(field('track-status-request-id').value)
-    const trackNamespace = parseTrackNamespace(field('track-status-track-namespace').value)
-    const trackName = field('track-status-track-name').value
-    const authInfo = field('auth-info').value
-    await sendControlMessage('TRACK_STATUS', () =>
-      moqtClient.requireConnectedClient().sendTrackStatus(requestId, trackNamespace, trackName, authInfo)
-    )
-  })
+function readSubscription(received: MoqSubscription): void {
+  void received.done.then((done) => done && showReceived(`[subscribe] PUBLISH_DONE ${done.code}: ${done.reason}`))
+  void (async () => {
+    for await (const object of received) {
+      showReceived(`[subscribe] ${describeObject(object)}`)
+    }
+  })().catch((error: unknown) => console.warn('[message] subscription read ended', error))
 }
 
-function setupSessionButtons(): void {
-  onClick('connectBtn', async () => {
-    await moqtClient.connect(field('url').value, { sendSetup: false })
-    registerClientCallbacks()
-    setSendStatus('Ready to send CLIENT_SETUP')
-  })
-
-  onClick('closeBtn', async () => {
-    await moqtClient.disconnect()
-    subgroupHeaderSent.clear()
-    requestTrackAliases.clear()
-    requestTrackMetadata.clear()
-    objectId = 0n
-    groupId = 0n
-    subgroupId = 0n
-  })
-
-  onClick('sendSetupBtn', async () => {
-    const versions = toBigUint64Array(field('versions').value)
-    const maxRequestId = BigInt(field('max-subscribe-id').value)
-    await sendControlMessage('CLIENT_SETUP', () => moqtClient.sendClientSetup(versions, maxRequestId))
-  })
-
-  onClick('sendPublishNamespaceBtn', async () => {
-    const trackNamespace = parseTrackNamespace(field('publish-track-namespace').value)
-    const authInfo = field('auth-info').value
-    await sendControlMessage('PUBLISH_NAMESPACE', () => moqtClient.publishNamespace(trackNamespace, authInfo))
-  })
-
-  onClick('sendSubscribeNamespaceBtn', async () => {
-    const trackNamespacePrefix = parseTrackNamespace(field('track-namespace-prefix').value)
-    const authInfo = field('auth-info').value
-    await sendControlMessage('SUBSCRIBE_NAMESPACE', () => moqtClient.subscribeNamespace(trackNamespacePrefix, authInfo))
-  })
-
-  onClick('sendSubscribeBtn', async () => {
-    const requestId = BigInt(field('subscribe-request-id').value)
-    const trackNamespace = parseTrackNamespace(field('subscribe-track-namespace').value)
-    const trackName = field('track-name').value
-    const authInfo = field('auth-info').value
-    const subscriberPriority = Number(field('subscriber-priority').value)
-    const groupOrder = Number(radioValue('group-order')) as GroupOrder
-    const filterType = Number(radioValue('filter-type')) as FilterType
-    const startGroup = BigInt(field('start-group').value)
-    const startObject = BigInt(field('start-object').value)
-    const endGroup = BigInt(field('end-group').value)
-    const forward = radioValue('forwarding') === 'true'
-
-    requestTrackMetadata.set(requestId, {
-      trackNamespace: [...trackNamespace],
-      trackName
-    })
-
-    await sendControlMessage('SUBSCRIBE', async () => {
-      const trackAlias = (
-        await moqtClient.subscribe(trackNamespace, trackName, authInfo, {
-          requestId,
-          subscriberPriority,
-          groupOrder,
-          filterType,
-          startGroup,
-          startObject,
-          endGroup,
-          forward,
-          onPublishDone: (message) => {
-            unregisterTrackAliasByRequestId(requestId)
-            setSendStatus(`Received PUBLISH_DONE for ${requestId} (status ${message.statusCode})`)
-          }
-        })
-      ).subscribeOk.trackAlias
-
-      registerTrackAlias(requestId, trackAlias, {
-        trackNamespace: [...trackNamespace],
-        trackName
-      })
-      attachSubgroupObjectHandler(trackAlias)
-    })
-  })
-
-  onClick('sendUnsubscribeBtn', async () => {
-    const requestId = BigInt(field('unsubscribe-subscribe-id').value)
-    await sendControlMessage('UNSUBSCRIBE', async () => {
-      await moqtClient.unsubscribe(requestId)
-      unregisterTrackAliasByRequestId(requestId)
-    })
-  })
-}
-
-function readObjectInputs(): { client: MOQTClient; trackAlias: bigint; publisherPriority: number } {
-  return {
-    client: moqtClient.requireConnectedClient(),
-    trackAlias: getSelectedTrackAlias(),
-    publisherPriority: Number(field('publisher-priority').value)
+/// Fills the FETCH fields with the whole group just written.
+function fetchGroup(groupId: bigint): void {
+  for (const id of ['fetch-start-group', 'fetch-end-group']) {
+    element<HTMLInputElement>(id).value = groupId.toString()
+  }
+  for (const id of ['fetch-start-object', 'fetch-end-object']) {
+    element<HTMLInputElement>(id).value = '0'
   }
 }
 
-function readPayload(): Uint8Array {
-  return new TextEncoder().encode(field('payload').value)
-}
-
-function readObjectStatus(): number {
-  return Number(radioValue('object-status'))
-}
-
-function renderIds(): void {
-  element('objectId').textContent = objectId.toString()
-  element('datagramGroupId').textContent = groupId.toString()
-  element('subgroupGroupId').textContent = groupId.toString()
-  element('subgroupId').textContent = subgroupId.toString()
-}
-
-async function sendSubgroup(objectStatus: number | undefined, payload: Uint8Array): Promise<void> {
-  const { client, trackAlias, publisherPriority } = readObjectInputs()
-  const key = `${trackAlias.toString()}:${groupId.toString()}:${subgroupId.toString()}`
-  if (!subgroupHeaderSent.has(key)) {
-    await client.sendSubgroupHeader(trackAlias, groupId, subgroupId, publisherPriority)
-    subgroupHeaderSent.add(key)
+function showWritten(groupId: bigint | undefined): void {
+  if (groupId === undefined) {
+    showReceived('[write] cached; no subscriber took it')
+    return
   }
-  await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId++, objectStatus, payload, undefined)
-  renderIds()
+  showReceived(`[write] group ${groupId}`)
+  fetchGroup(groupId)
 }
 
-function setupObjectButtons(): void {
-  onClick('sendDatagramObjectBtn', async () => {
-    const { client, trackAlias, publisherPriority } = readObjectInputs()
-    await client.sendObjectDatagram(trackAlias, groupId, objectId++, publisherPriority, readPayload(), undefined)
-    renderIds()
-  })
+function reset(): void {
+  session = undefined
+  announcement = undefined
+  watch = undefined
+  writer = undefined
+  subscription = undefined
+}
 
-  onClick('sendDatagramObjectWithStatusBtn', async () => {
-    const { client, trackAlias, publisherPriority } = readObjectInputs()
-    await client.sendObjectDatagramStatus(
-      trackAlias,
-      groupId,
-      objectId++,
-      publisherPriority,
-      readObjectStatus(),
-      undefined
-    )
-    renderIds()
-  })
-
-  onClick('sendSubgroupObjectBtn', () => sendSubgroup(undefined, readPayload()))
-  onClick('sendSubgroupObjectWithStatusBtn', () => sendSubgroup(readObjectStatus(), new Uint8Array()))
-
-  const idButtons: [string, 'group' | 'subgroup', bigint][] = [
-    ['ascendDatagramGroupIdBtn', 'group', 1n],
-    ['descendDatagramGroupIdBtn', 'group', -1n],
-    ['ascendSubgroupGroupIdBtn', 'group', 1n],
-    ['descendSubgroupGroupIdBtn', 'group', -1n],
-    ['ascendSubgroupIdBtn', 'subgroup', 1n],
-    ['descendSubgroupIdBtn', 'subgroup', -1n]
-  ]
-  for (const [id, counter, step] of idButtons) {
-    onClick(id, () => {
-      const next = (counter === 'group' ? groupId : subgroupId) + step
-      if (next < 0n) {
-        return
+onClick('connectBtn', async () => {
+  try {
+    const opened = await MoqSession.connect(value('url'))
+    session = opened
+    void opened.closed.then(({ code, reason }) => {
+      console.info('connection closed', { code, reason })
+      if (session === opened) {
+        reset()
       }
-      if (counter === 'group') {
-        groupId = next
-        subgroupId = 0n
-      } else {
-        subgroupId = next
-      }
-      objectId = 0n
-      renderIds()
     })
+    setSendStatus('Connected')
+  } catch (error) {
+    setSendStatus(`Failed to connect: ${getErrorMessage(error)}`)
   }
-}
+})
+
+onClick('closeBtn', () => {
+  session?.close()
+  reset()
+  setSendStatus('Closed')
+})
+
+onClick('announceBtn', () =>
+  send('PUBLISH_NAMESPACE', async () => {
+    announcement = await connected().announce(namespace('announce-namespace'))
+  })
+)
+
+onClick('withdrawBtn', () =>
+  send('PUBLISH_NAMESPACE_DONE', async () => {
+    await announcement?.close()
+    announcement = undefined
+  })
+)
+
+onClick('watchBtn', () =>
+  send('SUBSCRIBE_NAMESPACE', async () => {
+    const opened = await connected().watchNamespaces(namespace('watch-prefix'))
+    watch = opened
+    void (async () => {
+      for await (const { kind, namespace } of opened) {
+        showReceived(`[namespace] ${kind} ${namespace.join('/')}`)
+      }
+    })()
+  })
+)
+
+onClick('unwatchBtn', () =>
+  send('UNSUBSCRIBE_NAMESPACE', async () => {
+    await watch?.close()
+    watch = undefined
+  })
+)
+
+onClick('publishTrackBtn', async () => {
+  try {
+    const trackNamespace = namespace('publish-namespace')
+    const track = value('publish-track')
+    writer = await connected().publishTrack(trackNamespace, track, {
+      retentionMs: Number(value('publish-retention')),
+      publish: checked('publish-publish')
+    })
+    setSendStatus(`Published ${trackNamespace.join('/')}/${track}`)
+  } catch (error) {
+    setSendStatus(`Failed publishTrack: ${getErrorMessage(error)}`)
+  }
+})
+
+onClick('writeBtn', () =>
+  send('OBJECT', async () => {
+    if (!writer) {
+      throw new Error('publish a track first')
+    }
+    showWritten(
+      await writer.write(new TextEncoder().encode(value('write-payload')), checked('write-new-group'), undefined)
+    )
+  })
+)
+
+onClick('writeGroupBtn', () =>
+  send('OBJECT', async () => {
+    if (!writer) {
+      throw new Error('publish a track first')
+    }
+    showWritten(await writer.writeGroup(new TextEncoder().encode(value('write-payload'))))
+  })
+)
+
+onClick('subscribeBtn', () =>
+  send('SUBSCRIBE', async () => {
+    const received = await connected().subscribe(namespace('subscribe-namespace'), value('subscribe-track'), {
+      filter: value('subscribe-filter') as 'largestObject' | 'nextGroupStart',
+      forward: checked('subscribe-forward'),
+      priority: Number(value('subscribe-priority'))
+    })
+    subscription = received
+    readSubscription(received)
+  })
+)
+
+onClick('setForwardBtn', () =>
+  send('SUBSCRIBE_UPDATE', async () => {
+    if (!subscription) {
+      throw new Error('subscribe first')
+    }
+    await subscription.setForward(checked('subscribe-forward'))
+  })
+)
+
+onClick('unsubscribeBtn', () =>
+  send('UNSUBSCRIBE', async () => {
+    await subscription?.close()
+    subscription = undefined
+  })
+)
+
+onClick('fetchBtn', () =>
+  send('FETCH', async () => {
+    const fetched = await connected().fetch(
+      namespace('fetch-namespace'),
+      value('fetch-track'),
+      { groupId: BigInt(value('fetch-start-group')), objectId: BigInt(value('fetch-start-object')) },
+      { groupId: BigInt(value('fetch-end-group')), objectId: BigInt(value('fetch-end-object')) }
+    )
+    let count = 0
+    for await (const object of fetched) {
+      count += 1
+      showReceived(`[fetch] ${describeObject(object)}`)
+    }
+    console.info(`FETCH stream finished after ${count} objects`)
+  })
+)
+
+onClick('trackStatusBtn', () =>
+  send('TRACK_STATUS', async () => {
+    const largest = await connected().trackStatus(namespace('track-status-namespace'), value('track-status-track'))
+    showReceived(`[track status] largest ${largest ? `${largest.groupId}/${largest.objectId}` : 'none'}`)
+  })
+)
 
 setUpRelayUrlControls(element('url'), element('urlPresets'))
-for (const id of ['publish-track-namespace', 'track-namespace-prefix', 'subscribe-track-namespace']) {
-  element<HTMLInputElement>(id).value = buildDefaultTrackNamespace()
+const defaultNamespace = buildDefaultTrackNamespace()
+for (const id of [
+  'announce-namespace',
+  'watch-prefix',
+  'publish-namespace',
+  'subscribe-namespace',
+  'fetch-namespace',
+  'track-status-namespace'
+]) {
+  element<HTMLInputElement>(id).value = defaultNamespace
 }
-setupSessionButtons()
-setupObjectButtons()
-setupControlMessageButtons()
