@@ -7,7 +7,7 @@ use moqt::{
     publish::Origin,
     wire::publish_done_code_to_wire,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PublishDone {
@@ -27,9 +27,36 @@ pub(crate) struct SessionRoutes {
     publish_done: RefCell<HashMap<u64, oneshot::Sender<PublishDone>>>,
 }
 
+/// The namespace events of one watch, until the session ends or `close`.
+pub(crate) struct NamespaceEvents {
+    events: Mutex<mpsc::UnboundedReceiver<NamespaceEvent>>,
+    /// Ends a `next` that waits, since it holds `events` meanwhile.
+    closed: watch::Sender<bool>,
+}
+
+impl NamespaceEvents {
+    pub(crate) async fn next(&self) -> Option<NamespaceEvent> {
+        let mut closed = self.closed.subscribe();
+        let mut events = self.events.lock().await;
+        tokio::select! {
+            biased;
+            _ = closed.wait_for(|closed| *closed) => None,
+            event = events.recv() => event,
+        }
+    }
+
+    pub(crate) async fn close(&self) {
+        self.closed.send_replace(true);
+        self.events.lock().await.close();
+    }
+}
+
 impl SessionRoutes {
-    pub(crate) fn watch(&self, prefix: Vec<String>) -> mpsc::UnboundedReceiver<NamespaceEvent> {
-        self.watchers.watch(prefix)
+    pub(crate) fn watch(&self, prefix: Vec<String>) -> NamespaceEvents {
+        NamespaceEvents {
+            events: Mutex::new(self.watchers.watch(prefix)),
+            closed: watch::channel(false).0,
+        }
     }
 
     /// Fails once the session ends or `forget` drops it.
@@ -156,6 +183,24 @@ mod tests {
             server: server_session,
             _endpoints: (client, server),
         }
+    }
+
+    #[tokio::test]
+    async fn closing_a_namespace_watch_ends_the_read_that_waits() {
+        // Arrange
+        let routes = SessionRoutes::default();
+        let events = routes.watch(vec!["room".to_string()]);
+
+        // Act
+        let (event, ()) = tokio::time::timeout(TIMEOUT, async {
+            tokio::join!(events.next(), events.close())
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert_eq!(event, None);
+        assert_eq!(events.next().await, None);
     }
 
     #[tokio::test]
