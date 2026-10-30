@@ -4,6 +4,7 @@ import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
 import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'
+import 'moq-wasm/media/player.css'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
 const VIEWER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'viewer']

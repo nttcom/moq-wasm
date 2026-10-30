@@ -5,6 +5,8 @@ import { formatLiveStats } from 'moq-wasm/media/player/locLive'
 import { PlayerControls } from 'moq-wasm/media/controls/playerControls'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { element, parseTrackNamespace } from '../../utils/page'
+import 'moq-wasm/media/player.css'
+import 'moq-wasm/media/controls.css'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
 

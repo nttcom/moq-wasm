@@ -6,7 +6,6 @@ import type { LogLevel } from '../player/trackContext'
 import { CONTROLS_MARKUP } from './controlsMarkup'
 import { getErrorMessage } from '../internal/status'
 import type { MediaCatalogTrack } from '../catalog'
-import './playerControls.css'
 
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
