@@ -19,9 +19,6 @@
     "./media/controls.css": "./src/media/controls/playerControls.css",
     "./media/*": {
       "source": "./src/media/*.ts"
-    },
-    "./internal/wasm": {
-      "source": "./pkg/moqt.js"
     }
   },
   "scripts": {

@@ -1,7 +1,7 @@
 # ブラウザ SDK 設計
 
 ## ステータス
-承認済みで、未実装。「移行計画」の PR が入るまで、ここに書いたものは存在しない。
+承認済み。「移行計画」の step 1〜12 を実装した。
 1.0 の範囲は「決定事項」にまとめた。この計画のゴールは、npm パッケージとして使える形に
 整えるところまでで、配布は GitHub Release に添付する tarball から始め、npm への公開は
 含まない（「配布」を参照）。採用後は、パッケージ構成、公開 API、ここに書いた
@@ -18,11 +18,11 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 
 | 項目 | 現状 | SDK |
 | --- | --- | --- |
-| 接続 | `new MoqtClientWrapper()`、`connect(url, { authToken })`。`sendClientSetup` が露出している | `connect(url, options)` が `Session` を返す |
-| namespace の再生 | `new LivePlayer({ client, container })`、`start(namespace, authInfo)` | 同じ形で、`Session` の上で動く |
+| 接続 | `MoqSession.connect(url, { token })` | `connect(url, options)` が `Session` を返す |
+| namespace の再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks })`、`start(session, namespace)` | 同じ形で、`Session` の上で動く |
 | メディアの配信 | `moq-wasm/media` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
-| track 単位の PubSub | request id と track alias をキーにした callback、`sendSubgroupHeader` / `sendSubgroupObject`、JS が振る request id | `Subscription` / `TrackWriter` の handle と async iteration |
-| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読み、`MOQTClient` は `moq-wasm/internal/wasm` から読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
+| track 単位の PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack` が返す `MoqSubscription` / `MoqFetch` / `TrackWriter` の handle と async iteration | `Subscription` / `TrackWriter` の handle と async iteration |
+| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
 
 ## 目標の利用コード
 
@@ -126,7 +126,7 @@ encoder の worker、CSS を引き込むが、`core` はどれも引き込まな
 | 移動元 | 移動先 | 備考 |
 | --- | --- | --- |
 | `examples/browser/lib/moqt/loadMoqt.ts` | `core/init.ts` | single-flight な `init()`。wasm の URL を上書きできる |
-| `examples/browser/lib/moqt/moqtClient.ts` | `core/session.ts`（書き直し） | 「core API」を参照。callback の wrapper は、最後の利用者が移るまで `examples/browser` に残す |
+| `examples/browser/lib/moqt/moqtClient.ts` | `core/session.ts`（書き直し） | 「core API」を参照 |
 | `examples/browser/lib/msf/catalog.ts` | `media/catalog.ts` | パースだけ。組み立ては wasm へ移る |
 | `examples/browser/lib/player/*` | `media/player/*` | `LivePlayer`、playout、review。テストも一緒に移す |
 | `examples/browser/lib/player/ui` | `media/controls/*` | `PlayerControls`。React に依存しない DOM 部品なので、そのまま移せる |
@@ -166,9 +166,9 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
 
 - `crates/wasm` の `ClientState` が持つ publisher 側の管理情報（announce した
   namespace、受けた SUBSCRIBE とその join point、配信した最大の location、subgroup
-  の状態）。callback API を廃止した時点で消える。採番、キャッシュ、FETCH・
+  の状態）。callback API と一緒に消した。採番、キャッシュ、FETCH・
   FETCH_CANCEL・TRACK_STATUS への応答は `Origin` が、SUBSCRIBE への応答は
-  `broadcast` が担う。`ClientState` の subscriber 側も callback API と一緒に消える
+  `broadcast` が担う。`ClientState` の subscriber 側も callback API と一緒に消した
   （「core API」を参照）。
 - JS の `SubgroupWriter`、`fetchReplay`、`serveSubscribes.ts`。group と object の
   採番、リプレイ用キャッシュ、SUBSCRIBE/FETCH への応答を、2か所ではなく Rust の
@@ -382,11 +382,11 @@ session は、GOAWAY が無いままの切断（ネットワークの変化、re
   `session.closed` が解決する。
 
 callback スタイルからの移行: `examples/browser` が使っている間は、wasm の
-`MOQTClient` の callback export を残し、新しい `Session` は別の wasm クラスにする。
-example を1つずつ別の PR で移し、最後の1つと一緒に callback のクラス、`ClientState`、
-`MoqtClientWrapper` を消す。最初に移すのは `LivePlayer` である。core API の一番の
-利用者であり、「L1 は alias ごとの handler だけを登録する」というルールもこれで
-不要になる。
+`MOQTClient` の callback export を残し、新しい `Session` は別の wasm クラスにした。
+example を1つずつ別の PR で移し、最後の1つのあとで callback のクラス、`ClientState`、
+`MoqtClientWrapper` を消した。最初に移したのは、core API の一番の利用者である
+`LivePlayer` で、「L1 は alias ごとの handler だけを登録する」というルールもこれで
+不要になった。
 
 ## bundler 互換
 

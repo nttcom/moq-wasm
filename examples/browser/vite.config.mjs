@@ -8,10 +8,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     // The `source` export condition resolves `moq-wasm` to its TypeScript sources.
-    conditions: ['source', ...defaultClientConditions],
-    alias: {
-      '@moqt': resolve(import.meta.dirname, 'lib/moqt')
-    }
+    conditions: ['source', ...defaultClientConditions]
   },
   server: {
     fs: {
