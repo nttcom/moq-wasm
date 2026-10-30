@@ -154,36 +154,6 @@ export async function openMemberDetails(page: Page, memberName: string): Promise
   await page.getByTestId(`member-menu-${memberName}`).click()
 }
 
-export async function removeCatalogTrack(page: Page, trackName: string): Promise<void> {
-  await page.getByRole('button', { name: 'Catalog', exact: true }).click()
-  await page.getByTestId(`catalog-track-${trackName}`).getByRole('button', { name: 'Remove' }).click()
-}
-
-async function editAudioCatalogTracks(page: Page, edit: (track: Locator) => Promise<void>): Promise<void> {
-  await page.getByRole('button', { name: 'Catalog', exact: true }).click()
-  await page.getByRole('button', { name: /^Audio\(\d+\)$/ }).click()
-  for (const track of await page.getByTestId(/^catalog-track-audio/).all()) {
-    await edit(track)
-  }
-  await page.getByRole('button', { name: 'Close', exact: true }).click()
-}
-
-export async function setAudioGroupInterval(page: Page, seconds: number): Promise<void> {
-  await editAudioCatalogTracks(page, async (track) => {
-    const interval = track.getByLabel('更新間隔 (秒)')
-    await interval.fill(String(seconds))
-    await expect(interval).toHaveValue(String(seconds))
-  })
-}
-
-export async function setAudioSingleStream(page: Page): Promise<void> {
-  await editAudioCatalogTracks(page, async (track) => {
-    const singleStream = track.getByLabel('単一 Stream')
-    await singleStream.check()
-    await expect(singleStream).toBeChecked()
-  })
-}
-
 export async function openChat(model: MeetingClientPageModel): Promise<void> {
   if (!(await model.chatInput.isVisible())) {
     await model.page.getByTestId('chat-toggle-button').click()
