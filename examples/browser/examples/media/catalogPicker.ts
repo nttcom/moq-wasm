@@ -1,4 +1,4 @@
-import type { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import type { MoqSession } from 'moq-wasm'
 import { parse_msf_catalog_json } from 'moq-wasm/internal/wasm'
 import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
@@ -30,7 +30,7 @@ function placeholderOption(kind: MediaKind): HTMLOptionElement {
 }
 
 export function setUpCatalogPicker(
-  moqtClient: MoqtClientWrapper,
+  session: () => MoqSession | undefined,
   form: HTMLFormElement,
   onSelect?: (kind: MediaKind, track: MediaCatalogTrack) => void
 ): { pick: CatalogPick; reset: () => void } {
@@ -85,38 +85,37 @@ export function setUpCatalogPicker(
   element('sendCatalogSubscribeBtn').addEventListener('click', async () => {
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
     const catalogTrackName = form['catalog-track-name'].value.trim()
+    const connected = session()
+    if (!connected) {
+      setStatusText(STATUS_ID, 'Connect first')
+      return
+    }
     if (!catalogTrackName) {
       setStatusText(STATUS_ID, 'Catalog track is required')
       return
     }
+    setStatusText(STATUS_ID, `Catalog subscribe requested: ${catalogTrackName}`)
     // The publisher sends its catalog when it changes and every 30 s, so a
     // SUBSCRIBE alone would wait for the next one; the joining FETCH brings
-    // the current one. That catalog can render before subscribeLatest
-    // resolves, so set the status before the call for the catalog to replace.
-    setStatusText(STATUS_ID, `Catalog subscribe requested: ${catalogTrackName}`)
-    const { subscribeOk } = await moqtClient.subscribeLatest(
-      trackNamespace,
-      catalogTrackName,
-      'secret',
-      (payload) => {
-        try {
-          const catalog = parse_msf_catalog_json(new TextDecoder().decode(payload))
-          pick.video.tracks = extractCatalogTracks(catalog, 'video')
-          pick.audio.tracks = extractCatalogTracks(catalog, 'audio')
-          render()
-        } catch (error) {
-          console.error('[CatalogPicker] failed to parse catalog', error)
-          setStatusText(STATUS_ID, 'Catalog parse failed')
-        }
-      },
-      {
-        onPublishDone: () => {
-          reset()
-          setStatusText(STATUS_ID, 'Publisher ended the catalog track')
-        }
+    // the current one.
+    const catalogs = await connected.subscribeCurrentGroup(trackNamespace, catalogTrackName)
+    void catalogs.done.then((done) => {
+      if (done) {
+        reset()
+        setStatusText(STATUS_ID, 'Publisher ended the catalog track')
       }
-    )
-    form['catalog-track-alias'].value = subscribeOk.trackAlias.toString()
+    })
+    for await (const { objectPayload } of catalogs) {
+      try {
+        const catalog = parse_msf_catalog_json(new TextDecoder().decode(objectPayload))
+        pick.video.tracks = extractCatalogTracks(catalog, 'video')
+        pick.audio.tracks = extractCatalogTracks(catalog, 'audio')
+        render()
+      } catch (error) {
+        console.error('[CatalogPicker] failed to parse catalog', error)
+        setStatusText(STATUS_ID, 'Catalog parse failed')
+      }
+    }
   })
 
   render()

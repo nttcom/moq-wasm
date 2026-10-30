@@ -49,12 +49,6 @@
                 </span>
               </div>
               <div class="status-item">
-                <span class="status-label">Setup</span>
-                <span id="subscriber-setup-status" class="status-value" data-testid="subscriber-setup-status">
-                  Setup not sent
-                </span>
-              </div>
-              <div class="status-item">
                 <span class="status-label">Catalog</span>
                 <span id="catalog-track-status" class="status-value" data-testid="subscriber-catalog-status">
                   Catalog not loaded yet
@@ -81,16 +75,6 @@
             </div>
           </section>
 
-          <section class="card stack">
-            <h3>CLIENT_SETUP</h3>
-            <label>Max Request ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
-            <div class="button-row action-row">
-              <button type="button" id="sendSetupBtn" class="compact-button" data-testid="subscriber-setup-button">
-                Send
-              </button>
-            </div>
-          </section>
-
           <section class="card stack full">
             <h3>SUBSCRIBE</h3>
             <label
@@ -106,10 +90,7 @@
             <div class="subscribe-split">
               <section class="subscribe-panel stack">
                 <h4>Catalog Subscribe</h4>
-                <div class="field-row inline-fields">
-                  <label>Catalog Track: <input type="text" name="catalog-track-name" value="catalog" /></label>
-                  <label>Catalog Track Alias: <input type="text" name="catalog-track-alias" value="0" /></label>
-                </div>
+                <label>Catalog Track: <input type="text" name="catalog-track-name" value="catalog" /></label>
                 <p class="hint">Catalog をロードすると Track Subscribe で選択できるようになります。</p>
                 <div class="button-row action-row">
                   <button
@@ -141,12 +122,6 @@
                     data-testid="subscriber-audio-track-select"
                   ></select>
                 </label>
-                <div class="field-row">
-                  <label>Video Subscribe ID: <input type="text" name="video-subscribe-id" value="1" /></label>
-                  <label>Video Track Alias: <input type="text" name="video-track-alias" value="1" /></label>
-                  <label>Audio Subscribe ID: <input type="text" name="audio-subscribe-id" value="2" /></label>
-                  <label>Audio Track Alias: <input type="text" name="audio-track-alias" value="2" /></label>
-                </div>
                 <div class="button-row action-row">
                   <button type="button" id="sendSubscribeBtn" data-testid="subscriber-track-subscribe-button">
                     Subscribe Selected Tracks

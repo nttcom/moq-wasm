@@ -1,12 +1,12 @@
-import { MoqtClientWrapper } from '../../../lib/moqt/moqtClient'
+import { MoqSession, type MoqSubscription } from 'moq-wasm'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../../media/catalogPicker'
 import { setUpVisualizerToggle } from '../../media/visualizerToggle'
 
-const moqtClient = new MoqtClientWrapper()
+let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
 
-const catalogPicker = setUpCatalogPicker(moqtClient, form)
+const catalogPicker = setUpCatalogPicker(() => session, form)
 
 // MSE state
 let mediaSource: MediaSource | null = null
@@ -465,59 +465,49 @@ const setupMediaSource = (videoCodec: string, audioCodec: string): void => {
 
 // --- MoQ Object handlers ---
 
-const setupObjectCallbacks = (
+const receiveObjects = (
   kind: 'video' | 'audio',
-  trackAlias: bigint,
+  subscription: MoqSubscription,
   append: (data: Uint8Array) => void
 ): void => {
   let initReceived = false
   let initSize = 0
 
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
-    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
-    const { objectId, objectStatus } = subgroupStreamObject
-
-    if (objectId === 0n) {
-      initSize = payload.byteLength
-      setMoqObjectVisualizationState(kind, groupId, objectId)
-      if (!initReceived) {
-        console.info(`[CmafSubscriber] ${kind} init segment received`, { byteLength: payload.byteLength })
-        initReceived = true
-        append(payload)
-      }
-      return
+  void subscription.done.then((done) => {
+    if (done) {
+      setStatusText('catalog-track-status', `Publisher ended the ${kind} track`)
     }
-
-    if (objectStatus != null) {
-      setMoqObjectVisualizationState(kind, groupId, objectId)
-      return
-    }
-
-    if (payload.byteLength < 4) {
-      console.warn(`[CmafSubscriber] ${kind} payload too short for moof`, { groupId, objectId, objectStatus })
-      return
-    }
-
-    const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
-    const mdatSize = payload.byteLength - moofSize
-    const headerBytes = initSize + moofSize
-    const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
-    updateOverheadDisplay(kind, initSize, moofSize, mdatSize, overhead)
-    setMoqObjectVisualizationState(kind, groupId, objectId)
-    append(payload)
   })
+  void (async () => {
+    for await (const { groupId, objectId, objectPayload: payload } of subscription) {
+      if (objectId === 0n) {
+        initSize = payload.byteLength
+        setMoqObjectVisualizationState(kind, groupId, objectId)
+        if (!initReceived) {
+          console.info(`[CmafSubscriber] ${kind} init segment received`, { byteLength: payload.byteLength })
+          initReceived = true
+          append(payload)
+        }
+        continue
+      }
+
+      if (payload.byteLength < 4) {
+        console.warn(`[CmafSubscriber] ${kind} payload too short for moof`, { groupId, objectId })
+        continue
+      }
+
+      const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
+      const mdatSize = payload.byteLength - moofSize
+      const headerBytes = initSize + moofSize
+      const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
+      updateOverheadDisplay(kind, initSize, moofSize, mdatSize, overhead)
+      setMoqObjectVisualizationState(kind, groupId, objectId)
+      append(payload)
+    }
+  })().catch((error: unknown) => console.warn(`[CmafSubscriber] ${kind} read ended`, error))
 }
 
 // --- Button handlers ---
-
-const sendSetupButtonClickHandler = (): void => {
-  const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
-  sendSetupBtn.addEventListener('click', async () => {
-    const versions = new BigUint64Array([0xff00000en])
-    const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
-    await moqtClient.sendClientSetup(versions, maxSubscribeId)
-  })
-}
 
 const sendSubscribeButtonClickHandler = (): void => {
   const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement
@@ -525,9 +515,11 @@ const sendSubscribeButtonClickHandler = (): void => {
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
     const videoTrack = catalogPicker.pick.video.selected
     const audioTrack = catalogPicker.pick.audio.selected
-    const videoSubscribeId = BigInt(form['video-subscribe-id'].value)
-    const audioSubscribeId = BigInt(form['audio-subscribe-id'].value)
 
+    if (!session) {
+      setStatusText('catalog-track-status', 'Connect first')
+      return
+    }
     if (!videoTrack) {
       setStatusText('catalog-track-status', 'Select a video track from catalog first')
       return
@@ -538,23 +530,8 @@ const sendSubscribeButtonClickHandler = (): void => {
     }
 
     setupMediaSource(videoTrack.codec, audioTrack.codec)
-    const videoTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, videoTrack.name, 'secret', {
-        requestId: videoSubscribeId,
-        onPublishDone: () => setStatusText('catalog-track-status', 'Publisher ended the video track')
-      })
-    ).subscribeOk.trackAlias
-    form['video-track-alias'].value = videoTrackAlias.toString()
-    setupObjectCallbacks('video', videoTrackAlias, appendToVideo)
-
-    const audioTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, audioTrack.name, 'secret', {
-        requestId: audioSubscribeId,
-        onPublishDone: () => setStatusText('catalog-track-status', 'Publisher ended the audio track')
-      })
-    ).subscribeOk.trackAlias
-    form['audio-track-alias'].value = audioTrackAlias.toString()
-    setupObjectCallbacks('audio', audioTrackAlias, appendToAudio)
+    receiveObjects('video', await session.subscribe(trackNamespace, videoTrack.name), appendToVideo)
+    receiveObjects('audio', await session.subscribe(trackNamespace, audioTrack.name), appendToAudio)
     setStatusText('catalog-track-status', `Subscribed video=${videoTrack.name} audio=${audioTrack.name}`)
   })
 }
@@ -562,8 +539,8 @@ const sendSubscribeButtonClickHandler = (): void => {
 const setupCloseButtonHandler = (): void => {
   const closeBtn = document.getElementById('closeBtn') as HTMLButtonElement
   closeBtn.addEventListener('click', async () => {
-    await moqtClient.disconnect()
-    moqtClient.clearSubgroupObjectHandlers()
+    session?.close()
+    session = undefined
     playbackStarted = false
     lastLiveEdgeCatchupAtMs = 0
     videoAppendQueue.length = 0
@@ -588,22 +565,11 @@ const setupCloseButtonHandler = (): void => {
 }
 
 const setupButtonHandlers = (): void => {
-  sendSetupButtonClickHandler()
   sendSubscribeButtonClickHandler()
   setupLiveCatchupModeButton()
   setupCloseButtonHandler()
   setupLiveEdgeCatchupHandler()
 }
-
-// --- Client callbacks ---
-
-moqtClient.setOnServerSetupHandler((serverSetup: any) => {
-  console.log({ serverSetup })
-})
-
-moqtClient.setOnSubscribeResponseHandler((subscribeResponse) => {
-  console.log({ subscribeResponse })
-})
 
 // --- Init ---
 
@@ -613,7 +579,7 @@ const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
   const url = form.url.value
 
-  await moqtClient.connect(url, { sendSetup: false })
+  session = await MoqSession.connect(url)
   setStatusText('catalog-track-status', 'Connected')
 })
 
