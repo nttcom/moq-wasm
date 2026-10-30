@@ -442,7 +442,10 @@ decoded, and one playout clock decides when each is presented. The clock maps
 the LOC capture timestamps, which the bridge stamps on the same wall clock for
 every track, onto the local clock behind a jitter buffer. The buffer tracks
 the delay from capture to arrival of the audio chunks of the last 10 s and
-covers their peak-to-peak jitter (the slowest minus the fastest) plus the audio
+covers their peak-to-peak jitter (the slowest minus the fastest; the meeting
+example takes the 95th percentile instead of the slowest, through the buffer
+policy's `arrivalQuantile`, and leaves the rarer delays to the concealment
+below) plus the audio
 device's output latency (the time from handing a chunk to the device to
 hearing it, some 25 ms on built-in speakers and far more over Bluetooth) and the
 20 ms within which the sound is continued by repetition (below). That
