@@ -23,7 +23,8 @@ import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../internal/status'
-import { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from '../catalog'
+import { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from '../catalog'
+import { parseCatalog } from '../parseCatalog'
 
 const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000

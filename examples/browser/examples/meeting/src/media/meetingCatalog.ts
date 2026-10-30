@@ -1,5 +1,6 @@
 import type { Rendition } from 'moq-wasm/media/publish'
-import { parseCatalog, resolveInitData, type MsfTrack } from 'moq-wasm/media/catalog'
+import { parseCatalog } from 'moq-wasm/media'
+import { resolveInitData, type MsfTrack } from 'moq-wasm/media/catalog'
 import {
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
   type MeetingCatalogTrack,

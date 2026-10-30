@@ -1,5 +1,6 @@
 import type { MoqSession } from 'moq-wasm'
-import { extractCatalogTracks, type MediaCatalogTrack, parseCatalog } from 'moq-wasm/media/catalog'
+import { parseCatalog } from 'moq-wasm/media'
+import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
 import { latestObjects } from '../../utils/latestObjects'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
 import type { MediaKind } from 'moq-wasm/media/player/trackContext'

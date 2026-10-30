@@ -21,5 +21,6 @@ export {
   LivePlayer
 } from './player/livePlayer'
 export { PlayerControls } from './controls/playerControls'
-export { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from './catalog'
+export { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from './catalog'
+export { parseCatalog } from './parseCatalog'
 export { Mp4AudioTrack, Mp4Broadcast, Mp4Index, Mp4SampleTable, Mp4VideoTrack } from '../../pkg/moqt'
