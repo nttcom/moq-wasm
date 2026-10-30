@@ -28,8 +28,9 @@ export type Rendition = {
   bitrate: number
 }
 
-/// The codec of the video encoder worker's `buildDefaultConfig`.
+/// The codec and bitrate of the video encoder worker's `buildDefaultConfig`.
 const DEFAULT_VIDEO_CODEC = 'avc1.640028'
+const DEFAULT_VIDEO_BITRATE = 1_000_000
 
 export type MediaKind = 'video' | 'audio'
 
@@ -73,7 +74,7 @@ export async function publish(
   // would reuse its group ids and capture times.
   const startedAtMs = performance.now()
   const camera = publishSource(
-    broadcast.addSource('video', options.videoLabel ?? 'Video', 'audio', 'Audio'),
+    broadcast.addSource('video', options.videoLabel ?? 'Video', videoBitrate(options), 'audio', 'Audio'),
     stream,
     options,
     startedAtMs,
@@ -91,7 +92,13 @@ export async function publish(
         throw new Error(`a source named ${name} is already published`)
       }
       const source = publishSource(
-        broadcast.addSource(name, sourceOptions.videoLabel ?? name, `${name}_audio`, `${name} audio`),
+        broadcast.addSource(
+          name,
+          sourceOptions.videoLabel ?? name,
+          videoBitrate(sourceOptions),
+          `${name}_audio`,
+          `${name} audio`
+        ),
         sourceStream,
         sourceOptions,
         startedAtMs,
@@ -105,6 +112,10 @@ export async function publish(
       await Promise.all([camera, ...added.values()].map((source) => source.close()))
     }
   }
+}
+
+function videoBitrate(options: SourceOptions): number | undefined {
+  return options.videoEncoderConfig ? options.videoEncoderConfig.bitrate : DEFAULT_VIDEO_BITRATE
 }
 
 function publishSource(
