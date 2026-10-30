@@ -162,7 +162,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn namespaces_announced_after_unsubscribe_namespace_are_not_forwarded() {
-        // Arrange: the later SUBSCRIBE_NAMESPACE is answered only after the relay handled the UNSUBSCRIBE_NAMESPACE
+        // Arrange: the relay answers "APP/lobby" only after it handled the UNSUBSCRIBE_NAMESPACE
         let (relay, watcher) = spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
         let announcer = connect_client(&relay).await;
         subscribe_namespace(&watcher, "APP/room").await;

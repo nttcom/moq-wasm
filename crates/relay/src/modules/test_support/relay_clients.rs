@@ -75,13 +75,8 @@ impl TrackPublisher {
         }
     }
 
-    /// The Request ID of the next UNSUBSCRIBE, or `None` when none arrives
-    /// within the timeout.
     pub(crate) async fn next_unsubscribe(&mut self) -> Option<u64> {
-        tokio::time::timeout(EVENT_TIMEOUT, self.unsubscribe_receiver.recv())
-            .await
-            .ok()
-            .flatten()
+        within(self.unsubscribe_receiver.recv()).await
     }
 }
 

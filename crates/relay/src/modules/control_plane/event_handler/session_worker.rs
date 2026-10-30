@@ -456,8 +456,7 @@ mod tests {
         },
     };
 
-    /// A subscription starting at group 1, whose End Group can be set to
-    /// group 0 so that nothing is left to deliver.
+    /// Starts at group 1 so that `end_before_start` leaves nothing to deliver.
     fn from_group_1() -> SubscribeOption {
         SubscribeOption {
             filter_type: FilterType::AbsoluteStart {

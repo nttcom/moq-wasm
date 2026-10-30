@@ -120,7 +120,7 @@ mod tests {
         // Act
         watcher.close_with_error(TerminationErrorCode::NoError, "leaving");
 
-        // Assert: the route goes once the relay notices the disconnection
+        // Assert
         within(async {
             while !route_registry
                 .namespace_subscriber_calls()
