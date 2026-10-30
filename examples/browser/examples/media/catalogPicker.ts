@@ -1,5 +1,5 @@
 import type { MoqSession } from 'moq-wasm'
-import { parse_msf_catalog_json } from 'moq-wasm/internal/wasm'
+import { parseCatalog } from 'moq-wasm/media'
 import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
 import { latestObjects } from '../../utils/latestObjects'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
@@ -108,7 +108,7 @@ export function setUpCatalogPicker(
     })
     for await (const { objectPayload } of latestObjects(catalogs)) {
       try {
-        const catalog = parse_msf_catalog_json(new TextDecoder().decode(objectPayload))
+        const catalog = parseCatalog(new TextDecoder().decode(objectPayload))
         pick.video.tracks = extractCatalogTracks(catalog, 'video')
         pick.audio.tracks = extractCatalogTracks(catalog, 'audio')
         render()

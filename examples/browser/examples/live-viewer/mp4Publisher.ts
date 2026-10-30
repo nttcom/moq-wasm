@@ -1,10 +1,4 @@
-import {
-  Mp4Broadcast,
-  Mp4Index,
-  type Mp4SampleTable,
-  type Mp4VideoTrack,
-  type Mp4AudioTrack
-} from 'moq-wasm/internal/wasm'
+import { Mp4Broadcast, Mp4Index, type Mp4SampleTable, type Mp4VideoTrack, type Mp4AudioTrack } from 'moq-wasm/media'
 import { loadMoqt } from 'moq-wasm'
 import { monotonicUnixMicros } from 'moq-wasm/media/internal/clock'
 import type { PublishPreview } from './publishPreview'

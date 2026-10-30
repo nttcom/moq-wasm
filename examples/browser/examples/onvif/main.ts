@@ -1,5 +1,5 @@
 import { MoqSession } from 'moq-wasm'
-import type { TrackWriter } from 'moq-wasm/internal/wasm'
+import type { TrackWriter } from 'moq-wasm'
 import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
 import { formatLiveStats } from 'moq-wasm/media/player/locLive'
 import { PlayerControls } from 'moq-wasm/media/controls/playerControls'

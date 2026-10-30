@@ -5,7 +5,7 @@ import {
   type MoqSubscription,
   type ReceivedObject
 } from 'moq-wasm'
-import type { TrackWriter } from 'moq-wasm/internal/wasm'
+import type { TrackWriter } from 'moq-wasm'
 import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'

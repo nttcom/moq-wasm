@@ -1,5 +1,5 @@
-import { parse_msf_catalog_json } from 'moq-wasm/internal/wasm'
 import type { Rendition } from 'moq-wasm/media/publish'
+import { parseCatalog } from 'moq-wasm/media'
 import { resolveInitData, type MsfTrack } from 'moq-wasm/media/catalog'
 import {
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
@@ -108,7 +108,7 @@ export const SCREEN_SHARE_RENDITIONS: Rendition[] = [
 ]
 
 export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[] {
-  const catalog: { tracks?: MsfTrack[] } = parse_msf_catalog_json(payload)
+  const catalog: { tracks?: MsfTrack[] } = parseCatalog(payload) as { tracks?: MsfTrack[] }
   return (catalog.tracks ?? []).flatMap((track) => {
     const role = resolveRole(track)
     if (!role) {

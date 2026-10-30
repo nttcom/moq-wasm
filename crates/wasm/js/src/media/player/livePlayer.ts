@@ -1,6 +1,5 @@
 import { RequestError, RequestErrorCode } from '../../core/requestError'
 import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session'
-import { parse_msf_catalog_json } from '../../../pkg/moqt'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { monotonicUnixMicros } from '../internal/clock'
 import { readLocHeader } from '../internal/loc'
@@ -25,6 +24,7 @@ import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContex
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../internal/status'
 import { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from '../catalog'
+import { parseCatalog } from '../parseCatalog'
 
 const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
@@ -544,7 +544,7 @@ export class LivePlayer {
       return
     }
     try {
-      const catalog = parse_msf_catalog_json(payload)
+      const catalog = parseCatalog(payload)
       this.cmafTracks = extractCatalogTracks(catalog).filter((track) => track.packaging === 'cmaf')
       const changed = this.replaceAllTracks(
         extractCatalogTracks(catalog, 'video').filter(isLocTrack),
