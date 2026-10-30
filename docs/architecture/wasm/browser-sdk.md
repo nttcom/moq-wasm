@@ -103,7 +103,7 @@ for await (const event of await session.watchNamespaces(['room-1'])) {
 
 ```
 moq-wasm            core: init, connect, Session, Subscription, TrackWriter, 型
-moq-wasm/media      publish(), MediaBroadcast, LivePlayer, PlayerControls
+moq-wasm/media      publish(), MediaBroadcast, LivePlayer, PlayerControls, parseCatalog, Mp4Broadcast
 moq-wasm/media/player.css
 moq-wasm/media/controls.css
 ```
