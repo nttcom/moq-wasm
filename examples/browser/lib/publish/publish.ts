@@ -43,6 +43,11 @@ export type SourcePublication = {
   setMuted(kind: MediaKind, muted: boolean): Promise<void>
   /// A muted kind stays muted. Does nothing once the publication is closed.
   replaceTrack(kind: MediaKind, track: MediaStreamTrack): void
+  /// Restarts the video encoder with `config` and the renditions' encoders
+  /// with its codec. A muted video takes it when unmuted. The catalog keeps the
+  /// bitrate the source was published with. Does nothing once the publication
+  /// is closed.
+  setVideoEncoderConfig(config: VideoEncoderConfig): void
   /// Ends the tracks with PUBLISH_DONE. The session stays open.
   close(): Promise<void>
 }
@@ -127,10 +132,11 @@ function videoBitrate(options: SourceOptions): number | undefined {
 function publishSource(
   source: MediaSource,
   stream: MediaStream,
-  options: SourceOptions,
+  initialOptions: SourceOptions,
   startedAtMs: number,
   report: (error: unknown) => void
 ): SourcePublication {
+  let options = initialOptions
   const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
     source.addRendition(name, label, bitrate)
   )
@@ -190,6 +196,17 @@ function publishSource(
       if (!encoding.muted) {
         encoding.worker?.terminate()
         encoding.worker = encode(kind, track)
+      }
+    },
+    setVideoEncoderConfig: (config) => {
+      if (closed) {
+        return
+      }
+      options = { ...options, videoEncoderConfig: config }
+      const encoding = kinds.get('video')
+      if (encoding && !encoding.muted) {
+        encoding.worker?.terminate()
+        encoding.worker = encode('video', encoding.track)
       }
     },
     close: () => {
