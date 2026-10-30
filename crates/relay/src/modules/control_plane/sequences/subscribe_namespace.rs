@@ -12,6 +12,8 @@ use crate::modules::{
     },
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
+use std::collections::HashSet;
+
 use moqt::RequestErrorCode;
 
 pub(crate) struct SubscribeNameSpace;
@@ -68,16 +70,18 @@ impl SubscribeNameSpace {
             tracing::error!(error = ?e, "SUBSCRIBE_NAMESPACE failed");
             return;
         }
-        self.forward_matching_publications(
-            session_id,
-            track_namespace_prefix,
-            forwarder,
-            downstream_publish,
-        )
-        .await;
+        let local_namespaces = self
+            .forward_matching_publications(
+                session_id,
+                track_namespace_prefix,
+                forwarder,
+                downstream_publish,
+            )
+            .await;
         self.notify_remote_publish_namespaces(
             session_id,
             track_namespace_prefix,
+            &local_namespaces,
             forwarder,
             route_registry,
         )
@@ -128,16 +132,18 @@ impl SubscribeNameSpace {
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
+    /// Returns the namespaces it sent PUBLISH_NAMESPACE for.
     async fn forward_matching_publications(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
         forwarder: &ControlMessageForwarder,
         downstream_publish: &DownstreamPublish,
-    ) {
+    ) -> HashSet<String> {
         let publications = downstream_publish
             .table
             .matching_publications(track_namespace_prefix);
+        let mut namespaces = HashSet::new();
         for publication in publications {
             match publication {
                 MatchingPublication::Track(track_key) => {
@@ -151,9 +157,11 @@ impl SubscribeNameSpace {
                     forwarder
                         .publish_namespace(session_id, track_namespace.clone())
                         .await;
+                    namespaces.insert(track_namespace);
                 }
             }
         }
+        namespaces
     }
 
     #[tracing::instrument(
@@ -162,10 +170,13 @@ impl SubscribeNameSpace {
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
+    /// The route registry lists this relay's own namespaces too, which
+    /// `already_sent` holds.
     async fn notify_remote_publish_namespaces(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
+        already_sent: &HashSet<String>,
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
     ) {
@@ -186,9 +197,11 @@ impl SubscribeNameSpace {
         };
 
         for route in routes {
-            forwarder
-                .publish_namespace(session_id, route.track_namespace.clone())
-                .await;
+            if !already_sent.contains(&route.track_namespace) {
+                forwarder
+                    .publish_namespace(session_id, route.track_namespace)
+                    .await;
+            }
         }
     }
 }
@@ -203,6 +216,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
+        domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::{
             directory_fixtures::{
@@ -210,6 +224,7 @@ mod tests {
                 downstream_publish_context, table_with_upstream, track_key,
             },
             mock_session::{MockPublishHandler, PUBLISH_REQUEST_ID},
+            stub_route_registry::StubRouteRegistry,
         },
     };
 
@@ -342,6 +357,37 @@ mod tests {
                 "PUBLISH",
                 "SUBSCRIBE_NAMESPACE_ERROR"
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_published_here_and_in_the_route_registry_is_announced_once() {
+        // Arrange: the registry lists this relay's own `ns/alice` next to `ns/bob` on another relay
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            "ns/alice".to_string(),
+            SessionPeer::Client,
+        );
+        let ctx = downstream_publish_context(table, || Ok(true)).await;
+        let sent = SentMessages::default();
+
+        // Act
+        SubscribeNameSpace
+            .handle(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                &ctx.table,
+                &ctx.forwarder,
+                &ctx.downstream_publish(),
+                &StubRouteRegistry::with_namespace_routes(&["ns/alice", "ns/bob"]),
+                &MockSubscribeNamespaceHandler { prefix: "ns", sent },
+            )
+            .await;
+
+        // Assert
+        assert_eq!(
+            ctx.subscriber.publish_namespaces(),
+            vec!["ns/alice", "ns/bob"]
         );
     }
 }
