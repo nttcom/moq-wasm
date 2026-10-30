@@ -3,6 +3,7 @@ import type { AudioLevel } from '../loc'
 import { createBitrateLogger } from '../bitrate'
 import { CaptureTimestamps } from './captureTimestamps'
 import { encoderConfigForInput } from './audioInputFormat'
+import { pcmFrames } from './pcmCapture'
 
 let audioEncoder: AudioEncoder | undefined
 let encoderConfig: AudioEncoderConfig = {
@@ -117,7 +118,9 @@ self.onmessage = async (event) => {
     }
     return
   }
-  const audioReadableStream: ReadableStream<AudioData> = event.data.audioStream
+  // A page without MediaStreamTrackProcessor (Safari) sends the port of `capturePcm` instead.
+  const audioReadableStream: ReadableStream<AudioData> | undefined =
+    event.data.audioStream ?? (event.data.audioPort && pcmFrames(event.data.audioPort))
   if (!audioReadableStream) {
     console.error('MediaStreamTrack が渡されていません')
     return
