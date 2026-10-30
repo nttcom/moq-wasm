@@ -63,7 +63,10 @@ const DEFAULT_KEYFRAME_INTERVAL_FRAMES = 60
 
 type ChunkMessage<Chunk, Metadata> = { type: 'chunk'; chunk: Chunk; metadata: Metadata | undefined }
 
-type Encoding = { track: MediaStreamTrack; muted: boolean; worker?: Worker }
+/// Stops one kind's encoder worker and what feeds it.
+type Encoder = { stop: () => void }
+
+type Encoding = { track: MediaStreamTrack; muted: boolean; encoder?: Encoder }
 
 /// Publishes `stream` as an MSF broadcast in `namespace`, encoding its first
 /// video track as H.264 by default and its first audio track as Opus.
@@ -152,7 +155,7 @@ function publishSource(
     ['audio', stream.getAudioTracks()[0]]
   ] as const) {
     if (track) {
-      kinds.set(kind, { track, muted: false, worker: encode(kind, track) })
+      kinds.set(kind, { track, muted: false, encoder: encode(kind, track) })
     }
   }
   // An unmute that publishes the track before the mute's removal finishes
@@ -165,11 +168,11 @@ function publishSource(
   const serialized = (operation: () => Promise<void>) => (queue = queue.then(operation, operation))
   const stop = async (kind: MediaKind) => {
     const encoding = kinds.get(kind)
-    if (!encoding?.worker) {
+    if (!encoding?.encoder) {
       return
     }
-    encoding.worker.terminate()
-    encoding.worker = undefined
+    encoding.encoder.stop()
+    encoding.encoder = undefined
     await source.removeTrack(kind)
   }
   return {
@@ -183,7 +186,7 @@ function publishSource(
         if (muted) {
           await stop(kind)
         } else {
-          encoding.worker = encode(kind, encoding.track)
+          encoding.encoder = encode(kind, encoding.track)
         }
       }),
     replaceTrack: (kind, track) => {
@@ -194,8 +197,8 @@ function publishSource(
       encoding.track = track
       kinds.set(kind, encoding)
       if (!encoding.muted) {
-        encoding.worker?.terminate()
-        encoding.worker = encode(kind, track)
+        encoding.encoder?.stop()
+        encoding.encoder = encode(kind, track)
       }
     },
     setVideoEncoderConfig: (config) => {
@@ -205,8 +208,8 @@ function publishSource(
       options = { ...options, videoEncoderConfig: config }
       const encoding = kinds.get('video')
       if (encoding && !encoding.muted) {
-        encoding.worker?.terminate()
-        encoding.worker = encode('video', encoding.track)
+        encoding.encoder?.stop()
+        encoding.encoder = encode('video', encoding.track)
       }
     },
     close: () => {
@@ -226,7 +229,7 @@ function encodeVideo(
   renditionIndices: number[],
   offsetMicros: number,
   report: (error: unknown) => void
-): Worker {
+): Encoder {
   const worker = new Worker(new URL('../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
     type: 'module'
   })
@@ -287,9 +290,21 @@ function encodeVideo(
       }))
     })
   }
-  const videoStream = new MediaStreamTrackProcessor({ track }).readable
-  worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
-  return worker
+  if (typeof MediaStreamTrackProcessor === 'function') {
+    const videoStream = new MediaStreamTrackProcessor({ track }).readable
+    worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
+    return { stop: () => worker.terminate() }
+  }
+  // Safari reads a track only in a worker. The worker stops the clone it was
+  // given, which `terminate` would leave running.
+  const clone = track.clone()
+  worker.postMessage({ type: 'videoTrack', track: clone }, [clone as unknown as Transferable])
+  return {
+    stop: () => {
+      worker.onmessage = null
+      worker.postMessage({ type: 'stop' })
+    }
+  }
 }
 
 function encodeAudio(
@@ -297,7 +312,7 @@ function encodeAudio(
   track: MediaStreamTrack,
   offsetMicros: number,
   report: (error: unknown) => void
-): Worker {
+): Encoder {
   const worker = new Worker(new URL('../../utils/media/encoders/audioEncoder.ts', import.meta.url), {
     type: 'module'
   })
@@ -329,7 +344,7 @@ function encodeAudio(
   }
   const audioStream = new MediaStreamTrackProcessor({ track }).readable
   worker.postMessage({ audioStream }, [audioStream])
-  return worker
+  return { stop: () => worker.terminate() }
 }
 
 function bytes(source: AllowSharedBufferSource): Uint8Array {
