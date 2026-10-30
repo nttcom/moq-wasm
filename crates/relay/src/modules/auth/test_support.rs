@@ -16,7 +16,7 @@ use crate::{
             token_verifier::{TokenVerifier, VerifyError},
             verified_token::{VerifiedToken, parse_namespace_path},
         },
-        cascading::route_registry::NoopRelayRouteRegistry,
+        cascading::route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         session::session_repository::SessionRepository,
         test_support::relay_harness::fixtures::disk_cache::TempDir,
     },
@@ -84,6 +84,13 @@ pub(crate) struct RunningRelay {
 }
 
 pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRelay {
+    spawn_relay(token, Arc::new(NoopRelayRouteRegistry)).await
+}
+
+pub(crate) async fn spawn_relay(
+    token: VerifiedToken,
+    route_registry: Arc<dyn RelayRouteRegistry>,
+) -> RunningRelay {
     let cert_dir = TempDir::new("auth-test");
     let CertificateFiles {
         cert_path,
@@ -94,7 +101,7 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
         &cert_path,
         RelayServerDeps {
             repo: SessionRepository::new(),
-            route_registry: Arc::new(NoopRelayRouteRegistry),
+            route_registry,
             authenticator: SessionAuthenticator {
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),
             },

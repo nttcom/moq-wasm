@@ -36,8 +36,12 @@ fn relays(relay_ids: &[&str]) -> Vec<RelayInfo> {
 pub(crate) struct StubRouteRegistry {
     publisher_lookup: PublisherLookup,
     watched_namespace_calls: Mutex<Vec<String>>,
+    namespace_subscriber_calls: Mutex<Vec<String>>,
     migration_target: Option<String>,
     draining: AtomicBool,
+    /// The namespaces other relays publish; `None` leaves the namespace routes
+    /// unused, so a call fails the test.
+    namespace_routes: Option<Vec<String>>,
 }
 
 impl StubRouteRegistry {
@@ -45,8 +49,22 @@ impl StubRouteRegistry {
         Self {
             publisher_lookup,
             watched_namespace_calls: Mutex::new(Vec::new()),
+            namespace_subscriber_calls: Mutex::new(Vec::new()),
             migration_target: None,
             draining: AtomicBool::new(false),
+            namespace_routes: None,
+        }
+    }
+
+    pub(crate) fn with_namespace_routes(track_namespaces: &[&str]) -> Self {
+        Self {
+            namespace_routes: Some(
+                track_namespaces
+                    .iter()
+                    .map(|namespace| namespace.to_string())
+                    .collect(),
+            ),
+            ..Self::new(PublisherLookup::MustNotBeCalled)
         }
     }
 
@@ -59,6 +77,10 @@ impl StubRouteRegistry {
 
     pub(crate) fn watched_namespace_calls(&self) -> Vec<String> {
         self.watched_namespace_calls.lock().unwrap().clone()
+    }
+
+    pub(crate) fn namespace_subscriber_calls(&self) -> Vec<String> {
+        self.namespace_subscriber_calls.lock().unwrap().clone()
     }
 
     pub(crate) fn is_draining(&self) -> bool {
@@ -137,16 +159,33 @@ impl RelayRouteRegistry for StubRouteRegistry {
 
     async fn register_namespace_subscriber(
         &self,
-        _track_namespace_prefix: &str,
+        track_namespace_prefix: &str,
     ) -> Result<(), RegisterRouteError> {
-        unimplemented!("not used with the stub route registry")
+        assert!(
+            self.namespace_routes.is_some(),
+            "not used with the stub route registry"
+        );
+        self.namespace_subscriber_calls
+            .lock()
+            .unwrap()
+            .push(format!("register {track_namespace_prefix}"));
+        Ok(())
     }
 
     async fn find_namespace_publishers_by_prefix(
         &self,
         _track_namespace_prefix: &str,
     ) -> anyhow::Result<Vec<NamespaceRoute>> {
-        unimplemented!("not used with the stub route registry")
+        let routes = self
+            .namespace_routes
+            .as_ref()
+            .expect("not used with the stub route registry");
+        Ok(routes
+            .iter()
+            .map(|track_namespace| NamespaceRoute {
+                track_namespace: track_namespace.clone(),
+            })
+            .collect())
     }
 
     async fn unregister_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
@@ -155,9 +194,13 @@ impl RelayRouteRegistry for StubRouteRegistry {
 
     async fn unregister_namespace_subscriber(
         &self,
-        _track_namespace_prefix: &str,
+        track_namespace_prefix: &str,
     ) -> anyhow::Result<()> {
-        unimplemented!("not used with the stub route registry")
+        self.namespace_subscriber_calls
+            .lock()
+            .unwrap()
+            .push(format!("unregister {track_namespace_prefix}"));
+        Ok(())
     }
 
     async fn find_namespace_subscribers(
