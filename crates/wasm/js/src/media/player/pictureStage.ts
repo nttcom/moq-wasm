@@ -1,6 +1,5 @@
 import type { MseSink } from '../internal/mseSink'
 import { createPictureCanvas, createPictureVideo } from './pictureElements'
-import './livePlayer.css'
 
 const MSE_POOL_SIZE = 3
 

@@ -1,6 +1,7 @@
 import { MoqSession } from 'moq-wasm'
 import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
 import type { CameraId } from '../types/monitoring'
+import 'moq-wasm/media/player.css'
 
 const CAMERA_VIDEO_CODEC = 'avc3.640028'
 

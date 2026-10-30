@@ -7,24 +7,36 @@
   "exports": {
     ".": {
       "source": "./src/core/index.ts",
-      "default": "./src/core/index.ts"
+      "types": "./types/core/index.d.ts",
+      "default": "./dist/core/index.js"
     },
     "./media": {
       "source": "./src/media/index.ts",
-      "default": "./src/media/index.ts"
+      "types": "./types/media/index.d.ts",
+      "default": "./dist/media/index.js"
     },
     "./media/player.css": "./src/media/player/livePlayer.css",
     "./media/controls.css": "./src/media/controls/playerControls.css",
     "./media/*": {
-      "source": "./src/media/*.ts",
-      "default": "./src/media/*.ts"
+      "source": "./src/media/*.ts"
     },
-    "./internal/wasm": "./pkg/moqt.js"
+    "./internal/wasm": {
+      "source": "./pkg/moqt.js"
+    }
   },
   "scripts": {
     "wasm": "wasm-pack build ../ --target web --out-name moqt --out-dir=js/pkg",
     "wasm:dev": "wasm-pack build --dev ../ --target web --out-name moqt --out-dir=js/pkg",
+    "build": "vite build && tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
-    "test": "playwright test --config playwright.unit.config.ts"
-  }
+    "test": "playwright test --config playwright.unit.config.ts",
+    "check:pack": "node scripts/check-pack.mjs"
+  },
+  "files": [
+    "dist",
+    "types",
+    "pkg/moqt.d.ts",
+    "src/media/player/livePlayer.css",
+    "src/media/controls/playerControls.css"
+  ]
 }

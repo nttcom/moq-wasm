@@ -18,6 +18,8 @@ import {
 } from './streamMonitor'
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
 import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
+import 'moq-wasm/media/player.css'
+import 'moq-wasm/media/controls.css'
 
 /// Each draw rebuilds every stream monitor's SVG through innerHTML, too costly
 /// to run on every frame.
