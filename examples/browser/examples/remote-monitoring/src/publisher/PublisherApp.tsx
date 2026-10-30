@@ -29,14 +29,12 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   const [relayUrl, setRelayUrl] = useState(defaultRelayUrl)
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [subscriberCount, setSubscriberCount] = useState(0)
   const [sourceType, setSourceType] = useState<VideoSourceType>('synthetic')
   const defaultFileUrl = (id: CameraId | '') => (id ? `/moq-wasm/videos/${id}.mp4` : '')
   const [fileUrl, setFileUrl] = useState(() => defaultFileUrl(defaultCamId))
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionRef = useRef<PublisherSession | null>(null)
   const publisherRef = useRef<CameraPublisher | null>(null)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const isIdle = status === 'idle' || status === 'error'
   const canConnect = isIdle && !!camId && !!location
@@ -49,9 +47,8 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
       publisherRef.current?.stop()
-      sessionRef.current?.disconnect().catch(console.error)
+      sessionRef.current?.disconnect()
     }
   }, [])
 
@@ -70,20 +67,17 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   }
 
   const handlePublish = async () => {
-    const session = sessionRef.current
-    if (!session) return
+    const video = sessionRef.current?.video
+    if (!video) return
     setStatus('starting')
     setError(null)
     try {
       const source: VideoSource = sourceType === 'file' ? { type: 'file', fileUrl } : { type: sourceType }
-      const publisher = new CameraPublisher(session, camId as CameraId, source)
+      const publisher = new CameraPublisher(video, camId as CameraId, source)
       const stream = await publisher.start()
       publisherRef.current = publisher
       if (videoRef.current) videoRef.current.srcObject = stream
       setStatus('live')
-      timerRef.current = setInterval(() => {
-        setSubscriberCount(session.getVideoTrackAliases().length)
-      }, 1000)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Publish failed')
       setStatus('connected')
@@ -243,10 +237,6 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
               {SOURCE_LABELS[sourceType]}
               {sourceType === 'file' ? ` — ${fileUrl}` : ''}
             </span>
-          </div>
-          <div className="flex gap-3 text-xs text-zinc-400">
-            <span>Subscribers:</span>
-            <span className={subscriberCount > 0 ? 'text-green-400' : 'text-zinc-500'}>{subscriberCount}</span>
           </div>
         </div>
       )}

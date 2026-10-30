@@ -1,6 +1,6 @@
-import { MediaTransportState } from '../../../../utils/media/transportState'
-import { sendVideoChunkViaMoqt } from '../../../../utils/media/videoTransport'
-import type { PublisherSession } from './publisherSession'
+import type { TrackWriter } from 'moq-wasm'
+import { monotonicUnixMicros } from 'moq-wasm/media/internal/clock'
+import { buildLocHeader } from 'moq-wasm/media/internal/loc'
 import { type CameraId, type VideoSource } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
@@ -27,14 +27,12 @@ export class CameraPublisher {
   private worker: Worker | null = null
   private stream: MediaStream | null = null
   private videoEl: HTMLVideoElement | null = null
-  private readonly transportState = new MediaTransportState()
-  private readonly activeAliases = new Set<string>()
   private sendQueue: Promise<void> = Promise.resolve()
   private chunkCount = 0
   private rafId: number | null = null
 
   constructor(
-    private readonly session: PublisherSession,
+    private readonly video: TrackWriter,
     private readonly camId: CameraId,
     private readonly source: VideoSource
   ) {}
@@ -192,36 +190,16 @@ export class CameraPublisher {
     metadata: EncodedVideoChunkMetadata | undefined,
     captureTimestampMicros?: number
   ): Promise<void> {
-    const aliases = this.collectVideoAliases()
-    if (aliases.length === 0) return
-
-    await sendVideoChunkViaMoqt({
-      chunk,
-      metadata,
-      captureTimestampMicros,
-      trackAliases: aliases,
-      publisherPriority: 0,
-      client: this.session.sender,
-      transportState: this.transportState
+    const payload = new Uint8Array(chunk.byteLength)
+    chunk.copyTo(payload)
+    const description = metadata?.decoderConfig?.description
+    const locHeader = buildLocHeader({
+      captureTimestampMicros: Number.isFinite(captureTimestampMicros)
+        ? Math.round(captureTimestampMicros!)
+        : monotonicUnixMicros(),
+      videoConfig: chunk.type === 'key' && description ? new Uint8Array(description as ArrayBuffer) : undefined
     })
-  }
-
-  private collectVideoAliases(): bigint[] {
-    const aliases = this.session.getVideoTrackAliases()
-    const latestKeys = new Set(aliases.map((alias) => alias.toString()))
-
-    for (const key of this.activeAliases) {
-      if (!latestKeys.has(key)) {
-        this.transportState.resetAlias(key)
-      }
-    }
-
-    this.activeAliases.clear()
-    for (const alias of aliases) {
-      this.activeAliases.add(alias.toString())
-    }
-
-    return aliases
+    await this.video.write(payload, chunk.type === 'key', locHeader)
   }
 
   stop(): void {
@@ -236,6 +214,5 @@ export class CameraPublisher {
       this.videoEl.src = ''
       this.videoEl = null
     }
-    this.activeAliases.clear()
   }
 }
