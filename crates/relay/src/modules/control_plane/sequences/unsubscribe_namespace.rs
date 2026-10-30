@@ -143,3 +143,97 @@ impl UnsubscribeNamespace {
         relays
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use moqt::SessionEvent;
+
+    use crate::modules::{
+        auth::test_support::{
+            app_token, connect_client, spawn_relay, spawn_relay_and_connect_client,
+        },
+        test_support::{
+            relay_clients::{next_event, publish_namespace, subscribe_namespace},
+            stub_route_registry::{PublisherLookup, StubRouteRegistry},
+        },
+    };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn namespaces_announced_after_unsubscribe_namespace_are_not_forwarded() {
+        // Arrange: the later SUBSCRIBE_NAMESPACE is answered only after the relay handled the UNSUBSCRIBE_NAMESPACE
+        let (relay, watcher) = spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let announcer = connect_client(&relay).await;
+        subscribe_namespace(&watcher, "APP/room").await;
+        watcher
+            .subscriber()
+            .unsubscribe_namespace("APP/room".to_string())
+            .await
+            .unwrap();
+        subscribe_namespace(&watcher, "APP/lobby").await;
+
+        // Act
+        publish_namespace(&announcer, "APP/room/y").await;
+        publish_namespace(&announcer, "APP/lobby/z").await;
+        let event = next_event(&watcher).await;
+
+        // Assert: "APP/room/y" would have arrived first had it been forwarded
+        let SessionEvent::PublishNamespace(announced) = event else {
+            panic!("expected PUBLISH_NAMESPACE, got {event:?}");
+        };
+        assert_eq!(announced.track_namespace, "APP/lobby/z");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_last_unsubscribe_namespace_of_a_prefix_removes_its_route() {
+        // Arrange
+        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::NotFound));
+        let relay = spawn_relay(app_token(Some(""), Some("")), route_registry.clone()).await;
+        let watcher = connect_client(&relay).await;
+        subscribe_namespace(&watcher, "APP/room").await;
+
+        // Act
+        watcher
+            .subscriber()
+            .unsubscribe_namespace("APP/room".to_string())
+            .await
+            .unwrap();
+        subscribe_namespace(&watcher, "APP/lobby").await;
+
+        // Assert
+        assert_eq!(
+            route_registry.namespace_subscriber_calls(),
+            [
+                "register APP/room",
+                "unregister APP/room",
+                "register APP/lobby"
+            ]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unsubscribe_namespace_keeps_the_route_while_another_client_watches_the_prefix() {
+        // Arrange
+        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::NotFound));
+        let relay = spawn_relay(app_token(Some(""), Some("")), route_registry.clone()).await;
+        let leaving = connect_client(&relay).await;
+        let staying = connect_client(&relay).await;
+        subscribe_namespace(&leaving, "APP/room").await;
+        subscribe_namespace(&staying, "APP/room").await;
+
+        // Act
+        leaving
+            .subscriber()
+            .unsubscribe_namespace("APP/room".to_string())
+            .await
+            .unwrap();
+        subscribe_namespace(&leaving, "APP/lobby").await;
+
+        // Assert
+        assert_eq!(
+            route_registry.namespace_subscriber_calls(),
+            ["register APP/room", "register APP/lobby"]
+        );
+    }
+}
