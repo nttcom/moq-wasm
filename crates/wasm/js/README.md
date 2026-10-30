@@ -28,3 +28,9 @@ npm --prefix crates/wasm/js run check:pack
 `check:pack` packs the package and builds a new Vite project from the tarball.
 Inside this repository, `examples/browser` reads the TypeScript sources through
 the `source` export condition instead.
+
+## Releasing
+
+Raise `version` in `package.json`, add its section to `CHANGELOG.md`, and push
+a `sdk-v<version>` tag. `.github/workflows/sdk-release.yml` builds the package
+and attaches the `npm pack` tarball to a GitHub Release of the same name.
