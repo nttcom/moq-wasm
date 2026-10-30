@@ -229,26 +229,24 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
 
 ## Safari 対応
 
-Safari 26 は WebTransport と WebCodecs を持つが、Chrome と違う点がいくつかある。SDK は
-次のように扱う。
+Safari は WebTransport と WebCodecs を持つが、Chrome と違う点がいくつかある。Safari 27.0.1
+で確かめた違いと、SDK の扱いは次のとおり。
 
 - **WebTransport の datagram。** Safari は今の仕様の `datagrams.createWritable()`
   だけを持つ。wasm はすでに `createWritable` を先に試している。
-- **映像の capture。** `MediaStreamTrackProcessor` が使えない環境では、track を
-  `<video>` に流し、`requestVideoFrameCallback` ごとに `new VideoFrame(video)` で
-  フレームを取る。どちらで取るかは機能検出で決め、encoder から先は同じ経路にする。
-- **音声の capture。** `MediaStreamTrackProcessor` が使えない環境では、AudioWorklet
-  で PCM を取り、`AudioData` にして `AudioEncoder` に渡す。
-- **encoder の設定。** 使う codec と `avc.format` は、毎回
-  `VideoEncoder.isConfigSupported` / `AudioEncoder.isConfigSupported` で確かめる。
-  Annex-B 出力が無い環境では avcC 形式で受け取り、wasm で
-  `mediapack::h264::avcc_to_annexb` を使って Annex-B に直す。codec を指定しない
-  `publish()` は、Opus を encode できない環境では AAC に切り替える。指定された codec が
-  使えなければ reject する。
+- **映像の capture。** `MediaStreamTrackProcessor` は worker の中にしか無い。page に
+  無いときは、track の clone を encoder の worker へ transfer して、worker の中で読む。
+  止めるときは worker が clone を止めて閉じる（`terminate` では clone が残る）。
+- **音声の capture。** worker の `MediaStreamTrackProcessor` は映像の track しか読めない。
+  page に無いときは AudioWorklet で PCM を 10 ms ずつ取り、`MessageChannel` で encoder の
+  worker に送って `AudioData` にする（`utils/media/encoders/pcmCapture.ts`）。10 ms は、
+  encoder の出力を入力の capture 時刻と突き合わせる `CaptureTimestamps` の間隔に合わせた。
+- **encoder の設定。** Safari は H.264 の Annex-B 出力と Opus の encode を持つので、avcC
+  から Annex-B への変換と AAC への切り替えは要らない。
 - **再生。** `MediaStreamTrackGenerator` が無いので、映像は canvas の sink で出す
   （`LivePlayer` はすでにそうしている）。
-- **テスト。** Playwright の WebKit が WebTransport を持たない間は、Safari は実機の
-  Safari での手動確認とし、確認手順を `examples/browser` の README に書く。
+- **テスト。** Playwright の WebKit は WebTransport を持たないので、Safari は実機で
+  確かめる。手順は `examples/browser` の README にある。
 
 ## `MediaBroadcast`
 
@@ -449,9 +447,8 @@ example を1つずつ別の PR で移し、最後の1つと一緒に callback �
    そのあと meeting
    example を移し、`mediaPublisher.ts` のプロトコル部分と `meetingCatalog.ts` の
    catalog 組み立てを消す。
-10. **feat(browser): Safari 対応。** capture の代替経路、encoder 設定の機能検出、
-    avcC から Annex-B への変換、AAC への切り替え。実機の Safari で配信と再生を
-    確かめる。
+10. **feat(browser): Safari 対応。** 映像と音声の capture の代替経路。実機の Safari で
+    配信と再生を確かめる。
 11. **refactor: TS をパッケージディレクトリへ移す。** subpath exports、worker の
     バンドル、`examples/browser` を workspace 依存にする。CI に、新しい Vite
     プロジェクトが `npm pack` した tarball でビルドできるかの確認を足す。
