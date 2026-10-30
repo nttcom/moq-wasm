@@ -1,3 +1,5 @@
+import workletSource from './pcmCaptureWorklet.js?raw'
+
 /// One message of `pcmCaptureWorklet.js`: `data` holds each channel's frames in turn.
 export type PcmBatch = {
   timestampMicros: number
@@ -19,7 +21,14 @@ export type PcmCapture = {
 export async function capturePcm(track: MediaStreamTrack): Promise<PcmCapture> {
   const context = new AudioContext()
   try {
-    await context.audioWorklet.addModule(new URL('./pcmCaptureWorklet.js', import.meta.url))
+    // A Blob URL, not an asset: a consumer's bundler would inline the small
+    // module as a data URL, or not emit it at all.
+    const workletUrl = URL.createObjectURL(new Blob([workletSource], { type: 'text/javascript' }))
+    try {
+      await context.audioWorklet.addModule(workletUrl)
+    } finally {
+      URL.revokeObjectURL(workletUrl)
+    }
     const source = context.createMediaStreamSource(new MediaStream([track]))
     const node = new AudioWorkletNode(context, 'pcm-capture')
     const { port1, port2 } = new MessageChannel()

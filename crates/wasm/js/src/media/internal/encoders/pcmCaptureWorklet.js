@@ -1,5 +1,5 @@
-// An AudioWorklet module the build copies as is (it is a `new URL` asset, not a
-// bundled worker), so it stays plain JS and self-contained.
+// An AudioWorklet module that pcmCapture.ts imports as raw text, so it stays
+// plain JS without imports.
 
 /// The capture inputs of Chrome's MediaStreamTrackProcessor are 10 ms apart,
 /// which `CaptureTimestamps` relies on to match an encoder output to its input.
