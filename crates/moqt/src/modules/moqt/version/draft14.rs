@@ -895,6 +895,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn late_subscribe_namespace_ok_is_withdrawn_with_unsubscribe_namespace() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("late-subscribe-namespace-ok").await;
+        let context = server.subscriber().session;
+
+        // Act
+        handle_late_response(
+            &context,
+            &context.connection(),
+            REQUEST_ID,
+            LateResponseAction::UnsubscribeNamespace {
+                namespace: vec!["room".to_string(), "a".to_string()],
+            },
+            ResponseMessage::SubscribeNameSpaceOk(REQUEST_ID),
+        )
+        .await;
+
+        // Assert
+        let SessionEvent::UnsubscribeNamespace(unsubscribe) = client.receive_event().await.unwrap()
+        else {
+            panic!("expected UNSUBSCRIBE_NAMESPACE");
+        };
+        assert_eq!(unsubscribe.track_namespace_prefix(), "room/a");
+    }
+
+    #[tokio::test]
+    async fn late_publish_namespace_ok_is_withdrawn_with_publish_namespace_done() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("late-publish-namespace-ok").await;
+        let context = server.publisher().session;
+
+        // Act
+        handle_late_response(
+            &context,
+            &context.connection(),
+            REQUEST_ID,
+            LateResponseAction::PublishNamespaceDone {
+                namespace: vec!["room".to_string(), "a".to_string()],
+            },
+            ResponseMessage::PublishNamespaceOk(REQUEST_ID),
+        )
+        .await;
+
+        // Assert
+        let SessionEvent::PublishNamespaceDone(done) = client.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_NAMESPACE_DONE");
+        };
+        assert_eq!(done.track_namespace(), "room/a");
+    }
+
+    #[tokio::test]
     async fn late_track_status_ok_for_another_request_kind_closes_the_session() {
         // Arrange
         let (_client, server) = spawn_connected_native_sessions("late-track-status-ok").await;
