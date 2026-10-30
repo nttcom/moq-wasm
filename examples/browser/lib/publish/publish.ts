@@ -1,6 +1,7 @@
 import type { MoqSession } from '@moqt/session'
 import type { MediaSource } from '../../pkg/moqt'
 import type { AudioLevel } from '../../utils/media/loc'
+import { capturePcm } from '../../utils/media/encoders/pcmCapture'
 
 export type SourceOptions = {
   /// The video's label in the catalog.
@@ -342,9 +343,22 @@ function encodeAudio(
       report(error)
     }
   }
-  const audioStream = new MediaStreamTrackProcessor({ track }).readable
-  worker.postMessage({ audioStream }, [audioStream])
-  return { stop: () => worker.terminate() }
+  if (typeof MediaStreamTrackProcessor === 'function') {
+    const audioStream = new MediaStreamTrackProcessor({ track }).readable
+    worker.postMessage({ audioStream }, [audioStream])
+    return { stop: () => worker.terminate() }
+  }
+  const capture = capturePcm(track)
+  capture.then(({ port }) => worker.postMessage({ audioPort: port }, [port]), report)
+  return {
+    stop: () => {
+      worker.terminate()
+      void capture.then(
+        ({ close }) => close(),
+        () => {}
+      )
+    }
+  }
 }
 
 function bytes(source: AllowSharedBufferSource): Uint8Array {
