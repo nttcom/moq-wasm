@@ -147,7 +147,7 @@ export class LivePlayout {
   }
 
   targetBufferMs(): number {
-    return this.jitterBuffer.targetMs(this.outputLatencyMs())
+    return this.jitterBuffer.targetMs(this.audioActive() ? this.audio.scheduleAheadMs() : 0)
   }
 
   /// Capture-to-arrival delay of the window's fastest sample; plus `bufferMs`
@@ -162,8 +162,8 @@ export class LivePlayout {
     return this.jitterBuffer.spreadMs()
   }
 
-  /// The sound has to reach the audio device before it is due, so the buffer
-  /// covers how long the device takes to play what it is handed.
+  /// How long the audio device takes to play what it is handed. The buffer
+  /// covers it plus the concealment lead.
   outputLatencyMs(): number {
     return this.audioActive() ? this.audio.outputLatencyMs() : 0
   }
@@ -210,6 +210,12 @@ export class LivePlayout {
   /// ended since playback started.
   audioBreaks(): number {
     return this.audio.breaks
+  }
+
+  /// Total time the sound has been concealed by repetition since playback
+  /// started.
+  audioConcealedMs(): number {
+    return this.audio.concealedMs
   }
 
   videoDrops(): string {
@@ -316,7 +322,7 @@ export class LivePlayout {
     const newest = Math.max(...held.map((sample) => sample.captureMicros))
     this.clock.anchor(
       newest,
-      nowMs + this.jitterBuffer.targetMs(this.audio.outputLatencyMs(), longestArrivalGapMs(held))
+      nowMs + this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), longestArrivalGapMs(held))
     )
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs

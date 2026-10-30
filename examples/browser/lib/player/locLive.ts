@@ -38,6 +38,7 @@ export type LiveStats = {
   receivedAudioKbps: number
   syncOffsetMs: number | undefined
   audioBreaks: number
+  audioConcealedMs: number
   videoDrops: string
   shedMs: number
   /// Longest wait between two objects of that kind within the last
@@ -195,6 +196,7 @@ export class LocLive {
       receivedAudioKbps: this.receivedAudioKbps,
       syncOffsetMs: this.playout.syncOffsetMs(),
       audioBreaks: this.playout.audioBreaks(),
+      audioConcealedMs: this.playout.audioConcealedMs(),
       videoDrops: this.playout.videoDrops(),
       shedMs: this.playout.shedMs(),
       maxArrivalGapMs: { video: longestGapMs(this.arrivalsMs.video), audio: longestGapMs(this.arrivalsMs.audio) }
@@ -238,7 +240,8 @@ export function formatLiveStats(stats: LiveStats): string {
       : ` · buffer ${Math.round(stats.bufferMs)} ms (${stats.fixedBuffer ? 'fixed' : `target ${Math.round(stats.targetBufferMs)}`})`
   return (
     `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps)} kbps · audio ${Math.round(stats.receivedAudioKbps)} kbps` +
-    ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops}` +
+    ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks}` +
+    ` · concealed ${Math.round(stats.audioConcealedMs)} ms · video ${stats.videoDrops}` +
     ` · shed ${Math.round(stats.shedMs)} ms` +
     ` · arrival gap A ${formatGap(stats.maxArrivalGapMs.audio)} / V ${formatGap(stats.maxArrivalGapMs.video)} ms`
   )

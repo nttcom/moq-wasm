@@ -1,4 +1,13 @@
-import { type Channels, crossfadeSamples, insertRepetition, joinAfterSkip, trimRepetition } from './audioSplice'
+import {
+  type Channels,
+  crossfadeSamples,
+  insertRepetition,
+  joinAfterSkip,
+  lastPeriod,
+  repeatPeriod,
+  samplesFor,
+  trimRepetition
+} from './audioSplice'
 
 const MILLIS_PER_SECOND = 1_000
 const MICROS_PER_MILLI = 1_000
@@ -11,6 +20,12 @@ const POSITION_STALE_MS = 1_000
 /// only a hole this wide in the source is played as a hole.
 const CONTIGUOUS_TOLERANCE_MS = 100
 const RENDERING_POLL_MS = 10
+/// Concealment starts this long before the scheduled sound runs out with no
+/// chunk queued after it.
+const CONCEALMENT_LEAD_MS = 20
+const CONCEALMENT_CHUNK_MS = 10
+/// How long a repetition takes to fade out to silence.
+const CONCEALMENT_FADE_MS = 300
 const VOLUME_RAMP_SECONDS = 0.02
 
 type Output = {
@@ -34,6 +49,8 @@ type Scheduled = {
   atMs: number
 }
 
+type Concealment = { period: Channels; played: number }
+
 /// Plays decoded audio through an AudioContext running at the stream's sample
 /// rate. Chunks are appended whole at a write head so the waveform stays
 /// continuous, and how far the write head sits from the time the clock asked
@@ -51,6 +68,10 @@ type Scheduled = {
 /// plays repetitions again until they are that much longer. A chunk that
 /// ends before or after the next one is due reports the difference as drift,
 /// so the clock follows what was removed or added.
+/// When the scheduled sound is about to run out with no chunk queued, its last
+/// pitch period repeats, fading out, until a chunk arrives. That chunk fades in
+/// from the repetition and starts where it ended, so it reports the repetition
+/// as drift.
 export class AudioPlayout {
   private output: Output | undefined
   private volume = 1
@@ -61,9 +82,13 @@ export class AudioPlayout {
   private readonly waiting: Chunk[] = []
   private writeHead: number | undefined
   private renderingPoll: ReturnType<typeof setTimeout> | undefined
+  private concealmentTimer: ReturnType<typeof setTimeout> | undefined
+  private lastChunk: Channels | undefined
+  private concealment: Concealment | undefined
   private last: Scheduled | undefined
   breaks = 0
   shedMs = 0
+  concealedMs = 0
 
   constructor(private readonly onDrift: (driftMs: number, captureMicros: number) => void) {}
 
@@ -109,6 +134,10 @@ export class AudioPlayout {
     this.last = undefined
     this.skippedHead = undefined
     this.compressionDebtSamples = 0
+    clearTimeout(this.concealmentTimer)
+    this.concealmentTimer = undefined
+    this.lastChunk = undefined
+    this.concealment = undefined
   }
 
   setCompressionRate(compressionRate: number): void {
@@ -153,6 +182,12 @@ export class AudioPlayout {
     return (this.output?.context.outputLatency || 0) * MILLIS_PER_SECOND
   }
 
+  /// How long before it is heard a chunk has to be scheduled so that no
+  /// repetition fills in ahead of it.
+  scheduleAheadMs(): number {
+    return this.outputLatencyMs() + CONCEALMENT_LEAD_MS
+  }
+
   positionMicrosAt(nowMs: number): number | undefined {
     if (!this.last || this.last.captureMicros === undefined || nowMs - this.last.atMs > POSITION_STALE_MS) {
       return undefined
@@ -160,14 +195,16 @@ export class AudioPlayout {
     return this.last.captureMicros + (nowMs - this.last.atMs) * MICROS_PER_MILLI
   }
 
-  private schedule({ context, gain }: Output, chunk: Chunk): void {
+  private schedule(output: Output, chunk: Chunk): void {
+    const { context } = output
     const nowMs = performance.now()
     const atMs = chunk.playoutTimeAt(nowMs)
     const target = contextTimeFor(context, atMs, nowMs)
     const continues =
       this.writeHead !== undefined &&
       this.writeHead >= context.currentTime &&
-      Math.abs(this.writeHead - target) * MILLIS_PER_SECOND < CONTIGUOUS_TOLERANCE_MS
+      (this.concealment !== undefined ||
+        Math.abs(this.writeHead - target) * MILLIS_PER_SECOND < CONTIGUOUS_TOLERANCE_MS)
     const startAt = continues ? this.writeHead! : Math.max(target, context.currentTime)
     if (!continues && this.writeHead !== undefined) {
       this.breaks += 1
@@ -175,8 +212,19 @@ export class AudioPlayout {
     if (chunk.captureMicros !== undefined) {
       this.onDrift((startAt - target) * MILLIS_PER_SECOND, chunk.captureMicros)
     }
-    const channels = this.splice(chunk, continues)
-    const buffer = context.createBuffer(channels.length, channels[0].length, chunk.sampleRate)
+    const channels = this.splice(
+      { ...chunk, joinFrom: chunk.joinFrom ?? this.concealmentHead(chunk.sampleRate) },
+      continues
+    )
+    this.concealment = undefined
+    this.lastChunk = channels
+    this.start(output, channels, chunk.sampleRate, startAt)
+    this.last = { captureMicros: chunk.captureMicros, atMs }
+  }
+
+  private start(output: Output, channels: Channels, sampleRate: number, startAt: number): void {
+    const { context, gain } = output
+    const buffer = context.createBuffer(channels.length, channels[0].length, sampleRate)
     channels.forEach((channel, index) => buffer.copyToChannel(channel, index))
     const source = new AudioBufferSourceNode(context, { buffer })
     source.connect(gain)
@@ -184,7 +232,59 @@ export class AudioPlayout {
     source.start(startAt)
     this.sources.set(source, startAt)
     this.writeHead = startAt + buffer.duration
-    this.last = { captureMicros: chunk.captureMicros, atMs }
+    this.armConcealment(output)
+  }
+
+  private armConcealment(output: Output): void {
+    clearTimeout(this.concealmentTimer)
+    const aheadMs = (this.writeHead! - output.context.currentTime) * MILLIS_PER_SECOND
+    this.concealmentTimer = setTimeout(
+      () => {
+        this.concealmentTimer = undefined
+        this.conceal(output)
+      },
+      Math.max(0, aheadMs - CONCEALMENT_LEAD_MS)
+    )
+  }
+
+  /// A timer that fires after the sound has already run out, as in a
+  /// background tab, leaves the gap silent.
+  private conceal(output: Output): void {
+    if (
+      this.output !== output ||
+      this.waiting.length > 0 ||
+      this.writeHead === undefined ||
+      this.writeHead < output.context.currentTime
+    ) {
+      return
+    }
+    const { sampleRate } = output.context
+    if (!this.concealment) {
+      const period = this.lastChunk && lastPeriod(this.lastChunk, sampleRate)
+      if (!period) {
+        return
+      }
+      this.concealment = { period, played: 0 }
+    }
+    const { period, played } = this.concealment
+    const fadeSamples = samplesFor(CONCEALMENT_FADE_MS, sampleRate)
+    const length = Math.min(samplesFor(CONCEALMENT_CHUNK_MS, sampleRate), fadeSamples - played)
+    if (length <= 0) {
+      return
+    }
+    this.concealment.played += length
+    this.concealedMs += (length * MILLIS_PER_SECOND) / sampleRate
+    this.start(output, repeatPeriod(period, played, length, fadeSamples), sampleRate, this.writeHead)
+  }
+
+  /// What the repetition would have gone on with, for the chunk that ends it
+  /// to fade in from.
+  private concealmentHead(sampleRate: number): Channels | undefined {
+    if (!this.concealment) {
+      return undefined
+    }
+    const { period, played } = this.concealment
+    return repeatPeriod(period, played, crossfadeSamples(sampleRate), samplesFor(CONCEALMENT_FADE_MS, sampleRate))
   }
 
   private splice(chunk: Chunk, continues: boolean): Channels {

@@ -444,7 +444,8 @@ every track, onto the local clock behind a jitter buffer. The buffer tracks
 the delay from capture to arrival of the audio chunks of the last 10 s and
 covers their peak-to-peak jitter (the slowest minus the fastest) plus the audio
 device's output latency (the time from handing a chunk to the device to
-hearing it, some 25 ms on built-in speakers and far more over Bluetooth). That
+hearing it, some 25 ms on built-in speakers and far more over Bluetooth) and the
+20 ms within which the sound is continued by repetition (below). That
 sum is clamped to `Min buffer (ms)` (200 ms by default) and `Max buffer (ms)`
 (unlimited when empty), so the bounds are the buffer as displayed; equal
 bounds fix it, and a maximum below the output latency makes every chunk late.
@@ -471,7 +472,13 @@ so a chunk placed on its own target would leave a gap or an overlap each time.
 The distance between the write head and the target is fed back to the clock,
 which makes the audio device the master the picture follows; a late chunk is
 not trimmed but starts at once and moves the clock the same way, so the chunks
-behind it stay contiguous; that is how the buffer grows. Once the buffer has
+behind it stay contiguous; that is how the buffer grows. When the scheduled
+sound is about to run out (within 20 ms) and no chunk follows, its last pitch
+period is repeated, fading out to silence over 300 ms (what NetEq calls
+expand); the chunk that ends the repetition fades in from it and starts where
+it ended, so instead of a silent gap the sound continues and the clock moves by
+the repetition. A sound whose end does not repeat, or a timer that fires after
+the sound has run out, as in a background tab, leaves the gap silent. Once the buffer has
 settled (10 s unless its bounds are equal), `Catch up` decides how a buffer above its
 target shrinks. `Skip (trim + crossfade)`, the default, drops each audio chunk that fits in the
 excess and fades the next one in from the head of the first dropped chunk, at
@@ -486,7 +493,8 @@ shrinks it. The stats line shows the buffer and its target as
 `shed N ms`.
 The stats line shows the offset between the picture on screen and the sound as
 `A/V +N ms`, as `audio breaks N` how often the sound did not continue where
-the previous chunk ended, and as `video N dropped / M late` how many frames
+the previous chunk ended, as `concealed N ms` how long it was continued by
+repetition, and as `video N dropped / M late` how many frames
 fell due together with a newer one or arrived after a newer one was shown and
 were never shown, and how many were shown more than a frame period after they
 were due.
