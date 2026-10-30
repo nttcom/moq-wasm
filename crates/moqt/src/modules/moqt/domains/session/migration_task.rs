@@ -1156,7 +1156,7 @@ mod tests {
 
     #[tokio::test]
     async fn go_away_does_not_subscribe_again_to_an_unsubscribed_namespace() {
-        // Arrange: "room" was subscribed first, so it would be renewed first
+        // Arrange: "room" is subscribed before "lobby", so a renewed "room" would reach server B first
         let (port_a, accept_a) = spawn_native_server("session-migration-unsubscribed-a");
         let (port_b, accept_b) = spawn_native_server("session-migration-unsubscribed-b");
         let client = connect(port_a).await;

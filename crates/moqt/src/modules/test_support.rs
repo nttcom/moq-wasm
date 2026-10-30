@@ -359,8 +359,6 @@ pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Ses
         .unwrap()
 }
 
-/// Sends SUBSCRIBE_NAMESPACE from `client` and answers it with
-/// SUBSCRIBE_NAMESPACE_OK on `server`.
 pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Session, prefix: &str) {
     let subscriber = client.subscriber();
     let (subscribed, ()) = tokio::join!(subscriber.subscribe_namespace(prefix.into()), async {
