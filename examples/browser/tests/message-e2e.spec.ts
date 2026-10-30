@@ -24,10 +24,14 @@ async function arrangeTrackFields(client: MessagePageModel): Promise<void> {
   ]) {
     await input.fill(namespace)
   }
-  for (const input of [client.publishTrackInput, client.subscribeTrackInput, client.fetchTrackNameInput]) {
+  for (const input of [
+    client.publishTrackInput,
+    client.subscribeTrackInput,
+    client.fetchTrackNameInput,
+    client.trackStatusTrackInput
+  ]) {
     await input.fill(TRACK_NAME)
   }
-  await client.trackStatusTrackInput.fill(TRACK_NAME)
   await client.writePayloadInput.fill(PAYLOAD)
 }
 
@@ -56,17 +60,16 @@ test.describe('MoqSession requests through the relay', () => {
       await send(client, client.subscribeButton, 'SUBSCRIBE')
       await send(client, client.writeGroupButton, 'OBJECT')
       // Assert: 書いた object が relay を経て自分の subscription に届いたことを確認する。
-      await expect(client.received).toContainText(`[subscribe]`)
-      await expect(client.received).toContainText(PAYLOAD)
+      await expect(client.received).toContainText(new RegExp(`\\[subscribe\\] \\d+/0: ${PAYLOAD}`))
 
       await send(client, client.trackStatusButton, 'TRACK_STATUS')
-      // Assert: TRACK_STATUS が largest を返すことを確認する（group の object の後の End of Group）。
+      // Assert: TRACK_STATUS が largest を返すことを確認する。
       await expect(client.received).toContainText(/\[track status\] largest \d+\/\d+/)
 
-      // writeGroup が FETCH の範囲をその group に揃えている。
+      // Arrange: writeGroup が FETCH の範囲をその group に揃えている。
       await send(client, client.fetchButton, 'FETCH')
-      // Assert: FETCH が同じ object を返したことを確認する。
-      await expect(client.received).toContainText(`[fetch]`)
+      // Assert: FETCH が書いた object を返したことを確認する。
+      await expect(client.received).toContainText(new RegExp(`\\[fetch\\] \\d+/0: ${PAYLOAD}`))
 
       // Act: forward を止める。
       await client.subscribeForwardCheckbox.uncheck()

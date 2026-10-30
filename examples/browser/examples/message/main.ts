@@ -48,7 +48,13 @@ function connected(): MoqSession {
   return session
 }
 
-/// Shows `Sent <label>` once the relay accepts the request, or why it failed.
+function published(): TrackWriter {
+  if (!writer) {
+    throw new Error('publish a track first')
+  }
+  return writer
+}
+
 async function send(label: string, request: () => Promise<unknown>): Promise<void> {
   try {
     await request()
@@ -71,23 +77,19 @@ function readSubscription(received: MoqSubscription): void {
   })().catch((error: unknown) => console.warn('[message] subscription read ended', error))
 }
 
-/// Fills the FETCH fields with the whole group just written.
-function fetchGroup(groupId: bigint): void {
-  for (const id of ['fetch-start-group', 'fetch-end-group']) {
-    element<HTMLInputElement>(id).value = groupId.toString()
-  }
-  for (const id of ['fetch-start-object', 'fetch-end-object']) {
-    element<HTMLInputElement>(id).value = '0'
-  }
-}
-
 function showWritten(groupId: bigint | undefined): void {
   if (groupId === undefined) {
     showReceived('[write] cached; no subscriber took it')
     return
   }
   showReceived(`[write] group ${groupId}`)
-  fetchGroup(groupId)
+  // FETCH the whole group just written.
+  for (const id of ['fetch-start-group', 'fetch-end-group']) {
+    element<HTMLInputElement>(id).value = groupId.toString()
+  }
+  for (const id of ['fetch-start-object', 'fetch-end-object']) {
+    element<HTMLInputElement>(id).value = '0'
+  }
 }
 
 function reset(): void {
@@ -141,7 +143,7 @@ onClick('watchBtn', () =>
       for await (const { kind, namespace } of opened) {
         showReceived(`[namespace] ${kind} ${namespace.join('/')}`)
       }
-    })()
+    })().catch((error: unknown) => console.warn('[message] namespace watch ended', error))
   })
 )
 
@@ -168,21 +170,15 @@ onClick('publishTrackBtn', async () => {
 
 onClick('writeBtn', () =>
   send('OBJECT', async () => {
-    if (!writer) {
-      throw new Error('publish a track first')
-    }
     showWritten(
-      await writer.write(new TextEncoder().encode(value('write-payload')), checked('write-new-group'), undefined)
+      await published().write(new TextEncoder().encode(value('write-payload')), checked('write-new-group'), undefined)
     )
   })
 )
 
 onClick('writeGroupBtn', () =>
   send('OBJECT', async () => {
-    if (!writer) {
-      throw new Error('publish a track first')
-    }
-    showWritten(await writer.writeGroup(new TextEncoder().encode(value('write-payload'))))
+    showWritten(await published().writeGroup(new TextEncoder().encode(value('write-payload'))))
   })
 )
 
