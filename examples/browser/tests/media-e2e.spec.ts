@@ -44,11 +44,6 @@ async function subscribeForPlayback(subscriber: SubscriberPageModel): Promise<vo
   await subscriber.connectButton.click()
   // Assert: Subscriber 側でも接続完了ステータスが表示されることを確認する。
   await expect(subscriber.connectionStatus).toContainText('Connected:')
-
-  // Act: Subscriber の setup を送信して購読準備を整える。
-  await subscriber.setupButton.click()
-  // Assert: setup が受理され、catalog 購読に進める状態になったことを確認する。
-  await expect(subscriber.setupStatus).toContainText('Setup acknowledged')
   // Assert: Subscriber も期待した transport で繋がったことを確認する。
   await expect.poll(() => subscriber.sessionTransports).toEqual([mediaE2EConfig.expectedTransport])
 

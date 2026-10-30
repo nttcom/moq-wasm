@@ -18,7 +18,7 @@ export const mediaE2EConfig = {
 
 const SESSION_TRANSPORT_LOG = /^\[moqt\] session established over (\w+) in \d+ ms$/
 
-/** Fills as `MoqSession` and `MoqtClientWrapper` log each established session. */
+/** Fills as `MoqSession` logs each established session. */
 function recordSessionTransports(page: Page): string[] {
   const transports: string[] = []
   page.on('console', (message) => {
@@ -67,8 +67,6 @@ function createSubscriberPageModel(page: Page) {
     namespaceInput: page.getByTestId('subscriber-namespace-input'),
     connectButton: page.getByTestId('subscriber-connect-button'),
     connectionStatus: page.getByTestId('subscriber-connection-status'),
-    setupButton: page.getByTestId('subscriber-setup-button'),
-    setupStatus: page.getByTestId('subscriber-setup-status'),
     catalogSubscribeButton: page.getByTestId('subscriber-catalog-subscribe-button'),
     catalogStatus: page.getByTestId('subscriber-catalog-status'),
     videoTrackSelect: page.getByTestId('subscriber-video-track-select'),
