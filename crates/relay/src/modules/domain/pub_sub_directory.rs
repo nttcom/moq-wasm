@@ -56,6 +56,21 @@ pub(crate) struct DownstreamRunnerSignals {
 // directory tracks the peer to detect when the last client leaves.
 type PeersByNamespace = DashMap<String, DashMap<SessionId, SessionPeer>>;
 
+/// Whether one of two `/`-joined namespace prefixes is the other's leading
+/// fields: `a/b` overlaps `a` and `a/b/c`, not `a/bc`.
+fn namespace_prefixes_overlap(a: &str, b: &str) -> bool {
+    let (a, b) = (namespace_fields(a), namespace_fields(b));
+    let shared = a.len().min(b.len());
+    a[..shared] == b[..shared]
+}
+
+fn namespace_fields(prefix: &str) -> Vec<&str> {
+    prefix
+        .split('/')
+        .filter(|field| !field.is_empty())
+        .collect()
+}
+
 fn has_client(peers: &DashMap<SessionId, SessionPeer>) -> bool {
     peers
         .iter()
@@ -382,6 +397,20 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
+    /// Whether `session_id` has an active SUBSCRIBE_NAMESPACE whose prefix is a
+    /// prefix of, equal to or an extension of `track_namespace_prefix`, compared
+    /// field by field (draft-14 §9.28).
+    pub(crate) fn has_overlapping_subscribe_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+    ) -> bool {
+        self.subscriber_namespaces.iter().any(|entry| {
+            entry.value().contains_key(&session_id)
+                && namespace_prefixes_overlap(entry.key(), track_namespace_prefix)
+        })
+    }
+
     pub(crate) fn unregister_subscribe_namespace(
         &self,
         session_id: SessionId,
@@ -987,6 +1016,22 @@ mod tests {
         );
         // Client publisher 2 still holds "room/member", so no Redis cleanup is requested.
         assert!(removed.publish_namespace_track_namespaces.is_empty());
+    }
+
+    #[test]
+    fn a_subscribe_namespace_overlaps_the_session_s_own_prefixes_field_by_field() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(1, "app/room".to_string(), SessionPeer::Client);
+
+        // Act
+        let overlaps = ["app/room", "app", "app/room/alice", "app/room1"]
+            .map(|prefix| table.has_overlapping_subscribe_namespace(1, prefix));
+        let other_session = table.has_overlapping_subscribe_namespace(2, "app/room");
+
+        // Assert: `app/room1` differs in its second field; another session never overlaps
+        assert_eq!(overlaps, [true, true, true, false]);
+        assert!(!other_session);
     }
 
     #[test]
