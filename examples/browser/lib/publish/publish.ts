@@ -146,7 +146,10 @@ function publishSource(
   // An unmute that publishes the track before the mute's removal finishes
   // would leave it removed, so mutes, unmutes and the close run one at a time.
   let closed = false
-  let queue: Promise<void> = Promise.resolve()
+
+  // A source without audio removes the `audio` placeholder the catalog lists
+  // with the default `video`, queued before its first configuration.
+  let queue: Promise<void> = kinds.has('audio') ? Promise.resolve() : source.removeTrack('audio').catch(report)
   const serialized = (operation: () => Promise<void>) => (queue = queue.then(operation, operation))
   const stop = async (kind: MediaKind) => {
     const encoding = kinds.get(kind)
