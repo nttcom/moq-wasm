@@ -34,6 +34,30 @@ The meeting example also accepts an app-scoped JWT via `?jwt=<token>` (signed
 with the `auth-token` CLI). Its namespace root then becomes the token's
 appId, and a rejected token is reported with the relay's close code and reason.
 
+## Safari
+
+Playwright's WebKit has no WebTransport, so check Safari on a Mac by hand.
+
+1. Copy the relay certificate out of the checkout and trust it once; every
+   checkout's relay reads it through `RELAY_CERT_DIR`:
+
+   ```shell
+   mkdir -p ~/.config/moqt/relay-keys && cp crates/relay/keys/*.pem ~/.config/moqt/relay-keys/
+   security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.config/moqt/relay-keys/cert.pem
+   ```
+
+2. Start the relay with it and the pages: `RELAY_CERT_DIR=~/.config/moqt/relay-keys make relay` and `make browser`.
+3. In Safari, open `media/publisher` and `media/subscriber` under
+   `http://localhost:5173/moq-wasm/examples/` and go through each page's buttons
+   in order. The subscriber draws on a canvas, since Safari has no
+   `MediaStreamTrackGenerator`; its playback status stays `Playback idle`, as
+   it follows the `<video>` element.
+
+Safari lets one page capture the camera at a time, so a meeting check needs a
+second browser for the other participant. With `safaridriver --enable` and
+Develop > Allow Remote Automation, a WebDriver session gets mock camera and
+microphone devices instead of the real ones.
+
 ## E2E
 
 ```shell
