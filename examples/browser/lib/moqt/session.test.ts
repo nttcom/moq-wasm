@@ -133,3 +133,21 @@ test('a subscription closed while a read is in flight is freed only once the rea
   expect(freedWhileReading).toBe(0)
   expect(freed).toBe(1)
 })
+
+test('a subscribe passes its subscriber priority to the wasm session', async () => {
+  // Arrange
+  const priorities: unknown[] = []
+  const session = new MoqSession({
+    closed: new Promise(() => {}),
+    subscribe: async (...args: unknown[]) => {
+      priorities.push(args[4])
+      return wasmSubscription({})
+    }
+  } as unknown as ConstructorParameters<typeof MoqSession>[0])
+
+  // Act
+  await session.subscribe(['room', 'alice'], 'audio', { priority: 0 })
+
+  // Assert
+  expect(priorities).toEqual([0])
+})
