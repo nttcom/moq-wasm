@@ -53,9 +53,7 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
     const timeline = await joined.subscribe(botNamespace, EVENT_TIMELINE_TRACK)
     void (async () => {
       for await (const object of timeline) {
-        if (object.objectStatus === undefined) {
-          options.onTimelineObject(object.objectPayload)
-        }
+        options.onTimelineObject(object.objectPayload)
       }
     })().catch((error: unknown) => console.warn(`[${logTag}] event timeline read ended`, error))
     await systemOneStatus.follow(joined, botNamespace)
