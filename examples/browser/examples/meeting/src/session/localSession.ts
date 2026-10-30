@@ -1,6 +1,10 @@
-import { PublishNamespaceDoneMessage, PublishNamespaceMessage, SubscribeOkMessage } from '../../../../pkg/moqt'
-import { FilterType, MoqtClientWrapper } from '@moqt/moqtClient'
-import { MoqSession } from '@moqt/session'
+import {
+  type MoqLocation,
+  type MoqNamespaceWatch,
+  MoqSession,
+  type MoqSubscription,
+  type ReceivedObject
+} from '@moqt/session'
 import type { TrackWriter } from '../../../../pkg/moqt'
 import { CATALOG_TRACK_NAME } from '../../../../lib/msf/catalog'
 import { LocalMember } from '../types/member'
@@ -29,10 +33,10 @@ interface LocalSessionOptions {
   relayUrl: string
 }
 
-const AUTH_INFO = 'secret'
-/// draft-14 §7.2: the relay sends a lower subscriber priority first, so
-/// video yields the downlink to audio when the two compete.
+/// draft-14 §7.2: the relay sends a lower subscriber priority first, so video
+/// yields the downlink to audio when the two compete.
 const VIDEO_SUBSCRIBER_PRIORITY = 128
+const AUDIO_SUBSCRIBER_PRIORITY = 0
 const CATALOG_SUBSCRIBE_TIMEOUT_MS = 5000
 const TRANSCRIPT_TRACK_NAME = 'transcript'
 const TRANSCRIBER_STATUS_TRACK_NAME = 'status'
@@ -45,50 +49,30 @@ export enum LocalSessionState {
   Disconnected = 'disconnected'
 }
 
+type NamespaceHandler = (trackNamespace: string[]) => void
+
 export class LocalSession {
   readonly roomName: string
   readonly relayUrl: string
   readonly localMember: LocalMember
-  private readonly client = new MoqtClientWrapper()
-  /// Publishes the member's media and chat; `client` subscribes to the others.
-  private publishingSession: MoqSession | null = null
+  /// Publishes the member's media and chat and subscribes to the others.
+  private session: MoqSession | null = null
+  private namespaceWatch: MoqNamespaceWatch | null = null
   private chatWriter: Promise<TrackWriter> | null = null
   private readonly mediaController: MeetingMediaController
-  private state: LocalSessionState
-  private chatMessageHandler: ((message: ChatMessage) => void) | null
-  private readonly subscribeTrackAliases = new Map<bigint, bigint>()
+  private state: LocalSessionState = LocalSessionState.Idle
+  private chatMessageHandler: ((message: ChatMessage) => void) | null = null
+  private publishNamespaceHandler: NamespaceHandler | null = null
+  private publishNamespaceDoneHandler: NamespaceHandler | null = null
+  /// By the id `subscribe` returns, which also keys the track's media registration.
+  private readonly subscriptions = new Map<bigint, MoqSubscription>()
+  private nextSubscriptionId = 0n
 
   constructor({ roomName, userName, relayUrl }: LocalSessionOptions) {
     this.roomName = roomName
     this.relayUrl = relayUrl
     this.localMember = { id: userName, name: userName }
-    this.client.setOnConnectionClosedHandler(() => {
-      console.info('[meeting][moqt] connection closed')
-      this.transitionToState(LocalSessionState.Disconnected)
-    })
-    this.client.setOnServerSetupHandler((setup) => {
-      console.info('[meeting][moqt] received SERVER_SETUP', setup)
-    })
-    this.client.setOnPublishNamespaceResponseHandler((response) => {
-      console.info('[meeting][moqt] received PUBLISH_NAMESPACE response', response)
-    })
-    this.client.setOnSubscribeNamespaceResponseHandler((response) => {
-      console.info('[meeting][moqt] received SUBSCRIBE_NAMESPACE response', response)
-    })
-    this.client.setOnSubscribeResponseHandler((response) => {
-      if (response instanceof SubscribeOkMessage) {
-        console.info('[meeting][moqt] received SUBSCRIBE_OK', {
-          contentExists: response.contentExists,
-          largestGroupId: response.largestGroupId?.toString(),
-          largestObjectId: response.largestObjectId?.toString()
-        })
-      } else {
-        console.info('[meeting][moqt] received SUBSCRIBE response', response)
-      }
-    })
-    this.mediaController = new MeetingMediaController(this.client, this.trackNamespace)
-    this.state = LocalSessionState.Idle
-    this.chatMessageHandler = null
+    this.mediaController = new MeetingMediaController(this.trackNamespace)
   }
 
   get status(): LocalSessionState {
@@ -107,27 +91,12 @@ export class LocalSession {
     return buildNamespacePrefix(this.roomName)
   }
 
-  setOnPublishNamespaceHandler(handler: ((publishNamespace: PublishNamespaceMessage) => void) | null): void {
-    if (!handler) {
-      this.client.setOnPublishNamespaceHandler(null)
-      return
-    }
-    this.client.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-      console.info('[meeting][moqt] received PUBLISH_NAMESPACE', publishNamespace)
-      handler(publishNamespace)
-      await respondOk()
-    })
+  setOnPublishNamespaceHandler(handler: NamespaceHandler | null): void {
+    this.publishNamespaceHandler = handler
   }
 
-  setOnPublishNamespaceDoneHandler(handler: ((message: PublishNamespaceDoneMessage) => void) | null): void {
-    if (!handler) {
-      this.client.setOnPublishNamespaceDoneHandler(null)
-      return
-    }
-    this.client.setOnPublishNamespaceDoneHandler((message) => {
-      console.info('[meeting][moqt] received PUBLISH_NAMESPACE_DONE', message.trackNamespace)
-      handler(message)
-    })
+  setOnPublishNamespaceDoneHandler(handler: NamespaceHandler | null): void {
+    this.publishNamespaceDoneHandler = handler
   }
 
   setOnChatMessageHandler(handler: ((message: ChatMessage) => void) | null): void {
@@ -141,22 +110,19 @@ export class LocalSession {
 
     this.transitionToState(LocalSessionState.Connecting)
     try {
-      const token = readMeetingAuth().token
-      await this.client.connect(this.relayUrl, { authToken: token })
-      const publishingSession = await MoqSession.connect(this.relayUrl, { token })
-      this.publishingSession = publishingSession
-      void publishingSession.closed.then((close) => {
-        if (this.publishingSession === publishingSession) {
-          console.info('[meeting][moqt] publishing session closed', close)
+      const session = await MoqSession.connect(this.relayUrl, { token: readMeetingAuth().token })
+      this.session = session
+      void session.closed.then((close) => {
+        if (this.session === session) {
+          console.info('[meeting][moqt] connection closed', close)
           this.transitionToState(LocalSessionState.Disconnected)
         }
       })
-      await this.mediaController.publisher.start(publishingSession)
+      await this.mediaController.publisher.start(session)
       this.transitionToState(LocalSessionState.Ready)
     } catch (error) {
-      this.publishingSession?.close()
-      this.publishingSession = null
-      await this.client.disconnect().catch(() => {})
+      this.session?.close()
+      this.session = null
       this.transitionToState(LocalSessionState.Idle)
       throw error
     }
@@ -170,37 +136,45 @@ export class LocalSession {
     this.transitionToState(LocalSessionState.Disconnecting)
     try {
       await this.unsubscribeAllActiveSubscriptions()
+      await this.namespaceWatch
+        ?.close()
+        .catch((error) => console.warn('[meeting] failed to unsubscribe the namespace', error))
       await this.mediaController.dispose().catch((error) => console.warn('[meeting] failed to stop the media', error))
-      this.subscribeTrackAliases.clear()
-      this.chatMessageHandler = null
-      this.client.setOnPublishNamespaceHandler(null)
-      this.client.setOnSubscribeResponseHandler(null)
-      this.client.setOnIncomingSubscribeHandler(null)
-      this.client.setOnIncomingUnsubscribeHandler(null)
-      this.client.setOnIncomingFetchHandler(null)
-      this.client.setOnPublishNamespaceResponseHandler(null)
-      this.client.setOnSubscribeNamespaceResponseHandler(null)
-      this.client.setOnServerSetupHandler(null)
-      this.client.setOnConnectionClosedHandler(null)
-      await this.client.disconnect()
     } finally {
+      this.namespaceWatch = null
+      this.chatMessageHandler = null
+      this.publishNamespaceHandler = null
+      this.publishNamespaceDoneHandler = null
       this.chatWriter = null
-      const publishingSession = this.publishingSession
-      this.publishingSession = null
-      publishingSession?.close()
+      const session = this.session
+      this.session = null
+      session?.close()
       this.transitionToState(LocalSessionState.Disconnected)
     }
   }
 
-  private assertReady(action: string): void {
-    if (this.state !== LocalSessionState.Ready) {
+  private connected(action: string): MoqSession {
+    if (this.state !== LocalSessionState.Ready || !this.session) {
       throw new Error(`Cannot ${action} when session state is "${this.state}"`)
     }
+    return this.session
   }
 
+  /// Calls the namespace handlers for every member and bot published under
+  /// `trackNamespacePrefix`, those already present included.
   async subscribeNamespace(trackNamespacePrefix: string[]): Promise<void> {
-    this.assertReady('subscribe namespace')
-    await this.client.subscribeNamespace(trackNamespacePrefix, AUTH_INFO)
+    const watch = await this.connected('subscribe namespace').watchNamespaces(trackNamespacePrefix)
+    this.namespaceWatch = watch
+    void (async () => {
+      for await (const { kind, namespace } of watch) {
+        console.info(
+          `[meeting][moqt] ${kind === 'announced' ? 'PUBLISH_NAMESPACE' : 'PUBLISH_NAMESPACE_DONE'}`,
+          namespace
+        )
+        const handler = kind === 'announced' ? this.publishNamespaceHandler : this.publishNamespaceDoneHandler
+        handler?.(namespace)
+      }
+    })().catch((error: unknown) => console.warn('[meeting] namespace watch ended', error))
   }
 
   /// `onEnded` is called when the publisher ends the track with PUBLISH_DONE;
@@ -210,81 +184,63 @@ export class LocalSession {
     trackName: string,
     role: CatalogSubscribeRole,
     config: TrackMediaConfig | undefined,
-    onEnded: (requestId: bigint) => void,
+    onEnded: (subscribeId: bigint) => void,
     adaptation?: VideoAdaptation
   ): Promise<bigint> {
-    this.assertReady('subscribe')
-    const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO, {
-      subscriberPriority: role === 'video' || role === 'screenshare' ? VIDEO_SUBSCRIBER_PRIORITY : 0,
-      // NextGroupStart would never deliver the audio of a single-stream publisher, which never starts a
-      // new group (draft-14 §9.7), and would keep a new picture waiting for the next keyframe, which a
-      // still screen share may not send for minutes; video fetches its current group instead.
-      filterType: role === 'chat' ? FilterType.NextGroupStart : FilterType.LargestObject,
-      onPublishDone: ({ requestId }) => {
-        this.forgetSubscription(requestId)
-        onEnded(requestId)
-      }
-    })
-    const trackAlias = subscribeOk.trackAlias
-    this.subscribeTrackAliases.set(requestId, trackAlias)
-    const remoteUser = parseTrackNamespace(trackNamespace)?.userName ?? `alias-${trackAlias.toString()}`
+    const session = this.connected('subscribe')
+    const { subscriber } = this.mediaController
+    const remoteUser = parseTrackNamespace(trackNamespace)?.userName ?? trackName
+    const isVideo = role === 'video' || role === 'screenshare'
+    // A new picture starts at the current group's keyframe, which the joining FETCH brings; a track
+    // that takes over a playing picture waits for its next group instead (see `RenditionSplice`).
+    // NextGroupStart would never deliver the audio of a single-stream publisher, which never starts a
+    // new group (draft-14 §9.7), so audio starts after the largest object.
+    const joining = isVideo && subscriber.startsPicture(remoteUser, trackName)
+    const handle = joining
+      ? await session.subscribeCurrentGroup(trackNamespace, trackName)
+      : await session.subscribe(trackNamespace, trackName, {
+          filter: role === 'chat' ? 'nextGroupStart' : 'largestObject',
+          priority: isVideo ? VIDEO_SUBSCRIBER_PRIORITY : AUDIO_SUBSCRIBER_PRIORITY
+        })
+    const id = this.track(handle, () => onEnded(id))
 
     if (role === 'chat') {
-      this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
-        try {
-          const payload = new Uint8Array(subgroup.objectPayload)
-          const decoded = new TextDecoder().decode(payload)
-          const { text, timestamp } = decodeChatPayload(decoded)
-          if (this.chatMessageHandler) {
-            const message: ChatMessage = {
-              sender: remoteUser,
-              trackNamespace: [...trackNamespace],
-              groupId,
-              text,
-              timestamp,
-              isLocal: false
-            }
-            this.chatMessageHandler(message)
-          }
-        } catch (error) {
-          console.error('Failed to decode subgroup payload:', error)
-        }
-      })
-    } else if (role === 'audio') {
-      this.mediaController.subscriber.registerAudioTrack(remoteUser, trackName, trackAlias, config)
+      this.read(id, handle, (object) => this.receiveChat(remoteUser, trackNamespace, object))
+      return id
+    }
+    if (role === 'audio') {
+      subscriber.registerAudioTrack(remoteUser, trackName, id, config)
     } else {
-      const joining = this.mediaController.subscriber.registerVideoTrack(
+      subscriber.registerVideoTrack(
         remoteUser,
         trackName,
-        trackAlias,
+        id,
         config,
-        subscribeOk.contentExists,
         () => {
-          this.unsubscribe(requestId).catch((error) => console.error('Failed to unsubscribe a replaced track:', error))
+          this.unsubscribe(id).catch((error) => console.error('Failed to unsubscribe a replaced track:', error))
         },
         adaptation
       )
-      if (joining) {
-        this.fetchCurrentVideoGroup(requestId, trackAlias)
-      }
     }
-
-    return requestId
+    const cachedUntil = joining ? handle.largest : undefined
+    this.read(id, handle, (object) => subscriber.receive(id, object.groupId, object, isAtOrBefore(object, cachedUntil)))
+    return id
   }
 
-  /// draft-14 §9.16.2: a joining FETCH with offset 0 starts at the current
-  /// group's first object and ends at the largest object the SUBSCRIBE starts after.
-  private fetchCurrentVideoGroup(requestId: bigint, trackAlias: bigint): void {
-    const subscriber = this.mediaController.subscriber
-    this.client
-      .relativeJoiningFetch(requestId, 0n, {
-        onObject: (object) => subscriber.pushJoiningVideo(trackAlias, object),
-        onStreamEnd: () => subscriber.endJoining(trackAlias)
+  private receiveChat(sender: string, trackNamespace: string[], object: ReceivedObject): void {
+    try {
+      const { text, timestamp } = decodeChatPayload(new TextDecoder().decode(object.objectPayload))
+      this.chatMessageHandler?.({
+        sender,
+        trackNamespace: [...trackNamespace],
+        groupId: object.groupId,
+        text,
+        timestamp,
+        isLocal: false
       })
-      .catch((error) => {
-        console.warn('[meeting][moqt] joining FETCH failed', error)
-        subscriber.endJoining(trackAlias)
-      })
+    } catch (error) {
+      console.error('Failed to decode a chat message:', error)
+    }
   }
 
   /// Moves a subscribed media role to `trackName`. A track of the same codec
@@ -296,11 +252,10 @@ export class LocalSession {
     trackName: string,
     role: CatalogSubscribeRole,
     config: TrackMediaConfig | undefined,
-    onEnded: (requestId: bigint) => void,
+    onEnded: (subscribeId: bigint) => void,
     adaptation?: VideoAdaptation
   ): Promise<bigint> {
-    const previousAlias = this.subscribeTrackAliases.get(previousId)
-    if (previousAlias === undefined || !this.mediaController.subscriber.canReplaceVideo(previousAlias, config)) {
+    if (!this.subscriptions.has(previousId) || !this.mediaController.subscriber.canReplaceVideo(previousId, config)) {
       await this.unsubscribe(previousId)
     }
     return this.subscribe(trackNamespace, trackName, role, config, onEnded, adaptation)
@@ -313,36 +268,26 @@ export class LocalSession {
     onTracksUpdated: (tracks: MeetingCatalogTrack[]) => void,
     onEnded: () => void
   ): Promise<void> {
-    this.assertReady('subscribe catalog')
+    const session = this.connected('subscribe catalog')
     const { promise: firstCatalog, resolve: resolveFirst, reject: rejectFirst } = Promise.withResolvers<void>()
     const subscribed = async () => {
-      const { requestId, subscribeOk } = await this.client.subscribeLatest(
-        trackNamespace,
-        CATALOG_TRACK_NAME,
-        AUTH_INFO,
-        (payload, groupId) => {
-          try {
-            const tracks = parseMeetingCatalogTracks(new TextDecoder().decode(payload))
-            console.info('[meeting][catalog] apply', {
-              trackNamespace,
-              groupId: groupId.toString(),
-              tracks: tracks.map((t) => t.role)
-            })
-            onTracksUpdated(tracks)
-            resolveFirst()
-          } catch (error) {
-            console.error('Failed to parse catalog payload:', error)
-            rejectFirst(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
-          }
-        },
-        {
-          onPublishDone: ({ requestId }) => {
-            this.forgetSubscription(requestId)
-            onEnded()
-          }
+      const handle = await session.subscribeCurrentGroup(trackNamespace, CATALOG_TRACK_NAME)
+      const id = this.track(handle, onEnded)
+      this.read(id, handle, ({ groupId, objectPayload }) => {
+        try {
+          const tracks = parseMeetingCatalogTracks(new TextDecoder().decode(objectPayload))
+          console.info('[meeting][catalog] apply', {
+            trackNamespace,
+            groupId: groupId.toString(),
+            tracks: tracks.map((t) => t.role)
+          })
+          onTracksUpdated(tracks)
+          resolveFirst()
+        } catch (error) {
+          console.error('Failed to parse catalog payload:', error)
+          rejectFirst(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
         }
-      )
-      this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
+      })
       return firstCatalog
     }
     let timeoutId: number | undefined
@@ -361,74 +306,85 @@ export class LocalSession {
 
   /// The transcriber's event timeline, from the current group on.
   async subscribeTranscript(onRecords: (records: TranscriptRecord[]) => void, onEnded: () => void): Promise<bigint> {
-    this.assertReady('subscribe transcript')
+    const session = this.connected('subscribe transcript')
     const timeline = new TranscriptTimeline()
-    const { requestId, subscribeOk } = await this.client.subscribeCurrentGroup(
-      buildTranscriberNamespace(this.roomName),
-      TRANSCRIPT_TRACK_NAME,
-      AUTH_INFO,
-      (groupId, objectId, payload, fetched) => {
-        if (timeline.add(groupId, objectId, payload, !fetched)) {
-          onRecords(timeline.records())
-        }
-      },
-      {
-        onPublishDone: ({ requestId }) => {
-          this.forgetSubscription(requestId)
-          onEnded()
-        }
+    const handle = await session.subscribeCurrentGroup(buildTranscriberNamespace(this.roomName), TRANSCRIPT_TRACK_NAME)
+    const id = this.track(handle, onEnded)
+    this.read(id, handle, (object) => {
+      if (timeline.add(object.groupId, object.objectId, object.objectPayload, !isAtOrBefore(object, handle.largest))) {
+        onRecords(timeline.records())
       }
-    )
-    this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
-    return requestId
+    })
+    return id
   }
 
   /// The transcriber's recognizer and whether it answers yet: one object per group.
   async subscribeTranscriberStatus(onStatus: (status: TranscriberStatus) => void): Promise<bigint> {
-    this.assertReady('subscribe transcriber status')
-    const { requestId, subscribeOk } = await this.client.subscribeLatest(
+    const session = this.connected('subscribe transcriber status')
+    const handle = await session.subscribeCurrentGroup(
       buildTranscriberNamespace(this.roomName),
-      TRANSCRIBER_STATUS_TRACK_NAME,
-      AUTH_INFO,
-      (payload) => {
-        const status = parseTranscriberStatus(payload)
-        if (status) {
-          onStatus(status)
-        }
-      },
-      { onPublishDone: ({ requestId }) => this.forgetSubscription(requestId) }
+      TRANSCRIBER_STATUS_TRACK_NAME
     )
-    this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
-    return requestId
+    const id = this.track(handle, () => {})
+    this.read(id, handle, ({ objectPayload }) => {
+      const status = parseTranscriberStatus(objectPayload)
+      if (status) {
+        onStatus(status)
+      }
+    })
+    return id
   }
 
   isSubscribed(subscribeId: bigint): boolean {
-    return this.subscribeTrackAliases.has(subscribeId)
+    return this.subscriptions.has(subscribeId)
   }
 
   async unsubscribe(subscribeId: bigint): Promise<void> {
-    this.assertReady('unsubscribe')
+    this.connected('unsubscribe')
+    const handle = this.subscriptions.get(subscribeId)
     this.forgetSubscription(subscribeId)
-    await this.client.unsubscribe(subscribeId)
+    await handle?.close()
+  }
+
+  /// Keeps `handle` under a new id until it is unsubscribed or the publisher ends it
+  /// with PUBLISH_DONE, when `onEnded` is called.
+  private track(handle: MoqSubscription, onEnded: () => void): bigint {
+    const id = this.nextSubscriptionId++
+    this.subscriptions.set(id, handle)
+    void handle.done.then((done) => {
+      if (done && this.subscriptions.get(id) === handle) {
+        this.forgetSubscription(id)
+        onEnded()
+      }
+    })
+    return id
+  }
+
+  /// Hands each object of `handle` to `onObject` while `id` stays subscribed.
+  private read(id: bigint, handle: MoqSubscription, onObject: (object: ReceivedObject) => void): void {
+    void (async () => {
+      for await (const object of handle) {
+        if (this.subscriptions.get(id) === handle) {
+          onObject(object)
+        }
+      }
+    })().catch((error: unknown) => console.warn(`[meeting] subscription ${id.toString()} read ended`, error))
   }
 
   private forgetSubscription(subscribeId: bigint): void {
-    const trackAlias = this.subscribeTrackAliases.get(subscribeId)
-    this.subscribeTrackAliases.delete(subscribeId)
-    if (trackAlias !== undefined) {
-      this.mediaController.subscriber.unregisterTrack(trackAlias)
-    }
+    this.subscriptions.delete(subscribeId)
+    this.mediaController.subscriber.unregisterTrack(subscribeId)
   }
 
   private async unsubscribeAllActiveSubscriptions(): Promise<void> {
-    const subscribeIds = Array.from(this.subscribeTrackAliases.keys())
-    if (!subscribeIds.length) {
-      return
+    const handles = Array.from(this.subscriptions.entries())
+    for (const [subscribeId] of handles) {
+      this.forgetSubscription(subscribeId)
     }
     await Promise.all(
-      subscribeIds.map(async (subscribeId) => {
+      handles.map(async ([subscribeId, handle]) => {
         try {
-          await this.client.unsubscribe(subscribeId)
+          await handle.close()
         } catch (error) {
           console.warn(`[meeting] failed to unsubscribe during disconnect (${subscribeId.toString()})`, error)
         }
@@ -440,11 +396,7 @@ export class LocalSession {
     if (!message.trim()) {
       return
     }
-    this.assertReady('send chat message')
-    const session = this.publishingSession
-    if (!session) {
-      return
-    }
+    const session = this.connected('send chat message')
     const chatWriter = (this.chatWriter ??= session.publishTrack(this.trackNamespace, 'chat'))
     const writer = await chatWriter.catch((error: unknown) => {
       if (this.chatWriter === chatWriter) {
@@ -458,6 +410,15 @@ export class LocalSession {
   getMediaController(): MeetingMediaController {
     return this.mediaController
   }
+}
+
+/// An object at or before `location` came from the joining FETCH, since the
+/// SUBSCRIBE starts after the largest object.
+function isAtOrBefore(object: ReceivedObject, location: MoqLocation | undefined): boolean {
+  return (
+    location !== undefined &&
+    (object.groupId < location.groupId || (object.groupId === location.groupId && object.objectId <= location.objectId))
+  )
 }
 
 type ChatEventRecord = {
