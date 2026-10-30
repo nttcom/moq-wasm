@@ -117,6 +117,7 @@ impl TrackPublisher {
                 let info = VideoTrackInfo {
                     cmaf: self.tracks.cmaf,
                     switching_set: self.tracks.switching_set.clone(),
+                    bitrate: self.tracks.video_bitrate,
                     ..VideoTrackInfo::from_config(config, self.tracks.video_label.clone())?
                 };
                 self.broadcast
