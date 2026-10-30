@@ -67,14 +67,30 @@ impl MediaBroadcast {
             .map_err(|err| js_error(format!("{err:#}")))
     }
 
+    /// Lists the chat track in the catalog even while no source publishes the
+    /// default `video` or `audio`; write the chat with `Session.publishTrack`.
+    #[wasm_bindgen(js_name = offerChat)]
+    pub fn offer_chat(&self) -> Promise {
+        let broadcast = self.broadcast.clone();
+        future_to_promise(async move {
+            broadcast
+                .offer_chat()
+                .await
+                .map(|()| JsValue::UNDEFINED)
+                .map_err(|err| js_error(format!("{err:#}")))
+        })
+    }
+
     /// Only a source on the tracks `video` and `audio` brings the media
     /// timeline and the chat. Its video forms a switching set of its own with
     /// its renditions.
+    /// `video_bitrate` is the video encoder's target in bits per second.
     #[wasm_bindgen(js_name = addSource)]
     pub fn add_source(
         &self,
         video: String,
         video_label: String,
+        video_bitrate: Option<f64>,
         audio: String,
         audio_label: String,
     ) -> MediaSource {
@@ -85,6 +101,7 @@ impl MediaBroadcast {
             audio,
             audio_label,
             cmaf: false,
+            video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
         };
         MediaSource {
             writer: BroadcastWriter::run(self.broadcast.clone(), tracks.clone()),

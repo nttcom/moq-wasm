@@ -98,6 +98,20 @@ impl Broadcast {
             .await
     }
 
+    /// Lists the chat track in the catalog while no default video or audio
+    /// lists it, and sends the catalog. Fails when the relay session has
+    /// ended.
+    pub async fn offer_chat(&self) -> Result<()> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay
+            .update_metadata(&self.namespace, |metadata| {
+                !std::mem::replace(&mut metadata.chat_offered, true)
+            })
+            .await
+    }
+
     /// Sends the catalog without the video or audio track, then ends with
     /// PUBLISH_DONE every track that catalog no longer lists: the track, its
     /// CMAF sibling and, when it was the last default track, the `audio`
@@ -128,6 +142,9 @@ pub struct SourceTracks {
     /// (draft-ietf-moq-msf-01 §5.2.12), so sources of the same picture, such
     /// as the profiles of one camera, share it and a shared screen does not.
     pub switching_set: String,
+    /// The video's target bitrate in bits per second, known when the source
+    /// encodes it.
+    pub video_bitrate: Option<u64>,
 }
 
 impl Default for SourceTracks {
@@ -139,6 +156,7 @@ impl Default for SourceTracks {
             audio_label: "Audio".to_string(),
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
+            video_bitrate: None,
         }
     }
 }
@@ -201,6 +219,7 @@ pub(crate) struct CatalogMetadata {
     pub(crate) audio_tracks: BTreeMap<String, AudioTrackInfo>,
     /// The default `audio` was removed, so no placeholder stands in for it.
     default_audio_removed: bool,
+    chat_offered: bool,
 }
 
 impl CatalogMetadata {
@@ -284,6 +303,8 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     }
     if metadata.has_default_tracks() {
         tracks.extend(default_tracks(&namespace, metadata));
+    } else if metadata.chat_offered {
+        tracks.push(chat_track(&namespace, metadata));
     }
 
     let mut catalog = Catalog::new(tracks, executor::system_time().as_millis() as u64);
@@ -322,6 +343,13 @@ fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec
     timeline.mime_type = Some("application/json".to_string());
     tracks.push(timeline);
 
+    tracks.push(chat_track(namespace, metadata));
+    tracks
+}
+
+/// The chat depends on the default tracks the catalog lists (draft-ietf-moq-msf-01
+/// §8.2), none for a chat offered without media.
+fn chat_track(namespace: &Option<String>, metadata: &CatalogMetadata) -> Track {
     let mut chat = track(
         namespace,
         CHAT_TRACK_NAME,
@@ -330,13 +358,24 @@ fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec
     );
     chat.event_type = Some(CHAT_EVENT_TYPE.to_string());
     chat.label = Some("Chat".to_string());
-    chat.depends = Some(vec![
-        VIDEO_TRACK_NAME.to_string(),
-        AUDIO_TRACK_NAME.to_string(),
-    ]);
+    let default_audio_listed = metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME)
+        || (metadata.has_default_tracks() && !metadata.default_audio_removed);
+    let depends = [
+        (
+            VIDEO_TRACK_NAME,
+            metadata.video_tracks.contains_key(VIDEO_TRACK_NAME),
+        ),
+        (AUDIO_TRACK_NAME, default_audio_listed),
+    ];
+    chat.depends = Some(
+        depends
+            .into_iter()
+            .filter(|(_, listed)| *listed)
+            .map(|(name, _)| name.to_string())
+            .collect(),
+    );
     chat.mime_type = Some("application/json".to_string());
-    tracks.push(chat);
-    tracks
+    chat
 }
 
 fn video_mime_type(codec: &str) -> &'static str {
@@ -480,6 +519,31 @@ mod tests {
         assert!(!awaits_subscribe(&catalog, "video"));
         assert!(!awaits_subscribe(&catalog, "timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
+    }
+
+    #[test]
+    fn an_offered_chat_is_listed_without_default_tracks() {
+        // Arrange
+        let metadata = CatalogMetadata {
+            chat_offered: true,
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let names: Vec<&str> = catalog
+            .tracks
+            .iter()
+            .flatten()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert_eq!(names, [CHAT_TRACK_NAME]);
+        assert_eq!(
+            track_named(&catalog, CHAT_TRACK_NAME).depends,
+            Some(Vec::new())
+        );
     }
 
     #[test]

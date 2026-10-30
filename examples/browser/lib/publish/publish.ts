@@ -16,6 +16,9 @@ export type SourceOptions = {
 }
 
 export type PublishOptions = SourceOptions & {
+  /// Lists the `chat` track in the catalog even while nothing is published on
+  /// `video` or `audio`.
+  offerChat?: boolean
   onError?: (error: unknown) => void
 }
 
@@ -28,8 +31,9 @@ export type Rendition = {
   bitrate: number
 }
 
-/// The codec of the video encoder worker's `buildDefaultConfig`.
+/// The codec and bitrate of the video encoder worker's `buildDefaultConfig`.
 const DEFAULT_VIDEO_CODEC = 'avc1.640028'
+const DEFAULT_VIDEO_BITRATE = 1_000_000
 
 export type MediaKind = 'video' | 'audio'
 
@@ -66,6 +70,9 @@ export async function publish(
 ): Promise<Publication> {
   const broadcast = session.broadcast(namespace)
   await broadcast.announce()
+  if (options.offerChat) {
+    await broadcast.offerChat()
+  }
   const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
   // A new encoder worker stamps its first chunk 0, so the chunks of a worker
   // started after an unmute or a replaced track are shifted by the time since
@@ -73,7 +80,7 @@ export async function publish(
   // would reuse its group ids and capture times.
   const startedAtMs = performance.now()
   const camera = publishSource(
-    broadcast.addSource('video', options.videoLabel ?? 'Video', 'audio', 'Audio'),
+    broadcast.addSource('video', options.videoLabel ?? 'Video', videoBitrate(options), 'audio', 'Audio'),
     stream,
     options,
     startedAtMs,
@@ -91,7 +98,13 @@ export async function publish(
         throw new Error(`a source named ${name} is already published`)
       }
       const source = publishSource(
-        broadcast.addSource(name, sourceOptions.videoLabel ?? name, `${name}_audio`, `${name} audio`),
+        broadcast.addSource(
+          name,
+          sourceOptions.videoLabel ?? name,
+          videoBitrate(sourceOptions),
+          `${name}_audio`,
+          `${name} audio`
+        ),
         sourceStream,
         sourceOptions,
         startedAtMs,
@@ -105,6 +118,10 @@ export async function publish(
       await Promise.all([camera, ...added.values()].map((source) => source.close()))
     }
   }
+}
+
+function videoBitrate(options: SourceOptions): number | undefined {
+  return options.videoEncoderConfig ? options.videoEncoderConfig.bitrate : DEFAULT_VIDEO_BITRATE
 }
 
 function publishSource(
@@ -135,7 +152,10 @@ function publishSource(
   // An unmute that publishes the track before the mute's removal finishes
   // would leave it removed, so mutes, unmutes and the close run one at a time.
   let closed = false
-  let queue: Promise<void> = Promise.resolve()
+
+  // A source without audio removes the `audio` placeholder the catalog lists
+  // with the default `video`, queued before its first configuration.
+  let queue: Promise<void> = kinds.has('audio') ? Promise.resolve() : source.removeTrack('audio').catch(report)
   const serialized = (operation: () => Promise<void>) => (queue = queue.then(operation, operation))
   const stop = async (kind: MediaKind) => {
     const encoding = kinds.get(kind)
