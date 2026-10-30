@@ -18,7 +18,7 @@ handlers; request ids and track aliases it has seen keep their values.
 
 ## Context
 
-Before this design, migration lived in three places:
+Migration lives in three places today:
 
 | Where | Subscribing side | Publishing side |
 | --- | --- | --- |
@@ -26,8 +26,8 @@ Before this design, migration lived in three places:
 | `broadcast::RelayConnection` | — | through `MigratingSession` (#805) |
 | `examples/browser/lib/moqt/moqtClient.ts` | id/alias maps, group cutover, joining FETCH fill, FETCH carry-over, Forward | dual send for PUBLISH and for SUBSCRIBE-served tracks |
 
-The wasm `MOQTClient` (since removed) exposed a message-level API: JavaScript chose request
-ids, read subgroup headers, objects and ends per track alias, and wrote
+The wasm `MOQTClient` exposes a message-level API: JavaScript chooses request
+ids, reads subgroup headers, objects and ends per track alias, and writes
 subgroups by track alias. `MigratingSession` hides ids behind handles and
 delivers objects only, so the browser cannot use it without an id map of its
 own. Putting the id map into `Session` serves Rust and the browser alike.
