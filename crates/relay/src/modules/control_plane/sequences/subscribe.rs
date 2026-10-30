@@ -382,6 +382,20 @@ impl Subscribe {
                 "upstream SUBSCRIBE_OK received"
             );
 
+            // The publisher sent PUBLISH for the track while the SUBSCRIBE was
+            // pending: unsubscribing that PUBLISH would fail the publisher's writes.
+            if let Some(published) =
+                table.published_upstream_subscription(&track_key, pub_session_id)
+            {
+                if let Err(error) = forwarder.unsubscribe(pub_session_id, &subscription).await {
+                    tracing::warn!(
+                        ?error,
+                        publisher_session_id = %pub_session_id,
+                        "failed to unsubscribe the SUBSCRIBE a PUBLISH overtook"
+                    );
+                }
+                break (pub_session_id, published);
+            }
             let active_upstream = subscribe_initiated(&subscription, answered.publisher_peer);
             let upstream_request_id = subscription.request_id();
             if !super::start_ingress(
@@ -639,12 +653,13 @@ mod tests {
     use crate::modules::session::session_repository::SessionRepository;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
-        PUBLISHER_SESSION, active_upstream, local_publisher_resolver, track_key, upstream_track,
+        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, local_publisher_resolver,
+        track_key, upstream_track,
     };
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, mock_session_answering_subscribe,
-        mock_session_never_answering_subscribe, session_repository_with_session,
-        session_repository_with_sessions,
+        mock_session_never_answering_subscribe, recorded_session_answering_subscribe,
+        session_repository_with_session, session_repository_with_sessions,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
 
@@ -906,6 +921,61 @@ mod tests {
                 .await,
             vec![DEAD_PUBLISHER_SESSION, NEW_PUBLISHER_SESSION]
         );
+    }
+
+    #[tokio::test]
+    async fn a_publish_overtaking_the_subscribe_keeps_feeding_the_track() {
+        // Arrange: the publisher sends PUBLISH for the track as it answers the SUBSCRIBE
+        let table_cell = Arc::new(OnceLock::<Arc<InMemoryLocalPubSubDirectory>>::new());
+        let publishing_cell = table_cell.clone();
+        let (session, recorded) = recorded_session_answering_subscribe(move || {
+            publishing_cell
+                .get()
+                .unwrap()
+                .register_upstream_subscription(
+                    track_key(),
+                    PUBLISHER_SESSION,
+                    active_upstream(UpstreamSubscriptionOrigin::Publish),
+                );
+            moqt::object::ContentExists::False
+        });
+        let repository = session_repository_with_session(
+            PUBLISHER_SESSION,
+            session,
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        let _ = table_cell.set(table.clone());
+        let forwarder = ControlMessageForwarder { repository };
+        let (ingress_sender, mut ingress_receiver) = tokio::sync::mpsc::channel(4);
+
+        // Act
+        let created = Subscribe
+            .get_or_create_upstream_subscription(
+                2,
+                SessionPeer::Client,
+                "ns",
+                "track",
+                &table,
+                &forwarder,
+                &ingress_sender,
+                &Arc::new(local_publisher_resolver()),
+                &UpstreamCreationSerializer::default(),
+                &Arc::new(TrackCacheStore::new()),
+            )
+            .await;
+
+        // Assert: only the SUBSCRIBE (request 1) is unsubscribed, and its ingress never replaces the PUBLISH's
+        assert!(created.is_ok());
+        assert_eq!(recorded.unsubscribed_request_ids(), vec![1]);
+        assert!(ingress_receiver.try_recv().is_err());
+        assert!(table.has_upstream_subscription(
+            &track_key(),
+            PUBLISHER_SESSION,
+            UPSTREAM_REQUEST_ID
+        ));
     }
 
     #[tokio::test]

@@ -285,7 +285,8 @@ mod tests {
         table: Arc<InMemoryLocalPubSubDirectory>,
         publisher_session_id: SessionId,
     ) -> (RecordedControlMessages, mpsc::Receiver<IngressCommand>) {
-        let (session, recorded) = recorded_session_answering_subscribe();
+        let (session, recorded) =
+            recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         let repository = session_repository_with_session(
             publisher_session_id,
             session,
@@ -431,7 +432,8 @@ mod tests {
             )
             .unwrap();
         let table = Arc::new(table);
-        let (session, _recorded) = recorded_session_answering_subscribe();
+        let (session, _recorded) =
+            recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         let repository = session_repository_with_session(
             LATE_PUBLISHER_SESSION,
             session,
