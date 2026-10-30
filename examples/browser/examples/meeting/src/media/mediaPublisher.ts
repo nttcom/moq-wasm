@@ -1,6 +1,5 @@
 import type { MoqSession } from '@moqt/session'
 import { type Publication, type SourcePublication, publish } from '@publish/publish'
-import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import { DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import {
@@ -18,9 +17,7 @@ export type MediaPublisherHandlers = {
   onLocalCameraStream?: LocalStreamHandler
   onLocalScreenShareStream?: LocalStreamHandler
   onLocalAudioStream?: LocalStreamHandler
-  onVideoEncodeError?: (message: string) => void
-  onAudioEncodeError?: (message: string) => void
-  onAudioEncodingAdjusted?: (settings: AudioEncodingSettings) => void
+  onPublishError?: (message: string) => void
   /// A new capture of the default device replaced a microphone whose track ended.
   onMicrophoneSwitched?: (track: MediaStreamTrack) => void
   /// No microphone could replace the one whose track ended; the audio is off.
@@ -45,7 +42,6 @@ export class MediaPublisher {
 
   private videoEncodingSettings: VideoEncodingSettings = INITIAL_CAMERA_ENCODING_SETTINGS
   private screenShareEncodingSettings: VideoEncodingSettings = DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS
-  private audioEncodingSettings: AudioEncodingSettings = DEFAULT_AUDIO_ENCODING_SETTINGS
 
   private videoCaptureConstraints: CameraCaptureConstraints = { frameRate: 30 }
   private audioCaptureConstraints: AudioCaptureConstraints = {
@@ -64,7 +60,7 @@ export class MediaPublisher {
       renditions: CAMERA_RENDITIONS,
       keyframeIntervalFrames: CAMERA_KEYFRAME_INTERVAL,
       offerChat: true,
-      onError: (error) => this.handlers.onVideoEncodeError?.(error instanceof Error ? error.message : String(error))
+      onError: (error) => this.handlers.onPublishError?.(error instanceof Error ? error.message : String(error))
     })
   }
 
@@ -168,11 +164,6 @@ export class MediaPublisher {
     this.screenShare?.setVideoEncoderConfig(settings)
   }
 
-  /// Only `channels` is used, by the next microphone capture.
-  setAudioEncodingSettings(settings: AudioEncodingSettings): void {
-    this.audioEncodingSettings = settings
-  }
-
   async dispose(): Promise<void> {
     for (const stream of [this.cameraStream, this.screenShareStream, this.audioStream]) {
       releaseStream(stream)
@@ -196,7 +187,7 @@ export class MediaPublisher {
     return navigator.mediaDevices.getUserMedia({
       audio: {
         ...this.audioCaptureConstraints,
-        channelCount: { ideal: this.audioEncodingSettings.channels },
+        channelCount: { ideal: 1 },
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },
       video: false
@@ -208,14 +199,6 @@ export class MediaPublisher {
     this.handlers.onLocalAudioStream?.(stream)
     const [track] = stream.getAudioTracks()
     track.onended = () => void this.recaptureEndedAudio(stream)
-    const desiredChannels = this.audioEncodingSettings.channels
-    const actualChannels = track.getSettings().channelCount ?? desiredChannels
-    if (desiredChannels > 1 && (!actualChannels || actualChannels < desiredChannels)) {
-      const effectiveChannels = actualChannels > 0 ? actualChannels : 1
-      this.audioEncodingSettings = { ...this.audioEncodingSettings, channels: effectiveChannels }
-      this.handlers.onAudioEncodeError?.('Stereo capture is not available on this device. Falling back to mono.')
-      this.handlers.onAudioEncodingAdjusted?.(this.audioEncodingSettings)
-    }
     const publication = this.started()
     publication.replaceTrack('audio', track)
     await publication.setMuted('audio', false)

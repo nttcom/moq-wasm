@@ -1,26 +1,16 @@
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import type { RemotePictures } from '../media/mediaSubscriber'
 import type { PlayoutSettings } from '../types/playout'
 import {
   DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
   DEFAULT_VIDEO_ENCODING_SETTINGS,
-  VIDEO_BITRATE_OPTIONS,
-  VIDEO_CODEC_OPTIONS,
   VIDEO_HARDWARE_ACCELERATION_OPTIONS,
   VIDEO_RESOLUTION_OPTIONS,
   type VideoEncodingSettings
 } from '../types/videoEncoding'
-import {
-  AUDIO_BITRATE_OPTIONS,
-  AUDIO_CODEC_OPTIONS,
-  AUDIO_CHANNEL_OPTIONS,
-  DEFAULT_AUDIO_ENCODING_SETTINGS,
-  type AudioEncodingSettings
-} from '../types/audioEncoding'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { E2E_CAMERA_SETTINGS, INITIAL_CAMERA_ENCODING_SETTINGS } from '../media/meetingCatalog'
-import { type LocalSendStats, NO_LOCAL_SEND_STATS } from '../types/stats'
 import { DominantSpeaker } from '../media/dominantSpeaker'
 
 const SPEAKER_UPDATE_INTERVAL_MS = 250
@@ -42,29 +32,18 @@ interface UseMeetingMediaResult {
   localVideoStream: MediaStream | null
   localScreenShareStream: MediaStream | null
   localAudioStream: MediaStream | null
-  /// Stays `NO_LOCAL_SEND_STATS`: `publish()` reports no send stats.
-  localSendStats: RefObject<LocalSendStats>
   remotePictures: Map<string, RemotePictures>
   toggleCamera: () => Promise<boolean>
   toggleScreenShare: () => Promise<boolean>
   toggleMicrophone: () => Promise<boolean>
   playoutSettings: Map<string, PlayoutSettings>
   setPlayoutSettings: (userId: string, settings: PlayoutSettings) => void
-  videoCodecOptions: typeof VIDEO_CODEC_OPTIONS
   videoResolutionOptions: typeof VIDEO_RESOLUTION_OPTIONS
-  videoBitrateOptions: typeof VIDEO_BITRATE_OPTIONS
   videoHardwareAccelerationOptions: typeof VIDEO_HARDWARE_ACCELERATION_OPTIONS
   selectedVideoEncoding: VideoEncodingSettings
   selectVideoEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
   selectedScreenShareEncoding: VideoEncodingSettings
   selectScreenShareEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
-  videoEncoderError: string | null
-  audioCodecOptions: typeof AUDIO_CODEC_OPTIONS
-  audioBitrateOptions: typeof AUDIO_BITRATE_OPTIONS
-  audioChannelOptions: typeof AUDIO_CHANNEL_OPTIONS
-  selectedAudioEncoding: AudioEncodingSettings
-  selectAudioEncoding: (settings: Partial<AudioEncodingSettings>) => Promise<void>
-  audioEncoderError: string | null
   videoDevices: MediaDeviceInfo[]
   audioDevices: MediaDeviceInfo[]
   selectedVideoDeviceId: string | null
@@ -87,7 +66,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null)
   const [localScreenShareStream, setLocalScreenShareStream] = useState<MediaStream | null>(null)
   const [localAudioStream, setLocalAudioStream] = useState<MediaStream | null>(null)
-  const localSendStats = useRef<LocalSendStats>(NO_LOCAL_SEND_STATS)
   const [remotePictures, setRemotePictures] = useState<Map<string, RemotePictures>>(new Map())
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | undefined>(undefined)
   const [speakingMemberIds, setSpeakingMemberIds] = useState<Set<string>>(new Set())
@@ -102,11 +80,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [selectedScreenShareEncoding, setSelectedScreenShareEncoding] = useState<VideoEncodingSettings>(
     DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS
   )
-  const [videoEncoderError, setVideoEncoderError] = useState<string | null>(null)
-  const [selectedAudioEncoding, setSelectedAudioEncoding] = useState<AudioEncodingSettings>(
-    DEFAULT_AUDIO_ENCODING_SETTINGS
-  )
-  const [audioEncoderError, setAudioEncoderError] = useState<string | null>(null)
   const [captureSettings, setCaptureSettings] = useState<CaptureSettingsState>({
     videoEnabled: true,
     audioEnabled: true,
@@ -141,14 +114,11 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
-      localSendStats.current = NO_LOCAL_SEND_STATS
       setRemotePictures(new Map())
       setCameraEnabled(false)
       setMicrophoneEnabled(false)
       setScreenShareEnabled(false)
       setPlayoutSettingsState(new Map())
-      setVideoEncoderError(null)
-      setAudioEncoderError(null)
       return
     }
 
@@ -166,9 +136,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         setLocalAudioStream(stream)
         setMicrophoneEnabled(!!stream)
       },
-      onVideoEncodeError: (message) => setVideoEncoderError(message),
-      onAudioEncodeError: (message) => setAudioEncoderError(message),
-      onAudioEncodingAdjusted: (settings) => setSelectedAudioEncoding(settings),
+      onPublishError: (message) => setNotice(message),
       onMicrophoneSwitched: (track) => {
         setSelectedAudioDeviceId(track.getSettings().deviceId ?? null)
         setNotice(`Microphone: ${track.label}`)
@@ -209,7 +177,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       publisher.setHandlers({})
       subscriber.setHandlers({})
       setRemotePictures(new Map())
-      localSendStats.current = NO_LOCAL_SEND_STATS
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
@@ -250,13 +217,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     }
     session.getMediaController().publisher.setScreenShareEncodingSettings(selectedScreenShareEncoding)
   }, [selectedScreenShareEncoding, session])
-
-  useEffect(() => {
-    if (!session) {
-      return
-    }
-    session.getMediaController().publisher.setAudioEncodingSettings(selectedAudioEncoding)
-  }, [selectedAudioEncoding, session])
 
   useEffect(() => {
     if (!session) {
@@ -380,7 +340,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     async (settings: Partial<VideoEncodingSettings>) => {
       const next = { ...selectedVideoEncoding, ...settings }
       setSelectedVideoEncoding(next)
-      setVideoEncoderError(null)
     },
     [selectedVideoEncoding]
   )
@@ -389,18 +348,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     async (settings: Partial<VideoEncodingSettings>) => {
       const next = { ...selectedScreenShareEncoding, ...settings }
       setSelectedScreenShareEncoding(next)
-      setVideoEncoderError(null)
     },
     [selectedScreenShareEncoding]
-  )
-
-  const selectAudioEncoding = useCallback(
-    async (settings: Partial<AudioEncodingSettings>) => {
-      const next = { ...selectedAudioEncoding, ...settings }
-      setSelectedAudioEncoding(next)
-      setAudioEncoderError(null)
-    },
-    [selectedAudioEncoding]
   )
 
   const updateCaptureSettings = useCallback((settings: Partial<CaptureSettingsState>) => {
@@ -455,28 +404,18 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     localVideoStream,
     localScreenShareStream,
     localAudioStream,
-    localSendStats,
     remotePictures,
     toggleCamera,
     toggleScreenShare,
     toggleMicrophone,
     playoutSettings,
     setPlayoutSettings,
-    videoCodecOptions: VIDEO_CODEC_OPTIONS,
     videoResolutionOptions: VIDEO_RESOLUTION_OPTIONS,
-    videoBitrateOptions: VIDEO_BITRATE_OPTIONS,
     videoHardwareAccelerationOptions: VIDEO_HARDWARE_ACCELERATION_OPTIONS,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,
     selectScreenShareEncoding,
-    audioCodecOptions: AUDIO_CODEC_OPTIONS,
-    audioBitrateOptions: AUDIO_BITRATE_OPTIONS,
-    audioChannelOptions: AUDIO_CHANNEL_OPTIONS,
-    selectedAudioEncoding,
-    selectAudioEncoding,
-    videoEncoderError,
-    audioEncoderError,
     videoDevices,
     audioDevices,
     selectedVideoDeviceId,

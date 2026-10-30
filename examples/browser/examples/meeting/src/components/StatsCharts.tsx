@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { LiveStats } from '@player/locLive'
 import type { RemoteVideoSource } from '../media/mediaSubscriber'
-import type { LocalStatsSample, RemoteStatsSample } from '../types/stats'
+import type { RemoteStatsSample } from '../types/stats'
 
 type ChartYAxisPadding = {
   topRatio: number
@@ -34,7 +34,6 @@ const CHART_VIEWBOX_HEIGHT = 48
 const CHART_LINE_STROKE_WIDTH = 0.8
 const ADAPTIVE_TICK_HEADROOM_RATIO = 0.25
 const BITRATE_Y_PADDING: ChartYAxisPadding = { topRatio: 0.14, bottomRatio: 0.1 }
-const RENDERING_RATE_Y_PADDING: ChartYAxisPadding = { topRatio: 0.16, bottomRatio: 0.12 }
 const LATENCY_Y_PADDING: ChartYAxisPadding = { topRatio: 0.12, bottomRatio: 0.1 }
 
 const VIDEO_BITRATE_SCALE: ChartScale = { yTickStep: 250, yPadding: BITRATE_Y_PADDING, unit: 'kbps' }
@@ -43,14 +42,6 @@ const AUDIO_BITRATE_SCALE: ChartScale = {
   yPadding: BITRATE_Y_PADDING,
   unit: 'kbps'
 }
-const SEND_TIME_SCALE: ChartScale = { yTickStep: 25, yPadding: LATENCY_Y_PADDING, unit: 'ms' }
-const QUEUE_DEPTH_SCALE: ChartScale = {
-  yTickStep: 1,
-  adaptiveMaxTickCount: 8,
-  yPadding: RENDERING_RATE_Y_PADDING,
-  unit: ''
-}
-const OBJECT_SIZE_SCALE: ChartScale = { yTickStep: 25, yPadding: BITRATE_Y_PADDING, unit: 'KB' }
 const PLAYOUT_SCALE: ChartScale = { yTickStep: 100, yPadding: LATENCY_Y_PADDING, unit: 'ms' }
 const AV_OFFSET_SCALE: ChartScale = {
   yTickStep: 20,
@@ -70,92 +61,6 @@ const SERIES_COLOR_CLASSES = [
   'text-lime-300',
   'text-violet-300',
   'text-amber-300'
-]
-
-const SEND_CHART_CONFIGS: SampleChartConfig<LocalStatsSample>[] = [
-  {
-    key: 'video-bitrate',
-    title: 'Video Bitrate (kbps)',
-    scale: VIDEO_BITRATE_SCALE,
-    series: [
-      { label: 'Camera', accessor: (sample) => sample.cameraBitrateKbps, colorClass: 'text-cyan-300' },
-      { label: 'Screen', accessor: (sample) => sample.screenShareBitrateKbps, colorClass: 'text-orange-300' }
-    ]
-  },
-  {
-    key: 'audio-bitrate',
-    title: 'Audio Bitrate (kbps)',
-    scale: AUDIO_BITRATE_SCALE,
-    series: [{ label: 'Audio', accessor: (sample) => sample.audioBitrateKbps, colorClass: 'text-emerald-300' }]
-  },
-  {
-    key: 'video-encode',
-    title: 'Video Encode (Capture→EncodeDone)',
-    scale: SEND_TIME_SCALE,
-    series: [
-      { label: 'Camera', accessor: (sample) => sample.cameraSend?.captureToEncodeDoneMs, colorClass: 'text-cyan-300' },
-      {
-        label: 'Screen',
-        accessor: (sample) => sample.screenShareSend?.captureToEncodeDoneMs,
-        colorClass: 'text-orange-300'
-      }
-    ]
-  },
-  {
-    key: 'video-send-queue-wait',
-    title: 'Video Send Queue Wait',
-    scale: SEND_TIME_SCALE,
-    series: [
-      { label: 'Camera', accessor: (sample) => sample.cameraSend?.queueWaitMs, colorClass: 'text-cyan-300' },
-      { label: 'Screen', accessor: (sample) => sample.screenShareSend?.queueWaitMs, colorClass: 'text-orange-300' }
-    ]
-  },
-  {
-    key: 'video-send-active',
-    title: 'Video Send Active',
-    scale: SEND_TIME_SCALE,
-    series: [
-      { label: 'Camera total', accessor: (sample) => sample.cameraSend?.sendActiveMs, colorClass: 'text-emerald-300' },
-      { label: 'Camera object', accessor: (sample) => sample.cameraSend?.objectSendMs, colorClass: 'text-lime-300' },
-      {
-        label: 'Screen total',
-        accessor: (sample) => sample.screenShareSend?.sendActiveMs,
-        colorClass: 'text-amber-300'
-      }
-    ]
-  },
-  {
-    key: 'video-send-queue-depth',
-    title: 'Video Send Queue Depth',
-    scale: QUEUE_DEPTH_SCALE,
-    series: [
-      { label: 'Camera sendQ', accessor: (sample) => sample.cameraSend?.queueDepth, colorClass: 'text-fuchsia-300' },
-      { label: 'Camera encQ', accessor: (sample) => sample.cameraSend?.encodeQueueSize, colorClass: 'text-violet-300' },
-      { label: 'Screen sendQ', accessor: (sample) => sample.screenShareSend?.queueDepth, colorClass: 'text-rose-300' },
-      {
-        label: 'Screen encQ',
-        accessor: (sample) => sample.screenShareSend?.encodeQueueSize,
-        colorClass: 'text-red-300'
-      }
-    ]
-  },
-  {
-    key: 'video-send-object-bytes',
-    title: 'Video Object Size',
-    scale: OBJECT_SIZE_SCALE,
-    series: [
-      {
-        label: 'Camera',
-        accessor: (sample) => sample.cameraSend && sample.cameraSend.objectBytes / 1024,
-        colorClass: 'text-cyan-300'
-      },
-      {
-        label: 'Screen',
-        accessor: (sample) => sample.screenShareSend && sample.screenShareSend.objectBytes / 1024,
-        colorClass: 'text-orange-300'
-      }
-    ]
-  }
 ]
 
 const primaryStats = (sample: RemoteStatsSample) => sample.camera ?? sample.screenshare
@@ -281,46 +186,8 @@ const RECEIVE_METRICS: ReceiveMetric[] = [
 
 export type RemoteMemberStats = { id: string; name: string; samples: RemoteStatsSample[] }
 
-type StatsTab = 'send' | 'receive'
-
-export function MeetingStats({
-  localSamples,
-  remoteMembers
-}: {
-  localSamples: LocalStatsSample[]
-  remoteMembers: RemoteMemberStats[]
-}) {
-  const [tab, setTab] = useState<StatsTab>('send')
-  return (
-    <div className="space-y-4">
-      <div className="inline-flex rounded-md border border-white/10 bg-white/5 p-0.5 text-sm" role="tablist">
-        {(['send', 'receive'] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            data-testid={`stats-tab-${value}`}
-            onClick={() => setTab(value)}
-            className={`rounded px-4 py-1 transition ${
-              tab === value ? 'bg-white/15 text-white' : 'text-blue-200 hover:text-white'
-            }`}
-          >
-            {value === 'send' ? 'Send' : 'Receive'}
-          </button>
-        ))}
-      </div>
-      {tab === 'send' ? (
-        <SendStatsCharts samples={localSamples} />
-      ) : (
-        <StatsChartList charts={buildReceiveCharts(remoteMembers)} emptyMessage="No received media yet." />
-      )}
-    </div>
-  )
-}
-
-export function SendStatsCharts({ samples }: { samples: LocalStatsSample[] }) {
-  return <StatsChartList charts={buildSampleCharts(SEND_CHART_CONFIGS, samples)} emptyMessage="No sent media yet." />
+export function MeetingStats({ remoteMembers }: { remoteMembers: RemoteMemberStats[] }) {
+  return <StatsChartList charts={buildReceiveCharts(remoteMembers)} emptyMessage="No received media yet." />
 }
 
 export function RemoteMemberStatsCharts({ samples }: { samples: RemoteStatsSample[] }) {
