@@ -1,3 +1,4 @@
+use moqt::RequestFailure;
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
@@ -22,14 +23,29 @@ impl DownstreamPublishTask {
                     .send(subscriber_session_id, &track_key)
                     .await
                 {
-                    Ok(()) => tracing::info!(
+                    // moqt logs the PUBLISH_OK or PUBLISH_ERROR at INFO.
+                    Ok(()) => tracing::debug!(
                         subscriber_session_id = %subscriber_session_id,
                         "forwarded PUBLISH accepted"
                     ),
+                    Err(error)
+                        if matches!(
+                            error.downcast_ref::<RequestFailure>(),
+                            Some(RequestFailure::Rejected { .. })
+                        ) =>
+                    {
+                        tracing::debug!(
+                            %error,
+                            subscriber_session_id = %subscriber_session_id,
+                            "forwarded PUBLISH rejected"
+                        )
+                    }
                     Err(error) => tracing::warn!(
-                        ?error,
+                        %error,
                         subscriber_session_id = %subscriber_session_id,
-                        "forwarded PUBLISH not accepted"
+                        track_namespace = %track_key.track_namespace,
+                        track_name = %track_key.track_name,
+                        "forwarded PUBLISH failed"
                     ),
                 }
             }
