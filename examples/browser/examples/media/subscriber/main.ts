@@ -3,6 +3,7 @@ import { LocLive, formatLiveStats } from 'moq-wasm/media/player/locLive'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../catalogPicker'
+import { readObjects } from '../readObjects'
 import type { MediaKind } from 'moq-wasm/media/player/trackContext'
 
 let session: MoqSession | undefined
@@ -126,11 +127,7 @@ function receiveObjects(kind: MediaKind, subscription: MoqSubscription): void {
       setStatusText('subscriber-track-status', `Publisher ended the ${kind} track`)
     }
   })
-  void (async () => {
-    for await (const object of subscription) {
-      receiveObject(kind, object)
-    }
-  })().catch((error: unknown) => console.warn(`[MediaSubscriber] ${kind} read ended`, error))
+  readObjects(subscription, (object) => receiveObject(kind, object), `MediaSubscriber ${kind}`)
 }
 
 function receiveObject(kind: MediaKind, object: ReceivedObject): void {
@@ -146,6 +143,7 @@ function receiveObject(kind: MediaKind, object: ReceivedObject): void {
     groupId: object.groupId,
     objectId: object.objectId,
     payloadLength: object.objectPayloadLength,
+    status: object.objectStatus,
     loc: object.locHeader
   })
   locLive.push(kind, object.groupId, object)

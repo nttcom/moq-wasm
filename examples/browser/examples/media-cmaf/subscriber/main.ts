@@ -1,6 +1,7 @@
-import { MoqSession, type MoqSubscription } from 'moq-wasm'
+import { MoqSession, type MoqSubscription, type ReceivedObject } from 'moq-wasm'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../../media/catalogPicker'
+import { readObjects } from '../../media/readObjects'
 import { setUpVisualizerToggle } from '../../media/visualizerToggle'
 
 let session: MoqSession | undefined
@@ -478,33 +479,37 @@ const receiveObjects = (
       setStatusText('catalog-track-status', `Publisher ended the ${kind} track`)
     }
   })
-  void (async () => {
-    for await (const { groupId, objectId, objectPayload: payload } of subscription) {
-      if (objectId === 0n) {
-        initSize = payload.byteLength
-        setMoqObjectVisualizationState(kind, groupId, objectId)
-        if (!initReceived) {
-          console.info(`[CmafSubscriber] ${kind} init segment received`, { byteLength: payload.byteLength })
-          initReceived = true
-          append(payload)
-        }
-        continue
-      }
-
-      if (payload.byteLength < 4) {
-        console.warn(`[CmafSubscriber] ${kind} payload too short for moof`, { groupId, objectId })
-        continue
-      }
-
-      const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
-      const mdatSize = payload.byteLength - moofSize
-      const headerBytes = initSize + moofSize
-      const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
-      updateOverheadDisplay(kind, initSize, moofSize, mdatSize, overhead)
+  const receive = ({ groupId, objectId, objectStatus, objectPayload: payload }: ReceivedObject): void => {
+    if (objectId === 0n) {
+      initSize = payload.byteLength
       setMoqObjectVisualizationState(kind, groupId, objectId)
-      append(payload)
+      if (!initReceived) {
+        console.info(`[CmafSubscriber] ${kind} init segment received`, { byteLength: payload.byteLength })
+        initReceived = true
+        append(payload)
+      }
+      return
     }
-  })().catch((error: unknown) => console.warn(`[CmafSubscriber] ${kind} read ended`, error))
+
+    if (objectStatus != null) {
+      setMoqObjectVisualizationState(kind, groupId, objectId)
+      return
+    }
+
+    if (payload.byteLength < 4) {
+      console.warn(`[CmafSubscriber] ${kind} payload too short for moof`, { groupId, objectId, objectStatus })
+      return
+    }
+
+    const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
+    const mdatSize = payload.byteLength - moofSize
+    const headerBytes = initSize + moofSize
+    const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
+    updateOverheadDisplay(kind, initSize, moofSize, mdatSize, overhead)
+    setMoqObjectVisualizationState(kind, groupId, objectId)
+    append(payload)
+  }
+  readObjects(subscription, receive, `CmafSubscriber ${kind}`)
 }
 
 // --- Button handlers ---
