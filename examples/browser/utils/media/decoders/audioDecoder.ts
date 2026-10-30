@@ -15,6 +15,10 @@ const audioBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', media: 'audio', kbps })
 })
 
+/// How far ahead of its hand-over to the audio output the group order gate
+/// releases an object, to cover the decode and the post to the page.
+const RELEASE_MARGIN_MS = 50
+
 const audioConfig: AudioConfig = { codec: 'opus', sampleRate: 48000, channels: 1 }
 let audioDecoder: AudioDecoder | undefined
 /// The decoder stamps its outputs from the sample count it has produced, not
@@ -47,6 +51,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
 type AudioWorkerMessage =
   | SubgroupWorkerMessage
   | { type: 'catalog'; codec?: string; sampleRate?: number; channels?: number; descriptionBase64?: string }
+  | { type: 'timeline'; captureMicros?: number; handOverAtUnixMs?: number }
 
 self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
   const data = event.data
@@ -56,6 +61,16 @@ self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
       audioConfig.sampleRate = data.sampleRate ?? audioConfig.sampleRate
       audioConfig.channels = data.channels ?? audioConfig.channels
       audioConfig.descriptionBase64 = data.descriptionBase64 || audioConfig.descriptionBase64
+      return
+    case 'timeline':
+      groupOrder.setTimeline(
+        data.captureMicros !== undefined && data.handOverAtUnixMs !== undefined
+          ? {
+              captureMicros: data.captureMicros,
+              releaseAtMs: performance.now() + (data.handOverAtUnixMs - RELEASE_MARGIN_MS - Date.now())
+            }
+          : undefined
+      )
       return
     case 'object':
       audioBitrateLogger.addBytes(data.subgroupStreamObject.objectPayloadLength)

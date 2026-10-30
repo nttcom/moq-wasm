@@ -1,16 +1,20 @@
 const WINDOW_MS = 10_000
 const MICROS_PER_MILLI = 1_000
 
-export type BufferPolicy = { minimumMs: number; maximumMs: number }
+/// `arrivalQuantile` is the share of the window's arrivals the buffer is in
+/// time for: 1, the default, covers the slowest of them, and a lower one
+/// leaves the rarest delays to the audio concealment for less latency.
+export type BufferPolicy = { minimumMs: number; maximumMs: number; arrivalQuantile?: number }
 
 type Arrival = { atMs: number; delayMs: number }
 
 /// Sizes the live playout buffer. The delay from capture to arrival of every
 /// sample of the last `WINDOW_MS` is kept; each delay carries the offset
 /// between the capture clock and the local one, which only the differences
-/// between them cancel. The buffer covers the spread between the fastest and
-/// the slowest of them plus the time a sample takes from being handed over to
-/// being heard, and the policy clamps that sum; equal bounds fix it.
+/// between them cancel. The buffer covers the spread between the fastest of
+/// them and the policy's quantile of them plus the time a sample takes from
+/// being handed over to being heard, and the policy clamps that sum; equal
+/// bounds fix it.
 export class JitterBuffer {
   private readonly arrivals: Arrival[] = []
   private observingSinceMs: number | undefined
@@ -55,7 +59,9 @@ export class JitterBuffer {
     if (fastest === undefined) {
       return undefined
     }
-    return Math.max(...this.arrivals.map((arrival) => arrival.delayMs)) - fastest
+    const delaysMs = this.arrivals.map((arrival) => arrival.delayMs).sort((left, right) => left - right)
+    const index = Math.ceil((this.policy.arrivalQuantile ?? 1) * delaysMs.length) - 1
+    return delaysMs[Math.max(0, index)] - fastest
   }
 
   reset(): void {

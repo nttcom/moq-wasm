@@ -60,3 +60,35 @@ test('a compression rate below 1 lengthens the chunks and reports the added time
   expect(Math.max(...driftsMs)).toBeGreaterThan(0)
   expect(driftsMs.every((driftMs) => driftMs >= 0)).toBe(true)
 })
+
+test('a chunk that arrives after the sound ran out continues from the repetition that filled the gap', () => {
+  // Arrange: a chunk due 100 ms from now, and the next one 150 ms after it has run out
+  const driftsMs: number[] = []
+  const playout = new AudioPlayout((driftMs) => driftsMs.push(driftMs))
+  const startMs = environment.nowMs
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_000_000, () => startMs + 100)
+
+  // Act
+  environment.advanceTo(startMs + 270)
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_020_000, (nowMs) => nowMs)
+
+  // Assert: no break; the repetition is heard first and the chunk reports it as drift
+  expect(playout.breaks).toBe(0)
+  expect(playout.concealedMs).toBeGreaterThan(150)
+  expect(driftsMs[1]).toBeGreaterThan(OUTPUT_LATENCY_SECONDS * 1_000)
+})
+
+test('a repetition fades out after 300 ms and a chunk arriving after it is a break', () => {
+  // Arrange
+  const playout = new AudioPlayout(() => {})
+  const startMs = environment.nowMs
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_000_000, () => startMs + 100)
+
+  // Act
+  environment.advanceTo(startMs + 1_000)
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_020_000, (nowMs) => nowMs)
+
+  // Assert
+  expect(playout.concealedMs).toBeCloseTo(300)
+  expect(playout.breaks).toBe(1)
+})

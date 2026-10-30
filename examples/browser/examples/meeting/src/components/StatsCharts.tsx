@@ -189,7 +189,7 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
         colorClass: 'text-sky-300'
       },
       {
-        label: 'Jitter (p-p)',
+        label: 'Jitter (p95)',
         accessor: (sample) => primaryStats(sample)?.arrivalSpreadMs,
         colorClass: 'text-rose-300'
       }
@@ -261,7 +261,7 @@ const RECEIVE_METRICS: ReceiveMetric[] = [
   },
   {
     key: 'jitter',
-    title: 'Jitter (p-p, ms)',
+    title: 'Jitter (p95, ms)',
     scale: PLAYOUT_SCALE,
     value: (stats) => stats.arrivalSpreadMs
   },

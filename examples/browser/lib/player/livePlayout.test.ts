@@ -9,6 +9,8 @@ const STREAM_MS = 3_000
 const CAPTURE_EPOCH_MS = 1_000_000
 const MICROS_PER_MILLI = 1_000
 const OUTPUT_LATENCY_MS = 40
+/// The output latency plus the audio playout's `CONCEALMENT_LEAD_MS` (20 ms).
+const SCHEDULE_AHEAD_MS = OUTPUT_LATENCY_MS + 20
 
 let environment: FakeMediaEnvironment
 
@@ -76,7 +78,7 @@ test('video arriving later than the audio raises the buffer target', () => {
 
   // Assert
   expect(audioOnly.targetBufferMs()).toBeCloseTo(200)
-  expect(withVideo.targetBufferMs()).toBeCloseTo(VIDEO_DELAY_MS - AUDIO_DELAY_MS + OUTPUT_LATENCY_MS)
+  expect(withVideo.targetBufferMs()).toBeCloseTo(VIDEO_DELAY_MS - AUDIO_DELAY_MS + SCHEDULE_AHEAD_MS)
 })
 
 test('without a picture the presented position follows the sound', () => {

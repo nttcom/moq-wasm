@@ -60,6 +60,35 @@ export function insertRepetition(channels: Channels, sampleRate: number, maxSamp
   })
 }
 
+/// The last pitch period of a chunk, or undefined when its end does not repeat.
+export function lastPeriod(channels: Channels, sampleRate: number): Channels | undefined {
+  const length = crossfadeSamples(sampleRate)
+  const end = channels[0].length - length
+  const shortest = samplesFor(MIN_PERIOD_MS, sampleRate)
+  const longest = Math.min(samplesFor(MAX_PERIOD_MS, sampleRate), end)
+  if (longest < shortest) {
+    return undefined
+  }
+  const mixed = mix(channels)
+  const { offset, similarity } = mostSimilarOffset(mixed.subarray(end), mixed, end - longest, end - shortest)
+  if (similarity < MIN_SIMILARITY) {
+    return undefined
+  }
+  const period = end - offset
+  return channels.map((channel) => channel.slice(channel.length - period))
+}
+
+/// `length` samples of `period` repeated from `played` samples on, fading out
+/// linearly to silence `fadeSamples` after the repetition began.
+export function repeatPeriod(period: Channels, played: number, length: number, fadeSamples: number): Channels {
+  return period.map((channel) =>
+    Float32Array.from({ length }, (_, i) => {
+      const position = played + i
+      return channel[position % channel.length] * Math.max(0, 1 - position / fadeSamples)
+    })
+  )
+}
+
 function repeatingPeriod(
   channels: Channels,
   sampleRate: number,
@@ -143,6 +172,6 @@ function mix(channels: Channels): Float32Array {
   return mixed
 }
 
-function samplesFor(ms: number, sampleRate: number): number {
+export function samplesFor(ms: number, sampleRate: number): number {
   return Math.round((ms * sampleRate) / MILLIS_PER_SECOND)
 }
