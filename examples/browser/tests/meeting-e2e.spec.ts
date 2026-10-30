@@ -15,10 +15,7 @@ import {
   joinRoom,
   openChat,
   openMemberDetails,
-  removeCatalogTrack,
   sendChatMessage,
-  setAudioGroupInterval,
-  setAudioSingleStream,
   startScreenShare
 } from './meeting-e2e-arrange'
 
@@ -69,14 +66,6 @@ function widestPlotRatio(page: Page): Promise<number> {
       })
     )
   )
-}
-
-// The A/V offset disappears 1 s after the last audio chunk is scheduled, so an audio stall fails one of these samples.
-async function expectAudioKeepsPlaying(stats: import('@playwright/test').Locator): Promise<void> {
-  for (let sample = 0; sample < 10; sample++) {
-    expect(await stats.textContent()).toMatch(/A\/V [+-]\d+ ms/)
-    await stats.page().waitForTimeout(500)
-  }
 }
 
 function videoWidth(video: import('@playwright/test').Locator): Promise<number> {
@@ -326,7 +315,7 @@ test('a viewer switches a member camera between renditions on the same picture',
 
     // Act
     await openMemberDetails(bob.page.page, 'alice')
-    await getTrackSelect(bob.page.page, 'video', 'alice').selectOption('camera_e2e_e2e_low')
+    await getTrackSelect(bob.page.page, 'video', 'alice').selectOption('video_low')
 
     // Assert: the same picture element plays the lower rendition, so the pipeline was kept
     await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(106)
@@ -340,36 +329,6 @@ test('a viewer switches a member camera between renditions on the same picture',
     // Assert: the tile is taller than 90 px and delivery keeps up, so Auto steps back up after its calm spell
     await expect.poll(async () => videoWidth(video), { timeout: 45_000 }).toBe(160)
     await expect(video).toHaveAttribute('data-before-switch', 'true')
-  } finally {
-    await alice.context.close()
-    await bob.context.close()
-  }
-})
-
-test('a viewer moves to a remaining rendition when the member removes the one it plays', async ({ browser }) => {
-  // Arrange: alice publishes a 160x90 and a 106x60 rendition; bob plays the first
-  const params = { e2eVideoCodec: 'avc1.42001F', e2eVideoLowHeight: '60' }
-  const alice = await arrangeMeetingClient(browser, { params })
-  const bob = await arrangeMeetingClient(browser, { params })
-
-  try {
-    const roomName = `e2e-remove-track-${Date.now()}`
-    await joinRoom(alice.page, roomName, 'alice', 'a')
-    await enableMedia(alice.page)
-    await joinRoom(bob.page, roomName, 'bob', 'a')
-    await expectCatalogSubscribed(bob.page.page, 'alice')
-    await subscribeMedia(bob.page.page, 'alice')
-    const video = getMemberVideo(bob.page.page, 'alice')
-    await expectVideoPlaying(video)
-    await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(160)
-
-    // Act
-    await removeCatalogTrack(alice.page.page, 'camera_e2e_e2e')
-
-    // Assert
-    await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(106)
-    await expectTrackStatus(bob.page.page, 'video', 'alice', 'Subscribed')
-    await expectInterFramesDecoded(video)
   } finally {
     await alice.context.close()
     await bob.context.close()
@@ -642,74 +601,6 @@ test('multiple clients on a single relay all connect and receive video+audio', a
   }
 })
 
-test('a subscriber keeps hearing a member who changes an audio setting while another subscriber joins', async ({
-  browser
-}) => {
-  // Arrange
-  const alice = await arrangeMeetingClient(browser)
-  const bob = await arrangeMeetingClient(browser)
-  const carol = await arrangeMeetingClient(browser)
-
-  try {
-    const roomName = `e2e-audio-continuity-${Date.now()}`
-    await joinRoom(alice.page, roomName, 'alice', 'a')
-    await enableMedia(alice.page)
-    await joinRoom(bob.page, roomName, 'bob', 'a')
-    await expectCatalogSubscribed(bob.page.page, 'alice')
-    await subscribeAndExpectMedia(bob.page.page, 'alice')
-    const bobStats = getMemberStats(bob.page.page, 'alice')
-
-    // Act: alice changes the audio group interval from its 1 s default
-    await setAudioGroupInterval(alice.page.page, 2)
-
-    // Assert
-    await expectAudioKeepsPlaying(bobStats)
-
-    // Act
-    await joinRoom(carol.page, roomName, 'carol', 'b')
-    await expectCatalogSubscribed(carol.page.page, 'alice')
-    await subscribeAndExpectMedia(carol.page.page, 'alice')
-
-    // Assert
-    await expectAudioKeepsPlaying(bobStats)
-  } finally {
-    await alice.context.close()
-    await bob.context.close()
-    await carol.context.close()
-  }
-})
-
-test('a subscriber who joins after a member switches audio to a single stream hears that member', async ({
-  browser
-}) => {
-  // Arrange: bob's subscription keeps alice encoding, so carol joins in the middle of alice's single audio group
-  const alice = await arrangeMeetingClient(browser)
-  const bob = await arrangeMeetingClient(browser)
-  const carol = await arrangeMeetingClient(browser)
-
-  try {
-    const roomName = `e2e-audio-single-stream-${Date.now()}`
-    await joinRoom(alice.page, roomName, 'alice', 'a')
-    await enableMedia(alice.page)
-    await joinRoom(bob.page, roomName, 'bob', 'a')
-    await expectCatalogSubscribed(bob.page.page, 'alice')
-    await subscribeAndExpectMedia(bob.page.page, 'alice')
-    await setAudioSingleStream(alice.page.page)
-
-    // Act
-    await joinRoom(carol.page, roomName, 'carol', 'b')
-    await expectCatalogSubscribed(carol.page.page, 'alice')
-    await subscribeMedia(carol.page.page, 'alice')
-
-    // Assert
-    await expectAudioPlaying(getMemberStats(carol.page.page, 'alice'))
-  } finally {
-    await alice.context.close()
-    await bob.context.close()
-    await carol.context.close()
-  }
-})
-
 test('chat message sent by one client is displayed on the receiving client', async ({ browser }) => {
   // Arrange: relay-a に alice と bob を参加させる。
   const alice = await arrangeMeetingClient(browser)
@@ -763,57 +654,5 @@ test('an invalid token is rejected by the relay with a surfaced reason', async (
     await expect(client.page.roomName).toHaveCount(0)
   } finally {
     await client.context.close()
-  }
-})
-
-// Tentative bounds from one local run with two native relays on one machine; tighten once CI runs show the spread.
-// Closing a browser send stream does not await the FIN's ACK. Through a remote relay the audio EndOfGroup and
-// close took p50 57 / max 261 ms before the fix, p50 0.2 / max 2.1 ms after. Over loopback a regression adds
-// only the relay's round trip (0.4-8 ms, measured with the fix reverted), so on Linux the runner delays
-// every relay reply by 60 ms (`relayReplyDelayMs` in tests/browser-e2e/run-meeting-e2e.mjs).
-const MAX_AUDIO_END_OF_GROUP_MS = 50
-// A stream whose header has not arrived does not hold back later streams. So the audio group that opens every
-// second and the video frames keep their pace: 20 ms audio chunks, 15 fps video.
-const MAX_AUDIO_ARRIVAL_GAP_MS = 250
-const MAX_VIDEO_ARRIVAL_GAP_MS = 500
-// Longer than `ARRIVAL_GAP_WINDOW_MS`, so the subscription start has dropped out of the window.
-const TALK_MS = 12_000
-
-test('rotating the audio group neither stalls the sender nor gaps the receiver', async ({ browser }) => {
-  // Arrange: alice publishes on relay-a; bob plays her on relay-b.
-  const alice = await arrangeMeetingClient(browser)
-  const bob = await arrangeMeetingClient(browser)
-
-  try {
-    const roomName = `e2e-audio-group-${Date.now()}`
-    await joinRoom(alice.page, roomName, 'alice', 'a')
-    await enableMedia(alice.page)
-    await joinRoom(bob.page, roomName, 'bob', 'b')
-    await enableMedia(bob.page)
-    await expectCatalogSubscribed(bob.page.page, 'alice')
-    await subscribeAndExpectMedia(bob.page.page, 'alice')
-
-    // Act: talk long enough for a dozen audio groups to close.
-    await bob.page.page.waitForTimeout(TALK_MS)
-
-    // Assert: sending the EndOfGroup and closing its stream never waited on the relay.
-    const endOfGroupMs = await alice.page.page.evaluate(
-      () =>
-        (globalThis as unknown as { audioEndOfGroupTiming: { durationsMs: number[] } }).audioEndOfGroupTiming
-          .durationsMs
-    )
-    const stats = await getMemberStats(bob.page.page, 'alice').textContent()
-    console.log(JSON.stringify({ endOfGroupMs: endOfGroupMs.map((ms) => Math.round(ms * 10) / 10), stats }))
-    expect(endOfGroupMs.length).toBeGreaterThanOrEqual(8)
-    expect(Math.max(...endOfGroupMs)).toBeLessThan(MAX_AUDIO_END_OF_GROUP_MS)
-
-    // Assert: bob's audio and video arrivals never paused across the group boundaries.
-    const gaps = /arrival gap A (\d+) \/ V (\d+) ms/.exec(stats ?? '')
-    expect(gaps).not.toBeNull()
-    expect(Number(gaps![1])).toBeLessThan(MAX_AUDIO_ARRIVAL_GAP_MS)
-    expect(Number(gaps![2])).toBeLessThan(MAX_VIDEO_ARRIVAL_GAP_MS)
-  } finally {
-    await alice.context.close()
-    await bob.context.close()
   }
 })

@@ -1,18 +1,14 @@
 import { parse_msf_catalog_json } from '../../../../pkg/moqt'
-import { buildMsfCatalogJson, resolveInitData, type MsfTrack } from '../../../../lib/msf/catalog'
+import type { Rendition } from '@publish/publish'
+import { resolveInitData, type MsfTrack } from '../../../../lib/msf/catalog'
 import {
-  DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
-  type AudioStreamUpdateMode,
   type MeetingCatalogTrack,
   type CatalogTrackRole,
-  type CatalogSubscribeRole,
-  type EditableMeetingCatalogTrack
+  type CatalogSubscribeRole
 } from '../types/catalog'
-import type { VideoEncodingSettings } from '../types/videoEncoding'
-import type { AudioEncodingSettings } from '../types/audioEncoding'
-import { parseAudioChannelCount } from '../../../../utils/media/audioChannelConfig'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 
 type E2ECameraSettings = {
   width: number
@@ -69,195 +65,47 @@ function resolveE2ECameraSettings(): E2ECameraSettings | null {
   return { width, height, framerate, bitrate, codec, lowHeight }
 }
 
-const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
+const CHAT_TRACK_NAME = 'chat'
+
+export const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
 export const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
 
-const DEFAULT_CAMERA_PROFILES = [
-  { id: 'base', label: 'Base', codec: 'avc1.42001F', maxEncodePixels: 1280 * 720 },
-  { id: 'main', label: 'Main', codec: 'avc1.4D4028', maxEncodePixels: Number.POSITIVE_INFINITY },
-  { id: 'high', label: 'High', codec: 'avc1.640028', maxEncodePixels: Number.POSITIVE_INFINITY }
-] as const
-const CAMERA_PROFILES = E2E_CAMERA_SETTINGS?.codec
-  ? [
-      {
-        id: 'e2e',
-        label: 'E2E',
-        codec: E2E_CAMERA_SETTINGS.codec,
-        maxEncodePixels: Number.POSITIVE_INFINITY
-      }
+export const INITIAL_CAMERA_ENCODING_SETTINGS: VideoEncodingSettings = E2E_CAMERA_SETTINGS
+  ? {
+      ...DEFAULT_VIDEO_ENCODING_SETTINGS,
+      width: E2E_CAMERA_SETTINGS.width,
+      height: E2E_CAMERA_SETTINGS.height,
+      framerate: E2E_CAMERA_SETTINGS.framerate,
+      bitrate: E2E_CAMERA_SETTINGS.bitrate,
+      ...(E2E_CAMERA_SETTINGS.codec ? { codec: E2E_CAMERA_SETTINGS.codec } : {})
+    }
+  : DEFAULT_VIDEO_ENCODING_SETTINGS
+
+/// The camera's lower renditions. An E2E run gets one rendition
+/// `e2eVideoLowHeight` high at half the bitrate, and none without that parameter.
+export const CAMERA_RENDITIONS: Rendition[] = E2E_CAMERA_SETTINGS
+  ? E2E_CAMERA_SETTINGS.lowHeight
+    ? [
+        {
+          name: 'low',
+          label: 'Low',
+          width:
+            Math.round((E2E_CAMERA_SETTINGS.width * E2E_CAMERA_SETTINGS.lowHeight) / E2E_CAMERA_SETTINGS.height / 2) *
+            2,
+          height: E2E_CAMERA_SETTINGS.lowHeight,
+          bitrate: E2E_CAMERA_SETTINGS.bitrate / 2
+        }
+      ]
+    : []
+  : [
+      { name: '720p', label: '720p', width: 1280, height: 720, bitrate: 500_000 },
+      { name: '480p', label: '480p', width: 854, height: 480, bitrate: 200_000 }
     ]
-  : DEFAULT_CAMERA_PROFILES
 
-const DEFAULT_CAMERA_RESOLUTIONS = [
-  { id: '1080p', label: '1080p', width: 1920, height: 1080, bitrate: 1_000_000 },
-  { id: '720p', label: '720p', width: 1280, height: 720, bitrate: 500_000 },
-  { id: '480p', label: '480p', width: 854, height: 480, bitrate: 200_000 }
-] as const
-const CAMERA_RESOLUTIONS = E2E_CAMERA_SETTINGS
-  ? [
-      {
-        id: 'e2e',
-        label: 'E2E',
-        width: E2E_CAMERA_SETTINGS.width,
-        height: E2E_CAMERA_SETTINGS.height,
-        bitrate: E2E_CAMERA_SETTINGS.bitrate
-      },
-      ...(E2E_CAMERA_SETTINGS.lowHeight
-        ? [
-            {
-              id: 'e2e_low',
-              label: 'E2E low',
-              width:
-                Math.round(
-                  (E2E_CAMERA_SETTINGS.width * E2E_CAMERA_SETTINGS.lowHeight) / E2E_CAMERA_SETTINGS.height / 2
-                ) * 2,
-              height: E2E_CAMERA_SETTINGS.lowHeight,
-              bitrate: E2E_CAMERA_SETTINGS.bitrate / 2
-            }
-          ]
-        : [])
-    ]
-  : DEFAULT_CAMERA_RESOLUTIONS
-const CAMERA_FRAMERATE = E2E_CAMERA_SETTINGS?.framerate ?? 30
-
-const CAMERA_CATALOG_TRACKS: MeetingCatalogTrack[] = CAMERA_PROFILES.flatMap((profile) =>
-  CAMERA_RESOLUTIONS.filter((resolution) => resolution.width * resolution.height <= profile.maxEncodePixels).map(
-    (resolution) => ({
-      name: `camera_${profile.id}_${resolution.id}`,
-      label: `Camera ${profile.label} ${resolution.label}`,
-      role: 'video' as const,
-      codec: profile.codec,
-      width: resolution.width,
-      height: resolution.height,
-      bitrate: resolution.bitrate,
-      framerate: CAMERA_FRAMERATE,
-      hardwareAcceleration: 'prefer-software',
-      keyframeInterval: CAMERA_KEYFRAME_INTERVAL,
-      isLive: true
-    })
-  )
-)
-
-const SCREENSHARE_CATALOG_TRACKS: MeetingCatalogTrack[] = [
-  {
-    name: 'screenshare_1080p',
-    label: 'Screen 1080p',
-    role: 'video',
-    codec: 'av01.0.08M.08',
-    width: 1920,
-    height: 1080,
-    bitrate: 2_000_000,
-    framerate: 30,
-    hardwareAcceleration: 'prefer-software',
-    isLive: true
-  },
-  {
-    name: 'screenshare_720p',
-    label: 'Screen 720p',
-    role: 'video',
-    codec: 'av01.0.08M.08',
-    width: 1280,
-    height: 720,
-    bitrate: 1_200_000,
-    framerate: 30,
-    hardwareAcceleration: 'prefer-software',
-    isLive: true
-  },
-  {
-    name: 'screenshare_480p',
-    label: 'Screen 480p',
-    role: 'video',
-    codec: 'av01.0.08M.08',
-    width: 854,
-    height: 480,
-    bitrate: 700_000,
-    framerate: 30,
-    hardwareAcceleration: 'prefer-software',
-    isLive: true
-  }
+export const SCREEN_SHARE_RENDITIONS: Rendition[] = [
+  { name: '720p', label: 'Screen 720p', width: 1280, height: 720, bitrate: 1_200_000 },
+  { name: '480p', label: 'Screen 480p', width: 854, height: 480, bitrate: 700_000 }
 ]
-
-const AUDIO_CATALOG_TRACKS: MeetingCatalogTrack[] = [
-  {
-    name: 'audio_128kbps',
-    label: 'Audio 128kbps',
-    role: 'audio',
-    codec: 'opus',
-    bitrate: 128_000,
-    samplerate: 48_000,
-    channelConfig: 'mono',
-    isLive: true
-  },
-  {
-    name: 'audio_64kbps',
-    label: 'Audio 64kbps',
-    role: 'audio',
-    codec: 'opus',
-    bitrate: 64_000,
-    samplerate: 48_000,
-    channelConfig: 'mono',
-    isLive: true
-  },
-  {
-    name: 'audio_32kbps',
-    label: 'Audio 32kbps',
-    role: 'audio',
-    codec: 'opus',
-    bitrate: 32_000,
-    samplerate: 48_000,
-    channelConfig: 'mono',
-    isLive: true
-  }
-]
-
-const CHAT_TRACK_NAME = 'chat'
-const CHAT_TRACK_LABEL = 'Chat'
-const CHAT_EVENT_TYPE = 'com.skyway.chat.v1'
-
-export function getCameraCatalogTracks(): MeetingCatalogTrack[] {
-  return CAMERA_CATALOG_TRACKS.map((track) => ({ ...track }))
-}
-
-export function getScreenShareCatalogTracks(): MeetingCatalogTrack[] {
-  return SCREENSHARE_CATALOG_TRACKS.map((track) => ({ ...track }))
-}
-
-export function getAudioCatalogTracks(): MeetingCatalogTrack[] {
-  return AUDIO_CATALOG_TRACKS.map((track) => ({ ...track }))
-}
-
-export function buildMeetingCatalogJson(trackNamespace: string[], tracks: MeetingCatalogTrack[]): string {
-  const namespace = trackNamespace.length > 0 ? trackNamespace.join('/') : undefined
-  const catalogTracks: MsfTrack[] = tracks.map((track) => ({
-    namespace,
-    name: track.name,
-    packaging: 'loc',
-    role: track.role,
-    isLive: track.isLive ?? true,
-    label: track.label || track.name,
-    codec: track.codec,
-    bitrate: track.bitrate,
-    width: track.width,
-    height: track.height,
-    framerate: track.framerate,
-    samplerate: track.samplerate,
-    channelConfig: track.channelConfig
-  }))
-  if (!catalogTracks.some((track) => track.name === CHAT_TRACK_NAME)) {
-    catalogTracks.push({
-      namespace,
-      name: CHAT_TRACK_NAME,
-      packaging: 'eventtimeline',
-      role: 'chat',
-      isLive: true,
-      label: CHAT_TRACK_LABEL,
-      mimeType: 'application/json',
-      eventType: CHAT_EVENT_TYPE,
-      depends: tracks.map((track) => track.name)
-    })
-  }
-  return buildMsfCatalogJson(catalogTracks)
-}
 
 export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[] {
   const catalog: { tracks?: MsfTrack[] } = parse_msf_catalog_json(payload)
@@ -285,25 +133,6 @@ export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[
   })
 }
 
-export function trackVideoEncoding(track: MeetingCatalogTrack, fallback: VideoEncodingSettings): VideoEncodingSettings {
-  return {
-    codec: track.codec ?? fallback.codec,
-    width: track.width ?? fallback.width,
-    height: track.height ?? fallback.height,
-    bitrate: track.bitrate ?? fallback.bitrate,
-    framerate: track.framerate ?? fallback.framerate,
-    hardwareAcceleration: track.hardwareAcceleration ?? fallback.hardwareAcceleration
-  }
-}
-
-export function trackAudioEncoding(track: MeetingCatalogTrack, fallback: AudioEncodingSettings): AudioEncodingSettings {
-  return {
-    codec: track.codec ?? fallback.codec,
-    bitrate: track.bitrate ?? fallback.bitrate,
-    channels: parseAudioChannelCount(track.channelConfig) ?? fallback.channels
-  }
-}
-
 export function catalogTracksForRole<T extends MeetingCatalogTrack>(tracks: T[], role: CatalogSubscribeRole): T[] {
   if (role === 'audio' || role === 'chat') {
     return tracks.filter((track) => track.role === role)
@@ -325,105 +154,6 @@ function tracksByBitrate<T extends MeetingCatalogTrack>(tracks: T[]): T[] {
   return tracks.filter((track) => typeof track.bitrate === 'number').sort((a, b) => (a.bitrate ?? 0) - (b.bitrate ?? 0))
 }
 
-export function toEditableCatalogTracks(tracks: MeetingCatalogTrack[]): EditableMeetingCatalogTrack[] {
-  return tracks.map((track) => ({
-    ...track,
-    id: createCatalogTrackId()
-  }))
-}
-
-export function toCatalogTracks(tracks: EditableMeetingCatalogTrack[]): MeetingCatalogTrack[] {
-  return tracks.map((track) => sanitizeTrack(track)).filter((track): track is MeetingCatalogTrack => track !== null)
-}
-
-export function appendCatalogTracks(
-  existingTracks: EditableMeetingCatalogTrack[],
-  tracksToAppend: MeetingCatalogTrack[]
-): EditableMeetingCatalogTrack[] {
-  const existingNames = new Set(
-    existingTracks
-      .map((track) => track.name.trim())
-      .filter((name): name is string => typeof name === 'string' && name.length > 0)
-  )
-  const appended: EditableMeetingCatalogTrack[] = [...existingTracks]
-  let changed = false
-
-  for (const track of tracksToAppend) {
-    const normalizedName = track.name.trim()
-    if (!normalizedName || existingNames.has(normalizedName)) {
-      continue
-    }
-    changed = true
-    existingNames.add(normalizedName)
-    appended.push({
-      ...track,
-      name: normalizedName,
-      label: track.label.trim() || normalizedName,
-      id: createCatalogTrackId()
-    })
-  }
-
-  return changed ? appended : existingTracks
-}
-
-export function removeCatalogTracksByNames(
-  tracks: EditableMeetingCatalogTrack[],
-  trackNames: string[]
-): EditableMeetingCatalogTrack[] {
-  const names = new Set(
-    trackNames.map((name) => name.trim()).filter((name): name is string => typeof name === 'string' && name.length > 0)
-  )
-  if (!names.size) {
-    return tracks
-  }
-  let changed = false
-  const next = tracks.filter((track) => {
-    const shouldRemove = names.has(track.name.trim())
-    if (shouldRemove) {
-      changed = true
-    }
-    return !shouldRemove
-  })
-  return changed ? next : tracks
-}
-
-export function createCatalogTrackId(): string {
-  return `catalog-track-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
-}
-
-function sanitizeTrack(track: EditableMeetingCatalogTrack): MeetingCatalogTrack | null {
-  const name = track.name.trim()
-  if (!name) {
-    return null
-  }
-  const label = track.label.trim() || name
-  return {
-    name,
-    label,
-    role: track.role,
-    codec: track.codec?.trim() || undefined,
-    bitrate: toPositiveNumber(track.bitrate),
-    width: track.role === 'video' ? toPositiveNumber(track.width) : undefined,
-    height: track.role === 'video' ? toPositiveNumber(track.height) : undefined,
-    framerate: track.role === 'video' ? toPositiveNumber(track.framerate) : undefined,
-    hardwareAcceleration: track.role === 'video' ? asHardwareAcceleration(track.hardwareAcceleration) : undefined,
-    keyframeInterval:
-      track.role === 'video'
-        ? (toPositiveNumber(track.keyframeInterval) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL)
-        : undefined,
-    samplerate: track.role === 'audio' ? toPositiveNumber(track.samplerate) : undefined,
-    channelConfig: track.role === 'audio' ? track.channelConfig?.trim() || undefined : undefined,
-    audioStreamUpdateMode:
-      track.role === 'audio' ? normalizeAudioStreamUpdateMode(track.audioStreamUpdateMode) : undefined,
-    audioStreamUpdateIntervalSeconds:
-      track.role === 'audio'
-        ? (toPositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
-          DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds)
-        : undefined,
-    isLive: track.isLive ?? true
-  }
-}
-
 function resolveRole({ role, name }: MsfTrack): CatalogTrackRole | null {
   if (role === 'chat' || name === CHAT_TRACK_NAME) {
     return 'chat'
@@ -438,22 +168,4 @@ function resolveRole({ role, name }: MsfTrack): CatalogTrackRole | null {
     return 'audio'
   }
   return null
-}
-
-function asHardwareAcceleration(value: unknown): HardwareAcceleration | undefined {
-  if (value === 'prefer-hardware' || value === 'prefer-software' || value === 'no-preference') {
-    return value
-  }
-  return undefined
-}
-
-function toPositiveNumber(value: number | undefined): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return undefined
-  }
-  return Math.floor(value)
-}
-
-function normalizeAudioStreamUpdateMode(value: AudioStreamUpdateMode | undefined): AudioStreamUpdateMode {
-  return value === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
 }

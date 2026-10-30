@@ -20,7 +20,7 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 | --- | --- | --- |
 | 接続 | `new MoqtClientWrapper()`、`connect(url, { authToken })`。`sendClientSetup` が露出している | `connect(url, options)` が `Session` を返す |
 | namespace の再生 | `new LivePlayer({ client, container })`、`start(namespace, authInfo)` | 同じ形で、`Session` の上で動く |
-| メディアの配信 | `lib` には無い。meeting が `mediaPublisher.ts`（約1100行）、`meetingCatalog.ts`、`utils/media/*` の encoder と LOC、`serveSubscribes.ts` を組み合わせている | `publish(session, namespace, mediaStream)` |
+| メディアの配信 | `lib/publish` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
 | track 単位の PubSub | request id と track alias をキーにした callback、`sendSubgroupHeader` / `sendSubgroupObject`、JS が振る request id | `Subscription` / `TrackWriter` の handle と async iteration |
 | パッケージ | wasm は `examples/browser/pkg` にビルド。vite alias の `@moqt`、`@player`。worker は TS ソースから `new URL(..., import.meta.url)` で読む | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
 

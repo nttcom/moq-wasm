@@ -12,7 +12,6 @@ import {
   PhoneOff,
   Settings2,
   Shapes,
-  SlidersHorizontal,
   User,
   Video,
   VideoOff
@@ -38,7 +37,6 @@ interface ControlBarProps {
   onSelectVideoDevice: (deviceId: string) => void
   onSelectAudioDevice: (deviceId: string) => void
   onOpenDevices: () => void
-  onOpenCatalog: () => void
   onOpenStats: () => void
   view: StageView
   onToggleView: () => void
@@ -54,9 +52,6 @@ export function ControlBar(props: ControlBarProps) {
   return (
     <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-slate-950/90 px-4 py-3">
       <div className="flex items-center gap-2">
-        <BarButton label="Catalog" onClick={props.onOpenCatalog}>
-          <SlidersHorizontal className="h-5 w-5" />
-        </BarButton>
         <BarButton label="Show stats" onClick={props.onOpenStats}>
           <BarChart3 className="h-5 w-5" />
         </BarButton>
