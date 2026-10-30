@@ -71,12 +71,18 @@ export class LocLive {
     this.picture = createLivePictureSink(video, canvas, (picture) => callbacks.onPresented(picture), livePicture)
     this.playout = new LivePlayout(
       (frame) => this.show(frame),
-      (origin) =>
+      (origin) => {
         this.videoWorker.postMessage({
           type: 'timeline',
           captureMicros: origin?.captureMicros,
           dueAtUnixMs: origin && performance.timeOrigin + origin.atMs
         })
+        this.audioWorker.postMessage({
+          type: 'timeline',
+          captureMicros: origin?.captureMicros,
+          handOverAtUnixMs: origin && performance.timeOrigin + origin.atMs - this.playout.outputLatencyMs()
+        })
+      }
     )
     this.applyDecoderConfig()
     this.videoWorker.onmessage = (event) => {

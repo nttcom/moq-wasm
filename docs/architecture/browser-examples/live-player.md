@@ -500,7 +500,12 @@ from, in the live and the review decoder alike. The relay delivers each group
 on its own stream, and when the tail of one audio group and the head of the
 next are in flight together the streams interleave and the head lands first;
 the audio worker holds the objects of a later group until the group before
-them has ended, for at most 100 ms, so the decoder sees them in order. The
+them has ended, so the decoder sees them in order. It waits for the tail as
+long as the playout buffer allows: the page sends it the playout clock, and the
+later group is released only 50 ms before its head has to reach the audio
+output, or 100 ms after it arrived while the clock is not anchored. A tail
+that arrives after that is older than the sound already scheduled and is
+dropped. The
 video worker instead moves on with the keyframe of the newer group as soon as
 it arrives and drops what is left of the older group: those frames predict
 from references the keyframe has replaced, and decoding them would smear the
