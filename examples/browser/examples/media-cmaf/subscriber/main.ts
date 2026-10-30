@@ -1,4 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqtClientWrapper } from '../../../lib/moqt/moqtClient'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../../media/catalogPicker'
 import { setUpVisualizerToggle } from '../../media/visualizerToggle'

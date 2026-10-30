@@ -1,6 +1,6 @@
-import { parse_msf_catalog_json } from '../../../../pkg/moqt'
-import type { Rendition } from '@publish/publish'
-import { resolveInitData, type MsfTrack } from '../../../../lib/msf/catalog'
+import { parse_msf_catalog_json } from 'moq-wasm/internal/wasm'
+import type { Rendition } from 'moq-wasm/media/publish'
+import { resolveInitData, type MsfTrack } from 'moq-wasm/media/catalog'
 import {
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
   type MeetingCatalogTrack,

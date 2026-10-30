@@ -1,4 +1,4 @@
-import type { MoqtClientWrapper } from '@moqt/moqtClient'
+import type { MoqtClientWrapper } from '../lib/moqt/moqtClient'
 
 const STATUS_TRACK = 'status'
 const AUTH_INFO = ''

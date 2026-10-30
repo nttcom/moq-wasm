@@ -1,10 +1,10 @@
-import { MoqSession } from '@moqt/session'
-import type { LivePictureKind } from '@player/livePictureSink'
-import { PlayerControls } from '@player/ui/playerControls'
+import { MoqSession } from 'moq-wasm'
+import type { LivePictureKind } from 'moq-wasm/media/player/livePictureSink'
+import { PlayerControls } from 'moq-wasm/media/controls/playerControls'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
-import { LivePlayer, type LivePlayerState } from '@player/livePlayer'
-import { formatLiveStats } from '@player/locLive'
+import { LivePlayer, type LivePlayerState } from 'moq-wasm/media/player/livePlayer'
+import { formatLiveStats } from 'moq-wasm/media/player/locLive'
 import { PublishPreview } from './publishPreview'
 import {
   DEFAULT_WINDOW_SECONDS,
@@ -17,7 +17,7 @@ import {
   summarizeStreams
 } from './streamMonitor'
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
-import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
+import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
 
 /// Each draw rebuilds every stream monitor's SVG through innerHTML, too costly
 /// to run on every frame.

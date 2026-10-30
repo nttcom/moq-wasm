@@ -1,4 +1,4 @@
-import { MoqtClientWrapper, type SubgroupSender } from '@moqt/moqtClient'
+import { MoqtClientWrapper, type SubgroupSender } from '../../../../lib/moqt/moqtClient'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)

@@ -1,8 +1,8 @@
-import { MoqSession } from '@moqt/session'
-import type { TrackWriter } from '../../pkg/moqt'
-import { LivePlayer } from '@player/livePlayer'
-import { formatLiveStats } from '@player/locLive'
-import { PlayerControls } from '@player/ui/playerControls'
+import { MoqSession } from 'moq-wasm'
+import type { TrackWriter } from 'moq-wasm/internal/wasm'
+import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
+import { formatLiveStats } from 'moq-wasm/media/player/locLive'
+import { PlayerControls } from 'moq-wasm/media/controls/playerControls'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { element, parseTrackNamespace } from '../../utils/page'
 

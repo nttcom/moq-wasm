@@ -1,4 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { pageRoomId } from '../../utils/botRoom'
 import { SingleObjectGroupPublisher, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'

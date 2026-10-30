@@ -1,4 +1,4 @@
-import type { SubgroupObjectMessage } from '../../pkg/moqt'
+import type { SubgroupObjectMessage } from 'moq-wasm/internal/wasm'
 
 export type SubgroupObjectMessageWithLoc = SubgroupObjectMessage & { locHeader?: any }
 export type SubgroupObjectHandler = (groupId: bigint, message: SubgroupObjectMessageWithLoc) => void

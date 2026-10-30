@@ -1,3 +1,4 @@
+import { RequestError, RequestErrorCode } from 'moq-wasm'
 import type {
   FetchMessage,
   FetchObjectMessage,
@@ -18,10 +19,10 @@ import type {
   SubgroupState,
   SubscribeMessage,
   SubscribeOkMessage
-} from '../../pkg/moqt'
+} from 'moq-wasm/internal/wasm'
 import { SubscriptionStateManager, type SubgroupObjectHandler } from './subscriptionStateManager'
 import { SubgroupWriter } from './subgroupWriter'
-import { loadMoqt } from './loadMoqt'
+import { loadMoqt } from 'moq-wasm'
 
 type PendingResponse<T> = { resolve: (response: T) => void; reject: (error: Error) => void }
 type PendingResponses<T> = Map<bigint, PendingResponse<T>>
@@ -75,28 +76,11 @@ export type GroupOrder = (typeof GroupOrder)[keyof typeof GroupOrder]
 export const FilterType = { NextGroupStart: 0x1, LargestObject: 0x2, AbsoluteStart: 0x3, AbsoluteRange: 0x4 } as const
 export type FilterType = (typeof FilterType)[keyof typeof FilterType]
 
-export const RequestErrorCode = {
-  InternalError: 0x0n,
-  Timeout: 0x2n,
-  NotSupported: 0x3n,
-  TrackDoesNotExist: 0x4n,
-  InvalidRange: 0x5n,
-  NoObjects: 0x6n,
-  UnknownStatusInRange: 0x8n
-} as const
-
 const PUBLISH_DONE_TRACK_ENDED = 0x2n
 /// The Stream Count a publisher that does not count its streams must send (draft-14 §9.12).
 const UNKNOWN_STREAM_COUNT = 2n ** 62n - 1n
 
-export class RequestError extends Error {
-  readonly errorCode: bigint
-
-  constructor(messageType: string, response: Pick<RequestErrorMessage, 'errorCode' | 'reasonPhrase'>) {
-    super(`${messageType} ${response.errorCode}: ${response.reasonPhrase}`)
-    this.errorCode = response.errorCode
-  }
-}
+export { RequestError, RequestErrorCode }
 
 export interface SubscribeOptions {
   /**

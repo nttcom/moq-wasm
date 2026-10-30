@@ -1,0 +1,30 @@
+{
+  "name": "moq-wasm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Media over QUIC Transport in the browser: sessions, publishing and playback",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/core/index.ts",
+      "default": "./src/core/index.ts"
+    },
+    "./media": {
+      "source": "./src/media/index.ts",
+      "default": "./src/media/index.ts"
+    },
+    "./media/player.css": "./src/media/player/livePlayer.css",
+    "./media/controls.css": "./src/media/controls/playerControls.css",
+    "./media/*": {
+      "source": "./src/media/*.ts",
+      "default": "./src/media/*.ts"
+    },
+    "./internal/wasm": "./pkg/moqt.js"
+  },
+  "scripts": {
+    "wasm": "wasm-pack build ../ --target web --out-name moqt --out-dir=js/pkg",
+    "wasm:dev": "wasm-pack build --dev ../ --target web --out-name moqt --out-dir=js/pkg",
+    "lint": "tsc --noEmit",
+    "test": "playwright test --config playwright.unit.config.ts"
+  }
+}

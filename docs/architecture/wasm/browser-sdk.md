@@ -20,9 +20,9 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 | --- | --- | --- |
 | 接続 | `new MoqtClientWrapper()`、`connect(url, { authToken })`。`sendClientSetup` が露出している | `connect(url, options)` が `Session` を返す |
 | namespace の再生 | `new LivePlayer({ client, container })`、`start(namespace, authInfo)` | 同じ形で、`Session` の上で動く |
-| メディアの配信 | `lib/publish` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
+| メディアの配信 | `moq-wasm/media` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
 | track 単位の PubSub | request id と track alias をキーにした callback、`sendSubgroupHeader` / `sendSubgroupObject`、JS が振る request id | `Subscription` / `TrackWriter` の handle と async iteration |
-| パッケージ | wasm は `examples/browser/pkg` にビルド。vite alias の `@moqt`、`@player`。worker は TS ソースから `new URL(..., import.meta.url)` で読む | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
+| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読み、`MOQTClient` は `moq-wasm/internal/wasm` から読む。ビルド済みの成果物はまだ無い | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
 
 ## 目標の利用コード
 
@@ -203,7 +203,7 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    catalog から抜けて戻る必要がある。今の `Broadcast` は track を足すことしかできない。
    追加するのは `Broadcast::remove_track`（catalog の更新と PUBLISH_DONE）だけ。
 5. **Audio Level。** meeting の話者検出は、LOC の Audio Level property
-   （draft-ietf-moq-loc-04）を読む。JS が、今の `utils/media/audioLevel.ts` と同じく
+   （draft-ietf-moq-loc-04）を読む。JS が、今の `media/internal/audioLevel.ts` と同じく
    capture したサンプルからレベルを計算し、
    `pushAudio` に渡す。`broadcast` はそれをその object の property として書く。
 6. **映像 codec の追加（VP8、VP9、AV1）。** `TrackPublisher` は今
@@ -239,7 +239,7 @@ Safari は WebTransport と WebCodecs を持つが、Chrome と違う点がい�
   止めるときは worker が clone を止めて閉じる（`terminate` では clone が残る）。
 - **音声の capture。** worker の `MediaStreamTrackProcessor` は映像の track しか読めない。
   page に無いときは AudioWorklet で PCM を 10 ms ずつ取り、`MessageChannel` で encoder の
-  worker に送って `AudioData` にする（`utils/media/encoders/pcmCapture.ts`）。10 ms は、
+  worker に送って `AudioData` にする（`media/internal/encoders/pcmCapture.ts`）。10 ms は、
   encoder の出力を入力の capture 時刻と突き合わせる `CaptureTimestamps` の間隔に合わせた。
 - **encoder の設定。** Safari は H.264 の Annex-B 出力と Opus の encode を持つので、avcC
   から Annex-B への変換と AAC への切り替えは要らない。

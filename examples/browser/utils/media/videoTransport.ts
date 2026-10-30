@@ -1,8 +1,8 @@
-import type { SubgroupSender } from '@moqt/moqtClient'
+import type { SubgroupSender } from '../../lib/moqt/moqtClient'
 import { MediaTransportState } from './transportState'
-import { buildLocHeader, type LocHeader } from './loc'
-import { monotonicUnixMicros } from './clock'
-import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
+import { buildLocHeader, type LocHeader } from 'moq-wasm/media/internal/loc'
+import { monotonicUnixMicros } from 'moq-wasm/media/internal/clock'
+import { OBJECT_STATUS_END_OF_GROUP } from 'moq-wasm/media/internal/objectStatus'
 
 export type VideoChunkSender = (
   trackAlias: bigint,

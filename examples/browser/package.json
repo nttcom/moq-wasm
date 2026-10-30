@@ -4,8 +4,8 @@
   "description": "moq-wasm client",
   "main": "index.js",
   "scripts": {
-    "wasm": "wasm-pack build ../../crates/wasm --target web --out-name moqt --out-dir=../../examples/browser/pkg",
-    "wasm:dev": "wasm-pack build --dev ../../crates/wasm --target web --out-name moqt --out-dir=../../examples/browser/pkg",
+    "wasm": "wasm-pack build ../../crates/wasm --target web --out-name moqt --out-dir=js/pkg",
+    "wasm:dev": "wasm-pack build --dev ../../crates/wasm --target web --out-name moqt --out-dir=js/pkg",
     "dev": "npm run wasm:dev && vite",
     "build": "npm run wasm && vite build",
     "prod": "npm run wasm && vite --host",
@@ -49,7 +49,8 @@
     "mediabunny": "^1.35.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "tailwind-merge": "^3.3.1"
+    "tailwind-merge": "^3.3.1",
+    "moq-wasm": "*"
   },
   "overrides": {
     "postcss": "^8.5.10",

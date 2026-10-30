@@ -4,10 +4,12 @@ WebAssembly bindings that expose `moqt` to the browser over WebTransport.
 `MOQTClient` runs `moqt::Endpoint::<BROWSER>` (the session stack of
 `crates/moqt` on the browser's WebTransport API) and maps its requests,
 responses and objects onto the JavaScript callback API in `src/client.rs`.
-`examples/browser` consumes the generated package from `examples/browser/pkg`.
+The `moq-wasm` npm package in `js/` wraps the generated glue (`js/pkg`) in
+`MoqSession`, `publish()` and `LivePlayer`; `examples/browser` depends on it
+as an npm workspace.
 
 ```shell
-npm --prefix examples/browser run wasm       # wasm-pack build --target web
+npm --prefix crates/wasm/js run wasm         # wasm-pack build --target web
 ```
 
 `make browser` builds it before starting Vite, so this is only needed when

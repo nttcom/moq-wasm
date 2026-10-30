@@ -1,4 +1,4 @@
-import type { CatchUp } from '@player/livePlayout'
+import type { CatchUp } from 'moq-wasm/media/player/livePlayout'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 
 const CATCH_UP_OPTIONS: { value: CatchUp; label: string }[] = [

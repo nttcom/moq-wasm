@@ -43,14 +43,14 @@ L3  page            examples/live-viewer, examples/onvif
                     connection form, MP4 publisher / PTZ, diagnostics
                     (StreamMonitor, delivery grid, PlaybackCharts, stats line), log
                         | public API and callbacks only
-L2  controls        lib/player/ui
+L2  controls        crates/wasm/js/src/media/controls
                     seek bar, skip buttons, play/pause, LIVE, volume, speed,
                     quality menu, fullscreen, pointer idle, buffering spinner
                         | public API and callbacks only
-L1  LivePlayer      lib/player
+L1  LivePlayer      crates/wasm/js/src/media/player
                     catalog, subscriptions, live pipelines, seek timeline, review
                         |
-L0  transport/codec @moqt/moqtClient, utils/media (decoder workers, MseSink)
+L0  transport/codec MoqSession, crates/wasm/js/src/media/internal (decoder workers, MseSink)
 ```
 
 Rules:
@@ -61,7 +61,7 @@ Rules:
   writes status text; overlays the page puts in the same container stay on
   top of the pictures.
 - L1 does not connect. `start` is given a connected `MoqSession`
-  (`lib/moqt/session.ts`), so a page can share one session with a publisher
+  (`crates/wasm/js/src/core/session.ts`), so a page can share one session with a publisher
   or with other players, and the page closes it.
 - Relay switchover and reconnecting are the session's, not the player's. The
   wasm `Session`'s `moqt::Session` follows GOAWAY and reconnects itself (see
@@ -81,7 +81,7 @@ Rules:
   appends its markup and `playerControls.css` to the same container, after the
   pictures and the page's own overlays. The arrow keys skip wherever the focus
   is, so a page holds one `PlayerControls`.
-- L1 reads the MSF catalog through `lib/msf/catalog.ts` and uses
+- L1 reads the MSF catalog through `crates/wasm/js/src/media/catalog.ts` and uses
   `getErrorMessage` from `utils/page.ts`; neither `lib/` nor `utils/` imports
   from `examples/`.
 - Diagnostics stay in L3. L1 reports deliveries to an optional observer

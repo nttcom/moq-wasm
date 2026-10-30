@@ -1,7 +1,7 @@
-import type { MsfTrack } from '../../lib/msf/catalog'
-import { buildMsfCatalogJson } from '../../lib/msf/catalog'
+import type { MsfTrack } from 'moq-wasm/media/catalog'
+import { buildMsfCatalogJson } from 'moq-wasm/media/catalog'
 import { getMediaVideoEncodingOverrides } from './common'
-import { formatAudioChannelConfig } from '../../utils/media/audioChannelConfig'
+import { formatAudioChannelConfig } from 'moq-wasm/media/internal/audioChannelConfig'
 
 export type MediaVideoProfile = {
   trackName: string

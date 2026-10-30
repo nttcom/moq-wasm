@@ -1,7 +1,7 @@
-import { type MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
-import { SubgroupWriter } from '@moqt/subgroupWriter'
-import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
-import { timeSeededGroupId } from '../../utils/media/clock'
+import { type MoqtClientWrapper, RequestErrorCode } from '../../lib/moqt/moqtClient'
+import { SubgroupWriter } from '../../lib/moqt/subgroupWriter'
+import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
+import { timeSeededGroupId } from 'moq-wasm/media/internal/clock'
 
 type MediaPublication = {
   trackNamespace: () => string[]

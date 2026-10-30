@@ -188,7 +188,7 @@ jobs:
               # Shared by every browser example. A path under one example
               # selects only the jobs whose pages load its files.
               case "$path" in
-                examples/browser/lib/*|examples/browser/utils/*|examples/browser/public/*|examples/browser/index.html|examples/browser/package.json|examples/browser/package-lock.json|examples/browser/vite.config.mjs|examples/browser/tsconfig.json|examples/browser/postcss.config.cjs|examples/browser/playwright.config.ts|examples/browser/playwright.helpers.ts)
+                crates/wasm/js/*|examples/browser/lib/*|examples/browser/utils/*|examples/browser/public/*|examples/browser/index.html|package.json|package-lock.json|examples/browser/package.json|examples/browser/vite.config.mjs|examples/browser/tsconfig.json|examples/browser/postcss.config.cjs|examples/browser/playwright.config.ts|examples/browser/playwright.helpers.ts)
                   media=true
                   message=true
                   chat_moderation=true
@@ -290,7 +290,7 @@ jobs:
                   ;;
               esac
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/install-playwright-chromium/*|tests/browser-e2e/run-console-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|examples/browser/package.json|examples/browser/package-lock.json|examples/browser/playwright.console.config.ts|examples/browser/tests/console-e2e*|crates/console/*|crates/app-registry/*|crates/auth-token/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/install-playwright-chromium/*|tests/browser-e2e/run-console-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|package.json|package-lock.json|examples/browser/package.json|examples/browser/playwright.console.config.ts|examples/browser/tests/console-e2e*|crates/console/*|crates/app-registry/*|crates/auth-token/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   console=true
                   ;;
               esac
@@ -386,7 +386,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -460,7 +460,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -537,7 +537,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -596,7 +596,7 @@ jobs:
           node-version: 22.23.4
           cache: npm
           cache-dependency-path: |
-            examples/browser/package-lock.json
+            package-lock.json
             crates/console/web/package-lock.json
 
       - name: Setup Rust toolchain
@@ -650,7 +650,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -729,7 +729,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -808,7 +808,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -878,7 +878,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -951,7 +951,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
