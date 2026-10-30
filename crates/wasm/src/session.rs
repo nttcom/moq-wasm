@@ -322,14 +322,15 @@ pub struct TrackWriter {
 #[wasm_bindgen]
 impl TrackWriter {
     /// `loc_header` is the object's LOC properties (draft-ietf-moq-loc-04).
-    /// Resolves to whether a subscriber took the object; it is cached either
-    /// way. An object within a group that was never started is dropped.
+    /// Resolves to the object's group id when a subscriber took it, and to
+    /// `undefined` otherwise; it is cached either way. An object within a
+    /// group that was never started is dropped.
     pub async fn write(
         &self,
         payload: Vec<u8>,
         new_group: bool,
         loc_header: JsValue,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<Option<u64>, JsValue> {
         let group = if new_group {
             GroupBoundary::Next
         } else {
@@ -346,7 +347,10 @@ impl TrackWriter {
             .write(&self.namespace, &self.track, object)
             .await
             .map_err(anyhow_error)?;
-        Ok(matches!(outcome, WriteOutcome::Sent(_)))
+        Ok(match outcome {
+            WriteOutcome::Sent(placement) => Some(placement.location.group_id),
+            _ => None,
+        })
     }
 
     /// Sends `payload` as a group of its own, the layout of an MSF catalog
