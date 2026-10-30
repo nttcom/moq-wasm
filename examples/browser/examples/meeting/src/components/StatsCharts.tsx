@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { LiveStats } from '@player/locLive'
+import type { LiveStats } from 'moq-wasm/media/player/locLive'
 import type { RemoteVideoSource } from '../media/mediaSubscriber'
 import type { RemoteStatsSample } from '../types/stats'
 

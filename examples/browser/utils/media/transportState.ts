@@ -1,4 +1,4 @@
-import { timeSeededGroupId } from './clock'
+import { timeSeededGroupId } from 'moq-wasm/media/internal/clock'
 
 type SubgroupId = number
 type TrackAlias = bigint | string

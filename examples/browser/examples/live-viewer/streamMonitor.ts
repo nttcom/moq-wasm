@@ -1,4 +1,4 @@
-import type { DeliveryObserver, Playhead, StreamKind } from '@player/deliveryObserver'
+import type { DeliveryObserver, Playhead, StreamKind } from 'moq-wasm/media/player/deliveryObserver'
 
 const DEFAULT_KEPT_GROUPS = 5
 export const DEFAULT_WINDOW_SECONDS = 10

@@ -1,4 +1,4 @@
-import { MoqtClientWrapper, type SubgroupSender } from '@moqt/moqtClient'
+import { MoqtClientWrapper, type SubgroupSender } from '../../../lib/moqt/moqtClient'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'

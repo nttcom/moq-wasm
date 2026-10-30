@@ -45,7 +45,7 @@ Publishers outside the browser: [`crates/live-ingest`](crates/live-ingest/README
 
 ```shell
 nix develop
-npm --prefix examples/browser ci
+npm ci
 ```
 
 ### Single relay

@@ -1,9 +1,9 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SubgroupWriter } from '@moqt/subgroupWriter'
+import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import { SubgroupWriter } from '../../lib/moqt/subgroupWriter'
 import { pageRoomId } from '../../utils/botRoom'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpSystemOneBotPage } from '../../utils/systemOneBot'
-import { timeSeededGroupId } from '../../utils/media/clock'
+import { timeSeededGroupId } from 'moq-wasm/media/internal/clock'
 import { element, setStatus } from '../../utils/page'
 
 const ROOM = pageRoomId()
@@ -188,7 +188,7 @@ function updateQuestionRows(): void {
 }
 
 function startEncoder(stream: MediaStream): void {
-  encoderWorker ??= new Worker(new URL('../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
+  encoderWorker ??= new Worker(new URL('moq-wasm/media/internal/encoders/videoEncoder', import.meta.url), {
     type: 'module'
   })
   encoderWorker.onmessage = (event: MessageEvent<{ type: string; chunk: EncodedVideoChunk }>) => {

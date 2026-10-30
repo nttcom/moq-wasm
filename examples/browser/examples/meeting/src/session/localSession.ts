@@ -4,9 +4,9 @@ import {
   MoqSession,
   type MoqSubscription,
   type ReceivedObject
-} from '@moqt/session'
-import type { TrackWriter } from '../../../../pkg/moqt'
-import { CATALOG_TRACK_NAME } from '../../../../lib/msf/catalog'
+} from 'moq-wasm'
+import type { TrackWriter } from 'moq-wasm/internal/wasm'
+import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'

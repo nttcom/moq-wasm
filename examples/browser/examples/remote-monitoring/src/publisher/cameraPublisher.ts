@@ -54,7 +54,7 @@ export class CameraPublisher {
 
     const track = this.stream.getVideoTracks()[0]
 
-    this.worker = new Worker(new URL('../../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
+    this.worker = new Worker(new URL('moq-wasm/media/internal/encoders/videoEncoder', import.meta.url), {
       type: 'module'
     })
     this.worker.postMessage({ type: 'keyframeInterval', keyframeInterval: KEYFRAME_INTERVAL_FRAMES })

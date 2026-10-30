@@ -28,7 +28,7 @@ import type { VideoAdaptation } from '../media/mediaSubscriber'
 import type { RemoteStatsSample } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 import { type StageView, arrangeStage, tileKey } from '../utils/stageLayout'
-import { type Rung, capLadderToHeight } from '@player/adaptiveBitrate'
+import { type Rung, capLadderToHeight } from 'moq-wasm/media/player/adaptiveBitrate'
 
 interface MeetingRoomProps {
   session: LocalSession

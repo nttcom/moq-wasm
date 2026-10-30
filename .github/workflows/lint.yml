@@ -8,8 +8,9 @@ on:
       - "!docs/**"
       # rustdoc runs the code blocks in the moqt README as doctests
       - "crates/moqt/README.md"
-      # prettier checks the Markdown under examples/browser
+      # prettier checks the Markdown under examples/browser and crates/wasm/js
       - "examples/browser/**.md"
+      - "crates/wasm/js/**.md"
   push:
     branches:
       - master
@@ -20,8 +21,9 @@ on:
       - "!docs/**"
       # rustdoc runs the code blocks in the moqt README as doctests
       - "crates/moqt/README.md"
-      # prettier checks the Markdown under examples/browser
+      # prettier checks the Markdown under examples/browser and crates/wasm/js
       - "examples/browser/**.md"
+      - "crates/wasm/js/**.md"
 
 concurrency:
   # Without the run_id fallback, master pushes would share one group and
@@ -188,7 +190,7 @@ jobs:
         run: npm ci
         working-directory: examples/browser
       - name: Check code formatting
-        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore
+        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore
   browser-unit-test:
     runs-on: ubuntu-latest
     container:
@@ -201,8 +203,7 @@ jobs:
         run: npm ci
         working-directory: examples/browser
       - name: Run browser unit tests
-        run: npm test
-        working-directory: examples/browser
+        run: npm test --workspaces
   console-web:
     runs-on: ubuntu-latest
     container:

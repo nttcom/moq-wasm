@@ -1,6 +1,6 @@
 import type { MoqtClientWrapper } from './moqtClient'
-import { buildLocHeader } from '../../utils/media/loc'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { buildLocHeader } from 'moq-wasm/media/internal/loc'
+import { OBJECT_STATUS_END_OF_GROUP } from 'moq-wasm/media/internal/objectStatus'
 
 const SUBGROUP_ID = 0n
 const PUBLISHER_PRIORITY = 0

@@ -13,7 +13,8 @@ node_modules/
 __pycache__/
 examples/browser/.vite/
 examples/browser/dist/*
-examples/browser/pkg/*
+crates/wasm/js/pkg/*
+crates/wasm/js/test-results/
 examples/browser/examples/*/dist/*
 
 *.log

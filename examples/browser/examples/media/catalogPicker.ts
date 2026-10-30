@@ -1,8 +1,8 @@
-import type { MoqtClientWrapper } from '@moqt/moqtClient'
-import { parse_msf_catalog_json } from '../../pkg/moqt'
-import { extractCatalogTracks, type MediaCatalogTrack } from '../../lib/msf/catalog'
+import type { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import { parse_msf_catalog_json } from 'moq-wasm/internal/wasm'
+import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
-import type { MediaKind } from '../../lib/player/trackContext'
+import type { MediaKind } from 'moq-wasm/media/player/trackContext'
 
 type CatalogPick = Record<MediaKind, { tracks: MediaCatalogTrack[]; selected?: MediaCatalogTrack }>
 

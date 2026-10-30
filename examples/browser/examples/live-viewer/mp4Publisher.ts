@@ -1,6 +1,12 @@
-import { Mp4Broadcast, Mp4Index, type Mp4SampleTable, type Mp4VideoTrack, type Mp4AudioTrack } from '../../pkg/moqt'
-import { loadMoqt } from '../../lib/moqt/loadMoqt'
-import { monotonicUnixMicros } from '../../utils/media/clock'
+import {
+  Mp4Broadcast,
+  Mp4Index,
+  type Mp4SampleTable,
+  type Mp4VideoTrack,
+  type Mp4AudioTrack
+} from 'moq-wasm/internal/wasm'
+import { loadMoqt } from 'moq-wasm'
+import { monotonicUnixMicros } from 'moq-wasm/media/internal/clock'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor, type StreamRecord } from './streamMonitor'
 import { type StatusState, getErrorMessage } from '../../utils/page'

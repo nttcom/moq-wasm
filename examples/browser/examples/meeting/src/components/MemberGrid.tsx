@@ -23,7 +23,7 @@ import { buildTrackActionKey } from '../utils/state/roomState'
 import type { RemoteStatsSample } from '../types/stats'
 import { MeetingStats, RemoteMemberStatsCharts } from './StatsCharts'
 import type { RemotePictures } from '../media/mediaSubscriber'
-import { formatLiveStats } from '@player/locLive'
+import { formatLiveStats } from 'moq-wasm/media/player/locLive'
 import type {
   VideoHardwareAccelerationOption,
   VideoResolutionOption,

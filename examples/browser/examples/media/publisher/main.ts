@@ -1,5 +1,5 @@
-import { MoqSession } from '@moqt/session'
-import { type Publication, type SourcePublication, publish } from '@publish/publish'
+import { MoqSession } from 'moq-wasm'
+import { type Publication, type SourcePublication, publish } from 'moq-wasm/media/publish'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { getMediaVideoEncodingOverrides } from '../common'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../../../utils/page'

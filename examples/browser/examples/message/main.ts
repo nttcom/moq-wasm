@@ -1,4 +1,4 @@
-import { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
+import { MOQTClient, SubgroupObjectMessage } from 'moq-wasm/internal/wasm'
 import { FilterType, GroupOrder, MoqtClientWrapper, isRequestError } from '../../lib/moqt/moqtClient'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { element, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'

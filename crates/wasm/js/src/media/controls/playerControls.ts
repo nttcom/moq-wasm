@@ -1,0 +1,353 @@
+import type { BufferPolicy } from '../player/jitterBuffer'
+import type { LivePlayer, LivePlayerState, LivePlayerStats, Packaging } from '../player/livePlayer'
+import { type CatchUp, DEFAULT_BUFFER_POLICY } from '../player/livePlayout'
+import { formatElapsed } from '../player/mediaTimeline'
+import type { LogLevel } from '../player/trackContext'
+import { CONTROLS_MARKUP } from './controlsMarkup'
+import { getErrorMessage } from '../internal/status'
+import type { MediaCatalogTrack } from '../catalog'
+import './playerControls.css'
+
+const MICROS_PER_SECOND = 1_000_000
+const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
+const POINTER_IDLE_MS = 2_500
+
+/// The arrow keys skip wherever the focus is, so a page holds one of these.
+export class PlayerControls {
+  readonly seekbar: HTMLInputElement
+  private seeking = false
+  private pointerIdleTimer: ReturnType<typeof setTimeout> | undefined
+
+  constructor(
+    private readonly container: HTMLElement,
+    private readonly player: LivePlayer,
+    private readonly onLog: (level: LogLevel, message: string) => void
+  ) {
+    container.classList.add('viewer-stage')
+    const template = document.createElement('template')
+    template.innerHTML = CONTROLS_MARKUP
+    container.append(template.content)
+    this.seekbar = this.part<HTMLInputElement>('seekbar')
+    this.part<HTMLButtonElement>('quality-button').popoverTargetElement = this.part('quality-menu')
+    this.bind()
+  }
+
+  render(): void {
+    const state = this.player.state
+    fillSelect(this.part('video-track'), state.videoTracks, state.selectedVideoTrack, describeVideoTrack, {
+      selected: state.adaptiveVideo,
+      label: `Auto${describeAutoTrack(state)}`
+    })
+    fillSelect(this.part('audio-track'), state.audioTracks, state.selectedAudioTrack, (track) => track.label)
+    this.renderPackaging(state)
+    this.renderPlayPause(state.paused)
+    this.part('buffering').hidden = !state.stalled
+    this.renderSeekbar(state)
+  }
+
+  renderBuffer(stats: LivePlayerStats): void {
+    this.part('buffer-current').textContent =
+      stats.bufferMs === undefined
+        ? 'Current: -'
+        : `Current: ${Math.round(stats.bufferMs)} ms (${stats.fixedBuffer ? 'fixed' : `target ${Math.round(stats.targetBufferMs)}`})`
+  }
+
+  private part<T extends HTMLElement>(name: string): T {
+    const found = this.container.querySelector<T>(`[data-part="${name}"]`)
+    if (!found) {
+      throw new Error(`missing control: ${name}`)
+    }
+    return found
+  }
+
+  private onValue(part: string, type: 'change' | 'input', apply: (value: string) => void): void {
+    const control = this.part<HTMLInputElement | HTMLSelectElement>(part)
+    control.addEventListener(type, () => apply(control.value))
+  }
+
+  private bind(): void {
+    const { player, seekbar } = this
+    this.onValue('video-track', 'change', (value) =>
+      value === AUTO_VIDEO_TRACK ? player.setAdaptiveVideo(true) : void player.selectVideoTrack(value)
+    )
+    this.onValue('audio-track', 'change', (value) => void player.selectAudioTrack(value))
+    this.onValue('packaging', 'change', (value) => void player.setPackaging(value as Packaging))
+    this.onValue('speed', 'change', (value) => player.setPlaybackRate(Number(value)))
+    this.onValue('volume', 'input', (value) => player.setVolume(Number(value)))
+    this.onValue('catch-up', 'change', (value) => player.setCatchUp(value as CatchUp))
+    this.part('live').addEventListener('click', () => this.goLive())
+    this.part('play-pause').addEventListener('click', () => player.setPaused(!player.state.paused))
+    this.part('fullscreen').addEventListener('click', () => void this.toggleFullscreen())
+    for (const part of ['min-buffer', 'max-buffer']) {
+      this.part(part).addEventListener('change', () => this.applyBufferPolicy())
+    }
+    this.container.addEventListener('fullscreenchange', () => this.renderFullscreen())
+    for (const type of ['pointermove', 'pointerdown', 'keydown']) {
+      this.container.addEventListener(type, () => this.markPointerActive())
+    }
+    for (const button of Array.from(this.container.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
+      button.addEventListener('click', () => player.skip(Number(button.dataset.skipSeconds)))
+    }
+    document.addEventListener('keydown', (event) => {
+      const seconds = SKIP_SECONDS_BY_KEY[event.key]
+      if (seconds === undefined || this.usesArrowKeys(event.target)) {
+        return
+      }
+      event.preventDefault()
+      player.skip(seconds)
+    })
+    seekbar.addEventListener('input', () => {
+      this.seeking = true
+      this.renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max), true)
+    })
+    seekbar.addEventListener('change', () => {
+      this.seeking = false
+      this.seekTo(seekbar.valueAsNumber)
+    })
+    /// The axis spans the whole broadcast but only the replayable window can be
+    /// fetched, so Home lands on that window instead of on a position the relay no
+    /// longer holds. End goes live here rather than through the browser, whose End
+    /// only fires `change` when it actually moves the thumb.
+    seekbar.addEventListener('keydown', (event) => {
+      if (event.key === 'End') {
+        event.preventDefault()
+        this.goLive()
+        return
+      }
+      if (event.key !== 'Home') {
+        return
+      }
+      event.preventDefault()
+      this.seeking = false
+      const start = player.state.seek.replayableStartSeconds
+      seekbar.value = String(start)
+      this.seekTo(start)
+    })
+    for (const type of ['pointercancel', 'blur']) {
+      seekbar.addEventListener(type, () => {
+        this.seeking = false
+        this.renderSeekbar(player.state)
+      })
+    }
+  }
+
+  /// Selects and text inputs use the arrow keys themselves. The seek bar's own
+  /// stepping is replaced so that the vertical arrows move by five seconds.
+  private usesArrowKeys(target: EventTarget | null): boolean {
+    return target instanceof HTMLSelectElement || (target instanceof HTMLInputElement && target !== this.seekbar)
+  }
+
+  private goLive(): void {
+    this.seeking = false
+    this.player.goLive()
+  }
+
+  private applyBufferPolicy(): void {
+    const policy: BufferPolicy = {
+      minimumMs: this.nonNegativeNumber('min-buffer', DEFAULT_BUFFER_POLICY.minimumMs),
+      maximumMs: this.nonNegativeNumber('max-buffer', DEFAULT_BUFFER_POLICY.maximumMs)
+    }
+    this.player.setBufferPolicy(policy)
+    this.onLog(
+      'info',
+      `playout buffer ${policy.minimumMs}–${Number.isFinite(policy.maximumMs) ? policy.maximumMs : '∞'} ms`
+    )
+  }
+
+  private nonNegativeNumber(part: string, fallback: number): number {
+    const text = this.part<HTMLInputElement>(part).value
+    const value = Number(text)
+    return text !== '' && Number.isFinite(value) && value >= 0 ? value : fallback
+  }
+
+  private renderPackaging(state: LivePlayerState): void {
+    const select = this.part<HTMLSelectElement>('packaging')
+    for (const option of Array.from(select.options)) {
+      option.disabled = option.value === 'cmaf' && !state.cmafAvailable
+    }
+    if (select.value !== state.packaging) {
+      select.value = state.packaging
+    }
+  }
+
+  private renderPlayPause(paused: boolean): void {
+    const button = this.part('play-pause')
+    if (button.getAttribute('aria-pressed') === String(paused)) {
+      return
+    }
+    button.textContent = paused ? '▶' : '❚❚'
+    button.setAttribute('aria-label', paused ? 'Play' : 'Pause')
+    button.setAttribute('aria-pressed', String(paused))
+  }
+
+  private renderSpeed(state: LivePlayerState): void {
+    const select = this.part<HTMLSelectElement>('speed')
+    select.disabled = !state.playbackRateAdjustable
+    if (select.value !== String(state.playbackRate)) {
+      select.value = String(state.playbackRate)
+    }
+  }
+
+  private async toggleFullscreen(): Promise<void> {
+    try {
+      if (document.fullscreenElement === this.container) {
+        await document.exitFullscreen()
+      } else {
+        await this.container.requestFullscreen()
+      }
+    } catch (error) {
+      this.onLog('error', `fullscreen: ${getErrorMessage(error)}`)
+    }
+  }
+
+  private renderFullscreen(): void {
+    const fullscreen = document.fullscreenElement === this.container
+    const button = this.part('fullscreen')
+    button.setAttribute('aria-label', fullscreen ? 'Exit fullscreen' : 'Fullscreen')
+    button.title = fullscreen ? '全画面を終了' : '全画面'
+    this.markPointerActive()
+  }
+
+  private markPointerActive(): void {
+    this.container.classList.remove('pointer-idle')
+    if (this.pointerIdleTimer !== undefined) {
+      clearTimeout(this.pointerIdleTimer)
+    }
+    this.pointerIdleTimer = setTimeout(() => {
+      this.pointerIdleTimer = undefined
+      this.container.classList.add('pointer-idle')
+    }, POINTER_IDLE_MS)
+  }
+
+  private renderSeekbar(state: LivePlayerState): void {
+    const { seek } = state
+    const { seekbar } = this
+    const reviewing = state.mode === 'review'
+    this.part('seek-available-window').dataset.seconds = seek.replayableSeconds.toFixed(1)
+    this.part('live').classList.toggle('reviewing', reviewing)
+    this.renderSpeed(state)
+    if (this.seeking) {
+      return
+    }
+    const latest = seek.liveEdgeSeconds
+    seekbar.min = String(seek.broadcastStartSeconds ?? seek.replayableStartSeconds)
+    seekbar.max = String(latest)
+    seekbar.disabled = !seek.seekable
+    const anchor = seek.anchorSeconds ?? latest
+    const playhead = seek.playheadSeconds ?? latest
+    seekbar.valueAsNumber = anchor
+    this.renderReplayableWindow(seek.replayableStartSeconds, latest)
+    this.renderReviewProgress(reviewing, anchor, playhead, latest)
+    this.renderSeekPosition(anchor, playhead, latest, !reviewing)
+  }
+
+  private renderReviewProgress(reviewing: boolean, anchor: number, playhead: number, latest: number): void {
+    const played = this.part('seek-review-progress')
+    played.hidden = !reviewing || latest <= Number(this.seekbar.min)
+    if (played.hidden) {
+      return
+    }
+    played.style.left = this.percentOfAxis(anchor - Number(this.seekbar.min), latest)
+    played.style.width = this.percentOfAxis(Math.max(0, playhead - anchor), latest)
+  }
+
+  private renderReplayableWindow(replayableStart: number, latest: number): void {
+    const min = Number(this.seekbar.min)
+    const window = this.part('seek-available-window')
+    window.style.left = this.percentOfAxis(replayableStart - min, latest)
+    window.style.width = this.percentOfAxis(latest - replayableStart, latest)
+    this.part('seek-start').textContent = this.timeLabel(min)
+  }
+
+  private percentOfAxis(seconds: number, latest: number): string {
+    const axis = latest - Number(this.seekbar.min)
+    return axis > 0 ? `${((seconds / axis) * 100).toFixed(3)}%` : '0%'
+  }
+
+  /// `seekbar.max` is frozen while a drag is in progress, so comparing against it
+  /// rather than against the live edge keeps the right end meaning "go live" even
+  /// when a group arrives mid-gesture.
+  private seekTo(captureSeconds: number): void {
+    if (captureSeconds >= Number(this.seekbar.max)) {
+      this.goLive()
+      return
+    }
+    this.player.seek(captureSeconds * MICROS_PER_SECOND)
+  }
+
+  /// A review that has caught up with the live edge is still a review, so
+  /// `LIVE` is shown only while live; a drag previews the position it would
+  /// land on, and releasing at the end goes live.
+  private renderSeekPosition(anchor: number, playhead: number, latest: number, live: boolean): void {
+    const behind = Math.max(0, latest - playhead)
+    this.part('seek-position').textContent = live && behind < 0.1 ? 'LIVE' : `-${behind.toFixed(1)}s`
+    const thumbBehind = Math.max(0, latest - anchor)
+    this.seekbar.setAttribute(
+      'aria-valuetext',
+      thumbBehind < 0.1 ? 'Live' : `${thumbBehind.toFixed(1)} seconds behind live`
+    )
+    this.renderSeekElapsed(playhead, latest)
+  }
+
+  private renderSeekElapsed(position: number, latest: number): void {
+    this.part('seek-elapsed').textContent = `${this.timeLabel(position)} / ${this.timeLabel(latest)}`
+  }
+
+  /// Elapsed broadcast time when a media timeline exists, else the capture
+  /// wall-clock time (continuous cameras have no timeline); a stopped player
+  /// has no time to show.
+  private timeLabel(captureSeconds: number): string {
+    if (captureSeconds <= 0) return '--:--'
+    const elapsed = this.player.elapsedMsAt(captureSeconds * MICROS_PER_SECOND)
+    return elapsed === undefined ? formatClock(captureSeconds) : formatElapsed(elapsed)
+  }
+}
+
+/// The option value of the automatic choice; track names never start with `@`
+/// in the publishers this player follows.
+const AUTO_VIDEO_TRACK = '@auto'
+
+/// `auto` adds a leading option for the automatic choice, shown selected while
+/// it is on.
+function fillSelect(
+  select: HTMLSelectElement,
+  tracks: MediaCatalogTrack[],
+  selected: string,
+  describe: (track: MediaCatalogTrack) => string,
+  auto?: { selected: boolean; label: string }
+): void {
+  const names = [...(auto ? [AUTO_VIDEO_TRACK] : []), ...tracks.map((track) => track.name)]
+  const current = Array.from(select.options).map((option) => option.value)
+  if (names.length !== current.length || names.some((name, index) => name !== current[index])) {
+    select.replaceChildren(
+      ...names.map((name, index) => {
+        const option = document.createElement('option')
+        option.value = name
+        const track = tracks[auto ? index - 1 : index]
+        option.textContent = track ? describe(track) : ''
+        return option
+      })
+    )
+  }
+  if (auto) {
+    select.options[0].textContent = auto.label
+  }
+  const value = auto?.selected ? AUTO_VIDEO_TRACK : selected
+  if (select.value !== value) {
+    select.value = value
+  }
+}
+
+function describeAutoTrack(state: LivePlayerState): string {
+  const track = state.videoTracks.find((candidate) => candidate.name === state.selectedVideoTrack)
+  return state.adaptiveVideo && track ? ` (${track.label})` : ''
+}
+
+function describeVideoTrack(track: MediaCatalogTrack): string {
+  const resolution = track.width && track.height ? ` (${track.width}x${track.height})` : ''
+  return `${track.label}${resolution}`
+}
+
+function formatClock(captureSeconds: number): string {
+  return new Date(captureSeconds * 1000).toLocaleTimeString([], { hour12: false })
+}

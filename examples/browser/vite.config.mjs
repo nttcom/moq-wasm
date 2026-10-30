@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defaultClientConditions, defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { globSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -7,10 +7,10 @@ export default defineConfig({
   base: '/moq-wasm/',
   plugins: [react()],
   resolve: {
+    // The `source` export condition resolves `moq-wasm` to its TypeScript sources.
+    conditions: ['source', ...defaultClientConditions],
     alias: {
-      '@moqt': resolve(import.meta.dirname, 'lib/moqt'),
-      '@player': resolve(import.meta.dirname, 'lib/player'),
-      '@publish': resolve(import.meta.dirname, 'lib/publish')
+      '@moqt': resolve(import.meta.dirname, 'lib/moqt')
     }
   },
   server: {

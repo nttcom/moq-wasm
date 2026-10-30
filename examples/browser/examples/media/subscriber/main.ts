@@ -1,9 +1,9 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { LocLive, formatLiveStats } from '@player/locLive'
+import { MoqtClientWrapper } from '../../../lib/moqt/moqtClient'
+import { LocLive, formatLiveStats } from 'moq-wasm/media/player/locLive'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../catalogPicker'
-import type { MediaKind } from '@player/trackContext'
+import type { MediaKind } from 'moq-wasm/media/player/trackContext'
 
 const moqtClient = new MoqtClientWrapper()
 const form = element<HTMLFormElement>('form')

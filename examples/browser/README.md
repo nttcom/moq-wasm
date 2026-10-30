@@ -3,7 +3,7 @@
 Browser demos built on `crates/wasm`.
 
 ```shell
-npm --prefix examples/browser ci
+npm ci              # the repository root is an npm workspace
 make browser        # wasm build + Vite on http://localhost:5173
 make chrome         # Chrome trusting the local relay certificate (make chrome:linux on Linux)
 ```
