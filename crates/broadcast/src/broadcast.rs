@@ -128,6 +128,9 @@ pub struct SourceTracks {
     /// (draft-ietf-moq-msf-01 §5.2.12), so sources of the same picture, such
     /// as the profiles of one camera, share it and a shared screen does not.
     pub switching_set: String,
+    /// The video's target bitrate in bits per second, known when the source
+    /// encodes it.
+    pub video_bitrate: Option<u64>,
 }
 
 impl Default for SourceTracks {
@@ -139,6 +142,7 @@ impl Default for SourceTracks {
             audio_label: "Audio".to_string(),
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
+            video_bitrate: None,
         }
     }
 }
