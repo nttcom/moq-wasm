@@ -528,10 +528,21 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct MockSubscribeHandler {
+    pub(crate) forward: bool,
     pub(crate) subscribe_ok_count: Arc<Mutex<usize>>,
     pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
+}
+
+impl Default for MockSubscribeHandler {
+    fn default() -> Self {
+        Self {
+            forward: true,
+            subscribe_ok_count: Arc::default(),
+            subscribe_errors: Arc::default(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -560,8 +571,8 @@ impl SubscribeHandler for MockSubscribeHandler {
         GroupOrder::Ascending
     }
 
-    fn _forward(&self) -> bool {
-        true
+    fn forward(&self) -> bool {
+        self.forward
     }
 
     fn _filter_type(&self) -> FilterType {

@@ -39,9 +39,6 @@ pub(crate) struct Subscribe;
 /// finding it and registering on it; each attempt finds or creates it again.
 const UPSTREAM_ATTEMPTS: usize = 3;
 
-/// Clients that leave Forward at 0 in SUBSCRIBE still expect delivery.
-const INITIAL_FORWARD: bool = true;
-
 enum Acceptance {
     Answered,
     UpstreamGone,
@@ -498,7 +495,7 @@ impl Subscribe {
             subscriber_peer,
             track_key.clone(),
             JoinPoint::new(&filter_type, largest_location),
-            DeliveryControl::new(INITIAL_FORWARD, &filter_type, largest_location),
+            DeliveryControl::new(handler.forward(), &filter_type, largest_location),
         ) else {
             tracing::debug!(
                 request_id = handler.subscribe_id(),
@@ -1107,6 +1104,41 @@ mod tests {
         concurrent_cleanup.await.unwrap();
         assert!(matches!(acceptance, Acceptance::UpstreamGone));
         assert_unanswered(&handler);
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_with_forward_off_starts_its_egress_with_forward_off() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+        );
+        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
+        let egress = tokio::spawn(async move {
+            let Some(EgressCommand::StartReader(request)) = egress_receiver.recv().await else {
+                panic!("expected the SUBSCRIBE to start an egress runner");
+            };
+            let forward = request
+                .runner_signals
+                .delivery_control_receiver
+                .borrow()
+                .forward;
+            let _ = request.ready_sender.send(Ok(()));
+            forward
+        });
+        let handler = MockSubscribeHandler {
+            forward: false,
+            ..Default::default()
+        };
+
+        // Act
+        accept_downstream(&table, &egress_sender, &handler).await;
+
+        // Assert
+        assert!(!egress.await.unwrap());
+        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 1);
     }
 
     #[tokio::test]

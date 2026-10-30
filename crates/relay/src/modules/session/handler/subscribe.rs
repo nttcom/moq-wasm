@@ -16,7 +16,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn track_name(&self) -> &str;
     fn _subscriber_priority(&self) -> u8;
     fn _group_order(&self) -> GroupOrder;
-    fn _forward(&self) -> bool;
+    fn forward(&self) -> bool;
     fn _filter_type(&self) -> FilterType;
     fn _max_cache_duration(&self) -> Option<u64>;
     fn _delivery_timeout(&self) -> Option<u64>;
@@ -56,7 +56,7 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
     fn _group_order(&self) -> GroupOrder {
         self.group_order
     }
-    fn _forward(&self) -> bool {
+    fn forward(&self) -> bool {
         self.forward
     }
     fn _filter_type(&self) -> FilterType {

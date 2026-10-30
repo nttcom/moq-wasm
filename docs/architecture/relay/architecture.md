@@ -442,8 +442,9 @@ next to its runner stop sender. The End Group is kept as the first group past
 the range, `None` when open-ended: an AbsoluteRange End Group is the last group
 included (§9.7) and is stored plus 1, while the SUBSCRIBE_UPDATE field already
 is the end group plus 1 with 0 meaning open-ended (§9.10). A SUBSCRIBE starts
-it at Forward 1 whatever the SUBSCRIBE asked for (clients that leave Forward at 0
-expect delivery); a forwarded PUBLISH starts it at its PUBLISH_OK's Forward.
+it at the SUBSCRIBE's Forward State (§5.1 of draft-14 and draft-18: no object
+is sent at Forward 0), while the relay's own upstream SUBSCRIBE always asks for
+Forward 1; a forwarded PUBLISH starts it at its PUBLISH_OK's Forward.
 SUBSCRIBE_UPDATE applies to the (session, Subscription Request ID)
 registration: Forward is taken as sent, the range only narrows (the later
 Start Location, the smaller End Group). An update that widens the range is
