@@ -1,6 +1,7 @@
 import type { MoqSession } from 'moq-wasm'
 import { parse_msf_catalog_json } from 'moq-wasm/internal/wasm'
 import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
+import { latestObjects } from '../../utils/latestObjects'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
 import type { MediaKind } from 'moq-wasm/media/player/trackContext'
 
@@ -105,7 +106,7 @@ export function setUpCatalogPicker(
         setStatusText(STATUS_ID, 'Publisher ended the catalog track')
       }
     })
-    for await (const { objectPayload } of catalogs) {
+    for await (const { objectPayload } of latestObjects(catalogs)) {
       try {
         const catalog = parse_msf_catalog_json(new TextDecoder().decode(objectPayload))
         pick.video.tracks = extractCatalogTracks(catalog, 'video')
