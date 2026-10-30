@@ -1,4 +1,4 @@
-export type { TrackWriter } from '../../pkg/moqt'
+export type { Announcement, TrackWriter } from '../../pkg/moqt'
 export { loadMoqt } from './init'
 export { RequestError, RequestErrorCode } from './requestError'
 export {
