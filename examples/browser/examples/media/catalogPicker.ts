@@ -91,7 +91,9 @@ export function setUpCatalogPicker(
     }
     // The publisher sends its catalog when it changes and every 30 s, so a
     // SUBSCRIBE alone would wait for the next one; the joining FETCH brings
-    // the current one.
+    // the current one. That catalog can render before subscribeLatest
+    // resolves, so set the status before the call for the catalog to replace.
+    setStatusText(STATUS_ID, `Catalog subscribe requested: ${catalogTrackName}`)
     const { subscribeOk } = await moqtClient.subscribeLatest(
       trackNamespace,
       catalogTrackName,
@@ -115,7 +117,6 @@ export function setUpCatalogPicker(
       }
     )
     form['catalog-track-alias'].value = subscribeOk.trackAlias.toString()
-    setStatusText(STATUS_ID, `Catalog subscribe requested: ${catalogTrackName}`)
   })
 
   render()
