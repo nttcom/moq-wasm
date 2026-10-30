@@ -20,8 +20,9 @@ the live-ingest stats panel reads its transport statistics and stream ledger.
 `Broadcast` binds that connection to one namespace: it announces the
 namespace, holds the catalog metadata and sends the objects of its tracks.
 `BroadcastWriter` turns `mediapack::MediaEvent`s into those objects behind a
-queue that never blocks the media source; `live-ingest` adds the transcoded
-renditions through the same `Broadcast`. A writer writes into `video` and
+queue that never blocks the media source. A `RenditionTrack` writes one
+rendition of a writer's source video into a track of its own; `live-ingest`
+adds its transcoded renditions this way. A writer writes into `video` and
 `audio` by default; `onvif-ingest` runs one writer per camera profile in one
 broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
 The media timeline and the chat describe the default `video` and `audio`, so
@@ -165,9 +166,9 @@ publishing to the old session until that relay closes it.
 ## Group alignment
 The source video track and its transcoded renditions form a CMSF switching set
 (draft-ietf-moq-cmsf-01 §3.2): the transcoder is asked for a keyframe at every
-source keyframe and each rendition group takes the group id the source assigned
-to that presentation time, so the same group id names the same instant on every
-track. A rendition that misses a source keyframe keeps writing into its current
+source keyframe and each `RenditionTrack` group takes the group id the source
+assigned to that presentation time, so the same group id names the same
+instant on every track. A rendition that misses a source keyframe keeps writing into its current
 group and announces the skipped ids with the Prior Group ID Gap header when it
 catches up.
 
