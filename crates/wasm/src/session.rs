@@ -109,17 +109,22 @@ impl Session {
     }
 
     /// `filter` is `"largestObject"` (the default) or `"nextGroupStart"`.
+    /// `priority` is the Subscriber Priority (draft-14 §7.2), 128 by default:
+    /// the relay sends a lower value first.
     pub async fn subscribe(
         &self,
         namespace: Vec<String>,
         track: String,
         filter: Option<String>,
         forward: Option<bool>,
+        priority: Option<u8>,
     ) -> Result<Subscription, JsValue> {
+        let defaults = SubscribeOption::default();
         let option = SubscribeOption {
             filter_type: filter_type(filter.as_deref())?,
             forward: forward.unwrap_or(true),
-            ..SubscribeOption::default()
+            subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
+            ..defaults
         };
         let mut subscriber = self.session.subscriber();
         let subscription = subscriber

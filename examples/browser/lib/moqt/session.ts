@@ -37,6 +37,9 @@ export type PublishTrackOptions = {
 export type MoqSubscribeOptions = {
   filter?: 'largestObject' | 'nextGroupStart'
   forward?: boolean
+  /// The Subscriber Priority (draft-14 §7.2), 128 by default: the relay sends a
+  /// lower value first.
+  priority?: number
 }
 
 type WasmSession = Pick<
@@ -91,7 +94,7 @@ export class MoqSession {
 
   async subscribe(namespace: string[], track: string, options: MoqSubscribeOptions = {}): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () =>
-      this.inner.subscribe(namespace, track, options.filter, options.forward)
+      this.inner.subscribe(namespace, track, options.filter, options.forward, options.priority)
     )
     return new MoqSubscription(subscription)
   }
