@@ -1,9 +1,7 @@
-import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
-import { SubgroupWriter } from '../../lib/moqt/subgroupWriter'
+import type { TrackWriter } from 'moq-wasm'
 import { pageRoomId } from '../../utils/botRoom'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
-import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpSystemOneBotPage } from '../../utils/systemOneBot'
-import { timeSeededGroupId } from 'moq-wasm/media/internal/clock'
+import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
 
 const ROOM = pageRoomId()
@@ -30,41 +28,14 @@ const VIDEO_ENCODER_CONFIG = {
   hardwareAcceleration: 'prefer-software'
 }
 
-class GopSender {
-  private nextGroupId = timeSeededGroupId()
-  private readonly writer: SubgroupWriter
-
-  constructor(
-    client: MoqtClientWrapper,
-    readonly requestId: bigint,
-    trackAlias: bigint
-  ) {
-    this.writer = new SubgroupWriter(client, trackAlias)
-  }
-
-  /// Each keyframe opens a group, so the detector, which starts a decoder at every
-  /// group, always starts from a decodable picture.
-  async send(chunk: EncodedVideoChunk): Promise<void> {
-    if (chunk.type === 'key') {
-      await this.writer.openGroup(this.nextGroupId++)
-    }
-    if (this.writer.openGroupId === undefined) {
-      return
-    }
-    const payload = new Uint8Array(chunk.byteLength)
-    chunk.copyTo(payload)
-    await this.writer.send(payload)
-  }
-}
-
 type Question = { type: 'choice'; question: string; choices: string[] } | { type: 'boxes'; target: string }
 type Prompt = { questions: Question[] }
 /// The choice picked (null when outside the choices), or every box found.
 type Answer = string | null | BoxEdges[]
 
-const session = new MoqtClientWrapper()
-let videoSender: GopSender | undefined
-let promptPublisher: SingleObjectGroupPublisher | undefined
+let videoWriter: TrackWriter | undefined
+let promptWriter: TrackWriter | undefined
+let promptGroupId: bigint | undefined
 let mediaStream: MediaStream | undefined
 let encoderWorker: Worker | undefined
 let sendQueue = Promise.resolve()
@@ -79,10 +50,8 @@ addQuestionRow({ type: 'choice', question: '人が映っていますか？', cho
 let appliedPrompt = readPrompt()
 
 setUpSystemOneBotPage({
-  session,
   logTag: 'moq-camera-detection',
   ownNamespace: CAMERA_NAMESPACE,
-  ownTracks: [VIDEO_TRACK, PROMPT_TRACK],
   botNamespace: DETECTOR_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
@@ -93,34 +62,32 @@ setUpSystemOneBotPage({
     })
     preview.srcObject = mediaStream
   },
-  afterConnect: async () => startEncoder(mediaStream!),
-  onSubscriber: async ({ trackName, requestId, trackAlias }) => {
-    if (trackName === VIDEO_TRACK) {
-      setVideoSender(new GopSender(session, requestId, trackAlias))
+  onConnect: async (session) => {
+    videoWriter = await session.publishTrack(CAMERA_NAMESPACE, VIDEO_TRACK)
+    promptWriter = await session.publishTrack(CAMERA_NAMESPACE, PROMPT_TRACK)
+    // A SUBSCRIBE joins mid-group, which the detector cannot decode.
+    onEachSubscriber(videoWriter, () => {
+      setDetectorStatus(true)
       encoderWorker?.postMessage({ type: 'forceKeyframe' })
-    } else {
-      promptPublisher = new SingleObjectGroupPublisher(session, requestId, trackAlias)
-      await sendPrompt()
-    }
+    })
+    onEachSubscriber(promptWriter, sendPrompt)
   },
-  onUnsubscribe: (requestId) => {
-    if (videoSender?.requestId === requestId) {
-      setVideoSender(undefined)
-    }
-    if (promptPublisher?.requestId === requestId) {
-      promptPublisher = undefined
-      showVerdicts(undefined)
-    }
+  afterConnect: async () => startEncoder(mediaStream!),
+  onBotLeft: () => {
+    setDetectorStatus(false)
+    showVerdicts(undefined)
   },
   onTimelineObject: (payload) => {
-    const data = latestRecordForPrompt<{ answers?: unknown }>(payload, promptPublisher?.latestGroupId)
+    const data = latestRecordForPrompt<{ answers?: unknown }>(payload, promptGroupId)
     if (Array.isArray(data?.answers) && data.answers.length === appliedPrompt.questions.length) {
       showVerdicts(data.answers as Answer[])
     }
   },
   onReset: () => {
-    setVideoSender(undefined)
-    promptPublisher = undefined
+    setDetectorStatus(false)
+    videoWriter = undefined
+    promptWriter = undefined
+    promptGroupId = undefined
     for (const track of mediaStream?.getTracks() ?? []) {
       track.stop()
     }
@@ -194,8 +161,11 @@ function startEncoder(stream: MediaStream): void {
   encoderWorker.onmessage = (event: MessageEvent<{ type: string; chunk: EncodedVideoChunk }>) => {
     if (event.data.type === 'chunk') {
       const { chunk } = event.data
+      const payload = new Uint8Array(chunk.byteLength)
+      chunk.copyTo(payload)
+      // A keyframe starts a new group; the detector starts a decoder per group.
       sendQueue = sendQueue
-        .then(() => videoSender?.send(chunk))
+        .then(async () => void (await videoWriter?.write(payload, chunk.type === 'key', undefined)))
         .catch((error) => console.error('[moq-camera-detection] video send failed', error))
     }
   }
@@ -261,20 +231,19 @@ function applyPrompt(): void {
 }
 
 async function sendPrompt(): Promise<void> {
-  if (!promptPublisher) {
+  if (!promptWriter) {
     return
   }
   showVerdicts(undefined)
   try {
-    await promptPublisher.send(new TextEncoder().encode(JSON.stringify(appliedPrompt)))
+    promptGroupId = await promptWriter.writeGroup(new TextEncoder().encode(JSON.stringify(appliedPrompt)))
   } catch (error) {
     console.error('[moq-camera-detection] prompt send failed', error)
   }
 }
 
-function setVideoSender(sender: GopSender | undefined): void {
-  videoSender = sender
-  setStatus('detector-status', sender ? 'bot 接続済み' : 'bot 未接続', sender ? 'ok' : 'idle')
+function setDetectorStatus(joined: boolean): void {
+  setStatus('detector-status', joined ? 'bot 接続済み' : 'bot 未接続', joined ? 'ok' : 'idle')
 }
 
 /// One badge per applied question, and the boxes of every boxes question over the preview.

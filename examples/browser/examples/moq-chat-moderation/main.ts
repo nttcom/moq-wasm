@@ -1,6 +1,6 @@
-import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import type { TrackWriter } from 'moq-wasm'
 import { pageRoomId } from '../../utils/botRoom'
-import { SingleObjectGroupPublisher, setUpSystemOneBotPage } from '../../utils/systemOneBot'
+import { onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
 import {
   type Label,
@@ -38,9 +38,8 @@ const DEFAULT_LABELS: Label[] = [
 /// `labels` is undefined until the message is judged.
 type ChatEntry = { item: HTMLLIElement; labels?: LabelProbability[] }
 
-const session = new MoqtClientWrapper()
 const messages = new Map<string, ChatEntry>()
-let chatPublisher: SingleObjectGroupPublisher | undefined
+let chatPublisher: TrackWriter | undefined
 let sidebarEntry: ChatEntry | undefined
 
 const messageList = element<HTMLOListElement>('messages')
@@ -55,20 +54,17 @@ const sidebarState = element<HTMLParagraphElement>('sidebarState')
 const sidebarLabels = element<HTMLOListElement>('sidebarLabels')
 
 setUpSystemOneBotPage({
-  session,
   logTag: 'moq-chat-moderation',
   ownNamespace: CHAT_NAMESPACE,
-  ownTracks: [CHAT_TRACK],
   botNamespace: MODERATOR_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
-  onSubscriber: ({ requestId, trackAlias }) =>
-    setChatPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias)),
-  onUnsubscribe: (requestId) => {
-    if (chatPublisher?.requestId === requestId) {
-      setChatPublisher(undefined)
-    }
+  onConnect: async (session) => {
+    const writer = await session.publishTrack(CHAT_NAMESPACE, CHAT_TRACK)
+    // The moderator subscribes from the largest object, so sending waits for it.
+    onEachSubscriber(writer, () => setChatPublisher(writer))
   },
+  onBotLeft: () => setChatPublisher(undefined),
   onTimelineObject: (payload) => parseModerationVerdicts(payload).forEach(moderateMessage),
   onReset: () => setChatPublisher(undefined)
 })
@@ -135,7 +131,7 @@ function currentLabels(): Label[] {
   })
 }
 
-function setChatPublisher(publisher: SingleObjectGroupPublisher | undefined): void {
+function setChatPublisher(publisher: TrackWriter | undefined): void {
   chatPublisher = publisher
   chatInput.disabled = publisher === undefined
   sendButton.disabled = publisher === undefined
@@ -153,21 +149,25 @@ async function sendChat(): Promise<void> {
   }
   chatInput.value = ''
   const labels = currentLabels()
-  const location = { groupId: chatPublisher.reserveGroupId(), objectId: 0n }
-  const entry = appendMessage(text, location)
+  let groupId: bigint | undefined
+  try {
+    groupId = await chatPublisher.writeGroup(encodeChatMessage(text, labels))
+  } catch (error) {
+    console.error('[moq-chat-moderation] chat send failed', error)
+  }
+  if (groupId === undefined) {
+    setVerdict(appendMessage(text, undefined).item, 'failed', '送信失敗')
+    return
+  }
+  const location = { groupId, objectId: 0n }
+  appendMessage(text, location)
   // The moderator does not judge a message without labels.
   if (labels.length === 0) {
     moderateMessage({ location, labels: [] })
   }
-  try {
-    await chatPublisher.send(encodeChatMessage(text, labels), location.groupId)
-  } catch (error) {
-    console.error('[moq-chat-moderation] chat send failed', error)
-    setVerdict(entry.item, 'failed', '送信失敗')
-  }
 }
 
-function appendMessage(text: string, location: Location): ChatEntry {
+function appendMessage(text: string, location: Location | undefined): ChatEntry {
   const item = document.createElement('li')
   item.className = 'chat-message'
   item.dataset.verdict = 'pending'
@@ -184,7 +184,9 @@ function appendMessage(text: string, location: Location): ChatEntry {
   messageList.scrollTop = messageList.scrollHeight
   const entry: ChatEntry = { item }
   item.addEventListener('click', () => showSidebar(entry))
-  messages.set(locationKey(location), entry)
+  if (location) {
+    messages.set(locationKey(location), entry)
+  }
   return entry
 }
 
