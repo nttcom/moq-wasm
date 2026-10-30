@@ -1,5 +1,4 @@
 import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
-import { PublishNamespaceDoneMessage, PublishNamespaceMessage } from '../../../../pkg/moqt'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { isTranscriberNamespace, parseTrackNamespace } from '../session/trackNamespace'
 import { Room } from '../types/room'
@@ -89,20 +88,20 @@ function createPublishNamespaceHandler({
   setRoom,
   setTranscriberPresent
 }: PublishNamespaceHandlerOptions) {
-  return (publishNamespace: PublishNamespaceMessage) => {
+  return (trackNamespace: string[]) => {
     if (session.status !== LocalSessionState.Ready) {
       return
     }
-    if (isTranscriberNamespace(publishNamespace.trackNamespace, roomName)) {
+    if (isTranscriberNamespace(trackNamespace, roomName)) {
       setTranscriberPresent(true)
       return
     }
-    const announced = parseTrackNamespace(publishNamespace.trackNamespace)
+    const announced = parseTrackNamespace(trackNamespace)
     if (!announced || announced.roomName !== roomName || announced.userName === userName) {
       return
     }
 
-    setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announced.userName, publishNamespace.trackNamespace))
+    setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announced.userName, trackNamespace))
   }
 }
 
@@ -113,15 +112,15 @@ function createPublishNamespaceDoneHandler({
   setRoom,
   setTranscriberPresent
 }: PublishNamespaceHandlerOptions) {
-  return (message: PublishNamespaceDoneMessage) => {
+  return (trackNamespace: string[]) => {
     if (session.status !== LocalSessionState.Ready) {
       return
     }
-    if (isTranscriberNamespace(message.trackNamespace, roomName)) {
+    if (isTranscriberNamespace(trackNamespace, roomName)) {
       setTranscriberPresent(false)
       return
     }
-    const announced = parseTrackNamespace(message.trackNamespace)
+    const announced = parseTrackNamespace(trackNamespace)
     if (!announced || announced.roomName !== roomName || announced.userName === userName) {
       return
     }

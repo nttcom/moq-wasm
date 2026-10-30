@@ -418,7 +418,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({ ...track, isSubscribing: true }))
     )
     try {
-      const requestId = await session.switchTrack(
+      const subscribeId = await session.switchTrack(
         previousId,
         member.trackNamespace,
         trackName,
@@ -430,7 +430,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,
-          subscribeId: requestId,
+          subscribeId,
           isSubscribing: false,
           isSubscribed: true
         }))
@@ -469,8 +469,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     if (trackState.isSubscribed || trackState.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
       return
     }
-    // Optimistically mark as subscribing; the request id is unknown until
-    // subscribe() returns it (issued internally by moqtClient).
     setRoom((currentRoom) =>
       updateMemberSubscriptionStateByRole(currentRoom, memberId, role, () => ({
         ...trackState,
@@ -481,7 +479,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     )
 
     try {
-      const requestId = await session.subscribe(
+      const subscribeId = await session.subscribe(
         member.trackNamespace,
         trackName,
         role,
@@ -492,7 +490,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,
-          subscribeId: requestId,
+          subscribeId,
           isSubscribing: false,
           isSubscribed: true
         }))
