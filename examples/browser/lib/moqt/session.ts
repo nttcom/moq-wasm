@@ -42,6 +42,9 @@ export type MoqSubscribeOptions = {
   priority?: number
 }
 
+/// `withdrawn` follows PUBLISH_NAMESPACE_DONE.
+export type NamespaceEvent = { readonly kind: 'announced' | 'withdrawn'; readonly namespace: string[] }
+
 type WasmSession = Pick<
   Moqt.Session,
   | 'closed'
@@ -49,6 +52,7 @@ type WasmSession = Pick<
   | 'subscribeCurrentGroup'
   | 'fetch'
   | 'trackStatus'
+  | 'watchNamespaces'
   | 'announce'
   | 'publishTrack'
   | 'broadcast'
@@ -64,6 +68,7 @@ type WasmObject = Pick<
   'groupId' | 'subgroupId' | 'objectId' | 'status' | 'payload' | 'locHeader' | 'free'
 >
 type WasmStream = Pick<Moqt.FetchStream, 'next' | 'free'>
+type WasmNamespaceWatch = Pick<Moqt.NamespaceWatch, 'next' | 'close' | 'free'>
 
 /// A request the relay rejects throws a `RequestError` with the draft-14 code.
 export class MoqSession {
@@ -119,6 +124,12 @@ export class MoqSession {
   async trackStatus(namespace: string[], track: string): Promise<MoqLocation | undefined> {
     const largest = await request('TRACK_STATUS', () => this.inner.trackStatus(namespace, track))
     return largest && location(largest)
+  }
+
+  /// SUBSCRIBE_NAMESPACE on `prefix`; resolves once the relay accepts it.
+  async watchNamespaces(prefix: string[]): Promise<MoqNamespaceWatch> {
+    const watch = await request('SUBSCRIBE_NAMESPACE', () => this.inner.watchNamespaces(prefix))
+    return new MoqNamespaceWatch(watch)
   }
 
   /// PUBLISH_NAMESPACE; the returned announcement's `close` withdraws it.
@@ -227,6 +238,57 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
 
   private freeIfIdle(): void {
     if (this.closed && this.reads === 0 && !this.freed) {
+      this.freed = true
+      this.inner.free()
+    }
+  }
+}
+
+/// Every namespace published under the prefix, those published before the
+/// watch included, until the session ends or `close` is called.
+export class MoqNamespaceWatch implements AsyncIterable<NamespaceEvent> {
+  private ended = false
+  private calls = 0
+  private freed = false
+
+  constructor(private readonly inner: WasmNamespaceWatch) {}
+
+  async *[Symbol.asyncIterator](): AsyncIterator<NamespaceEvent> {
+    for (;;) {
+      const change = this.ended ? undefined : await this.call(() => this.inner.next())
+      if (!change) {
+        this.ended = true
+        this.end()
+        return
+      }
+      const event: NamespaceEvent = { kind: change.active ? 'announced' : 'withdrawn', namespace: change.namespace }
+      change.free()
+      yield event
+    }
+  }
+
+  /// UNSUBSCRIBE_NAMESPACE; the iteration ends.
+  async close(): Promise<void> {
+    if (this.ended) {
+      return
+    }
+    this.ended = true
+    await this.call(() => this.inner.close())
+  }
+
+  private async call<T>(send: () => Promise<T>): Promise<T> {
+    this.calls += 1
+    try {
+      return await send()
+    } finally {
+      this.calls -= 1
+      this.end()
+    }
+  }
+
+  /// The wasm object is freed once the watch has ended and no call awaits it.
+  private end(): void {
+    if (this.ended && this.calls === 0 && !this.freed) {
       this.freed = true
       this.inner.free()
     }
