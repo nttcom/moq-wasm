@@ -11,7 +11,6 @@ export function isSwitchableRole(role: CatalogSubscribeRole): boolean {
 }
 export const CATALOG_SUBSCRIBE_ROLES: CatalogSubscribeRole[] = ['video', 'screenshare', 'audio', 'chat']
 export type CatalogSelections = Partial<Record<CatalogSubscribeRole, string>>
-export type AudioStreamUpdateMode = 'single' | 'interval'
 
 export interface MeetingCatalogTrack {
   name: string
@@ -27,13 +26,7 @@ export interface MeetingCatalogTrack {
   samplerate?: number
   channelConfig?: string
   initData?: string
-  audioStreamUpdateMode?: AudioStreamUpdateMode
-  audioStreamUpdateIntervalSeconds?: number
   isLive?: boolean
-}
-
-export interface EditableMeetingCatalogTrack extends MeetingCatalogTrack {
-  id: string
 }
 
 export type TrackMediaConfig = {
@@ -41,16 +34,6 @@ export type TrackMediaConfig = {
   samplerate?: number
   channelConfig?: string
   initData?: string
-}
-
-export interface AudioStreamUpdateSettings {
-  mode: AudioStreamUpdateMode
-  intervalSeconds: number
-}
-
-export const DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS: AudioStreamUpdateSettings = {
-  mode: 'interval',
-  intervalSeconds: 1
 }
 
 /// In frames: 2 s at 30 fps. A viewer switching to a rendition that the relay

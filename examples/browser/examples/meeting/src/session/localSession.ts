@@ -1,5 +1,7 @@
 import { PublishNamespaceDoneMessage, PublishNamespaceMessage, SubscribeOkMessage } from '../../../../pkg/moqt'
 import { FilterType, MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqSession } from '@moqt/session'
+import type { TrackWriter } from '../../../../pkg/moqt'
 import { CATALOG_TRACK_NAME } from '../../../../lib/msf/catalog'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
@@ -48,6 +50,9 @@ export class LocalSession {
   readonly relayUrl: string
   readonly localMember: LocalMember
   private readonly client = new MoqtClientWrapper()
+  /// Publishes the member's media and chat; `client` subscribes to the others.
+  private publishingSession: MoqSession | null = null
+  private chatWriter: Promise<TrackWriter> | null = null
   private readonly mediaController: MeetingMediaController
   private state: LocalSessionState
   private chatMessageHandler: ((message: ChatMessage) => void) | null
@@ -136,10 +141,22 @@ export class LocalSession {
 
     this.transitionToState(LocalSessionState.Connecting)
     try {
-      await this.client.connect(this.relayUrl, { authToken: readMeetingAuth().token })
+      const token = readMeetingAuth().token
+      await this.client.connect(this.relayUrl, { authToken: token })
+      const publishingSession = await MoqSession.connect(this.relayUrl, { token })
+      this.publishingSession = publishingSession
+      void publishingSession.closed.then((close) => {
+        if (this.publishingSession === publishingSession) {
+          console.info('[meeting][moqt] publishing session closed', close)
+          this.transitionToState(LocalSessionState.Disconnected)
+        }
+      })
+      await this.mediaController.publisher.start(publishingSession)
       this.transitionToState(LocalSessionState.Ready)
-      await this.publishNamespace(this.trackNamespace)
     } catch (error) {
+      this.publishingSession?.close()
+      this.publishingSession = null
+      await this.client.disconnect().catch(() => {})
       this.transitionToState(LocalSessionState.Idle)
       throw error
     }
@@ -153,7 +170,7 @@ export class LocalSession {
     this.transitionToState(LocalSessionState.Disconnecting)
     try {
       await this.unsubscribeAllActiveSubscriptions()
-      await this.mediaController.dispose()
+      await this.mediaController.dispose().catch((error) => console.warn('[meeting] failed to stop the media', error))
       this.subscribeTrackAliases.clear()
       this.chatMessageHandler = null
       this.client.setOnPublishNamespaceHandler(null)
@@ -167,6 +184,10 @@ export class LocalSession {
       this.client.setOnConnectionClosedHandler(null)
       await this.client.disconnect()
     } finally {
+      this.chatWriter = null
+      const publishingSession = this.publishingSession
+      this.publishingSession = null
+      publishingSession?.close()
       this.transitionToState(LocalSessionState.Disconnected)
     }
   }
@@ -175,11 +196,6 @@ export class LocalSession {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot ${action} when session state is "${this.state}"`)
     }
-  }
-
-  async publishNamespace(trackNamespace: string[]): Promise<void> {
-    this.assertReady('publish namespace')
-    await this.client.publishNamespace(trackNamespace, AUTH_INFO)
   }
 
   async subscribeNamespace(trackNamespacePrefix: string[]): Promise<void> {
@@ -425,7 +441,18 @@ export class LocalSession {
       return
     }
     this.assertReady('send chat message')
-    await this.client.sendSubgroupTextForTrack(this.trackNamespace, 'chat', encodeChatPayload(message))
+    const session = this.publishingSession
+    if (!session) {
+      return
+    }
+    const chatWriter = (this.chatWriter ??= session.publishTrack(this.trackNamespace, 'chat'))
+    const writer = await chatWriter.catch((error: unknown) => {
+      if (this.chatWriter === chatWriter) {
+        this.chatWriter = null
+      }
+      throw error
+    })
+    await writer.writeGroup(new TextEncoder().encode(encodeChatPayload(message)))
   }
 
   getMediaController(): MeetingMediaController {
