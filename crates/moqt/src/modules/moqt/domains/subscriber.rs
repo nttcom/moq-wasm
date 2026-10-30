@@ -803,7 +803,8 @@ mod tests {
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, first_subgroup_stream, location,
                 notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
                 send_subgroup_object, send_without_waiting, spawn_connected_native_sessions,
-                subgroup_receiver, subscription, wait_for_control_delivery, within,
+                subgroup_receiver, subscribe_namespace_accepted, subscription,
+                wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -1890,5 +1891,27 @@ mod tests {
         // Assert
         assert_eq!(payloads, ["live"]);
         assert!(event.is_none(), "{event:?}");
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_namespace_reaches_the_peer_with_its_prefix() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions("subscriber-unsubscribe-namespace").await;
+        subscribe_namespace_accepted(&client, &server, "room/a").await;
+
+        // Act
+        client
+            .subscriber()
+            .unsubscribe_namespace("room/a".to_string())
+            .await
+            .unwrap();
+        let event = within(server.receive_event()).await.unwrap();
+
+        // Assert
+        let SessionEvent::UnsubscribeNamespace(handler) = event else {
+            panic!("expected UNSUBSCRIBE_NAMESPACE, got {event:?}");
+        };
+        assert_eq!(handler.track_namespace_prefix(), "room/a");
     }
 }

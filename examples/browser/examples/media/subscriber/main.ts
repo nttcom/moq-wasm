@@ -13,11 +13,17 @@ const PLAYOUT_STATS_INTERVAL_MS = 1000
 
 const videoElement = document.getElementById('video') as HTMLVideoElement
 const canvasElement = document.getElementById('canvas') as HTMLCanvasElement
+let canvasFramesShown = 0
 const locLive = new LocLive(videoElement, canvasElement, undefined, {
   onPresented: () => {},
   onFrameShown: (ids) => {
     if (ids) {
       setPlaybackObjectPosition('video', ids.groupId, ids.objectId)
+    }
+    // A canvas (Safari) fires none of the <video> events setupVideoPlaybackStatus follows.
+    if (locLive.picture.element === canvasElement) {
+      canvasFramesShown += 1
+      setStatusText('subscriber-playback-status', `Playing: canvas frames=${canvasFramesShown}`)
     }
   }
 })
