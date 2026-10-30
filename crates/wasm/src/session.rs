@@ -16,7 +16,7 @@ use moqt::{
     subscribe::{FilterType, SubscribeOption},
     wire::{RequestKind, request_error_code_to_wire},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::{JsFuture, future_to_promise, spawn_local};
 
@@ -272,6 +272,7 @@ impl Session {
                 .map_err(anyhow_error)?;
         }
         Ok(TrackWriter {
+            subscribers: Mutex::new(self.routes.watch_subscribers(&namespace, &track)),
             routes: self.routes.clone(),
             namespace,
             track,
@@ -315,6 +316,7 @@ pub struct TrackWriter {
     routes: Rc<SessionRoutes>,
     namespace: String,
     track: String,
+    subscribers: Mutex<mpsc::UnboundedReceiver<()>>,
 }
 
 #[wasm_bindgen]
@@ -358,6 +360,14 @@ impl TrackWriter {
             .await
             .map_err(anyhow_error)?;
         Ok(matches!(outcome, WriteOutcome::Sent(_)))
+    }
+
+    /// Resolves to `true` once a SUBSCRIBE for the track is answered, and to
+    /// `false` once the session has ended: the moment to send what a new
+    /// subscriber needs, since its SUBSCRIBE starts after the largest object.
+    #[wasm_bindgen(js_name = nextSubscriber)]
+    pub async fn next_subscriber(&self) -> bool {
+        self.subscribers.lock().await.recv().await.is_some()
     }
 }
 

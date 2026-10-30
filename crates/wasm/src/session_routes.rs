@@ -15,6 +15,9 @@ pub(crate) struct PublishDone {
     pub(crate) reason: String,
 }
 
+/// Keyed by `(namespace, track)`.
+type SubscriberWatchers = HashMap<(String, String), mpsc::UnboundedSender<()>>;
+
 /// Each event goes to the broadcasts first, then to `origin`, which they
 /// share. `origin` answers the peer's SUBSCRIBE, FETCH and TRACK_STATUS for
 /// the other tracks this session publishes. A SUBSCRIBE for any other track,
@@ -25,6 +28,7 @@ pub(crate) struct SessionRoutes {
     broadcasts: RefCell<Vec<RelayConnection>>,
     watchers: NamespaceWatchers,
     publish_done: RefCell<HashMap<u64, oneshot::Sender<PublishDone>>>,
+    subscriber_watchers: RefCell<SubscriberWatchers>,
 }
 
 /// The namespace events of one watch, until the session ends or `close`.
@@ -66,6 +70,20 @@ impl SessionRoutes {
         receiver
     }
 
+    /// Receives once per SUBSCRIBE `origin` answers for the track; ends with
+    /// the session. Watching a track again replaces the earlier watch.
+    pub(crate) fn watch_subscribers(
+        &self,
+        namespace: &str,
+        track: &str,
+    ) -> mpsc::UnboundedReceiver<()> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.subscriber_watchers
+            .borrow_mut()
+            .insert((namespace.to_string(), track.to_string()), sender);
+        receiver
+    }
+
     pub(crate) fn add_broadcast(&self, connection: RelayConnection) {
         self.broadcasts.borrow_mut().push(connection);
     }
@@ -85,7 +103,16 @@ impl SessionRoutes {
                 };
                 event = unhandled;
             }
+            let subscribed = match &event {
+                SessionEvent::Subscribe(handler) => {
+                    Some((handler.track_namespace.clone(), handler.track_name.clone()))
+                }
+                _ => None,
+            };
             let Some(event) = self.origin.handle(event).await else {
+                if let Some(track) = subscribed {
+                    self.notify_subscribed(&track);
+                }
                 continue;
             };
             let Some(event) = self.watchers.handle(event).await else {
@@ -126,6 +153,13 @@ impl SessionRoutes {
         }
         self.watchers.close();
         self.publish_done.borrow_mut().clear();
+        self.subscriber_watchers.borrow_mut().clear();
+    }
+
+    fn notify_subscribed(&self, track: &(String, String)) {
+        if let Some(sender) = self.subscriber_watchers.borrow().get(track) {
+            let _ = sender.send(());
+        }
     }
 }
 
@@ -297,6 +331,43 @@ mod tests {
 
         // Assert
         assert_eq!(payload, Bytes::from_static(b"o0"));
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_the_origin_answers_reaches_the_track_s_subscriber_watch() {
+        // Arrange
+        let Connected {
+            client,
+            server,
+            _endpoints,
+        } = connected_sessions("subscriber-watch").await;
+        let routes = SessionRoutes::default();
+        routes
+            .origin
+            .ensure_track("ns", "track", 0, Retention::NewestOnly)
+            .await;
+        let mut subscribers = routes.watch_subscribers("ns", "track");
+        let mut other_track = routes.watch_subscribers("ns", "other");
+        let mut subscriber = server.subscriber();
+
+        // Act
+        tokio::time::timeout(TIMEOUT, async {
+            tokio::select! {
+                () = routes.route(&client) => panic!("the session ended"),
+                () = async {
+                    subscriber
+                        .subscribe("ns".into(), "track".into(), SubscribeOption::default())
+                        .await
+                        .unwrap();
+                    subscribers.recv().await.unwrap();
+                } => {}
+            }
+        })
+        .await
+        .unwrap();
+
+        // Assert: a watch on another track hears nothing
+        assert!(other_track.try_recv().is_err());
     }
 
     #[tokio::test]
