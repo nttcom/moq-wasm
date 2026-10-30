@@ -53,7 +53,7 @@ sequenceDiagram
     S->>R: connect, SUBSCRIBE_NAMESPACE {root}/{room}/
     R->>S: PUBLISH_NAMESPACE {root}/{room}/alice, .../bob
     S->>R: PUBLISH_NAMESPACE {root}/{room}/bots/transcriber
-    S->>R: SUBSCRIBE catalog, audio_128kbps (per participant)
+    S->>R: SUBSCRIBE catalog, audio (per participant)
     B->>R: audio objects
     R->>S: audio objects
     Note over S: VAD + Whisper per participant
