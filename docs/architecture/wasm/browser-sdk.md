@@ -89,7 +89,7 @@ for await (const object of subscription) {
   console.log(object.groupId, new TextDecoder().decode(object.payload))
 }
 
-for await (const event of session.watchNamespaces(['room-1'])) {
+for await (const event of await session.watchNamespaces(['room-1'])) {
   if (event.kind === 'announced') player.start(event.namespace)
 }
 ```
@@ -316,7 +316,7 @@ export interface Session extends EventTarget {
   trackStatus(namespace: string[], track: string): Promise<TrackStatus>
   announce(namespace: string[]): Promise<Announcement>          // PUBLISH_NAMESPACE
   publishTrack(namespace: string[], track: string, options?: PublishOptions): Promise<TrackWriter>
-  watchNamespaces(prefix: string[]): AsyncIterable<NamespaceEvent>
+  watchNamespaces(prefix: string[]): Promise<NamespaceWatch>      // SUBSCRIBE_NAMESPACE; AsyncIterable<NamespaceEvent>
   close(code?: number, reason?: string): Promise<void>
 }
 

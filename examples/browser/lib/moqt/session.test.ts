@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { RequestError } from './moqtClient'
-import { MoqSession, MoqSubscription } from './session'
+import { MoqNamespaceWatch, MoqSession, MoqSubscription } from './session'
 
 type Freed = { freed: number }
 
@@ -127,6 +127,71 @@ test('a subscription closed while a read is in flight is freed only once the rea
   await subscription.close()
   const freedWhileReading = freed
   resolveNextGroup(undefined)
+  await reading
+
+  // Assert
+  expect(freedWhileReading).toBe(0)
+  expect(freed).toBe(1)
+})
+
+function wasmNamespaceWatch(overrides: Record<string, unknown>) {
+  return {
+    next: sequence([]),
+    close: async () => {},
+    free: () => {},
+    ...overrides
+  } as unknown as ConstructorParameters<typeof MoqNamespaceWatch>[0]
+}
+
+test('a namespace watch yields each announcement and withdrawal and frees the watch once it ends', async () => {
+  // Arrange
+  let freed = 0
+  const change = (namespace: string[], active: boolean) => ({ namespace, active, free: () => {} })
+  const watch = new MoqNamespaceWatch(
+    wasmNamespaceWatch({
+      next: sequence([change(['room', 'alice'], true), change(['room', 'alice'], false)]),
+      free: () => {
+        freed += 1
+      }
+    })
+  )
+
+  // Act
+  const events = []
+  for await (const event of watch) {
+    events.push(event)
+  }
+
+  // Assert
+  expect(events).toEqual([
+    { kind: 'announced', namespace: ['room', 'alice'] },
+    { kind: 'withdrawn', namespace: ['room', 'alice'] }
+  ])
+  expect(freed).toBe(1)
+})
+
+test('a namespace watch closed while a read is in flight is freed only once both calls return', async () => {
+  // Arrange
+  let freed = 0
+  const { promise: next, resolve: resolveNext } = Promise.withResolvers<undefined>()
+  const watch = new MoqNamespaceWatch(
+    wasmNamespaceWatch({
+      next: () => next,
+      free: () => {
+        freed += 1
+      }
+    })
+  )
+  const reading = (async () => {
+    for await (const event of watch) {
+      void event
+    }
+  })()
+
+  // Act
+  await watch.close()
+  const freedWhileReading = freed
+  resolveNext(undefined)
   await reading
 
   // Assert
