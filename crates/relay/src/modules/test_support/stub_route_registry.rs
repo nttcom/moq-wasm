@@ -36,6 +36,7 @@ fn relays(relay_ids: &[&str]) -> Vec<RelayInfo> {
 pub(crate) struct StubRouteRegistry {
     publisher_lookup: PublisherLookup,
     watched_namespace_calls: Mutex<Vec<String>>,
+    namespace_subscriber_calls: Mutex<Vec<String>>,
     migration_target: Option<String>,
     draining: AtomicBool,
     /// The namespaces other relays publish; `None` leaves the namespace routes
@@ -48,6 +49,7 @@ impl StubRouteRegistry {
         Self {
             publisher_lookup,
             watched_namespace_calls: Mutex::new(Vec::new()),
+            namespace_subscriber_calls: Mutex::new(Vec::new()),
             migration_target: None,
             draining: AtomicBool::new(false),
             namespace_routes: None,
@@ -75,6 +77,10 @@ impl StubRouteRegistry {
 
     pub(crate) fn watched_namespace_calls(&self) -> Vec<String> {
         self.watched_namespace_calls.lock().unwrap().clone()
+    }
+
+    pub(crate) fn namespace_subscriber_calls(&self) -> Vec<String> {
+        self.namespace_subscriber_calls.lock().unwrap().clone()
     }
 
     pub(crate) fn is_draining(&self) -> bool {
@@ -153,12 +159,16 @@ impl RelayRouteRegistry for StubRouteRegistry {
 
     async fn register_namespace_subscriber(
         &self,
-        _track_namespace_prefix: &str,
+        track_namespace_prefix: &str,
     ) -> Result<(), RegisterRouteError> {
         assert!(
             self.namespace_routes.is_some(),
             "not used with the stub route registry"
         );
+        self.namespace_subscriber_calls
+            .lock()
+            .unwrap()
+            .push(format!("register {track_namespace_prefix}"));
         Ok(())
     }
 
@@ -184,9 +194,13 @@ impl RelayRouteRegistry for StubRouteRegistry {
 
     async fn unregister_namespace_subscriber(
         &self,
-        _track_namespace_prefix: &str,
+        track_namespace_prefix: &str,
     ) -> anyhow::Result<()> {
-        unimplemented!("not used with the stub route registry")
+        self.namespace_subscriber_calls
+            .lock()
+            .unwrap()
+            .push(format!("unregister {track_namespace_prefix}"));
+        Ok(())
     }
 
     async fn find_namespace_subscribers(
