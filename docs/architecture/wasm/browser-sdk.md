@@ -291,12 +291,32 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   `statechange` イベントで出す。再接続中も handle は生きたままである（「再接続」を参照）。
 - 境界をまたぐ値は `Uint8Array` と `bigint`。`MoqObject` は
   `{ groupId, subgroupId, objectId, payload, extensions, status }`。
+- wasm 内の `tracing` のログは `init({ onLog, logLevel })` で受け取る。`onLog` は
+  `logLevel`（既定は `'warn'`）以上の event ごとに `LogRecord`
+  （`{ timeMs, level, target, message, fields }`）で呼ばれる。`onLog` を渡さなければ
+  ログは捨てる。wasm の subscriber はページ全体で1つなので、session の option では
+  なく `init` の option にし、`onLog` を付けた `init` を2回呼ぶと reject する。
+  subscriber は `tracing-subscriber` の registry に自前の `Layer` を載せたもので、
+  `crates/wasm/src/log_sink.rs` にある（`tracing-subscriber.md` を参照）。
 
 形（TypeScript、抜粋）:
 
 ```ts
-export function init(options?: { wasmUrl?: string | URL }): Promise<void>
+export function init(options?: {
+  wasmUrl?: string | URL
+  onLog?: (record: LogRecord) => void
+  logLevel?: LogLevel                                          // 既定は 'warn'
+}): Promise<void>
 export function connect(url: string, options?: ConnectOptions): Promise<Session>
+
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace'
+export interface LogRecord {
+  timeMs: number                                               // Date.now() の時刻
+  level: LogLevel
+  target: string                                               // Rust の module path
+  message: string
+  fields: Record<string, string | number | boolean>
+}
 
 export interface ConnectOptions {
   token?: string | (() => Promise<string>)       // CLIENT_SETUP の AUTHORIZATION TOKEN
