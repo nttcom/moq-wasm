@@ -1,5 +1,6 @@
 import { MoqSession } from 'moq-wasm'
 import type { TrackWriter } from 'moq-wasm'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
 import { formatLiveStats } from 'moq-wasm/media/player/locLive'
 import { PlayerControls } from 'moq-wasm/media/controls/playerControls'
@@ -36,6 +37,11 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
 
 let session: MoqSession | undefined
 const stage = element<HTMLDivElement>('stage')
+const telemetry = startPageTelemetry(
+  'onvif',
+  () => inputValue('moqt-url'),
+  () => player
+)
 const player = new LivePlayer({
   container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: log }
@@ -56,6 +62,7 @@ function renderVideoStats(): void {
 }
 
 function log(level: 'info' | 'warn' | 'error', message: string): void {
+  telemetry.log(level, message)
   console[level](`[onvif] ${message}`)
 }
 
