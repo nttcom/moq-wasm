@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
-import type { RecordingLayout } from '../recording/recorderApi'
+import type { RecordingLayout, RecordingFormat } from '../recording/recorderApi'
 import type { StageView } from '../utils/stageLayout'
 
 interface ControlBarProps {
@@ -207,7 +207,14 @@ function DeviceToggle({
   )
 }
 
-const RECORDING_CHOICES: { id: string; layout: RecordingLayout; composite: boolean; label: string }[] = [
+const RECORDING_CHOICES: {
+  id: string
+  layout: RecordingLayout
+  composite: boolean
+  label: string
+  format?: RecordingFormat
+}[] = [
+  { id: 'moq', layout: 'combined', composite: false, format: 'moq', label: 'Record meeting with chat and transcript' },
   { id: 'composite', layout: 'combined', composite: true, label: 'All Track in one file' },
   { id: 'combined', layout: 'combined', composite: false, label: 'User Track in one file' },
   { id: 'per-track', layout: 'per-track', composite: false, label: 'Per Track in one file' }
@@ -263,19 +270,30 @@ function RecordingSection({ recording, onChoose }: { recording: RoomRecordingCon
           {pending ?? 'Stop recording'}
         </MenuItem>
       ) : (
-        RECORDING_CHOICES.map(({ id, layout, composite, label }) => (
+        RECORDING_CHOICES.map(({ id, layout, composite, label, format }) => (
           <MenuItem
             key={id}
             testId={`record-${id}`}
             disabled={recording.busy}
             onClick={() => {
               onChoose()
-              void recording.start(layout, composite)
+              void recording.start(layout, composite, format)
             }}
           >
             {label}
           </MenuItem>
         ))
+      )}
+      {recording.playbackUrl && (
+        <MenuItem
+          testId="record-play"
+          onClick={() => {
+            onChoose()
+            window.open(recording.playbackUrl, '_blank', 'noopener,noreferrer')
+          }}
+        >
+          Open latest recording
+        </MenuItem>
       )}
       {recording.error && <MenuNote>{recording.error}</MenuNote>}
     </>

@@ -1,5 +1,14 @@
 # `recorder` Architecture
 
+An experimental archive is available with `--archive` and with the room API's
+`format: "moq"`. It stores catalogs, selected LOC media and available meeting
+event tracks without muxing. Closed data and index chunks are uploaded before
+their manifest. `POST /recordings/{id}/publish` exposes a finished archive
+through relay FETCH, and `examples/recording-player` plays the meeting with
+chat and transcript. The separate experimental archive player handles a local
+single-broadcast JSON Lines file. See
+[moq-recording-proposal.md](moq-recording-proposal.md) for the proposed design.
+
 ## Status
 Living document. Update this file in the same change whenever the track
 choice, the muxing flow or the file rules described here change.
@@ -240,6 +249,9 @@ object is not readable until the upload completes, a crash loses the whole
 segment, and a network stall would hold up the recording.
 
 ## Recording API
+
+The room watcher ignores namespaces under `<room>/recordings/<id>/` so that
+replayed recordings do not become participants of a new recording.
 `recorder serve` is an HTTP API (`api_server::ApiServer`, see
 [hyper.md](hyper.md)) that keeps no recording in its own memory or process.
 Every room recording runs as a `recorder record` job and every composite as a
@@ -339,12 +351,94 @@ counts the active recordings. The `starting` state lasts as long as the job
 takes to start, about 12 s on Cloud Run; the Meeting shows `Starting` instead
 of `REC` meanwhile, and nothing from before the job joined is recorded.
 
-The API has no authentication, so it accepts only a prefix of at least two
-elements under `--namespace-root` (`anon` by default) and one recording per
-prefix. A POST whose `Origin` is not an `--allowed-origin` is refused, since
+The API accepts only a prefix of at least two elements under `--namespace-root`
+(`anon` by default) and one recording per prefix. Anonymous rooms are public,
+matching relay authorization. Other roots require a bearer token verified by
+`--auth-vts-url` (`AUTH_VTS_URL`): reads and replay require the `subscribe`
+claim to cover the room, while start and stop require `publish`. Namespace
+claims use component boundaries, not a string-prefix match. VTS failures deny
+access. Tokens are never stored in the recording. The recorder's relay identity
+comes from `MOQT_AUTH_TOKEN` or `MOQT_AUTH_TOKEN_FILE`; a token file is refreshed
+the same way as in standalone recording. A POST whose `Origin` is not an `--allowed-origin` is refused, since
 CORS alone only hides the answer from that page and a `text/plain` POST needs
 no preflight. The relay URL, the store and the track choice are server
 settings, so a request cannot point the recorder at another relay or bucket.
+
+## MoQ archives and replay
+
+`format: "moq"` writes a room manifest that refers to participant camera,
+screen-share and event archives. Camera archives also receive `chat`; the
+`<room>/bots/transcriber` namespace has a transcript archive and does not keep
+an otherwise empty room alive. Each track has immutable payload chunks and JSON
+indexes, including canonical object fields, subgroup headers and FIN events,
+receipt sequence, capture timestamps and source event times. Duplicate object
+identities retain the first payload; conflicting duplicates fail the recording.
+The recording fails if a subscription, task or upload fails, and its final room
+manifest is written only after its broadcast manifests are committed.
+
+`POST /recordings/{id}/publish` accepts a finished MoQ or MP4 recording, verifies access
+to its source room and starts `replay::ReplayTask`. It announces namespaces under
+`<room>/recordings/<id>/<member-index>/<content>/<session-index>` and returns
+the relay URL and each track's original first and last object locations. Raw
+catalogs and media retain their object identities. The player issues standalone
+FETCH for these ranges. This is historical playback; a live-only player that
+expects newly published frames needs a replay adapter.
+
+For an MP4 recording, `mp4_replay` reads the original room manifest and converts
+each listed camera or screen-share file into a separate archived broadcast.
+The first request reads each file in bounded ranges: `mediapack::mp4::Demuxer`
+handles fMP4; `Mp4Index` supplies sample ranges for progressive H.264 MP4.
+Encoded samples pass through `loc::Muxer` and `archive_chunks::ChunkWriter`
+without decoding or re-encoding. Capture origins from the room manifest map
+file presentation times onto the common source clock. Catalogs and object IDs
+are generated; text events and original MoQ headers cannot be recovered.
+Every file gets its own namespace, including rotated and per-track files, so
+its configuration stays fixed. The original MP4 files and manifest remain
+unchanged. Completed replay manifests are cached at `<id>/mp4-replay/manifest.json`
+only after all chunks are written, and later requests reuse them. A failed
+conversion leaves its attempt unpublished; retries use a fresh attempt prefix.
+The first request needs a complete file read and extra storage for the replay
+chunks. MP4 metadata is limited to 4 MiB, and fragments and samples to 16 MiB;
+there is no total media-size limit. Ordinary MP4 uses `Mp4Index`'s supported
+track types (H.264 video and its supported audio codecs).
+
+`archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
+oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
+boundaries, supports ascending and descending group order, handles cancellation
+and checks for conflicting duplicates. Data and index checksums are verified
+before FETCH_OK so damaged data is rejected with a control response rather than
+an unreadable stream reset. This currently reads selected payload chunks twice,
+once for validation and once for sending. Four FETCH requests can run at once
+per replay. Active subscriptions and FETCH requests keep a replay alive. Once
+the last subscription leaves and all FETCH requests finish, it closes its
+relay session after 15 idle minutes, or at once on server shutdown. A new FETCH
+resets the idle period when it finishes or is cancelled. Repeated HTTP requests
+on that API instance reuse its publication. The browser holds one catalog
+subscription while its recording page remains open, including during pauses,
+and closes it when another recording opens or the page closes. The response's
+`idle_timeout_seconds` states the inactivity timeout rather than an absolute
+publication expiry.
+
+Replay publications are process-local. Deploy a single replay-serving API
+instance with CPU allocated for its lifetime; recording jobs remain independent
+and their stored state stays shared. Multi-instance replay ownership is not
+implemented. The number of active publications is capped by `--max-recordings`.
+
+The recording player uses one audio context and a common capture-to-playback
+mapping for every source. It detects video access points in the H.264, VP8, VP9
+or AV1 bitstream, decodes ahead with bounded decoder queues, mixes participant
+audio and reconstructs chat and transcript on every seek. Transcript snapshots
+are deduplicated by utterance time and speaker. Source clocks are not calibrated:
+the UI explicitly calls alignment approximate. The replay description includes
+each chunk's capture-time bounds and object locations, without storage keys.
+The player fetches one media range per track at a time, releases consumed
+payloads, and limits concurrent FETCH requests to three. Seeking starts at the
+indexed target chunk and searches backward for a video access point before
+resuming incremental reads. There is no total recording-size limit; catalogs,
+chunk descriptors and text history remain in memory. The player rejects
+codec/configuration changes within a track instead of playing them with an
+incorrect configuration. This restriction is separate from the persisted
+format and relay range serving.
 
 ## Composite
 On a recorder started with `--composite`, a `POST /recordings` with

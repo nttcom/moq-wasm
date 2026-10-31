@@ -2708,6 +2708,7 @@ dependencies = [
  "object_store",
  "reqwest",
  "serde_json",
+ "sha2",
  "telemetry",
  "tokio",
  "tracing",

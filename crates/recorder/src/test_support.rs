@@ -170,6 +170,7 @@ pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
         listen: "127.0.0.1:0".parse().unwrap(),
         allowed_origins: Vec::new(),
         namespace_root: "anon".to_string(),
+        auth_vts_url: None,
         max_recordings,
         composite,
         store: store_url.clone(),
@@ -201,6 +202,46 @@ pub(crate) struct FakePublisher {
     pub(crate) origin: Origin,
     /// The track name of each SUBSCRIBE, sent once `origin` serves it.
     pub(crate) served: mpsc::UnboundedReceiver<String>,
+}
+
+pub(crate) struct ConnectedSessions {
+    pub(crate) client: crate::relay::RelayConnection,
+    pub(crate) server: std::sync::Arc<moqt::Session>,
+    _endpoint: Endpoint<NATIVE>,
+}
+
+pub(crate) async fn connected_sessions() -> ConnectedSessions {
+    let CertificateFiles {
+        cert_path,
+        key_path,
+    } = write_self_signed_cert(&scratch_dir(), &["localhost", "127.0.0.1"]).unwrap();
+    let endpoint = Endpoint::<NATIVE>::create_server(&ServerConfig {
+        port: 0,
+        cert_path,
+        key_path,
+        keep_alive_interval_sec: 5,
+    })
+    .unwrap();
+    let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
+    let (client, server) = tokio::join!(
+        crate::relay::RelayConnection::connect(&url, false, None),
+        async {
+            endpoint
+                .accept()
+                .await
+                .unwrap()
+                .await
+                .unwrap()
+                .accept()
+                .await
+                .unwrap()
+        }
+    );
+    ConnectedSessions {
+        client: client.unwrap(),
+        server: std::sync::Arc::new(server),
+        _endpoint: endpoint,
+    }
 }
 
 impl FakePublisher {
@@ -240,4 +281,47 @@ impl FakePublisher {
             served,
         }
     }
+}
+
+/// A publisher that sends the supplied datagrams after accepting a SUBSCRIBE.
+pub(crate) fn datagram_publisher(objects: Vec<moqt::object::Object>) -> String {
+    let CertificateFiles {
+        cert_path,
+        key_path,
+    } = write_self_signed_cert(&scratch_dir(), &["localhost", "127.0.0.1"]).unwrap();
+    let endpoint = Endpoint::<NATIVE>::create_server(&ServerConfig {
+        port: 0,
+        cert_path,
+        key_path,
+        keep_alive_interval_sec: 5,
+    })
+    .unwrap();
+    let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
+    tokio::spawn(async move {
+        let session = endpoint
+            .accept()
+            .await
+            .unwrap()
+            .await
+            .unwrap()
+            .accept()
+            .await
+            .unwrap();
+        while let Ok(event) = session.receive_event().await {
+            if let SessionEvent::Subscribe(handler) = event {
+                let alias = handler
+                    .ok(0, moqt::object::ContentExists::False)
+                    .await
+                    .unwrap();
+                let subscription = handler.into_subscription(alias);
+                let mut sender = session.publisher().create_datagram(&subscription);
+                for object in &objects {
+                    sender.send_object(object).await.unwrap();
+                }
+                let _ = session.closed().await;
+                break;
+            }
+        }
+    });
+    url
 }

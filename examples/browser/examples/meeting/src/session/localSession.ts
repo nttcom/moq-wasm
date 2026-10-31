@@ -118,6 +118,8 @@ export class LocalSession {
           this.transitionToState(LocalSessionState.Disconnected)
         }
       })
+      this.chatWriter = session.publishTrack(this.trackNamespace, 'chat')
+      await this.chatWriter
       await this.mediaController.publisher.start(session)
       this.transitionToState(LocalSessionState.Ready)
     } catch (error) {

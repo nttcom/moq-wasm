@@ -15,6 +15,7 @@ const SUBSCRIBER_PRIORITY: u8 = 128;
 pub(crate) struct RelayConnection {
     pub(crate) session: Arc<Session>,
     endpoint: Endpoint<NATIVE>,
+    _token_refresh: Option<crate::token_refresh_task::TokenRefreshTask>,
 }
 
 impl RelayConnection {
@@ -34,7 +35,33 @@ impl RelayConnection {
             .await
             .with_context(|| format!("cannot connect to {url}"))?;
         let session = Arc::new(connecting.await?);
-        Ok(Self { session, endpoint })
+        Ok(Self {
+            session,
+            endpoint,
+            _token_refresh: None,
+        })
+    }
+
+    pub(crate) async fn connect_service(
+        url: &str,
+        verify_certificate: bool,
+        namespace: &str,
+    ) -> Result<Self> {
+        let token_file = std::env::var_os("MOQT_AUTH_TOKEN_FILE").map(std::path::PathBuf::from);
+        let token = match &token_file {
+            Some(path) => Some(crate::token_refresh_task::read_token_file(path).await?),
+            None => std::env::var("MOQT_AUTH_TOKEN").ok(),
+        };
+        let mut connection = Self::connect(url, verify_certificate, token.clone()).await?;
+        if let (Some(path), Some(token)) = (token_file, token) {
+            connection._token_refresh = Some(crate::token_refresh_task::TokenRefreshTask::run(
+                connection.session.clone(),
+                path,
+                namespace.split('/').next().unwrap_or_default().to_string(),
+                token,
+            ));
+        }
+        Ok(connection)
     }
 
     /// Waiting lets the CONNECTION_CLOSE reach the relay before the process

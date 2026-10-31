@@ -12,6 +12,22 @@ cargo run -p recorder -- \
   --namespace anon/live/test
 ```
 
+For development, `--archive --output recording.jsonl` instead records the
+catalog and selected LOC audio and video objects as JSON Lines. This initial
+format is experimental: it has no seek index and is not a complete MoQ
+archive. Catalog and media tracks retain object status, datagrams and
+subgroup headers. With `--upload`, it also writes checksummed data and index
+chunks to the object store, then commits their manifest. It does not support
+cached history or timed segmentation. A final `complete` line marks a normal
+stop; an interrupted write or relay failure leaves that line absent.
+The browser's `examples/archive-player` is an experimental player for
+single-broadcast archives. It indexes the file on open and reads the media
+in keyframe-aligned windows during playback. Its end-to-end test is:
+
+```bash
+LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests/archive-player-e2e.spec.ts
+```
+
 To see which tracks a broadcast offers, print its catalog:
 
 ```bash
@@ -64,11 +80,60 @@ from the moment it is published, with the tracks picked from its catalog
 `composite.mp4` in `<store>/<recording id>/`; compositing needs the GStreamer
 plugins listed in the [transcode README](../transcode/README.md#compositing).
 
+An experimental `"format": "moq"` records participant camera, audio,
+screen-share and chat tracks, and the meeting transcriber's transcript, as
+object-store chunks instead of MP4. Omitting `format` retains MP4 behavior.
+
+To replay a finished MoQ or MP4 recording, send `POST /recordings/<id>/publish`.
+The response names the relay and tracks under
+`<room>/recordings/<id>/...`, with each track's original first and last object
+locations. Use standalone MoQ FETCH for those ranges. The recorder reads and
+checks the stored chunks without generating an MP4. The namespace remains
+available while it has Subscribers or active FETCH requests. After the last
+Subscriber leaves and all FETCH requests finish, 15 idle minutes close the
+publication. The recorder API process must remain running. The recording
+player holds a subscription while its page is open, including while paused.
+
+For MP4 recordings, the first publish request reads the original files and
+creates reusable MoQ chunks under `<id>/mp4-replay/`, without re-encoding or
+changing the MP4 files or their manifest. This first request needs time to read
+the whole recording and additional storage for the chunks. Recorder-produced
+fMP4 and progressive H.264 MP4 are supported; codecs must be supported by
+`mediapack` and the player's WebCodecs implementation. Capture origins in the
+room manifest align participant files. MP4 does not recover chat, transcripts
+or the original MoQ object identities.
+
+Open `examples/recording-player/` in the browser examples, enter the recorder
+URL and recording ID, then choose **Open recording** and **Play**. It renders
+participant and screen-share videos, mixes audio, and restores chat and
+transcript when seeking backward or forward. The meeting's Activities menu
+also offers **Record meeting with chat and transcript** and a link to its
+latest finished recording.
+
+Anonymous rooms are public. Private rooms require `Authorization: Bearer <JWT>`
+and `--auth-vts-url <VTS verify endpoint>` (`AUTH_VTS_URL`): `subscribe` grants
+viewing/replay, `publish` grants starting/stopping, each covering the source
+room. Configure the recorder's relay credentials through `MOQT_AUTH_TOKEN` or
+`MOQT_AUTH_TOKEN_FILE`. Tokens do not enter the archive.
+
+The player fetches media by indexed chunk, releases consumed payloads, and has
+no total recording-size limit. Seeking fetches the target interval and its
+preceding video access point. Catalogs and text history remain in memory.
+It rejects a track whose codec configuration changes. Its synchronization is
+approximate because
+publisher clocks have not been calibrated. Replay publications belong to one
+API process; keep that instance running while serving them.
+
+```bash
+LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests/recorder-archive-e2e.spec.ts tests/recorder-mp4-replay-e2e.spec.ts
+```
+
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--listen` | `127.0.0.1:8096` | Address of the API |
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
-| `--namespace-root` | `anon` | First element every recorded prefix must have; the API has no authentication |
+| `--namespace-root` | `anon` | First element every recorded prefix must have |
+| `--auth-vts-url` (`AUTH_VTS_URL`) | — | VTS verification endpoint for private rooms |
 | `--max-recordings` | `4` | Rooms recorded at once |
 | `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state |
 | `--output-dir` | `recordings` | Where a recording job writes its files until they are uploaded, and a composite job downloads them |

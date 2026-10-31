@@ -1,16 +1,20 @@
 use std::{
+    collections::HashMap,
     hash::{BuildHasher, RandomState},
     time::Duration,
 };
 
 use anyhow::Result;
 use serde_json::{Value, json};
+use tokio::sync::Mutex;
 
 use crate::{
     ServeArgs,
+    archive_reader::StoredRecording,
     launcher::{Job, Launcher},
     recording::Layout,
-    room_state::{CompositeState, MemberStatus, RoomRecord, RoomState},
+    replay::ReplayTask,
+    room_state::{CompositeState, MemberStatus, RecordingFormat, RoomRecord, RoomState},
     state_sync_task::{HEARTBEAT_INTERVAL, now_ms},
     store::RecordingStore,
 };
@@ -26,6 +30,7 @@ pub(crate) enum StartRejection {
     AlreadyRecording,
     TooManyRecordings,
     CompositeDisabled,
+    CompositeRequiresMp4,
     /// The store or the launcher failed.
     Internal(anyhow::Error),
 }
@@ -36,13 +41,26 @@ impl From<anyhow::Error> for StartRejection {
     }
 }
 
-/// The recording API over the store: it keeps no state of its own, so any
-/// number of instances answer alike and none has to outlive a recording. A
-/// recording runs as a `recorder record` job, which writes its state back.
+#[derive(Debug)]
+pub(crate) enum PublishRejection {
+    NotReady,
+    Capacity,
+    Internal(anyhow::Error),
+}
+
+impl From<anyhow::Error> for PublishRejection {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Internal(error)
+    }
+}
+
+/// Recording state belongs to the store and independent jobs. Replay
+/// publications belong to this API process for their bounded lifetime.
 pub(crate) struct Recordings {
     config: ServeArgs,
     store: RecordingStore,
     launcher: Launcher,
+    replays: Mutex<HashMap<String, ReplayTask>>,
 }
 
 impl Recordings {
@@ -51,7 +69,65 @@ impl Recordings {
             config,
             store,
             launcher,
+            replays: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub(crate) async fn authorize(
+        &self,
+        headers: &hyper::HeaderMap,
+        namespace: &str,
+        write: bool,
+    ) -> Result<(), crate::api_auth::AuthError> {
+        crate::api_auth::authorize(
+            headers,
+            self.config.auth_vts_url.as_deref(),
+            namespace,
+            write,
+        )
+        .await
+    }
+
+    pub(crate) async fn namespace(&self, id: &str) -> Result<Option<String>> {
+        Ok(self
+            .store
+            .read_state(id)
+            .await?
+            .map(|record| record.namespace_prefix))
+    }
+
+    pub(crate) fn namespace_root(&self) -> &str {
+        &self.config.namespace_root
+    }
+
+    pub(crate) async fn publish(&self, id: &str) -> Result<Option<Value>, PublishRejection> {
+        let Some(record) = self.store.read_state(id).await? else {
+            return Ok(None);
+        };
+        if record.state != RoomState::Finished {
+            return Err(PublishRejection::NotReady);
+        }
+        let mut replays = self.replays.lock().await;
+        replays.retain(|_, replay| replay.is_active());
+        if !replays.contains_key(id) {
+            if replays.len() >= self.config.max_recordings {
+                return Err(PublishRejection::Capacity);
+            }
+            let archive = StoredRecording::open(&self.store, id, &record.namespace_prefix).await?;
+            let replay = ReplayTask::run(
+                archive,
+                &self.config.room.relay,
+                !self.config.room.insecure_skip_tls_verify,
+            )
+            .await?;
+            replays.insert(id.to_string(), replay);
+        }
+        let mut description = replays[id].description();
+        description["recording_id"] = id.into();
+        description["relay"] = self.config.room.relay.clone().into();
+        description["namespace_prefix"] =
+            format!("{}/recordings/{id}", record.namespace_prefix).into();
+        Ok(Some(description))
     }
 
     pub(crate) async fn start(
@@ -59,12 +135,16 @@ impl Recordings {
         namespace_prefix: &str,
         layout: Layout,
         composite: bool,
+        format: RecordingFormat,
     ) -> Result<Value, StartRejection> {
         if !within_root(namespace_prefix, &self.config.namespace_root) {
             return Err(StartRejection::OutsideRoot);
         }
         if composite && !self.config.composite {
             return Err(StartRejection::CompositeDisabled);
+        }
+        if composite && format == RecordingFormat::Moq {
+            return Err(StartRejection::CompositeRequiresMp4);
         }
         let id = recording_id();
         if !self.lock_room(namespace_prefix, &id).await? {
@@ -80,6 +160,7 @@ impl Recordings {
             id: id.clone(),
             namespace_prefix: namespace_prefix.to_string(),
             layout,
+            format,
             composite,
             state: RoomState::Starting,
             members: Vec::new(),
@@ -131,6 +212,9 @@ impl Recordings {
         let mut recordings = Vec::new();
         for id in ids {
             if let Some(record) = self.store.read_state(&id).await? {
+                if record.namespace_prefix.split('/').next() != Some(&self.config.namespace_root) {
+                    continue;
+                }
                 recordings.push(self.view(record).await?);
             }
         }
@@ -210,6 +294,7 @@ impl Recordings {
             "id": record.id,
             "namespace_prefix": record.namespace_prefix,
             "layout": record.layout.name(),
+            "format": record.format.name(),
             "state": state_name,
             "error": error,
             "members": record.members.iter().map(MemberStatus::to_json).collect::<Vec<_>>(),
@@ -263,11 +348,21 @@ mod tests {
 
         // Act
         let started = recordings
-            .start("anon/research", Layout::Combined, true)
+            .start(
+                "anon/research",
+                Layout::Combined,
+                true,
+                RecordingFormat::Mp4,
+            )
             .await
             .unwrap();
         let again = recordings
-            .start("anon/research", Layout::Combined, false)
+            .start(
+                "anon/research",
+                Layout::Combined,
+                false,
+                RecordingFormat::Mp4,
+            )
             .await;
         let id = started["id"].as_str().unwrap().to_string();
         recordings.stop(&id).await.unwrap();
@@ -289,6 +384,7 @@ mod tests {
             id: "1700000000000-000001".to_string(),
             namespace_prefix: "anon/research".to_string(),
             layout: Layout::Combined,
+            format: RecordingFormat::Mp4,
             composite: false,
             state: RoomState::Recording,
             members: Vec::new(),
@@ -304,7 +400,12 @@ mod tests {
         // Act
         let dead_view = recordings.get(&dead.id).await.unwrap().unwrap();
         let started = recordings
-            .start("anon/research", Layout::Combined, false)
+            .start(
+                "anon/research",
+                Layout::Combined,
+                false,
+                RecordingFormat::Mp4,
+            )
             .await
             .unwrap();
 
@@ -319,13 +420,13 @@ mod tests {
         // Arrange
         let recordings = recordings(1, false);
         recordings
-            .start("anon/first", Layout::Combined, false)
+            .start("anon/first", Layout::Combined, false, RecordingFormat::Mp4)
             .await
             .unwrap();
 
         // Act
         let second = recordings
-            .start("anon/second", Layout::Combined, false)
+            .start("anon/second", Layout::Combined, false, RecordingFormat::Mp4)
             .await;
 
         // Assert

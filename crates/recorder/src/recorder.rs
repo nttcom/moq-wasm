@@ -57,6 +57,8 @@ pub(crate) async fn run(args: Args) -> Result<()> {
         });
     let result = if args.list_tracks {
         list_tracks(session, &args.namespace).await
+    } else if args.archive {
+        crate::archive::record(session, &args).await
     } else {
         record_until_interrupted(session, &args).await
     };

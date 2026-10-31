@@ -4,6 +4,29 @@ use serde_json::{Value, json};
 
 use crate::recording::Layout;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordingFormat {
+    Mp4,
+    Moq,
+}
+
+impl RecordingFormat {
+    pub(crate) fn parse(name: &str) -> Result<Self> {
+        match name {
+            "mp4" => Ok(Self::Mp4),
+            "moq" => Ok(Self::Moq),
+            _ => bail!("unknown recording format {name}"),
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Moq => "moq",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RoomState {
     /// Requested; the recording job has not connected yet.
@@ -114,6 +137,7 @@ pub(crate) struct RoomRecord {
     pub(crate) id: String,
     pub(crate) namespace_prefix: String,
     pub(crate) layout: Layout,
+    pub(crate) format: RecordingFormat,
     /// Whether the room is composited once the recording ends.
     pub(crate) composite: bool,
     pub(crate) state: RoomState,
@@ -128,6 +152,7 @@ impl RoomRecord {
             "id": self.id,
             "namespace_prefix": self.namespace_prefix,
             "layout": self.layout.name(),
+            "format": self.format.name(),
             "composite": self.composite,
             "state": state,
             "error": error,
@@ -143,6 +168,11 @@ impl RoomRecord {
             namespace_prefix: string(value, "namespace_prefix")?,
             layout: Layout::from_str(&layout, false)
                 .map_err(|error| anyhow::anyhow!("layout {layout}: {error}"))?,
+            format: match value.get("format") {
+                None => RecordingFormat::Mp4,
+                Some(Value::String(format)) => RecordingFormat::parse(format)?,
+                Some(_) => bail!("recording format must be a string"),
+            },
             composite: value["composite"].as_bool().unwrap_or_default(),
             state: RoomState::from_parts(&string(value, "state")?, value["error"].as_str())?,
             members: value["members"]
@@ -173,6 +203,7 @@ mod tests {
             id: "1700000000000-a1b2c3".to_string(),
             namespace_prefix: "anon/research".to_string(),
             layout: Layout::PerTrack,
+            format: RecordingFormat::Mp4,
             composite: true,
             state: RoomState::Failed("relay gone".to_string()),
             members: vec![MemberStatus {
@@ -189,5 +220,13 @@ mod tests {
 
         // Assert
         assert_eq!(read, record);
+        let mut legacy = record.to_json();
+        legacy.as_object_mut().unwrap().remove("format");
+        assert_eq!(
+            RoomRecord::from_json(&legacy).unwrap().format,
+            RecordingFormat::Mp4
+        );
+        legacy["format"] = json!(17);
+        assert!(RoomRecord::from_json(&legacy).is_err());
     }
 }

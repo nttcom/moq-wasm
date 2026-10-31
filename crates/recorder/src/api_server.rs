@@ -19,7 +19,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
     recording::Layout,
-    recordings::{Recordings, StartRejection},
+    recordings::{PublishRejection, Recordings, StartRejection},
 };
 
 const MAX_BODY_BYTES: usize = 16 * 1024;
@@ -31,12 +31,13 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 ///   one MP4 once the recording has ended; only a server started with
 ///   `--composite` accepts it
 /// - `POST /recordings/{id}/stop` stops it
+/// - `POST /recordings/{id}/publish` exposes a finished recording through relay FETCH
 /// - `GET /recordings/{id}` and `GET /recordings?namespace_prefix=` report it
 ///
 /// A POST from a page outside `allowed_origins` is refused: CORS alone would
 /// only hide the answer from that page, and a form or a `text/plain` fetch
-/// needs no preflight. Nothing authenticates a caller, so `Recordings` keeps
-/// every request under one namespace root. A failing store answers 500.
+/// needs no preflight. Private rooms require a VTS-verified bearer token;
+/// anonymous rooms remain public. A failing store answers 500.
 pub(crate) struct ApiServer {
     handle: JoinHandle<()>,
 }
@@ -102,6 +103,39 @@ async fn handle(
     let query = query_params(&request);
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
     let foreign_page = request.headers().contains_key(ORIGIN) && origin.is_none();
+    let headers = request.headers().clone();
+    if method != Method::OPTIONS && path != "/healthz" {
+        let namespace = match segments.as_slice() {
+            ["recordings", id, ..] => match state.recordings.namespace(id).await {
+                Ok(Some(namespace)) => namespace,
+                Ok(None) => {
+                    return Ok(with_cors(
+                        error_response(StatusCode::NOT_FOUND, "no such recording"),
+                        origin,
+                    ));
+                }
+                Err(error) => return Ok(with_cors(internal_error(&error), origin)),
+            },
+            ["recordings"] if method == Method::GET => query
+                .get("namespace_prefix")
+                .cloned()
+                .unwrap_or_else(|| state.recordings.namespace_root().to_string()),
+            _ => String::new(),
+        };
+        if !namespace.is_empty() {
+            let write = method == Method::POST && segments.last() != Some(&"publish");
+            if let Err(error) = state
+                .recordings
+                .authorize(&headers, &namespace, write)
+                .await
+            {
+                return Ok(with_cors(
+                    error_response(error.status, error.message),
+                    origin,
+                ));
+            }
+        }
+    }
     let response = match (&method, segments.as_slice()) {
         (&Method::POST, _) if foreign_page => {
             error_response(StatusCode::FORBIDDEN, "origin not allowed")
@@ -109,7 +143,17 @@ async fn handle(
         (&Method::OPTIONS, _) => empty_response(StatusCode::NO_CONTENT),
         (&Method::GET, ["healthz"]) => json_response(StatusCode::OK, &json!({ "status": "ok" })),
         (&Method::POST, ["recordings"]) => match read_json(request).await {
-            Ok(body) => start(&state.recordings, &body).await,
+            Ok(body) => {
+                if let Some(namespace) = body["namespace_prefix"].as_str()
+                    && let Err(error) = state.recordings.authorize(&headers, namespace, true).await
+                {
+                    return Ok(with_cors(
+                        error_response(error.status, error.message),
+                        origin,
+                    ));
+                }
+                start(&state.recordings, &body).await
+            }
             Err(error) => error_response(StatusCode::BAD_REQUEST, &format!("{error:#}")),
         },
         (&Method::GET, ["recordings"]) => match state
@@ -129,6 +173,21 @@ async fn handle(
             Ok(None) => error_response(StatusCode::NOT_FOUND, "no such recording"),
             Err(error) => internal_error(&error),
         },
+        (&Method::POST, ["recordings", id, "publish"]) => {
+            match state.recordings.publish(id).await {
+                Ok(Some(replay)) => json_response(StatusCode::OK, &replay),
+                Ok(None) => error_response(StatusCode::NOT_FOUND, "no such recording"),
+                Err(PublishRejection::NotReady) => error_response(
+                    StatusCode::CONFLICT,
+                    "only finished recordings can be published",
+                ),
+                Err(PublishRejection::Capacity) => error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "too many recording replays",
+                ),
+                Err(PublishRejection::Internal(error)) => internal_error(&error),
+            }
+        }
         _ => error_response(StatusCode::NOT_FOUND, "not_found"),
     };
     Ok(with_cors(response, origin))
@@ -155,7 +214,18 @@ async fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
         Some(Value::Bool(composite)) => *composite,
         Some(_) => return error_response(StatusCode::BAD_REQUEST, "composite must be a boolean"),
     };
-    match recordings.start(namespace_prefix, layout, composite).await {
+    let format = match body.get("format") {
+        None => crate::room_state::RecordingFormat::Mp4,
+        Some(Value::String(name)) => match crate::room_state::RecordingFormat::parse(name) {
+            Ok(format) => format,
+            Err(_) => return error_response(StatusCode::BAD_REQUEST, "format must be mp4 or moq"),
+        },
+        Some(_) => return error_response(StatusCode::BAD_REQUEST, "format must be mp4 or moq"),
+    };
+    match recordings
+        .start(namespace_prefix, layout, composite, format)
+        .await
+    {
         Ok(recording) => json_response(StatusCode::CREATED, &recording),
         Err(StartRejection::OutsideRoot) => error_response(
             StatusCode::FORBIDDEN,
@@ -172,6 +242,9 @@ async fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
             StatusCode::BAD_REQUEST,
             "this recorder does not composite; start it with --composite",
         ),
+        Err(StartRejection::CompositeRequiresMp4) => {
+            error_response(StatusCode::BAD_REQUEST, "composite requires mp4 format")
+        }
         Err(StartRejection::Internal(error)) => internal_error(&error),
     }
 }
@@ -219,7 +292,7 @@ fn with_cors(mut response: JsonResponse, origin: Option<HeaderValue>) -> JsonRes
         );
         headers.insert(
             ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("Content-Type"),
+            HeaderValue::from_static("Content-Type, Authorization"),
         );
     }
     response
@@ -306,6 +379,39 @@ mod tests {
             recordings.list(None).await.unwrap(),
             json!({ "recordings": [] })
         );
+    }
+
+    #[tokio::test]
+    async fn selects_moq_recording_and_rejects_incompatible_composite() {
+        // Arrange
+        let recordings = recordings(2, true);
+
+        // Act
+        let invalid = error_of(
+            start(
+                &recordings,
+                &json!({
+                    "namespace_prefix": "anon/room", "format": "moq", "composite": true
+                }),
+            )
+            .await,
+        )
+        .await;
+        let accepted = error_of(
+            start(
+                &recordings,
+                &json!({
+                    "namespace_prefix": "anon/room", "format": "moq"
+                }),
+            )
+            .await,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
+        assert_eq!(accepted.0, StatusCode::CREATED);
+        assert_eq!(accepted.1["format"], "moq");
     }
 
     #[test]
