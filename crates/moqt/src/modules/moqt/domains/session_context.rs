@@ -36,7 +36,7 @@ pub(crate) struct SessionContext {
     /// `None` for a session that does not follow GOAWAY. Held while a
     /// carried request is sent and while a migration sends them all again,
     /// so a request sent during a migration is not skipped.
-    pub(crate) carried: Option<tokio::sync::Mutex<CarriedRequests>>,
+    pub(crate) carried: Option<tokio::sync::RwLock<CarriedRequests>>,
     /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
     /// keyed by logical request id, with every connection each is on. Read
     /// for every subgroup sent, so not behind `carried`.
@@ -130,7 +130,7 @@ impl SessionContext {
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
-            carried: follows_go_away.then(|| tokio::sync::Mutex::new(CarriedRequests::default())),
+            carried: follows_go_away.then(|| tokio::sync::RwLock::new(CarriedRequests::default())),
             publications: std::sync::Mutex::default(),
             served_changed: watch::channel(()).0,
         }
@@ -142,9 +142,9 @@ impl SessionContext {
 
     pub(crate) async fn lock_carried(
         &self,
-    ) -> Option<tokio::sync::MutexGuard<'_, CarriedRequests>> {
+    ) -> Option<tokio::sync::RwLockWriteGuard<'_, CarriedRequests>> {
         match &self.carried {
-            Some(carried) => Some(carried.lock().await),
+            Some(carried) => Some(carried.write().await),
             None => None,
         }
     }

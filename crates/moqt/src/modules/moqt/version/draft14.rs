@@ -1019,6 +1019,24 @@ mod tests {
         reservation
     }
 
+    #[tokio::test]
+    async fn request_id_reservation_times_out_when_peer_does_not_raise_limit() {
+        // Arrange
+        use crate::{
+            RequestFailure, modules::moqt::version::ControlChannel as VersionControlChannel,
+        };
+        let (client, _server) = spawn_connected_native_sessions("request-id-timeout").await;
+        let connection = connection_of(&client);
+        let VersionControlChannel::Draft14(channel) = &connection.control;
+        channel.peer_request_id_limit.send_replace(0);
+
+        // Act
+        let result = connection.control.reserve_request_id().await;
+
+        // Assert
+        assert!(matches!(result, Err(RequestFailure::Timeout)));
+    }
+
     /// The handler is returned so its drop does not answer a request the
     /// test sent outside the client's inflight requests.
     async fn receive_track_status(session: &Session) -> TrackStatusHandler {

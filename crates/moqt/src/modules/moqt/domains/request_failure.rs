@@ -15,7 +15,7 @@ pub enum RequestFailure {
         code: RequestErrorCode,
         reason: String,
     },
-    #[error("no response within the request timeout")]
+    #[error("request timed out")]
     Timeout,
     #[error("the session closed before the response arrived")]
     SessionClosed,
