@@ -133,6 +133,8 @@ services:
       CLICKHOUSE_USER: observability
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-observability}
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://clickstack-otel-collector:4318/v1/metrics
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://clickstack-otel-collector:4318/v1/logs
+      AUTH_VTS_URL: ${AUTH_VTS_URL:-http://vts:8081/verify}
     ports:
       - "8095:8095"
     depends_on:

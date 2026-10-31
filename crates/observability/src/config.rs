@@ -23,6 +23,10 @@ pub struct ObservabilityConfig {
     pub http_port: u16,
     /// The full OTLP/HTTP metrics URL (`.../v1/metrics`); `None` exports no metrics.
     pub otlp_metrics_endpoint: Option<String>,
+    /// The full OTLP/HTTP logs URL (`.../v1/logs`) for browser logs; `None` drops them.
+    pub otlp_logs_endpoint: Option<String>,
+    /// The VTS `.../verify` URL that reads a browser report's app from its token.
+    pub vts_url: Option<String>,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -73,6 +77,8 @@ impl ObservabilityConfig {
             },
             http_port,
             otlp_metrics_endpoint: env("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"),
+            otlp_logs_endpoint: env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"),
+            vts_url: env("AUTH_VTS_URL"),
         })
     }
 }

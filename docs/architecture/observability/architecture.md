@@ -55,9 +55,10 @@ cumulative since the session, track cache or subscription started; rates are
 derived from consecutive snapshots, so a lost snapshot loses no traffic.
 `…_since_last_snapshot_…` and `lag_…` fields are gauges.
 
-All statistics are measured on the relay; clients report nothing. A browser
-client could not anyway: the wasm transport's `stats()` returns
-`TransportStats::default()`. A QUIC endpoint only knows the loss and
+All transport statistics are measured on the relay. A browser client could
+not report them: the wasm transport's `stats()` returns
+`TransportStats::default()`. What a browser does report is its player's
+view, through `POST /api/client-telemetry` (see Client telemetry). A QUIC endpoint only knows the loss and
 congestion window of what it sends, so the relay sees the two directions of a
 client session differently:
 
@@ -170,6 +171,8 @@ directly, so losing inter-relay routing does not hide the relays it affects.
 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | none | Basic auth |
 | `OBSERVABILITY_HTTP_PORT` | `8095` | API port |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | none | OTLP/HTTP metrics URL (`…/v1/metrics`); relay metrics are exported only when set |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | none | OTLP/HTTP logs URL (`…/v1/logs`) for browser logs |
+| `AUTH_VTS_URL` | none | VTS `…/verify` URL that reads a browser report's app from its token; without it every report is `anon` |
 
 The recommended deployment connects to each relay's inner endpoint with
 `AUTH_RELAY_TOKEN`: relay tokens do not expire and have full access, while a
@@ -188,6 +191,8 @@ out of the topology page.
 - `OtlpMetricsExportTask` (only with `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`):
   posts `LatestSnapshots` as OTLP metrics every 10 s (see Storage).
 - `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
+  - `POST /api/client-telemetry` — a browser's logs and player stats (see
+    Client telemetry); 404 unless an OTLP endpoint is set.
   - `GET /api/snapshots` — the newest snapshot of every relay that sent one
     in the last 10 s (`RELAY_SILENCE`, timed by arrival here), from memory, so
     a stopped relay leaves the live view instead of freezing on its last
@@ -284,6 +289,48 @@ Only process and session statistics are exported: track and subscription
 points would multiply the rows by the subscriber count. Session counters
 are cumulative monotonic sums without a start time, because the snapshot
 does not say when a session started.
+
+## Client telemetry
+
+Browsers cannot reach the collector, which listens only inside the VPC, so
+they post to the observability server behind its public load balancer, which
+converts the report to OTLP/JSON and forwards it (`client_telemetry`).
+
+- **Request.** `POST /api/client-telemetry` with a JSON body
+  `{ token?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, values }] }`.
+  `clientId` is generated once per page load. The server does not read
+  `Content-Type`: browsers send `text/plain`, a CORS simple request that
+  `navigator.sendBeacon` can send and that needs no preflight.
+- **Limits.** The body is at most 64 KiB (413), a report carries at most 100
+  logs and 100 stats, `clientId` and `page` at most 128 characters (400).
+  Each client address has a token bucket of 10 reports refilled at 1 per
+  second (429). The address is the second-to-last `X-Forwarded-For` entry,
+  which the Google Cloud load balancer appends after the client's own value,
+  or the TCP peer without the header.
+- **App.** A report with a `token` takes the `appId` the VTS returns for it,
+  after the server checks `exp` (the VTS checks only the signature); a
+  rejected token answers 401 and forwards nothing. A report without one is
+  `anon`, the app the relay gives an anonymous session. The server sets
+  `app_id` and `client_id` on every record, so a client cannot claim another
+  app's data.
+- **Logs** become OTLP log records of resource `service.name=browser`,
+  `page`, with `app_id`, `client_id`, `target` and the client's fields as
+  attributes, and are posted to `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`.
+- **Stats** become metric points with `app_id` and `client_id`, posted to
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. Keys other than these are dropped:
+
+| Metric | Unit | Kind | `LivePlayerStats` field |
+| --- | --- | --- | --- |
+| `client.player.viewer_delay` | ms | gauge | `viewerDelayMs` |
+| `client.player.buffer` | ms | gauge | `bufferMs` |
+| `client.player.received` | kbit/s | gauge | `receivedKbps` |
+| `client.player.audio_breaks` | {break} | cumulative sum | `audioBreaks` |
+| `client.player.audio_concealed` | ms | cumulative sum | `audioConcealedMs` |
+| `client.player.shed` | ms | cumulative sum | `shedMs` |
+| `client.player.max_arrival_gap` | ms | gauge, `media_kind` attribute | `maxArrivalGapMs` |
+
+A collector that does not accept the export answers 502. Linking a browser
+session to the relay's `relay.session` trace is not done yet.
 
 ## Browser page (`examples/browser/examples/observability`)
 
