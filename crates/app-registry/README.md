@@ -17,7 +17,7 @@ fields added, kept in Cloud Storage or in a local file.
 | Location | Generation | Write |
 | --- | --- | --- |
 | `CloudStorage { endpoint, bucket, object }` | The object's generation | Upload with `ifGenerationMatch`, safe for writers on any number of machines |
-| `File(path)` | A hash of the contents | Compare the hash, write a temporary file and rename it over the registry; one writing process only |
+| `File(path)` | A hash of the contents | Serialize writes in one process, compare the hash, write a temporary file and rename it over the registry |
 
 `RegistryStore::load` reads the apps and their generation, and
 `RegistryStore::update` changes the apps, reloading and running the change
