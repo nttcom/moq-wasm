@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `moq-wasm`: `init({ wasmUrl, onLog, logLevel })` loads the wasm module and
+  hands its logs to `onLog` as `LogRecord`s at `logLevel` (default `'warn'`)
+  or above.
+
 ## 0.1.0
 
 - `moq-wasm`: `MoqSession` connects to a relay over WebTransport, falling back
