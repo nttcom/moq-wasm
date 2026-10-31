@@ -102,18 +102,16 @@ impl ControlMessageForwarder {
             )
             .await;
         match &result {
-            Ok(_) => {
-                tracing::info!(subscriber_session_id = %session_id, %track_namespace, %track_name, "forwarded PUBLISH accepted")
+            Ok(subscription) => {
+                tracing::info!(subscriber_session_id = %session_id, %track_namespace, %track_name, request_id = subscription.request_id(), track_alias = subscription.track_alias(), "forwarded PUBLISH accepted")
             }
-            Err(error)
-                if matches!(
-                    error.downcast_ref::<moqt::RequestFailure>(),
-                    Some(moqt::RequestFailure::Rejected { .. })
-                ) =>
-            {
-                tracing::info!(%error, subscriber_session_id = %session_id, %track_namespace, %track_name, "forwarded PUBLISH rejected")
+            Err(error) => {
+                if let Some(moqt::RequestFailure::Rejected { request_id, .. }) =
+                    error.downcast_ref::<moqt::RequestFailure>()
+                {
+                    tracing::info!(%error, subscriber_session_id = %session_id, %track_namespace, %track_name, request_id, "forwarded PUBLISH rejected")
+                }
             }
-            Err(_) => {}
         }
         result
     }
