@@ -93,14 +93,29 @@ impl ControlMessageForwarder {
         max_cache_duration: Option<u64>,
     ) -> anyhow::Result<DownstreamSubscription> {
         let publisher = self.publisher(session_id).await?;
-        publisher
+        let result = publisher
             .send_publish(
-                track_namespace,
-                track_name,
+                track_namespace.clone(),
+                track_name.clone(),
                 content_exists,
                 max_cache_duration,
             )
-            .await
+            .await;
+        match &result {
+            Ok(_) => {
+                tracing::info!(subscriber_session_id = %session_id, %track_namespace, %track_name, "forwarded PUBLISH accepted")
+            }
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<moqt::RequestFailure>(),
+                    Some(moqt::RequestFailure::Rejected { .. })
+                ) =>
+            {
+                tracing::info!(%error, subscriber_session_id = %session_id, %track_namespace, %track_name, "forwarded PUBLISH rejected")
+            }
+            Err(_) => {}
+        }
+        result
     }
 
     #[tracing::instrument(
