@@ -1,5 +1,5 @@
 export type { Announcement, TrackWriter } from '../../pkg/moqt'
-export { loadMoqt } from './init'
+export { type InitOptions, type LogLevel, type LogRecord, init, loadMoqt } from './init'
 export { RequestError, RequestErrorCode } from './requestError'
 export {
   type CloseInfo,
