@@ -17,6 +17,7 @@ import {
   summarizeStreams
 } from './streamMonitor'
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
@@ -26,6 +27,11 @@ import 'moq-wasm/media/controls.css'
 const STREAM_RENDER_INTERVAL_MS = 100
 
 let session: MoqSession | undefined
+const telemetry = startPageTelemetry(
+  'live-viewer',
+  () => element<HTMLInputElement>('url').value.trim(),
+  () => player
+)
 const streamMonitor = new StreamMonitor()
 const stage = element<HTMLDivElement>('stage')
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
@@ -256,6 +262,7 @@ function trackNamespace(): string[] {
 }
 
 function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
+  telemetry.log(level, message)
   const panel = document.getElementById('logPanel')
   if (!panel) {
     return
