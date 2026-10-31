@@ -3,6 +3,7 @@ import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
@@ -22,12 +23,20 @@ type Prompt = { targets: string[]; video?: string }
 /// [index into the prompt's targets, edges]
 type TargetBox = [number, BoxEdges]
 
+const telemetry = startPageTelemetry(
+  'moq-ptz-tracking',
+  () => element<HTMLInputElement>('url').value.trim(),
+  () => player
+)
 const player = new LivePlayer({
   container: element('stage'),
   callbacks: {
     onStateChange: followSelectedVideoTrack,
     onLiveFrame: renderViewerDelay,
-    onLog: (level, message) => console[level](`[moq-ptz-tracking] ${message}`)
+    onLog: (level, message) => {
+      telemetry.log(level, message)
+      console[level](`[moq-ptz-tracking] ${message}`)
+    }
   }
 })
 let promptWriter: TrackWriter | undefined
