@@ -1,6 +1,6 @@
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Full};
 use hyper::{
-    Request, Response,
+    Request, Response, StatusCode,
     body::{Bytes, Incoming},
     server::conn::http1,
     service::service_fn,
@@ -22,6 +22,14 @@ pub(crate) fn snapshot(timestamp_ms: u64) -> RelaySnapshot {
 
 /// Answers 200 to every request and sends its URI and body to the receiver.
 pub(crate) async fn fake_http_server() -> (String, mpsc::UnboundedReceiver<(String, String)>) {
+    fake_http_server_answering(StatusCode::OK, "").await
+}
+
+/// Answers every request with `status` and `body` and sends its URI and body to the receiver.
+pub(crate) async fn fake_http_server_answering(
+    status: StatusCode,
+    body: &'static str,
+) -> (String, mpsc::UnboundedReceiver<(String, String)>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let (request_sender, request_receiver) = mpsc::unbounded_channel();
@@ -33,10 +41,13 @@ pub(crate) async fn fake_http_server() -> (String, mpsc::UnboundedReceiver<(Stri
                 let request_sender = request_sender.clone();
                 async move {
                     let uri = request.uri().to_string();
-                    let body = request.into_body().collect().await?.to_bytes();
-                    let body = String::from_utf8(body.to_vec()).unwrap();
-                    request_sender.send((uri, body)).unwrap();
-                    Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::new()))
+                    let received = request.into_body().collect().await?.to_bytes();
+                    let received = String::from_utf8(received.to_vec()).unwrap();
+                    request_sender.send((uri, received)).unwrap();
+                    let mut response =
+                        Response::new(Full::new(Bytes::from_static(body.as_bytes())));
+                    *response.status_mut() = status;
+                    Ok::<_, hyper::Error>(response)
                 }
             });
             tokio::spawn(http1::Builder::new().serve_connection(TokioIo::new(stream), service));
