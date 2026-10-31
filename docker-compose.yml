@@ -102,7 +102,7 @@ services:
         condition: service_started
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25.8@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
+    image: clickhouse/clickhouse-server:26.10.3.7@sha256:739e099abd1157390960a59e4532d21781d8fde57e6e4151cb920ea02c30b1ce
     environment:
       CLICKHOUSE_USER: observability
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-observability}
