@@ -19,10 +19,8 @@ use crate::modules::{
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer,
-    },
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer},
     session::handler::publish_namespace::PublishNamespaceHandler,
 };
 
@@ -284,7 +282,8 @@ mod tests {
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         cascading::route_registry::NoopRelayRouteRegistry,
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
+        directory::track::UpstreamSubscriptionOrigin,
+        domain::track_key::TrackKey,
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, local_publisher_resolver, table_with_upstream,

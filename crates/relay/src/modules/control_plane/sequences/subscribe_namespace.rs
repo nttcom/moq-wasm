@@ -6,10 +6,8 @@ use crate::modules::{
             DownstreamPublish, downstream_publish_task::DownstreamPublishTask,
         },
     },
-    domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::MatchingPublication},
-        session_id::SessionId,
-    },
+    directory::{InMemoryLocalPubSubDirectory, track::MatchingPublication},
+    domain::session_id::SessionId,
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
 use std::collections::HashSet;
@@ -216,8 +214,8 @@ mod tests {
     use super::*;
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
-        domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
+        directory::{InMemoryLocalPubSubDirectory, track::UpstreamSubscriptionOrigin},
+        domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,

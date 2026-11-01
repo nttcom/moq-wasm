@@ -1,4 +1,4 @@
-pub(crate) mod entry;
+pub(crate) mod track;
 
 use std::{
     collections::{BTreeSet, HashSet},
@@ -9,14 +9,14 @@ use dashmap::{DashMap, DashSet, Entry};
 use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
+    directory::track::{
+        ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication, PublishDoneReason,
+        ReleasedUpstreamSubscription, RemovedDownstreamSubscription, RemovedSessionSubscriptions,
+        UpstreamSubscriptionOrigin, UpstreamTrack,
+    },
     domain::{
         delivery_control::{DeliveryControl, UpdateOutcome},
         delivery_stats::{DeliveryCounters, DeliveryStats},
-        pub_sub_directory::entry::{
-            ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
-            PublishDoneReason, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
-            RemovedSessionSubscriptions, UpstreamSubscriptionOrigin, UpstreamTrack,
-        },
         session_id::SessionId,
         session_peer::SessionPeer,
         track_key::{TrackKey, TrackNamespace, TrackNamespacePrefix},

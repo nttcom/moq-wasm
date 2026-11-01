@@ -14,7 +14,8 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    directory::InMemoryLocalPubSubDirectory,
+    domain::session_id::SessionId,
     session::handler::fetch::FetchHandler,
 };
 

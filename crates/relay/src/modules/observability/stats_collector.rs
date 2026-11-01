@@ -12,12 +12,8 @@ use relay_stats::{
 use crate::modules::{
     cascading::inter_relay_connection_manager::InterRelayConnectionManager,
     data_plane::cache::{store::TrackCacheStore, track_cache::IngressCounters},
-    domain::{
-        pub_sub_directory::{DownstreamSubscriptionState, InMemoryLocalPubSubDirectory},
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
-    },
+    directory::{DownstreamSubscriptionState, InMemoryLocalPubSubDirectory},
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::session_repository::{SessionRepository, SessionState},
 };
 
@@ -252,15 +248,11 @@ mod tests {
         auth::verified_token::VerifiedToken,
         cascading::inter_relay_connection_manager::InterRelayConnectionManager,
         data_plane::cache::store::TrackCacheStore,
-        domain::{
-            pub_sub_directory::{
-                InMemoryLocalPubSubDirectory,
-                entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
-            },
-            session_id::SessionId,
-            session_peer::SessionPeer,
-            track_key::TrackKey,
+        directory::{
+            InMemoryLocalPubSubDirectory,
+            track::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
         },
+        domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
         session::session_repository::{NewSession, SessionRepository},
         test_support::{
             mock_session::{detached_session_repository, mock_session_with_transport_stats},

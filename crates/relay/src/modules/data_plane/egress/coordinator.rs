@@ -15,9 +15,8 @@ use crate::modules::{
             runner::{EgressRunner, RunnerExit},
         },
     },
-    domain::{
-        pub_sub_directory::DownstreamRunnerSignals, session_id::SessionId, track_key::TrackKey,
-    },
+    directory::DownstreamRunnerSignals,
+    domain::{session_id::SessionId, track_key::TrackKey},
     session::{
         session_event::SessionEvent, session_repository::SessionRepository,
         subscription::DownstreamSubscription,
@@ -209,13 +208,13 @@ mod tests {
     use tokio::sync::watch;
 
     use super::*;
-    use crate::modules::domain::{
-        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
-    };
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::relay_harness::{
         MockPublisherObservers, fixtures::subscription::make_subscription,
         session_repository_with_downstream_session,
+    };
+    use crate::modules::{
+        directory::track::PublishDoneReason, domain::delivery_control::DeliveryControl,
     };
 
     const SUBSCRIBER_SESSION_ID: SessionId = 2;

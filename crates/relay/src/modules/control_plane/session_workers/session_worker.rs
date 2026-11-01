@@ -23,10 +23,8 @@ use crate::modules::{
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
-    domain::{
-        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
-        session_id::SessionId,
-    },
+    directory::track::PublishDoneReason,
+    domain::{delivery_control::DeliveryControl, session_id::SessionId},
     session::{
         Session, handler::track_status::TrackStatusHandler, moqt_session_event::MoqtSessionEvent,
         session_event::SessionEvent,

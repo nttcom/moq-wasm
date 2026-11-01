@@ -1,7 +1,7 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, track_key::TrackKey},
+    directory::InMemoryLocalPubSubDirectory, domain::track_key::TrackKey,
 };
 
 pub(crate) struct MalformedTrackCleanup;
@@ -34,7 +34,8 @@ impl MalformedTrackCleanup {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_id::SessionId},
+        directory::track::UpstreamSubscriptionOrigin,
+        domain::session_id::SessionId,
         test_support::directory_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, active_upstream,
             upstream_release_context,

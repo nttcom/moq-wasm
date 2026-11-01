@@ -13,15 +13,11 @@ use crate::modules::{
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    domain::{
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{ActiveUpstreamSubscription, PublishDoneReason, UpstreamSubscriptionOrigin},
-        },
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
+    directory::{
+        InMemoryLocalPubSubDirectory,
+        track::{ActiveUpstreamSubscription, PublishDoneReason, UpstreamSubscriptionOrigin},
     },
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::subscription::UpstreamSubscription,
 };
 

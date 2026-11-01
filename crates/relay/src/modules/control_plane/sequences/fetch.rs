@@ -19,10 +19,8 @@ use crate::modules::{
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
-    },
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::handler::fetch::FetchHandler,
 };
 
@@ -477,7 +475,8 @@ mod tests {
             test_support::{app_token, connect_client, spawn_relay_and_connect_client},
             verified_token::VerifiedToken,
         },
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
+        directory::track::UpstreamSubscriptionOrigin,
+        domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{active_upstream, local_publisher_resolver, table_with_upstream},
             mock_session::{

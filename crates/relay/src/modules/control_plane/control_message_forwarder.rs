@@ -10,7 +10,8 @@ use moqt::{
 };
 
 use crate::modules::{
-    domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
+    directory::track::PublishDoneReason,
+    domain::session_id::SessionId,
     session::{
         publisher::Publisher,
         session_repository::SessionRepository,

@@ -24,7 +24,7 @@ use crate::{
             egress::coordinator::EgressCoordinator,
             ingress::ingress_coordinator::IngressCoordinator,
         },
-        domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
+        directory::InMemoryLocalPubSubDirectory,
         observability::{
             stats_collector::{StatsCollector, StatsSources},
             stats_publish_task::unix_millis_now,

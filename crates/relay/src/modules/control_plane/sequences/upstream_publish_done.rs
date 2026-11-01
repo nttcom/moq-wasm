@@ -2,10 +2,8 @@ use crate::modules::{
     cascading::route_registry::RelayRouteRegistry,
     control_plane::sequences::publish::Publish,
     data_plane::{cache::store::TrackCacheStore, ingress::ingress_coordinator::IngressCommand},
-    domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
-        session_id::SessionId,
-    },
+    directory::{InMemoryLocalPubSubDirectory, track::PublishDoneReason},
+    domain::session_id::SessionId,
 };
 
 pub(crate) struct UpstreamPublishDone;
@@ -42,10 +40,8 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
-        domain::{
-            pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer,
-            track_key::TrackKey,
-        },
+        directory::track::UpstreamSubscriptionOrigin,
+        domain::{session_peer::SessionPeer, track_key::TrackKey},
         test_support::directory_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
             upstream_release_context,

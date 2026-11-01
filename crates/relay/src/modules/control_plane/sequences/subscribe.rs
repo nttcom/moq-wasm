@@ -12,11 +12,9 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
+    directory::{InMemoryLocalPubSubDirectory, track::UpstreamTrack},
     domain::{
-        delivery_control::DeliveryControl,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
-        session_id::SessionId,
-        session_peer::SessionPeer,
+        delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::handler::subscribe::SubscribeHandler,
@@ -646,10 +644,6 @@ mod tests {
     use crate::modules::cascading::inter_relay_connection_manager::InterRelayConnectionManager;
     use crate::modules::cascading::route_registry::NoopRelayRouteRegistry;
     use crate::modules::data_plane::cache::track_cache::TrackCache;
-    use crate::modules::domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
-        session_peer::SessionPeer,
-    };
     use crate::modules::session::session_repository::SessionRepository;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
@@ -662,6 +656,10 @@ mod tests {
         session_repository_with_session, session_repository_with_sessions,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
+    use crate::modules::{
+        directory::{InMemoryLocalPubSubDirectory, track::UpstreamSubscriptionOrigin},
+        domain::session_peer::SessionPeer,
+    };
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
         insert_closed_group(cache, group_id, &[0]);

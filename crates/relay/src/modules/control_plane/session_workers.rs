@@ -22,7 +22,8 @@ use crate::modules::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
         ingress::ingress_coordinator::IngressCommand,
     },
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    directory::InMemoryLocalPubSubDirectory,
+    domain::session_id::SessionId,
     session::session_repository::{SessionAdded, SessionRepository},
 };
 
@@ -119,10 +120,8 @@ mod tests {
             cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
             ingress::ingress_coordinator::IngressCommand,
         },
-        domain::{
-            pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-            session_peer::SessionPeer,
-        },
+        directory::InMemoryLocalPubSubDirectory,
+        domain::{session_id::SessionId, session_peer::SessionPeer},
         session::{moqt_session_event::MoqtSessionEvent, session_repository::SessionRepository},
         test_support::mock_session::{
             MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,

@@ -8,7 +8,8 @@ use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    directory::InMemoryLocalPubSubDirectory,
+    domain::session_id::SessionId,
 };
 
 pub(crate) struct PublishNamespaceDone;

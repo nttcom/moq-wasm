@@ -16,12 +16,8 @@ use crate::modules::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressStartRequest},
     },
-    domain::{
-        delivery_control::DeliveryControl,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
-        session_id::SessionId,
-        track_key::TrackKey,
-    },
+    directory::{InMemoryLocalPubSubDirectory, track::PublishDoneReason},
+    domain::{delivery_control::DeliveryControl, session_id::SessionId, track_key::TrackKey},
 };
 use moqt::fetch::JoinPoint;
 
@@ -126,10 +122,8 @@ impl DownstreamPublish {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{
-            pub_sub_directory::entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
-            session_peer::SessionPeer,
-        },
+        directory::track::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
+        domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,

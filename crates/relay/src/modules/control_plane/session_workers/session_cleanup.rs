@@ -4,7 +4,8 @@ use crate::modules::{
         publish::Publish, publish_namespace_done::PublishNamespaceDone, stop_ingress,
         unsubscribe_namespace::UnsubscribeNamespace,
     },
-    domain::{pub_sub_directory::entry::RemovedSessionSubscriptions, session_id::SessionId},
+    directory::track::RemovedSessionSubscriptions,
+    domain::session_id::SessionId,
 };
 
 /// Idempotent: safe to call when the session is already absent. The session

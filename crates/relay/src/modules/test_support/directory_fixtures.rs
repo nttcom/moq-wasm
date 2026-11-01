@@ -18,21 +18,21 @@ use crate::modules::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
         ingress::ingress_coordinator::IngressCommand,
     },
+    directory::{
+        InMemoryLocalPubSubDirectory,
+        track::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin, UpstreamTrack},
+    },
     domain::{
-        delivery_control::DeliveryControl,
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin, UpstreamTrack},
-        },
-        session_id::SessionId,
-        session_peer::SessionPeer,
+        delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
-    test_support::mock_session::{
-        RecordedControlMessages, detached_session_repository, mock_session_answering_publish,
-        session_repository_with_session, session_repository_with_upstream_session,
+    test_support::{
+        mock_session::{
+            RecordedControlMessages, detached_session_repository, mock_session_answering_publish,
+            session_repository_with_session, session_repository_with_upstream_session,
+        },
+        relay_harness::fixtures::subscription::upstream_subscription,
     },
-    test_support::relay_harness::fixtures::subscription::upstream_subscription,
 };
 
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;

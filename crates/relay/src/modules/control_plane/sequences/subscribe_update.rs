@@ -1,7 +1,9 @@
-use crate::modules::domain::{
-    delivery_control::{DeliveryControl, UpdateOutcome},
-    pub_sub_directory::InMemoryLocalPubSubDirectory,
-    session_id::SessionId,
+use crate::modules::{
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{
+        delivery_control::{DeliveryControl, UpdateOutcome},
+        session_id::SessionId,
+    },
 };
 
 pub(crate) struct SubscribeUpdate;
@@ -36,10 +38,8 @@ impl SubscribeUpdate {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{
-            pub_sub_directory::{DownstreamRunnerSignals, entry::UpstreamSubscriptionOrigin},
-            session_peer::SessionPeer,
-        },
+        directory::{DownstreamRunnerSignals, track::UpstreamSubscriptionOrigin},
+        domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{delivery_control, table_with_upstream},
             relay_harness::fixtures::location,

@@ -1,7 +1,7 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    directory::InMemoryLocalPubSubDirectory, domain::session_id::SessionId,
 };
 
 pub(crate) struct Unsubscribe;
@@ -63,11 +63,8 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        domain::{
-            pub_sub_directory::entry::{PublishDoneReason, UpstreamSubscriptionOrigin},
-            session_peer::SessionPeer,
-            track_key::TrackKey,
-        },
+        directory::track::{PublishDoneReason, UpstreamSubscriptionOrigin},
+        domain::{session_peer::SessionPeer, track_key::TrackKey},
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,

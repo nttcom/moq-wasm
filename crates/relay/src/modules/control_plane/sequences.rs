@@ -21,12 +21,8 @@ use crate::modules::{
     },
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::ActiveUpstreamSubscription},
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
-    },
+    directory::{InMemoryLocalPubSubDirectory, track::ActiveUpstreamSubscription},
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::subscription::UpstreamSubscription,
 };
 
@@ -188,7 +184,7 @@ pub(crate) async fn stop_ingress(
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        directory::track::UpstreamSubscriptionOrigin,
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, delivery_control,

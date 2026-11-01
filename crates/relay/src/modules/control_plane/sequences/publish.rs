@@ -16,15 +16,11 @@ use crate::modules::{
         },
     },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    domain::{
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
-        },
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
+    directory::{
+        InMemoryLocalPubSubDirectory,
+        track::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
     },
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
 

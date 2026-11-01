@@ -14,10 +14,8 @@ use crate::modules::{
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
-    },
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
 };
 
 pub(crate) struct GoAway;
@@ -112,11 +110,8 @@ mod tests {
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         control_plane::control_message_forwarder::ControlMessageForwarder,
-        domain::{
-            pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
-            session_id::SessionId,
-            session_peer::SessionPeer,
-        },
+        directory::{InMemoryLocalPubSubDirectory, track::UpstreamSubscriptionOrigin},
+        domain::{session_id::SessionId, session_peer::SessionPeer},
         session::session_repository::NewSession,
         test_support::{
             directory_fixtures::{active_upstream, local_publisher_resolver, track_key},
