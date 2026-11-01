@@ -61,6 +61,10 @@ struct RelayState {
     /// Per namespace path, the tracks a SUBSCRIBE is accepted for before the
     /// catalog lists them.
     declared_tracks: HashMap<String, HashSet<String>>,
+    /// Per namespace path, the tracks `remove_track` dropped from the catalog.
+    /// The origin keeps them, so a SUBSCRIBE for one is rejected here instead
+    /// of being returned to a caller that would hand it to the origin.
+    removed_tracks: HashMap<String, HashSet<String>>,
     /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
@@ -109,6 +113,12 @@ impl RelayState {
             .get(namespace_path)
             .and_then(|metadata| build_catalog(namespace_path, metadata).ok())
             .is_some_and(|catalog| awaits_subscribe(&catalog, track_name))
+    }
+
+    fn removed(&self, namespace_path: &str, track_name: &str) -> bool {
+        self.removed_tracks
+            .get(namespace_path)
+            .is_some_and(|tracks| tracks.contains(track_name))
     }
 
     fn catalog_refresh_due(&self, namespace_path: &str, now: Duration, generation: u64) -> bool {
@@ -175,8 +185,9 @@ impl RelayConnection {
     /// Answers SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS
     /// for the broadcasts on a session given to `with_session`, and returns
     /// every other event. That includes a SUBSCRIBE in a namespace no
-    /// broadcast here publishes and an UNSUBSCRIBE that the `origin` given to
-    /// `with_session` does not know. `Disconnected` and `ProtocolViolation`
+    /// broadcast here publishes, a SUBSCRIBE for a track the broadcast never
+    /// listed, which the owner may publish with the `origin` given to
+    /// `with_session`, and an UNSUBSCRIBE that this `origin` does not know. `Disconnected` and `ProtocolViolation`
     /// are returned too, after they ended the broadcasts' sends.
     pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         let connected = self.connected.lock().await.clone();
@@ -310,7 +321,10 @@ impl ConnectedRelay {
                     }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
                     SessionEvent::Subscribe(handler) => {
-                        let reason = format!("{} is not published here", handler.track_namespace);
+                        let reason = format!(
+                            "{}/{} is not published here",
+                            handler.track_namespace, handler.track_name
+                        );
                         if let Err(err) = handler
                             .error(RequestErrorCode::TrackDoesNotExist, reason)
                             .await
@@ -397,7 +411,8 @@ impl ConnectedRelay {
         }
     }
 
-    /// Returns `handler` for a namespace no broadcast here publishes.
+    /// Returns `handler` for a namespace no broadcast here publishes and for a
+    /// track the broadcast never listed.
     async fn serve_subscribe(
         origin: &Origin,
         state: &Mutex<RelayState>,
@@ -405,21 +420,22 @@ impl ConnectedRelay {
     ) -> Option<SubscribeHandler> {
         let namespace = handler.track_namespace.clone();
         let track_name = handler.track_name.clone();
-        let (publishes, subscribable) = {
+        let (publishes, subscribable, removed) = {
             let state = state.lock().await;
             (
                 state.publishes(&namespace),
                 state.subscribable(&namespace, &track_name),
+                state.removed(&namespace, &track_name),
             )
         };
-        if !publishes {
+        if !publishes || !(subscribable || removed) {
             return Some(handler);
         }
         if !subscribable {
             if let Err(err) = handler
                 .error(
                     RequestErrorCode::TrackDoesNotExist,
-                    format!("{track_name} is neither the catalog nor a CMAF track of it"),
+                    format!("{track_name} was removed from the catalog"),
                 )
                 .await
             {
@@ -525,7 +541,13 @@ impl ConnectedRelay {
                 return Ok(());
             }
             let after = catalog_track_names(&namespace_path, metadata)?;
-            before.difference(&after).cloned().collect::<Vec<_>>()
+            let dropped = before.difference(&after).cloned().collect::<Vec<_>>();
+            guard
+                .removed_tracks
+                .entry(namespace_path.clone())
+                .or_default()
+                .extend(dropped.iter().cloned());
+            dropped
         };
         self.send_catalog(&namespace_path).await?;
         for name in dropped {
@@ -1112,10 +1134,18 @@ mod tests {
         assert!(abandoned.wait_for(|subscribed| *subscribed).await.is_err());
     }
 
-    #[tokio::test]
-    async fn a_broadcast_publishes_on_a_session_its_owner_reads_and_close_leaves_it_open() {
-        // Arrange
-        let mut relay = FakeRelay::spawn("shared-session");
+    /// A broadcast on a session whose owner reads the events: every SUBSCRIBE
+    /// the connection returns is sent to `returned` as `namespace/track` and
+    /// rejected.
+    struct OwnedSessionBroadcast {
+        session: Arc<Session>,
+        connection: RelayConnection,
+        broadcast: Broadcast,
+        returned: mpsc::UnboundedReceiver<String>,
+        owner_loop: tokio::task::JoinHandle<()>,
+    }
+
+    async fn owned_session_broadcast(relay: &FakeRelay) -> OwnedSessionBroadcast {
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
             verify_certificate: false,
             ..ClientConfig::default()
@@ -1123,14 +1153,17 @@ mod tests {
         .unwrap();
         let session = Arc::new(endpoint.connect(&relay.url).await.unwrap().await.unwrap());
         let connection = RelayConnection::with_session(session.clone(), Origin::default());
-        let (returned_sender, mut returned) = mpsc::unbounded_channel();
+        let (returned_sender, returned) = mpsc::unbounded_channel();
         let owner_loop = tokio::spawn({
             let session = session.clone();
             let connection = connection.clone();
             async move {
                 while let Ok(event) = session.receive_event().await {
                     if let Some(SessionEvent::Subscribe(handler)) = connection.handle(event).await {
-                        let _ = returned_sender.send(handler.track_namespace.clone());
+                        let _ = returned_sender.send(format!(
+                            "{}/{}",
+                            handler.track_namespace, handler.track_name
+                        ));
                         let _ = handler
                             .error(RequestErrorCode::TrackDoesNotExist, String::new())
                             .await;
@@ -1142,33 +1175,50 @@ mod tests {
             connection.clone(),
             vec!["live".to_string(), "cam".to_string()],
         );
-
-        // Act
         broadcast
             .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
             .await
             .unwrap();
+        OwnedSessionBroadcast {
+            session,
+            connection,
+            broadcast,
+            returned,
+            owner_loop,
+        }
+    }
+
+    async fn relay_subscribe(relay_session: &Session, namespace: &str, track: &str) -> bool {
+        let mut subscriber = relay_session.subscriber();
+        matches!(
+            tokio::time::timeout(
+                TEST_TIMEOUT,
+                subscriber.subscribe(
+                    namespace.to_string(),
+                    track.to_string(),
+                    moqt::subscribe::SubscribeOption::default(),
+                ),
+            )
+            .await,
+            Ok(Ok(_))
+        )
+    }
+
+    #[tokio::test]
+    async fn a_broadcast_publishes_on_a_session_its_owner_reads_and_close_leaves_it_open() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("shared-session");
+        let mut owned = owned_session_broadcast(&relay).await;
+
+        // Act
         let catalogs = relay.received_catalogs().await;
         let relay_session = relay.session().await;
-        let subscribed = tokio::time::timeout(
-            TEST_TIMEOUT,
-            relay_session.subscriber().subscribe(
-                "live/cam".to_string(),
-                CATALOG_TRACK_NAME.to_string(),
-                moqt::subscribe::SubscribeOption::default(),
-            ),
-        )
-        .await;
-        let mut relay_subscriber = relay_session.subscriber();
-        let foreign = relay_subscriber.subscribe(
-            "other/ns".to_string(),
-            "track".to_string(),
-            moqt::subscribe::SubscribeOption::default(),
-        );
-        let _ = tokio::time::timeout(TEST_TIMEOUT, foreign).await;
-        let returned_namespace = returned.try_recv();
-        connection.close().await;
-        let still_open = tokio::time::timeout(Duration::from_millis(300), session.closed()).await;
+        let subscribed = relay_subscribe(&relay_session, "live/cam", CATALOG_TRACK_NAME).await;
+        relay_subscribe(&relay_session, "other/ns", "track").await;
+        let returned = owned.returned.try_recv();
+        owned.connection.close().await;
+        let still_open =
+            tokio::time::timeout(Duration::from_millis(300), owned.session.closed()).await;
 
         // Assert
         assert_eq!(
@@ -1179,20 +1229,60 @@ mod tests {
             ]
         );
         assert!(!catalogs.is_empty(), "the catalog must arrive");
-        assert!(
-            matches!(subscribed, Ok(Ok(_))),
-            "the SUBSCRIBE must be answered through handle"
-        );
+        assert!(subscribed, "the SUBSCRIBE must be answered through handle");
         assert_eq!(
-            returned_namespace.ok().as_deref(),
-            Some("other/ns"),
+            returned.ok().as_deref(),
+            Some("other/ns/track"),
             "a SUBSCRIBE in a namespace no broadcast publishes goes back to the owner"
         );
         assert!(
             still_open.is_err(),
             "close must leave the owner's session open"
         );
-        owner_loop.abort();
+        owned.owner_loop.abort();
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_for_a_track_the_broadcast_never_listed_goes_back_to_the_owner() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("unlisted-track");
+        let mut owned = owned_session_broadcast(&relay).await;
+        relay.received_catalogs().await;
+
+        let relay_session = relay.session().await;
+
+        // Act
+        relay_subscribe(&relay_session, "live/cam", "prompt").await;
+
+        // Assert
+        assert_eq!(
+            owned.returned.try_recv().ok().as_deref(),
+            Some("live/cam/prompt")
+        );
+        owned.owner_loop.abort();
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_for_a_removed_track_is_rejected_without_reaching_the_owner() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("removed-track");
+        let mut owned = owned_session_broadcast(&relay).await;
+        relay.received_catalogs().await;
+        owned
+            .broadcast
+            .remove_track(VIDEO_TRACK_NAME)
+            .await
+            .unwrap();
+
+        let relay_session = relay.session().await;
+
+        // Act
+        let subscribed = relay_subscribe(&relay_session, "live/cam", VIDEO_TRACK_NAME).await;
+
+        // Assert
+        assert!(!subscribed);
+        assert!(owned.returned.try_recv().is_err());
+        owned.owner_loop.abort();
     }
 
     #[tokio::test]
