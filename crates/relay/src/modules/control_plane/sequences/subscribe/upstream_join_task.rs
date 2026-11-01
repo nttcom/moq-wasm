@@ -12,9 +12,12 @@ use crate::modules::{
     data_plane::cache::store::TrackCacheStore,
     directory::{
         InMemoryLocalPubSubDirectory,
-        track::{Producer, ProducerOrigin, ProducerState, PublishDoneReason},
+        track::{Producer, ProducerOrigin, ProducerState},
     },
-    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+    domain::{
+        publish_done_reason::PublishDoneReason, session_id::SessionId, session_peer::SessionPeer,
+        track_key::TrackKey,
+    },
     session::subscription::UpstreamSubscription,
 };
 
@@ -181,11 +184,10 @@ async fn join_track(
 ) {
     let subscription = state.subscription.clone();
     let upstream_request_id = subscription.request_id();
-    let taken = deps
+    let joined = deps
         .table
-        .track_takes_publisher(track_key, publisher_session_id, state.peer);
-    let ingest = if taken {
-        start_ingest(
+        .track_takes_publisher(track_key, publisher_session_id, state.peer)
+        && match start_ingest(
             &deps.forwarder,
             &deps.cache_store,
             IngestRequest {
@@ -196,18 +198,14 @@ async fn join_track(
             },
         )
         .await
-    } else {
-        None
-    };
-    let joined = match ingest {
-        Some(ingest) => deps.table.add_upstream_subscription_to_track(
-            track_key,
-            publisher_session_id,
-            Producer::new(state, ingest),
-        ),
-        None if taken => return,
-        None => false,
-    };
+        {
+            Some(ingest) => deps.table.add_upstream_subscription_to_track(
+                track_key,
+                publisher_session_id,
+                Producer::new(state, ingest),
+            ),
+            None => return,
+        };
     if !joined {
         tracing::debug!(
             publisher_session_id = %publisher_session_id,

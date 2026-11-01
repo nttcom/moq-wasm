@@ -10,7 +10,7 @@ use crate::modules::{
             cached_object::{CacheStamp, CachedObject},
             track_cache::TrackCache,
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::fetch_delivery::{EgressFetchRequest, FetchDeliveryTask},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
@@ -34,7 +34,6 @@ pub(crate) struct FetchIngest {
 impl FetchIngest {
     pub(crate) fn run(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        egress_sender: tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> Self {
         let downstream_subscriber_session_id = start.egress_start.subscriber_session_id;
@@ -45,9 +44,7 @@ impl FetchIngest {
         let cache = start.egress_start.cache.clone();
         let join_handle = tokio::spawn(
             async move {
-                if let Err(error) =
-                    Self::run_inner(session_repo.clone(), &egress_sender, start).await
-                {
+                if let Err(error) = Self::run_inner(session_repo.clone(), start).await {
                     // These failures are request-scoped and expected (timeout, upstream reset).
                     // Log the chain without anyhow's backtrace.
                     tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
@@ -88,21 +85,16 @@ impl FetchIngest {
 
     async fn run_inner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
         let timeout = start.fill_timeout;
-        tokio::time::timeout(
-            timeout,
-            Self::ingest_fetch_stream(session_repo, egress_sender, start),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("fetch ingest timed out after {:?}", timeout))?
+        tokio::time::timeout(timeout, Self::ingest_fetch_stream(session_repo, start))
+            .await
+            .map_err(|_| anyhow::anyhow!("fetch ingest timed out after {:?}", timeout))?
     }
 
     async fn ingest_fetch_stream(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
         let (mut subscriber, persist) = {
@@ -151,9 +143,14 @@ impl FetchIngest {
                         start.egress_start.start_location,
                         start.egress_start.end_location,
                     );
-                    egress_sender
-                        .send(EgressCommand::StartFetch(start.egress_start))
-                        .await?;
+                    let publisher = session_repo
+                        .lock()
+                        .await
+                        .publisher(start.egress_start.subscriber_session_id)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("downstream subscriber session not found")
+                        })?;
+                    let _delivery = FetchDeliveryTask::run(publisher, start.egress_start);
                     return Ok(());
                 }
             }
@@ -231,8 +228,6 @@ impl FetchIngest {
 mod tests {
     use super::*;
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
-    use tokio::sync::mpsc;
-
     use crate::modules::{
         data_plane::cache::track_cache::FetchRangeResolution,
         session::session_event::SessionEvent,
@@ -272,7 +267,6 @@ mod tests {
         );
         assert!(cache.is_malformed());
 
-        let (egress_sender, _egress_receiver) = mpsc::channel(1);
         let start = FetchIngestStart {
             track_key: TrackKey::new("ns", "track"),
             upstream_publisher_session_id: UPSTREAM_SESSION,
@@ -297,7 +291,7 @@ mod tests {
 
         // Act: the receiver pends forever, so only the malformed latch can
         // make the ingest bail.
-        let _ingest = FetchIngest::run(session_repo, egress_sender, start);
+        let _ingest = FetchIngest::run(session_repo, start);
 
         // Assert
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);

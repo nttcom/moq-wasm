@@ -18,17 +18,18 @@ optionally cascades across relays via a Redis-backed route registry.
 | Directory | Holds |
 | --- | --- |
 | `session/` | The session as the relay sees it: `Session` / `Publisher` / `Subscriber` traits implemented by `moqt::Session` and by the test mocks, the per-message `handler::*` traits, data stream adapters, `SessionRepository`, `SessionEvent` |
-| `domain/` | Relay vocabulary and state shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, the pub/sub directory and its entries (error codes are `moqt`'s typed enums) |
+| `domain/` | Relay vocabulary shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, `DeliveryControl`, `DeliveryStats`, `PublishDoneReason`, the egress runner's `DownstreamRunnerSignals` (error codes are `moqt`'s typed enums) |
+| `directory/` | The relay's registry: `InMemoryLocalPubSubDirectory` (namespace tables, tracks and the consumer index) and `track.rs` with `Track`, its `Producer`s (each owning the `IngestTask` reading its publisher) and `Consumer`s (each owning the signals its egress runner lives by) |
 | `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
 | `control_plane/` | Control-message processing: `SessionWorkers` and the per-session `SessionWorker`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
-| `data_plane/` | Objects in flight: `ingress/`, `cache/`, `egress/`, and the data-plane integration tests |
+| `data_plane/` | Objects in flight: `ingress/` (`IngestTask`), `cache/`, `egress/` (`EgressTask`, `FetchDeliveryTask`), and the data-plane integration tests |
 | `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op) and `InterRelayConnectionManager` |
 | `observability/` | `StatsCollector` (snapshot of sessions, tracks, subscriptions and process memory) and `StatsPublishTask`, which publishes it once per second |
 | `test_support/` | `cfg(test)` mocks, the data-plane `RelayHarness` and directory fixtures shared across modules |
 
-Dependencies point downwards in this order: `control_plane` → `cascading`,
-`data_plane` → `session`, `auth` → `domain`. `observability` only reads
-`session`, `data_plane` and `domain` state. `auth` and `session` reference
+Dependencies point downwards in this order: `control_plane` → `cascading` →
+`directory` → `data_plane` → `session`, `auth` → `domain`. `observability` only reads
+`session`, `directory`, `data_plane` and `domain` state. `auth` and `session` reference
 each other only through `VerifiedToken` / `SessionExpiryTask`.
 
 ## Startup path
@@ -65,7 +66,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
   repository announces every added session on the `SessionAdded` channel
   `RelayServer` creates with it.
 - `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`),
-  `InterRelayConnectionManager`, `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
+  the directory, `InterRelayConnectionManager`, `UpstreamPublisherResolver`,
   `SessionWorkers` (consuming the `SessionAdded` channel, with the
   `WorkerDeps` every session worker clones) and the cache-eviction job.
 
@@ -254,7 +255,7 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   without a token goes to `sequences::track_status`.
 - An upstream PUBLISH_DONE goes to
   `sequences::upstream_publish_done::UpstreamPublishDone`: it ends the
-  matching `ActiveUpstreamSubscription` and stops its ingress. When that was
+  matching `Producer`, whose ingest stops with it. When that was
   the last upstream subscription of its track, the track's downstream
   registrations end with it, handed the received status code and reason (see
   "Egress"); otherwise the remaining publishers keep feeding them. No UNSUBSCRIBE is sent, since the publisher
@@ -267,11 +268,11 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   - `MalformedTrackDetected(track_key)`, raised by the reader that
     latched the track. Handled by
     `sequences::malformed_track::MalformedTrackCleanup`: remove every
-    `ActiveUpstreamSubscription` of the track, since the cache latch makes the
-    whole track malformed whichever publisher's object conflicted, send each
-    publisher UNSUBSCRIBE (§2.5 MUST), and stop their ingress via
-    `IngressCommand::StopTrack`. Duplicate reports are idempotent (the track
-    entry is only found once).
+    `Producer` of the track, since the cache latch makes the whole track
+    malformed whichever publisher's object conflicted, and send each
+    publisher UNSUBSCRIBE (§2.5 MUST); dropping the producers stops their
+    ingests. Duplicate reports are idempotent (the track entry is only found
+    once).
   - `ProtocolViolationDetected { reason }`, raised when a subgroup object
     carries an Object Status draft-14 §10.2.1.1 does not define. The worker
     closes the session with PROTOCOL_VIOLATION (`Session::close_with_error`);
@@ -307,33 +308,42 @@ Each sequence owns the relay-side protocol logic for one message
   the same subscriber. The fan-out includes the originating session when it
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
   to its sender).
-- `InMemoryLocalPubSubDirectory` (`domain/pub_sub_directory.rs`) — the relay's in-memory
-  registry of publish/subscribe namespaces, upstream tracks, and downstream
-  subscriptions. Each namespace entry carries its sessions' `SessionPeer`:
-  client-owned Redis routes are cleaned up when the last *client* leaves, while
-  local namespace subscribers get PUBLISH_NAMESPACE_DONE only once no client or
-  relay session publishes the namespace. An `UpstreamTrack` holds one
-  `ActiveUpstreamSubscription` per publisher session feeding the track
-  (draft-14 §8.2) and the count of its downstream subscribers; downstream
-  subscriptions refer to the track, not to a publisher. The track lives while
-  any upstream subscription feeds it. The last downstream subscriber leaving
-  releases its SUBSCRIBE-initiated upstream subscriptions, while
-  PUBLISH-initiated ones stay until their publisher ends them. `remove_session` returns everything cleanup needs.
-  An `ActiveUpstreamSubscription` keeps the `moqt::Subscription` handle, and
-  a release hands that handle back (`ReleasedUpstreamSubscription`), because
-  moqt addresses UNSUBSCRIBE / PUBLISH_DONE / FETCH_CANCEL by the
-  subscription or fetch handle rather than by its request id.
+- `InMemoryLocalPubSubDirectory` (`directory.rs`) — the relay's in-memory
+  registry of publish/subscribe namespaces and tracks. Each namespace entry
+  carries its sessions' `SessionPeer`: client-owned Redis routes are cleaned
+  up when the last *client* leaves, while local namespace subscribers get
+  PUBLISH_NAMESPACE_DONE only once no client or relay session publishes the
+  namespace. A `Track` (`directory/track.rs`) holds one `Producer` per
+  publisher session feeding it (draft-14 §8.2) and one `Consumer` per
+  downstream subscription, keyed by (session, request id) and indexed in
+  `consumer_tracks`; consumers refer to the track, not to a publisher. A
+  `Producer` is its `ProducerState` (the `moqt::Subscription` handle, origin,
+  peer, expires, Content Exists) plus the `IngestTask` reading the publisher;
+  sequences read a `TrackState`, the producers without their ingests. A
+  `Consumer` holds the senders its egress runner selects on: the stop
+  `oneshot<PublishDoneReason>`, the `DeliveryControl` watch and the
+  `DeliveryStats`. Dropping a producer stops its ingest and dropping a
+  consumer stops its runner, so whoever removes an entry ends its task;
+  the UNSUBSCRIBE a removal leaves due is sent by the caller, from the
+  handle a release hands back (`ReleasedUpstreamSubscription`), because moqt
+  addresses UNSUBSCRIBE / PUBLISH_DONE / FETCH_CANCEL by the subscription or
+  fetch handle rather than by its request id. The track lives while any
+  producer feeds it. The last consumer leaving releases its
+  SUBSCRIBE-initiated producers, while PUBLISH-initiated ones stay until their
+  publisher ends them. `remove_session` returns everything cleanup needs.
 - `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
   guard removes the track's entry on release unless a waiter still holds the
   mutex, so the map only holds tracks whose upstream creation is in progress.
 
 ### SUBSCRIBE sequence (the central flow)
-1. **Find-or-create upstream subscription.** Fast path: an
-   `UpstreamTrack` already exists in the directory. Miss: take
+1. **Find-or-create upstream subscription.** Fast path: a
+   `Track` already exists in the directory. Miss: take
    the per-track serializer lock, re-check (a sibling may have created it),
    otherwise resolve the publishers and send upstream SUBSCRIBE to every one
-   of them at once (draft-14 §8.4). The first SUBSCRIBE_OK starts ingress,
-   registers the track and serves this SUBSCRIBE; the still pending requests
+   of them at once (draft-14 §8.4). The first SUBSCRIBE_OK starts the
+   ingest (`sequences::start_ingest`, which needs the publisher session's
+   `Subscriber`, mailbox and span), registers its `Producer` and serves this
+   SUBSCRIBE; the still pending requests
    go to an `UpstreamJoinTask` (`sequences/subscribe/upstream_join_task.rs`),
    started once this SUBSCRIBE's downstream subscription is registered. It
    adds each publisher that answers later to the track while the track still
@@ -361,9 +371,9 @@ Each sequence owns the relay-side protocol logic for one message
 4. **Downstream registration + egress start**: register the downstream
    subscription — atomically with the upstream subscription's existence, so a
    registration never outlives an upstream a concurrent cleanup already
-   removed — which returns the registered subscription's runner stop
-   `oneshot::Receiver`. Send
-   `EgressCommand::StartReader` carrying it and wait for the runner's
+   removed — which returns the consumer's `DownstreamRunnerSignals`. Start
+   the egress runner with them (`sequences::start_egress`, which needs the
+   subscriber session's `Publisher` and mailbox) and wait for the runner's
    readiness `oneshot`, then send SUBSCRIBE_OK with the allocated track alias
    and resolved largest location — SUBSCRIBE_OK and egress start always agree.
    If a concurrent cleanup removed the upstream before registration, or the
@@ -389,10 +399,10 @@ to the track the same way.
 ### PUBLISH sequence
 1. For a client-origin PUBLISH, register the track-publisher route; a failure
    answers PUBLISH_ERROR INTERNAL_ERROR, like PUBLISH_NAMESPACE.
-2. Add the publisher to the track's `UpstreamTrack` as an
-   `ActiveUpstreamSubscription` of origin `Publish` (it survives without
-   downstream subscribers), register the PUBLISH for namespace lookups, and
-   start ingress.
+2. Start the ingest and add the publisher to the `Track` as a `Producer` of
+   origin `Publish` (it survives without consumers), which replaces and
+   unsubscribes a SUBSCRIBE-initiated producer of the same publisher, and
+   register the PUBLISH for namespace lookups.
 3. Forward PUBLISH to every local session whose SUBSCRIBE_NAMESPACE prefix
    matches (draft-14 §8.4) and, for a client-origin PUBLISH, to every remote
    relay holding a namespace-subscriber route, dialled via
@@ -411,8 +421,8 @@ establishes a subscription):
 - on PUBLISH_OK the subscription is registered under the forwarded PUBLISH's
   Request ID with the receiving session's `SessionPeer` — so UNSUBSCRIBE,
   SUBSCRIBE_UPDATE and the split-horizon counts treat it like a SUBSCRIBE —
-  and `EgressCommand::StartReader` starts its runner with the parameters of
-  the PUBLISH_OK. The runner's acknowledgement signal is already resolved,
+  and `start_egress` starts its runner with the parameters of the
+  PUBLISH_OK. The runner's acknowledgement signal is already resolved,
   since the PUBLISH_OK has been received;
 - a track that ended before the PUBLISH_OK arrived is answered with
   PUBLISH_DONE TRACK_ENDED instead of a registration; a PUBLISH_ERROR or
@@ -460,8 +470,9 @@ cache keeps filling for FETCH.
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Relative
 Joining from the downstream subscription's `JoinPoint`), reply FETCH_OK,
-then delegate to `EgressCommand::StartFetch`, which serves the range from
-`TrackCache` over a new uni stream (see "Fetch delivery" under "Egress").
+then start a `FetchDeliveryTask` (`sequences::start_fetch_delivery`), which
+serves the range from `TrackCache` over a new uni stream (see "Fetch
+delivery" under "Egress").
 A Joining FETCH of a subscription whose filter is not Largest Object closes
 the session with a PROTOCOL_VIOLATION (draft-14 §9.16.2): the registration's
 `JoinPoint` records whether it may be joined.
@@ -478,11 +489,11 @@ all of them fail are the other publishers of the track resolved, and dialled,
 newest first. A FETCH_ERROR or a timeout moves on to the next; only when every
 publisher failed is the last error relayed downstream. A
 downstream session that disconnects meanwhile only makes the FETCH_OK send
-fail; egress drops a `StartFetch` for a departed session.
+fail; a departed session gets no delivery.
 
 ### TRACK_STATUS sequence
 A status query is answered from the relay's own state only. For a track with
-an `UpstreamTrack`, TRACK_STATUS_OK carries the newest upstream subscription's
+a `Track`, TRACK_STATUS_OK carries the newest producer's
 Expires and the Largest Location resolved as on the SUBSCRIBE fast path (the
 cache's largest location, else the largest Content Exists of its upstream
 subscriptions). Any other track
@@ -556,23 +567,25 @@ per-request authorization gate under "Event pipeline".
 - `TrackCacheStore` — `DashMap<TrackKey, Arc<TrackCache>>`.
 
 ### Ingress (`modules/data_plane/ingress`)
-`IngressCoordinator` consumes `IngressCommand::{Start, StopTrack}`:
+`IngestTask` (`ingest_task.rs`) is the ingest of one publisher's track,
+owned by the track's `Producer`:
 
-- On `Start`, it obtains the upstream session's `Subscriber`, creates the data
-  receiver (cancellable via a `watch` stop channel per track and publisher), and hands it to
-  `TrackIngestTask` as an `IngestSource` (subgroup-stream factory or datagram
-  receiver).
-- `TrackIngestTask` (`track_ingest_task.rs`) runs one task per track,
-  publisher and source kind: `accept_streams` (`stream_reader.rs`) spawns a `read_stream`
+- `sequences::start_ingest` spawns it with the publisher session's
+  `Subscriber`, the track cache, the publisher's mailbox sender and the
+  `CacheStamp`. The task creates the data receiver (`create_data_receiver`
+  waits for the publisher's first stream, so it runs inside the task and is
+  cancelled by the stop `watch` when the producer is dropped meanwhile),
+  then reads it: `accept_streams` (`stream_reader.rs`) spawns a `read_stream`
   per accepted subgroup stream, `read_datagrams` (`datagram_reader.rs`) reads
-  the datagram receiver. Every reader of one publisher's track shares one `TrackIngest`
-  (track key, publisher, cache, session-event sender, stop receiver).
+  the datagram receiver. Every reader of one publisher's track shares one
+  `TrackIngest` (track key, cache, publisher mailbox sender, stop receiver,
+  stamp).
   **Every publisher is ingested** (draft-14 §8.2): all publishers of a track
   insert into the same `TrackCache`, whose §8.1 duplicate handling
-  deduplicates them. A second `Start` for a publisher already ingesting the
-  track is ignored, and a publisher's `Stop` tears down only its own readers.
-  Stream readers outlive their accept loop until their stop sender is
-  signalled or dropped.
+  deduplicates them. A producer registered for a publisher that already
+  feeds the track replaces it, and the replaced producer's ingest stops with
+  it; dropping a producer tears down only its own readers. Stream readers
+  outlive their accept loop until their stop sender is signalled or dropped.
 - Readers convert every object moqt hands them (`moqt::object::Object`, ids
   already resolved) into a canonical `CachedObject` and insert it into
   `TrackCache`; an object whose payload arrives in pieces is published as an
@@ -728,7 +741,7 @@ per-request authorization gate under "Event pipeline".
   before or after the relay TTL, and the newest-object exception does not
   extend it. Objects received without the value keep the relay TTL.
   Downstream, the relay sends the value it received unchanged:
-  `UpstreamTrack::max_cache_duration` (the newest publisher's) goes into the
+  `TrackState::max_cache_duration` (the newest publisher's) goes into the
   SUBSCRIBE_OK, the forwarded PUBLISH and a FETCH_OK served from cache, and an
   upstream FETCH_OK's value goes into the relayed FETCH_OK. Each relay counts
   from its own receipt, so in a cascade an object can stay cached up to N ms
@@ -737,7 +750,7 @@ per-request authorization gate under "Event pipeline".
 - Disk cache (`disk_cache.rs`, on when `RELAY_DISK_CACHE_DIR` is set): the
   relay a client publisher sends to keeps the payloads for up to
   `RETENTION_LIMIT`; a downstream relay keeps its memory cache only and
-  forwards a FETCH that misses it upstream. The ingress coordinator and
+  forwards a FETCH that misses it upstream. `start_ingest` and
   `FetchIngest` stamp `CacheStamp.persist` when the upstream session is
   `SessionPeer::Client`.
   - Write: `TrackCache` hands each newly inserted persisted object with a
@@ -772,14 +785,16 @@ per-request authorization gate under "Event pipeline".
     the `*.seg` files in the directory.
 
 ### Egress (`modules/data_plane/egress`)
-`EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop
-command: each registered downstream subscription in the pub/sub directory owns the
+`EgressTask` (`egress_task.rs`) runs the `EgressRunner` of one downstream
+subscription; `sequences::start_egress` spawns it right after the consumer
+is registered, with the subscriber session's `Publisher` and mailbox sender.
+There is no stop command: the `Consumer` owns the
 `oneshot::Sender<PublishDoneReason>` whose receiver `EgressRunner::run` selects on (biased,
 before its delivery), so the runner lives exactly as long as the registration.
-Whoever removes the registration — UNSUBSCRIBE, the subscriber's or the publisher's session
-cleanup, an upstream PUBLISH_DONE — stops the runner, and a registration removed before the
-coordinator got to `StartReader` yields a runner that never runs; the order in which different
-session workers touch the registration and the coordinator cannot leak a runner. Removal
+Whoever removes the consumer — UNSUBSCRIBE, the subscriber's or the publisher's session
+cleanup, an upstream PUBLISH_DONE — stops the runner, and a consumer removed before its
+runner first polled its signals yields a runner that never delivers; the order in which
+different session workers touch the registration cannot leak a runner. Removal
 drops the sender when the subscriber ended the subscription (draft-14 §5.1: the publisher
 may destroy its state). Removal because the track's last upstream ended — its publisher's session went
 away (TRACK_ENDED) or it sent PUBLISH_DONE (its status code) — sends a `PublishDoneReason`
@@ -788,17 +803,15 @@ of streams it opened, after its senders stopped (§9.12: no state is destroyed w
 PUBLISH_DONE). A malformed track ends the runner the same way with MALFORMED_TRACK. A
 subscription with an End Group ends the runner once its range is delivered (see
 `EgressScheduler`): it sends PUBLISH_DONE SUBSCRIPTION_ENDED after every stream it opened
-was closed or reset (§9.12), and the coordinator then sends
+was closed or reset (§9.12), and the task then sends
 `SessionEvent::DownstreamSubscriptionEnded` to the subscriber session's mailbox, whose worker removes
 the registration through the UNSUBSCRIBE sequence, releasing the upstream subscriptions it
 leaves unneeded. The
 runner sends PUBLISH_DONE only once the subscribe sequence signals that SUBSCRIBE_OK went
 out (`subscribe_ok_receiver`), so it never precedes SUBSCRIBE_OK; a runner stopped before
 readiness drops it, the SUBSCRIBE fails with SUBSCRIBE_ERROR and no PUBLISH_DONE is sent. A
-forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been received. The
-coordinator keeps the runner tasks in a `JoinSet`, reaping each one as it
-finishes (including runners that end on their own, e.g. on a malformed track)
-and aborting the rest when it shuts down. `EgressRunner` splits into:
+forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been received.
+`EgressRunner` splits into:
 
 - `EgressScheduler` — listens on the cache's subgroup-opened channel and the cache,
   takes the delivery start from the registration's `DeliveryControl` (the
@@ -864,8 +877,8 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   ids may be wall-clock timestamps; assigning it at open time means a still
   buffered tail of group N keeps outranking group N+1's keyframe without
   re-prioritizing streams already queued in the transport.
-- Fetch delivery (`fetch_delivery.rs`) — one task per FETCH served from the
-  cache: it opens the fetch stream, drives the `FetchCursor` and writes each
+- Fetch delivery (`fetch_delivery.rs`) — `FetchDeliveryTask`, one task per
+  FETCH served from the cache: it opens the fetch stream, drives the `FetchCursor` and writes each
   object as soon as the cursor yields it, so objects of already-closed groups
   reach the subscriber while a later group in the range is still open. The
   stream is FIN'd when the cursor is exhausted and reset with
@@ -992,23 +1005,23 @@ so cache, fan-out, FETCH and authorization need no separate path.
   session's registration until its terminal event; its mailbox leaves the
   repository with the session, so an event for a departed session has no
   destination and is dropped by its sender.
-- **One upstream subscription per track and publisher**: creation is
-  serialized by the `UpstreamCreationSerializer` per-track lock with a
-  double-check, and a publisher answering after the track already holds its
-  subscription is unsubscribed again.
+- **One producer per track and publisher**: creation is serialized by the
+  `UpstreamCreationSerializer` per-track lock with a double-check, and a
+  publisher answering after the track already holds its producer is
+  unsubscribed again, without an ingest.
 - **SUBSCRIBE_OK matches egress**: the largest location advertised downstream
   is the same value the egress scheduler starts from.
 - **Start Location is a lower bound**: egress delivers the first group at or
   above the start whether it arrives as an open event or is already cached;
   neither path requires the start group id itself to exist.
 - **Every publisher is ingested**: one reader set per track and publisher,
-  all inserting into the track's single cache; a publisher's stop ends only
-  its own readers, and only a FIN covering a stream subgroup from its
-  earliest received object completes it.
-- **Egress runner lifetime is the downstream registration's**: a runner stops
-  when its registered downstream subscription is removed, regardless of which
-  session worker removes it or when; a downstream subscription is only ever
-  registered while its upstream track exists.
+  owned by its `Producer` and inserting into the track's single cache;
+  dropping a producer ends only its own readers, and only a FIN covering a
+  stream subgroup from its earliest received object completes it.
+- **Egress runner lifetime is the consumer's**: a runner stops when its
+  `Consumer` is removed from the track, regardless of which session worker
+  removes it or when; a consumer is only ever registered while its track
+  exists.
 - **An ended upstream is announced downstream**: every downstream subscription
   removed because its track's last upstream subscription ended receives PUBLISH_DONE, always
   after its SUBSCRIBE_OK. An upstream PUBLISH_DONE on a PUBLISH-initiated track
@@ -1050,10 +1063,9 @@ target, agreed in November 2026, is three aggregates and a registry:
 - `Track` owns the session↔track edges — a `Producer` per upstream
   subscription (its `moqt` handle, origin, peer and the ingest task) and a
   `Consumer` per downstream subscription (its handle, `DeliveryControl`,
-  stats, stop signal and the egress runner) — and with them the draft-14 §8.2
-  lifetime rules. `IngressCoordinator`, `EgressCoordinator`, their command
-  channels and stop-sender maps go away; dropping a `Producer` or `Consumer`
-  stops its task.
+  stats and the signals its egress runner lives by) — and with them the
+  draft-14 §8.2 lifetime rules. Done: see "`modules/control_plane/sequences`"
+  above.
 - Waits on another session's answer (`UpstreamJoinTask`,
   `DownstreamPublishTask`, `UpstreamFetchTask`) become `Pending → Active`
   states of a `Producer` / `Consumer` owned by the `Track`, which also replaces
@@ -1069,8 +1081,9 @@ target, agreed in November 2026, is three aggregates and a registry:
 A state transition returns effects; the caller performs the I/O. Nothing
 sends a control message under a `Track` lock or from a `Drop`.
 
-The event pipeline described above is the first step; the `Track` and its
-edges, then the pending states, follow in their own changes.
+The event pipeline and the `Track` with its producers and consumers are in
+place; the pending states, then the session's edge index, follow in their
+own changes.
 
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —

@@ -23,8 +23,10 @@ use crate::modules::{
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
-    directory::track::PublishDoneReason,
-    domain::{delivery_control::DeliveryControl, session_id::SessionId},
+    domain::{
+        delivery_control::DeliveryControl, publish_done_reason::PublishDoneReason,
+        session_id::SessionId,
+    },
     session::{
         Session, handler::track_status::TrackStatusHandler, moqt_session_event::MoqtSessionEvent,
         session_event::SessionEvent,
@@ -123,7 +125,6 @@ impl SessionWorker {
         DownstreamPublish {
             table: self.deps.local_pub_sub_directory.clone(),
             forwarder: self.deps.control_message_forwarder.clone(),
-            egress_sender: self.deps.egress_sender.clone(),
             cache_store: self.deps.cache_store.clone(),
         }
     }
@@ -290,7 +291,6 @@ impl SessionWorker {
                         session_id,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
-                        &deps.egress_sender,
                         &deps.upstream_publisher_resolver,
                         &deps.cache_store,
                         &deps.upstream_serializer,
@@ -318,7 +318,6 @@ impl SessionWorker {
                     session_id,
                     &deps.local_pub_sub_directory,
                     &deps.cache_store,
-                    &deps.egress_sender,
                     &deps.control_message_forwarder,
                     &deps.upstream_publisher_resolver,
                     handler,

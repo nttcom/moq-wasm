@@ -206,10 +206,7 @@ impl SubscribeNameSpace {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::modules::{
@@ -286,9 +283,7 @@ mod tests {
                 &MockSubscribeNamespaceHandler { prefix: "ns", sent },
             )
             .await;
-        tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
-            .await
-            .expect("the accepted PUBLISH should start an egress reader");
+        ctx.wait_registered(PUBLISH_REQUEST_ID).await;
     }
 
     #[tokio::test]

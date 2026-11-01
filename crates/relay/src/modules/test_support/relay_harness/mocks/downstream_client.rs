@@ -3,14 +3,11 @@ use moqt::publish::PublishDoneCode;
 use tokio::sync::mpsc;
 
 use crate::modules::session::{
-    Session,
     data_object::DataObject,
     data_sender::{
         DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
     },
-    moqt_session_event::MoqtSessionEvent,
     publisher::{PublishNamespaceResponse, Publisher},
-    subscriber::Subscriber,
     subscription::DownstreamSubscription,
 };
 
@@ -203,42 +200,5 @@ impl FetchSender for MockFetchSender {
         self.sent
             .send(FetchSent::Reset(error_code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
-    }
-}
-
-pub(crate) struct MockDownstreamSession {
-    pub(crate) publisher: MockPublisher,
-}
-
-#[async_trait::async_trait]
-impl Session for MockDownstreamSession {
-    fn as_publisher(&self) -> Box<dyn Publisher> {
-        Box::new(self.publisher.clone())
-    }
-
-    fn as_subscriber(&self) -> Box<dyn Subscriber> {
-        unreachable!("not used by the egress path under test")
-    }
-
-    async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
-        std::future::pending().await
-    }
-
-    fn close(&self, _code: moqt::TerminationErrorCode, _reason: &str) {}
-
-    async fn go_away(&self, _new_session_uri: String) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn transport_stats(&self) -> moqt::TransportStats {
-        moqt::TransportStats::default()
-    }
-
-    fn transport_addresses(&self) -> moqt::server::TransportAddresses {
-        moqt::server::TransportAddresses::default()
-    }
-
-    fn url_scheme(&self) -> &'static str {
-        "moqt"
     }
 }

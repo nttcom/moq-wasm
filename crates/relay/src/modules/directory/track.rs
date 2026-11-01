@@ -1,10 +1,22 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
-use moqt::{fetch::JoinPoint, object::ContentExists, publish::PublishDoneCode};
+use moqt::{fetch::JoinPoint, object::ContentExists};
+use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     data_plane::ingress::ingest_task::IngestTask,
-    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+    domain::{
+        delivery_control::{DeliveryControl, UpdateOutcome},
+        delivery_stats::{DeliveryCounters, DeliveryStats},
+        publish_done_reason::PublishDoneReason,
+        runner_signals::DownstreamRunnerSignals,
+        session_id::SessionId,
+        session_peer::SessionPeer,
+        track_key::TrackKey,
+    },
     session::subscription::UpstreamSubscription,
 };
 
@@ -41,13 +53,75 @@ impl Producer {
     }
 }
 
-/// draft-14 §8.2. Session ids grow with time, so the last producer is the
-/// newest publisher's.
+/// One subscriber receiving a track: its downstream subscription and the
+/// signals its egress runner lives by. Dropping the consumer stops the
+/// runner without PUBLISH_DONE (the subscriber ended the subscription);
+/// `end` stops it with the reason it sends as PUBLISH_DONE.
+pub(crate) struct Consumer {
+    pub(crate) subscription: DownstreamSubscription,
+    pub(crate) peer: SessionPeer,
+    runner_stop_sender: oneshot::Sender<PublishDoneReason>,
+    delivery_control_sender: watch::Sender<DeliveryControl>,
+    delivery_stats: Arc<DeliveryStats>,
+}
+
+impl Consumer {
+    pub(crate) fn new(
+        subscription: DownstreamSubscription,
+        peer: SessionPeer,
+        delivery_control: DeliveryControl,
+    ) -> (Self, DownstreamRunnerSignals) {
+        let (runner_stop_sender, stop_receiver) = oneshot::channel();
+        let (delivery_control_sender, delivery_control_receiver) = watch::channel(delivery_control);
+        let delivery_stats = Arc::new(DeliveryStats::default());
+        (
+            Self {
+                subscription,
+                peer,
+                runner_stop_sender,
+                delivery_control_sender,
+                delivery_stats: delivery_stats.clone(),
+            },
+            DownstreamRunnerSignals {
+                stop_receiver,
+                delivery_control_receiver,
+                delivery_stats,
+            },
+        )
+    }
+
+    pub(crate) fn end(self, reason: PublishDoneReason) {
+        let _ = self.runner_stop_sender.send(reason);
+    }
+
+    /// See `DeliveryControl::apply_update`.
+    pub(crate) fn update_delivery(&self, update: DeliveryControl) -> UpdateOutcome {
+        let mut outcome = UpdateOutcome::Applied;
+        self.delivery_control_sender.send_if_modified(|control| {
+            let previous = *control;
+            outcome = control.apply_update(update);
+            *control != previous
+        });
+        outcome
+    }
+
+    pub(crate) fn delivery_counters(&self) -> DeliveryCounters {
+        self.delivery_stats.counters()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn delivery_control(&self) -> DeliveryControl {
+        *self.delivery_control_sender.borrow()
+    }
+}
+
+/// The relay's state for one track: every publisher feeding it and every
+/// subscriber receiving it (draft-14 §8.2). Session ids grow with time, so
+/// the last producer is the newest publisher's.
 #[derive(Default)]
 pub(crate) struct Track {
     pub(crate) producers: BTreeMap<SessionId, Producer>,
-    pub(crate) downstream_subscriber_count: usize,
-    pub(crate) client_downstream_subscriber_count: usize,
+    pub(crate) consumers: HashMap<(SessionId, u64), Consumer>,
 }
 
 impl Track {
@@ -61,13 +135,19 @@ impl Track {
         }
     }
 
+    pub(crate) fn has_client_consumer(&self) -> bool {
+        self.consumers
+            .values()
+            .any(|consumer| consumer.peer == SessionPeer::Client)
+    }
+
     /// A relay's upstream subscription only serves this relay's clients, so a
     /// relay publisher is wanted while a client watches the track and a
     /// client publisher while anyone does.
     pub(crate) fn wants(&self, publisher_peer: SessionPeer) -> bool {
         match publisher_peer {
-            SessionPeer::Client => self.downstream_subscriber_count > 0,
-            SessionPeer::Relay => self.client_downstream_subscriber_count > 0,
+            SessionPeer::Client => !self.consumers.is_empty(),
+            SessionPeer::Relay => self.has_client_consumer(),
         }
     }
 }
@@ -106,35 +186,6 @@ impl TrackState {
             .values()
             .next_back()
             .and_then(|producer| producer.subscription.as_moqt().max_cache_duration())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PublishDoneReason {
-    pub(crate) status_code: PublishDoneCode,
-    pub(crate) error_reason: String,
-}
-
-impl PublishDoneReason {
-    pub(crate) fn publisher_session_closed() -> Self {
-        Self {
-            status_code: PublishDoneCode::TrackEnded,
-            error_reason: "publisher session closed".to_string(),
-        }
-    }
-
-    pub(crate) fn subscription_ended() -> Self {
-        Self {
-            status_code: PublishDoneCode::SubscriptionEnded,
-            error_reason: "end of subscription range reached".to_string(),
-        }
-    }
-
-    pub(crate) fn malformed_track() -> Self {
-        Self {
-            status_code: PublishDoneCode::MalformedTrack,
-            error_reason: "malformed track".to_string(),
-        }
     }
 }
 

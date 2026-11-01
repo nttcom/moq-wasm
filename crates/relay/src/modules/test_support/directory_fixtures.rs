@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use moqt::object::ContentExists;
-use tokio::sync::mpsc;
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
@@ -14,10 +13,7 @@ use crate::modules::{
         sequences::{IngestRequest, downstream_publish::DownstreamPublish, start_ingest},
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
-    data_plane::{
-        cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
-        ingress::ingest_task::IngestTask,
-    },
+    data_plane::{cache::store::TrackCacheStore, ingress::ingest_task::IngestTask},
     directory::{
         InMemoryLocalPubSubDirectory,
         track::{Producer, ProducerOrigin, ProducerState, TrackState},
@@ -31,7 +27,7 @@ use crate::modules::{
         mock_session::{
             MockUpstreamSession, RecordedControlMessages, detached_session_repository,
             mock_session_answering_publish, session_repository_with_session,
-            session_repository_with_upstream_session,
+            session_repository_with_upstream_session, wait_until,
         },
         relay_harness::fixtures::subscription::upstream_subscription,
     },
@@ -181,8 +177,6 @@ pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
 pub(crate) struct DownstreamPublishContext {
     pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) forwarder: ControlMessageForwarder,
-    pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
-    pub(crate) egress_receiver: mpsc::Receiver<EgressCommand>,
     pub(crate) cache_store: Arc<TrackCacheStore>,
     pub(crate) subscriber: RecordedControlMessages,
 }
@@ -192,9 +186,20 @@ impl DownstreamPublishContext {
         DownstreamPublish {
             table: self.table.clone(),
             forwarder: self.forwarder.clone(),
-            egress_sender: self.egress_sender.clone(),
             cache_store: self.cache_store.clone(),
         }
+    }
+
+    /// Resolves once the forwarded PUBLISH `request_id` is registered for the
+    /// namespace subscriber.
+    pub(crate) async fn wait_registered(&self, request_id: u64) {
+        wait_until(|| {
+            self.table
+                .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, request_id)
+                .is_some()
+        })
+        .await
+        .expect("the forwarded PUBLISH should be registered");
     }
 }
 
@@ -209,12 +214,9 @@ pub(crate) async fn downstream_publish_context(
         VerifiedToken::full_access(),
     )
     .await;
-    let (egress_sender, egress_receiver) = mpsc::channel(8);
     DownstreamPublishContext {
         table,
         forwarder: ControlMessageForwarder { repository },
-        egress_sender,
-        egress_receiver,
         cache_store: Arc::new(TrackCacheStore::new()),
         subscriber,
     }

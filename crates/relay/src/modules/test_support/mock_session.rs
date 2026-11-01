@@ -11,8 +11,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
-    directory::track::PublishDoneReason,
-    domain::{session_id::SessionId, session_peer::SessionPeer},
+    domain::{
+        publish_done_reason::PublishDoneReason, session_id::SessionId, session_peer::SessionPeer,
+    },
     session::{
         Session,
         data_receiver::{
@@ -715,6 +716,9 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 pub(crate) struct MockSubscribeHandler {
     pub(crate) subscribe_ok_count: Arc<Mutex<usize>>,
     pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
+    /// Runs when the sequence allocates the track alias, i.e. after it found
+    /// the upstream and before it registers the downstream subscription.
+    pub(crate) on_allocate_track_alias: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[async_trait::async_trait]
@@ -760,6 +764,9 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 
     fn allocate_track_alias(&self) -> u64 {
+        if let Some(hook) = &self.on_allocate_track_alias {
+            hook();
+        }
         0
     }
 

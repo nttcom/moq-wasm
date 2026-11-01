@@ -6,17 +6,18 @@ use std::{
 };
 
 use dashmap::{DashMap, DashSet, Entry};
-use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     directory::track::{
-        DownstreamSubscription, MatchingPublication, Producer, ProducerOrigin, ProducerState,
-        PublishDoneReason, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
+        Consumer, DownstreamSubscription, MatchingPublication, Producer, ProducerOrigin,
+        ProducerState, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
         RemovedSessionSubscriptions, Track, TrackState,
     },
     domain::{
         delivery_control::{DeliveryControl, UpdateOutcome},
-        delivery_stats::{DeliveryCounters, DeliveryStats},
+        delivery_stats::DeliveryCounters,
+        publish_done_reason::PublishDoneReason,
+        runner_signals::DownstreamRunnerSignals,
         session_id::SessionId,
         session_peer::SessionPeer,
         track_key::{TrackKey, TrackNamespace, TrackNamespacePrefix},
@@ -24,14 +25,6 @@ use crate::modules::{
     session::handler::publish::PublishHandler,
 };
 use moqt::fetch::JoinPoint;
-
-pub(crate) struct RegisteredDownstreamSubscription {
-    pub(crate) subscription: DownstreamSubscription,
-    subscriber_peer: SessionPeer,
-    runner_stop_sender: oneshot::Sender<PublishDoneReason>,
-    delivery_control_sender: watch::Sender<DeliveryControl>,
-    delivery_stats: Arc<DeliveryStats>,
-}
 
 pub(crate) struct DownstreamSubscriptionState {
     pub(crate) subscriber_session_id: SessionId,
@@ -44,12 +37,6 @@ pub(crate) struct RegisteredPublish {
     publisher_session_id: SessionId,
     publisher_peer: SessionPeer,
     handler: Arc<dyn PublishHandler>,
-}
-
-pub(crate) struct DownstreamRunnerSignals {
-    pub(crate) stop_receiver: oneshot::Receiver<PublishDoneReason>,
-    pub(crate) delivery_control_receiver: watch::Receiver<DeliveryControl>,
-    pub(crate) delivery_stats: Arc<DeliveryStats>,
 }
 
 // Client subscriptions own the Redis route for their prefix, so the
@@ -123,8 +110,9 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
         DashMap<TrackNamespacePrefix, DashMap<SessionId, SessionPeer>>,
     pub(crate) published_handlers: RwLock<Vec<RegisteredPublish>>,
     pub(crate) upstream_tracks: DashMap<TrackKey, Track>,
-    pub(crate) downstream_subscriptions:
-        DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
+    /// The track of each consumer, keyed like `Track::consumers`. A track
+    /// entry is locked before this index.
+    consumer_tracks: DashMap<(SessionId, u64), TrackKey>,
     /// Unix milliseconds of the start of the drain.
     draining_since_ms: OnceLock<u64>,
 }
@@ -136,7 +124,7 @@ impl InMemoryLocalPubSubDirectory {
             subscriber_namespaces: DashMap::new(),
             published_handlers: RwLock::new(Vec::new()),
             upstream_tracks: DashMap::new(),
-            downstream_subscriptions: DashMap::new(),
+            consumer_tracks: DashMap::new(),
             draining_since_ms: OnceLock::new(),
         }
     }
@@ -161,7 +149,7 @@ impl InMemoryLocalPubSubDirectory {
             .upstream_tracks
             .iter()
             .filter(|track| {
-                track.downstream_subscriber_count == 0
+                track.consumers.is_empty()
                     && track
                         .producers
                         .get(&publisher_session_id)
@@ -175,7 +163,7 @@ impl InMemoryLocalPubSubDirectory {
                 continue;
             };
             let track = entry.get_mut();
-            if track.downstream_subscriber_count > 0 {
+            if !track.consumers.is_empty() {
                 continue;
             }
             let Some(producer) = track.producers.remove(&publisher_session_id) else {
@@ -234,7 +222,7 @@ impl InMemoryLocalPubSubDirectory {
             .retain(|published| published.publisher_session_id != session_id);
 
         let downstream_keys: Vec<_> = self
-            .downstream_subscriptions
+            .consumer_tracks
             .iter()
             .filter_map(|entry| (entry.key().0 == session_id).then_some(*entry.key()))
             .collect();
@@ -559,7 +547,7 @@ impl InMemoryLocalPubSubDirectory {
     pub(crate) fn watched_namespaces(&self) -> HashSet<TrackNamespace> {
         self.upstream_tracks
             .iter()
-            .filter(|entry| entry.value().client_downstream_subscriber_count > 0)
+            .filter(|entry| entry.value().has_client_consumer())
             .map(|entry| entry.key().track_namespace.clone())
             .collect()
     }
@@ -581,17 +569,22 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     pub(crate) fn downstream_subscription_states(&self) -> Vec<DownstreamSubscriptionState> {
-        self.downstream_subscriptions
+        self.upstream_tracks
             .iter()
-            .map(|entry| {
-                let (subscriber_session_id, request_id) = *entry.key();
-                let registered = entry.value();
-                DownstreamSubscriptionState {
-                    subscriber_session_id,
-                    request_id,
-                    track_key: registered.subscription.track_key.clone(),
-                    delivery: registered.delivery_stats.counters(),
-                }
+            .flat_map(|entry| {
+                entry
+                    .value()
+                    .consumers
+                    .iter()
+                    .map(|((subscriber_session_id, request_id), consumer)| {
+                        DownstreamSubscriptionState {
+                            subscriber_session_id: *subscriber_session_id,
+                            request_id: *request_id,
+                            track_key: entry.key().clone(),
+                            delivery: consumer.delivery_counters(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
@@ -624,14 +617,42 @@ impl InMemoryLocalPubSubDirectory {
             .map(|entry| entry.value().state())
     }
 
+    fn with_consumer<T>(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+        read: impl FnOnce(&Consumer) -> T,
+    ) -> Option<T> {
+        let key = (downstream_session_id, downstream_subscribe_id);
+        let track_key = self.consumer_tracks.get(&key)?.clone();
+        self.upstream_tracks
+            .get(&track_key)?
+            .consumers
+            .get(&key)
+            .map(read)
+    }
+
     pub(crate) fn get_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
     ) -> Option<DownstreamSubscription> {
-        self.downstream_subscriptions
-            .get(&(downstream_session_id, downstream_subscribe_id))
-            .map(|entry| entry.value().subscription.clone())
+        self.with_consumer(downstream_session_id, downstream_subscribe_id, |consumer| {
+            consumer.subscription.clone()
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn downstream_delivery_control(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+    ) -> Option<DeliveryControl> {
+        self.with_consumer(
+            downstream_session_id,
+            downstream_subscribe_id,
+            Consumer::delivery_control,
+        )
     }
 
     pub(crate) fn has_downstream_subscription_to_track(
@@ -639,9 +660,11 @@ impl InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         track_key: &TrackKey,
     ) -> bool {
-        self.downstream_subscriptions.iter().any(|entry| {
-            entry.key().0 == downstream_session_id
-                && &entry.value().subscription.track_key == track_key
+        self.upstream_tracks.get(track_key).is_some_and(|track| {
+            track
+                .consumers
+                .keys()
+                .any(|(session_id, _)| *session_id == downstream_session_id)
         })
     }
 
@@ -781,7 +804,7 @@ impl InMemoryLocalPubSubDirectory {
         if !track.get().producers.is_empty() {
             return Some((ended, Vec::new()));
         }
-        let removed = self.end_downstream_subscriptions(track_key, end);
+        let removed = self.end_downstream_subscriptions(track.get_mut(), track_key, end);
         track.remove();
         Some((ended, removed))
     }
@@ -798,35 +821,22 @@ impl InMemoryLocalPubSubDirectory {
         join_point: JoinPoint,
         delivery_control: DeliveryControl,
     ) -> Option<DownstreamRunnerSignals> {
-        // The track entry stays locked until the registration is inserted: a concurrent removal
-        // of the track either finds it or makes this registration fail. Lock order is always
-        // upstream before downstream.
-        let mut upstream = self.upstream_tracks.get_mut(&track_key)?;
-        upstream.downstream_subscriber_count += 1;
-        if subscriber_peer == SessionPeer::Client {
-            upstream.client_downstream_subscriber_count += 1;
-        }
-        let (runner_stop_sender, stop_receiver) = oneshot::channel();
-        let (delivery_control_sender, delivery_control_receiver) = watch::channel(delivery_control);
-        let delivery_stats = Arc::new(DeliveryStats::default());
-        self.downstream_subscriptions.insert(
-            (downstream_session_id, downstream_subscribe_id),
-            RegisteredDownstreamSubscription {
-                subscription: DownstreamSubscription {
-                    track_key,
-                    join_point,
-                },
-                subscriber_peer,
-                runner_stop_sender,
-                delivery_control_sender,
-                delivery_stats: delivery_stats.clone(),
+        // The track entry stays locked until the consumer is inserted: a
+        // concurrent removal of the track either finds it or makes this
+        // registration fail.
+        let mut track = self.upstream_tracks.get_mut(&track_key)?;
+        let (consumer, signals) = Consumer::new(
+            DownstreamSubscription {
+                track_key: track_key.clone(),
+                join_point,
             },
+            subscriber_peer,
+            delivery_control,
         );
-        Some(DownstreamRunnerSignals {
-            stop_receiver,
-            delivery_control_receiver,
-            delivery_stats,
-        })
+        let key = (downstream_session_id, downstream_subscribe_id);
+        track.consumers.insert(key, consumer);
+        self.consumer_tracks.insert(key, track_key);
+        Some(signals)
     }
 
     /// Applies a SUBSCRIBE_UPDATE to the registration's delivery control (see
@@ -838,18 +848,9 @@ impl InMemoryLocalPubSubDirectory {
         downstream_subscribe_id: u64,
         update: DeliveryControl,
     ) -> Option<UpdateOutcome> {
-        let registered = self
-            .downstream_subscriptions
-            .get(&(downstream_session_id, downstream_subscribe_id))?;
-        let mut outcome = UpdateOutcome::Applied;
-        registered
-            .delivery_control_sender
-            .send_if_modified(|control| {
-                let previous = *control;
-                outcome = control.apply_update(update);
-                *control != previous
-            });
-        Some(outcome)
+        self.with_consumer(downstream_session_id, downstream_subscribe_id, |consumer| {
+            consumer.update_delivery(update)
+        })
     }
 
     /// The last downstream subscriber leaving releases the track's
@@ -866,21 +867,20 @@ impl InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
     ) -> Option<RemovedDownstreamSubscription> {
-        let (_, registered) = self
-            .downstream_subscriptions
-            .remove(&(downstream_session_id, downstream_subscribe_id))?;
-        let track_key = registered.subscription.track_key;
+        let key = (downstream_session_id, downstream_subscribe_id);
+        let track_key = self.consumer_tracks.get(&key)?.clone();
         let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
+            self.consumer_tracks.remove(&key);
             return None;
         };
         let track = entry.get_mut();
-        track.downstream_subscriber_count = track.downstream_subscriber_count.saturating_sub(1);
-        if registered.subscriber_peer == SessionPeer::Client {
-            track.client_downstream_subscriber_count =
-                track.client_downstream_subscriber_count.saturating_sub(1);
-        }
-        let downstream_remains = track.downstream_subscriber_count > 0;
-        let client_remains = track.client_downstream_subscriber_count > 0;
+        // Dropping the consumer stops its runner without PUBLISH_DONE: the
+        // subscriber ended the subscription (draft-14 §5.1).
+        let removed_consumer = track.consumers.remove(&key);
+        self.consumer_tracks.remove(&key);
+        removed_consumer?;
+        let downstream_remains = !track.consumers.is_empty();
+        let client_remains = track.has_client_consumer();
         let draining = self.draining_since_ms.get().is_some();
         let mut released_upstream_subscriptions = Vec::new();
         let mut released_published = Vec::new();
@@ -907,6 +907,7 @@ impl InMemoryLocalPubSubDirectory {
         }
         if track.producers.is_empty() {
             self.end_downstream_subscriptions(
+                track,
                 &track_key,
                 PublishDoneReason::publisher_session_closed(),
             );
@@ -923,31 +924,26 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
+    /// Ends every consumer of `track`, whose last producer ended, with the
+    /// PUBLISH_DONE reason `end`. The caller holds the track's entry.
     fn end_downstream_subscriptions(
         &self,
+        track: &mut Track,
         track_key: &TrackKey,
         end: PublishDoneReason,
     ) -> Vec<RemovedDownstreamSubscription> {
-        let downstream_keys: Vec<_> = self
-            .downstream_subscriptions
-            .iter()
-            .filter_map(|entry| {
-                (&entry.value().subscription.track_key == track_key).then_some(*entry.key())
+        track
+            .consumers
+            .drain()
+            .map(|(key, consumer)| {
+                self.consumer_tracks.remove(&key);
+                consumer.end(end.clone());
+                RemovedDownstreamSubscription {
+                    track_key: track_key.clone(),
+                    released_upstream_subscriptions: Vec::new(),
+                }
             })
-            .collect();
-        let mut removed = Vec::new();
-        for downstream_key in downstream_keys {
-            let Some((_, registered)) = self.downstream_subscriptions.remove(&downstream_key)
-            else {
-                continue;
-            };
-            let _ = registered.runner_stop_sender.send(end.clone());
-            removed.push(RemovedDownstreamSubscription {
-                track_key: track_key.clone(),
-                released_upstream_subscriptions: Vec::new(),
-            });
-        }
-        removed
+            .collect()
     }
 }
 
@@ -1494,7 +1490,7 @@ mod tests {
 
         // Assert
         assert!(runner_stopped(&mut runner_stop_receiver));
-        assert!(table.downstream_subscriptions.is_empty());
+        assert!(table.downstream_subscription_states().is_empty());
     }
 
     #[tokio::test]
@@ -1515,7 +1511,7 @@ mod tests {
 
         // Assert
         assert!(runner_signals.is_none());
-        assert!(table.downstream_subscriptions.is_empty());
+        assert!(table.downstream_subscription_states().is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1557,7 +1553,7 @@ mod tests {
             // Assert
             let reported = !removed.downstream_subscriptions.is_empty();
             assert_eq!(registered, reported);
-            assert!(table.downstream_subscriptions.is_empty());
+            assert!(table.downstream_subscription_states().is_empty());
         }
     }
 
@@ -1616,7 +1612,7 @@ mod tests {
                 registered
             );
             assert_eq!(
-                table.downstream_subscriptions.len(),
+                table.downstream_subscription_states().len(),
                 usize::from(registered)
             );
         }
@@ -1853,7 +1849,7 @@ mod tests {
             Ok(PublishDoneReason::publisher_session_closed())
         );
         assert!(table.upstream_tracks.is_empty());
-        assert!(table.downstream_subscriptions.is_empty());
+        assert!(table.downstream_subscription_states().is_empty());
     }
 
     #[tokio::test]

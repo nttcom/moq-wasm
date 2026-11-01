@@ -2,8 +2,8 @@ use crate::modules::{
     cascading::route_registry::RelayRouteRegistry,
     control_plane::sequences::publish::Publish,
     data_plane::cache::store::TrackCacheStore,
-    directory::{InMemoryLocalPubSubDirectory, track::PublishDoneReason},
-    domain::session_id::SessionId,
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
 };
 
 pub(crate) struct UpstreamPublishDone;
@@ -89,7 +89,7 @@ mod tests {
             Ok(PublishDoneReason::publisher_session_closed())
         );
         assert!(ctx.table.upstream_tracks.is_empty());
-        assert!(ctx.table.downstream_subscriptions.is_empty());
+        assert!(ctx.table.downstream_subscription_states().is_empty());
         assert!(ctx.recorded.unsubscribed_request_ids().is_empty());
         ctx.recorded.wait_ingest_stopped(UPSTREAM_REQUEST_ID).await;
     }

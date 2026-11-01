@@ -7,10 +7,7 @@ use crate::modules::{
         upstream_creation_serializer::UpstreamCreationSerializer,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
-    data_plane::{
-        cache::store::TrackCacheStore,
-        egress::coordinator::{EgressCommand, EgressStartRequest},
-    },
+    data_plane::cache::store::TrackCacheStore,
     directory::{
         InMemoryLocalPubSubDirectory,
         track::{Producer, TrackState},
@@ -24,7 +21,6 @@ use crate::modules::{
 use moqt::fetch::JoinPoint;
 
 use moqt::object::ContentExists;
-use tracing::Span;
 
 pub(crate) mod upstream_join_task;
 
@@ -121,7 +117,6 @@ impl Subscribe {
         session_id: SessionId,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
         upstream_serializer: &UpstreamCreationSerializer,
@@ -193,7 +188,7 @@ impl Subscribe {
                     access.upstream_track,
                     access.largest_location,
                     table,
-                    egress_sender,
+                    forwarder,
                     cache_store,
                     handler.as_ref(),
                 )
@@ -463,7 +458,7 @@ impl Subscribe {
         upstream_track: TrackState,
         largest_location: Option<moqt::object::Location>,
         table: &InMemoryLocalPubSubDirectory,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
+        forwarder: &ControlMessageForwarder,
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) -> Acceptance {
@@ -510,27 +505,22 @@ impl Subscribe {
 
         let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
         let (subscribe_ok_sender, subscribe_ok_receiver) = tokio::sync::oneshot::channel();
-        if egress_sender
-            .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
+        if !super::start_egress(
+            forwarder,
+            cache_store,
+            super::EgressRequest {
                 subscriber_session_id: session_id,
-                downstream_subscribe_id: handler.subscribe_id(),
+                request_id: handler.subscribe_id(),
                 track_key: track_key.clone(),
                 downstream_subscription,
-                parent_span: Span::current(),
                 ready_sender,
                 runner_signals,
                 subscribe_ok_receiver,
                 largest_location,
-            })))
-            .await
-            .is_err()
+            },
+        )
+        .await
         {
-            tracing::error!(
-                request_id = handler.subscribe_id(),
-                track_namespace = %track_key.track_namespace,
-                track_name = %track_key.track_name,
-                "failed to send EgressStartRequest"
-            );
             return Acceptance::Answered;
         }
         match ready_receiver.await {
@@ -621,7 +611,10 @@ impl Subscribe {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::OnceLock;
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use super::*;
     use crate::modules::auth::verified_token::VerifiedToken;
@@ -635,7 +628,8 @@ mod tests {
         upstream_track,
     };
     use crate::modules::test_support::mock_session::{
-        MockSubscribeHandler, mock_session_answering_subscribe,
+        MockSubscribeHandler, MockUpstreamSession, RecordedControlMessages,
+        detached_session_repository, mock_session_answering_subscribe,
         mock_session_never_answering_subscribe, recorded_session_answering_subscribe,
         session_repository_with_session, session_repository_with_sessions,
     };
@@ -1083,7 +1077,6 @@ mod tests {
 
     async fn accept_downstream(
         table: &InMemoryLocalPubSubDirectory,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &MockSubscribeHandler,
     ) -> Acceptance {
         Subscribe
@@ -1094,7 +1087,9 @@ mod tests {
                 upstream_track(ProducerOrigin::Subscribe),
                 None,
                 table,
-                egress_sender,
+                &ControlMessageForwarder {
+                    repository: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
+                },
                 &Arc::new(TrackCacheStore::new()),
                 handler,
             )
@@ -1110,53 +1105,20 @@ mod tests {
     async fn upstream_removed_before_registration_leaves_the_subscribe_unanswered() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
         let handler = MockSubscribeHandler::default();
 
         // Act
-        let acceptance = accept_downstream(&table, &egress_sender, &handler).await;
+        let acceptance = accept_downstream(&table, &handler).await;
 
         // Assert
-        assert!(matches!(acceptance, Acceptance::UpstreamGone));
-        assert_unanswered(&handler);
-        assert!(egress_receiver.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn registration_removed_before_runner_readiness_leaves_the_subscribe_unanswered() {
-        // Arrange
-        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        table.register_upstream_subscription(
-            track_key(),
-            PUBLISHER_SESSION,
-            producer(ProducerOrigin::Subscribe),
-        );
-        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
-        let concurrent_cleanup = tokio::spawn({
-            let table = table.clone();
-            async move {
-                if let Some(EgressCommand::StartReader(request)) = egress_receiver.recv().await {
-                    table.remove_downstream_subscription(
-                        request.subscriber_session_id,
-                        request.downstream_subscribe_id,
-                    );
-                }
-            }
-        });
-        let handler = MockSubscribeHandler::default();
-
-        // Act
-        let acceptance = accept_downstream(&table, &egress_sender, &handler).await;
-
-        // Assert
-        concurrent_cleanup.await.unwrap();
         assert!(matches!(acceptance, Acceptance::UpstreamGone));
         assert_unanswered(&handler);
     }
 
     #[tokio::test]
     async fn a_subscribe_whose_upstream_ends_while_it_is_accepted_is_answered_on_a_new_upstream() {
-        // Arrange: the first runner start loses its registration, as when the last other subscriber leaves
+        // Arrange: the upstream ends between the SUBSCRIBE finding it and registering on it,
+        // as when the last other subscriber leaves; the publisher answers a new SUBSCRIBE
         const SUBSCRIBER_SESSION: SessionId = 2;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
@@ -1165,9 +1127,17 @@ mod tests {
             PUBLISHER_SESSION,
             producer(ProducerOrigin::Subscribe),
         );
-        let repository = session_repository_with_session(
-            PUBLISHER_SESSION,
-            mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
+        let repository = session_repository_with_sessions(
+            vec![
+                (
+                    PUBLISHER_SESSION,
+                    mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
+                ),
+                (
+                    SUBSCRIBER_SESSION,
+                    Box::new(MockUpstreamSession::new(RecordedControlMessages::default())),
+                ),
+            ],
             VerifiedToken::full_access(),
         )
         .await;
@@ -1178,48 +1148,36 @@ mod tests {
                 "unused-relay-token".to_string(),
             )),
         );
-        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
-        let egress = tokio::spawn({
-            let table = table.clone();
-            async move {
-                let mut started = 0;
-                while let Some(EgressCommand::StartReader(request)) = egress_receiver.recv().await {
-                    started += 1;
-                    if started == 1 {
-                        table.remove_downstream_subscription(
-                            request.subscriber_session_id,
-                            request.downstream_subscribe_id,
-                        );
-                    } else {
-                        let _ = request.ready_sender.send(Ok(()));
-                        return started;
+        let upstream_ended = Arc::new(AtomicBool::new(false));
+        let handler = MockSubscribeHandler {
+            on_allocate_track_alias: Some(Arc::new({
+                let table = table.clone();
+                let upstream_ended = upstream_ended.clone();
+                move || {
+                    if !upstream_ended.swap(true, Ordering::SeqCst) {
+                        table.remove_upstream_track(&track_key());
                     }
                 }
-                started
-            }
-        });
-        let handler = MockSubscribeHandler::default();
+            })),
+            ..MockSubscribeHandler::default()
+        };
 
         // Act
         Subscribe
             .handle(
                 SUBSCRIBER_SESSION,
                 &table,
-                &ControlMessageForwarder {
-                    repository: repository.clone(),
-                },
-                &egress_sender,
+                &ControlMessageForwarder { repository },
                 &Arc::new(resolver),
                 &Arc::new(TrackCacheStore::new()),
                 &UpstreamCreationSerializer::default(),
                 Box::new(handler.clone()),
             )
             .await;
-        drop(egress_sender);
 
         // Assert
-        assert_eq!(egress.await.unwrap(), 2);
         assert!(handler.subscribe_errors.lock().unwrap().is_empty());
         assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 1);
+        assert!(table.track_state(&track_key()).is_some());
     }
 }

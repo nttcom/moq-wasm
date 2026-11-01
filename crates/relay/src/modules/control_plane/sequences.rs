@@ -22,12 +22,20 @@ use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::{
         cache::{cached_object::CacheStamp, store::TrackCacheStore},
+        egress::{
+            egress_task::{EgressStart, EgressTask},
+            fetch_delivery::{EgressFetchRequest, FetchDeliveryTask},
+        },
         ingress::ingest_task::{IngestStart, IngestTask},
     },
     directory::{InMemoryLocalPubSubDirectory, track::Producer},
-    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
-    session::subscription::UpstreamSubscription,
+    domain::{
+        runner_signals::DownstreamRunnerSignals, session_id::SessionId, session_peer::SessionPeer,
+        track_key::TrackKey,
+    },
+    session::subscription::{DownstreamSubscription, UpstreamSubscription},
 };
+use tokio::sync::oneshot;
 use tracing::Span;
 
 #[derive(Clone, Copy)]
@@ -204,6 +212,80 @@ pub(crate) async fn start_ingest(
         request_span: Span::current(),
         publisher_session_span,
     }))
+}
+
+pub(crate) struct EgressRequest {
+    pub(crate) subscriber_session_id: SessionId,
+    pub(crate) request_id: u64,
+    pub(crate) track_key: TrackKey,
+    pub(crate) downstream_subscription: DownstreamSubscription,
+    pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
+    pub(crate) runner_signals: DownstreamRunnerSignals,
+    pub(crate) subscribe_ok_receiver: oneshot::Receiver<()>,
+    pub(crate) largest_location: Option<moqt::object::Location>,
+}
+
+/// Starts the egress runner of a registered downstream subscription. `false`
+/// when the subscriber session already left the repository.
+pub(crate) async fn start_egress(
+    forwarder: &ControlMessageForwarder,
+    cache_store: &TrackCacheStore,
+    request: EgressRequest,
+) -> bool {
+    let (publisher, subscriber_mailbox_sender) = {
+        let repository = forwarder.repository.lock().await;
+        (
+            repository.publisher(request.subscriber_session_id),
+            repository.mailbox(request.subscriber_session_id),
+        )
+    };
+    let (Some(publisher), Some(subscriber_mailbox_sender)) = (publisher, subscriber_mailbox_sender)
+    else {
+        tracing::error!(
+            subscriber_session_id = request.subscriber_session_id,
+            request_id = request.request_id,
+            "subscriber session not found; egress not started"
+        );
+        return false;
+    };
+    let _egress = EgressTask::run(EgressStart {
+        subscriber_session_id: request.subscriber_session_id,
+        request_id: request.request_id,
+        cache: cache_store.get_or_create(&request.track_key),
+        track_key: request.track_key,
+        downstream_subscription: request.downstream_subscription,
+        publisher,
+        subscriber_mailbox_sender,
+        parent_span: Span::current(),
+        ready_sender: request.ready_sender,
+        runner_signals: request.runner_signals,
+        subscribe_ok_receiver: request.subscribe_ok_receiver,
+        largest_location: request.largest_location,
+    });
+    true
+}
+
+/// Serves a FETCH from the cache on the subscriber's session. `false` when
+/// the subscriber session already left the repository.
+pub(crate) async fn start_fetch_delivery(
+    forwarder: &ControlMessageForwarder,
+    request: EgressFetchRequest,
+) -> bool {
+    let publisher = forwarder
+        .repository
+        .lock()
+        .await
+        .publisher(request.subscriber_session_id);
+    let Some(publisher) = publisher else {
+        tracing::error!(
+            subscriber_session_id = request.subscriber_session_id,
+            request_id = request.request_id,
+            "subscriber session not found; fetch not delivered"
+        );
+        return false;
+    };
+    let _delivery = FetchDeliveryTask::run(publisher, request);
+    true
 }
 
 #[cfg(test)]

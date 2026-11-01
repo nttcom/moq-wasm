@@ -17,7 +17,7 @@ use crate::modules::{
             store::TrackCacheStore,
             track_cache::{FetchRangeResolution, TrackCache},
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::fetch_delivery::EgressFetchRequest,
     },
     directory::InMemoryLocalPubSubDirectory,
     domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
@@ -96,7 +96,6 @@ impl Fetch {
         session_id: SessionId,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         cache_store: &Arc<TrackCacheStore>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         handler: Box<dyn FetchHandler>,
@@ -154,12 +153,7 @@ impl Fetch {
                     end_location,
                     group_order: handler.group_order(),
                 };
-                if let Err(e) = egress_sender
-                    .send(EgressCommand::StartFetch(fetch_request))
-                    .await
-                {
-                    tracing::error!(error = ?e, "Failed to send fetch request to egress");
-                }
+                super::start_fetch_delivery(forwarder, fetch_request).await;
             }
             FetchSource::Upstream => {
                 // Joining Fetches forward as Standalone: the target is already
@@ -173,7 +167,6 @@ impl Fetch {
                     forwarder: forwarder.clone(),
                     upstream_publisher_resolver: upstream_publisher_resolver.clone(),
                     cache_store: cache_store.clone(),
-                    egress_sender: egress_sender.clone(),
                     fill_timeout: self.fill_timeout,
                 });
             }

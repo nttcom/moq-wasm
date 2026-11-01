@@ -38,8 +38,8 @@ impl SubscribeUpdate {
 mod tests {
     use super::*;
     use crate::modules::{
-        directory::{DownstreamRunnerSignals, track::ProducerOrigin},
-        domain::session_peer::SessionPeer,
+        directory::track::ProducerOrigin,
+        domain::{runner_signals::DownstreamRunnerSignals, session_peer::SessionPeer},
         test_support::{
             directory_fixtures::{delivery_control, table_with_upstream},
             relay_harness::fixtures::location,

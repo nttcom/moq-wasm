@@ -59,8 +59,8 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        directory::track::{ProducerOrigin, PublishDoneReason},
-        domain::session_peer::SessionPeer,
+        directory::track::ProducerOrigin,
+        domain::{publish_done_reason::PublishDoneReason, session_peer::SessionPeer},
         test_support::{
             directory_fixtures::{
                 UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key, upstream_release_context,

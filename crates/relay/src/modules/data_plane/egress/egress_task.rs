@@ -2,189 +2,81 @@ use std::sync::Arc;
 
 use tokio::{
     sync::{mpsc, oneshot},
-    task::JoinSet,
+    task::JoinHandle,
 };
 use tracing::{Instrument, Span};
 
 use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
     data_plane::{
-        cache::{store::TrackCacheStore, track_cache::TrackCache},
-        egress::{
-            fetch_delivery::deliver_fetch,
-            runner::{EgressRunner, RunnerExit},
-        },
+        cache::track_cache::TrackCache,
+        egress::runner::{EgressRunner, RunnerExit},
     },
-    directory::DownstreamRunnerSignals,
-    domain::{session_id::SessionId, track_key::TrackKey},
+    domain::{runner_signals::DownstreamRunnerSignals, session_id::SessionId, track_key::TrackKey},
     session::{
-        session_event::SessionEvent, session_repository::SessionRepository,
-        subscription::DownstreamSubscription,
+        publisher::Publisher, session_event::SessionEvent, subscription::DownstreamSubscription,
     },
 };
 
-pub(crate) struct EgressStartRequest {
+pub(crate) struct EgressStart {
     pub(crate) subscriber_session_id: SessionId,
-    pub(crate) downstream_subscribe_id: u64,
+    pub(crate) request_id: u64,
     pub(crate) track_key: TrackKey,
     pub(crate) downstream_subscription: DownstreamSubscription,
+    pub(crate) publisher: Box<dyn Publisher>,
+    pub(crate) subscriber_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) cache: Arc<TrackCache>,
+    /// The request that starts the egress; the egress outlives it and links to it.
     pub(crate) parent_span: Span,
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
     pub(crate) runner_signals: DownstreamRunnerSignals,
     pub(crate) subscribe_ok_receiver: oneshot::Receiver<()>,
-    /// From LargestLocation of SUBSCRIBE_OK
-    /// None means that no content has been delivered yet.
+    /// From LargestLocation of SUBSCRIBE_OK; `None` when no content has been
+    /// delivered yet.
     pub(crate) largest_location: Option<moqt::object::Location>,
 }
 
-pub(crate) struct EgressFetchRequest {
-    pub(crate) subscriber_session_id: SessionId,
-    pub(crate) request_id: u64,
-    pub(crate) cache: Arc<TrackCache>,
-    pub(crate) start_location: moqt::object::Location,
-    pub(crate) end_location: moqt::object::Location,
-    pub(crate) group_order: moqt::object::GroupOrder,
+/// The egress runner of one downstream subscription. It lives as long as
+/// the subscription's registration: the registration's stop sender ends it,
+/// and a runner that ends its subscription itself reports that to the
+/// subscriber session's mailbox, so the session worker removes the
+/// registration.
+pub(crate) struct EgressTask {
+    _join_handle: JoinHandle<()>,
 }
 
-pub(crate) enum EgressCommand {
-    StartReader(Box<EgressStartRequest>),
-    StartFetch(EgressFetchRequest),
-}
-
-pub(crate) struct EgressCoordinator {
-    command_sender: mpsc::Sender<EgressCommand>,
-    command_runner: tokio::task::JoinHandle<()>,
-}
-
-impl EgressCoordinator {
-    /// A runner that ends its subscription itself reports it to the
-    /// subscriber session's mailbox, so that session's worker removes the
-    /// registration.
-    pub(crate) fn new(
-        session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        cache_store: Arc<TrackCacheStore>,
-    ) -> Self {
-        let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
-
-        let command_runner = tokio::spawn(async move {
-            let mut runners = JoinSet::new();
-            loop {
-                tokio::select! {
-                    Some(_) = runners.join_next() => {}
-                    command = command_receiver.recv() => {
-                        let Some(command) = command else {
-                            break;
-                        };
-                        match command {
-                            EgressCommand::StartReader(request) => {
-                                Self::spawn_runner(
-                                    &mut runners,
-                                    session_repo.clone(),
-                                    cache_store.clone(),
-                                    *request,
-                                )
-                                .await;
-                            }
-                            EgressCommand::StartFetch(request) => {
-                                Self::spawn_fetch_delivery(session_repo.clone(), request).await;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        Self {
-            command_sender,
-            command_runner,
-        }
-    }
-
-    pub(crate) fn sender(&self) -> mpsc::Sender<EgressCommand> {
-        self.command_sender.clone()
-    }
-
-    async fn spawn_fetch_delivery(
-        session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        request: EgressFetchRequest,
-    ) {
-        let fetching_session_publisher = session_repo
-            .lock()
-            .await
-            .publisher(request.subscriber_session_id);
-        let Some(publisher) = fetching_session_publisher else {
-            tracing::error!("session not found for fetch");
-            return;
-        };
-
-        tokio::spawn(async move {
-            let sender = match publisher.new_fetch_sender(request.request_id).await {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(error = ?e, "failed to create fetch sender");
-                    return;
-                }
-            };
-            deliver_fetch(&request, sender.as_ref()).await;
-        });
-    }
-
-    async fn spawn_runner(
-        runners: &mut JoinSet<()>,
-        session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        cache_store: Arc<TrackCacheStore>,
-        request: EgressStartRequest,
-    ) {
-        let (publisher, subscriber_mailbox_sender) = {
-            let session_repo = session_repo.lock().await;
-            (
-                session_repo.publisher(request.subscriber_session_id),
-                session_repo.mailbox(request.subscriber_session_id),
-            )
-        };
-        let (Some(publisher), Some(subscriber_mailbox_sender)) =
-            (publisher, subscriber_mailbox_sender)
-        else {
-            tracing::error!("subscriber session not found for egress start");
-            let _ = request
-                .ready_sender
-                .send(Err(anyhow::anyhow!("subscriber session not found")));
-            return;
-        };
-
-        let cache = cache_store.get_or_create(&request.track_key);
-        let track_alias = request.downstream_subscription.track_alias();
+impl EgressTask {
+    pub(crate) fn run(start: EgressStart) -> Self {
+        let track_alias = start.downstream_subscription.track_alias();
         // The track outlives the request that starts it, so its span roots its
         // own trace, linked to the request.
         let egress_track_span = tracing::info_span!(
             parent: None,
             "relay.dataplane.egress.track",
             relay_hostname = relay_hostname(),
-            subscriber_session_id = %request.subscriber_session_id,
-            request_id = request.downstream_subscribe_id,
-
+            subscriber_session_id = %start.subscriber_session_id,
+            request_id = start.request_id,
             track_alias = track_alias,
-            track_namespace = %request.track_key.track_namespace,
-            track_name = %request.track_key.track_name,
+            track_namespace = %start.track_key.track_namespace,
+            track_name = %start.track_key.track_name,
         );
-
-        link_span(&egress_track_span, &request.parent_span);
+        link_span(&egress_track_span, &start.parent_span);
 
         let runner = EgressRunner::new(
-            request.track_key,
-            cache,
-            publisher,
-            request.downstream_subscription.clone(),
-            request.ready_sender,
-            request.largest_location,
-            request.runner_signals,
+            start.track_key,
+            start.cache,
+            start.publisher,
+            start.downstream_subscription,
+            start.ready_sender,
+            start.largest_location,
+            start.runner_signals,
         );
-
-        let subscribe_ok_receiver = request.subscribe_ok_receiver;
+        let subscribe_ok_receiver = start.subscribe_ok_receiver;
+        let subscriber_mailbox_sender = start.subscriber_mailbox_sender;
         let subscription_ended = SessionEvent::DownstreamSubscriptionEnded {
-            request_id: request.downstream_subscribe_id,
+            request_id: start.request_id,
         };
-        runners.spawn(
+        let join_handle = tokio::spawn(
             async move {
                 if let RunnerExit::SubscriptionEnded = runner.run(subscribe_ok_receiver).await {
                     let _ = subscriber_mailbox_sender.send(subscription_ended);
@@ -192,12 +84,9 @@ impl EgressCoordinator {
             }
             .instrument(egress_track_span),
         );
-    }
-}
-
-impl Drop for EgressCoordinator {
-    fn drop(&mut self) {
-        self.command_runner.abort();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }
 
@@ -208,13 +97,14 @@ mod tests {
     use tokio::sync::watch;
 
     use super::*;
-    use crate::modules::test_support::directory_fixtures::delivery_control;
-    use crate::modules::test_support::relay_harness::{
-        MockPublisherObservers, fixtures::subscription::make_subscription,
-        session_repository_with_downstream_session,
-    };
     use crate::modules::{
-        directory::track::PublishDoneReason, domain::delivery_control::DeliveryControl,
+        domain::{delivery_control::DeliveryControl, publish_done_reason::PublishDoneReason},
+        test_support::{
+            directory_fixtures::delivery_control,
+            relay_harness::{
+                MockPublisher, MockPublisherObservers, fixtures::subscription::make_subscription,
+            },
+        },
     };
 
     const SUBSCRIBER_SESSION_ID: SessionId = 2;
@@ -223,28 +113,27 @@ mod tests {
     const PUBLISH_DONE_WINDOW: Duration = Duration::from_millis(100);
 
     struct TestContext {
-        coordinator: EgressCoordinator,
         track_key: TrackKey,
         cache: Arc<TrackCache>,
         idle_cache_reference_count: usize,
+        publisher: MockPublisher,
         observers: MockPublisherObservers,
+        subscriber_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
         subscriber_mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     }
 
-    async fn setup() -> TestContext {
-        let (session_repo, observers, subscriber_mailbox_receiver) =
-            session_repository_with_downstream_session(SUBSCRIBER_SESSION_ID);
-        let cache_store = Arc::new(TrackCacheStore::new());
-        let track_key = TrackKey::new("ns", "track");
-        let cache = cache_store.get_or_create(&track_key);
+    fn setup() -> TestContext {
+        let (publisher, observers) = MockPublisher::channel();
+        let cache = Arc::new(TrackCache::new());
         let idle_cache_reference_count = Arc::strong_count(&cache);
-        let coordinator = EgressCoordinator::new(session_repo, cache_store);
+        let (subscriber_mailbox_sender, subscriber_mailbox_receiver) = mpsc::unbounded_channel();
         TestContext {
-            coordinator,
-            track_key,
+            track_key: TrackKey::new("ns", "track"),
             cache,
             idle_cache_reference_count,
+            publisher,
             observers,
+            subscriber_mailbox_sender,
             subscriber_mailbox_receiver,
         }
     }
@@ -259,27 +148,24 @@ mod tests {
     ) {
         let (ready_sender, ready_receiver) = oneshot::channel();
         let (subscribe_ok_sender, subscribe_ok_receiver) = oneshot::channel();
-        ctx.coordinator
-            .sender()
-            .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
-                subscriber_session_id: SUBSCRIBER_SESSION_ID,
-                downstream_subscribe_id: DOWNSTREAM_SUBSCRIBE_ID,
-                track_key: ctx.track_key.clone(),
-                downstream_subscription: make_subscription(
-                    moqt::subscribe::FilterType::LargestObject,
-                ),
-                parent_span: Span::none(),
-                ready_sender,
-                runner_signals: DownstreamRunnerSignals {
-                    stop_receiver: runner_stop_receiver,
-                    delivery_control_receiver: watch::channel(control).1,
-                    delivery_stats: Arc::default(),
-                },
-                subscribe_ok_receiver,
-                largest_location: None,
-            })))
-            .await
-            .expect("coordinator should accept commands");
+        let _egress = EgressTask::run(EgressStart {
+            subscriber_session_id: SUBSCRIBER_SESSION_ID,
+            request_id: DOWNSTREAM_SUBSCRIBE_ID,
+            track_key: ctx.track_key.clone(),
+            downstream_subscription: make_subscription(moqt::subscribe::FilterType::LargestObject),
+            publisher: Box::new(ctx.publisher.clone()),
+            subscriber_mailbox_sender: ctx.subscriber_mailbox_sender.clone(),
+            cache: ctx.cache.clone(),
+            parent_span: Span::none(),
+            ready_sender,
+            runner_signals: DownstreamRunnerSignals {
+                stop_receiver: runner_stop_receiver,
+                delivery_control_receiver: watch::channel(control).1,
+                delivery_stats: Arc::default(),
+            },
+            subscribe_ok_receiver,
+            largest_location: None,
+        });
         let readiness = tokio::time::timeout(TEST_TIMEOUT, ready_receiver)
             .await
             .expect("runner should resolve its readiness");
@@ -322,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn runner_whose_subscription_was_removed_before_start_never_runs() {
         // Arrange
-        let ctx = setup().await;
+        let ctx = setup();
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         drop(runner_stop_sender);
 
@@ -337,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn runner_whose_upstream_ended_before_start_sends_no_publish_done() {
         // Arrange
-        let mut ctx = setup().await;
+        let mut ctx = setup();
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         runner_stop_sender
             .send(PublishDoneReason::publisher_session_closed())
@@ -354,7 +240,7 @@ mod tests {
     #[tokio::test]
     async fn publish_done_waits_for_subscribe_ok() {
         // Arrange
-        let mut ctx = setup().await;
+        let mut ctx = setup();
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         let (readiness, subscribe_ok_sender) =
             start_reader_without_subscribe_ok(&ctx, runner_stop_receiver, delivery_control(true))
@@ -380,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn runner_stops_once_its_subscription_is_removed() {
         // Arrange
-        let mut ctx = setup().await;
+        let mut ctx = setup();
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         start_reader(&ctx, runner_stop_receiver)
             .await
@@ -399,7 +285,7 @@ mod tests {
     #[tokio::test]
     async fn runner_that_delivered_its_range_reports_the_subscription_ended() {
         // Arrange: a start past the End Group leaves nothing to deliver
-        let mut ctx = setup().await;
+        let mut ctx = setup();
         let (_runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         let empty_range = DeliveryControl::from_subscribe_update(
             true,

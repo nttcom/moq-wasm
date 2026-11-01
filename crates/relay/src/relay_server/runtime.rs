@@ -16,12 +16,9 @@ use crate::{
             upstream_creation_serializer::UpstreamCreationSerializer,
             upstream_publisher_resolver::UpstreamPublisherResolver,
         },
-        data_plane::{
-            cache::{
-                disk_cache::DiskCacheTask, eviction_job::spawn_cache_eviction_job,
-                store::TrackCacheStore,
-            },
-            egress::coordinator::EgressCoordinator,
+        data_plane::cache::{
+            disk_cache::DiskCacheTask, eviction_job::spawn_cache_eviction_job,
+            store::TrackCacheStore,
         },
         directory::InMemoryLocalPubSubDirectory,
         observability::{
@@ -44,7 +41,6 @@ pub(crate) struct RelayRuntime {
     local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
     cache_store: Arc<TrackCacheStore>,
     inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
-    _egress: EgressCoordinator,
     _session_workers: SessionWorkers,
     _evict_job: tokio::task::JoinHandle<()>,
     _watched_namespace_job: WatchedNamespaceJob,
@@ -75,7 +71,6 @@ impl RelayRuntime {
             upstream_publisher_resolver.watched_namespace_routes.clone(),
             local_pub_sub_directory.clone(),
         );
-        let egress = EgressCoordinator::new(repo.clone(), cache_store.clone());
         let session_workers = SessionWorkers::run(
             session_added_receiver,
             WorkerDeps {
@@ -84,7 +79,6 @@ impl RelayRuntime {
                 },
                 repo: repo.clone(),
                 local_pub_sub_directory: local_pub_sub_directory.clone(),
-                egress_sender: egress.sender(),
                 route_registry,
                 inter_relay_connection_manager: inter_relay_connection_manager.clone(),
                 upstream_publisher_resolver,
@@ -100,7 +94,6 @@ impl RelayRuntime {
             local_pub_sub_directory,
             cache_store,
             inter_relay_connection_manager,
-            _egress: egress,
             _session_workers: session_workers,
             _evict_job: evict_job,
             _watched_namespace_job: watched_namespace_job,
