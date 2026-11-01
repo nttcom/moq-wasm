@@ -45,7 +45,8 @@ export class CameraPublisher {
       this.stream = await this.startVideoFileCamera(url)
     }
 
-    this.publication = await publish(session, namespace, this.stream, {
+    // A video file's captured stream carries its sound too; the monitor shows video only.
+    this.publication = await publish(session, namespace, new MediaStream(this.stream.getVideoTracks()), {
       videoLabel: this.camId,
       keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
       videoEncoderConfig: encoderConfig,

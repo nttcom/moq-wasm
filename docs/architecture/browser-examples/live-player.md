@@ -696,12 +696,11 @@ named `live-player-*`.
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
   buffer bypass checkbox.
 - `examples/remote-monitoring`: one player per camera on the page's session,
-  following the catalog the camera's `publish()` announces, on a canvas
-  picture, video only. Each player draws into a host element the page moves
-  between the stage and the strip, so the stage and the thumbnails are layout
-  over four players. Clicking the
-  stage pauses its player, which is the first still picture of a review; the
-  step buttons skip a second with the pause kept, the seek bar is the
-  player's capture-time axis, and the debug bar shows the player's rewind
-  status. The players keep live while reviewing, so `LIVE 復帰` shows the live
-  picture at once.
+  following the catalog of the camera's `publish()`, on a canvas picture,
+  video only. Each player draws into a host element the page moves between
+  the stage and the strip, so the stage and the thumbnails are layout over
+  four players. Clicking the stage pauses its player, which is the first
+  still picture of a review; the step buttons skip a second with the pause
+  kept, the seek bar is the player's capture-time axis, and the debug bar
+  shows the player's rewind status. The players keep live while reviewing,
+  so `LIVE 復帰` shows the live picture at once.
