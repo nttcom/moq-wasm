@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
     hash::{BuildHasher, RandomState},
+    sync::Arc,
     time::Duration,
 };
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 
 use crate::{
     ServeArgs,
@@ -60,7 +61,10 @@ pub(crate) struct Recordings {
     config: ServeArgs,
     store: RecordingStore,
     launcher: Launcher,
-    replays: Mutex<HashMap<String, ReplayTask>>,
+    /// A cell is reserved under the lock and filled outside it, so opening
+    /// one recording (an MP4 import can take minutes) does not hold up
+    /// requests for the others.
+    replays: Mutex<HashMap<String, Arc<OnceCell<ReplayTask>>>>,
 }
 
 impl Recordings {
@@ -107,22 +111,40 @@ impl Recordings {
         if record.state != RoomState::Finished {
             return Err(PublishRejection::NotReady);
         }
-        let mut replays = self.replays.lock().await;
-        replays.retain(|_, replay| replay.is_active());
-        if !replays.contains_key(id) {
-            if replays.len() >= self.config.max_recordings {
+        let cell = {
+            let mut replays = self.replays.lock().await;
+            replays.retain(|_, cell| cell.get().is_none_or(ReplayTask::is_active));
+            if !replays.contains_key(id) && replays.len() >= self.config.max_recordings {
                 return Err(PublishRejection::Capacity);
             }
-            let archive = StoredRecording::open(&self.store, id, &record.namespace_prefix).await?;
-            let replay = ReplayTask::run(
-                archive,
-                &self.config.room.relay,
-                !self.config.room.insecure_skip_tls_verify,
-            )
-            .await?;
-            replays.insert(id.to_string(), replay);
-        }
-        let mut description = replays[id].description();
+            Arc::clone(replays.entry(id.to_string()).or_default())
+        };
+        let replay = cell
+            .get_or_try_init(|| async {
+                let archive =
+                    StoredRecording::open(&self.store, id, &record.namespace_prefix).await?;
+                ReplayTask::run(
+                    archive,
+                    &self.config.room.relay,
+                    !self.config.room.insecure_skip_tls_verify,
+                )
+                .await
+            })
+            .await;
+        let replay = match replay {
+            Ok(replay) => replay,
+            Err(error) => {
+                let mut replays = self.replays.lock().await;
+                if replays
+                    .get(id)
+                    .is_some_and(|current| Arc::ptr_eq(current, &cell))
+                {
+                    replays.remove(id);
+                }
+                return Err(error.into());
+            }
+        };
+        let mut description = replay.description();
         description["recording_id"] = id.into();
         description["relay"] = self.config.room.relay.clone().into();
         description["namespace_prefix"] =
