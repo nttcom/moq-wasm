@@ -8,7 +8,11 @@ use std::{
 use anyhow::{Context, Result};
 use moqt::{RequestErrorCode, Session, SessionEvent};
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
-use tokio::{sync::watch, task::JoinSet, time::Instant};
+use tokio::{
+    sync::watch,
+    task::{JoinError, JoinSet},
+    time::Instant,
+};
 
 use crate::{
     archive::{record_broadcast as record_archive, record_event_track},
@@ -173,17 +177,17 @@ async fn follow_members(
                 break;
             }
             Some(finished) = members.join_next(), if !members.is_empty() => {
-                match finished {
-                    Ok(files) => {
+                match member_finished(finished, archive_target.is_some()) {
+                    Ok(Some(files)) => {
                         recorded.remove(&files.namespace);
                         event_sources.remove(&files.namespace);
                         recorded_files.push(files);
                     }
-                    Err(error) if archive_target.is_some() => {
-                        failure = Some(error.into());
+                    Ok(None) => {}
+                    Err(error) => {
+                        failure = Some(error);
                         break;
                     }
-                    Err(error) => tracing::error!(%error, "participant recording task failed"),
                 }
                 auto_stop.members_changed(recorded.len(), Instant::now());
                 continue;
@@ -251,16 +255,31 @@ async fn follow_members(
     }
     let _ = member_stop_sender.send(true);
     while let Some(result) = members.join_next().await {
-        match result {
-            Ok(files) => recorded_files.push(files),
-            Err(error) if archive_target.is_some() => failure = Some(error.into()),
-            Err(error) => tracing::error!(%error, "participant recording task failed"),
+        match member_finished(result, archive_target.is_some()) {
+            Ok(files) => recorded_files.extend(files),
+            Err(error) => failure = Some(error),
         }
     }
     if let Some(error) = failure {
         return Err(error);
     }
     Ok(by_member(recorded_files))
+}
+
+/// A failed participant task fails a MoQ room recording, whose archive would
+/// miss objects; an MP4 recording leaves that participant out.
+fn member_finished(
+    result: Result<MemberFiles, JoinError>,
+    archive: bool,
+) -> Result<Option<MemberFiles>> {
+    match result {
+        Ok(files) => Ok(Some(files)),
+        Err(error) if archive => Err(error.into()),
+        Err(error) => {
+            tracing::error!(%error, "participant recording task failed");
+            Ok(None)
+        }
+    }
 }
 
 fn is_recording_namespace(prefix: &str, namespace: &str) -> bool {
@@ -598,6 +617,34 @@ mod tests {
             files: recorded_files(files),
             screen_share: recorded_files(screen_share),
         }
+    }
+
+    async fn panicked_member() -> Result<MemberFiles, JoinError> {
+        tokio::spawn(async { panic!("participant task panicked") }).await
+    }
+
+    #[tokio::test]
+    async fn a_panicked_participant_is_left_out_of_an_mp4_recording() {
+        // Arrange
+        let result = panicked_member().await;
+
+        // Act
+        let files = member_finished(result, false);
+
+        // Assert
+        assert!(files.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_panicked_participant_fails_a_moq_recording() {
+        // Arrange
+        let result = panicked_member().await;
+
+        // Act
+        let files = member_finished(result, true);
+
+        // Assert
+        assert!(files.is_err());
     }
 
     #[test]
