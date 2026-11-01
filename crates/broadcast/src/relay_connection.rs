@@ -61,10 +61,12 @@ struct RelayState {
     /// Per namespace path, the tracks a SUBSCRIBE is accepted for before the
     /// catalog lists them.
     declared_tracks: HashMap<String, HashSet<String>>,
-    /// Per namespace path, the tracks `remove_track` dropped from the catalog.
-    /// The origin keeps them, so a SUBSCRIBE for one is rejected here instead
-    /// of being returned to a caller that would hand it to the origin.
-    removed_tracks: HashMap<String, HashSet<String>>,
+    /// Per namespace path, the tracks PUBLISH has been sent for. The relay
+    /// takes them from the PUBLISH, and the origin keeps them after
+    /// `remove_track`, so `serve_subscribe` rejects a SUBSCRIBE for one that
+    /// is not subscribable instead of returning it to an owner that would hand
+    /// it to the origin.
+    published_tracks: HashMap<String, HashSet<String>>,
     /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
@@ -115,8 +117,8 @@ impl RelayState {
             .is_some_and(|catalog| awaits_subscribe(&catalog, track_name))
     }
 
-    fn removed(&self, namespace_path: &str, track_name: &str) -> bool {
-        self.removed_tracks
+    fn published(&self, namespace_path: &str, track_name: &str) -> bool {
+        self.published_tracks
             .get(namespace_path)
             .is_some_and(|tracks| tracks.contains(track_name))
     }
@@ -185,10 +187,11 @@ impl RelayConnection {
     /// Answers SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS
     /// for the broadcasts on a session given to `with_session`, and returns
     /// every other event. That includes a SUBSCRIBE in a namespace no
-    /// broadcast here publishes, a SUBSCRIBE for a track the broadcast never
-    /// listed, which the owner may publish with the `origin` given to
-    /// `with_session`, and an UNSUBSCRIBE that this `origin` does not know. `Disconnected` and `ProtocolViolation`
-    /// are returned too, after they ended the broadcasts' sends.
+    /// broadcast here publishes, a SUBSCRIBE for a track no broadcast here
+    /// has published, which the owner may publish with the `origin` given to
+    /// `with_session`, and an UNSUBSCRIBE that this `origin` does not know.
+    /// `Disconnected` and `ProtocolViolation` are returned too, after they
+    /// ended the broadcasts' sends.
     pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         let connected = self.connected.lock().await.clone();
         match connected {
@@ -412,7 +415,7 @@ impl ConnectedRelay {
     }
 
     /// Returns `handler` for a namespace no broadcast here publishes and for a
-    /// track the broadcast never listed.
+    /// track no broadcast here has published.
     async fn serve_subscribe(
         origin: &Origin,
         state: &Mutex<RelayState>,
@@ -420,22 +423,22 @@ impl ConnectedRelay {
     ) -> Option<SubscribeHandler> {
         let namespace = handler.track_namespace.clone();
         let track_name = handler.track_name.clone();
-        let (publishes, subscribable, removed) = {
+        let (publishes, subscribable, published) = {
             let state = state.lock().await;
             (
                 state.publishes(&namespace),
                 state.subscribable(&namespace, &track_name),
-                state.removed(&namespace, &track_name),
+                state.published(&namespace, &track_name),
             )
         };
-        if !publishes || !(subscribable || removed) {
+        if !publishes || !(subscribable || published) {
             return Some(handler);
         }
         if !subscribable {
             if let Err(err) = handler
                 .error(
                     RequestErrorCode::TrackDoesNotExist,
-                    format!("{track_name} was removed from the catalog"),
+                    format!("{track_name} is neither the catalog nor a CMAF track of it"),
                 )
                 .await
             {
@@ -541,13 +544,7 @@ impl ConnectedRelay {
                 return Ok(());
             }
             let after = catalog_track_names(&namespace_path, metadata)?;
-            let dropped = before.difference(&after).cloned().collect::<Vec<_>>();
-            guard
-                .removed_tracks
-                .entry(namespace_path.clone())
-                .or_default()
-                .extend(dropped.iter().cloned());
-            dropped
+            before.difference(&after).cloned().collect::<Vec<_>>()
         };
         self.send_catalog(&namespace_path).await?;
         for name in dropped {
@@ -629,6 +626,13 @@ impl ConnectedRelay {
 
     async fn publish_track(&self, key: TrackKey) -> Result<()> {
         ensure_origin_track(&self.origin, &key).await;
+        self.state
+            .lock()
+            .await
+            .published_tracks
+            .entry(key.0.clone())
+            .or_default()
+            .insert(key.1.clone());
         self.origin.publish(&self.session, &key.0, &key.1).await
     }
 }
