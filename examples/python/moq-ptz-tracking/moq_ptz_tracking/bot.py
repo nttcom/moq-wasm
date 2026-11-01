@@ -7,7 +7,6 @@ import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
@@ -169,21 +168,12 @@ async def track_in_session(
         await publisher.publish_on(await session.track(namespace, track_name, retention_seconds=RETENTION_SECONDS))
     await session.publish_namespace(TRACKER_NAMESPACE)
     await session.publish_namespace(COMMAND_NAMESPACE)
-    following = asyncio.create_task(
-        while_published(
-            session,
-            VIEWER_NAMESPACE,
-            partial(follow_prompts, session, latest_target),
-            unpublished_seconds=GRACE_SECONDS,
-        )
-    )
     forwarding = asyncio.create_task(
         while_published(session, CAMERA_NAMESPACE, partial(forward_camera, session, latest_target, worker))
     )
     try:
-        return await until_room_empty(session, following)
+        return await until_room_empty(session, VIEWER_NAMESPACE, partial(follow_prompts, session, latest_target))
     finally:
-        following.cancel()
         forwarding.cancel()
 
 
