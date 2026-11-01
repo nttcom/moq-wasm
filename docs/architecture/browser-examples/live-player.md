@@ -153,10 +153,9 @@ buffer and target, output latency, arrival spread, video and audio bitrate,
 A/V offset, audio breaks, video drops, shed.
 
 `LiveTracks` (`{ video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }`)
-stands in for the catalog of a publisher that announces none, such as the
-remote-monitoring cameras: `start` subscribes to the tracks given and nothing
-else, the catalog status reads `Tracks given`, and a track redefinition can
-only come from another `start`.
+stands in for the catalog of a publisher that announces none: `start`
+subscribes to the tracks given and nothing else, the catalog status reads
+`Tracks given`, and a track redefinition can only come from another `start`.
 
 One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
@@ -697,10 +696,10 @@ named `live-player-*`.
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
   buffer bypass checkbox.
 - `examples/remote-monitoring`: one player per camera on the page's session,
-  started with the camera's `video` track given as `LiveTracks`
-  (`avc3.640028`, no catalog) on a canvas picture, video only. Each player
-  draws into a host element the page moves between the stage and the strip,
-  so the stage and the thumbnails are layout over four players. Clicking the
+  following the catalog the camera's `publish()` announces, on a canvas
+  picture, video only. Each player draws into a host element the page moves
+  between the stage and the strip, so the stage and the thumbnails are layout
+  over four players. Clicking the
   stage pauses its player, which is the first still picture of a review; the
   step buttons skip a second with the pause kept, the seek bar is the
   player's capture-time axis, and the debug bar shows the player's rewind
