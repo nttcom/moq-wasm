@@ -424,6 +424,7 @@ mod tests {
 
     #[tokio::test]
     async fn indexes_event_times_without_replacing_missing_timestamps() {
+        // Arrange
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let mut writer = ChunkWriter::new(store.clone(), Path::from("events"), "anon/a".into());
         let object = Object {
@@ -438,8 +439,12 @@ mod tests {
             payload: Bytes::from_static(br#"[{"t":42,"data":{"text":"hi"}},{"data":{}}]"#),
             ends_group: false,
         };
+
+        // Act
         writer.push("chat", &Event::Object(object)).await.unwrap();
         let key = writer.finish().await.unwrap();
+
+        // Assert
         let manifest: Value =
             serde_json::from_slice(&store.get(&key).await.unwrap().bytes().await.unwrap()).unwrap();
         let index = Path::from(
