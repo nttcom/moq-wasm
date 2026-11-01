@@ -1,8 +1,6 @@
 import { MoqSession } from 'moq-wasm'
-import type { LivePictureKind } from 'moq-wasm/media/player/livePictureSink'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
-import { formatLiveStats } from 'moq-wasm/media/player/locLive'
 import { PublishPreview } from './publishPreview'
 import {
   DEFAULT_WINDOW_SECONDS,
@@ -16,7 +14,14 @@ import {
 } from './streamMonitor'
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
-import { CATALOG_TRACK_NAME, LivePlayer, type LivePlayerState, PlayerControls } from 'moq-wasm/media'
+import {
+  CATALOG_TRACK_NAME,
+  type LivePictureKind,
+  LivePlayer,
+  type LivePlayerState,
+  PlayerControls,
+  formatLiveStats
+} from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
 

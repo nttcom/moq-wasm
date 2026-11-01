@@ -1,5 +1,4 @@
-import type { BufferPolicy } from 'moq-wasm/media/player/jitterBuffer'
-import { type CatchUp, DEFAULT_BUFFER_POLICY } from 'moq-wasm/media/player/livePlayout'
+import type { BufferPolicy, CatchUp } from 'moq-wasm/media'
 
 export type PlayoutSettings = {
   policy: BufferPolicy
@@ -12,6 +11,6 @@ export type PlayoutSettings = {
 /// rendition spreads keyframes less, so stepping down shortens the shown delay
 /// that the quality choice holds to its target.
 export const DEFAULT_PLAYOUT_SETTINGS: PlayoutSettings = {
-  policy: { ...DEFAULT_BUFFER_POLICY, minimumMs: 0, arrivalQuantile: 0.95 },
+  policy: { minimumMs: 0, maximumMs: Number.POSITIVE_INFINITY, arrivalQuantile: 0.95 },
   catchUp: 'speed-up'
 }

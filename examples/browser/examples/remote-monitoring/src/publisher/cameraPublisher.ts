@@ -1,5 +1,5 @@
 import type { TrackWriter } from 'moq-wasm'
-import { monotonicUnixMicros } from 'moq-wasm/media/internal/clock'
+import { monotonicUnixMicros } from 'moq-wasm/media'
 import { buildLocHeader } from 'moq-wasm/media/internal/loc'
 import { type CameraId, type VideoSource } from '../types/monitoring'
 
