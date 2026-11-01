@@ -373,8 +373,11 @@ an otherwise empty room alive. Each track has immutable payload chunks and JSON
 indexes, including canonical object fields, subgroup headers and FIN events,
 receipt sequence, capture timestamps and source event times. Duplicate object
 identities retain the first payload; conflicting duplicates fail the recording.
-The recording fails if a subscription, task or upload fails, and its final room
-manifest is written only after its broadcast manifests are committed.
+The chunks go straight to the object store; no local copy is written. A reset
+subgroup stream ends only that stream, as in `moqt`'s `TrackReader`. The
+recording fails if a subscription, task or upload fails, and its final room
+manifest is written only after its broadcast manifests are committed. An MP4
+room recording instead leaves out a participant whose task failed.
 
 `POST /recordings/{id}/publish` accepts a finished MoQ or MP4 recording, verifies access
 to its source room and starts `replay::ReplayTask`. It announces namespaces under
@@ -413,7 +416,9 @@ per replay. Active subscriptions and FETCH requests keep a replay alive. Once
 the last subscription leaves and all FETCH requests finish, it closes its
 relay session after 15 idle minutes, or at once on server shutdown. A new FETCH
 resets the idle period when it finishes or is cancelled. Repeated HTTP requests
-on that API instance reuse its publication. The browser holds one catalog
+on that API instance reuse its publication. A request reserves its recording's
+slot under a lock and opens the recording outside it, so a long MP4 conversion
+delays only the requests for that recording. The browser holds one catalog
 subscription while its recording page remains open, including during pauses,
 and closes it when another recording opens or the page closes. The response's
 `idle_timeout_seconds` states the inactivity timeout rather than an absolute
