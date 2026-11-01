@@ -264,7 +264,7 @@ pub(crate) async fn send_publish(
         .accept();
     match response {
         ResponseMessage::PublishOk(message) if message.request_id == request_id => {
-            tracing::debug!(
+            tracing::info!(
                 request_id,
                 track_namespace,
                 track_name,
@@ -277,7 +277,7 @@ pub(crate) async fn send_publish(
             "response for another request ID",
         )),
         ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
-            tracing::debug!(
+            tracing::info!(
                 request_id,
                 track_namespace,
                 track_name,

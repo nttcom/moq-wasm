@@ -23,6 +23,7 @@ impl DownstreamPublishTask {
                     .send(subscriber_session_id, &track_key)
                     .await
                 {
+                    // moqt logs the PUBLISH_OK or PUBLISH_ERROR at INFO.
                     Ok(()) => tracing::debug!(
                         subscriber_session_id = %subscriber_session_id,
                         track_namespace = %track_key.track_namespace,
