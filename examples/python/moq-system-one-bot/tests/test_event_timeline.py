@@ -1,5 +1,5 @@
 from moq_system_one_bot.event_timeline import EventTimeline, location_record
-from tests.helpers import RecordingPublication
+from moq_system_one_bot.testing import RecordingPublication
 
 VERDICT = {"labels": [{"name": "暴言", "probability": 0.93}]}
 

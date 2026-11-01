@@ -1,33 +1,9 @@
-import asyncio
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from aiohttp import web
 
 from moq_chat_moderation.chat import Label
-from moq_system_one_bot.event_timeline import EventTimeline
-
-READ_TIMEOUT_SECONDS = 2
-
-
-class RecordingPublication:
-    def __init__(self):
-        self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()
-
-    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
-        self._writes.put_nowait((new_group, json.loads(payload)))
-
-    async def next_write(self) -> tuple[bool, Any]:
-        return await asyncio.wait_for(self._writes.get(), READ_TIMEOUT_SECONDS)
-
-
-async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
-    timeline = EventTimeline(replay=True)
-    publication = RecordingPublication()
-    await timeline.publish_on(publication)
-    await publication.next_write()
-    return timeline, publication
 
 
 @dataclass
