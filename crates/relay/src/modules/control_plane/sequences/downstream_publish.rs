@@ -41,14 +41,14 @@ impl DownstreamPublish {
         subscriber_session_id: SessionId,
         track_key: &TrackKey,
     ) -> anyhow::Result<()> {
-        if self
-            .table
-            .has_downstream_subscription_to_track(subscriber_session_id, track_key)
-        {
-            return Ok(());
-        }
         let Some(upstream_track) = self.table.track_state(track_key) else {
             bail!("upstream track ended before PUBLISH was sent");
+        };
+        let Some(_forwarding) = self
+            .table
+            .begin_forwarded_publish(track_key, subscriber_session_id)
+        else {
+            return Ok(());
         };
         let largest_location =
             existing_track_largest(&self.cache_store, track_key, &upstream_track);

@@ -293,7 +293,6 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         &deps.upstream_publisher_resolver,
                         &deps.cache_store,
-                        &deps.upstream_serializer,
                         handler,
                     )
                     .instrument(event_span)

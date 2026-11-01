@@ -5,9 +5,7 @@ use crate::modules::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
             session_peer,
-            subscribe::upstream_join_task::{
-                UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, send_upstream_subscribes,
-            },
+            subscribe::pending_producer_task::{PendingProducerDeps, subscribe_publishers},
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
@@ -47,10 +45,11 @@ impl GoAway {
             tracks = fed_tracks.len(),
             "upstream relay is going away; subscribing the other publishers of its tracks"
         );
-        let join_deps = UpstreamJoinDeps {
+        let join_deps = PendingProducerDeps {
             table: table.clone(),
             forwarder: forwarder.clone(),
             cache_store: cache_store.clone(),
+            resolver: upstream_publisher_resolver.clone(),
         };
         for track_key in fed_tracks {
             let feeding = table
@@ -80,20 +79,7 @@ impl GoAway {
                 publishers = publishers.len(),
                 "subscribing other publishers"
             );
-            let pending = send_upstream_subscribes(
-                upstream_publisher_resolver,
-                &join_deps.forwarder,
-                &track_key,
-                publishers,
-            );
-            let _upstream_join = UpstreamJoinTask::run(
-                UpstreamJoin {
-                    subscriber_session_id: session_id,
-                    track_key,
-                    pending,
-                },
-                join_deps.clone(),
-            );
+            subscribe_publishers(&join_deps, &track_key, session_id, publishers);
         }
     }
 }

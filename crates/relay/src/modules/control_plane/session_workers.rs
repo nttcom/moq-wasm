@@ -15,7 +15,6 @@ use crate::modules::{
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        upstream_creation_serializer::UpstreamCreationSerializer,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::cache::store::TrackCacheStore,
@@ -39,7 +38,6 @@ pub(crate) struct WorkerDeps {
     pub(crate) inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
     pub(crate) upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
     pub(crate) cache_store: Arc<TrackCacheStore>,
-    pub(crate) upstream_serializer: UpstreamCreationSerializer,
     pub(crate) token_verifier: Arc<dyn TokenVerifier>,
     pub(crate) fetch_fill_timeout: Duration,
 }
@@ -107,7 +105,6 @@ mod tests {
         },
         control_plane::{
             control_message_forwarder::ControlMessageForwarder,
-            upstream_creation_serializer::UpstreamCreationSerializer,
             upstream_publisher_resolver::UpstreamPublisherResolver,
         },
         data_plane::cache::store::TrackCacheStore,
@@ -157,7 +154,6 @@ mod tests {
                     inter_relay_connection_manager,
                     upstream_publisher_resolver,
                     cache_store: cache_store.clone(),
-                    upstream_serializer: UpstreamCreationSerializer::default(),
                     token_verifier: Arc::new(StubVerifier(StubOutcome::Unauthorized)),
                     fetch_fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
                 },

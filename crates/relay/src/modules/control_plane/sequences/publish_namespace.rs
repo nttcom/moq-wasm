@@ -10,9 +10,7 @@ use crate::modules::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
             CascadingRelayContext,
-            subscribe::upstream_join_task::{
-                UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, send_upstream_subscribes,
-            },
+            subscribe::pending_producer_task::{PendingProducerDeps, subscribe_publishers},
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
@@ -68,10 +66,11 @@ impl PublishNamespace {
         self.notify_to_subscribers(track_namespace, table, forwarder)
             .await;
 
-        let join_deps = UpstreamJoinDeps {
+        let join_deps = PendingProducerDeps {
             table: table.clone(),
             forwarder: forwarder.clone(),
             cache_store: cache_store.clone(),
+            resolver: upstream_publisher_resolver.clone(),
         };
         if is_origin {
             Self::join_tracks_wanting_publishers(
@@ -80,7 +79,6 @@ impl PublishNamespace {
                 SessionPeer::Client,
                 Some(session_id),
                 vec![UpstreamPublisher::Session(session_id)],
-                upstream_publisher_resolver,
                 &join_deps,
             );
             self.notify_remote_subscribers(
@@ -94,7 +92,6 @@ impl PublishNamespace {
             Self::join_tracks_wanting_publisher_relays(
                 session_id,
                 track_namespace,
-                upstream_publisher_resolver,
                 &join_deps,
                 cascading_relay_context,
             )
@@ -109,8 +106,7 @@ impl PublishNamespace {
     async fn join_tracks_wanting_publisher_relays(
         announcing_session_id: SessionId,
         track_namespace: &str,
-        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
-        join_deps: &UpstreamJoinDeps,
+        join_deps: &PendingProducerDeps,
         cascading_relay_context: CascadingRelayContext<'_>,
     ) {
         let relays = match cascading_relay_context
@@ -130,7 +126,6 @@ impl PublishNamespace {
             SessionPeer::Relay,
             None,
             relays.into_iter().map(UpstreamPublisher::Relay).collect(),
-            upstream_publisher_resolver,
             join_deps,
         );
     }
@@ -143,8 +138,7 @@ impl PublishNamespace {
         publisher_peer: SessionPeer,
         publisher_session_id: Option<SessionId>,
         publishers: Vec<UpstreamPublisher>,
-        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
-        join_deps: &UpstreamJoinDeps,
+        join_deps: &PendingProducerDeps,
     ) {
         if publishers.is_empty() {
             return;
@@ -159,19 +153,11 @@ impl PublishNamespace {
                 track_name = %track_key.track_name,
                 "subscribing newly announced publishers to an active track"
             );
-            let pending = send_upstream_subscribes(
-                upstream_publisher_resolver,
-                &join_deps.forwarder,
+            subscribe_publishers(
+                join_deps,
                 &track_key,
+                announcing_session_id,
                 publishers.clone(),
-            );
-            let _upstream_join = UpstreamJoinTask::run(
-                UpstreamJoin {
-                    subscriber_session_id: announcing_session_id,
-                    track_key,
-                    pending,
-                },
-                join_deps.clone(),
             );
         }
     }

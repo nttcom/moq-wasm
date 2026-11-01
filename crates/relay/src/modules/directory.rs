@@ -9,9 +9,9 @@ use dashmap::{DashMap, DashSet, Entry};
 
 use crate::modules::{
     directory::track::{
-        Consumer, DownstreamSubscription, MatchingPublication, Producer, ProducerOrigin,
-        ProducerState, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
-        RemovedSessionSubscriptions, Track, TrackState,
+        Consumer, CreationFailure, CreationState, DownstreamSubscription, MatchingPublication,
+        Producer, ProducerOrigin, ProducerState, ReleasedUpstreamSubscription,
+        RemovedDownstreamSubscription, RemovedSessionSubscriptions, Track, TrackState,
     },
     domain::{
         delivery_control::{DeliveryControl, UpdateOutcome},
@@ -25,6 +25,51 @@ use crate::modules::{
     session::handler::publish::PublishHandler,
 };
 use moqt::fetch::JoinPoint;
+use tokio::sync::watch;
+
+/// What a SUBSCRIBE finds for its track. Each holds a `TrackReservation`,
+/// so the track wants its producers for the caller already.
+pub(crate) enum TrackLookup {
+    /// Producers feed the track.
+    Ready(TrackState, TrackReservation),
+    /// Another SUBSCRIBE is creating the track; wait on its creation.
+    Creating(watch::Receiver<CreationState>, TrackReservation),
+    /// The caller is to create the track: resolve its publishers and send
+    /// them SUBSCRIBE, or abandon the creation when there is none.
+    Started(watch::Receiver<CreationState>, TrackReservation),
+}
+
+/// A forwarded PUBLISH between its send and its answer; dropping it lets the
+/// track forward another PUBLISH to the session.
+pub(crate) struct ForwardedPublish {
+    directory: Arc<InMemoryLocalPubSubDirectory>,
+    track_key: TrackKey,
+    session_id: SessionId,
+}
+
+impl Drop for ForwardedPublish {
+    fn drop(&mut self) {
+        if let Some(mut track) = self.directory.upstream_tracks.get_mut(&self.track_key) {
+            track.end_forwarded_publish(self.session_id);
+        }
+    }
+}
+
+/// Keeps a track wanting its producers for a subscriber that found it and is
+/// about to register its consumer. Released on drop.
+pub(crate) struct TrackReservation {
+    directory: Arc<InMemoryLocalPubSubDirectory>,
+    track_key: TrackKey,
+    peer: SessionPeer,
+}
+
+impl Drop for TrackReservation {
+    fn drop(&mut self) {
+        if let Some(mut track) = self.directory.upstream_tracks.get_mut(&self.track_key) {
+            track.release_reservation(self.peer);
+        }
+    }
+}
 
 pub(crate) struct DownstreamSubscriptionState {
     pub(crate) subscriber_session_id: SessionId,
@@ -149,7 +194,7 @@ impl InMemoryLocalPubSubDirectory {
             .upstream_tracks
             .iter()
             .filter(|track| {
-                track.consumers.is_empty()
+                !track.downstream_remains()
                     && track
                         .producers
                         .get(&publisher_session_id)
@@ -163,7 +208,7 @@ impl InMemoryLocalPubSubDirectory {
                 continue;
             };
             let track = entry.get_mut();
-            if !track.consumers.is_empty() {
+            if track.downstream_remains() {
                 continue;
             }
             let Some(producer) = track.producers.remove(&publisher_session_id) else {
@@ -611,10 +656,69 @@ impl InMemoryLocalPubSubDirectory {
                 .is_empty()
     }
 
+    /// `None` for a track no producer feeds yet (see `TrackLookup`).
     pub(crate) fn track_state(&self, track_key: &TrackKey) -> Option<TrackState> {
         self.upstream_tracks
             .get(track_key)
+            .filter(|entry| !entry.producers.is_empty())
             .map(|entry| entry.value().state())
+    }
+
+    /// Finds the track for a SUBSCRIBE from a `requester` peer, or starts its
+    /// creation: the entry is inserted `Creating` so that the SUBSCRIBEs
+    /// that follow wait for this one instead of subscribing upstream again.
+    pub(crate) fn track_or_begin_creation(
+        self: &Arc<Self>,
+        track_key: &TrackKey,
+        requester: SessionPeer,
+    ) -> TrackLookup {
+        let reservation = TrackReservation {
+            directory: self.clone(),
+            track_key: track_key.clone(),
+            peer: requester,
+        };
+        match self.upstream_tracks.entry(track_key.clone()) {
+            Entry::Occupied(mut entry) => {
+                let track = entry.get_mut();
+                track.reserve(requester);
+                if track.producers.is_empty() {
+                    TrackLookup::Creating(track.creation(), reservation)
+                } else {
+                    TrackLookup::Ready(track.state(), reservation)
+                }
+            }
+            Entry::Vacant(entry) => {
+                let mut track = Track::creating();
+                track.reserve(requester);
+                let creation = track.creation();
+                entry.insert(track);
+                TrackLookup::Started(creation, reservation)
+            }
+        }
+    }
+
+    pub(crate) fn add_pending_producers(&self, track_key: &TrackKey, count: usize) {
+        if let Some(mut track) = self.upstream_tracks.get_mut(track_key) {
+            track.add_pending_producers(count);
+        }
+    }
+
+    /// An upstream SUBSCRIBE for the track ended without a producer. When it
+    /// was the last one of a track still being created, the creation fails
+    /// and the entry goes; returns whether the entry is gone.
+    pub(crate) fn pending_producer_ended(
+        &self,
+        track_key: &TrackKey,
+        failure: Option<CreationFailure>,
+    ) -> bool {
+        let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
+            return true;
+        };
+        if !entry.get_mut().pending_producer_ended(failure) {
+            return false;
+        }
+        entry.remove();
+        true
     }
 
     fn with_consumer<T>(
@@ -655,17 +759,22 @@ impl InMemoryLocalPubSubDirectory {
         )
     }
 
-    pub(crate) fn has_downstream_subscription_to_track(
-        &self,
-        downstream_session_id: SessionId,
+    /// Marks a PUBLISH for the track as on its way to `session_id`, so no
+    /// second one is sent meanwhile. `None` when the track is gone or the
+    /// session already receives it.
+    pub(crate) fn begin_forwarded_publish(
+        self: &Arc<Self>,
         track_key: &TrackKey,
-    ) -> bool {
-        self.upstream_tracks.get(track_key).is_some_and(|track| {
-            track
-                .consumers
-                .keys()
-                .any(|(session_id, _)| *session_id == downstream_session_id)
-        })
+        session_id: SessionId,
+    ) -> Option<ForwardedPublish> {
+        self.upstream_tracks
+            .get_mut(track_key)?
+            .begin_forwarded_publish(session_id)
+            .then(|| ForwardedPublish {
+                directory: self.clone(),
+                track_key: track_key.clone(),
+                session_id,
+            })
     }
 
     /// Returns the producer from the same publisher that this one replaces;
@@ -676,12 +785,13 @@ impl InMemoryLocalPubSubDirectory {
         publisher_session_id: SessionId,
         producer: Producer,
     ) -> Option<Producer> {
-        let replaced = self
+        let mut track = self
             .upstream_tracks
             .entry(track_key.clone())
-            .or_default()
-            .producers
-            .insert(publisher_session_id, producer);
+            .or_insert_with(Track::created);
+        let replaced = track.producers.insert(publisher_session_id, producer);
+        track.mark_created();
+        drop(track);
         if replaced
             .as_ref()
             .is_some_and(|replaced| replaced.state.origin == ProducerOrigin::Publish)
@@ -718,7 +828,8 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Returns false, adding nothing, when the track is gone, the publisher
-    /// already feeds it, or the track does not want it.
+    /// already feeds it, or the track does not want it. The first producer
+    /// of a track being created completes the creation.
     pub(crate) fn add_upstream_subscription_to_track(
         &self,
         track_key: &TrackKey,
@@ -732,6 +843,7 @@ impl InMemoryLocalPubSubDirectory {
             return false;
         }
         track.producers.insert(publisher_session_id, producer);
+        track.mark_created();
         true
     }
 
@@ -877,8 +989,8 @@ impl InMemoryLocalPubSubDirectory {
         let removed_consumer = track.consumers.remove(&key);
         self.consumer_tracks.remove(&key);
         removed_consumer?;
-        let downstream_remains = !track.consumers.is_empty();
-        let client_remains = track.has_client_consumer();
+        let downstream_remains = track.downstream_remains();
+        let client_remains = track.client_remains();
         let draining = self.draining_since_ms.get().is_some();
         let mut released_upstream_subscriptions = Vec::new();
         let mut released_published = Vec::new();
@@ -951,7 +1063,7 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, producer, producer_with,
-        table_with_upstream,
+        table_with_upstream, track_key,
     };
     use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
@@ -1926,5 +2038,130 @@ mod tests {
             Some(vec![1])
         );
         assert_eq!(publisher_subscriptions, vec![1]);
+    }
+
+    fn creation_failure(reason: &str) -> CreationFailure {
+        CreationFailure {
+            code: moqt::RequestErrorCode::InternalError,
+            reason: reason.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_first_subscribe_starts_the_creation_and_the_next_waits_for_it() {
+        // Arrange
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(creation, _reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        assert!(matches!(
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client),
+            TrackLookup::Creating(..)
+        ));
+        assert!(table.track_state(&track_key()).is_none());
+        table.add_pending_producers(&track_key(), 1);
+
+        // Act: the first producer completes the creation without a consumer
+        let taken = table.add_upstream_subscription_to_track(
+            &track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+
+        // Assert
+        assert!(taken);
+        assert_eq!(*creation.borrow(), CreationState::Created);
+        assert!(matches!(
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client),
+            TrackLookup::Ready(..)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_creation_whose_subscribes_all_fail_ends_with_the_last_failure() {
+        // Arrange
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(creation, _reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        table.add_pending_producers(&track_key(), 2);
+
+        // Act
+        let gone_after_first =
+            table.pending_producer_ended(&track_key(), Some(creation_failure("first")));
+        let gone_after_last =
+            table.pending_producer_ended(&track_key(), Some(creation_failure("last")));
+
+        // Assert
+        assert!(!gone_after_first);
+        assert!(gone_after_last);
+        assert_eq!(
+            *creation.borrow(),
+            CreationState::Failed(creation_failure("last"))
+        );
+        assert!(table.upstream_tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_publish_during_the_creation_completes_it() {
+        // Arrange
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(creation, _reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        table.add_pending_producers(&track_key(), 1);
+
+        // Act
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Publish),
+        );
+        let gone = table.pending_producer_ended(&track_key(), Some(creation_failure("refused")));
+
+        // Assert
+        assert_eq!(*creation.borrow(), CreationState::Created);
+        assert!(!gone);
+        assert!(table.track_state(&track_key()).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_reserved_track_wants_producers_before_its_consumer_registers() {
+        // Arrange
+        let (table, _) = table_with_upstream(ProducerOrigin::Subscribe);
+        let table = Arc::new(table);
+        let TrackLookup::Ready(_, reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("a fed track is ready");
+        };
+
+        // Act / Assert
+        assert!(table.track_takes_publisher(&track_key(), 3, SessionPeer::Client));
+        drop(reservation);
+        assert!(!table.track_takes_publisher(&track_key(), 3, SessionPeer::Client));
+    }
+
+    #[tokio::test]
+    async fn a_forwarded_publish_in_flight_blocks_a_second_one_to_the_session() {
+        // Arrange
+        let (table, _) = table_with_upstream(ProducerOrigin::Publish);
+        let table = Arc::new(table);
+
+        // Act
+        let forwarding = table.begin_forwarded_publish(&track_key(), 2);
+        let second = table.begin_forwarded_publish(&track_key(), 2);
+
+        // Assert
+        assert!(forwarding.is_some());
+        assert!(second.is_none());
+        drop(forwarding);
+        assert!(table.begin_forwarded_publish(&track_key(), 2).is_some());
     }
 }
