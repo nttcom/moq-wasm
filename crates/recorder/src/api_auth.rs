@@ -1,9 +1,17 @@
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
+use auth_token::Claims;
 use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use serde_json::Value;
 
 use crate::state_sync_task::now_ms;
+
+/// The clock difference the relay tolerates on `iat` and `exp`, so a token
+/// the relay accepts is accepted here too.
+const CLOCK_LEEWAY_SECONDS: u64 = 60;
+const MAX_CLIENT_TOKEN_SECONDS: u64 = 86_400;
+
+static VTS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 #[derive(Debug)]
 pub(crate) struct AuthError {
@@ -41,7 +49,7 @@ pub(crate) async fn authorize(
             "HTTP token verification is not configured",
         )
     })?;
-    let response = reqwest::Client::new()
+    let response = VTS_CLIENT
         .post(vts)
         .timeout(Duration::from_secs(3))
         .json(&serde_json::json!({ "token": token }))
@@ -76,26 +84,30 @@ pub(crate) async fn authorize(
 
 fn check_claims(verified: &Value, namespace: &str, write: bool, now: u64) -> Result<(), AuthError> {
     let denied = || rejected(StatusCode::FORBIDDEN, "token does not authorize this room");
-    let claims = &verified["claims"];
     let app_id = verified["appId"].as_str().ok_or_else(denied)?;
-    if claims["appId"] != app_id {
+    let claims: Claims =
+        serde_json::from_value(verified["claims"].clone()).map_err(|_| denied())?;
+    if claims.app_id != app_id {
         return Err(denied());
     }
-    let iat = claims["iat"].as_u64().ok_or_else(denied)?;
-    let exp = claims["exp"].as_u64().ok_or_else(denied)?;
-    if exp <= now
-        || iat > now.saturating_add(60)
+    let iat = claims.iat.ok_or_else(denied)?;
+    let exp = claims.exp.ok_or_else(denied)?;
+    if exp.saturating_add(CLOCK_LEEWAY_SECONDS) <= now
+        || iat > now.saturating_add(CLOCK_LEEWAY_SECONDS)
         || exp <= iat
-        || (verified["isRelay"] != true && exp.saturating_sub(iat) > 86_400)
+        || (verified["isRelay"] != true && exp.saturating_sub(iat) > MAX_CLIENT_TOKEN_SECONDS)
     {
         return Err(rejected(
             StatusCode::UNAUTHORIZED,
             "token lifetime is invalid",
         ));
     }
-    let claim = claims[if write { "publish" } else { "subscribe" }]
-        .as_str()
-        .ok_or_else(denied)?;
+    let claim = if write {
+        claims.publish
+    } else {
+        claims.subscribe
+    }
+    .ok_or_else(denied)?;
     if !claim.is_empty() && claim.split('/').any(str::is_empty) {
         return Err(denied());
     }
@@ -140,6 +152,7 @@ mod tests {
                     Ok::<_, std::convert::Infallible>(response)
                 });
             hyper::server::conn::http1::Builder::new()
+                .keep_alive(false)
                 .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
                 .await
                 .unwrap();
@@ -183,6 +196,8 @@ mod tests {
         assert!(check_claims(&verified, "OTHER/room", false, 100).is_err());
         assert!(check_claims(&verified, "APP/room", true, 100).is_err());
         verified["claims"]["exp"] = json!(99);
+        assert!(check_claims(&verified, "APP/room", false, 100).is_ok());
+        verified["claims"]["exp"] = json!(40);
         assert!(check_claims(&verified, "APP/room", false, 100).is_err());
     }
 }

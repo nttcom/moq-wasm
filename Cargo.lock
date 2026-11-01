@@ -2696,6 +2696,7 @@ name = "recorder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth-token",
  "base64 0.23.1",
  "bytes",
  "clap",
