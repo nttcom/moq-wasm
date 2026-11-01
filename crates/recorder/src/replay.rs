@@ -13,7 +13,7 @@ use moqt::{
 };
 use serde_json::Value;
 use tokio::{
-    task::{AbortHandle, JoinHandle, JoinSet},
+    task::{AbortHandle, JoinError, JoinHandle, JoinSet},
     time::Instant,
 };
 
@@ -115,17 +115,7 @@ async fn serve(
             _ = tokio::time::sleep_until(idle_since + idle_timeout), if subscribers.is_empty() && active.is_empty() => break,
             _ = session.closed() => break,
             Some(result) = fetches.join_next(), if !fetches.is_empty() => {
-                match result {
-                    Ok((request_id, result)) => {
-                        active.remove(&request_id);
-                        if let Err(error) = result { tracing::warn!(request_id, %error, "recording FETCH failed"); }
-                    }
-                    Err(error) => {
-                        // A cancelled FETCH was already removed; a panicked one is removed here.
-                        active.retain(|_, task| task.id() != error.id());
-                        if error.is_panic() { tracing::error!(%error, "recording FETCH panicked"); }
-                    }
-                }
+                fetch_finished(result, &mut active);
                 idle_since = Instant::now();
                 continue;
             },
@@ -269,6 +259,28 @@ async fn serve(
     Ok(())
 }
 
+/// Frees the slot of a FETCH task that ended, including one that panicked.
+fn fetch_finished(
+    result: Result<(u64, Result<()>), JoinError>,
+    active: &mut HashMap<u64, AbortHandle>,
+) {
+    match result {
+        Ok((request_id, result)) => {
+            active.remove(&request_id);
+            if let Err(error) = result {
+                tracing::warn!(request_id, %error, "recording FETCH failed");
+            }
+        }
+        Err(error) => {
+            // A cancelled FETCH was already removed; a panicked one is removed here.
+            active.retain(|_, task| task.id() != error.id());
+            if error.is_panic() {
+                tracing::error!(%error, "recording FETCH panicked");
+            }
+        }
+    }
+}
+
 async fn send_fetch(
     session: &Session,
     recording: Arc<StoredRecording>,
@@ -388,6 +400,42 @@ mod tests {
         subscribe::SubscribeOption,
     };
     use object_store::{ObjectStoreExt, PutPayload};
+
+    #[tokio::test]
+    async fn a_panicked_fetch_frees_its_slot() {
+        // Arrange
+        let mut fetches = JoinSet::new();
+        let mut active = HashMap::new();
+        let panicked = fetches.spawn(async { panic!("FETCH task panicked") });
+        let running = fetches.spawn(std::future::pending());
+        active.insert(1, panicked);
+        active.insert(2, running);
+
+        // Act
+        let result = fetches.join_next().await.unwrap();
+        fetch_finished(result, &mut active);
+
+        // Assert: only the panicked FETCH leaves the active set
+        assert_eq!(active.keys().copied().collect::<Vec<_>>(), [2]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_fetch_frees_its_slot() {
+        // Arrange
+        let mut fetches = JoinSet::new();
+        let mut active = HashMap::new();
+        active.insert(
+            1,
+            fetches.spawn(async { (1, Err(anyhow::anyhow!("object store unavailable"))) }),
+        );
+
+        // Act
+        let result = fetches.join_next().await.unwrap();
+        fetch_finished(result, &mut active);
+
+        // Assert
+        assert!(active.is_empty());
+    }
 
     #[tokio::test]
     async fn subscribers_keep_replay_alive_until_the_last_one_leaves_and_fetch_preserves_objects() {
