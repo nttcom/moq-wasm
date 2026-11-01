@@ -115,11 +115,18 @@ async fn serve(
             _ = tokio::time::sleep_until(idle_since + idle_timeout), if subscribers.is_empty() && active.is_empty() => break,
             _ = session.closed() => break,
             Some(result) = fetches.join_next(), if !fetches.is_empty() => {
-                if let Ok((id, result)) = result {
-                    active.remove(&id);
-                    idle_since = Instant::now();
-                    if let Err(error) = result { tracing::warn!(request_id = id, %error, "recording FETCH failed"); }
+                match result {
+                    Ok((request_id, result)) => {
+                        active.remove(&request_id);
+                        if let Err(error) = result { tracing::warn!(request_id, %error, "recording FETCH failed"); }
+                    }
+                    Err(error) => {
+                        // A cancelled FETCH was already removed; a panicked one is removed here.
+                        active.retain(|_, task| task.id() != error.id());
+                        if error.is_panic() { tracing::error!(%error, "recording FETCH panicked"); }
+                    }
                 }
+                idle_since = Instant::now();
                 continue;
             },
             event = session.receive_event() => event?,
