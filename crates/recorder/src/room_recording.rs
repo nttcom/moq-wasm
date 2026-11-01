@@ -178,10 +178,11 @@ async fn follow_members(
                         event_sources.remove(&files.namespace);
                         recorded_files.push(files);
                     }
-                    Err(error) => {
+                    Err(error) if archive_target.is_some() => {
                         failure = Some(error.into());
                         break;
                     }
+                    Err(error) => tracing::error!(%error, "participant recording task failed"),
                 }
                 auto_stop.members_changed(recorded.len(), Instant::now());
                 continue;
@@ -251,7 +252,8 @@ async fn follow_members(
     while let Some(result) = members.join_next().await {
         match result {
             Ok(files) => recorded_files.push(files),
-            Err(error) => failure = Some(error.into()),
+            Err(error) if archive_target.is_some() => failure = Some(error.into()),
+            Err(error) => tracing::error!(%error, "participant recording task failed"),
         }
     }
     if let Some(error) = failure {
