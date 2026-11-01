@@ -1,8 +1,10 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use gstreamer::{self as gst, prelude::*};
-use mediapack::{MediaEvent, Timestamp, mpegts};
+use mediapack::{MediaEvent, Timestamp, VideoSample, mpegts};
 
-use crate::compositor::EventSource;
+use crate::{Rendition, TranscodedEvent, Transcoder, compositor::EventSource};
 
 const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
 pub(crate) const FIXTURE_VP8_IVF: &[u8] =
@@ -18,6 +20,40 @@ pub(crate) fn fixture_events() -> Vec<MediaEvent> {
     let mut events = demuxer.push(FIXTURE_TS).unwrap();
     events.extend(demuxer.finish().unwrap());
     events
+}
+
+pub(crate) fn fixture_video_samples() -> Vec<VideoSample> {
+    fixture_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            MediaEvent::Video(sample) => Some(sample),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) async fn transcode_54p(samples: &[VideoSample]) -> Vec<TranscodedEvent> {
+    let mut transcoder = Transcoder::new(&[Rendition {
+        name: "54p".into(),
+        width: 96,
+        height: 54,
+        bitrate_kbps: 100,
+    }])
+    .unwrap();
+    let input = transcoder.input();
+    for sample in samples {
+        input.push(sample).unwrap();
+    }
+    input.finish().unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut outputs = Vec::new();
+        while let Some(output) = transcoder.next().await {
+            outputs.push(output.unwrap());
+        }
+        outputs
+    })
+    .await
+    .expect("transcoder finished")
 }
 
 /// The frame payloads of an IVF file: a header whose length is at byte 6,

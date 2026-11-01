@@ -456,12 +456,9 @@ mod tests {
     use mediapack::{Timestamp, mp4::Mp4Index};
 
     use super::*;
-    use crate::{
-        Rendition, Transcoder,
-        test_support::{
-            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_events, decode_in_software,
-            fixture_events, ivf_frames, shifted, source,
-        },
+    use crate::test_support::{
+        FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_events, decode_in_software,
+        fixture_events, fixture_video_samples, ivf_frames, shifted, source, transcode_54p,
     };
 
     const SETTINGS: CompositeSettings = CompositeSettings {
@@ -745,24 +742,11 @@ mod tests {
         // Arrange: the fixture at 160x90, then the same pictures re-encoded at 96x54
         decode_in_software();
         let first = video_events();
-        let mut transcoder = Transcoder::new(&[Rendition {
-            name: "54p".into(),
-            width: 96,
-            height: 54,
-            bitrate_kbps: 100,
-        }])
-        .unwrap();
-        let input = transcoder.input();
-        for event in &first {
-            if let MediaEvent::Video(sample) = event {
-                input.push(sample).unwrap();
-            }
-        }
-        input.finish().unwrap();
-        let mut smaller = Vec::new();
-        while let Some(output) = transcoder.next().await {
-            smaller.push(output.unwrap().event);
-        }
+        let smaller = transcode_54p(&fixture_video_samples())
+            .await
+            .into_iter()
+            .map(|output| output.event)
+            .collect();
         let smaller = shifted(
             smaller,
             video_end(&first).saturating_sub(Timestamp::from_micros(1_421_333)),
