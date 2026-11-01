@@ -11,7 +11,7 @@ use crate::modules::{
     },
     data_plane::cache::store::TrackCacheStore,
     directory::InMemoryLocalPubSubDirectory,
-    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+    domain::{session_id::SessionId, session_peer::SessionPeer},
 };
 
 pub(crate) struct GoAway;
@@ -35,12 +35,7 @@ impl GoAway {
             tracing::info!("client announced that it is leaving");
             return;
         }
-        let fed_tracks: Vec<TrackKey> = table
-            .active_upstream_tracks()
-            .into_iter()
-            .filter(|(publisher_session_id, _)| *publisher_session_id == session_id)
-            .map(|(_, track_key)| track_key)
-            .collect();
+        let fed_tracks = table.tracks_fed_by(session_id);
         tracing::info!(
             tracks = fed_tracks.len(),
             "upstream relay is going away; subscribing the other publishers of its tracks"
