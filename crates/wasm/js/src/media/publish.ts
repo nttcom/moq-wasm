@@ -78,8 +78,8 @@ export async function publish(
   options: PublishOptions = {}
 ): Promise<Publication> {
   const broadcast = session.broadcast(namespace)
-  // A subscriber that knows the camera's tracks by name, such as a detection
-  // bot, may subscribe before the first frame puts them in the catalog.
+  // The catalog lists a track only at its first frame; a subscriber that knows
+  // the track's name may subscribe before that.
   await broadcast.declareTracks([
     ...(stream.getVideoTracks().length > 0 ? ['video'] : []),
     ...(stream.getAudioTracks().length > 0 ? ['audio'] : [])
