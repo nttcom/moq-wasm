@@ -460,7 +460,7 @@ async fn archive_member(
     let key = record_archive(
         session,
         namespace,
-        path.clone(),
+        None,
         options,
         Some(chunks),
         async move {
@@ -468,7 +468,6 @@ async fn archive_member(
         },
     )
     .await?;
-    tokio::fs::remove_file(&path).await?;
     Ok(key
         .into_iter()
         .map(|key| crate::recording::RecordedFile {
@@ -514,34 +513,24 @@ fn record_transcript(
             &session,
             &namespace,
             "transcript",
-            path.clone(),
+            None,
             chunks,
             async move {
                 let _ = stop.wait_for(|stop| *stop).await;
             },
         )
         .await;
-        let cleanup = if result.is_ok() {
-            tokio::fs::remove_file(&path).await.err()
-        } else {
-            None
-        };
         let mut member = lock(&status);
         member.members[index].finished = true;
         let files = match result {
-            Ok(key) => {
-                if let Some(error) = cleanup {
-                    member.members[index].error =
-                        Some(format!("cannot delete temporary transcript: {error}"));
-                }
-                key.into_iter()
-                    .map(|key| crate::recording::RecordedFile {
-                        path: path.clone(),
-                        key: Some(key),
-                        capture_origin: None,
-                    })
-                    .collect()
-            }
+            Ok(key) => key
+                .into_iter()
+                .map(|key| crate::recording::RecordedFile {
+                    path: path.clone(),
+                    key: Some(key),
+                    capture_origin: None,
+                })
+                .collect(),
             Err(error) => {
                 member.members[index].error = Some(format!("transcript: {error:#}"));
                 Vec::new()
@@ -589,8 +578,8 @@ mod tests {
         assert!(!is_recording_namespace(prefix, "app/room/alice"));
     }
 
-    fn recorded(path: &std::path::Path, origin_ms: u64) -> RecordedFile {
-        RecordedFile {
+    fn recorded(path: &std::path::Path, origin_ms: u64) -> crate::recording::RecordedFile {
+        crate::recording::RecordedFile {
             path: path.to_path_buf(),
             key: None,
             capture_origin: Some(ORIGIN.saturating_add(Timestamp::from_millis(origin_ms))),

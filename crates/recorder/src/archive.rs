@@ -62,7 +62,7 @@ async fn record_until(
         segment_length: None,
         upload: None,
     };
-    record_broadcast(session, &args.namespace, path, &options, chunks, stop)
+    record_broadcast(session, &args.namespace, Some(path), &options, chunks, stop)
         .await
         .map(drop)
 }
@@ -70,7 +70,7 @@ async fn record_until(
 pub(crate) async fn record_broadcast(
     session: &Session,
     namespace: &str,
-    path: PathBuf,
+    path: Option<PathBuf>,
     options: &BroadcastOptions,
     chunks: Option<ChunkWriter>,
     stop: impl Future<Output = ()>,
@@ -176,7 +176,7 @@ pub(crate) async fn record_event_track(
     session: &Session,
     namespace: &str,
     name: &str,
-    path: PathBuf,
+    path: Option<PathBuf>,
     chunks: ChunkWriter,
     stop: impl Future<Output = ()>,
 ) -> Result<Option<object_store::path::Path>> {
@@ -204,23 +204,30 @@ async fn next(track: &mut Option<ArchiveTrack>) -> Result<Option<Event>> {
     }
 }
 
+/// Writes to the local JSON Lines file, the object store chunks, or both.
 struct Archive {
-    file: BufWriter<tokio::fs::File>,
+    file: Option<BufWriter<tokio::fs::File>>,
     chunks: Option<ChunkWriter>,
 }
 
 impl Archive {
-    async fn create(path: PathBuf, namespace: &str, chunks: Option<ChunkWriter>) -> Result<Self> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("cannot create {}", path.display()))?;
-        let mut archive = Self {
-            file: BufWriter::new(file),
-            chunks,
+    async fn create(
+        path: Option<PathBuf>,
+        namespace: &str,
+        chunks: Option<ChunkWriter>,
+    ) -> Result<Self> {
+        let file = match path {
+            Some(path) => Some(BufWriter::new(
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .await
+                    .with_context(|| format!("cannot create {}", path.display()))?,
+            )),
+            None => None,
         };
+        let mut archive = Self { file, chunks };
         archive
             .line(json!({"version": 1, "namespace": namespace}))
             .await?;
@@ -297,9 +304,12 @@ impl Archive {
     }
 
     async fn line(&mut self, value: serde_json::Value) -> Result<()> {
-        self.file.write_all(&serde_json::to_vec(&value)?).await?;
-        self.file.write_all(b"\n").await?;
-        self.file.flush().await?;
+        let Some(file) = &mut self.file else {
+            return Ok(());
+        };
+        file.write_all(&serde_json::to_vec(&value)?).await?;
+        file.write_all(b"\n").await?;
+        file.flush().await?;
         Ok(())
     }
 
@@ -342,7 +352,7 @@ mod tests {
             extension_headers: headers.clone(),
             payload: Bytes::from_static(b"frame"),
         };
-        let mut archive = Archive::create(path.clone(), "anon/test", None)
+        let mut archive = Archive::create(Some(path.clone()), "anon/test", None)
             .await
             .unwrap();
 
@@ -369,7 +379,7 @@ mod tests {
             .unwrap();
         assert_eq!(ExtensionHeaders::decode(&mut &encoded[..]), Some(headers));
         assert_eq!(lines[2]["complete"], true);
-        assert!(Archive::create(path, "other", None).await.is_err());
+        assert!(Archive::create(Some(path), "other", None).await.is_err());
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
@@ -379,7 +389,7 @@ mod tests {
         use moqt::object::{ForwardingPreference, Location, Object, ObjectStatus, SubgroupStart};
         let dir = scratch_dir();
         let path = dir.join("archive.jsonl");
-        let mut archive = Archive::create(path.clone(), "anon/test", None)
+        let mut archive = Archive::create(Some(path.clone()), "anon/test", None)
             .await
             .unwrap();
         let header = SubgroupStart {
@@ -610,7 +620,7 @@ mod tests {
                 &session,
                 namespace,
                 "transcript",
-                output_path,
+                Some(output_path),
                 chunks,
                 async {
                     let _ = stop.await;
