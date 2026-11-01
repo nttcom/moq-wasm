@@ -1,5 +1,5 @@
 import type { TrackWriter } from 'moq-wasm'
-import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
+import { LivePlayer } from 'moq-wasm/media'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'

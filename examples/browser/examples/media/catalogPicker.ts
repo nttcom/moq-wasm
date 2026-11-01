@@ -1,9 +1,7 @@
 import type { MoqSession } from 'moq-wasm'
-import { parseCatalog } from 'moq-wasm/media'
-import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
+import { type MediaCatalogTrack, type MediaKind, extractCatalogTracks, parseCatalog } from 'moq-wasm/media'
 import { latestObjects } from '../../utils/latestObjects'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
-import type { MediaKind } from 'moq-wasm/media/player/trackContext'
 
 type CatalogPick = Record<MediaKind, { tracks: MediaCatalogTrack[]; selected?: MediaCatalogTrack }>
 

@@ -1,5 +1,5 @@
 import { MoqSession, type TrackWriter } from 'moq-wasm'
-import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
+import { CATALOG_TRACK_NAME } from 'moq-wasm/media'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'
 import {

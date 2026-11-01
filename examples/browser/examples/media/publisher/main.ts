@@ -1,5 +1,5 @@
 import { MoqSession } from 'moq-wasm'
-import { type Publication, type SourcePublication, publish } from 'moq-wasm/media/publish'
+import { type Publication, type SourcePublication, publish } from 'moq-wasm/media'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { getMediaVideoEncodingOverrides } from '../common'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../../../utils/page'
