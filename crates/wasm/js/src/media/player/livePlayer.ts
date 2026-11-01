@@ -556,8 +556,8 @@ export class LivePlayer {
     }
     try {
       const catalog = parseCatalog(payload)
-      const source = this.source
-      const sourceNames = source && new Set(sourceTracks(extractCatalogTracks(catalog), source).map(({ name }) => name))
+      const sourceNames =
+        this.source && new Set(sourceTracks(extractCatalogTracks(catalog), this.source).map(({ name }) => name))
       const ofSource = (role?: 'video' | 'audio') =>
         extractCatalogTracks(catalog, role).filter((track) => !sourceNames || sourceNames.has(track.name))
       this.cmafTracks = ofSource().filter((track) => track.packaging === 'cmaf')

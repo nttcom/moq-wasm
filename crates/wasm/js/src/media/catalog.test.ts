@@ -95,8 +95,7 @@ test('a video track keeps its alternate group and bitrate', () => {
   expect(rendition.bitrate).toBe(1_200_000)
 })
 
-/// A camera with a rendition and a shared screen, each with its audio and the
-/// CMAF siblings `publish()` lists; the camera's video is left out with `withoutCamera`.
+/// The tracks `publish()` lists for a camera with a rendition and a shared screen.
 function cameraAndScreenTracks({ withoutCamera = false } = {}): MediaCatalogTrack[] {
   const track = (name: string, packaging: string, altGroup?: number): MediaCatalogTrack => ({
     name,

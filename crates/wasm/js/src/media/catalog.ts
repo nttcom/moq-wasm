@@ -91,9 +91,7 @@ export function resolveInitData(catalog: unknown, track: Record<string, unknown>
 /// screen, named by its video and audio tracks.
 export type LiveSource = { video: string; audio?: string }
 
-/// The tracks of `source` among `tracks`: its video track, the renditions in
-/// that track's alternate group, its audio track, and their CMAF siblings. An
-/// absent video track, such as a muted camera's, leaves the audio.
+/// An absent video track, such as a muted camera's, leaves the audio.
 export function sourceTracks(tracks: MediaCatalogTrack[], source: LiveSource): MediaCatalogTrack[] {
   const altGroup = tracks.find((track) => track.name === source.video)?.altGroup
   const named = new Set([source.video, source.audio])
