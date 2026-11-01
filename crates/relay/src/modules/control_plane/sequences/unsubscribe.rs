@@ -1,6 +1,5 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
-    data_plane::ingress::ingress_coordinator::IngressCommand,
     directory::InMemoryLocalPubSubDirectory, domain::session_id::SessionId,
 };
 
@@ -15,7 +14,6 @@ impl Unsubscribe {
         session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         subscribe_id: u64,
     ) {
         tracing::debug!(
@@ -45,10 +43,8 @@ impl Unsubscribe {
         for released in removed.released_upstream_subscriptions {
             super::release_upstream(
                 forwarder,
-                ingress_sender,
                 released.publisher_session_id,
                 &released.subscription,
-                &removed.track_key,
             )
             .await;
         }
@@ -63,12 +59,11 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        directory::track::{PublishDoneReason, UpstreamSubscriptionOrigin},
-        domain::{session_peer::SessionPeer, track_key::TrackKey},
+        directory::track::{ProducerOrigin, PublishDoneReason},
+        domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
-                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
-                upstream_release_context,
+                UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key, upstream_release_context,
             },
             mock_session::runner_stopped,
         },
@@ -80,7 +75,7 @@ mod tests {
     }
 
     async fn setup(
-        origin: UpstreamSubscriptionOrigin,
+        origin: ProducerOrigin,
         downstream_subscriptions: &[(SessionId, u64)],
     ) -> TestContext {
         let upstream = upstream_release_context(origin).await;
@@ -113,7 +108,6 @@ mod tests {
                 session_id,
                 &ctx.upstream.table,
                 &ctx.upstream.forwarder,
-                &ctx.upstream.ingress_sender,
                 subscribe_id,
             )
             .await;
@@ -122,7 +116,7 @@ mod tests {
     #[tokio::test]
     async fn last_subscriber_forwards_upstream_unsubscribe_and_stops_ingress() {
         // Arrange
-        let mut ctx = setup(UpstreamSubscriptionOrigin::Subscribe, &[(100, 10)]).await;
+        let mut ctx = setup(ProducerOrigin::Subscribe, &[(100, 10)]).await;
 
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
@@ -133,26 +127,16 @@ mod tests {
             ctx.upstream.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
-        match ctx.upstream.ingress_receiver.try_recv() {
-            Ok(IngressCommand::StopTrack {
-                track_key,
-                publisher_session_id,
-            }) => {
-                assert_eq!(track_key, TrackKey::new("ns", "track"));
-                assert_eq!(publisher_session_id, PUBLISHER_SESSION);
-            }
-            other => panic!("Expected StopTrack, got {:?}", other.is_ok()),
-        }
+        ctx.upstream
+            .recorded
+            .wait_ingest_stopped(UPSTREAM_REQUEST_ID)
+            .await;
     }
 
     #[tokio::test]
     async fn remaining_subscribers_keep_upstream_subscription() {
         // Arrange
-        let mut ctx = setup(
-            UpstreamSubscriptionOrigin::Subscribe,
-            &[(100, 10), (101, 11)],
-        )
-        .await;
+        let mut ctx = setup(ProducerOrigin::Subscribe, &[(100, 10), (101, 11)]).await;
 
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
@@ -161,13 +145,13 @@ mod tests {
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(!runner_stopped(&mut ctx.runner_stop_receivers[1]));
         assert!(ctx.upstream.recorded.unsubscribed_request_ids().is_empty());
-        assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
+        assert!(ctx.upstream.recorded.ingests_stopped().is_empty());
     }
 
     #[tokio::test]
     async fn publish_origin_keeps_upstream_subscription() {
         // Arrange
-        let mut ctx = setup(UpstreamSubscriptionOrigin::Publish, &[(100, 10)]).await;
+        let mut ctx = setup(ProducerOrigin::Publish, &[(100, 10)]).await;
 
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
@@ -175,13 +159,13 @@ mod tests {
         // Assert
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(ctx.upstream.recorded.unsubscribed_request_ids().is_empty());
-        assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
+        assert!(ctx.upstream.recorded.ingests_stopped().is_empty());
     }
 
     #[tokio::test]
     async fn publish_origin_is_released_by_its_last_subscriber_on_a_draining_relay() {
         // Arrange
-        let mut ctx = setup(UpstreamSubscriptionOrigin::Publish, &[(100, 10)]).await;
+        let ctx = setup(ProducerOrigin::Publish, &[(100, 10)]).await;
         ctx.upstream.table.begin_draining(1);
 
         // Act
@@ -192,16 +176,16 @@ mod tests {
             ctx.upstream.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
-        assert!(matches!(
-            ctx.upstream.ingress_receiver.try_recv(),
-            Ok(IngressCommand::StopTrack { .. })
-        ));
+        ctx.upstream
+            .recorded
+            .wait_ingest_stopped(UPSTREAM_REQUEST_ID)
+            .await;
     }
 
     #[tokio::test]
     async fn unknown_subscription_stops_no_runner_and_forwards_nothing() {
         // Arrange
-        let mut ctx = setup(UpstreamSubscriptionOrigin::Subscribe, &[(101, 11)]).await;
+        let mut ctx = setup(ProducerOrigin::Subscribe, &[(101, 11)]).await;
 
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
@@ -209,6 +193,6 @@ mod tests {
         // Assert
         assert!(!runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(ctx.upstream.recorded.unsubscribed_request_ids().is_empty());
-        assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
+        assert!(ctx.upstream.recorded.ingests_stopped().is_empty());
     }
 }

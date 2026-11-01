@@ -214,7 +214,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
-        directory::{InMemoryLocalPubSubDirectory, track::UpstreamSubscriptionOrigin},
+        directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
         domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
@@ -259,7 +259,7 @@ mod tests {
     }
 
     async fn context_with_published_track(sent: SentMessages) -> DownstreamPublishContext {
-        let table = Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Publish).0);
+        let table = Arc::new(table_with_upstream(ProducerOrigin::Publish).0);
         table.register_publish(
             PUBLISHER_SESSION,
             SessionPeer::Client,

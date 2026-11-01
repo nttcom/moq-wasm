@@ -1,6 +1,5 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
-    data_plane::ingress::ingress_coordinator::IngressCommand,
     directory::InMemoryLocalPubSubDirectory, domain::track_key::TrackKey,
 };
 
@@ -12,18 +11,15 @@ impl MalformedTrackCleanup {
         track_key: &TrackKey,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
     ) {
         let released = table.remove_upstream_track(track_key);
         // draft-14 §2.5: the cache latch makes the whole track malformed, so
         // every publisher's subscription is ended, not only the reporting one.
-        for (publisher_session_id, active) in released {
+        for (publisher_session_id, producer) in released {
             super::release_upstream(
                 forwarder,
-                ingress_sender,
                 publisher_session_id,
-                &active.subscription,
-                track_key,
+                &producer.state.subscription,
             )
             .await;
         }
@@ -34,29 +30,23 @@ impl MalformedTrackCleanup {
 mod tests {
     use super::*;
     use crate::modules::{
-        directory::track::UpstreamSubscriptionOrigin,
+        directory::track::ProducerOrigin,
         domain::session_id::SessionId,
         test_support::directory_fixtures::{
-            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, active_upstream,
-            upstream_release_context,
+            UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_release_context,
         },
     };
 
     async fn run_cleanup(ctx: &UpstreamReleaseContext) {
         MalformedTrackCleanup
-            .handle(
-                &TrackKey::new("ns", "track"),
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.ingress_sender,
-            )
+            .handle(&TrackKey::new("ns", "track"), &ctx.table, &ctx.forwarder)
             .await;
     }
 
     #[tokio::test]
     async fn detection_unsubscribes_upstream_and_stops_ingress() {
         // Arrange
-        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
 
         // Act
         run_cleanup(&ctx).await;
@@ -67,24 +57,15 @@ mod tests {
             ctx.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
-        match ctx.ingress_receiver.try_recv() {
-            Ok(IngressCommand::StopTrack {
-                track_key,
-                publisher_session_id,
-            }) => {
-                assert_eq!(track_key, TrackKey::new("ns", "track"));
-                assert_eq!(publisher_session_id, PUBLISHER_SESSION);
-            }
-            other => panic!("Expected StopTrack, got {:?}", other.is_ok()),
-        }
+        ctx.recorded.wait_ingest_stopped(UPSTREAM_REQUEST_ID).await;
     }
 
     #[tokio::test]
     async fn duplicate_detection_reports_are_idempotent() {
         // Arrange: the first report already ran the cleanup.
-        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
         run_cleanup(&ctx).await;
-        let _ = ctx.ingress_receiver.try_recv();
+        ctx.recorded.wait_ingest_stopped(UPSTREAM_REQUEST_ID).await;
 
         // Act: a second reader reports the same detection.
         run_cleanup(&ctx).await;
@@ -94,37 +75,33 @@ mod tests {
             ctx.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
-        assert!(ctx.ingress_receiver.try_recv().is_err());
+        assert_eq!(ctx.recorded.ingests_stopped(), vec![UPSTREAM_REQUEST_ID]);
     }
 
     #[tokio::test]
     async fn detection_ends_the_upstream_subscription_of_every_publisher() {
         // Arrange
         const OTHER_PUBLISHER_SESSION: SessionId = 3;
-        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
-        ctx.table.register_upstream_subscription(
-            TrackKey::new("ns", "track"),
-            OTHER_PUBLISHER_SESSION,
-            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
-        );
+        const OTHER_UPSTREAM_REQUEST_ID: u64 = 43;
+        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
+        let other = ctx
+            .add_publisher(OTHER_PUBLISHER_SESSION, OTHER_UPSTREAM_REQUEST_ID)
+            .await;
 
         // Act
         run_cleanup(&ctx).await;
 
         // Assert
         assert!(ctx.table.upstream_tracks.is_empty());
-        let mut stopped_publishers = Vec::new();
-        while let Ok(IngressCommand::StopTrack {
-            publisher_session_id,
-            ..
-        }) = ctx.ingress_receiver.try_recv()
-        {
-            stopped_publishers.push(publisher_session_id);
-        }
-        stopped_publishers.sort();
+        ctx.recorded.wait_ingest_stopped(UPSTREAM_REQUEST_ID).await;
+        other.wait_ingest_stopped(OTHER_UPSTREAM_REQUEST_ID).await;
         assert_eq!(
-            stopped_publishers,
-            vec![PUBLISHER_SESSION, OTHER_PUBLISHER_SESSION]
+            ctx.recorded.unsubscribed_request_ids(),
+            vec![UPSTREAM_REQUEST_ID]
+        );
+        assert_eq!(
+            other.unsubscribed_request_ids(),
+            vec![OTHER_UPSTREAM_REQUEST_ID]
         );
     }
 }

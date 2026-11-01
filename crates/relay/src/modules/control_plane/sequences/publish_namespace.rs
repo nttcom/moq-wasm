@@ -1,8 +1,6 @@
 use moqt::RequestErrorCode;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
@@ -18,7 +16,7 @@ use crate::modules::{
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
-    data_plane::ingress::ingress_coordinator::IngressCommand,
+    data_plane::cache::store::TrackCacheStore,
     directory::InMemoryLocalPubSubDirectory,
     domain::{session_id::SessionId, session_peer::SessionPeer},
     session::handler::publish_namespace::PublishNamespaceHandler,
@@ -33,7 +31,7 @@ impl PublishNamespace {
         session_id: SessionId,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &mpsc::Sender<IngressCommand>,
+        cache_store: &Arc<TrackCacheStore>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &dyn PublishNamespaceHandler,
@@ -73,7 +71,7 @@ impl PublishNamespace {
         let join_deps = UpstreamJoinDeps {
             table: table.clone(),
             forwarder: forwarder.clone(),
-            ingress_sender: ingress_sender.clone(),
+            cache_store: cache_store.clone(),
         };
         if is_origin {
             Self::join_tracks_wanting_publishers(
@@ -282,25 +280,30 @@ mod tests {
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         cascading::route_registry::NoopRelayRouteRegistry,
-        directory::track::UpstreamSubscriptionOrigin,
+        directory::track::ProducerOrigin,
         domain::track_key::TrackKey,
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, local_publisher_resolver, table_with_upstream,
             },
             mock_session::{
-                MockPublishNamespaceHandler, detached_session_repository,
-                mock_session_answering_subscribe, session_repository_with_session,
+                MockPublishNamespaceHandler, RecordedControlMessages, detached_session_repository,
+                recorded_session_answering_subscribe, session_repository_with_session, wait_until,
             },
         },
     };
 
     const ANNOUNCING_PUBLISHER: SessionId = 3;
 
-    async fn announce(table: &Arc<InMemoryLocalPubSubDirectory>) -> mpsc::Receiver<IngressCommand> {
+    /// The announcing publisher answers SUBSCRIBE with request id 1.
+    const ANNOUNCING_UPSTREAM_REQUEST_ID: u64 = 1;
+
+    async fn announce(table: &Arc<InMemoryLocalPubSubDirectory>) -> RecordedControlMessages {
+        let (session, recorded) =
+            recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         let repository = session_repository_with_session(
             ANNOUNCING_PUBLISHER,
-            mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
+            session,
             VerifiedToken::full_access(),
         )
         .await;
@@ -308,13 +311,12 @@ mod tests {
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             "unused-relay-token".to_string(),
         );
-        let (ingress_sender, ingress_receiver) = mpsc::channel(8);
         PublishNamespace
             .handle(
                 ANNOUNCING_PUBLISHER,
                 table,
                 &ControlMessageForwarder { repository },
-                &ingress_sender,
+                &Arc::new(TrackCacheStore::new()),
                 &Arc::new(local_publisher_resolver()),
                 CascadingRelayContext {
                     route_registry: &NoopRelayRouteRegistry,
@@ -323,13 +325,13 @@ mod tests {
                 &MockPublishNamespaceHandler::new("ns"),
             )
             .await;
-        ingress_receiver
+        recorded
     }
 
     #[tokio::test]
     async fn a_publisher_announcing_the_namespace_of_a_watched_track_is_subscribed_to_it() {
         // Arrange
-        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
         let table = Arc::new(table);
         table
             .register_downstream_subscription(
@@ -343,37 +345,33 @@ mod tests {
             .unwrap();
 
         // Act
-        let mut ingress_receiver = announce(&table).await;
+        let recorded = announce(&table).await;
 
         // Assert
-        let started = tokio::time::timeout(Duration::from_secs(1), ingress_receiver.recv())
-            .await
-            .expect("the announcing publisher's ingress should start");
-        assert!(matches!(
-            started,
-            Some(IngressCommand::Start(request)) if request.publisher_session_id == ANNOUNCING_PUBLISHER
-        ));
-        assert_eq!(
+        recorded
+            .wait_ingest_started(ANNOUNCING_UPSTREAM_REQUEST_ID)
+            .await;
+        let publishers = || {
             table
-                .get_upstream_track(&TrackKey::new("ns", "track"))
-                .map(|track| track.subscriptions.into_keys().collect::<Vec<_>>()),
-            Some(vec![PUBLISHER_SESSION, ANNOUNCING_PUBLISHER])
-        );
+                .track_state(&TrackKey::new("ns", "track"))
+                .map(|track| track.producers.into_keys().collect::<Vec<_>>())
+        };
+        wait_until(|| publishers() == Some(vec![PUBLISHER_SESSION, ANNOUNCING_PUBLISHER]))
+            .await
+            .expect("the announcing publisher should join the track");
     }
 
     #[tokio::test]
     async fn a_track_nobody_watches_is_not_subscribed_on_announcement() {
         // Arrange
-        let (table, _) = table_with_upstream(UpstreamSubscriptionOrigin::Publish);
+        let (table, _) = table_with_upstream(ProducerOrigin::Publish);
         let table = Arc::new(table);
 
         // Act
-        let mut ingress_receiver = announce(&table).await;
+        let recorded = announce(&table).await;
 
         // Assert
-        assert!(matches!(
-            tokio::time::timeout(Duration::from_millis(100), ingress_receiver.recv()).await,
-            Err(_) | Ok(None)
-        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(recorded.data_receivers().is_empty());
     }
 }

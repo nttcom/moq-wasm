@@ -11,25 +11,27 @@ use crate::modules::{
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::downstream_publish::DownstreamPublish,
+        sequences::{IngestRequest, downstream_publish::DownstreamPublish, start_ingest},
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
-        ingress::ingress_coordinator::IngressCommand,
+        ingress::ingest_task::IngestTask,
     },
     directory::{
         InMemoryLocalPubSubDirectory,
-        track::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin, UpstreamTrack},
+        track::{Producer, ProducerOrigin, ProducerState, TrackState},
     },
     domain::{
         delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
+    session::session_repository::NewSession,
     test_support::{
         mock_session::{
-            RecordedControlMessages, detached_session_repository, mock_session_answering_publish,
-            session_repository_with_session, session_repository_with_upstream_session,
+            MockUpstreamSession, RecordedControlMessages, detached_session_repository,
+            mock_session_answering_publish, session_repository_with_session,
+            session_repository_with_upstream_session,
         },
         relay_harness::fixtures::subscription::upstream_subscription,
     },
@@ -48,52 +50,121 @@ pub(crate) fn delivery_control(forward: bool) -> DeliveryControl {
     DeliveryControl::new(forward, &moqt::subscribe::FilterType::LargestObject, None)
 }
 
-pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstreamSubscription {
-    ActiveUpstreamSubscription {
+pub(crate) fn active_upstream(origin: ProducerOrigin) -> ProducerState {
+    ProducerState {
         subscription: upstream_subscription(UPSTREAM_REQUEST_ID),
         expires: None,
         content_exists: ContentExists::False,
         origin,
-        publisher_peer: SessionPeer::Client,
+        peer: SessionPeer::Client,
     }
 }
 
-pub(crate) fn upstream_track(origin: UpstreamSubscriptionOrigin) -> UpstreamTrack {
-    let mut upstream_track = UpstreamTrack::default();
+/// A producer whose ingest reads nothing.
+pub(crate) fn producer_with(state: ProducerState) -> Producer {
+    Producer::new(state, IngestTask::idle())
+}
+
+pub(crate) fn producer(origin: ProducerOrigin) -> Producer {
+    producer_with(active_upstream(origin))
+}
+
+pub(crate) fn upstream_track(origin: ProducerOrigin) -> TrackState {
+    let mut upstream_track = TrackState::default();
     upstream_track
-        .subscriptions
+        .producers
         .insert(PUBLISHER_SESSION, active_upstream(origin));
     upstream_track
 }
 
 pub(crate) fn table_with_upstream(
-    origin: UpstreamSubscriptionOrigin,
+    origin: ProducerOrigin,
 ) -> (InMemoryLocalPubSubDirectory, TrackKey) {
     let table = InMemoryLocalPubSubDirectory::new();
-    table.register_upstream_subscription(track_key(), PUBLISHER_SESSION, active_upstream(origin));
+    table.register_upstream_subscription(track_key(), PUBLISHER_SESSION, producer(origin));
     (table, track_key())
 }
 
 pub(crate) struct UpstreamReleaseContext {
     pub(crate) table: InMemoryLocalPubSubDirectory,
     pub(crate) forwarder: ControlMessageForwarder,
-    pub(crate) ingress_sender: mpsc::Sender<IngressCommand>,
-    pub(crate) ingress_receiver: mpsc::Receiver<IngressCommand>,
+    pub(crate) cache_store: Arc<TrackCacheStore>,
     pub(crate) recorded: RecordedControlMessages,
 }
 
-pub(crate) async fn upstream_release_context(
-    origin: UpstreamSubscriptionOrigin,
-) -> UpstreamReleaseContext {
-    let (table, _) = table_with_upstream(origin);
+/// `PUBLISHER_SESSION` feeds `ns/track` through an ingest reading the mock
+/// session, so `recorded` sees the ingest start and stop.
+pub(crate) async fn upstream_release_context(origin: ProducerOrigin) -> UpstreamReleaseContext {
     let (repository, recorded) = session_repository_with_upstream_session(PUBLISHER_SESSION).await;
-    let (ingress_sender, ingress_receiver) = mpsc::channel(8);
+    let forwarder = ControlMessageForwarder { repository };
+    let cache_store = Arc::new(TrackCacheStore::new());
+    let ingest = start_ingest(
+        &forwarder,
+        &cache_store,
+        IngestRequest {
+            subscriber_session_id: 2,
+            publisher_session_id: PUBLISHER_SESSION,
+            track_key: track_key(),
+            subscription: upstream_subscription(UPSTREAM_REQUEST_ID),
+        },
+    )
+    .await
+    .expect("the publisher session is in the repository");
+    let table = InMemoryLocalPubSubDirectory::new();
+    table.register_upstream_subscription(
+        track_key(),
+        PUBLISHER_SESSION,
+        Producer::new(active_upstream(origin), ingest),
+    );
+    recorded.wait_ingest_started(UPSTREAM_REQUEST_ID).await;
     UpstreamReleaseContext {
         table,
-        forwarder: ControlMessageForwarder { repository },
-        ingress_sender,
-        ingress_receiver,
+        forwarder,
+        cache_store,
         recorded,
+    }
+}
+
+impl UpstreamReleaseContext {
+    /// Adds a mock publisher session feeding the track through its own ingest.
+    pub(crate) async fn add_publisher(
+        &self,
+        session_id: SessionId,
+        upstream_request_id: u64,
+    ) -> RecordedControlMessages {
+        let recorded = RecordedControlMessages::default();
+        self.forwarder.repository.lock().await.add(NewSession {
+            session_id,
+            session: Box::new(MockUpstreamSession::new(recorded.clone())),
+            session_span: tracing::Span::none(),
+            peer: SessionPeer::Client,
+            verified_token: VerifiedToken::full_access(),
+        });
+        let ingest = start_ingest(
+            &self.forwarder,
+            &self.cache_store,
+            IngestRequest {
+                subscriber_session_id: 2,
+                publisher_session_id: session_id,
+                track_key: track_key(),
+                subscription: upstream_subscription(upstream_request_id),
+            },
+        )
+        .await
+        .expect("the publisher session was just added");
+        self.table.register_upstream_subscription(
+            track_key(),
+            session_id,
+            Producer::new(
+                ProducerState {
+                    subscription: upstream_subscription(upstream_request_id),
+                    ..active_upstream(ProducerOrigin::Subscribe)
+                },
+                ingest,
+            ),
+        );
+        recorded.wait_ingest_started(upstream_request_id).await;
+        recorded
     }
 }
 

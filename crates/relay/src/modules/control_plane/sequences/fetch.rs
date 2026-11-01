@@ -139,7 +139,7 @@ impl Fetch {
                 // The relay does not yet track final End Of Track via PUBLISH_DONE,
                 // so local cache responses cannot assert it.
                 let max_cache_duration = table
-                    .get_upstream_track(&target.track_key)
+                    .track_state(&target.track_key)
                     .and_then(|upstream_track| upstream_track.max_cache_duration());
                 if let Err(e) = handler.ok(false, end_location, max_cache_duration).await {
                     tracing::error!(error = ?e, "Failed to send FETCH_OK");
@@ -249,15 +249,14 @@ impl Fetch {
         target: &FetchTarget,
     ) -> Vec<SessionId> {
         table
-            .get_upstream_track(&target.track_key)
+            .track_state(&target.track_key)
             .map(|track| {
                 track
-                    .subscriptions
+                    .producers
                     .into_iter()
                     .rev()
-                    .filter(|(_, subscription)| {
-                        requester == SessionPeer::Client
-                            || subscription.publisher_peer == SessionPeer::Client
+                    .filter(|(_, producer)| {
+                        requester == SessionPeer::Client || producer.peer == SessionPeer::Client
                     })
                     .map(|(publisher_session_id, _)| publisher_session_id)
                     .collect()
@@ -447,10 +446,7 @@ impl Fetch {
                 FetchError::Joining(error)
             })?;
 
-        if table
-            .get_upstream_track(&downstream_sub.track_key)
-            .is_none()
-        {
+        if table.track_state(&downstream_sub.track_key).is_none() {
             tracing::warn!("Joined subscription has no active upstream subscription");
             return Err(FetchError::TrackNotFound);
         }
@@ -475,10 +471,10 @@ mod tests {
             test_support::{app_token, connect_client, spawn_relay_and_connect_client},
             verified_token::VerifiedToken,
         },
-        directory::track::UpstreamSubscriptionOrigin,
+        directory::track::ProducerOrigin,
         domain::session_peer::SessionPeer,
         test_support::{
-            directory_fixtures::{active_upstream, local_publisher_resolver, table_with_upstream},
+            directory_fixtures::{local_publisher_resolver, producer, table_with_upstream},
             mock_session::{
                 FetchAnswer, MockFetchHandler, mock_session_answering_fetch,
                 session_repository_with_sessions,
@@ -507,8 +503,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fetch_goes_first_to_publishers_that_answered_subscribe_newest_first() {
+    #[tokio::test]
+    async fn fetch_goes_first_to_publishers_that_answered_subscribe_newest_first() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let track_key = TrackKey::new("ns", "track");
@@ -516,7 +512,7 @@ mod tests {
             table.register_upstream_subscription(
                 track_key.clone(),
                 publisher_session_id,
-                active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+                producer(ProducerOrigin::Subscribe),
             );
         }
         let target = FETCH
@@ -550,7 +546,7 @@ mod tests {
         table.register_upstream_subscription(
             TrackKey::new("ns", "track"),
             SUBSCRIBED_PUBLISHER,
-            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+            producer(ProducerOrigin::Subscribe),
         );
         let repository = session_repository_with_sessions(
             vec![
@@ -969,10 +965,10 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn resolve_joining_target_no_objects_published() {
+    #[tokio::test]
+    async fn resolve_joining_target_no_objects_published() {
         // Arrange
-        let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -1055,14 +1051,14 @@ mod tests {
         publisher_events.abort();
     }
 
-    #[test]
-    fn resolve_joining_target_ends_after_stored_largest() {
+    #[tokio::test]
+    async fn resolve_joining_target_ends_after_stored_largest() {
         // Arrange
         let largest = moqt::object::Location {
             group_id: 10,
             object_id: 5,
         };
-        let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -1090,13 +1086,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fetch_source_is_upstream_when_relative_joining_cache_does_not_cover_range() {
+    #[tokio::test]
+    async fn fetch_source_is_upstream_when_relative_joining_cache_does_not_cover_range() {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -1149,11 +1145,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn absolute_joining_forwards_resolved_range_upstream() {
+    #[tokio::test]
+    async fn absolute_joining_forwards_resolved_range_upstream() {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -1201,11 +1197,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn relative_joining_start_saturates_at_group_zero() {
+    #[tokio::test]
+    async fn relative_joining_start_saturates_at_group_zero() {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -1253,11 +1249,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
+    #[tokio::test]
+    async fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,

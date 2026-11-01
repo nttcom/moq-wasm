@@ -4,7 +4,7 @@ use crate::modules::{
     data_plane::{
         cache::subgroup_key::SubgroupKey,
         cache::{cached_object::CachedObject, track_cache::OpenSubgroupGuard},
-        ingress::track_ingest_task::TrackIngest,
+        ingress::ingest_task::TrackIngest,
     },
     domain::track_key::TrackKey,
     session::{data_receiver::datagram_receiver::DatagramReceiver, session_event::SessionEvent},

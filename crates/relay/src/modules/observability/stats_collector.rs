@@ -250,11 +250,12 @@ mod tests {
         data_plane::cache::store::TrackCacheStore,
         directory::{
             InMemoryLocalPubSubDirectory,
-            track::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
+            track::{ProducerOrigin, ProducerState},
         },
         domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
         session::session_repository::{NewSession, SessionRepository},
         test_support::{
+            directory_fixtures::producer_with,
             mock_session::{detached_session_repository, mock_session_with_transport_stats},
             relay_harness::fixtures::cached_object::{open_group, stream_object_with_payload},
         },
@@ -317,13 +318,13 @@ mod tests {
             self.directory.register_upstream_subscription(
                 track_key.clone(),
                 publisher_session_id,
-                ActiveUpstreamSubscription {
+                producer_with(ProducerState {
                     subscription: upstream_subscription(0),
                     expires: None,
                     content_exists: ContentExists::False,
-                    origin: UpstreamSubscriptionOrigin::Publish,
-                    publisher_peer: SessionPeer::Client,
-                },
+                    origin: ProducerOrigin::Publish,
+                    peer: SessionPeer::Client,
+                }),
             );
             track_key
         }

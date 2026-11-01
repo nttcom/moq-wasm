@@ -3,40 +3,62 @@ use std::collections::BTreeMap;
 use moqt::{fetch::JoinPoint, object::ContentExists, publish::PublishDoneCode};
 
 use crate::modules::{
+    data_plane::ingress::ingest_task::IngestTask,
     domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::subscription::UpstreamSubscription,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProducerOrigin {
+    Publish,
+    Subscribe,
+}
+
+/// What the relay knows about one publisher's subscription to a track.
 #[derive(Clone, Debug)]
-pub(crate) struct ActiveUpstreamSubscription {
+pub(crate) struct ProducerState {
     pub(crate) subscription: UpstreamSubscription,
     pub(crate) expires: Option<u64>,
     pub(crate) content_exists: ContentExists,
-    pub(crate) origin: UpstreamSubscriptionOrigin,
-    pub(crate) publisher_peer: SessionPeer,
+    pub(crate) origin: ProducerOrigin,
+    pub(crate) peer: SessionPeer,
 }
 
-/// draft-14 §8.2. Session ids grow with time, so the last subscription is the
+/// One publisher feeding a track: its upstream subscription and the ingest
+/// reading it into the track's cache. Dropping the producer stops the
+/// ingest; the UNSUBSCRIBE, when one is due, is sent by whoever removed it.
+pub(crate) struct Producer {
+    pub(crate) state: ProducerState,
+    _ingest: IngestTask,
+}
+
+impl Producer {
+    pub(crate) fn new(state: ProducerState, ingest: IngestTask) -> Self {
+        Self {
+            state,
+            _ingest: ingest,
+        }
+    }
+}
+
+/// draft-14 §8.2. Session ids grow with time, so the last producer is the
 /// newest publisher's.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct UpstreamTrack {
-    pub(crate) subscriptions: BTreeMap<SessionId, ActiveUpstreamSubscription>,
+#[derive(Default)]
+pub(crate) struct Track {
+    pub(crate) producers: BTreeMap<SessionId, Producer>,
     pub(crate) downstream_subscriber_count: usize,
     pub(crate) client_downstream_subscriber_count: usize,
 }
 
-impl UpstreamTrack {
-    pub(crate) fn content_exists(&self) -> ContentExists {
-        self.subscriptions
-            .values()
-            .filter_map(|subscription| match subscription.content_exists {
-                ContentExists::True { location } => Some(location),
-                ContentExists::False => None,
-            })
-            .max()
-            .map_or(ContentExists::False, |location| ContentExists::True {
-                location,
-            })
+impl Track {
+    pub(crate) fn state(&self) -> TrackState {
+        TrackState {
+            producers: self
+                .producers
+                .iter()
+                .map(|(session_id, producer)| (*session_id, producer.state.clone()))
+                .collect(),
+        }
     }
 
     /// A relay's upstream subscription only serves this relay's clients, so a
@@ -48,21 +70,42 @@ impl UpstreamTrack {
             SessionPeer::Relay => self.client_downstream_subscriber_count > 0,
         }
     }
+}
+
+/// A track as a sequence reads it: its producers without their ingests.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TrackState {
+    pub(crate) producers: BTreeMap<SessionId, ProducerState>,
+}
+
+impl TrackState {
+    pub(crate) fn content_exists(&self) -> ContentExists {
+        self.producers
+            .values()
+            .filter_map(|producer| match producer.content_exists {
+                ContentExists::True { location } => Some(location),
+                ContentExists::False => None,
+            })
+            .max()
+            .map_or(ContentExists::False, |location| ContentExists::True {
+                location,
+            })
+    }
 
     pub(crate) fn expires(&self) -> Option<u64> {
-        self.subscriptions
+        self.producers
             .values()
             .next_back()
-            .and_then(|subscription| subscription.expires)
+            .and_then(|producer| producer.expires)
     }
 
     /// The newest publisher's MAX_CACHE_DURATION in milliseconds, which the
     /// relay passes downstream unchanged.
     pub(crate) fn max_cache_duration(&self) -> Option<u64> {
-        self.subscriptions
+        self.producers
             .values()
             .next_back()
-            .and_then(|subscription| subscription.subscription.as_moqt().max_cache_duration())
+            .and_then(|producer| producer.subscription.as_moqt().max_cache_duration())
     }
 }
 
@@ -93,12 +136,6 @@ impl PublishDoneReason {
             error_reason: "malformed track".to_string(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum UpstreamSubscriptionOrigin {
-    Publish,
-    Subscribe,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

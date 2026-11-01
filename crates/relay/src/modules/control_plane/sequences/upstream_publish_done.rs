@@ -1,7 +1,7 @@
 use crate::modules::{
     cascading::route_registry::RelayRouteRegistry,
     control_plane::sequences::publish::Publish,
-    data_plane::{cache::store::TrackCacheStore, ingress::ingress_coordinator::IngressCommand},
+    data_plane::cache::store::TrackCacheStore,
     directory::{InMemoryLocalPubSubDirectory, track::PublishDoneReason},
     domain::session_id::SessionId,
 };
@@ -16,7 +16,6 @@ impl UpstreamPublishDone {
         upstream_request_id: u64,
         end: PublishDoneReason,
         table: &InMemoryLocalPubSubDirectory,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         cache_store: &TrackCacheStore,
         route_registry: &dyn RelayRouteRegistry,
     ) {
@@ -26,7 +25,6 @@ impl UpstreamPublishDone {
             tracing::debug!("PUBLISH_DONE for no active upstream subscription");
             return;
         };
-        super::stop_ingress(ingress_sender, publisher_session_id, &track_key).await;
         if !table.has_track_publisher(&track_key) {
             cache_store.publisher_left(&track_key);
         }
@@ -40,8 +38,8 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
-        directory::track::UpstreamSubscriptionOrigin,
-        domain::{session_peer::SessionPeer, track_key::TrackKey},
+        directory::track::ProducerOrigin,
+        domain::session_peer::SessionPeer,
         test_support::directory_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
             upstream_release_context,
@@ -59,7 +57,6 @@ mod tests {
                 upstream_request_id,
                 PublishDoneReason::publisher_session_closed(),
                 &ctx.table,
-                &ctx.ingress_sender,
                 &TrackCacheStore::new(),
                 &NoopRelayRouteRegistry,
             )
@@ -69,7 +66,7 @@ mod tests {
     #[tokio::test]
     async fn publish_done_ends_the_downstream_subscriptions_and_stops_ingress() {
         // Arrange
-        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
         let mut runner_stop_receiver = ctx
             .table
             .register_downstream_subscription(
@@ -94,24 +91,19 @@ mod tests {
         assert!(ctx.table.upstream_tracks.is_empty());
         assert!(ctx.table.downstream_subscriptions.is_empty());
         assert!(ctx.recorded.unsubscribed_request_ids().is_empty());
-        assert!(matches!(
-            ctx.ingress_receiver.try_recv(),
-            Ok(IngressCommand::StopTrack { track_key, publisher_session_id })
-                if track_key == TrackKey::new("ns", "track")
-                    && publisher_session_id == PUBLISHER_SESSION
-        ));
+        ctx.recorded.wait_ingest_stopped(UPSTREAM_REQUEST_ID).await;
     }
 
     #[tokio::test]
     async fn publish_done_for_another_request_changes_nothing() {
         // Arrange
-        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
 
         // Act
         receive_publish_done(&ctx, UPSTREAM_REQUEST_ID + 1).await;
 
         // Assert
         assert_eq!(ctx.table.upstream_tracks.len(), 1);
-        assert!(ctx.ingress_receiver.try_recv().is_err());
+        assert!(ctx.recorded.ingests_stopped().is_empty());
     }
 }

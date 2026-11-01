@@ -9,7 +9,7 @@ use crate::modules::{
             subgroup_key::SubgroupKey,
             track_cache::{OpenSubgroupGuard, PartialObjectWriter, TrackCache},
         },
-        ingress::track_ingest_task::TrackIngest,
+        ingress::ingest_task::TrackIngest,
     },
     domain::track_key::TrackKey,
     session::{

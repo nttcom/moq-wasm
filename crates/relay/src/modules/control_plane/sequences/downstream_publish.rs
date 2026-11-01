@@ -49,7 +49,7 @@ impl DownstreamPublish {
         {
             return Ok(());
         }
-        let Some(upstream_track) = self.table.get_upstream_track(track_key) else {
+        let Some(upstream_track) = self.table.track_state(track_key) else {
             bail!("upstream track ended before PUBLISH was sent");
         };
         let largest_location =
@@ -122,12 +122,13 @@ impl DownstreamPublish {
 mod tests {
     use super::*;
     use crate::modules::{
-        directory::track::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
+        directory::track::{ProducerOrigin, ProducerState},
         domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                UPSTREAM_REQUEST_ID, downstream_publish_context, table_with_upstream, track_key,
+                UPSTREAM_REQUEST_ID, downstream_publish_context, producer_with,
+                table_with_upstream, track_key,
             },
             mock_session::{PUBLISH_REQUEST_ID, SentPublish},
             relay_harness::fixtures::{
@@ -138,7 +139,7 @@ mod tests {
     };
 
     fn published_table() -> Arc<InMemoryLocalPubSubDirectory> {
-        Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Publish).0)
+        Arc::new(table_with_upstream(ProducerOrigin::Publish).0)
     }
 
     async fn context_accepting_publish() -> DownstreamPublishContext {
@@ -165,16 +166,16 @@ mod tests {
         table.register_upstream_subscription(
             track_key(),
             PUBLISHER_SESSION,
-            ActiveUpstreamSubscription {
+            producer_with(ProducerState {
                 subscription: upstream_subscription_with_max_cache_duration(
                     UPSTREAM_REQUEST_ID,
                     2_000,
                 ),
                 expires: None,
                 content_exists: ContentExists::False,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-                publisher_peer: SessionPeer::Client,
-            },
+                origin: ProducerOrigin::Subscribe,
+                peer: SessionPeer::Client,
+            }),
         );
         let ctx = downstream_publish_context(Arc::new(table), || Ok(true)).await;
 

@@ -20,11 +20,15 @@ use crate::modules::{
         route_registry::{RelayInfo, RelayRouteRegistry},
     },
     control_plane::control_message_forwarder::ControlMessageForwarder,
-    data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    directory::{InMemoryLocalPubSubDirectory, track::ActiveUpstreamSubscription},
+    data_plane::{
+        cache::{cached_object::CacheStamp, store::TrackCacheStore},
+        ingress::ingest_task::{IngestStart, IngestTask},
+    },
+    directory::{InMemoryLocalPubSubDirectory, track::Producer},
     domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::subscription::UpstreamSubscription,
 };
+use tracing::Span;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CascadingRelayContext<'a> {
@@ -89,12 +93,12 @@ pub(crate) async fn connect_relay(
         .ok()
 }
 
+/// Sends the UNSUBSCRIBE of a released upstream subscription; its ingest
+/// stopped with the producer the directory dropped.
 pub(crate) async fn release_upstream(
     forwarder: &ControlMessageForwarder,
-    ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
     publisher_session_id: SessionId,
     subscription: &UpstreamSubscription,
-    track_key: &TrackKey,
 ) {
     let upstream_request_id = subscription.request_id();
     if let Err(err) = forwarder
@@ -114,81 +118,103 @@ pub(crate) async fn release_upstream(
             "forwarded upstream UNSUBSCRIBE"
         );
     }
-
-    stop_ingress(ingress_sender, publisher_session_id, track_key).await;
 }
 
 /// Also unsubscribes the subscription from the same publisher that this one
 /// replaces, e.g. the SUBSCRIBE this relay sent before the publisher sent
-/// PUBLISH for the track. Call it after starting this subscription's
-/// ingress, which stops the replaced one's.
+/// PUBLISH for the track; the replaced producer's ingest stops with it.
 pub(crate) async fn register_upstream_subscription(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
     track_key: TrackKey,
     publisher_session_id: SessionId,
-    active_upstream: ActiveUpstreamSubscription,
+    producer: Producer,
 ) {
     let Some(replaced) =
-        table.register_upstream_subscription(track_key, publisher_session_id, active_upstream)
+        table.register_upstream_subscription(track_key, publisher_session_id, producer)
     else {
         return;
     };
     if let Err(error) = forwarder
-        .unsubscribe(publisher_session_id, &replaced.subscription)
+        .unsubscribe(publisher_session_id, &replaced.state.subscription)
         .await
     {
         tracing::warn!(
             ?error,
             publisher_session_id = %publisher_session_id,
-            request_id = %replaced.subscription.request_id(),
+            request_id = %replaced.state.subscription.request_id(),
             "failed to unsubscribe the replaced upstream subscription"
         );
     }
 }
 
-pub(crate) async fn start_ingress(
-    ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-    request: IngressStartRequest,
-) -> bool {
-    let track_key = request.track_key.clone();
-    let publisher_session_id = request.publisher_session_id;
-    let started = ingress_sender
-        .send(IngressCommand::Start(Box::new(request)))
-        .await
-        .is_ok();
-    if !started {
-        tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to send ingress start request");
-    }
-    started
+pub(crate) struct IngestRequest {
+    pub(crate) subscriber_session_id: SessionId,
+    pub(crate) publisher_session_id: SessionId,
+    pub(crate) track_key: TrackKey,
+    pub(crate) subscription: UpstreamSubscription,
 }
 
-pub(crate) async fn stop_ingress(
-    ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-    publisher_session_id: SessionId,
-    track_key: &TrackKey,
-) {
-    if ingress_sender
-        .send(IngressCommand::StopTrack {
-            track_key: track_key.clone(),
-            publisher_session_id,
-        })
-        .await
-        .is_err()
-    {
-        tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "failed to send ingress stop request");
-    }
+/// Starts reading the upstream subscription into the track's cache. `None`
+/// when the publisher session already left the repository.
+pub(crate) async fn start_ingest(
+    forwarder: &ControlMessageForwarder,
+    cache_store: &TrackCacheStore,
+    request: IngestRequest,
+) -> Option<IngestTask> {
+    let IngestRequest {
+        subscriber_session_id,
+        publisher_session_id,
+        track_key,
+        subscription,
+    } = request;
+    let (subscriber, publisher_mailbox_sender, publisher_session_span, persist) = {
+        let repository = forwarder.repository.lock().await;
+        let Some((subscriber, publisher_mailbox_sender)) = repository
+            .subscriber(publisher_session_id)
+            .zip(repository.mailbox(publisher_session_id))
+        else {
+            tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "publisher session not found; ingest not started");
+            return None;
+        };
+        (
+            subscriber,
+            publisher_mailbox_sender,
+            repository
+                .session_span(publisher_session_id)
+                .unwrap_or_else(Span::none),
+            // Only the relay a client publishes to keeps the payloads on
+            // disk; downstream relays fetch from it.
+            repository.is_client_session(publisher_session_id),
+        )
+    };
+    let stamp = CacheStamp {
+        max_cache_duration: subscription.max_cache_duration(),
+        persist,
+    };
+    Some(IngestTask::run(IngestStart {
+        cache: cache_store.get_or_create(&track_key),
+        track_key,
+        subscriber_session_id,
+        publisher_session_id,
+        subscriber,
+        subscription,
+        publisher_mailbox_sender,
+        stamp,
+        request_span: Span::current(),
+        publisher_session_span,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::modules::{
-        directory::track::UpstreamSubscriptionOrigin,
+        directory::track::{ProducerOrigin, ProducerState},
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, delivery_control,
-                track_key, upstream_release_context,
+                producer_with, track_key, upstream_release_context,
             },
             relay_harness::fixtures::subscription::upstream_subscription,
         },
@@ -197,17 +223,17 @@ mod tests {
 
     const PUBLISH_REQUEST_ID: u64 = 43;
 
-    fn published() -> ActiveUpstreamSubscription {
-        ActiveUpstreamSubscription {
+    fn published() -> Producer {
+        producer_with(ProducerState {
             subscription: upstream_subscription(PUBLISH_REQUEST_ID),
-            ..active_upstream(UpstreamSubscriptionOrigin::Publish)
-        }
+            ..active_upstream(ProducerOrigin::Publish)
+        })
     }
 
     #[tokio::test]
     async fn a_publish_of_a_subscribed_track_unsubscribes_the_subscribe() {
         // Arrange
-        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
 
         // Act
         register_upstream_subscription(
@@ -219,18 +245,18 @@ mod tests {
         )
         .await;
 
-        // Assert: the PUBLISH's ingress already replaced the SUBSCRIBE's, so none is stopped
+        // Assert: the SUBSCRIBE the relay sent first is unsubscribed, and its ingest stops with it
         assert_eq!(
             ctx.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
-        assert!(ctx.ingress_receiver.try_recv().is_err());
+        ctx.recorded.wait_ingest_stopped(UPSTREAM_REQUEST_ID).await;
     }
 
     #[tokio::test]
     async fn the_last_subscriber_leaving_a_draining_relay_leaves_the_publisher_unsubscribed() {
         // Arrange
-        let ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
+        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
         ctx.table
             .register_downstream_subscription(
                 100,

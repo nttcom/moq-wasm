@@ -38,7 +38,7 @@ impl SubscribeUpdate {
 mod tests {
     use super::*;
     use crate::modules::{
-        directory::{DownstreamRunnerSignals, track::UpstreamSubscriptionOrigin},
+        directory::{DownstreamRunnerSignals, track::ProducerOrigin},
         domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{delivery_control, table_with_upstream},
@@ -48,7 +48,7 @@ mod tests {
     use moqt::fetch::JoinPoint;
 
     fn table_with_downstream() -> (InMemoryLocalPubSubDirectory, DownstreamRunnerSignals) {
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
         let signals = table
             .register_downstream_subscription(
                 2,
@@ -62,8 +62,8 @@ mod tests {
         (table, signals)
     }
 
-    #[test]
-    fn forward_off_reaches_the_egress_runner_of_the_subscription() {
+    #[tokio::test]
+    async fn forward_off_reaches_the_egress_runner_of_the_subscription() {
         // Arrange
         let (table, signals) = table_with_downstream();
 
@@ -74,8 +74,8 @@ mod tests {
         assert!(!signals.delivery_control_receiver.borrow().forward);
     }
 
-    #[test]
-    fn end_group_reaches_the_egress_runner_of_the_subscription() {
+    #[tokio::test]
+    async fn end_group_reaches_the_egress_runner_of_the_subscription() {
         // Arrange
         let (table, signals) = table_with_downstream();
         let update = DeliveryControl::from_subscribe_update(true, location(0, 0), 4);
@@ -90,8 +90,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn widening_end_group_is_ignored() {
+    #[tokio::test]
+    async fn widening_end_group_is_ignored() {
         // Arrange
         let (table, signals) = table_with_downstream();
         let narrowing = DeliveryControl::from_subscribe_update(true, location(0, 0), 4);
@@ -108,8 +108,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn update_from_another_session_leaves_the_subscription_forwarding() {
+    #[tokio::test]
+    async fn update_from_another_session_leaves_the_subscription_forwarding() {
         // Arrange
         let (table, signals) = table_with_downstream();
 
