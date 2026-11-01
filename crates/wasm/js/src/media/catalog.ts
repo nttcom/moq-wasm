@@ -87,6 +87,24 @@ export function resolveInitData(catalog: unknown, track: Record<string, unknown>
   return data
 }
 
+/// One source of a broadcast that has several, such as a camera and a shared
+/// screen, named by its video and audio tracks.
+export type LiveSource = { video: string; audio?: string }
+
+/// The tracks of `source` among `tracks`: its video track, the renditions in
+/// that track's alternate group, its audio track, and their CMAF siblings. An
+/// absent video track, such as a muted camera's, leaves the audio.
+export function sourceTracks(tracks: MediaCatalogTrack[], source: LiveSource): MediaCatalogTrack[] {
+  const altGroup = tracks.find((track) => track.name === source.video)?.altGroup
+  const named = new Set([source.video, source.audio])
+  const own = tracks.filter(
+    (track) =>
+      track.packaging !== 'cmaf' && (named.has(track.name) || (altGroup !== undefined && track.altGroup === altGroup))
+  )
+  const cmafNames = new Set(own.map((track) => `${track.name}_cmaf`))
+  return [...own, ...tracks.filter((track) => track.packaging === 'cmaf' && cmafNames.has(track.name))]
+}
+
 export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaCatalogTrack[] {
   const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
     ? ((catalog as { tracks: unknown[] }).tracks ?? [])
