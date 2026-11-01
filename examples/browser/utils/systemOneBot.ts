@@ -9,12 +9,11 @@ const EVENT_TIMELINE_TRACK = 'eventtimeline'
 
 export type SystemOneBotPageOptions = {
   logTag: string
-  ownNamespace: string[]
   botNamespace: string[]
   /// The room the page asks the bot service to run a bot for while it is joined.
   room: string
   botService: ServiceUrls
-  /// Called once `ownNamespace` is announced, to publish the page's tracks.
+  /// Called once connected, to announce the page's namespace and publish its tracks.
   onConnect(session: MoqSession): Promise<void> | void
   onTimelineObject(payload: Uint8Array): void
   /// Called when the bot withdraws `botNamespace`.
@@ -25,7 +24,7 @@ export type SystemOneBotPageOptions = {
 }
 
 export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
-  const { logTag, ownNamespace, botNamespace } = options
+  const { logTag, botNamespace } = options
   const urlInput = element<HTMLInputElement>('url')
   const joinButton = element<HTMLButtonElement>('joinBtn')
   const leaveButton = element<HTMLButtonElement>('leaveBtn')
@@ -75,7 +74,6 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
           void reset('切断されました', 'error')
         }
       })
-      await joined.announce(ownNamespace)
       await options.onConnect(joined)
       const bots = await joined.watchNamespaces(botNamespace)
       void (async () => {
