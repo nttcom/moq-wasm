@@ -1366,6 +1366,7 @@ mod tests {
                         channels: 1,
                     },
                     cmaf: false,
+                    switching_set: VIDEO_TRACK_NAME.to_string(),
                 },
             )
             .await

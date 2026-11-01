@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose};
@@ -167,6 +167,9 @@ pub struct AudioTrackInfo {
     pub config: AudioConfig,
     /// Lists a CMAF sibling, for AAC only.
     pub cmaf: bool,
+    /// `SourceTracks::switching_set` of the track's source, whose render
+    /// group the track joins.
+    pub switching_set: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,6 +259,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     let namespace = Some(namespace_path.to_string());
     let video_role = TrackRole::Known(KnownTrackRole::Video);
     let alt_groups = alt_groups(metadata);
+    let render_groups = render_groups(metadata);
 
     let mut tracks = Vec::new();
     let mut init_data_list = Vec::new();
@@ -265,6 +269,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         let mut loc = track(&namespace, name, KnownPackaging::Loc, video_role.clone());
         loc.label = Some(info.label.clone());
         loc.alt_group = alt_group;
+        loc.render_group = render_groups.get(info.switching_set.as_str()).copied();
         loc.codec = Some(info.codec.clone());
         loc.mime_type = Some(video_mime_type(&info.codec).to_string());
         loc.framerate = Some(30.0);
@@ -282,6 +287,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
 
     for (name, info) in &metadata.audio_tracks {
         let mut audio = audio_track(&namespace, name, &info.label);
+        audio.render_group = render_groups.get(info.switching_set.as_str()).copied();
         audio.codec = Some(info.config.codec_string());
         audio.mime_type = Some(audio_mime_type(&info.config).to_string());
         audio.sample_rate = Some(info.config.sample_rate());
@@ -302,7 +308,8 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         tracks.extend(audio_cmaf);
     }
     if metadata.has_default_tracks() {
-        tracks.extend(default_tracks(&namespace, metadata));
+        let default_render_group = render_groups.get(VIDEO_TRACK_NAME).copied();
+        tracks.extend(default_tracks(&namespace, metadata, default_render_group));
     } else if metadata.chat_offered {
         tracks.push(chat_track(&namespace, metadata));
     }
@@ -315,10 +322,15 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
 /// The tracks that come with the default `video` and `audio`: the `audio`
 /// placeholder listed before its config arrives, so it is published together
 /// with `video`, the media timeline and the chat.
-fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec<Track> {
+fn default_tracks(
+    namespace: &Option<String>,
+    metadata: &CatalogMetadata,
+    render_group: Option<u64>,
+) -> Vec<Track> {
     let mut tracks = Vec::new();
     if !metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME) && !metadata.default_audio_removed {
         let mut audio = audio_track(namespace, AUDIO_TRACK_NAME, "Audio");
+        audio.render_group = render_group;
         audio.codec = Some("mp4a.40.2".to_string());
         audio.mime_type = Some("audio/aac".to_string());
         tracks.push(audio);
@@ -402,6 +414,24 @@ fn alt_groups(metadata: &CatalogMetadata) -> BTreeMap<&str, u64> {
         .collect()
 }
 
+/// One `renderGroup` per switching set (draft-ietf-moq-msf-01 §5.2.11): the
+/// video of a source, its renditions and its audio are rendered together. The
+/// numbers mean nothing beyond that grouping.
+fn render_groups(metadata: &CatalogMetadata) -> BTreeMap<&str, u64> {
+    let switching_sets: BTreeSet<&str> = metadata
+        .video_tracks
+        .values()
+        .map(|info| info.switching_set.as_str())
+        .chain(
+            metadata
+                .audio_tracks
+                .values()
+                .map(|info| info.switching_set.as_str()),
+        )
+        .collect();
+    switching_sets.into_iter().zip(1..).collect()
+}
+
 fn cmaf_sibling(loc: &Track, mime_type: &str, alt_group: Option<u64>) -> Track {
     let mut cmaf = loc.cmaf_sibling(&cmaf_track_name(&loc.name), mime_type, alt_group);
     cmaf.label = loc.label.as_ref().map(|label| format!("{label} (CMAF)"));
@@ -482,6 +512,7 @@ mod tests {
                     label: "Audio".to_string(),
                     config: AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1)),
                     cmaf: true,
+                    switching_set: VIDEO_TRACK_NAME.to_string(),
                 },
             )]),
             ..CatalogMetadata::default()
@@ -546,10 +577,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn each_switching_set_takes_its_own_alt_groups() {
-        // Arrange: the camera has a rendition, the shared screen has two tracks too
-        let video = |switching_set: &str| VideoTrackInfo {
+    fn video(switching_set: &str) -> VideoTrackInfo {
+        VideoTrackInfo {
             label: "Video".to_string(),
             codec: "avc1.42e01e".to_string(),
             width: 640,
@@ -558,7 +587,21 @@ mod tests {
             bitrate: None,
             cmaf: true,
             switching_set: switching_set.to_string(),
-        };
+        }
+    }
+
+    fn aac_audio(switching_set: &str) -> AudioTrackInfo {
+        AudioTrackInfo {
+            label: "Audio".to_string(),
+            config: AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1)),
+            cmaf: true,
+            switching_set: switching_set.to_string(),
+        }
+    }
+
+    #[test]
+    fn each_switching_set_takes_its_own_alt_groups() {
+        // Arrange: the camera has a rendition, the shared screen has two tracks too
         let metadata = CatalogMetadata {
             video_tracks: BTreeMap::from([
                 ("video".to_string(), video("video")),
@@ -579,6 +622,54 @@ mod tests {
         assert_ne!(alt_group("video"), alt_group("screen"));
         assert_ne!(alt_group("video_cmaf"), alt_group("video"));
         assert_ne!(alt_group("video_cmaf"), alt_group("screen"));
+    }
+
+    #[test]
+    fn each_source_renders_its_video_renditions_and_audio_as_one_group() {
+        // Arrange: a camera with a rendition and a shared screen, each with its audio
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([
+                ("video".to_string(), video("video")),
+                ("video_low".to_string(), video("video")),
+                ("screen".to_string(), video("screen")),
+            ]),
+            audio_tracks: BTreeMap::from([
+                ("audio".to_string(), aac_audio("video")),
+                ("screen_audio".to_string(), aac_audio("screen")),
+            ]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let render_group = |name: &str| track_named(&catalog, name).render_group;
+        assert!(render_group("video").is_some());
+        for name in ["video_low", "video_cmaf", "audio", "audio_cmaf"] {
+            assert_eq!(render_group(name), render_group("video"), "{name}");
+        }
+        assert_eq!(render_group("screen_audio"), render_group("screen"));
+        assert_ne!(render_group("screen"), render_group("video"));
+    }
+
+    #[test]
+    fn the_audio_placeholder_joins_the_default_video_s_render_group() {
+        // Arrange
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([("video".to_string(), video("video"))]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        assert!(track_named(&catalog, "audio").render_group.is_some());
+        assert_eq!(
+            track_named(&catalog, "audio").render_group,
+            track_named(&catalog, "video").render_group
+        );
     }
 
     #[test]
@@ -765,6 +856,7 @@ mod tests {
                     channels: 1,
                 },
                 cmaf: true,
+                switching_set: VIDEO_TRACK_NAME.to_string(),
             },
         );
 
