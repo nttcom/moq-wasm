@@ -20,7 +20,7 @@ use tracing::Span;
 use crate::{
     RequestFailure,
     modules::{
-        executor::{self, JoinHandle},
+        executor::JoinHandle,
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
@@ -303,17 +303,14 @@ impl ControlChannel {
 
     /// Blocks other requests on this channel until the reservation is
     /// passed to `send_request` or `send_subscribe_update`, or dropped.
-    /// Dropping it leaves the Request ID unused.
+    /// Dropping it leaves the Request ID unused. Fails with
+    /// `RequestFailure::Timeout` when the peer's Maximum Request ID keeps
+    /// the next Request ID blocked for the control message timeout.
     pub(crate) async fn reserve_request_id(
         &self,
     ) -> Result<RequestIdReservation<'_>, RequestFailure> {
         match self {
-            Self::Draft14(channel) => executor::timeout(
-                std::time::Duration::from_secs(10),
-                channel.reserve_request_id(),
-            )
-            .await
-            .map_err(|()| RequestFailure::Timeout),
+            Self::Draft14(channel) => channel.reserve_request_id().await,
         }
     }
 

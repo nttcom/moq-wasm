@@ -145,8 +145,18 @@ impl ControlChannel {
     }
 
     /// Waits while the next Request ID reaches the peer's Maximum Request
-    /// ID, sending one REQUESTS_BLOCKED per limit (§9.6).
-    pub(super) async fn reserve_request_id(&self) -> RequestIdReservation<'_> {
+    /// ID, sending one REQUESTS_BLOCKED per limit (§9.6). Fails with
+    /// `RequestFailure::Timeout` when the peer does not raise its limit
+    /// within `CONTROL_MESSAGE_RESPONSE_TIMEOUT`.
+    pub(super) async fn reserve_request_id(
+        &self,
+    ) -> Result<RequestIdReservation<'_>, RequestFailure> {
+        executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.wait_for_request_id())
+            .await
+            .map_err(|()| RequestFailure::Timeout)
+    }
+
+    async fn wait_for_request_id(&self) -> RequestIdReservation<'_> {
         let mut request_ids = self.request_ids.lock().await;
         let mut peer_request_id_limit = self.peer_request_id_limit.subscribe();
         loop {
@@ -710,7 +720,7 @@ mod tests {
         handle_late_response,
     };
     use crate::{
-        Session, SessionEvent,
+        RequestFailure, Session, SessionEvent,
         modules::{
             moqt::{
                 control_plane::{
@@ -1011,7 +1021,7 @@ mod tests {
 
     async fn blocked_reservation(
         channel: &ControlChannel,
-    ) -> Pin<Box<impl Future<Output = RequestIdReservation<'_>>>> {
+    ) -> Pin<Box<impl Future<Output = Result<RequestIdReservation<'_>, RequestFailure>>>> {
         channel.peer_request_id_limit.send_replace(0);
         let mut reservation = Box::pin(channel.reserve_request_id());
         let blocked = tokio::time::timeout(Duration::from_millis(100), &mut reservation).await;
@@ -1022,16 +1032,14 @@ mod tests {
     #[tokio::test]
     async fn request_id_reservation_times_out_when_peer_does_not_raise_limit() {
         // Arrange
-        use crate::{
-            RequestFailure, modules::moqt::version::ControlChannel as VersionControlChannel,
-        };
         let (client, _server) = spawn_connected_native_sessions("request-id-timeout").await;
         let connection = connection_of(&client);
-        let VersionControlChannel::Draft14(channel) = &connection.control;
+        let channel = ControlChannel::of(&connection);
         channel.peer_request_id_limit.send_replace(0);
+        tokio::time::pause();
 
         // Act
-        let result = connection.control.reserve_request_id().await;
+        let result = channel.reserve_request_id().await;
 
         // Assert
         assert!(matches!(result, Err(RequestFailure::Timeout)));
@@ -1199,6 +1207,7 @@ mod tests {
         // Assert
         let reservation = tokio::time::timeout(HANDSHAKE_TIMEOUT, reservation)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(reservation.request_id(), 0);
         drop(reservation);
@@ -1219,6 +1228,7 @@ mod tests {
         // Assert
         let reservation = tokio::time::timeout(DISCONNECT_TIMEOUT, reservation)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(reservation.request_id(), 0);
     }
