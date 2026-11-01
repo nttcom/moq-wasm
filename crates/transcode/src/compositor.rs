@@ -31,6 +31,7 @@ const OUTPUT_AUDIO_CAPS: &str = "audio/x-raw,format=F32LE,layout=interleaved,rat
 
 /// One participant. An input without video only feeds the audio mix and
 /// takes no tile.
+#[derive(Default)]
 pub struct CompositeInput {
     pub video: Option<EventSource>,
     pub screen_share: Option<EventSource>,
@@ -516,11 +517,16 @@ mod tests {
         events
     }
 
-    async fn composite(inputs: Vec<CompositeInput>, output: &Path) -> Result<()> {
-        let mut compositor = Compositor::start(inputs, SETTINGS, output)?;
+    async fn composite(inputs: Vec<CompositeInput>, name: &str) -> Mp4Index {
+        let output = output_path(name);
+        let mut compositor = Compositor::start(inputs, SETTINGS, &output).unwrap();
         tokio::time::timeout(TIMEOUT, compositor.finished())
             .await
-            .context("compositor did not finish")?
+            .expect("compositor did not finish")
+            .unwrap();
+        let index = read_index(&output);
+        std::fs::remove_file(output).unwrap();
+        index
     }
 
     fn read_index(path: &Path) -> Mp4Index {
@@ -576,28 +582,25 @@ mod tests {
         let inputs = vec![
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
                 audio: source(audio_events()),
                 loudness: loudness(Timestamp::default()),
+                ..Default::default()
             },
             CompositeInput {
                 video: source(later_video),
-                screen_share: None,
                 audio: source(shifted(audio_events(), shift)),
                 loudness: loudness(shift),
+                ..Default::default()
             },
         ];
-        let output = output_path("two");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "two").await;
 
         // Assert
-        let index = read_index(&output);
         assert_output_size(&index);
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
         assert_duration(&index, expected_end);
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -614,20 +617,15 @@ mod tests {
         let events = first.into_iter().chain(second).collect();
         let inputs = vec![CompositeInput {
             video: source(events),
-            screen_share: None,
-            audio: None,
-            loudness: None,
+            ..Default::default()
         }];
-        let output = output_path("gap");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "gap").await;
 
         // Assert
-        let index = read_index(&output);
         assert!(index.audio.is_none());
         assert_duration(&index, expected_end);
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -640,24 +638,19 @@ mod tests {
             CompositeInput {
                 video: source(video_events()),
                 screen_share: source(share),
-                audio: None,
-                loudness: None,
+                ..Default::default()
             },
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
-                audio: None,
-                loudness: None,
+                ..Default::default()
             },
         ];
-        let output = output_path("share");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "share").await;
 
         // Assert
-        assert_duration(&read_index(&output), expected_end);
-        std::fs::remove_file(output).unwrap();
+        assert_duration(&index, expected_end);
     }
 
     #[tokio::test]
@@ -666,28 +659,21 @@ mod tests {
         decode_in_software();
         let inputs = vec![
             CompositeInput {
-                video: None,
-                screen_share: None,
                 audio: source(audio_events()),
-                loudness: None,
+                ..Default::default()
             },
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
-                audio: None,
-                loudness: None,
+                ..Default::default()
             },
         ];
-        let output = output_path("audio-only");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "audio-only").await;
 
         // Assert
-        let index = read_index(&output);
         assert_output_size(&index);
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -700,28 +686,23 @@ mod tests {
         };
         let inputs = vec![
             CompositeInput {
-                video: None,
-                screen_share: None,
                 audio: source(audio_events()),
                 loudness: loudness(Timestamp::default()),
+                ..Default::default()
             },
             CompositeInput {
-                video: None,
-                screen_share: None,
                 audio: source(shifted(audio_events(), shift)),
                 loudness: loudness(shift),
+                ..Default::default()
             },
         ];
-        let output = output_path("nobody-has-video");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "nobody-has-video").await;
 
         // Assert: an audio-only file
-        let index = read_index(&output);
         assert!(index.video.is_none());
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -748,20 +729,15 @@ mod tests {
             .into_iter()
             .map(|events| CompositeInput {
                 video: source(events),
-                screen_share: None,
-                audio: None,
-                loudness: None,
+                ..Default::default()
             })
             .collect();
-        let output = output_path("codecs");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "codecs").await;
 
         // Assert
-        let index = read_index(&output);
         assert_output_size(&index);
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -794,18 +770,14 @@ mod tests {
         let expected_end = video_end(&smaller);
         let inputs = vec![CompositeInput {
             video: source(first.into_iter().chain(smaller).collect()),
-            screen_share: None,
-            audio: None,
-            loudness: None,
+            ..Default::default()
         }];
-        let output = output_path("resize");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "resize").await;
 
         // Assert
-        assert_duration(&read_index(&output), expected_end);
-        std::fs::remove_file(output).unwrap();
+        assert_duration(&index, expected_end);
     }
 
     fn config_only(events: Vec<MediaEvent>) -> Vec<MediaEvent> {
@@ -827,38 +799,28 @@ mod tests {
         let inputs = vec![
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
                 audio: source(config_only(audio_events())),
-                loudness: None,
+                ..Default::default()
             },
             CompositeInput {
                 video: source(config_only(video_events())),
-                screen_share: None,
                 audio: source(audio_events()),
-                loudness: None,
+                ..Default::default()
             },
         ];
-        let output = output_path("no-samples");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "no-samples").await;
 
         // Assert
-        let index = read_index(&output);
         assert!(index.video.is_some());
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
-        std::fs::remove_file(output).unwrap();
     }
 
     #[test]
     fn rejects_inputs_without_media() {
         // Arrange
-        let inputs = vec![CompositeInput {
-            video: None,
-            screen_share: None,
-            audio: None,
-            loudness: None,
-        }];
+        let inputs = vec![CompositeInput::default()];
 
         // Act / Assert
         assert!(Compositor::start(inputs, SETTINGS, &output_path("empty")).is_err());
