@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
 use moqt::TerminationErrorCode;
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
     cascading::route_registry::RelayRouteRegistry,
@@ -20,7 +19,6 @@ use crate::modules::{
 pub(crate) async fn drain_client_sessions(
     repo: &Arc<tokio::sync::Mutex<SessionRepository>>,
     route_registry: &dyn RelayRouteRegistry,
-    relay_event_sender: &UnboundedSender<SessionEvent>,
     timeout: Duration,
 ) {
     if let Err(error) = route_registry.mark_draining().await {
@@ -36,8 +34,13 @@ pub(crate) async fn drain_client_sessions(
 
     let (sessions, relay_sessions, mut client_session_count) = {
         let repo = repo.lock().await;
+        let sessions = repo
+            .sessions_with_peer(SessionPeer::Client)
+            .into_iter()
+            .map(|(session_id, session)| (session, repo.mailbox(session_id)))
+            .collect::<Vec<_>>();
         (
-            repo.sessions_with_peer(SessionPeer::Client),
+            sessions,
             repo.sessions_with_peer(SessionPeer::Relay),
             repo.client_session_count(),
         )
@@ -49,7 +52,7 @@ pub(crate) async fn drain_client_sessions(
         timeout_secs = timeout.as_secs(),
         "sending GOAWAY to every session"
     );
-    for (session_id, session) in &sessions {
+    for (session, mailbox_sender) in &sessions {
         let new_session_uri = target
             .as_deref()
             .map(|host| format!("{}://{host}", session.url_scheme()))
@@ -57,7 +60,9 @@ pub(crate) async fn drain_client_sessions(
         if let Err(error) = session.go_away(new_session_uri).await {
             tracing::warn!(%error, "failed to send GOAWAY");
         }
-        let _ = relay_event_sender.send(SessionEvent::go_away_sent(*session_id));
+        if let Some(mailbox_sender) = mailbox_sender {
+            let _ = mailbox_sender.send(SessionEvent::GoAwaySent);
+        }
     }
     for (_, session) in &relay_sessions {
         if let Err(error) = session.go_away(String::new()).await {
@@ -102,48 +107,48 @@ mod tests {
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         domain::session_peer::SessionPeer,
-        session::session_event::EventKind,
+        session::session_event::SessionEvent,
         session::session_repository::SessionRepository,
         test_support::{
-            mock_session::{RecordedControlMessages, mock_new_session},
+            mock_session::{
+                RecordedControlMessages, add_session_with_mailbox, detached_session_repository,
+                mock_new_session, session_repository,
+            },
             stub_route_registry::StubRouteRegistry,
         },
     };
 
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
-    async fn repository_with_client_session(
+    fn repository_with_client_session(
         session_id: u64,
     ) -> (
         Arc<tokio::sync::Mutex<SessionRepository>>,
         RecordedControlMessages,
+        tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
     ) {
-        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-        let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let (mut repository, mut session_added_receiver) = session_repository();
         let (new_session, recorded) = mock_new_session(session_id, VerifiedToken::full_access());
-        repository.lock().await.add(new_session, sender).await;
-        (repository, recorded)
+        let mailbox_receiver =
+            add_session_with_mailbox(&mut repository, &mut session_added_receiver, new_session);
+        (
+            Arc::new(tokio::sync::Mutex::new(repository)),
+            recorded,
+            mailbox_receiver,
+        )
     }
 
     #[tokio::test]
     async fn drain_marks_the_relay_draining_and_returns_once_the_clients_left() {
         // Arrange
-        let (repository, recorded) = repository_with_client_session(1).await;
+        let (repository, recorded, _mailbox_receiver) = repository_with_client_session(1);
         let registry = Arc::new(StubRouteRegistry::with_migration_target(Some(
             "relay-b.example:4433",
         )));
         let drain = {
             let (repository, registry) = (repository.clone(), registry.clone());
             tokio::spawn(async move {
-                let (relay_event_sender, _relay_event_receiver) =
-                    tokio::sync::mpsc::unbounded_channel();
-                drain_client_sessions(
-                    &repository,
-                    registry.as_ref(),
-                    &relay_event_sender,
-                    DRAIN_TIMEOUT,
-                )
-                .await
+                drain_client_sessions(&repository, registry.as_ref(), DRAIN_TIMEOUT).await
             })
         };
         while recorded.go_aways().is_empty() {
@@ -166,18 +171,11 @@ mod tests {
     #[tokio::test]
     async fn drain_closes_the_clients_that_stay_past_the_timeout() {
         // Arrange
-        let (repository, recorded) = repository_with_client_session(1).await;
+        let (repository, recorded, _mailbox_receiver) = repository_with_client_session(1);
         let registry = StubRouteRegistry::with_migration_target(None);
 
         // Act
-        let (relay_event_sender, _relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
-        drain_client_sessions(
-            &repository,
-            &registry,
-            &relay_event_sender,
-            Duration::from_millis(50),
-        )
-        .await;
+        drain_client_sessions(&repository, &registry, Duration::from_millis(50)).await;
 
         // Assert: no migration target, so the GOAWAY names no URI
         assert_eq!(recorded.go_aways(), vec![""]);
@@ -193,19 +191,17 @@ mod tests {
     #[tokio::test]
     async fn relay_peers_receive_an_empty_go_away_and_are_not_waited_for() {
         // Arrange
-        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-        let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let mut repository = detached_session_repository();
         let (mut new_session, recorded) = mock_new_session(1, VerifiedToken::full_access());
         new_session.peer = SessionPeer::Relay;
-        repository.lock().await.add(new_session, sender).await;
+        repository.add(new_session);
+        let repository = Arc::new(tokio::sync::Mutex::new(repository));
         let registry = StubRouteRegistry::with_migration_target(Some("relay-b.example:4433"));
-
-        let (relay_event_sender, _relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         // Act
         let drained = tokio::time::timeout(
             Duration::from_secs(1),
-            drain_client_sessions(&repository, &registry, &relay_event_sender, DRAIN_TIMEOUT),
+            drain_client_sessions(&repository, &registry, DRAIN_TIMEOUT),
         )
         .await;
 
@@ -218,15 +214,13 @@ mod tests {
     #[tokio::test]
     async fn drain_without_clients_returns_at_once() {
         // Arrange
-        let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let repository = Arc::new(tokio::sync::Mutex::new(detached_session_repository()));
         let registry = StubRouteRegistry::with_migration_target(None);
-
-        let (relay_event_sender, _relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         // Act
         let drained = tokio::time::timeout(
             Duration::from_secs(1),
-            drain_client_sessions(&repository, &registry, &relay_event_sender, DRAIN_TIMEOUT),
+            drain_client_sessions(&repository, &registry, DRAIN_TIMEOUT),
         )
         .await;
 
@@ -237,24 +231,16 @@ mod tests {
     #[tokio::test]
     async fn each_client_session_hears_that_its_go_away_was_sent() {
         // Arrange
-        let (repository, _recorded) = repository_with_client_session(7).await;
+        let (repository, _recorded, mut mailbox_receiver) = repository_with_client_session(7);
         let registry = StubRouteRegistry::with_migration_target(None);
-        let (relay_event_sender, mut relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         // Act
-        drain_client_sessions(
-            &repository,
-            &registry,
-            &relay_event_sender,
-            Duration::from_millis(10),
-        )
-        .await;
+        drain_client_sessions(&repository, &registry, Duration::from_millis(10)).await;
 
         // Assert
-        let event = relay_event_receiver
+        let event = mailbox_receiver
             .try_recv()
-            .expect("the drain must report the GOAWAY it sent");
-        assert_eq!(event.session_id, 7);
-        assert!(matches!(event.kind, EventKind::GoAwaySent));
+            .expect("the drain must tell the session that its GOAWAY was sent");
+        assert!(matches!(event, SessionEvent::GoAwaySent));
     }
 }

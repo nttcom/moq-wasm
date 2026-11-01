@@ -263,7 +263,7 @@ mod tests {
         },
         session::session_repository::{NewSession, SessionRepository},
         test_support::{
-            mock_session::mock_session_with_transport_stats,
+            mock_session::{detached_session_repository, mock_session_with_transport_stats},
             relay_harness::fixtures::cached_object::{open_group, stream_object_with_payload},
         },
     };
@@ -279,14 +279,13 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             Self {
-                repo: Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
+                repo: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
                 directory: Arc::new(InMemoryLocalPubSubDirectory::new()),
                 cache_store: Arc::new(TrackCacheStore::new()),
             }
         }
 
         fn collector(&self) -> StatsCollector {
-            let (session_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
             StatsCollector::new(
                 RELAY_ID.to_string(),
                 StatsSources {
@@ -295,7 +294,6 @@ mod tests {
                     cache_store: self.cache_store.clone(),
                     inter_relay_connection_manager: Arc::new(InterRelayConnectionManager::new(
                         self.repo.clone(),
-                        session_event_sender,
                         "relay-token".to_string(),
                     )),
                 },
@@ -308,21 +306,13 @@ mod tests {
             peer: SessionPeer,
             transport: moqt::TransportStats,
         ) {
-            let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-            self.repo
-                .lock()
-                .await
-                .add(
-                    NewSession {
-                        session_id,
-                        session: mock_session_with_transport_stats(transport),
-                        session_span: tracing::Span::none(),
-                        peer,
-                        verified_token: VerifiedToken::full_access(),
-                    },
-                    sender,
-                )
-                .await;
+            self.repo.lock().await.add(NewSession {
+                session_id,
+                session: mock_session_with_transport_stats(transport),
+                session_span: tracing::Span::none(),
+                peer,
+                verified_token: VerifiedToken::full_access(),
+            });
         }
 
         fn publish(

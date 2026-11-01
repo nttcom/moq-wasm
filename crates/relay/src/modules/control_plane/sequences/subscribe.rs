@@ -1199,13 +1199,10 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        let (session_event_sender, _session_event_receiver) =
-            tokio::sync::mpsc::unbounded_channel();
         let resolver = UpstreamPublisherResolver::new(
             Arc::new(NoopRelayRouteRegistry),
             Arc::new(InterRelayConnectionManager::new(
                 repository.clone(),
-                session_event_sender,
                 "unused-relay-token".to_string(),
             )),
         );

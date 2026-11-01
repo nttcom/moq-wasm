@@ -1,16 +1,7 @@
-use crate::modules::{
-    domain::{session_id::SessionId, track_key::TrackKey},
-    session::moqt_session_event::MoqtSessionEvent,
-};
+use crate::modules::domain::track_key::TrackKey;
 
-pub(crate) struct SessionEvent {
-    pub(crate) session_id: SessionId,
-    pub(crate) kind: EventKind,
-}
-
-pub(crate) enum EventKind {
-    SessionRegistered,
-    FromSession(MoqtSessionEvent),
+/// A relay-internal event addressed to one session's worker.
+pub(crate) enum SessionEvent {
     MalformedTrackDetected(TrackKey),
     ProtocolViolationDetected {
         reason: String,
@@ -21,41 +12,4 @@ pub(crate) enum EventKind {
     DownstreamSubscriptionEnded {
         request_id: u64,
     },
-}
-
-impl SessionEvent {
-    pub(crate) fn session_registered(session_id: SessionId) -> Self {
-        Self {
-            session_id,
-            kind: EventKind::SessionRegistered,
-        }
-    }
-
-    pub(crate) fn malformed_track_detected(session_id: SessionId, track_key: TrackKey) -> Self {
-        Self {
-            session_id,
-            kind: EventKind::MalformedTrackDetected(track_key),
-        }
-    }
-
-    pub(crate) fn go_away_sent(session_id: SessionId) -> Self {
-        Self {
-            session_id,
-            kind: EventKind::GoAwaySent,
-        }
-    }
-
-    pub(crate) fn protocol_violation_detected(session_id: SessionId, reason: String) -> Self {
-        Self {
-            session_id,
-            kind: EventKind::ProtocolViolationDetected { reason },
-        }
-    }
-
-    pub(crate) fn downstream_subscription_ended(session_id: SessionId, request_id: u64) -> Self {
-        Self {
-            session_id,
-            kind: EventKind::DownstreamSubscriptionEnded { request_id },
-        }
-    }
 }

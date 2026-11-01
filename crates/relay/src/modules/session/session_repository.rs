@@ -1,21 +1,12 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
-};
+use std::{collections::HashMap, sync::Arc};
 
-use tokio::sync::watch;
-use tracing::{Instrument, Span};
+use tokio::sync::{mpsc, watch};
+use tracing::Span;
 
 use crate::modules::{
     auth::{session_expiry_task::SessionExpiryTask, verified_token::VerifiedToken},
     domain::{session_id::SessionId, session_peer::SessionPeer},
-    session::{
-        Session,
-        moqt_session_event::MoqtSessionEvent,
-        publisher::Publisher,
-        session_event::{EventKind, SessionEvent},
-        subscriber::Subscriber,
-    },
+    session::{Session, publisher::Publisher, session_event::SessionEvent, subscriber::Subscriber},
 };
 
 pub(crate) struct SessionRepository {
@@ -23,6 +14,14 @@ pub(crate) struct SessionRepository {
     /// Number of `SessionPeer::Client` sessions; a draining relay waits for
     /// it to reach zero.
     client_session_count: watch::Sender<usize>,
+    session_added_sender: mpsc::UnboundedSender<SessionAdded>,
+}
+
+/// Announces a session to the worker that will handle it, together with the
+/// receiving end of the session's mailbox.
+pub(crate) struct SessionAdded {
+    pub(crate) session_id: SessionId,
+    pub(crate) mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
 }
 
 struct SessionEntry {
@@ -31,7 +30,7 @@ struct SessionEntry {
     peer: SessionPeer,
     verified_token: Arc<VerifiedToken>,
     expiry_task: Option<SessionExpiryTask>,
-    _event_forward_task: SessionEventForwardTask,
+    mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
 }
 
 pub(crate) struct SessionState {
@@ -63,10 +62,11 @@ fn expiry_task(
 }
 
 impl SessionRepository {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(session_added_sender: mpsc::UnboundedSender<SessionAdded>) -> Self {
         Self {
             sessions: HashMap::new(),
             client_session_count: watch::Sender::new(0),
+            session_added_sender,
         }
     }
 
@@ -79,11 +79,7 @@ impl SessionRepository {
         self.client_session_count.send_replace(count);
     }
 
-    pub(crate) async fn add(
-        &mut self,
-        new_session: NewSession,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    ) {
+    pub(crate) fn add(&mut self, new_session: NewSession) {
         let NewSession {
             session_id,
             session,
@@ -99,21 +95,7 @@ impl SessionRepository {
             "session started"
         );
         let expiry_task = expiry_task(&session, &verified_token);
-        if relay_session_event_sender
-            .send(SessionEvent::session_registered(session_id))
-            .is_err()
-        {
-            tracing::error!(
-                session_id,
-                "relay event channel closed; session is not handled"
-            );
-        }
-        let event_forward_task = SessionEventForwardTask::run(
-            session_id,
-            Arc::downgrade(&session),
-            relay_session_event_sender,
-            &session_span,
-        );
+        let (mailbox_sender, mailbox_receiver) = mpsc::unbounded_channel();
         self.sessions.insert(
             session_id,
             SessionEntry {
@@ -122,10 +104,20 @@ impl SessionRepository {
                 peer,
                 verified_token: Arc::new(verified_token),
                 expiry_task,
-                _event_forward_task: event_forward_task,
+                mailbox_sender,
             },
         );
         self.update_client_session_count();
+        let session_added = SessionAdded {
+            session_id,
+            mailbox_receiver,
+        };
+        if self.session_added_sender.send(session_added).is_err() {
+            tracing::error!(
+                session_id,
+                "session worker channel closed; session is not handled"
+            );
+        }
     }
 
     pub(crate) fn remove(&mut self, session_id: SessionId) {
@@ -152,6 +144,21 @@ impl SessionRepository {
 
     pub(crate) fn client_session_count(&self) -> watch::Receiver<usize> {
         self.client_session_count.subscribe()
+    }
+
+    pub(crate) fn session(&self, session_id: SessionId) -> Option<Arc<dyn Session>> {
+        self.sessions
+            .get(&session_id)
+            .map(|entry| entry.session.clone())
+    }
+
+    pub(crate) fn mailbox(
+        &self,
+        session_id: SessionId,
+    ) -> Option<mpsc::UnboundedSender<SessionEvent>> {
+        self.sessions
+            .get(&session_id)
+            .map(|entry| entry.mailbox_sender.clone())
     }
 
     pub(crate) fn session_span(&self, session_id: SessionId) -> Option<Span> {
@@ -219,67 +226,6 @@ impl SessionRepository {
                 .close(moqt::TerminationErrorCode::ProtocolViolation, reason),
             None => tracing::debug!(session_id, "session already gone; nothing to close"),
         }
-    }
-}
-
-struct SessionEventForwardTask {
-    join_handle: tokio::task::JoinHandle<()>,
-}
-
-impl SessionEventForwardTask {
-    fn run(
-        session_id: SessionId,
-        session: Weak<dyn Session>,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: &Span,
-    ) -> Self {
-        let join_handle = tokio::task::Builder::new()
-            .name("Session Event Forwarder")
-            .spawn(
-                async move {
-                    loop {
-                        if let Some(session) = session.upgrade() {
-                            let event = match session.receive_moqt_session_event().await {
-                                Ok(event) => event,
-                                Err(e) => {
-                                    tracing::error!(error = %e, "failed to receive a moqt session event");
-                                    break;
-                                }
-                            };
-                            let should_stop = matches!(
-                                event,
-                                MoqtSessionEvent::Disconnected()
-                                    | MoqtSessionEvent::ProtocolViolation()
-                            );
-
-                            let relay_event = SessionEvent {
-                                session_id,
-                                kind: EventKind::FromSession(event),
-                            };
-                            if let Err(err) = relay_session_event_sender.send(relay_event) {
-                                tracing::error!(error = %err, "failed to forward a session event");
-                                break;
-                            }
-                            if should_stop {
-                                tracing::debug!("stopping session event forwarder");
-                                break;
-                            }
-                        } else {
-                            tracing::warn!("Session handle no longer available");
-                            break;
-                        }
-                    }
-                }
-                .instrument(session_span.clone()),
-            )
-            .unwrap();
-        Self { join_handle }
-    }
-}
-
-impl Drop for SessionEventForwardTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
     }
 }
 

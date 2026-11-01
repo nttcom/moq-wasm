@@ -11,7 +11,7 @@ use crate::modules::{
         },
         ingress::track_ingest_task::TrackIngest,
     },
-    domain::{session_id::SessionId, track_key::TrackKey},
+    domain::track_key::TrackKey,
     session::{
         data_object::DataObject,
         data_receiver::stream_receiver::{StreamReceiver, StreamReceiverFactory},
@@ -44,8 +44,7 @@ pub(crate) async fn accept_streams(
                             ingest.cache.mark_malformed();
                             report_malformed_track(
                                 &Span::current(),
-                                &ingest.session_event_sender,
-                                ingest.publisher_session_id,
+                                &ingest.publisher_mailbox_sender,
                                 &ingest.track_key,
                             );
                         }
@@ -86,9 +85,8 @@ pub(crate) async fn read_stream(
 ) {
     let TrackIngest {
         track_key,
-        publisher_session_id,
         cache,
-        session_event_sender,
+        publisher_mailbox_sender,
         mut stop_receiver,
         stamp,
     } = ingest;
@@ -128,12 +126,7 @@ pub(crate) async fn read_stream(
                 };
                 let object = stamp.apply(CachedObject::from_object(object));
                 if current.insert(object).is_err() {
-                    report_malformed_track(
-                        &span,
-                        &session_event_sender,
-                        publisher_session_id,
-                        &track_key,
-                    );
+                    report_malformed_track(&span, &publisher_mailbox_sender, &track_key);
                     return;
                 }
                 if let Some(end_reason) = end_reason {
@@ -168,12 +161,7 @@ pub(crate) async fn read_stream(
                 }
                 let object = stamp.apply(CachedObject::from_object(writer.assemble()));
                 if current.insert(object).is_err() {
-                    report_malformed_track(
-                        &span,
-                        &session_event_sender,
-                        publisher_session_id,
-                        &track_key,
-                    );
+                    report_malformed_track(&span, &publisher_mailbox_sender, &track_key);
                     return;
                 }
                 if let Some(writer) = partial.take() {
@@ -199,12 +187,7 @@ pub(crate) async fn read_stream(
                     let end_of_group =
                         stamp.apply(CachedObject::end_of_group(&header.start, end_of_group_id));
                     if ingest.insert(end_of_group).is_err() {
-                        report_malformed_track(
-                            &span,
-                            &session_event_sender,
-                            publisher_session_id,
-                            &track_key,
-                        );
+                        report_malformed_track(&span, &publisher_mailbox_sender, &track_key);
                         return;
                     }
                 }
@@ -227,10 +210,8 @@ pub(crate) async fn read_stream(
             Err(moqt::object::StreamReceiveError::ProtocolViolation(error)) => {
                 span.record("end_reason", "protocol_violation");
                 tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, %error, "protocol violation on the stream");
-                let _ = session_event_sender.send(SessionEvent::protocol_violation_detected(
-                    publisher_session_id,
-                    error,
-                ));
+                let _ = publisher_mailbox_sender
+                    .send(SessionEvent::ProtocolViolationDetected { reason: error });
                 return;
             }
         }
@@ -239,16 +220,12 @@ pub(crate) async fn read_stream(
 
 fn report_malformed_track(
     span: &Span,
-    session_event_sender: &mpsc::UnboundedSender<SessionEvent>,
-    publisher_session_id: SessionId,
+    publisher_mailbox_sender: &mpsc::UnboundedSender<SessionEvent>,
     track_key: &TrackKey,
 ) {
     span.record("end_reason", "malformed_track");
     tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "malformed track detected; stopping stream ingest");
-    let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
-        publisher_session_id,
-        track_key.clone(),
-    ));
+    let _ = publisher_mailbox_sender.send(SessionEvent::MalformedTrackDetected(track_key.clone()));
 }
 
 fn open_subgroup<'a>(
@@ -273,9 +250,9 @@ mod tests {
     use super::*;
     use crate::modules::{
         data_plane::cache::track_cache::{FetchRangeResolution, NextObject},
-        session::session_event::EventKind,
+        session::session_event::SessionEvent,
         test_support::relay_harness::{
-            FailingUpstream, PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
+            FailingUpstream, RelayHarness, UpstreamSubgroupStream,
             fixtures::{
                 cached_object::stream_key,
                 data_object::{
@@ -457,7 +434,7 @@ mod tests {
         // Assert
         harness.wait_track_malformed().await;
         let event = harness.expect_session_event().await;
-        assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
+        assert!(matches!(event, SessionEvent::MalformedTrackDetected(_)));
     }
 
     #[tokio::test]
@@ -471,7 +448,7 @@ mod tests {
         // Assert
         harness.wait_track_malformed().await;
         let event = harness.expect_session_event().await;
-        assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
+        assert!(matches!(event, SessionEvent::MalformedTrackDetected(_)));
     }
 
     #[tokio::test]
@@ -501,10 +478,9 @@ mod tests {
             vec![(0, ObjectStatus::Normal)]
         );
         let event = harness.expect_session_event().await;
-        assert_eq!(event.session_id, PUBLISHER_SESSION_ID);
         assert!(matches!(
-            event.kind,
-            EventKind::ProtocolViolationDetected { .. }
+            event,
+            SessionEvent::ProtocolViolationDetected { .. }
         ));
     }
 

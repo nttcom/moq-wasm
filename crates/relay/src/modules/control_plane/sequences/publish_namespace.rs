@@ -285,14 +285,13 @@ mod tests {
         auth::verified_token::VerifiedToken,
         cascading::route_registry::NoopRelayRouteRegistry,
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
-        session::session_repository::SessionRepository,
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, local_publisher_resolver, table_with_upstream,
             },
             mock_session::{
-                MockPublishNamespaceHandler, mock_session_answering_subscribe,
-                session_repository_with_session,
+                MockPublishNamespaceHandler, detached_session_repository,
+                mock_session_answering_subscribe, session_repository_with_session,
             },
         },
     };
@@ -306,10 +305,8 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
         let inter_relay_connection_manager = InterRelayConnectionManager::new(
-            Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
-            session_event_sender,
+            Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             "unused-relay-token".to_string(),
         );
         let (ingress_sender, ingress_receiver) = mpsc::channel(8);

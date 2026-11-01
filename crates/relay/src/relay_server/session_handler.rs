@@ -13,17 +13,13 @@ use crate::{
             session_id::{SessionId, generate_session_id},
             session_peer::SessionPeer,
         },
-        session::{
-            session_event::SessionEvent,
-            session_repository::{NewSession, SessionRepository},
-        },
+        session::session_repository::{NewSession, SessionRepository},
     },
 };
 
 #[derive(Clone)]
 pub(crate) struct SessionIntake {
     pub(crate) repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    pub(crate) relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) accepted_peer: SessionPeer,
     pub(crate) authenticator: Arc<SessionAuthenticator>,
 }
@@ -74,20 +70,13 @@ impl SessionIntake {
         );
         async {
             tracing::debug!("session accepted");
-            self.repo
-                .lock()
-                .await
-                .add(
-                    NewSession {
-                        session_id,
-                        session: Box::new(session),
-                        session_span: session_span.clone(),
-                        peer: self.accepted_peer,
-                        verified_token,
-                    },
-                    self.relay_session_event_sender.clone(),
-                )
-                .await;
+            self.repo.lock().await.add(NewSession {
+                session_id,
+                session: Box::new(session),
+                session_span: session_span.clone(),
+                peer: self.accepted_peer,
+                verified_token,
+            });
         }
         .instrument(session_add_span)
         .await;
