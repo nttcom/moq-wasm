@@ -162,9 +162,10 @@ TOKEN is a status query instead (see "TRACK_STATUS sequence"). The session worke
 `TokenVerifier`, require a client (non-relay) session and a non-relay token
 whose `app_id` matches the current one. On success
 `SessionRepository::replace_verified_token` swaps the session's
-`VerifiedToken` and restarts its `SessionExpiryTask` at the new `exp`, the
-worker adopts the new token for later requests, and TRACK_STATUS_OK is sent
-with Track Alias 0 and Content Exists false — it reports no track status. On
+`VerifiedToken` and restarts its `SessionExpiryTask` at the new `exp`, and
+TRACK_STATUS_OK is sent with Track Alias 0 and Content Exists false — it
+reports no track status. The worker keeps no copy of the token: it reads the
+entry's token for each request, so the next request sees the new one. On
 failure TRACK_STATUS_ERROR carries `NOT_SUPPORTED (0x3)` on an inter-relay
 session, `MALFORMED_AUTH_TOKEN (0x10)` for an unsupported
 alias type / token type / non-UTF-8 value, `UNAUTHORIZED (0x1)` for a rejected
@@ -204,7 +205,9 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   and reaps workers as they exit. The worker reads its session's `moqt` events
   itself (`Session::receive_moqt_session_event`) and `select!`s them with the
   mailbox, mailbox first; each source is FIFO, their interleaving is not
-  ordered. A relay-internal event (`SessionEvent`: `MalformedTrackDetected`,
+  ordered. The worker holds the session id, its span and `WorkerDeps`;
+  everything else about the session (the token, the peer) it reads from the
+  repository entry when a request needs it. A relay-internal event (`SessionEvent`: `MalformedTrackDetected`,
   `ProtocolViolationDetected`, `GoAwaySent`, `DownstreamSubscriptionEnded`)
   is sent to the target session's mailbox, whose sender the sender captured
   when it was created (ingress hands the publisher's mailbox to its readers,
