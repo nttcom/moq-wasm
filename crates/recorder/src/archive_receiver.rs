@@ -111,7 +111,8 @@ impl ArchiveTrack {
                                                     }
                                                     break
                                                 },
-                                                Err(error) => { let _ = sender.send(Err(error.into())).await; break; }
+                                                // As in moqt's TrackReader, a failed subgroup stream ends only that stream.
+                                                Err(error) => { tracing::debug!(%error, "subgroup stream failed; the track goes on"); break; }
                                             }
                                         }
                                     });
@@ -154,7 +155,10 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::{relay::RelayConnection, test_support::datagram_publisher};
+    use crate::{
+        relay::RelayConnection,
+        test_support::{datagram_publisher, reset_stream_publisher},
+    };
 
     #[tokio::test]
     async fn receives_datagrams_and_empty_status_objects_without_losing_fields() {
@@ -212,6 +216,59 @@ mod tests {
 
         // Assert
         assert_eq!(received, [first, last]);
+        connection.close().await;
+    }
+
+    fn subgroup_object(group_id: u64, payload: &'static [u8]) -> Object {
+        Object {
+            location: Location {
+                group_id,
+                object_id: 0,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 0,
+            status: ObjectStatus::Normal,
+            extension_headers: ExtensionHeaders::default(),
+            payload: Bytes::from_static(payload),
+            ends_group: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reset_subgroup_stream_is_skipped_and_the_next_group_is_received() {
+        // Arrange
+        let (url, proceed) =
+            reset_stream_publisher(subgroup_object(0, b"g0"), subgroup_object(1, b"g1"));
+        let connection = RelayConnection::connect(&url, false, None).await.unwrap();
+        let mut track = ArchiveTrack::subscribe(
+            &connection.session,
+            "anon/test",
+            "video",
+            FilterType::LargestObject,
+            false,
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !matches!(track.next().await.unwrap(), Some(Event::Object(_))) {}
+        })
+        .await
+        .unwrap();
+
+        // Act
+        proceed.send(()).unwrap();
+        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::End { group_id, .. } = track.next().await.unwrap().unwrap() {
+                    break group_id;
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        // Assert: the reset group 0 fails neither the track nor ends a subgroup
+        assert_eq!(ended, 1);
         connection.close().await;
     }
 }

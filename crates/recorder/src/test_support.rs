@@ -325,3 +325,77 @@ pub(crate) fn datagram_publisher(objects: Vec<moqt::object::Object>) -> String {
     });
     url
 }
+
+/// A publisher that, after accepting a SUBSCRIBE, sends `reset` on a subgroup
+/// stream, and once the returned sender fires resets that stream and sends
+/// `object` on a subgroup stream it closes.
+pub(crate) fn reset_stream_publisher(
+    reset: moqt::object::Object,
+    object: moqt::object::Object,
+) -> (String, tokio::sync::oneshot::Sender<()>) {
+    let (proceed_sender, proceed_receiver) = tokio::sync::oneshot::channel();
+    let CertificateFiles {
+        cert_path,
+        key_path,
+    } = write_self_signed_cert(&scratch_dir(), &["localhost", "127.0.0.1"]).unwrap();
+    let endpoint = Endpoint::<NATIVE>::create_server(&ServerConfig {
+        port: 0,
+        cert_path,
+        key_path,
+        keep_alive_interval_sec: 5,
+    })
+    .unwrap();
+    let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
+    tokio::spawn(async move {
+        let session = endpoint
+            .accept()
+            .await
+            .unwrap()
+            .await
+            .unwrap()
+            .accept()
+            .await
+            .unwrap();
+        while let Ok(event) = session.receive_event().await {
+            if let SessionEvent::Subscribe(handler) = event {
+                let alias = handler
+                    .ok(0, moqt::object::ContentExists::False)
+                    .await
+                    .unwrap();
+                let subscription = handler.into_subscription(alias);
+                let factory = session.publisher().create_stream(&subscription);
+                let start = |object: &moqt::object::Object| moqt::object::SubgroupStart {
+                    group_id: object.location.group_id,
+                    subgroup_id: 0,
+                    publisher_priority: object.publisher_priority,
+                    ends_group: false,
+                };
+                let mut first = factory
+                    .next()
+                    .await
+                    .unwrap()
+                    .start(start(&reset))
+                    .await
+                    .unwrap();
+                first.send_object(&reset).await.unwrap();
+                let _ = proceed_receiver.await;
+                first
+                    .reset(moqt::object::DataStreamResetCode::Cancelled)
+                    .await
+                    .unwrap();
+                let mut second = factory
+                    .next()
+                    .await
+                    .unwrap()
+                    .start(start(&object))
+                    .await
+                    .unwrap();
+                second.send_object(&object).await.unwrap();
+                second.close().await.unwrap();
+                let _ = session.closed().await;
+                break;
+            }
+        }
+    });
+    (url, proceed_sender)
+}
