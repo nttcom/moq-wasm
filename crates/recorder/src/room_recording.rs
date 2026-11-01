@@ -16,6 +16,7 @@ use crate::{
     composite::MemberFiles,
     manifest::{MANIFEST_NAME, manifest_json},
     recorder::{BroadcastOptions, Content, UploadTarget, default_output_path, record_broadcast},
+    recording::RecordedFile,
     relay::RelayConnection,
     room_state::{MemberStatus, RecordingFormat, RoomState},
     upload_task::UploadTask,
@@ -456,7 +457,7 @@ async fn archive_member(
     options: &BroadcastOptions,
     chunks: ChunkWriter,
     mut stop: watch::Receiver<bool>,
-) -> Result<Vec<crate::recording::RecordedFile>> {
+) -> Result<Vec<RecordedFile>> {
     let key = record_archive(
         session,
         namespace,
@@ -470,7 +471,7 @@ async fn archive_member(
     .await?;
     Ok(key
         .into_iter()
-        .map(|key| crate::recording::RecordedFile {
+        .map(|key| RecordedFile {
             path: path.clone(),
             key: Some(key),
             capture_origin: None,
@@ -525,7 +526,7 @@ fn record_transcript(
         let files = match result {
             Ok(key) => key
                 .into_iter()
-                .map(|key| crate::recording::RecordedFile {
+                .map(|key| RecordedFile {
                     path: path.clone(),
                     key: Some(key),
                     capture_origin: None,
@@ -555,7 +556,6 @@ mod tests {
     use mediapack::Timestamp;
 
     use super::*;
-    use crate::recording::RecordedFile;
 
     const ORIGIN: Timestamp = Timestamp::from_micros(1_700_000_000_000_000);
 
@@ -578,8 +578,8 @@ mod tests {
         assert!(!is_recording_namespace(prefix, "app/room/alice"));
     }
 
-    fn recorded(path: &std::path::Path, origin_ms: u64) -> crate::recording::RecordedFile {
-        crate::recording::RecordedFile {
+    fn recorded(path: &std::path::Path, origin_ms: u64) -> RecordedFile {
+        RecordedFile {
             path: path.to_path_buf(),
             key: None,
             capture_origin: Some(ORIGIN.saturating_add(Timestamp::from_millis(origin_ms))),

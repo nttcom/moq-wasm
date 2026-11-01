@@ -6,11 +6,13 @@ use std::{
 };
 
 use anyhow::Result;
+use hyper::HeaderMap;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, OnceCell};
 
 use crate::{
     ServeArgs,
+    api_auth::{self, AuthError},
     archive_reader::StoredRecording,
     launcher::{Job, Launcher},
     recording::Layout,
@@ -79,11 +81,11 @@ impl Recordings {
 
     pub(crate) async fn authorize(
         &self,
-        headers: &hyper::HeaderMap,
+        headers: &HeaderMap,
         namespace: &str,
         write: bool,
-    ) -> Result<(), crate::api_auth::AuthError> {
-        crate::api_auth::authorize(
+    ) -> Result<(), AuthError> {
+        api_auth::authorize(
             headers,
             self.config.auth_vts_url.as_deref(),
             namespace,

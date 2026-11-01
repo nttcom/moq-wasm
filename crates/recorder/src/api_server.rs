@@ -20,6 +20,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 use crate::{
     recording::Layout,
     recordings::{PublishRejection, Recordings, StartRejection},
+    room_state::RecordingFormat,
 };
 
 const MAX_BODY_BYTES: usize = 16 * 1024;
@@ -215,8 +216,8 @@ async fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
         Some(_) => return error_response(StatusCode::BAD_REQUEST, "composite must be a boolean"),
     };
     let format = match body.get("format") {
-        None => crate::room_state::RecordingFormat::Mp4,
-        Some(Value::String(name)) => match crate::room_state::RecordingFormat::parse(name) {
+        None => RecordingFormat::Mp4,
+        Some(Value::String(name)) => match RecordingFormat::parse(name) {
             Ok(format) => format,
             Err(_) => return error_response(StatusCode::BAD_REQUEST, "format must be mp4 or moq"),
         },

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use moqt::{
@@ -8,6 +8,8 @@ use moqt::{
     subscribe::{FilterType, SubscribeOption},
 };
 
+use crate::token_refresh_task::{TokenRefreshTask, read_token_file};
+
 const SUBSCRIBER_PRIORITY: u8 = 128;
 
 /// The session follows the relay's GOAWAY by itself, so a recording outlives
@@ -15,7 +17,7 @@ const SUBSCRIBER_PRIORITY: u8 = 128;
 pub(crate) struct RelayConnection {
     pub(crate) session: Arc<Session>,
     endpoint: Endpoint<NATIVE>,
-    _token_refresh: Option<crate::token_refresh_task::TokenRefreshTask>,
+    _token_refresh: Option<TokenRefreshTask>,
 }
 
 impl RelayConnection {
@@ -47,14 +49,14 @@ impl RelayConnection {
         verify_certificate: bool,
         namespace: &str,
     ) -> Result<Self> {
-        let token_file = std::env::var_os("MOQT_AUTH_TOKEN_FILE").map(std::path::PathBuf::from);
+        let token_file = std::env::var_os("MOQT_AUTH_TOKEN_FILE").map(PathBuf::from);
         let token = match &token_file {
-            Some(path) => Some(crate::token_refresh_task::read_token_file(path).await?),
+            Some(path) => Some(read_token_file(path).await?),
             None => std::env::var("MOQT_AUTH_TOKEN").ok(),
         };
         let mut connection = Self::connect(url, verify_certificate, token.clone()).await?;
         if let (Some(path), Some(token)) = (token_file, token) {
-            connection._token_refresh = Some(crate::token_refresh_task::TokenRefreshTask::run(
+            connection._token_refresh = Some(TokenRefreshTask::run(
                 connection.session.clone(),
                 path,
                 namespace.split('/').next().unwrap_or_default().to_string(),
