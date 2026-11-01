@@ -118,8 +118,16 @@ export class LocalSession {
           this.transitionToState(LocalSessionState.Disconnected)
         }
       })
-      this.chatWriter = session.publishTrack(this.trackNamespace, 'chat')
-      await this.chatWriter
+      // Published at join so a recorder can subscribe to the chat before the first message.
+      // A failure only affects chat: sendChatMessage publishes again.
+      const chatWriter = session.publishTrack(this.trackNamespace, 'chat')
+      this.chatWriter = chatWriter
+      chatWriter.catch((error: unknown) => {
+        if (this.chatWriter === chatWriter) {
+          this.chatWriter = null
+        }
+        console.warn('[meeting] chat track publish failed', error)
+      })
       await this.mediaController.publisher.start(session)
       this.transitionToState(LocalSessionState.Ready)
     } catch (error) {
