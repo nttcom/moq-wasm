@@ -78,7 +78,12 @@ export async function publish(
   options: PublishOptions = {}
 ): Promise<Publication> {
   const broadcast = session.broadcast(namespace)
-  await broadcast.announce()
+  // A subscriber that knows the camera's tracks by name, such as a detection
+  // bot, may subscribe before the first frame puts them in the catalog.
+  await broadcast.declareTracks([
+    ...(stream.getVideoTracks().length > 0 ? ['video'] : []),
+    ...(stream.getAudioTracks().length > 0 ? ['audio'] : [])
+  ])
   if (options.offerChat) {
     await broadcast.offerChat()
   }

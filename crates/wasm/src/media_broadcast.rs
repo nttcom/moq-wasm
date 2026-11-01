@@ -67,6 +67,16 @@ impl MediaBroadcast {
             .map_err(|err| js_error(format!("{err:#}")))
     }
 
+    /// Announces the namespace like `announce` and accepts SUBSCRIBEs for
+    /// `track_names` before the catalog lists them.
+    #[wasm_bindgen(js_name = declareTracks)]
+    pub async fn declare_tracks(&self, track_names: Vec<String>) -> Result<(), JsValue> {
+        self.broadcast
+            .declare_tracks(&track_names)
+            .await
+            .map_err(|err| js_error(format!("{err:#}")))
+    }
+
     /// Lists the chat track in the catalog even while no source publishes the
     /// default `video` or `audio`; write the chat with `Session.publishTrack`.
     #[wasm_bindgen(js_name = offerChat)]
