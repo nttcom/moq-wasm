@@ -5,6 +5,10 @@
 - `moq-wasm`: `init({ wasmUrl, onLog, logLevel })` loads the wasm module and
   hands its logs to `onLog` as `LogRecord`s at `logLevel` (default `'warn'`)
   or above.
+- `moq-wasm/media` exports the types `LivePlayer` takes and returns
+  (`BufferPolicy`, `CatchUp`, `LivePictureKind`, `LiveStats`,
+  `DeliveryObserver`, `Playhead`, `StreamKind`), `formatLiveStats`, and
+  `monotonicUnixMicros`, the clock of the capture timestamps.
 
 ## 0.1.0
 
