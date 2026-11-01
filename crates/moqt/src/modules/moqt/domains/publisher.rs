@@ -134,10 +134,7 @@ impl Publisher {
         track_name: String,
         option: PublishOption,
     ) -> Result<Subscription, RequestFailure> {
-        let _carried = match &self.session.carried {
-            Some(carried) => Some(carried.read().await),
-            None => None,
-        };
+        let _carried = self.session.read_carried().await;
         let connection = self.session.connection();
         let (publish_ok, track_alias) =
             send_publish(&connection, &track_namespace, &track_name, &option).await?;
