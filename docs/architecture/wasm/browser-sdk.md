@@ -284,34 +284,33 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 | 機能 | API | meeting での使い方 |
 | --- | --- | --- |
-| ソースの選択 | `LivePlayerOptions.source`。`source` の映像 track と、catalog で同じ render group（draft-ietf-moq-msf-01 §5.2.11）に入る track だけを購読する。省略時は今と同じ | カメラと画面共有で player を分ける |
+| ソースの選択 | `LivePlayerOptions.source`（`{ video, audio? }`）。名前の映像 track と、その altGroup（draft-ietf-moq-msf-01 §5.2.12）の rendition、名前の音声 track だけを購読する。省略時は今と同じ | カメラと画面共有で player を分ける |
 | 表示の高さで ABR の上限を決める | 自動選択のとき、container の高さを監視し、ladder をその高さを満たす rendition までに絞る（今の `capLadderToHeight`） | 小さいタイルは低い rendition を受ける |
 | Audio Level | `LivePlayerCallbacks.onAudioLevel?(level: AudioLevel)`。音声 object の LOC Audio Level property（draft-ietf-moq-loc-04 §2.3.3.2）を渡す。`AudioLevel` を export する | 話者の検出（`dominantSpeaker.ts`） |
 | 最初の映像を joining FETCH で取る | 映像の最初の購読は `subscribeCurrentGroup` にする。rendition の切り替えは今と同じく次の group を待つ | 静止した画面共有も、参加した直後に映る |
 | 音声を映像より優先する | 音声の SUBSCRIBE の subscriber priority を映像より高くする。オプションにはしない | meeting の映像128、音声0 と同じ |
 
-render group は、`crates/broadcast` がソース（`SourceTracks`）ごとに別の番号を割り当て、
-catalog に書く。`msf` の `Track` は `render_group` をすでに持つ。§5.2.11 は番号に意味を
-定めず、同じ番号の track が一緒に描画されることだけを示す。そのため player は番号では
-なく、`source` の映像 track の名前（`video`、`screenshare` など）でソースを選び、その
-track の render group から一緒に再生する音声を決める。track 名の規則（`screenshare` と
-`screenshare_audio`）で音声まで決める方法は、`publish()` 以外の publisher に当てはまらない
-ので使わない。`source` を `start` の引数でなく player のオプションにするのは、`start` の
-3つ目の引数がすでに `LiveTracks` で、meeting はソースごとに player を作るため。
+ソースは映像と音声の track 名で渡す。rendition は、catalog が switching set ごとに
+付ける altGroup から見つかる。映像だけがミュートされて catalog から外れても、音声は名前で
+見つかるので再生を続けられる。catalog の render group（§5.2.11）で映像と音声を結び付ける
+方法は採らない。番号に意味が無いので、映像 track が catalog に無いときに、どの音声が
+そのソースのものかを決められない。track 名は `publish()` の命名（`video` と `audio`、
+`addSource` の `<name>` と `<name>_audio`）をアプリが渡し、player は命名の規則を持たない。
+`source` を `start` の引数でなく player のオプションにするのは、`start` の3つ目の引数が
+すでに `LiveTracks` で、meeting はソースごとに player を作るため。
 
 ### 移行の手順
 1手順を1 PR にする。
 
-1. **feat(broadcast): ソースごとの render group を catalog に書く。**
-2. **feat(wasm): `LivePlayerOptions.source`。**
-3. **feat(wasm): 表示の高さによる ABR の上限。**
-4. **feat(wasm): `onAudioLevel`。**
-5. **feat(wasm): 映像の最初の購読を joining FETCH にする。**
-6. **feat(wasm): 音声の subscriber priority を映像より高くする。**
-7. **refactor(browser): meeting の再生を `LivePlayer` に移す。** `mediaSubscriber.ts` と、
+1. **feat(wasm): `LivePlayerOptions.source`。**
+2. **feat(wasm): 表示の高さによる ABR の上限。**
+3. **feat(wasm): `onAudioLevel`。**
+4. **feat(wasm): 映像の最初の購読を joining FETCH にする。**
+5. **feat(wasm): 音声の subscriber priority を映像より高くする。**
+6. **refactor(browser): meeting の再生を `LivePlayer` に移す。** `mediaSubscriber.ts` と、
    `localSession.ts` の映像・音声の購読と切り替え、`meetingCatalog.ts` の解析を消す。
    ブラウザ E2E（`run-meeting-e2e.mjs`）で守る。
-8. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
+7. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
    なってから行う。
 
 ## core API
