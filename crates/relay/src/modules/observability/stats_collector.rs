@@ -4,9 +4,9 @@ use std::{
     time::Duration,
 };
 
-use relay_stats::{
-    ProcessStats, RelaySnapshot, SessionPeer as SnapshotPeer, SessionStats, SubscriptionStats,
-    TrackStats,
+use telemetry::relay_stats::{
+    self, ProcessStats, RelaySnapshot, SessionPeer as SnapshotPeer, SessionStats,
+    SubscriptionStats, TrackStats,
 };
 
 use crate::modules::{
@@ -245,7 +245,7 @@ mod tests {
 
     use bytes::Bytes;
     use moqt::object::ContentExists;
-    use relay_stats::SessionPeer as SnapshotPeer;
+    use telemetry::relay_stats::{self, SessionPeer as SnapshotPeer};
 
     use super::{StatsCollector, StatsSources};
     use crate::modules::{

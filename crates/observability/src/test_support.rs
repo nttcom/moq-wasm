@@ -6,7 +6,7 @@ use hyper::{
     service::service_fn,
 };
 use hyper_util::rt::TokioIo;
-use relay_stats::{ProcessStats, RelaySnapshot};
+use telemetry::relay_stats::{ProcessStats, RelaySnapshot};
 use tokio::{net::TcpListener, sync::mpsc};
 
 pub(crate) fn snapshot(timestamp_ms: u64) -> RelaySnapshot {

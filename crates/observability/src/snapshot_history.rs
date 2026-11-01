@@ -1,5 +1,5 @@
-use relay_stats::RelaySnapshot;
 use serde::Deserialize;
+use telemetry::relay_stats::RelaySnapshot;
 
 use crate::{clickhouse::ClickHouse, latest_snapshots::RELAY_SILENCE, schema::SNAPSHOTS};
 

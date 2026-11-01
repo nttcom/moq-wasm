@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
-use relay_stats::{RelaySnapshot, SessionPeer};
 use serde_json::Value;
+use telemetry::relay_stats::{RelaySnapshot, SessionPeer};
 
 /// JavaScript numbers hold 53 bits, so the browser receives 64-bit ids as strings.
 const ID_FIELDS: &[&str] = &[
@@ -64,8 +64,8 @@ fn snapshot_for_browser(snapshot: &RelaySnapshot) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use relay_stats::{RelaySnapshot, SubscriptionStats};
     use serde_json::json;
+    use telemetry::relay_stats::{RelaySnapshot, SubscriptionStats};
 
     use super::{masked_client_address, snapshots_for_browser};
     use crate::test_support::snapshot;

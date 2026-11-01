@@ -1,5 +1,5 @@
-use relay_stats::RelaySnapshot;
 use serde::Serialize;
+use telemetry::relay_stats::RelaySnapshot;
 
 use crate::{
     clickhouse::ClickHouse,
@@ -88,8 +88,8 @@ impl SnapshotRows {
 
 #[cfg(test)]
 mod tests {
-    use relay_stats::{ProcessStats, RelaySnapshot};
     use serde_json::json;
+    use telemetry::relay_stats::{ProcessStats, RelaySnapshot};
 
     use super::{SnapshotRows, rows};
     use crate::test_support::snapshot;
