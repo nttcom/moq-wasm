@@ -290,11 +290,14 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 | 最初の映像を joining FETCH で取る | 映像の最初の購読は `subscribeCurrentGroup` にする。rendition の切り替えは今と同じく次の group を待つ | 静止した画面共有も、参加した直後に映る |
 | 音声を映像より優先する | 音声の SUBSCRIBE の subscriber priority を映像より高くする。オプションにはしない | meeting の映像128、音声0 と同じ |
 
-render group は、`crates/broadcast` がソース（`SourceTracks`）ごとに1つ割り当て、
-catalog に書く。`msf` の `Track` は `render_group` をすでに持つ。track 名の規則
-（`screenshare` と `screenshare_audio`）で選ぶ方法は、`publish()` 以外の publisher に
-当てはまらないので使わない。`source` を `start` の引数でなく player のオプションにするのは、
-`start` の3つ目の引数がすでに `LiveTracks` で、meeting はソースごとに player を作るため。
+render group は、`crates/broadcast` がソース（`SourceTracks`）ごとに別の番号を割り当て、
+catalog に書く。`msf` の `Track` は `render_group` をすでに持つ。§5.2.11 は番号に意味を
+定めず、同じ番号の track が一緒に描画されることだけを示す。そのため player は番号では
+なく、`source` の映像 track の名前（`video`、`screenshare` など）でソースを選び、その
+track の render group から一緒に再生する音声を決める。track 名の規則（`screenshare` と
+`screenshare_audio`）で音声まで決める方法は、`publish()` 以外の publisher に当てはまらない
+ので使わない。`source` を `start` の引数でなく player のオプションにするのは、`start` の
+3つ目の引数がすでに `LiveTracks` で、meeting はソースごとに player を作るため。
 
 ### 移行の手順
 1手順を1 PR にする。
