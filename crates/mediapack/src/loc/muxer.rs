@@ -75,7 +75,7 @@ mod tests {
     use super::*;
     use crate::{
         sample::{AudioLevel, AudioSample, StreamSet, VideoSample},
-        test_support::{fixture_video_config, keyframe_annexb},
+        test_support::{fixture_video_config, keyframe_annexb, keyframe_sample},
     };
 
     fn muxer() -> Muxer {
@@ -85,12 +85,7 @@ mod tests {
     #[test]
     fn carries_the_video_payload_unchanged_with_a_capture_timestamp() {
         // Arrange
-        let sample = VideoSample {
-            data: keyframe_annexb(),
-            is_keyframe: true,
-            pts: Timestamp::from_millis(40),
-            dts: Timestamp::from_millis(40),
-        };
+        let sample = keyframe_sample(Timestamp::from_millis(40));
 
         // Act
         let object = muxer().push(&MediaEvent::Video(sample)).unwrap();

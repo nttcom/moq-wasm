@@ -129,7 +129,8 @@ mod tests {
         sample::StreamSet,
         test_support::{
             FIXTURE_FLV, IDR_SLICE, audio_samples, count_events, delta_frame_annexb,
-            fixture_record, fixture_video_config, keyframe_annexb, mono_48k, video_samples,
+            fixture_record, fixture_video_config, keyframe_annexb, keyframe_sample, mono_48k,
+            video_samples,
         },
     };
 
@@ -174,12 +175,9 @@ mod tests {
         );
         assert_eq!(
             key_events,
-            [MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts: Timestamp::from_millis(40),
-                dts: Timestamp::from_millis(40),
-            })]
+            [MediaEvent::Video(keyframe_sample(Timestamp::from_millis(
+                40
+            )))]
         );
         assert_eq!(
             delta_events,
