@@ -1,12 +1,14 @@
-use anyhow::Result;
-use moqt::{Session, TrackReader, subscribe::FilterType};
+use anyhow::{Context, Result};
+use moqt::{
+    Session, TrackReader,
+    subscribe::{FilterType, SubscribeOption},
+};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
-use crate::catalog;
 use crate::cli::SubscribeArgs;
 use crate::track::FullTrackName;
-use crate::transport::{connect_relay, read_catalog, subscribe, track_reader};
+use crate::transport::connect_relay;
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let connection = connect_relay(&args.relay, args.track.app_id()).await?;
@@ -43,43 +45,55 @@ async fn watch(session: &Session, track: &FullTrackName) -> Result<()> {
 
 async fn subscribe_media(session: &Session, track: &FullTrackName) -> Result<TrackReader> {
     // Subscribe to both tracks before reading either so NextGroupStart
-    // catches the first media group of a burst publisher. The catalog's
-    // joining FETCH may only join a Largest Object subscription (draft-14
-    // §9.16.2).
-    let catalog_subscription = subscribe(
-        session,
-        &track.namespace,
-        msf::CATALOG_TRACK_NAME,
-        FilterType::LargestObject,
-    )
-    .await?;
+    // catches the first media group of a burst publisher.
+    let mut subscriber = session.subscriber();
+    let (_catalog_subscription, mut catalog_reader) = subscriber
+        .subscribe_current_group(track.namespace.clone(), msf::CATALOG_TRACK_NAME.to_string())
+        .await
+        .with_context(|| {
+            format!(
+                "failed to subscribe {}/{}",
+                track.namespace,
+                msf::CATALOG_TRACK_NAME
+            )
+        })?;
+    let option = SubscribeOption {
+        filter_type: FilterType::NextGroupStart,
+        ..SubscribeOption::default()
+    };
+    let media_subscription = subscriber
+        .subscribe(track.namespace.clone(), track.name.clone(), option)
+        .await
+        .with_context(|| format!("failed to subscribe {}/{}", track.namespace, track.name))?;
     info!(
-        namespace = track.namespace,
-        track = track.name,
-        "subscribing"
+        track_namespace = track.namespace,
+        track_name = track.name,
+        "subscribed"
     );
-    let media_subscription = subscribe(
-        session,
-        &track.namespace,
-        &track.name,
-        FilterType::NextGroupStart,
-    )
-    .await?;
-    info!("subscribed");
 
-    let catalog = read_catalog(session, &catalog_subscription).await?;
-    describe_catalog(&catalog::parse(&catalog)?);
-    track_reader(session, &media_subscription).await
+    let catalog = catalog_reader
+        .next_object()
+        .await?
+        .context("catalog track ended before any object")?;
+    let catalog: msf::Catalog =
+        serde_json::from_slice(&catalog.payload).context("catalog is not MSF JSON")?;
+    describe_track(&catalog, &track.name);
+    Ok(subscriber.track_reader(&media_subscription))
 }
 
-fn describe_catalog(catalog: &msf::Catalog) {
-    let Some(track) = catalog.tracks.as_ref().and_then(|tracks| tracks.first()) else {
-        info!("catalog has no tracks");
+fn describe_track(catalog: &msf::Catalog, track_name: &str) {
+    let Some(track) = catalog
+        .tracks
+        .iter()
+        .flatten()
+        .find(|track| track.name == track_name)
+    else {
+        info!(track_name, "the catalog does not list the track");
         return;
     };
     info!(
-        track = track.name,
-        packaging = crate::catalog::packaging_str(&track.packaging),
+        track_name,
+        packaging = ?track.packaging,
         codec = track.codec.as_deref().unwrap_or("-"),
         "catalog resolved"
     );

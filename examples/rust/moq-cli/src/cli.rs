@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
 use url::Url;
 
-use crate::track::FullTrackName;
+use crate::track::{FullTrackName, Namespace};
 
 #[derive(Parser, Debug)]
 #[command(about = "MoQT CLI: publish/subscribe media over MoQT")]
@@ -17,14 +17,6 @@ pub struct Cli {
 pub enum Command {
     Publish(PublishArgs),
     Subscribe(SubscribeArgs),
-}
-
-#[derive(ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[value(rename_all = "lower")]
-pub enum Container {
-    #[default]
-    Loc,
-    Cmaf,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -46,12 +38,9 @@ pub struct RelayArgs {
 pub struct PublishArgs {
     #[command(flatten)]
     pub relay: RelayArgs,
+    /// Namespace of the broadcast, e.g. `anon/tokyo/cam01`
     #[arg(long)]
-    pub track: FullTrackName,
-    #[arg(long, default_value = "avc3")]
-    pub codec: String,
-    #[arg(long, value_enum, default_value_t = Container::Loc)]
-    pub container: Container,
+    pub namespace: Namespace,
 }
 
 #[derive(Args, Debug)]

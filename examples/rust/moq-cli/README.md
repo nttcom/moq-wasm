@@ -1,34 +1,46 @@
 # moq-cli
 
-Publishes an encoded H.264 stream from stdin to a MoQ relay, or subscribes to
-one and writes it to stdout.
+Publishes a raw H.264 stream from stdin to a MoQ relay as an MSF broadcast,
+or subscribes to one track and writes it to stdout.
 
 ## Usage
 
 ```sh
-ffmpeg ... | moq-cli publish --relay <relay> --track <track> --codec <codec>
-moq-cli subscribe --relay <relay> --track <track> | ffplay -
+ffmpeg ... -f h264 - | moq-cli publish --relay <relay> --namespace <namespace>
+moq-cli subscribe --relay <relay> --track <namespace>/video | ffplay -
 ```
 
 | Flag | publish | subscribe | Meaning |
 | --- | :-: | :-: | --- |
 | `--relay` | ● | ● | Relay URL, e.g. `moqt://localhost:4433` |
-| `--track` | ● | ● | Full track name, e.g. `anon/tokyo/cam01/video` |
-| `--codec` | ● | | Required with `--container loc`: `avc3`. Not used with `cmaf` |
-| `--container` | ● | | `loc` (default) or `cmaf` |
+| `--namespace` | ● | | Namespace of the broadcast, e.g. `anon/tokyo/cam01` |
+| `--track` | | ● | Full track name, e.g. `anon/tokyo/cam01/video` |
 | `--insecure` | ● | ● | Skip certificate verification, for self-signed relays |
 | `--auth-token` | ● | ● | JWT for the relay. Also `MOQT_AUTH_TOKEN` |
 | `--auth-token-file` | ● | ● | File holding the JWT. Also `MOQT_AUTH_TOKEN_FILE`. Exclusive with `--auth-token` |
 
-`subscribe` reads codec and container from the catalog. Timestamps are
-stamped from the wall clock. Input and output are always stdin and stdout.
+Input and output are always stdin and stdout.
 
-## Container
+## Publish
 
-| `--container` | Input | moq-cli does | Needs codec knowledge |
-| --- | --- | --- | --- |
-| `loc` (default) | Raw elementary stream (Annex-B) | Splits frames, detects keyframes, one frame per object | yes |
-| `cmaf` | CMAF (`moof` + `mdat`, ffmpeg `-f mp4 -movflags frag...`) | One object per box boundary | no |
+The input is an H.264 Annex-B elementary stream. `publish` splits it into
+access units (`mediapack::h264::ElementaryStreamDemuxer`) and publishes them
+through `crates/broadcast`. The namespace carries the same tracks as the
+other publishers:
+
+- `catalog`
+- `video` (LOC)
+- `video_cmaf` (CMAF, sent while the relay subscribes to it)
+- `timeline`
+
+The stream carries no timestamps; each access unit is stamped with the time
+it was read.
+
+Feed a file at its frame rate (`ffmpeg -re`): input that arrives faster than
+it can be sent is dropped.
+
+`subscribe` reads the catalog with a joining FETCH and writes the payloads of
+the track to stdout; for `video` that is the Annex-B stream.
 
 ## Auth token
 
@@ -41,19 +53,16 @@ the stream running. moq-cli does not interpret the token.
 ```sh
 AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "<appId>") | .secret' apps.json)" \
   cargo run -q -p auth-token --features cli -- --app-id <appId> --publish site1 --ttl 12h > /etc/moq/token
-moq-cli publish --relay moqt://relay:4433 --track <appId>/site1/video --codec avc3 --auth-token-file /etc/moq/token
+moq-cli publish --relay moqt://relay:4433 --namespace <appId>/site1 --auth-token-file /etc/moq/token
 ```
 
 ## Examples
 
 ```sh
-# local loopback
-cat sample.h264 | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
+# local loopback, from an MP4 converted to Annex-B by ffmpeg
+ffmpeg -re -i movie.mp4 -c:v copy -bsf:v h264_mp4toannexb -f h264 - \
+  | moq-cli publish --relay moqt://localhost:4433 --namespace anon/live --insecure
 moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecure | ffplay -
-
-# from an MP4, converted to Annex-B by ffmpeg
-ffmpeg -i movie.mp4 -c:v copy -bsf:v h264_mp4toannexb -f h264 - \
-  | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
 ```
 
 ## Raspberry Pi
@@ -65,7 +74,7 @@ cargo zigbuild --release --target aarch64-unknown-linux-musl -p moq-cli
 scp target/aarch64-unknown-linux-musl/release/moq-cli pi@pi-cam.local:~/
 
 rpicam-vid -t 0 --codec h264 --inline --width 1280 --height 720 --framerate 30 -o - \
-  | ./moq-cli publish --relay moqt://<relay>:443 --track anon/live/video --codec avc3
+  | ./moq-cli publish --relay moqt://<relay>:443 --namespace anon/live
 ```
 
 ## Build and test
@@ -74,9 +83,3 @@ rpicam-vid -t 0 --codec h264 --inline --width 1280 --height 720 --framerate 30 -
 cargo build --release -p moq-cli
 cargo test -p moq-cli
 ```
-
-## Known limitation
-
-The catalog is re-sent at every keyframe so that late subscribers receive it.
-The intended form is one catalog publish picked up by subscribers with a
-joining FETCH.

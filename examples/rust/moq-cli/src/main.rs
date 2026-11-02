@@ -1,6 +1,4 @@
-mod catalog;
 mod cli;
-mod media;
 mod publish;
 mod subscribe;
 mod track;

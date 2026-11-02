@@ -1,5 +1,5 @@
 """Stands in for onvif-ingest in the PTZ tracking E2E: streams a synthetic H.264 picture through
-`moq-cli publish` as the camera's LOC track, and records the PTZ commands the bot publishes, served
+`moq-cli publish` as the camera's broadcast, and records the PTZ commands the bot publishes, served
 as JSON at `GET /commands`. Runs in the moq-ptz-tracking environment (`uv run --project`)."""
 
 import argparse
@@ -14,7 +14,6 @@ import moqt
 from aiohttp import web
 
 CAMERA_NAMESPACE = ["anon", "onvif", "client"]
-CAMERA_TRACK = "/".join([*CAMERA_NAMESPACE, "video"])
 COMMAND_NAMESPACE = ["anon", "onvif", "viewer"]
 COMMAND_TRACK = "command"
 WIDTH, HEIGHT, FPS = 320, 180, 10
@@ -35,10 +34,8 @@ async def stream_camera(moq_cli: str, relay_url: str) -> None:
         "publish",
         "--relay",
         relay_url,
-        "--track",
-        CAMERA_TRACK,
-        "--codec",
-        "avc3",
+        "--namespace",
+        "/".join(CAMERA_NAMESPACE),
         "--insecure",
         stdin=asyncio.subprocess.PIPE,
         env={**os.environ, "RUST_LOG": os.environ.get("RUST_LOG", "info")},
@@ -83,8 +80,6 @@ async def main() -> None:
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", args.port).start()
     session = await moqt.connect(args.relay_url, verify_certificate=False)
-    # moq-cli sends PUBLISH only; the bot waits for the camera namespace to be announced.
-    await session.publish_namespace(CAMERA_NAMESPACE)
     print(f"serving commands on http://127.0.0.1:{args.port}", flush=True)
     try:
         async with asyncio.TaskGroup() as tasks:

@@ -1,13 +1,7 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
-use bytes::Bytes;
-use moqt::{
-    ClientConfig, Endpoint, QUIC, Session, Subscription, TrackReader,
-    fetch::{Fetch, FetchOption},
-    object::{DataReceiver, Object},
-    subscribe::{FilterType, SubscribeOption},
-};
+use anyhow::Result;
+use moqt::{ClientConfig, Endpoint, QUIC, Session};
 use tracing::info;
 
 use super::{auth_token_file::read_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
@@ -52,77 +46,4 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
         session,
         auth_token_refresh,
     })
-}
-
-/// Reads the catalog's latest group with the Joining FETCH (offset 0) that
-/// MSF §5 requires beside the SUBSCRIBE. Falls back to the subscription's
-/// next object when the FETCH fails, e.g. before the first catalog was sent.
-pub async fn read_catalog(session: &Session, subscription: &Subscription) -> Result<Bytes> {
-    match fetch_current_group(session, subscription).await {
-        Ok(objects) => {
-            if let Some(latest) = objects
-                .into_iter()
-                .rev()
-                .find(|object| !object.payload.is_empty())
-            {
-                return Ok(latest.payload);
-            }
-        }
-        Err(error) => tracing::warn!(%error, "joining FETCH of the catalog failed"),
-    }
-    let mut updates = track_reader(session, subscription).await?;
-    match updates.next_object().await? {
-        Some(object) => Ok(object.payload),
-        None => anyhow::bail!("catalog stream ended before any object"),
-    }
-}
-
-pub async fn subscribe(
-    session: &Session,
-    namespace: &str,
-    name: &str,
-    filter_type: FilterType,
-) -> Result<Subscription> {
-    let option = SubscribeOption {
-        filter_type,
-        ..SubscribeOption::default()
-    };
-    session
-        .subscriber()
-        .subscribe(namespace.to_string(), name.to_string(), option)
-        .await
-        .with_context(|| format!("failed to subscribe {namespace}/{name}"))
-}
-
-/// Waits for the first data stream of `subscription`.
-pub async fn track_reader(session: &Session, subscription: &Subscription) -> Result<TrackReader> {
-    let receiver = session
-        .subscriber()
-        .accept_data_receiver(subscription)
-        .await
-        .context("failed to accept data receiver")?;
-    let DataReceiver::Stream(factory) = receiver else {
-        anyhow::bail!("expected stream data receiver");
-    };
-    Ok(TrackReader::new(factory))
-}
-
-/// Reads the group of the subscription's Largest Location, up to that
-/// location, with a Relative Joining FETCH, Joining Start 0 (draft-14 §9.16.2).
-async fn fetch_current_group(
-    session: &Session,
-    subscription: &Subscription,
-) -> Result<Vec<Object>> {
-    let mut subscriber = session.subscriber();
-    let handle = subscriber
-        .fetch_relative_joining(subscription, 0, FetchOption::default())
-        .await?;
-    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-    let mut objects = Vec::new();
-    loop {
-        match receiver.receive().await? {
-            Fetch::Object(object) => objects.push(object),
-            Fetch::End => return Ok(objects),
-        }
-    }
 }
