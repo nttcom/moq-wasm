@@ -288,15 +288,19 @@ between sessions, tracks and subscriptions; querying the snapshot JSON in
 
 ## Client telemetry
 
-Browsers cannot reach the collector, which listens only inside the VPC, so
-they post to the observability server behind its public load balancer, which
-converts the report to OTLP/JSON and forwards it (`client_telemetry`).
+Clients (browser pages, `moq-cli`, the Python bots) cannot reach the
+collector, which listens only inside the VPC, so they post to the
+observability server behind its public load balancer, which converts the
+report to OTLP/JSON and forwards it (`client_telemetry`).
 
 - **Request.** `POST /api/client-telemetry` with a JSON body
-  `{ token?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }] }`.
-  `clientId` is generated once per page load. The server does not read
-  `Content-Type`: browsers send `text/plain`, a CORS simple request that
-  `navigator.sendBeacon` can send and that needs no preflight.
+  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }] }`.
+  `service` is `browser` (the default), `moq-cli` or `python`; any other value
+  answers 400, so a client cannot log as a relay. `page` names the page, the
+  CLI subcommand or the bot. `clientId` is generated once per page load or
+  process. The server does not read `Content-Type`: browsers send
+  `text/plain`, a CORS simple request that `navigator.sendBeacon` can send
+  and that needs no preflight.
 - **Limits.** The body is at most 64 KiB (413), a report carries at most 100
   logs and 100 stats, `clientId`, `page`, `trackNamespace` and `mediaSource`
   at most 128 characters (400).
@@ -310,9 +314,10 @@ converts the report to OTLP/JSON and forwards it (`client_telemetry`).
   `anon`, the app the relay gives an anonymous session. The server sets
   `app_id` and `client_id` on every record, so a client cannot claim another
   app's data.
-- **Logs** become OTLP log records of resource `service.name=browser`,
-  `page`, with `app_id`, `client_id`, `target` and the client's fields as
-  attributes, and are posted to `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`.
+- **Logs** become OTLP log records of resource `service.name` (the report's
+  `service`) and `page`, with `app_id`, `client_id`, `target` and the
+  client's fields as attributes, and are posted to
+  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`.
 - **Stats** become metric points with `app_id` and `client_id`, posted to
   `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. A page playing several tracks at
   once (meeting: each remote member's camera and screen share) sends one
