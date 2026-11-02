@@ -164,7 +164,7 @@ async function main() {
     const ffmpeg = spawnProcess(
       "ffmpeg",
       "ffmpeg",
-      buildLiveIngestFfmpegArgs(rtmpAddress, namespace),
+      buildLiveIngestFfmpegArgs("rtmp", rtmpAddress, namespace),
       {
         cwd: repoRoot,
       },

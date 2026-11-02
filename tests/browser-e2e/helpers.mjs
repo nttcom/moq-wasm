@@ -117,8 +117,9 @@ export async function startTcpProxy(targetPort) {
   };
 }
 
-/// A 300 s 720p30 H.264 + AAC test pattern streamed to live-ingest over RTMP.
-export function buildLiveIngestFfmpegArgs(rtmpAddress, namespace) {
+/// A 300 s 720p30 H.264 + AAC test pattern streamed to live-ingest over RTMP
+/// or SRT.
+export function buildLiveIngestFfmpegArgs(ingest, address, namespace) {
   return [
     "-hide_banner",
     "-loglevel",
@@ -152,8 +153,8 @@ export function buildLiveIngestFfmpegArgs(rtmpAddress, namespace) {
     "2",
     "-t",
     "300",
-    "-f",
-    "flv",
-    `rtmp://${rtmpAddress}/${namespace}/stream`,
+    ...(ingest === "srt"
+      ? ["-f", "mpegts", `srt://${address}?mode=caller&streamid=${namespace}`]
+      : ["-f", "flv", `rtmp://${address}/${namespace}/stream`]),
   ];
 }
