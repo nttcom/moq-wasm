@@ -14,7 +14,7 @@ bot は Qwen3-ASR と同じく、発話の区間ごとに 16 kHz の WAV を書�
 
 ```shell
 cd examples/python/haas-asr-server
-uv run haas-asr-server --host 0.0.0.0 --port 8080
+uv run --extra model haas-asr-server --host 0.0.0.0 --port 8080
 ```
 
 初回は Hugging Face からモデル（約 1.2 GB）をダウンロードします。
@@ -75,7 +75,7 @@ uv run python -m moq_meeting_transcriber.bot --asr haas-ja=${ASR_URL} --metadata
 uv run pytest
 ```
 
-テストは HTTP の処理だけを、モデルの代わりの偽物で確かめます。GPU は要りません。
+テストは HTTP の処理だけを、モデルの代わりの偽物で確かめます。GPU も `model` extra も要りません。
 
 ## ライセンス
 

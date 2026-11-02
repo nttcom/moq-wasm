@@ -12,9 +12,9 @@ RUN pip uninstall -y setuptools
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project --no-cache
+RUN uv sync --frozen --no-dev --no-install-project --no-cache --extra model
 COPY haas_asr_server haas_asr_server
-RUN uv sync --frozen --no-dev --no-cache
+RUN uv sync --frozen --no-dev --no-cache --extra model
 # Bake the weights into the image so a cold start does not wait for a download.
 ARG HAAS_REVISION=660728d39019e5e065046154beca44ac9a66a540
 RUN .venv/bin/hf download third-intelligence/Haas-ja-v1.0 Haas-ja-v1.0.nemo --revision ${HAAS_REVISION} \

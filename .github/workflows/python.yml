@@ -8,6 +8,8 @@ on:
       - "crates/python/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "examples/python/moq-bot-rooms/**"
+      - "examples/python/system-one-server/**"
+      - "examples/python/haas-asr-server/**"
       - "crates/moqt/**"
       - "services/relay/**"
       - "services/vts/**"
@@ -25,6 +27,8 @@ on:
       - "crates/python/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "examples/python/moq-bot-rooms/**"
+      - "examples/python/system-one-server/**"
+      - "examples/python/haas-asr-server/**"
       - "crates/moqt/**"
       - "services/relay/**"
       - "services/vts/**"
@@ -80,4 +84,12 @@ jobs:
 
       - name: Run transcriber unit tests
         working-directory: examples/python/moq-meeting-transcriber
+        run: uv run pytest
+
+      - name: Run System One server unit tests
+        working-directory: examples/python/system-one-server
+        run: uv run pytest
+
+      - name: Run Haas ASR server unit tests
+        working-directory: examples/python/haas-asr-server
         run: uv run pytest

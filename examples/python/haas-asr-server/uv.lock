@@ -1608,6 +1608,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "soundfile" },
+]
+
+[package.optional-dependencies]
+model = [
     { name = "haas-asr" },
 ]
 
@@ -1620,8 +1627,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
-    { name = "haas-asr", git = "https://github.com/third-intelligence/Haas-ASR.git?rev=acc614f68769dcbfae9dba96b48439c4a66295af" },
+    { name = "haas-asr", marker = "extra == 'model'", git = "https://github.com/third-intelligence/Haas-ASR.git?rev=acc614f68769dcbfae9dba96b48439c4a66295af" },
+    { name = "numpy", specifier = ">=2" },
+    { name = "soundfile", specifier = ">=0.13" },
 ]
+provides-extras = ["model"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -21,5 +21,16 @@ system-one-server = "system_one_server.server:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv.sources]
+# PyPI's Linux torch carries the CUDA libraries, several GB that the tests never load. The Dockerfile
+# installs with pip from a CUDA image, so this reaches uv only.
+torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+torchvision = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
