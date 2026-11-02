@@ -23,7 +23,8 @@ export const ASR_CHOICES = [
   { asr: 'whisper', label: 'Whisper (CPU)' },
   { asr: 'granite-speech-5-470m', label: 'Granite 470m (CPU)' },
   { asr: 'qwen3-asr', label: 'Qwen3-ASR (GPU)' },
-  { asr: 'granite-speech-5-2b', label: 'Granite 2b (GPU)' }
+  { asr: 'granite-speech-5-2b', label: 'Granite 2b (GPU)' },
+  { asr: 'haas-ja', label: 'Haas-ja (GPU)' }
 ] as const
 
 export type CaptionsControls = {

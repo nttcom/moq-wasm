@@ -12,6 +12,7 @@ vLLM の書き起こし API は、Granite Speech に言語を書かない決ま�
 
 モデルごとに別のサービスにします。Qwen3-ASR のモデルカードは、そのモデルに合わせて固定した vLLM の nightly 版を求めているためです。
 System One の判定サーバ（[d1-2B を Cloud Run にデプロイする](system-one-on-cloud-run.md)）とも別のサービスです。判定サーバは vLLM ではなく独自のサーバ（`system-one-server`）で動くためです。
+`haas-ja`（Haas-ja-v1.0）は vLLM で動かないため、専用のサーバを使います。手順は [haas-asr-server](haas-asr-server/README.md) にあります。
 
 | 構成 | 理由 |
 | --- | --- |

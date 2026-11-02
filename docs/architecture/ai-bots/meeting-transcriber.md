@@ -123,7 +123,7 @@ short utterance guesses wrong more often than a demo of a Japanese meeting
 gains from it. The Opus packets of the participant's audio objects are
 decoded with PyAV and pushed as `UserAudioRawFrame`s whose `user_id` is the
 participant's user name. The STT service is a `SegmentedSTTService` subclass
-that dates each utterance (below) and hands the segment to one of four speech
+that dates each utterance (below) and hands the segment to one of five speech
 recognizers:
 
 | Name | Model | Where it runs |
@@ -132,6 +132,7 @@ recognizers:
 | `granite-speech-5-470m` | Granite Speech 5.0 470m | in the bot, on the CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | its own Cloud Run service with an L4 GPU, served by vLLM |
 | `granite-speech-5-2b` | Granite Speech 5.0 2b | its own Cloud Run service with an L4 GPU, served by vLLM |
+| `haas-ja` | Haas-ja-v1.0 | its own Cloud Run service with an L4 GPU, served by `haas-asr-server` |
 
 - `whisper`: all pipelines share one faster-whisper model, so memory does not
   grow with the number of speakers, and transcribe one segment at a time.
@@ -169,6 +170,16 @@ recognizers:
   service then runs the official vLLM image with arguments only. Neither is
   the System One service, which runs its own server (`system-one-server`)
   rather than vLLM.
+- `haas-ja`: a Parakeet-TDT model (FastConformer encoder, TDT decoder) of
+  616M parameters trained on Japanese, so it takes no language either. It
+  runs on NeMo only, with Triton kernels that need an NVIDIA GPU, so vLLM
+  cannot serve it: `examples/python/haas-asr-server` loads it with haas-asr
+  and answers `/health` and `/v1/audio/transcriptions` as vLLM does, so the
+  bot calls it with the same `HttpRecognizer` as `qwen3-asr`. The server
+  runs the model on one thread, so concurrent segments wait for each other,
+  and a segment longer than the 30 s it was trained on is split at its
+  quietest points. Its 1.2 GB of weights go into the image rather than to
+  Cloud Storage.
 - None of the models transcribes while a participant speaks: each takes a
   whole utterance, so a caption follows the end of the utterance.
 
