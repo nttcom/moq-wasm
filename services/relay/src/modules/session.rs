@@ -4,6 +4,7 @@ pub(crate) mod data_sender;
 pub(crate) mod handler;
 pub(crate) mod moqt_session_event;
 pub(crate) mod publisher;
+pub(crate) mod remote_address_watch_task;
 pub(crate) mod session_event;
 pub(crate) mod session_repository;
 pub(crate) mod subscriber;
