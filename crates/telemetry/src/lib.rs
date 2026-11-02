@@ -12,9 +12,11 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
+mod event_logger;
 mod http_trace_context;
 pub mod relay_stats;
 
+pub use event_logger::EventLogger;
 pub use http_trace_context::{continue_trace_from, inject_trace_context};
 
 #[derive(Clone, Copy)]
@@ -48,6 +50,15 @@ pub struct TelemetryConfig<'a> {
 pub struct TelemetryGuard {
     tracer_provider: Option<SdkTracerProvider>,
     logger_provider: Option<SdkLoggerProvider>,
+}
+
+impl TelemetryGuard {
+    /// `None` while OTLP is off.
+    pub fn event_logger(&self, scope: &'static str) -> Option<EventLogger> {
+        self.logger_provider
+            .as_ref()
+            .map(|provider| EventLogger::new(provider, scope))
+    }
 }
 
 impl Drop for TelemetryGuard {

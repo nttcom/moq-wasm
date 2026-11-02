@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 
 pub const NAMESPACE_ROOT: &str = "observability";
 pub const TRACK_NAME: &str = "network_stats";
+/// `EventName` of the OTLP log record that carries a snapshot.
+pub const EVENT_NAME: &str = "relay.stats.snapshot";
+/// Attribute of that record holding the snapshot as JSON.
+pub const EVENT_ATTRIBUTE: &str = "snapshot";
 
 pub fn track_namespace(relay_id: &str) -> String {
     format!("{NAMESPACE_ROOT}/{relay_id}")

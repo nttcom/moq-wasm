@@ -16,3 +16,6 @@ serde_json = "1"
 tracing = "0.1.44"
 tracing-opentelemetry = "0.34.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+opentelemetry_sdk = { version = "0.33.1", features = ["testing"] }
