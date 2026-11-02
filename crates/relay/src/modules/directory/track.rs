@@ -279,18 +279,12 @@ impl Track {
             && (self.is_creating() || self.wants(publisher_peer))
     }
 
-    /// Whether `session_id` receives the track or has a forwarded PUBLISH
-    /// for it on its way.
-    pub(crate) fn has_consumer_session(&self, session_id: SessionId) -> bool {
-        self.pending_consumers.contains(&session_id)
-            || self
-                .consumers
-                .keys()
-                .any(|(consumer_session_id, _)| *consumer_session_id == session_id)
-    }
-
     pub(crate) fn begin_forwarded_publish(&mut self, session_id: SessionId) -> bool {
-        !self.has_consumer_session(session_id) && self.pending_consumers.insert(session_id)
+        !self
+            .consumers
+            .keys()
+            .any(|(consumer_session_id, _)| *consumer_session_id == session_id)
+            && self.pending_consumers.insert(session_id)
     }
 
     pub(crate) fn end_forwarded_publish(&mut self, session_id: SessionId) {
