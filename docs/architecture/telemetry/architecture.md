@@ -39,6 +39,17 @@ and the log bridge reads the active context.
 When OTLP is on, `init` also installs the W3C Trace Context propagator as the
 global propagator.
 
+## Event records
+
+`TelemetryGuard::event_logger` returns an `EventLogger` (`None` while OTLP is
+off) for records that carry data rather than a message: they go to the OTLP
+log exporter only, past the `tracing` filters and stdout, so a payload sent
+every second neither floods the readable log nor depends on a filter. Each
+record has an `EventName`, that name as its body, INFO severity and the data
+as one string attribute. The data is not the body because the ClickStack
+collector parses any body containing a JSON object into one attribute per
+field, which would store it twice.
+
 ## HTTP trace context
 
 `inject_trace_context` writes a span's context into an `http::HeaderMap` as
