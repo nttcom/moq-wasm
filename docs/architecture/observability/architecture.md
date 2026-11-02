@@ -9,9 +9,10 @@ An admin view of the relay mesh: per-session network statistics, per-track /
 per-subscription delivery counters, relay memory, and the pub/sub topology
 that links them, live and as history.
 
-- Every relay publishes one snapshot per second over MoQT.
-- The `observability` server subscribes to every relay, stores the snapshots in
-  ClickHouse, and serves them to the browser over HTTP.
+- Every relay sends one snapshot per second as an OTLP log record.
+- The ClickStack collector stores it in the `otel` database of ClickHouse,
+  and materialized views copy it into the `observability` database's tables.
+- The `observability` server serves those tables to the browser over HTTP.
 - The browser page renders the topology and plots history for a
   selected node.
 
@@ -22,31 +23,36 @@ Target scale: 3 relays, up to 100 clients.
 ```mermaid
 flowchart LR
   subgraph relay-a
-    C[StatsCollector] --> P[StatsPublishTask<br/>loopback session]
-    P -- "PUBLISH observability/relay-a<br/>network_stats" --> R[relay core]
+    C[StatsCollector] --> E[telemetry::EventLogger]
   end
-  R -- SUBSCRIBE --> O[observability server]
-  O -- "INSERT JSONEachRow (HTTP)" --> CH[(ClickHouse)]
-  B[browser topology page] -- "GET /api/snapshots, /api/series" --> O
-  O -- SELECT --> CH
+  E -- "OTLP gRPC log record<br/>relay.stats.snapshot" --> K[ClickStack collector]
+  K -- INSERT --> L[(otel.otel_logs)]
+  L -- "materialized views" --> T[(observability.*)]
+  B[browser topology page] -- "GET /api/snapshots, /api/series" --> O[observability server]
+  O -- SELECT --> T
 ```
 
-## Track
+## Snapshot record
 
 | Field | Value |
 | --- | --- |
-| Track Namespace | `["observability", <RELAY_ID>]` (`RELAY_ID` already exists in `RelayConfig`) |
-| Track Name | `network_stats` |
-| Group | one per snapshot; Group ID = Unix time in milliseconds of the snapshot |
-| Object | Object 0 only; payload is the JSON snapshot below |
+| `ServiceName` | `relay` (resource `relay.id` = `RELAY_ID`) |
+| `EventName` and body | `relay.stats.snapshot` |
+| `LogAttributes['snapshot']` | the JSON snapshot below |
+| `Timestamp` | the snapshot's `timestamp_ms` |
 
-A group per snapshot lets a congested subscriber skip stale snapshots and
-start from the newest one. Wall-clock group ids keep a restarted relay from
-reusing locations the relay cache still holds.
+The snapshot is an attribute rather than the body because the ClickStack
+collector parses a body containing a JSON object into one attribute per
+field, which would store it twice (see `docs/architecture/telemetry/architecture.md`).
 
-Topology is not a separate track: a snapshot already lists which session
+Topology is not a separate record: a snapshot already lists which session
 publishes each track and which session subscribes to it, so the topology at
 time *t* is the snapshot at *t*.
+
+The relays reach the collector the way their traces and logs do, so the
+server needs no list of relays: a relay appears once it logs a snapshot.
+A relay whose runtime stops, or whose collector reads block on a stuck
+directory lock, stops logging and leaves the live view after 10 s.
 
 ### Snapshot payload
 
@@ -156,47 +162,38 @@ resolver, ingress ownership and session cleanup — every path that today
 assumes a publisher is a session. At 1 Hz the loopback cost is negligible, so
 the loopback session wins.
 
-Cascading is not used for observability: the server connects to each relay
-directly, so losing inter-relay routing does not hide the relays it affects.
+The relay still publishes each snapshot on the MoQT track
+`observability/<RELAY_ID>` / `network_stats` too, which nothing reads any
+more.
+
+Cascading is not used for observability: each relay sends its own snapshots
+to the collector, so losing inter-relay routing does not hide the relays it
+affects.
 
 ## Observability server (`crates/observability`)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OBSERVABILITY_RELAYS` | required | Comma-separated `RELAY_ID=URL` pairs, e.g. `relay-a=moqt://relay-a:444` |
-| `OBSERVABILITY_AUTH_TOKEN` | none | JWT presented in CLIENT_SETUP |
-| `OBSERVABILITY_INSECURE` | unset | Any value disables relay certificate verification |
 | `CLICKHOUSE_URL` | `http://127.0.0.1:8123` | ClickHouse HTTP interface |
-| `CLICKHOUSE_DATABASE` | `observability` | Created at startup with its tables |
+| `CLICKHOUSE_DATABASE` | `observability` | Created at startup with its tables and views |
 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | none | Basic auth |
 | `OBSERVABILITY_HTTP_PORT` | `8095` | API port |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | none | OTLP/HTTP metrics URL (`…/v1/metrics`); relay metrics are exported only when set |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | none | OTLP/HTTP metrics URL (`…/v1/metrics`) for player stats |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | none | OTLP/HTTP logs URL (`…/v1/logs`) for browser logs |
 | `AUTH_VTS_URL` | none | VTS `…/verify` URL that reads a browser report's app from its token; without it every report is `anon` |
 
-The recommended deployment connects to each relay's inner endpoint with
-`AUTH_RELAY_TOKEN`: relay tokens do not expire and have full access, while a
-client token (`app_id` = `observability`, `subscribe` claim) would be capped
-by the relay's `AUTH_MAX_TOKEN_TTL_SECONDS` and the server does not refresh
-tokens. Sessions authenticated with an `observability` client token are left
-out of the topology page.
+The server stores nothing of the relays itself; at startup `schema::apply`
+creates the tables and the views that fill them (see Storage) and the API
+starts.
 
-- `RelaySubscriptionTask` (one per relay): connect, SUBSCRIBE
-  `observability/<RELAY_ID>` / `network_stats` with Next Group Start, decode
-  each object and send it to the ingest task; reconnect 5 s after the session
-  or track ends.
-- `SnapshotIngestTask`: keeps the newest snapshot per relay in
-  `LatestSnapshots` and buffers every snapshot's rows for the periodic
-  ClickHouse INSERT (`snapshot_rows::SnapshotRows`, see Storage).
-- `OtlpMetricsExportTask` (only with `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`):
-  posts `LatestSnapshots` as OTLP metrics every 10 s (see Storage).
 - `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
   - `POST /api/client-telemetry` — a browser's logs and player stats (see
     Client telemetry); 404 unless an OTLP endpoint is set.
-  - `GET /api/snapshots` — the newest snapshot of every relay that sent one
-    in the last 10 s (`RELAY_SILENCE`, timed by arrival here), from memory, so
-    a stopped relay leaves the live view instead of freezing on its last
-    state.
+  - `GET /api/snapshots` — the newest snapshot of every relay that logged one
+    in the last 10 s (`RELAY_SILENCE`, by the snapshot's time), so a stopped
+    relay leaves the live view instead of freezing on its last state. The
+    relay's batch exporter (1 s) and the collector's batch (5 s) make it
+    trail the relay by up to about 6 s.
   - `GET /api/snapshots?at=<ms>&previous=<ms>` — `{ snapshots, previous }`:
     each relay's last snapshot at or before `at`, and at or before
     `previous`, if it published one in the 10 s before that time. The page
@@ -227,13 +224,19 @@ cards remain distinguishable. Relay addresses stay unmasked because the page
 needs them to identify inter-relay sessions. ClickHouse keeps the unmasked
 addresses.
 
-The browser polls the server instead of subscribing over MoQT itself: one data
-path for live and history, and no relay tokens in the browser.
+The browser polls the server instead of reading ClickHouse or subscribing
+over MoQT itself: one data path for live and history, and no credentials in
+the browser.
 
 ## Storage (ClickHouse, self-hosted)
 
-`schema.rs` creates five MergeTree tables, all keyed by `relay_id` and
-`timestamp_ms` with `ts DateTime64(3, 'UTC')` derived from it:
+The collector writes each snapshot record into `otel.otel_logs` with the
+relays' other logs (7-day TTL, `HYPERDX_OTEL_EXPORTER_TABLES_TTL`), where
+HyperDX finds it by `relay.id`. That table is ordered by time and service,
+not by relay, and its granules hold 8192 rows, so the API does not query it.
+Instead `schema.rs` creates five MergeTree tables in the `observability`
+database, all keyed by `relay_id` and `timestamp_ms` with
+`ts DateTime64(3, 'UTC')` derived from it:
 
 | Table | Rows per snapshot | Extra key |
 | --- | --- | --- |
@@ -243,6 +246,23 @@ path for live and history, and no relay tokens in the browser.
 | `track_stats` | one per track | `publisher_session_id, namespace, name` |
 | `subscription_stats` | one per subscription | `subscriber_session_id, request_id` |
 
+and, for each, a materialized view `<table>_from_otel` from `otel.otel_logs`
+(`EventName = 'relay.stats.snapshot'`): ClickHouse runs it on every block the
+collector inserts, extracting each column from the snapshot JSON (an array
+element per row for sessions, tracks and subscriptions). The views are
+generated from the same column list as the tables, so a column added to a
+table is filled from the field of the same name. A field missing from an
+older relay's snapshot reads as 0 or `NULL`; a field with no column is
+ignored. The collector inserts at most once per 5 s (its batch timeout), so a
+table gets a part per 5 s, within ClickHouse's advice of about one INSERT per
+second per table.
+
+`schema::apply` drops the views, creates the tables and adds missing
+columns, rebuilds a table whose settings changed (below), then waits until
+the collector has created `otel.otel_logs` and creates the views again. The
+snapshots logged while the views are gone, a few seconds per server
+restart, are not copied, but they stay in `otel.otel_logs`.
+
 Every table is `PARTITION BY toYYYYMMDD(ts)` with
 `TTL toDateTime(ts) + INTERVAL 7 DAY` and `ttl_only_drop_parts = 1`, so old
 data leaves a whole day partition at a time; there is no capacity-based
@@ -251,44 +271,23 @@ few KB make the default granule about 1500 rows, so a `?at=` lookup of one row
 per relay decompressed thousands of payloads, and a seek bar drag sends one
 lookup per step. ClickHouse cannot change `index_granularity` on an existing
 table, so `schema::apply` rebuilds a table whose `engine_full` lacks its
-settings at startup, before ingestion starts: it copies the rows into
+settings, while no view inserts into it: it copies the rows into
 `<table>_rebuild`, swaps the two with `EXCHANGE TABLES` and drops the old
 data. The copy needs free disk for a second copy of the table.
-`SnapshotIngestTask` keeps the rows of the snapshots it receives in
-memory and, every 30 seconds, sends one synchronous INSERT per table, so a
-table gets one part per 30 seconds instead of one per relay snapshot. Parts
-created that often kept the merges busy: each merge rewrites the whole day
-part of a small table, and ClickHouse's documentation asks for batches of at
-least 1000 rows and about one INSERT per second per table at most. Alternative
-considered: server-side `async_insert`; it still costs one HTTP request per
-relay and table every second, and with `wait_for_async_insert = 0` a failed
-flush shows only in the ClickHouse log. A failed INSERT is logged and its batch
-dropped, and a restart loses the snapshots of the last interval, so charts
-trail the live view by up to 30 seconds. Inserts set `input_format_skip_unknown_fields`, so a
-field added to the snapshot is ignored until a column exists for it.
 Tables are created with `IF NOT EXISTS`, and every startup also runs
 `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for each column, so a database
 created by an older build gains the columns added since. A removed or retyped
 column still needs a hand-written `ALTER TABLE` (or a fresh database).
 
-ClickHouse runs as a `docker-compose.yml` service next to the relays.
+ClickHouse and the ClickStack services (collector, HyperDX on port 8080) run
+as `docker-compose.yml` services next to the relays; the relays send
+snapshots only with `OTEL_SDK_DISABLED=false`.
 
-The relays' OTLP logs and traces are a separate path: the ClickStack
-services start with `observability`, and with `OTEL_SDK_DISABLED=false` the
-ClickStack collector writes them into the `otel` database of the same ClickHouse (7-day
-TTL) and HyperDX serves a search UI on port 8080.
-
-The relays export no metrics themselves: `OtlpMetricsExportTask` converts
-each relay's newest snapshot into OTLP/JSON and posts it to the collector,
-so the stats track stays the one place a relay measures. Each relay is a
-`service.name = relay` resource with the same `relay.id` as its traces and
-logs. Session points carry `session_id`, `session_peer` and `app_id`, the
-log field names, so a session found in a trace filters its metrics.
-
-Only process and session statistics are exported: track and subscription
-points would multiply the rows by the subscriber count. Session counters
-are cumulative monotonic sums without a start time, because the snapshot
-does not say when a session started.
+Alternatives considered: OTLP metrics from the relay, read from
+`otel_metrics_*`, would chart in HyperDX but at the export interval
+(10 s or more), one row per metric and entity, and without the relations
+between sessions, tracks and subscriptions; querying the snapshot JSON in
+`otel.otel_logs` directly would parse a week of payloads for a 7-day chart.
 
 ## Client telemetry
 

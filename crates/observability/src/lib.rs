@@ -3,16 +3,10 @@ mod browser_json;
 pub mod clickhouse;
 pub mod client_telemetry;
 pub mod config;
-pub mod latest_snapshots;
 pub mod namespaces;
 mod otlp;
-mod otlp_metrics;
-pub mod otlp_metrics_export_task;
-pub mod relay_subscription_task;
 pub mod schema;
 pub mod series;
 pub mod snapshot_history;
-pub mod snapshot_ingest_task;
-mod snapshot_rows;
 #[cfg(test)]
 mod test_support;

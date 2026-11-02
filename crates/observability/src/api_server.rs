@@ -18,11 +18,10 @@ use crate::{
     browser_json::snapshots_for_browser,
     clickhouse::ClickHouse,
     client_telemetry::ClientTelemetry,
-    latest_snapshots::{LatestSnapshots, RELAY_SILENCE},
     namespaces::{NamespaceQuery, published_namespaces},
     schema::RETENTION_DAYS,
     series::{self, SeriesQuery, SeriesTarget},
-    snapshot_history::snapshots_at,
+    snapshot_history::{RELAY_SILENCE, latest_snapshots, snapshots_at},
 };
 
 const DEFAULT_POINTS: u64 = 90;
@@ -30,7 +29,6 @@ const MAX_POINTS: u64 = 300;
 const MAX_SPAN_MS: u64 = RETENTION_DAYS as u64 * 86_400_000;
 
 pub struct ApiState {
-    pub latest: LatestSnapshots,
     pub clickhouse: ClickHouse,
     /// `None` answers `POST /api/client-telemetry` with 404.
     pub client_telemetry: Option<ClientTelemetry>,
@@ -140,7 +138,7 @@ async fn snapshots(
     params: &HashMap<String, String>,
 ) -> anyhow::Result<JsonResponse> {
     let body = match past_snapshot_times(params)? {
-        None => snapshots_for_browser(&state.latest.current()),
+        None => snapshots_for_browser(&latest_snapshots(&state.clickhouse).await?),
         Some((at_ms, previous_ms)) => {
             let past = snapshots_at(&state.clickhouse, at_ms, previous_ms).await?;
             json!({

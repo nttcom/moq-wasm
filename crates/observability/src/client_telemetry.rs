@@ -161,7 +161,6 @@ mod tests {
         api_server::{ApiServer, ApiState},
         clickhouse::ClickHouse,
         config::ClickHouseConfig,
-        latest_snapshots::LatestSnapshots,
         test_support::{fake_http_server, fake_http_server_answering},
     };
 
@@ -206,7 +205,6 @@ mod tests {
         let api = ApiServer::run(
             listener,
             ApiState {
-                latest: LatestSnapshots::default(),
                 clickhouse,
                 client_telemetry,
             },

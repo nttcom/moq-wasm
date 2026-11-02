@@ -1,7 +1,8 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde::Deserialize;
+use telemetry::relay_stats::{EVENT_ATTRIBUTE, EVENT_NAME};
 
 use crate::clickhouse::ClickHouse;
 
@@ -13,10 +14,25 @@ pub const SESSION_STATS: &str = "session_stats";
 pub const TRACK_STATS: &str = "track_stats";
 pub const SUBSCRIPTION_STATS: &str = "subscription_stats";
 
+/// The table the ClickStack collector writes the relays' OTLP logs into.
+const OTEL_LOGS: &str = "otel.otel_logs";
+const OTEL_LOGS_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
 const COUNTER: &str = "UInt64";
+
+/// Where a table's rows sit in a snapshot.
+enum Rows {
+    /// The whole snapshot JSON, as `payload`.
+    Snapshot,
+    /// One row from the object under this key.
+    Object(&'static str),
+    /// One row per element of the array under this key.
+    Array(&'static str),
+}
 
 struct Table {
     name: &'static str,
+    rows: Rows,
     columns: &'static [(&'static str, &'static str)],
     order_by: &'static [&'static str],
     /// MergeTree settings beyond the shared ones. A table created without them
@@ -27,6 +43,7 @@ struct Table {
 const TABLES: &[Table] = &[
     Table {
         name: SNAPSHOTS,
+        rows: Rows::Snapshot,
         columns: &[("payload", "String")],
         order_by: &[],
         // With a few-KB payload, a granule under the default settings holds about 1500 rows,
@@ -35,6 +52,7 @@ const TABLES: &[Table] = &[
     },
     Table {
         name: PROCESS_STATS,
+        rows: Rows::Object("process"),
         columns: &[
             ("rss_bytes", "Nullable(UInt64)"),
             ("cache_tracks", COUNTER),
@@ -50,6 +68,7 @@ const TABLES: &[Table] = &[
     },
     Table {
         name: SESSION_STATS,
+        rows: Rows::Array("sessions"),
         columns: &[
             ("session_id", COUNTER),
             ("peer", "LowCardinality(String)"),
@@ -77,6 +96,7 @@ const TABLES: &[Table] = &[
     },
     Table {
         name: TRACK_STATS,
+        rows: Rows::Array("tracks"),
         columns: &[
             ("namespace", "String"),
             ("name", "String"),
@@ -89,6 +109,7 @@ const TABLES: &[Table] = &[
     },
     Table {
         name: SUBSCRIPTION_STATS,
+        rows: Rows::Array("subscriptions"),
         columns: &[
             ("namespace", "String"),
             ("name", "String"),
@@ -115,8 +136,11 @@ const KEY_COLUMNS: &[(&str, &str)] = &[
 ];
 
 /// Creates the database and its tables, then rebuilds every table that lacks
-/// its `settings`. Call it before anything inserts: a rebuild copies the
-/// table and swaps the copy in, so rows inserted during the copy are lost.
+/// its `settings`. Once the collector has created `otel.otel_logs`, it creates
+/// the materialized views that fill the tables from the relays' snapshot
+/// records.
+/// The views are dropped first, so a rebuild never copies a table something
+/// inserts into. Snapshots logged before the views are recreated are not stored.
 pub async fn apply(clickhouse: &ClickHouse) -> anyhow::Result<()> {
     let database = clickhouse.database();
     for statement in statements(database) {
@@ -144,13 +168,48 @@ pub async fn apply(clickhouse: &ClickHouse) -> anyhow::Result<()> {
             "table rebuilt"
         );
     }
+    wait_for_otel_logs(clickhouse).await?;
+    for table in TABLES {
+        clickhouse.execute(&create_view(database, table)).await?;
+    }
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct ExistsRow {
+    result: u8,
+}
+
+async fn wait_for_otel_logs(clickhouse: &ClickHouse) -> anyhow::Result<()> {
+    let mut logged = false;
+    loop {
+        let rows: Vec<ExistsRow> = clickhouse
+            .select(&format!("EXISTS TABLE {OTEL_LOGS}"), &[])
+            .await?;
+        if rows.first().is_some_and(|row| row.result == 1) {
+            return Ok(());
+        }
+        if !logged {
+            tracing::info!(
+                table = OTEL_LOGS,
+                "waiting for the collector to create its table"
+            );
+            logged = true;
+        }
+        tokio::time::sleep(OTEL_LOGS_POLL_INTERVAL).await;
+    }
 }
 
 /// Idempotent: a table created by an older build gains the columns added
 /// since, so a query naming them does not fail.
 pub fn statements(database: &str) -> Vec<String> {
     std::iter::once(format!("CREATE DATABASE IF NOT EXISTS {database}"))
+        .chain(TABLES.iter().map(|table| {
+            format!(
+                "DROP VIEW IF EXISTS {database}.{view}",
+                view = view_name(table)
+            )
+        }))
         .chain(
             TABLES
                 .iter()
@@ -212,14 +271,52 @@ fn rebuild_statements(database: &str, table: &Table) -> Vec<String> {
         .join(", ");
     vec![
         create_table(database, table, &rebuild),
-        // Writes the inserts the previous process left queued into the old table.
-        "SYSTEM FLUSH ASYNC INSERT QUEUE".to_string(),
         format!(
             "INSERT INTO {database}.{rebuild} ({columns}) SELECT {columns} FROM {database}.{name}"
         ),
         format!("EXCHANGE TABLES {database}.{name} AND {database}.{rebuild}"),
         format!("DROP TABLE {database}.{rebuild} SYNC"),
     ]
+}
+
+fn view_name(table: &Table) -> String {
+    format!("{}_from_otel", table.name)
+}
+
+/// A materialized view from `otel.otel_logs` into `table`: ClickHouse runs it
+/// on every block the collector inserts, so each snapshot record becomes the
+/// table's rows as it arrives.
+fn create_view(database: &str, table: &Table) -> String {
+    let extract = |source: &str| {
+        table
+            .columns
+            .iter()
+            .map(|(column, column_type)| {
+                format!("JSONExtract({source}, '{column}', '{column_type}') AS {column}")
+            })
+            .collect::<Vec<_>>()
+    };
+    let (columns, array_join) = match table.rows {
+        Rows::Snapshot => (vec!["snapshot AS payload".to_string()], String::new()),
+        Rows::Object(key) => (
+            extract(&format!("JSONExtractRaw(snapshot, '{key}')")),
+            String::new(),
+        ),
+        Rows::Array(key) => (
+            extract("item"),
+            format!(" ARRAY JOIN JSONExtractArrayRaw(snapshot, '{key}') AS item"),
+        ),
+    };
+    format!(
+        "CREATE MATERIALIZED VIEW {database}.{view} TO {database}.{name} AS \
+         SELECT JSONExtractString(snapshot, 'relay_id') AS relay_id, \
+         JSONExtractUInt(snapshot, 'timestamp_ms') AS timestamp_ms, {columns} \
+         FROM (SELECT LogAttributes['{EVENT_ATTRIBUTE}'] AS snapshot FROM {OTEL_LOGS} \
+         WHERE EventName = '{EVENT_NAME}'){array_join}",
+        view = view_name(table),
+        name = table.name,
+        columns = columns.join(", "),
+    )
 }
 
 fn create_table(database: &str, table: &Table, name: &str) -> String {
@@ -251,8 +348,8 @@ fn create_table(database: &str, table: &Table, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        PROCESS_STATS, SESSION_STATS, SNAPSHOTS, TABLES, Table, has_settings, rebuild_statements,
-        statements,
+        PROCESS_STATS, SESSION_STATS, SNAPSHOTS, TABLES, Table, create_view, has_settings,
+        rebuild_statements, statements,
     };
 
     fn table(name: &str) -> &'static Table {
@@ -343,17 +440,64 @@ mod tests {
         assert!(
             statements[0].starts_with("CREATE TABLE IF NOT EXISTS obs.process_stats_rebuild (")
         );
-        assert_eq!(statements[1], "SYSTEM FLUSH ASYNC INSERT QUEUE");
-        assert!(statements[2].starts_with(
+        assert!(statements[1].starts_with(
             "INSERT INTO obs.process_stats_rebuild (relay_id, timestamp_ms, ts, rss_bytes, "
         ));
-        assert!(statements[2].ends_with(" FROM obs.process_stats"));
+        assert!(statements[1].ends_with(" FROM obs.process_stats"));
         assert_eq!(
-            &statements[3..],
+            &statements[2..],
             [
                 "EXCHANGE TABLES obs.process_stats AND obs.process_stats_rebuild",
                 "DROP TABLE obs.process_stats_rebuild SYNC",
             ]
+        );
+    }
+
+    #[test]
+    fn every_view_is_dropped_before_the_tables_are_touched() {
+        // Act
+        let statements = statements("obs");
+
+        // Assert
+        assert_eq!(
+            &statements[1..=TABLES.len()],
+            TABLES
+                .iter()
+                .map(|table| format!("DROP VIEW IF EXISTS obs.{}_from_otel", table.name))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_view_reads_the_snapshot_attribute_of_the_relays_snapshot_records() {
+        // Act
+        let view = create_view("obs", table(SNAPSHOTS));
+
+        // Assert
+        assert_eq!(
+            view,
+            "CREATE MATERIALIZED VIEW obs.snapshots_from_otel TO obs.snapshots AS \
+             SELECT JSONExtractString(snapshot, 'relay_id') AS relay_id, \
+             JSONExtractUInt(snapshot, 'timestamp_ms') AS timestamp_ms, snapshot AS payload \
+             FROM (SELECT LogAttributes['snapshot'] AS snapshot FROM otel.otel_logs \
+             WHERE EventName = 'relay.stats.snapshot')"
+        );
+    }
+
+    #[test]
+    fn a_view_extracts_each_column_from_the_object_or_array_element_of_its_table() {
+        // Act
+        let process = create_view("obs", table(PROCESS_STATS));
+        let sessions = create_view("obs", table(SESSION_STATS));
+
+        // Assert
+        assert!(process.contains(
+            "JSONExtract(JSONExtractRaw(snapshot, 'process'), 'rss_bytes', 'Nullable(UInt64)') AS rss_bytes"
+        ));
+        assert!(!process.contains("ARRAY JOIN"));
+        assert!(sessions.contains("JSONExtract(item, 'peer', 'LowCardinality(String)') AS peer"));
+        assert!(
+            sessions.ends_with(" ARRAY JOIN JSONExtractArrayRaw(snapshot, 'sessions') AS item")
         );
     }
 }
