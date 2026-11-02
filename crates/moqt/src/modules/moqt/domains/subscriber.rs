@@ -15,7 +15,7 @@ use crate::{
                 subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
                 unsubscribe_namespace::UnsubscribeNamespace,
             },
-            enums::ResponseMessage,
+            enums::{RequestId, ResponseMessage},
         },
         data_plane::stream::{
             fetch_data_receiver::FetchDataReceiver,
@@ -25,10 +25,10 @@ use crate::{
             connection::{Connection, generation_of, logical_id},
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
-            session_context::{CarriedSubscription, SessionContext},
+            session_context::{CarriedSubscription, PendingFetch, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
-        version::{Notification, OutgoingRequest, ReceivedResponse},
+        version::{Notification, OutgoingRequest, PendingResponse, ReceivedResponse},
     },
     object::{DatagramReceiver, GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
@@ -82,11 +82,51 @@ impl Subscriber {
         track_name: String,
         option: SubscribeOption,
     ) -> Result<Subscription, RequestFailure> {
-        let (mut carried, connection, message, response) = loop {
+        let (subscription, _) = self
+            .subscribe_joining(track_namespace, track_name, option, false)
+            .await?;
+        Ok(subscription)
+    }
+
+    /// With `joining`, a Relative Joining FETCH of the current group is written
+    /// right behind the SUBSCRIBE on the same connection, before SUBSCRIBE_OK, so
+    /// both are answered within one round trip. The peer handles requests in
+    /// order, so the FETCH finds the subscription it joins (draft-14 §9.16.2).
+    /// The `SentFetch` is `None` without `joining` or when the FETCH could not be
+    /// written.
+    async fn subscribe_joining(
+        &mut self,
+        track_namespace: String,
+        track_name: String,
+        option: SubscribeOption,
+        joining: bool,
+    ) -> Result<(Subscription, Option<SentFetch>), RequestFailure> {
+        let (mut carried, connection, message, response, joining_fetch) = loop {
             let carried = self.session.lock_carried().await;
             let connection = self.session.connection();
-            match send_subscribe(&connection, &track_namespace, &track_name, &option).await {
-                Ok((message, response)) => break (carried, connection, message, response),
+            let sent = async {
+                let (request_id, pending) =
+                    send_subscribe_request(&connection, &track_namespace, &track_name, &option)
+                        .await?;
+                let joining_fetch = if joining {
+                    self.send_joining_fetch(&connection, request_id)
+                        .await
+                        .inspect_err(|error| {
+                            tracing::debug!(%error, "joining FETCH could not be sent");
+                        })
+                        .ok()
+                } else {
+                    None
+                };
+                let (message, response) =
+                    subscribe_ok(request_id, pending, &track_namespace, &track_name).await?;
+                Ok((message, response, joining_fetch))
+            }
+            .await;
+            match sent {
+                Ok((message, response, joining_fetch)) => {
+                    break (carried, connection, message, response, joining_fetch);
+                }
                 Err(error) => {
                     self.session
                         .resend_after(carried, &connection, error)
@@ -140,15 +180,27 @@ impl Subscriber {
             ..message
         };
         response.accept();
-        Ok(Subscription::SubscriberInitiated(
-            SubscriberInitiatedSubscription::new(
-                track_namespace,
-                track_name,
-                message,
-                option.subscriber_priority,
-                option.filter_type,
-            ),
-        ))
+        let subscription = Subscription::SubscriberInitiated(SubscriberInitiatedSubscription::new(
+            track_namespace,
+            track_name,
+            message,
+            option.subscriber_priority,
+            option.filter_type,
+        ));
+        Ok((subscription, joining_fetch))
+    }
+
+    async fn send_joining_fetch(
+        &self,
+        connection: &Arc<Connection>,
+        subscribe_request_id: RequestId,
+    ) -> Result<SentFetch, RequestFailure> {
+        let fetch_params = FetchParams::RelativeJoining {
+            joining_request_id: subscribe_request_id,
+            joining_start: 0,
+        };
+        self.send_fetch_request(connection.clone(), fetch_params, &FetchOption::default())
+            .await
     }
 
     #[tracing::instrument(
@@ -288,18 +340,7 @@ impl Subscriber {
         let (connection, joining_request_id) = self
             .on_live_connection(subscription.request_id())
             .unwrap_or_else(|| (self.session.connection(), subscription.request_id()));
-        let remainder = match subscription.content_exists() {
-            ContentExists::True { location } => Some(FetchRemainder {
-                track_namespace: subscription.track_namespace().to_string(),
-                track_name: subscription.track_name().to_string(),
-                start: Location {
-                    group_id: location.group_id.saturating_sub(joining_start),
-                    object_id: 0,
-                },
-                subscriber_priority: option.subscriber_priority,
-            }),
-            ContentExists::False => None,
-        };
+        let remainder = joining_remainder(subscription, joining_start, &option);
         // A later connection holds the subscription with a `resumed_filter`, never
         // Largest Object, so a Joining FETCH may not join it.
         let fetch_params = if connection.generation == generation_of(subscription.request_id()) {
@@ -338,14 +379,21 @@ impl Subscriber {
         option: FetchOption,
         remainder: Option<FetchRemainder>,
     ) -> Result<FetchHandle, RequestFailure> {
-        let remainder = remainder.filter(|_| {
-            self.session.follows_go_away() && option.group_order != GroupOrder::Descending
-        });
+        let sent = self
+            .send_fetch_request(connection, fetch_params, &option)
+            .await?;
+        self.fetch_answered(sent, &option, remainder).await
+    }
+
+    async fn send_fetch_request(
+        &self,
+        connection: Arc<Connection>,
+        fetch_params: FetchParams,
+        option: &FetchOption,
+    ) -> Result<SentFetch, RequestFailure> {
         let reservation = connection.control.reserve_request_id().await?;
         let request_id = reservation.request_id();
-
         let pending_fetch = self.session.register_pending_fetch(&connection, request_id);
-
         let fetch = Fetch {
             request_id,
             subscriber_priority: option.subscriber_priority,
@@ -356,10 +404,29 @@ impl Subscriber {
         let response = connection
             .control
             .send_request(reservation, OutgoingRequest::Fetch(fetch))
-            .await?
-            .response()
-            .await?
-            .accept();
+            .await?;
+        Ok(SentFetch {
+            connection,
+            pending_fetch,
+            response,
+        })
+    }
+
+    pub(crate) async fn fetch_answered(
+        &self,
+        sent: SentFetch,
+        option: &FetchOption,
+        remainder: Option<FetchRemainder>,
+    ) -> Result<FetchHandle, RequestFailure> {
+        let remainder = remainder.filter(|_| {
+            self.session.follows_go_away() && option.group_order != GroupOrder::Descending
+        });
+        let SentFetch {
+            connection,
+            pending_fetch,
+            response,
+        } = sent;
+        let response = response.response().await?.accept();
         match response {
             ResponseMessage::FetchOk(fetch_ok) => {
                 pending_fetch.keep();
@@ -538,12 +605,15 @@ impl Subscriber {
             filter_type: FilterType::LargestObject,
             ..SubscribeOption::default()
         };
-        let subscription = self.subscribe(track_namespace, track_name, option).await?;
+        let (subscription, joining_fetch) = self
+            .subscribe_joining(track_namespace, track_name, option, true)
+            .await?;
         let reader = TrackReader::joining_current_group(
             Subscriber {
                 session: self.session.clone(),
             },
             subscription.clone(),
+            joining_fetch,
         );
         Ok((subscription, reader))
     }
@@ -737,6 +807,34 @@ pub(crate) async fn send_subscribe_namespace(
     }
 }
 
+/// A FETCH written to the peer; `Subscriber::fetch_answered` reads its answer.
+pub(crate) struct SentFetch {
+    connection: Arc<Connection>,
+    pending_fetch: PendingFetch,
+    response: PendingResponse,
+}
+
+/// What a session that follows GOAWAY asks the next connection for when the
+/// response stream of a Joining FETCH of `subscription` is cut off.
+pub(crate) fn joining_remainder(
+    subscription: &Subscription,
+    joining_start: u64,
+    option: &FetchOption,
+) -> Option<FetchRemainder> {
+    match subscription.content_exists() {
+        ContentExists::True { location } => Some(FetchRemainder {
+            track_namespace: subscription.track_namespace().to_string(),
+            track_name: subscription.track_name().to_string(),
+            start: Location {
+                group_id: location.group_id.saturating_sub(joining_start),
+                object_id: 0,
+            },
+            subscriber_priority: option.subscriber_priority,
+        }),
+        ContentExists::False => None,
+    }
+}
+
 /// The SUBSCRIBE_OK, with `connection`'s wire ids, and its
 /// `ReceivedResponse`: dropping that before `accept` sends UNSUBSCRIBE.
 pub(crate) async fn send_subscribe(
@@ -745,6 +843,17 @@ pub(crate) async fn send_subscribe(
     track_name: &str,
     option: &SubscribeOption,
 ) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
+    let (request_id, pending) =
+        send_subscribe_request(connection, track_namespace, track_name, option).await?;
+    subscribe_ok(request_id, pending, track_namespace, track_name).await
+}
+
+async fn send_subscribe_request(
+    connection: &Connection,
+    track_namespace: &str,
+    track_name: &str,
+    option: &SubscribeOption,
+) -> Result<(RequestId, PendingResponse), RequestFailure> {
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let subscribe = Subscribe {
@@ -758,12 +867,20 @@ pub(crate) async fn send_subscribe(
         authorization_tokens: vec![],
         delivery_timeout: None,
     };
-    let response = connection
+    let pending = connection
         .control
         .send_request(reservation, OutgoingRequest::Subscribe(subscribe))
-        .await?
-        .response()
         .await?;
+    Ok((request_id, pending))
+}
+
+async fn subscribe_ok(
+    request_id: RequestId,
+    pending: PendingResponse,
+    track_namespace: &str,
+    track_name: &str,
+) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
+    let response = pending.response().await?;
     if let ResponseMessage::SubscribeOk(message) = response.message()
         && message.request_id == request_id
     {
@@ -1895,20 +2012,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscribe_current_group_sends_no_fetch_for_a_track_without_content() {
+    async fn subscribe_current_group_sends_the_joining_fetch_before_subscribe_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions("subscriber-current-pipelined").await;
+        let mut subscriber = client.subscriber();
+        let _request = tokio::spawn(async move {
+            subscriber
+                .subscribe_current_group("ns".to_string(), TRACK.to_string())
+                .await
+        });
+        let SessionEvent::Subscribe(subscribe) = within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Act: the SUBSCRIBE is left unanswered
+        let event = within(server.receive_event()).await.unwrap();
+
+        // Assert
+        let SessionEvent::Fetch(fetch) = event else {
+            panic!("expected the joining FETCH, got {event:?}");
+        };
+        assert_eq!(
+            fetch.fetch.fetch_params,
+            FetchParams::RelativeJoining {
+                joining_request_id: subscribe.request_id(),
+                joining_start: 0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_current_group_yields_live_objects_for_a_track_without_content() {
         // Arrange
         let (client, server) = spawn_connected_native_sessions("subscriber-current-empty").await;
         let (mut reader, served) =
             start_subscribe_current_group(&client, &server, ContentExists::False).await;
+        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected the joining FETCH");
+        };
 
-        // Act
+        // Act: refused with INVALID_RANGE, as draft-14 §9.16.2 requires for a track without content
+        fetch
+            .error(RequestErrorCode::InvalidRange, String::new())
+            .await
+            .unwrap();
         send_subgroup_object(&server, &served, &fetch_object(location(0, 0), b"live")).await;
         let payloads = read_payloads(&mut reader, 1).await;
-        let event = server.receive_event().now_or_never();
 
         // Assert
         assert_eq!(payloads, ["live"]);
-        assert!(event.is_none(), "{event:?}");
     }
 
     #[tokio::test]

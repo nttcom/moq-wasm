@@ -435,7 +435,13 @@ impl Fetch {
                 resolve_joining_fetch(joining_start, sub.join_point).map(|range| (sub, range))
             })
             .map_err(|error| {
-                tracing::warn!(session_id, joining_request_id, %error, "Joining fetch rejected");
+                // A subscriber may write its Joining FETCH behind the SUBSCRIBE before it knows
+                // whether the track has content, so NothingPublished is expected.
+                if error == JoiningFetchError::NothingPublished {
+                    tracing::debug!(session_id, joining_request_id, %error, "Joining fetch rejected");
+                } else {
+                    tracing::warn!(session_id, joining_request_id, %error, "Joining fetch rejected");
+                }
                 FetchError::Joining(error)
             })?;
 
