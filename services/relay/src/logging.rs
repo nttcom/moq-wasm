@@ -27,6 +27,7 @@ pub(crate) fn relay_hostname() -> &'static str {
 }
 
 pub fn init_logging(service_name: &str) -> anyhow::Result<TelemetryGuard> {
+    moqt::set_trace_context_provider(telemetry::current_traceparent);
     let relay_hostname = relay_hostname();
     telemetry::init(TelemetryConfig {
         service_name,

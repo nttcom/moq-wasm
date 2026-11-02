@@ -5,6 +5,7 @@ use crate::logging::mark_current_span_failed;
 
 #[async_trait]
 pub(crate) trait FetchHandler: 'static + Send + Sync {
+    fn trace_context(&self) -> Option<&moqt::TraceContext>;
     fn request_id(&self) -> u64;
     fn group_order(&self) -> moqt::object::GroupOrder;
     fn fetch_params(&self) -> moqt::fetch::FetchParams;
@@ -23,6 +24,9 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
 
 #[async_trait]
 impl FetchHandler for moqt::fetch::FetchHandler {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        moqt::fetch::FetchHandler::trace_context(self)
+    }
     fn request_id(&self) -> u64 {
         self.request_id
     }

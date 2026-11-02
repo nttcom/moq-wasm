@@ -12,6 +12,7 @@ use crate::modules::session::subscription::UpstreamSubscription;
 
 #[async_trait]
 pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
+    fn trace_context(&self) -> Option<&moqt::TraceContext>;
     fn track_namespace(&self) -> &str;
     fn track_namespace_tuple(&self) -> &[String];
     fn track_name(&self) -> &str;
@@ -38,6 +39,9 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
 
 #[async_trait]
 impl PublishHandler for moqt::publish::PublishHandler {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        moqt::publish::PublishHandler::trace_context(self)
+    }
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }

@@ -1,3 +1,4 @@
+use moqt::TraceContext;
 use tracing::Span;
 
 use crate::logging::{link_span, relay_hostname};
@@ -6,9 +7,10 @@ use crate::modules::{
     session::moqt_session_event::MoqtSessionEvent,
 };
 
-/// A request's span roots its own trace and links to the session span.
-/// Only the lifecycle events `Disconnected` and `ProtocolViolation` are
-/// children of the session span.
+/// A request's span roots its own trace, or continues the client's when the
+/// request carries TRACE_CONTEXT, and links to the session span. Only the
+/// lifecycle events `Disconnected` and `ProtocolViolation` are children of
+/// the session span.
 pub(super) fn session_event_span(
     session_id: SessionId,
     session_span: &Span,
@@ -171,6 +173,9 @@ pub(super) fn session_event_span(
             track_name = %handler.track_name(),
         ),
     };
+    if let Some(trace_context) = trace_context(event) {
+        telemetry::continue_trace_from_traceparent(&span, trace_context.as_str());
+    }
     if !matches!(
         event,
         MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
@@ -178,4 +183,55 @@ pub(super) fn session_event_span(
         link_span(&span, session_span);
     }
     span
+}
+
+fn trace_context(event: &MoqtSessionEvent) -> Option<&TraceContext> {
+    match event {
+        MoqtSessionEvent::PublishNamespace(handler) => handler.trace_context(),
+        MoqtSessionEvent::SubscribeNamespace(handler) => handler.trace_context(),
+        MoqtSessionEvent::Publish(handler) => handler.trace_context(),
+        MoqtSessionEvent::Subscribe(handler) => handler.trace_context(),
+        MoqtSessionEvent::Fetch(handler) => handler.trace_context(),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use opentelemetry::global;
+    use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing::Span;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use super::session_event_span;
+    use crate::modules::{
+        session::moqt_session_event::MoqtSessionEvent,
+        test_support::mock_session::MockSubscribeHandler,
+    };
+
+    const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+    #[test]
+    fn a_subscribe_carrying_a_traceparent_continues_the_client_s_trace() {
+        // Arrange
+        global::set_text_map_propagator(TraceContextPropagator::new());
+        let provider = SdkTracerProvider::builder().build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
+        let _default = tracing::subscriber::set_default(subscriber);
+        let event = MoqtSessionEvent::Subscribe(Box::new(MockSubscribeHandler {
+            trace_context: moqt::TraceContext::parse(TRACEPARENT.as_bytes()),
+            ..MockSubscribeHandler::default()
+        }));
+
+        // Act
+        let span = session_event_span(1, &Span::none(), None, &event);
+
+        // Assert
+        let trace_id = span.context().span().span_context().trace_id();
+        assert_eq!(trace_id.to_string(), "4bf92f3577b34da6a3ce929d0e0e4736");
+    }
 }

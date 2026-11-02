@@ -720,10 +720,14 @@ pub(crate) struct MockSubscribeHandler {
     /// Runs when the sequence allocates the track alias, i.e. after it found
     /// the upstream and before it registers the downstream subscription.
     pub(crate) on_allocate_track_alias: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub(crate) trace_context: Option<moqt::TraceContext>,
 }
 
 #[async_trait::async_trait]
 impl SubscribeHandler for MockSubscribeHandler {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        self.trace_context.as_ref()
+    }
     fn subscribe_id(&self) -> u64 {
         100
     }
@@ -800,6 +804,9 @@ pub(crate) struct MockFetchHandler;
 
 #[async_trait::async_trait]
 impl FetchHandler for MockFetchHandler {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        None
+    }
     fn request_id(&self) -> u64 {
         0
     }
@@ -862,6 +869,9 @@ impl MockPublishHandler {
 
 #[async_trait::async_trait]
 impl PublishHandler for MockPublishHandler {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        None
+    }
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
@@ -953,6 +963,9 @@ impl MockPublishNamespaceHandler {
 
 #[async_trait::async_trait]
 impl PublishNamespaceHandler for MockPublishNamespaceHandler {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        None
+    }
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }

@@ -2813,6 +2813,7 @@ dependencies = [
  "dashmap",
  "moqt",
  "opentelemetry",
+ "opentelemetry_sdk",
  "redis",
  "reqwest",
  "serde",
@@ -2822,6 +2823,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]

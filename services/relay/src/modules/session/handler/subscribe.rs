@@ -10,6 +10,7 @@ use crate::modules::session::subscription::DownstreamSubscription;
 
 #[async_trait]
 pub(crate) trait SubscribeHandler: 'static + Send + Sync {
+    fn trace_context(&self) -> Option<&moqt::TraceContext>;
     fn subscribe_id(&self) -> u64;
     fn track_namespace(&self) -> &str;
     fn track_namespace_tuple(&self) -> &[String];
@@ -38,6 +39,9 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
 
 #[async_trait]
 impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        moqt::subscribe::SubscribeHandler::trace_context(self)
+    }
     fn subscribe_id(&self) -> u64 {
         self.request_id()
     }
