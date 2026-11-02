@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
-use crate::js_error;
+use crate::{anyhow_error, js_error};
 
 /// An MSF broadcast of media the page encodes: it publishes the catalog, the
 /// LOC tracks and the media timeline, keeps objects for FETCH and answers
@@ -61,10 +61,7 @@ impl MediaBroadcast {
 impl MediaBroadcast {
     /// Resolves once the namespace is announced (PUBLISH_NAMESPACE).
     pub async fn announce(&self) -> Result<(), JsValue> {
-        self.broadcast
-            .announce()
-            .await
-            .map_err(|err| js_error(format!("{err:#}")))
+        self.broadcast.announce().await.map_err(anyhow_error)
     }
 
     /// Announces the namespace like `announce` and accepts SUBSCRIBEs for
@@ -74,7 +71,7 @@ impl MediaBroadcast {
         self.broadcast
             .declare_tracks(&track_names)
             .await
-            .map_err(|err| js_error(format!("{err:#}")))
+            .map_err(anyhow_error)
     }
 
     /// Lists the chat track in the catalog even while no source publishes the
@@ -87,7 +84,7 @@ impl MediaBroadcast {
                 .offer_chat()
                 .await
                 .map(|()| JsValue::UNDEFINED)
-                .map_err(|err| js_error(format!("{err:#}")))
+                .map_err(anyhow_error)
         })
     }
 
@@ -130,9 +127,7 @@ impl MediaSource {
     }
 
     fn push(&mut self, event: MediaEvent) -> Result<(), JsValue> {
-        self.writer
-            .push(event)
-            .map_err(|err| js_error(format!("{err:#}")))
+        self.writer.push(event).map_err(anyhow_error)
     }
 }
 
@@ -176,9 +171,7 @@ impl MediaSource {
             for removed in renditions {
                 result = result.and(removed.await);
             }
-            result
-                .map(|()| JsValue::UNDEFINED)
-                .map_err(|err| js_error(format!("{err:#}")))
+            result.map(|()| JsValue::UNDEFINED).map_err(anyhow_error)
         }))
     }
 
@@ -246,7 +239,7 @@ impl MediaSource {
             .ok_or_else(|| js_error("call configureRendition first"))?;
         let events = video
             .push(&chunk(data, timestamp_micros))
-            .map_err(|err| js_error(format!("{err:#}")))?;
+            .map_err(anyhow_error)?;
         for event in events {
             rendition
                 .command_sender
@@ -275,9 +268,7 @@ impl MediaSource {
             .as_mut()
             .ok_or_else(|| js_error("call configureVideo first"))?;
         let chunk = chunk(data, timestamp_micros);
-        let events = video
-            .push(&chunk)
-            .map_err(|err| js_error(format!("{err:#}")))?;
+        let events = video.push(&chunk).map_err(anyhow_error)?;
         for event in events {
             self.push(event)?;
         }
@@ -302,10 +293,7 @@ impl MediaSource {
             aac if aac.starts_with("mp4a.40.") => {
                 let description =
                     description.ok_or_else(|| js_error("AAC needs its AudioSpecificConfig"))?;
-                AudioConfig::Aac(
-                    AudioSpecificConfig::parse(&description)
-                        .map_err(|err| js_error(format!("{err:#}")))?,
-                )
+                AudioConfig::Aac(AudioSpecificConfig::parse(&description).map_err(anyhow_error)?)
             }
             other => return Err(js_error(format!("unsupported audio codec: {other}"))),
         };
