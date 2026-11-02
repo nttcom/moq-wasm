@@ -1,9 +1,9 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 
-use moqt::{fetch::JoinPoint, object::ContentExists};
+use moqt::{RequestErrorCode, fetch::JoinPoint, object::ContentExists};
 use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
@@ -115,16 +115,115 @@ impl Consumer {
     }
 }
 
+/// Why a track's creation failed: the SUBSCRIBE_ERROR its subscribers get.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CreationFailure {
+    pub(crate) code: RequestErrorCode,
+    pub(crate) reason: String,
+}
+
+/// A track is `Creating` from the first SUBSCRIBE for it until a producer
+/// feeds it (`Created`) or every upstream SUBSCRIBE sent for it failed
+/// (`Failed`, after which the track entry is gone).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CreationState {
+    Creating,
+    Created,
+    Failed(CreationFailure),
+}
+
+/// Subscribers between finding the track and registering their consumer,
+/// by peer: the track wants its producers for them already.
+#[derive(Default)]
+struct Reservations {
+    client: usize,
+    relay: usize,
+}
+
 /// The relay's state for one track: every publisher feeding it and every
 /// subscriber receiving it (draft-14 §8.2). Session ids grow with time, so
 /// the last producer is the newest publisher's.
-#[derive(Default)]
 pub(crate) struct Track {
     pub(crate) producers: BTreeMap<SessionId, Producer>,
     pub(crate) consumers: HashMap<(SessionId, u64), Consumer>,
+    creation: watch::Sender<CreationState>,
+    /// Upstream SUBSCRIBEs sent for the track and not yet answered.
+    pending_producers: usize,
+    last_failure: Option<CreationFailure>,
+    reservations: Reservations,
+    /// Sessions a forwarded PUBLISH is on its way to.
+    pending_consumers: HashSet<SessionId>,
 }
 
 impl Track {
+    pub(crate) fn new(state: CreationState) -> Self {
+        Self {
+            producers: BTreeMap::new(),
+            consumers: HashMap::new(),
+            creation: watch::channel(state).0,
+            pending_producers: 0,
+            last_failure: None,
+            reservations: Reservations::default(),
+            pending_consumers: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn is_creating(&self) -> bool {
+        *self.creation.borrow() == CreationState::Creating
+    }
+
+    pub(crate) fn creation(&self) -> watch::Receiver<CreationState> {
+        self.creation.subscribe()
+    }
+
+    pub(crate) fn mark_created(&self) {
+        self.creation.send_if_modified(|state| {
+            let was_creating = *state == CreationState::Creating;
+            if was_creating {
+                *state = CreationState::Created;
+            }
+            was_creating
+        });
+    }
+
+    pub(crate) fn add_pending_producers(&mut self, count: usize) {
+        self.pending_producers += count;
+    }
+
+    /// One upstream SUBSCRIBE ended without a producer. Returns true, failing
+    /// the creation with the last failure, when it was the last one and no
+    /// producer came; the caller then removes the entry.
+    pub(crate) fn pending_producer_ended(&mut self, failure: Option<CreationFailure>) -> bool {
+        self.pending_producers = self.pending_producers.saturating_sub(1);
+        if failure.is_some() {
+            self.last_failure = failure;
+        }
+        if self.pending_producers > 0 || !self.producers.is_empty() || !self.is_creating() {
+            return false;
+        }
+        let failure = self.last_failure.take().unwrap_or(CreationFailure {
+            code: RequestErrorCode::TrackDoesNotExist,
+            reason: "Designated namespace and track name do not exist.".to_string(),
+        });
+        let _ = self.creation.send(CreationState::Failed(failure));
+        true
+    }
+
+    pub(crate) fn reserve(&mut self, peer: SessionPeer) {
+        match peer {
+            SessionPeer::Client => self.reservations.client += 1,
+            SessionPeer::Relay => self.reservations.relay += 1,
+        }
+    }
+
+    pub(crate) fn release_reservation(&mut self, peer: SessionPeer) {
+        let count = match peer {
+            SessionPeer::Client => &mut self.reservations.client,
+            SessionPeer::Relay => &mut self.reservations.relay,
+        };
+        *count = count.saturating_sub(1);
+    }
+
     pub(crate) fn state(&self) -> TrackState {
         TrackState {
             producers: self
@@ -141,13 +240,23 @@ impl Track {
             .any(|consumer| consumer.peer == SessionPeer::Client)
     }
 
+    /// Someone receives the track or is about to register for it.
+    pub(crate) fn downstream_remains(&self) -> bool {
+        !self.consumers.is_empty() || self.reservations.client + self.reservations.relay > 0
+    }
+
+    /// A client receives the track or is about to register for it.
+    pub(crate) fn client_remains(&self) -> bool {
+        self.has_client_consumer() || self.reservations.client > 0
+    }
+
     /// A relay's upstream subscription only serves this relay's clients, so a
     /// relay publisher is wanted while a client watches the track and a
     /// client publisher while anyone does.
     pub(crate) fn wants(&self, publisher_peer: SessionPeer) -> bool {
         match publisher_peer {
-            SessionPeer::Client => !self.consumers.is_empty(),
-            SessionPeer::Relay => self.has_client_consumer(),
+            SessionPeer::Client => self.downstream_remains(),
+            SessionPeer::Relay => self.client_remains(),
         }
     }
 
@@ -156,7 +265,20 @@ impl Track {
         publisher_session_id: SessionId,
         publisher_peer: SessionPeer,
     ) -> bool {
-        !self.producers.contains_key(&publisher_session_id) && self.wants(publisher_peer)
+        !self.producers.contains_key(&publisher_session_id)
+            && (self.is_creating() || self.wants(publisher_peer))
+    }
+
+    pub(crate) fn begin_forwarded_publish(&mut self, session_id: SessionId) -> bool {
+        !self
+            .consumers
+            .keys()
+            .any(|(consumer_session_id, _)| *consumer_session_id == session_id)
+            && self.pending_consumers.insert(session_id)
+    }
+
+    pub(crate) fn end_forwarded_publish(&mut self, session_id: SessionId) {
+        self.pending_consumers.remove(&session_id);
     }
 }
 

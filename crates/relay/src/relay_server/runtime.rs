@@ -13,7 +13,6 @@ use crate::{
         control_plane::{
             control_message_forwarder::ControlMessageForwarder,
             session_workers::{SessionWorkers, WorkerDeps},
-            upstream_creation_serializer::UpstreamCreationSerializer,
             upstream_publisher_resolver::UpstreamPublisherResolver,
         },
         data_plane::cache::{
@@ -83,7 +82,6 @@ impl RelayRuntime {
                 inter_relay_connection_manager: inter_relay_connection_manager.clone(),
                 upstream_publisher_resolver,
                 cache_store: cache_store.clone(),
-                upstream_serializer: UpstreamCreationSerializer::default(),
                 token_verifier,
                 fetch_fill_timeout: data_plane.fetch_fill_timeout,
             },

@@ -21,7 +21,7 @@ optionally cascades across relays via a Redis-backed route registry.
 | `domain/` | Relay vocabulary shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, `DeliveryControl`, `DeliveryStats`, `PublishDoneReason`, the egress runner's `DownstreamRunnerSignals` (error codes are `moqt`'s typed enums) |
 | `directory/` | The relay's registry: `InMemoryLocalPubSubDirectory` (namespace tables, tracks and the consumer index) and `track.rs` with `Track`, its `Producer`s (each owning the `IngestTask` reading its publisher) and `Consumer`s (each owning the signals its egress runner lives by) |
 | `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
-| `control_plane/` | Control-message processing: `SessionWorkers` and the per-session `SessionWorker`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
+| `control_plane/` | Control-message processing: `SessionWorkers` and the per-session `SessionWorker`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, the `PendingProducerTask` behind every upstream SUBSCRIBE |
 | `data_plane/` | Objects in flight: `ingress/` (`IngestTask`), `cache/`, `egress/` (`EgressTask`, `FetchDeliveryTask`), and the data-plane integration tests |
 | `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op) and `InterRelayConnectionManager` |
 | `observability/` | `StatsCollector` (snapshot of sessions, tracks, subscriptions and process memory) and `StatsPublishTask`, which publishes it once per second |
@@ -287,11 +287,11 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   forward upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions
   the last downstream subscriber released, and withdraw namespace routes for
   client sessions. Leaving the repository first closes the race with a
-  SUBSCRIBE_OK from this session that arrives concurrently, whether for the
-  first publisher of a track or for one an `UpstreamJoinTask` adds. Either the
-  directory removal finds the subscription, or the check after registering
-  (`end_if_publisher_gone`) finds the session gone and ends the subscription
-  itself. The first SUBSCRIBE then tries the next answering publisher.
+  SUBSCRIBE_OK from this session that arrives concurrently in its
+  `PendingProducerTask`. Either the directory removal finds the producer, or
+  the check after adding it (`end_if_publisher_gone`) finds the session gone
+  and ends the subscription itself; a creation then waits for the next
+  answering publisher.
 
 ### `modules/control_plane/sequences` — one struct per control message
 Each sequence owns the relay-side protocol logic for one message
@@ -331,29 +331,36 @@ Each sequence owns the relay-side protocol logic for one message
   producer feeds it. The last consumer leaving releases its
   SUBSCRIBE-initiated producers, while PUBLISH-initiated ones stay until their
   publisher ends them. `remove_session` returns everything cleanup needs.
-- `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
-  guard removes the track's entry on release unless a waiter still holds the
-  mutex, so the map only holds tracks whose upstream creation is in progress.
+- A `Track` also carries its **creation state** (`CreationState`: `Creating`
+  until a producer feeds it, then `Created`; `Failed` with the SUBSCRIBE_ERROR
+  to relay once every upstream SUBSCRIBE sent for it failed, after which the
+  entry is gone), the number of upstream SUBSCRIBEs still pending for it,
+  the **reservations** of the subscribers between finding it and registering
+  their consumer (a `TrackReservation` guard; the track wants its producers
+  for them already), and the sessions a forwarded PUBLISH is on its way to.
+  `track_state` is `None` while no producer feeds the track, so a track being
+  created is invisible to every sequence but SUBSCRIBE.
 
 ### SUBSCRIBE sequence (the central flow)
-1. **Find-or-create upstream subscription.** Fast path: a
-   `Track` already exists in the directory. Miss: take
-   the per-track serializer lock, re-check (a sibling may have created it),
-   otherwise resolve the publishers and send upstream SUBSCRIBE to every one
-   of them at once (draft-14 §8.4). The first SUBSCRIBE_OK starts the
-   ingest (`sequences::start_ingest`, which needs the publisher session's
-   `Subscriber`, mailbox and span), registers its `Producer` and serves this
-   SUBSCRIBE; the still pending requests
-   go to an `UpstreamJoinTask` (`sequences/subscribe/upstream_join_task.rs`),
-   started once this SUBSCRIBE's downstream subscription is registered. It
-   adds each publisher that answers later to the track while the track still
-   wants it — someone watches it, and for a relay publisher a client does —
-   and unsubscribes it otherwise (the track ended, nobody watches it any more,
-   or the publisher already feeds it). A publisher that never answers —
-   e.g. a session that died without closing and lingers until its idle
-   timeout — therefore delays nobody, and the SUBSCRIBE fails only when every
-   publisher refuses it. Concurrent subscribers to the same track produce one
-   upstream subscription per publisher.
+1. **Find-or-create upstream subscription.** `track_or_begin_creation`
+   answers in one lock: `Ready` (producers feed the track), `Creating`
+   (another SUBSCRIBE is creating it; wait on its `CreationState` watch) or
+   `Started` (the entry was just inserted `Creating`; this SUBSCRIBE resolves
+   the publishers and sends upstream SUBSCRIBE to every one of them at once,
+   draft-14 §8.4). Each upstream SUBSCRIBE runs in its own
+   `PendingProducerTask` (`sequences/subscribe/pending_producer_task.rs`):
+   on SUBSCRIBE_OK it starts the ingest (`sequences::start_ingest`, which
+   needs the publisher session's `Subscriber`, mailbox and span) and adds the
+   `Producer`, which completes the creation; a publisher the track does not
+   take any more — it ended, nobody watches it or is reserved on it, or the
+   publisher already feeds it — is unsubscribed again, and a failed SUBSCRIBE
+   counts the pending request down, the last failure of a creation failing it.
+   A publisher that never answers — e.g. a session that died without closing
+   and lingers until its idle timeout — therefore delays nobody, and the
+   SUBSCRIBE fails only when every publisher refuses it. Concurrent
+   subscribers to the same track produce one upstream subscription per
+   publisher. Without any publisher to resolve, the creator abandons the
+   creation, which fails it unless a PUBLISH created the track meanwhile.
 2. **Publisher resolution** (`UpstreamPublisherResolver`): every local client
    publisher, newest first (session ids grow with time), and, for a SUBSCRIBE
    from a client, every remote relay the route registry lists as publishing the
@@ -388,8 +395,8 @@ draft-14 §8.4 makes a relay subscribe a publisher that announces a namespace
 whose tracks it already receives from other upstream sessions. After
 answering PUBLISH_NAMESPACE from a client session, `PublishNamespace` sends
 SUBSCRIBE to that publisher for every track of the namespace that has a
-downstream subscriber and that the publisher does not feed yet, and hands the
-requests to an `UpstreamJoinTask`, which adds the publisher once it answers.
+downstream subscriber and that the publisher does not feed yet, each in a
+`PendingProducerTask`, which adds the publisher once it answers.
 A PUBLISH_NAMESPACE from a relay does the same for the publishing relays the
 route registry lists, reached over the sessions `InterRelayConnectionManager`
 keeps per relay, and only for tracks a client watches (see "Cascading
@@ -414,7 +421,9 @@ Each forward in step 3 is a `DownstreamPublish`
 PUBLISH as a downstream subscription of the track (§5.1: a PUBLISH_OK
 establishes a subscription):
 - a subscriber that already has a downstream subscription to the track, e.g.
-  from the PUBLISH of an earlier publisher of it, gets no second PUBLISH;
+  from the PUBLISH of an earlier publisher of it, or a PUBLISH for it still
+  on its way (`begin_forwarded_publish`, released when the answer is in),
+  gets no second PUBLISH;
 - the PUBLISH advertises the Largest Location resolved like a fresh
   SUBSCRIBE (max of the cache and the track's Content Exists), and the egress
   runner starts from the same location;
@@ -508,9 +517,8 @@ from a relay-peer session means that relay is draining and will close the
 session, so for every track that session feeds the sequence resolves the
 publishers again through `UpstreamPublisherResolver` (local client publishers
 and the relays still `active` in the route registry; the draining relay is no
-longer active there) and subscribes those not already feeding the track through
-`send_upstream_subscribes` / `UpstreamJoinTask`, like a newly announced
-publisher. The departing session's own subscriptions end through the ordinary
+longer active there) and subscribes those not already feeding the track, each
+in a `PendingProducerTask`, like a newly announced publisher. The departing session's own subscriptions end through the ordinary
 cleanup when it closes; a track another publisher joined in the meantime keeps
 its downstream subscribers.
 
@@ -1005,10 +1013,10 @@ so cache, fan-out, FETCH and authorization need no separate path.
   session's registration until its terminal event; its mailbox leaves the
   repository with the session, so an event for a departed session has no
   destination and is dropped by its sender.
-- **One producer per track and publisher**: creation is serialized by the
-  `UpstreamCreationSerializer` per-track lock with a double-check, and a
-  publisher answering after the track already holds its producer is
-  unsubscribed again, without an ingest.
+- **One producer per track and publisher**: the track's `Creating` entry
+  makes every SUBSCRIBE after the first wait for its creation instead of
+  subscribing upstream again, and a publisher answering after the track
+  already holds its producer is unsubscribed again, without an ingest.
 - **SUBSCRIBE_OK matches egress**: the largest location advertised downstream
   is the same value the egress scheduler starts from.
 - **Start Location is a lower bound**: egress delivers the first group at or
@@ -1066,11 +1074,11 @@ target, agreed in November 2026, is three aggregates and a registry:
   stats and the signals its egress runner lives by) — and with them the
   draft-14 §8.2 lifetime rules. Done: see "`modules/control_plane/sequences`"
   above.
-- Waits on another session's answer (`UpstreamJoinTask`,
-  `DownstreamPublishTask`, `UpstreamFetchTask`) become `Pending → Active`
-  states of a `Producer` / `Consumer` owned by the `Track`, which also replaces
-  `UpstreamCreationSerializer` ("no producer and a pending one" is the
-  creating state).
+- Waits on another session's answer become state of the `Track`: an
+  upstream SUBSCRIBE is a pending producer counted on the track, whose
+  `Creating` state replaced `UpstreamCreationSerializer`, and a forwarded
+  PUBLISH a pending consumer. Done. `UpstreamFetchTask` stays a task of its
+  own: a FETCH fill is no edge of the track.
 - The session keeps only session-level state (handle, token, span, expiry)
   and the ids of its edges, for cleanup, GOAWAY and drain.
 - A relay-wide `Relay` is a registry of sessions, tracks and namespaces with
@@ -1081,9 +1089,9 @@ target, agreed in November 2026, is three aggregates and a registry:
 A state transition returns effects; the caller performs the I/O. Nothing
 sends a control message under a `Track` lock or from a `Drop`.
 
-The event pipeline and the `Track` with its producers and consumers are in
-place; the pending states, then the session's edge index, follow in their
-own changes.
+The event pipeline, the `Track` with its producers and consumers and the
+pending states are in place; the session's edge index follows in its own
+change.
 
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —

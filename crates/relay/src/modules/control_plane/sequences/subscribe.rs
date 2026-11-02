@@ -4,13 +4,12 @@ use std::sync::Arc;
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        upstream_creation_serializer::UpstreamCreationSerializer,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::cache::store::TrackCacheStore,
     directory::{
-        InMemoryLocalPubSubDirectory,
-        track::{Producer, TrackState},
+        InMemoryLocalPubSubDirectory, TrackLookup, TrackReservation,
+        track::{CreationFailure, CreationState, TrackState},
     },
     domain::{
         delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
@@ -22,17 +21,14 @@ use moqt::fetch::JoinPoint;
 
 use moqt::object::ContentExists;
 
-pub(crate) mod upstream_join_task;
+pub(crate) mod pending_producer_task;
 
-use upstream_join_task::{
-    UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, end_if_publisher_gone, next_answered,
-    send_upstream_subscribes, subscribe_initiated,
-};
+use pending_producer_task::{PendingProducerDeps, subscribe_publishers};
 
 pub(crate) struct Subscribe;
 
-/// Another session's cleanup can remove the upstream subscription between
-/// finding it and registering on it; each attempt finds or creates it again.
+/// Another session's cleanup can remove the track between finding it and
+/// registering on it; each attempt finds or creates it again.
 const UPSTREAM_ATTEMPTS: usize = 3;
 
 /// Clients that leave Forward at 0 in SUBSCRIBE still expect delivery.
@@ -68,22 +64,26 @@ pub(super) fn existing_track_largest(
     cached_largest(cache_store, track_key).max(upstream_largest)
 }
 
-/// `late_publishers` are the upstream SUBSCRIBEs still unanswered when the
-/// first publisher answered; they join the track once the downstream
-/// subscription that asked for it is registered, so the track wants them.
+/// The track as found or created for a SUBSCRIBE, held wanting its producers
+/// (`_reservation`) until the downstream subscription is registered.
 struct UpstreamTrackAccess {
     track_key: TrackKey,
     upstream_track: TrackState,
     largest_location: Option<moqt::object::Location>,
-    late_publishers: Option<UpstreamJoin>,
+    _reservation: TrackReservation,
 }
 
-enum UpstreamSubscriptionError {
+pub(crate) enum UpstreamSubscriptionError {
     PublisherNotFound,
     SubscribeFailed(anyhow::Error),
 }
 
 impl UpstreamSubscriptionError {
+    pub(crate) fn failure(&self) -> CreationFailure {
+        let (code, reason) = self.subscribe_error_response();
+        CreationFailure { code, reason }
+    }
+
     /// SUBSCRIBE_ERROR (code, reason) for the downstream subscriber. An
     /// upstream SUBSCRIBE_ERROR is relayed verbatim; an upstream timeout maps
     /// to TIMEOUT so one slow upstream request stays a request-scoped failure.
@@ -119,7 +119,6 @@ impl Subscribe {
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
-        upstream_serializer: &UpstreamCreationSerializer,
         handler: Box<dyn SubscribeHandler>,
     ) {
         let track_namespace = handler.track_namespace();
@@ -142,16 +141,14 @@ impl Subscribe {
                     table,
                     forwarder,
                     upstream_publisher_resolver,
-                    upstream_serializer,
                     cache_store,
                 )
                 .await
             {
                 Ok(upstream_subscription) => upstream_subscription,
-                Err(err) => {
-                    let (code, reason_phrase) = err.subscribe_error_response();
+                Err(failure) => {
                     if let Err(send_error) = self
-                        .response_error(session_id, handler.as_ref(), code, reason_phrase)
+                        .response_error(session_id, handler.as_ref(), failure.code, failure.reason)
                         .await
                     {
                         tracing::error!(
@@ -193,16 +190,6 @@ impl Subscribe {
                     handler.as_ref(),
                 )
                 .await;
-            if let Some(late_publishers) = access.late_publishers {
-                let _upstream_join = UpstreamJoinTask::run(
-                    late_publishers,
-                    UpstreamJoinDeps {
-                        table: table.clone(),
-                        forwarder: forwarder.clone(),
-                        cache_store: cache_store.clone(),
-                    },
-                );
-            }
             if let Acceptance::Answered = acceptance {
                 return;
             }
@@ -216,6 +203,9 @@ impl Subscribe {
         self.response_track_gone(session_id, handler.as_ref()).await;
     }
 
+    /// Finds the track or creates it: the first SUBSCRIBE for a track sends
+    /// the upstream SUBSCRIBEs and every SUBSCRIBE for it waits for the first
+    /// producer, or for the creation to fail (draft-14 §8.4).
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         level = "debug",
@@ -236,56 +226,77 @@ impl Subscribe {
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
-        upstream_serializer: &UpstreamCreationSerializer,
         cache_store: &Arc<TrackCacheStore>,
-    ) -> Result<UpstreamTrackAccess, UpstreamSubscriptionError> {
+    ) -> Result<UpstreamTrackAccess, CreationFailure> {
         let track_key = TrackKey::new(track_namespace, track_name);
-        // Fast path: cache hit without acquiring the per-track lock.
-        if let Some(upstream_track) = table.track_state(&track_key) {
-            let largest_location = existing_track_largest(cache_store, &track_key, &upstream_track);
+        loop {
+            let (mut receiver, reservation, cache_before_subscribe) =
+                match table.track_or_begin_creation(&track_key, requester) {
+                    TrackLookup::Ready(upstream_track, reservation) => {
+                        let largest_location =
+                            existing_track_largest(cache_store, &track_key, &upstream_track);
+                        return Ok(UpstreamTrackAccess {
+                            track_key,
+                            upstream_track,
+                            largest_location,
+                            _reservation: reservation,
+                        });
+                    }
+                    TrackLookup::Creating(receiver, reservation) => {
+                        tracing::debug!("another SUBSCRIBE is creating the track; waiting");
+                        (receiver, reservation, None)
+                    }
+                    TrackLookup::Started(receiver, reservation) => {
+                        let cache_before_subscribe = cached_largest(cache_store, &track_key);
+                        self.create_upstream_subscription(
+                            session_id,
+                            requester,
+                            &track_key,
+                            table,
+                            forwarder,
+                            upstream_publisher_resolver,
+                            cache_store,
+                        )
+                        .await;
+                        (receiver, reservation, Some(cache_before_subscribe))
+                    }
+                };
+            let state = receiver
+                .wait_for(|state| *state != CreationState::Creating)
+                .await
+                .map(|state| state.clone());
+            if let Ok(CreationState::Failed(failure)) = state {
+                return Err(failure);
+            }
+            // Created, or the entry went away meanwhile.
+            let Some(upstream_track) = table.track_state(&track_key) else {
+                continue;
+            };
+            // The creator advertises the Largest Location of subscribe time:
+            // the upstream SUBSCRIBE uses the Largest Object filter, so the
+            // objects a burst cached meanwhile are delivered, not skipped.
+            let largest_location = match cache_before_subscribe {
+                Some(cache_before_subscribe) => {
+                    let upstream_largest = match upstream_track.content_exists() {
+                        ContentExists::True { location } => Some(location),
+                        ContentExists::False => None,
+                    };
+                    upstream_largest.max(cache_before_subscribe)
+                }
+                None => existing_track_largest(cache_store, &track_key, &upstream_track),
+            };
             return Ok(UpstreamTrackAccess {
                 track_key,
                 upstream_track,
                 largest_location,
-                late_publishers: None,
+                _reservation: reservation,
             });
         }
-
-        // Cache miss: acquire the per-track lock so that concurrent tasks for
-        // the same track serialise here and only one of them calls
-        // create_upstream_subscription.
-        let _guard = upstream_serializer.lock(track_namespace, track_name).await;
-
-        // Re-check after acquiring the lock: a sibling task may have created
-        // and registered the upstream subscription while we were waiting.
-        if let Some(upstream_track) = table.track_state(&track_key) {
-            tracing::debug!(
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                "upstream subscription found after serializer lock (joined existing)"
-            );
-            let largest_location = existing_track_largest(cache_store, &track_key, &upstream_track);
-            return Ok(UpstreamTrackAccess {
-                track_key,
-                upstream_track,
-                largest_location,
-                late_publishers: None,
-            });
-        }
-
-        self.create_upstream_subscription(
-            session_id,
-            requester,
-            track_namespace,
-            track_name,
-            table,
-            forwarder,
-            upstream_publisher_resolver,
-            cache_store,
-        )
-        .await
     }
 
+    /// Resolves the track's publishers and sends each a SUBSCRIBE in a
+    /// `PendingProducerTask`; without any, the creation is abandoned, which
+    /// fails it unless a PUBLISH created the track meanwhile.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         level = "debug",
@@ -293,152 +304,52 @@ impl Subscribe {
         skip_all,
         fields(
             session_id = %session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name
+            track_namespace = %track_key.track_namespace,
+            track_name = %track_key.track_name
         )
     )]
     async fn create_upstream_subscription(
         &self,
         session_id: SessionId,
         requester: SessionPeer,
-        track_namespace: &str,
-        track_name: &str,
+        track_key: &TrackKey,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
-    ) -> Result<UpstreamTrackAccess, UpstreamSubscriptionError> {
+    ) {
         if requester == SessionPeer::Client {
             upstream_publisher_resolver
                 .watched_namespace_routes
-                .watch(track_namespace)
+                .watch(&track_key.track_namespace)
                 .await;
         }
         let publishers = upstream_publisher_resolver
-            .resolve(table, track_namespace, track_name, requester)
+            .resolve(
+                table,
+                &track_key.track_namespace,
+                &track_key.track_name,
+                requester,
+            )
             .await;
         if publishers.is_empty() {
-            return Err(UpstreamSubscriptionError::PublisherNotFound);
+            table.pending_producer_ended(
+                track_key,
+                Some(UpstreamSubscriptionError::PublisherNotFound.failure()),
+            );
+            return;
         }
-
-        let track_key = TrackKey::new(track_namespace, track_name);
-        let cache_before_subscribe = cached_largest(cache_store, &track_key);
-
-        // draft-14 §8.4
-        let mut pending = send_upstream_subscribes(
-            upstream_publisher_resolver,
-            forwarder,
-            &track_key,
+        subscribe_publishers(
+            &PendingProducerDeps {
+                table: table.clone(),
+                forwarder: forwarder.clone(),
+                cache_store: cache_store.clone(),
+                resolver: upstream_publisher_resolver.clone(),
+            },
+            track_key,
+            session_id,
             publishers,
         );
-        let mut last_error = None;
-        let mut publisher_left = false;
-        let (pub_session_id, active_upstream) = loop {
-            let Some(answered) = next_answered(&mut pending).await else {
-                return Err(match last_error {
-                    Some(error) => UpstreamSubscriptionError::SubscribeFailed(error),
-                    None if publisher_left => UpstreamSubscriptionError::PublisherNotFound,
-                    None => UpstreamSubscriptionError::SubscribeFailed(anyhow::anyhow!(
-                        "no upstream publisher could be reached"
-                    )),
-                });
-            };
-            let pub_session_id = answered.publisher_session_id;
-            let subscription = match answered.subscribed {
-                Ok(subscription) => subscription,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        publisher_session_id = %pub_session_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "upstream SUBSCRIBE failed"
-                    );
-                    last_error = Some(error);
-                    continue;
-                }
-            };
-            tracing::debug!(
-                publisher_session_id = %pub_session_id,
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                track_alias = subscription.track_alias(),
-                expires = subscription.expires().unwrap_or(0),
-                "upstream SUBSCRIBE_OK received"
-            );
-
-            // The publisher sent PUBLISH for the track while the SUBSCRIBE was
-            // pending: unsubscribing that PUBLISH would fail the publisher's writes.
-            if let Some(published) =
-                table.published_upstream_subscription(&track_key, pub_session_id)
-            {
-                if let Err(error) = forwarder.unsubscribe(pub_session_id, &subscription).await {
-                    tracing::warn!(
-                        ?error,
-                        publisher_session_id = %pub_session_id,
-                        "failed to unsubscribe the SUBSCRIBE a PUBLISH overtook"
-                    );
-                }
-                break (pub_session_id, published);
-            }
-            let state = subscribe_initiated(&subscription, answered.publisher_peer);
-            let upstream_request_id = subscription.request_id();
-            let Some(ingest) = super::start_ingest(
-                forwarder,
-                cache_store,
-                super::IngestRequest {
-                    subscriber_session_id: session_id,
-                    publisher_session_id: pub_session_id,
-                    track_key: track_key.clone(),
-                    subscription,
-                },
-            )
-            .await
-            else {
-                publisher_left = true;
-                continue;
-            };
-            super::register_upstream_subscription(
-                table,
-                forwarder,
-                track_key.clone(),
-                pub_session_id,
-                Producer::new(state.clone(), ingest),
-            )
-            .await;
-            if end_if_publisher_gone(table, forwarder, pub_session_id, upstream_request_id).await {
-                publisher_left = true;
-                continue;
-            }
-            break (pub_session_id, state);
-        };
-        tracing::debug!(
-            publisher_session_id = %pub_session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name,
-            "upstream subscription registered"
-        );
-        let late_publishers = (!pending.is_empty()).then(|| UpstreamJoin {
-            track_key: track_key.clone(),
-            subscriber_session_id: session_id,
-            pending,
-        });
-
-        let upstream_largest = match active_upstream.content_exists {
-            ContentExists::True { location } => Some(location),
-            ContentExists::False => None,
-        };
-        let subscribe_time_largest = upstream_largest.max(cache_before_subscribe);
-        let mut upstream_track = TrackState::default();
-        upstream_track
-            .producers
-            .insert(pub_session_id, active_upstream);
-        Ok(UpstreamTrackAccess {
-            track_key,
-            upstream_track,
-            largest_location: subscribe_time_largest,
-            late_publishers,
-        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -722,7 +633,6 @@ mod tests {
         .await;
         let forwarder = ControlMessageForwarder { repository };
         let resolver = Arc::new(local_publisher_resolver());
-        let serializer = UpstreamCreationSerializer::default();
 
         let mut largest_locations = Vec::new();
         for _ in 0..subscribe_count {
@@ -737,7 +647,6 @@ mod tests {
                     &table,
                     &forwarder,
                     &resolver,
-                    &serializer,
                     &cache_store,
                 )
                 .await
@@ -756,7 +665,7 @@ mod tests {
         publishers: Vec<(SessionId, Box<dyn crate::modules::session::Session>)>,
     ) -> (
         Arc<InMemoryLocalPubSubDirectory>,
-        Result<UpstreamTrackAccess, UpstreamSubscriptionError>,
+        Result<UpstreamTrackAccess, CreationFailure>,
     ) {
         let publisher_session_ids = publishers.iter().map(|(id, _)| *id).collect();
         let repository =
@@ -769,7 +678,7 @@ mod tests {
         publisher_session_ids: Vec<SessionId>,
     ) -> (
         Arc<InMemoryLocalPubSubDirectory>,
-        Result<UpstreamTrackAccess, UpstreamSubscriptionError>,
+        Result<UpstreamTrackAccess, CreationFailure>,
     ) {
         const SUBSCRIBER_SESSION: SessionId = 2;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
@@ -783,7 +692,7 @@ mod tests {
         let forwarder = ControlMessageForwarder { repository };
         let resolver = Arc::new(local_publisher_resolver());
         let cache_store = Arc::new(TrackCacheStore::new());
-        let mut created = tokio::time::timeout(
+        let created = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             Subscribe.get_or_create_upstream_subscription(
                 SUBSCRIBER_SESSION,
@@ -793,13 +702,12 @@ mod tests {
                 &table,
                 &forwarder,
                 &resolver,
-                &UpstreamCreationSerializer::default(),
                 &cache_store,
             ),
         )
         .await
         .expect("the SUBSCRIBE must not wait for a publisher that never answers");
-        if let Ok(access) = &mut created {
+        if let Ok(access) = &created {
             table
                 .register_downstream_subscription(
                     SUBSCRIBER_SESSION,
@@ -810,16 +718,6 @@ mod tests {
                     delivery_control(true),
                 )
                 .unwrap();
-            if let Some(late_publishers) = access.late_publishers.take() {
-                let _upstream_join = UpstreamJoinTask::run(
-                    late_publishers,
-                    UpstreamJoinDeps {
-                        table: table.clone(),
-                        forwarder,
-                        cache_store,
-                    },
-                );
-            }
         }
         (table, created)
     }
@@ -932,7 +830,6 @@ mod tests {
                 &table,
                 &forwarder,
                 &Arc::new(local_publisher_resolver()),
-                &UpstreamCreationSerializer::default(),
                 &Arc::new(TrackCacheStore::new()),
             )
             .await;
@@ -974,7 +871,10 @@ mod tests {
         // Assert
         assert!(matches!(
             created,
-            Err(UpstreamSubscriptionError::PublisherNotFound)
+            Err(CreationFailure {
+                code: RequestErrorCode::TrackDoesNotExist,
+                ..
+            })
         ));
         assert!(table.track_state(&TrackKey::new("ns", "track")).is_none());
     }
@@ -1170,7 +1070,6 @@ mod tests {
                 &ControlMessageForwarder { repository },
                 &Arc::new(resolver),
                 &Arc::new(TrackCacheStore::new()),
-                &UpstreamCreationSerializer::default(),
                 Box::new(handler.clone()),
             )
             .await;
