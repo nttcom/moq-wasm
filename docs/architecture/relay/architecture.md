@@ -162,9 +162,10 @@ TOKEN is a status query instead (see "TRACK_STATUS sequence"). The session worke
 `TokenVerifier`, require a client (non-relay) session and a non-relay token
 whose `app_id` matches the current one. On success
 `SessionRepository::replace_verified_token` swaps the session's
-`VerifiedToken` and restarts its `SessionExpiryTask` at the new `exp`, the
-worker adopts the new token for later requests, and TRACK_STATUS_OK is sent
-with Track Alias 0 and Content Exists false — it reports no track status. On
+`VerifiedToken` and restarts its `SessionExpiryTask` at the new `exp`, and
+TRACK_STATUS_OK is sent with Track Alias 0 and Content Exists false — it
+reports no track status. The worker keeps no copy of the token: it reads the
+entry's token for each request, so the next request sees the new one. On
 failure TRACK_STATUS_ERROR carries `NOT_SUPPORTED (0x3)` on an inter-relay
 session, `MALFORMED_AUTH_TOKEN (0x10)` for an unsupported
 alias type / token type / non-UTF-8 value, `UNAUTHORIZED (0x1)` for a rejected
@@ -204,7 +205,9 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   and reaps workers as they exit. The worker reads its session's `moqt` events
   itself (`Session::receive_moqt_session_event`) and `select!`s them with the
   mailbox, mailbox first; each source is FIFO, their interleaving is not
-  ordered. A relay-internal event (`SessionEvent`: `MalformedTrackDetected`,
+  ordered. The worker holds the session id, its span and `WorkerDeps`;
+  everything else about the session (the token, the peer) it reads from the
+  repository entry when a request needs it. A relay-internal event (`SessionEvent`: `MalformedTrackDetected`,
   `ProtocolViolationDetected`, `GoAwaySent`, `DownstreamSubscriptionEnded`)
   is sent to the target session's mailbox, whose sender the sender captured
   when it was created (ingress hands the publisher's mailbox to its readers,
@@ -331,6 +334,10 @@ Each sequence owns the relay-side protocol logic for one message
   producer feeds it. The last consumer leaving releases its
   SUBSCRIBE-initiated producers, while PUBLISH-initiated ones stay until their
   publisher ends them. `remove_session` returns everything cleanup needs.
+  A session's edges are found in the directory rather than indexed on the
+  session: `tracks_fed_by` lists the tracks a session holds a producer of
+  (session cleanup, GOAWAY from a relay peer, the drain release) and
+  `consumer_tracks` its consumers.
 - A `Track` also carries its **creation state** (`CreationState`: `Creating`
   until a producer feeds it, then `Created`; `Failed` with the SUBSCRIBE_ERROR
   to relay once every upstream SUBSCRIBE sent for it failed, after which the
@@ -1063,35 +1070,32 @@ so cache, fan-out, FETCH and authorization need no separate path.
   GOAWAY the relay only waits; it closes a client session itself only at the
   drain timeout, with `GOAWAY_TIMEOUT`.
 
-## Planned direction
+## Design direction
 
-The relay is being reshaped so that fewer parts carry the same state. The
-target, agreed in November 2026, is three aggregates and a registry:
+The relay was reshaped in November 2026 so that fewer parts carry the same
+state. Three aggregates and a registry:
 
 - `Track` owns the session↔track edges — a `Producer` per upstream
   subscription (its `moqt` handle, origin, peer and the ingest task) and a
   `Consumer` per downstream subscription (its handle, `DeliveryControl`,
   stats and the signals its egress runner lives by) — and with them the
-  draft-14 §8.2 lifetime rules. Done: see "`modules/control_plane/sequences`"
-  above.
-- Waits on another session's answer become state of the `Track`: an
-  upstream SUBSCRIBE is a pending producer counted on the track, whose
-  `Creating` state replaced `UpstreamCreationSerializer`, and a forwarded
-  PUBLISH a pending consumer. Done. `UpstreamFetchTask` stays a task of its
-  own: a FETCH fill is no edge of the track.
-- The session keeps only session-level state (handle, token, span, expiry)
-  and the ids of its edges, for cleanup, GOAWAY and drain.
-- A relay-wide `Relay` is a registry of sessions, tracks and namespaces with
-  no rules of its own; the sequences stay as thin choreography over it, and
-  the per-session worker stays the dispatcher that reads in order, runs the
+  draft-14 §8.2 lifetime rules (see "`modules/control_plane/sequences`").
+- Waits on another session's answer are state of the `Track`: an upstream
+  SUBSCRIBE is a pending producer counted on the track, whose `Creating`
+  state replaced the former creation serializer, and a forwarded PUBLISH a
+  pending consumer. `UpstreamFetchTask` stays a task of its own: a FETCH
+  fill is no edge of the track.
+- The session entry keeps only session-level state (handle, token, span,
+  peer, expiry, mailbox); the worker reads it from there and holds nothing of
+  its own. Which edges a session has is a directory query (`tracks_fed_by`,
+  `consumer_tracks`), not a second index kept in step with the tracks.
+- `SessionRepository` and the directory are the registry; no object above
+  them carries rules. The sequences are thin choreography over them, and the
+  per-session worker is the dispatcher that reads in order, runs the
   authorization gate and performs the effects the aggregates return.
 
 A state transition returns effects; the caller performs the I/O. Nothing
 sends a control message under a `Track` lock or from a `Drop`.
-
-The event pipeline, the `Track` with its producers and consumers and the
-pending states are in place; the session's edge index follows in its own
-change.
 
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —

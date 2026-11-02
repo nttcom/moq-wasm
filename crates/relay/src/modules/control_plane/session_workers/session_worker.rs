@@ -38,7 +38,6 @@ use crate::modules::{
 pub(super) struct SessionWorker {
     session_id: SessionId,
     session_span: Span,
-    verified_token: Option<Arc<VerifiedToken>>,
     deps: WorkerDeps,
 }
 
@@ -48,13 +47,9 @@ impl SessionWorker {
         mut mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
         deps: WorkerDeps,
     ) -> SessionId {
-        let (session, session_span, verified_token) = {
+        let (session, session_span) = {
             let repo = deps.repo.lock().await;
-            (
-                repo.session(session_id),
-                repo.session_span(session_id),
-                repo.verified_token(session_id),
-            )
+            (repo.session(session_id), repo.session_span(session_id))
         };
         // The entry is inserted before SessionAdded is sent and removed only
         // by this worker's terminal cleanup.
@@ -62,16 +57,9 @@ impl SessionWorker {
             .unwrap_or_else(|| unreachable!("worker started for a session not in the repository"));
         let session_span = session_span
             .unwrap_or_else(|| unreachable!("worker started for a session without a span"));
-        if verified_token.is_none() {
-            tracing::error!(
-                session_id,
-                "session has no verified token; every namespace request will be denied"
-            );
-        }
-        let mut worker = Self {
+        let worker = Self {
             session_id,
             session_span,
-            verified_token,
             deps,
         };
 
@@ -129,7 +117,7 @@ impl SessionWorker {
         }
     }
 
-    async fn handle_relay_event(&mut self, event: SessionEvent) {
+    async fn handle_relay_event(&self, event: SessionEvent) {
         let session_id = self.session_id;
         match event {
             SessionEvent::MalformedTrackDetected(track_key) => {
@@ -192,19 +180,16 @@ impl SessionWorker {
         }
     }
 
-    async fn handle_moqt_event(&mut self, event: MoqtSessionEvent) {
+    async fn handle_moqt_event(&self, event: MoqtSessionEvent) {
         let session_id = self.session_id;
         let session_span = self.session_span.clone();
         let deps = &self.deps;
-        let event = scope_anonymous_root_subscription(self.verified_token.as_deref(), event);
-        let event_span = session_event_span(
-            session_id,
-            &session_span,
-            self.verified_token.as_deref(),
-            &event,
-        );
+        let verified_token = deps.repo.lock().await.verified_token(session_id);
+        let verified_token = verified_token.as_deref();
+        let event = scope_anonymous_root_subscription(verified_token, event);
+        let event_span = session_event_span(session_id, &session_span, verified_token, &event);
         event_span.in_scope(|| tracing::debug!("Received session event"));
-        if let Err(denied) = authorize_request(self.verified_token.as_deref(), &event) {
+        if let Err(denied) = authorize_request(verified_token, &event) {
             let reject_span = tracing::info_span!(
                 parent: &event_span,
                 "relay.session.unauthorized_request",
@@ -264,7 +249,7 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         self.cascading_relay_context(),
                         scope_anonymous_root_prefix(
-                            self.verified_token.as_deref(),
+                            verified_token,
                             handler.track_namespace_prefix(),
                         ),
                     )
@@ -335,7 +320,7 @@ impl SessionWorker {
                     .await;
             }
             MoqtSessionEvent::TrackStatus(handler) => {
-                self.refresh_token(handler.as_ref())
+                self.refresh_token(verified_token, handler.as_ref())
                     .instrument(event_span)
                     .await;
             }
@@ -401,10 +386,14 @@ impl SessionWorker {
         }
     }
 
-    async fn refresh_token(&mut self, handler: &dyn TrackStatusHandler) {
+    async fn refresh_token(
+        &self,
+        current: Option<&VerifiedToken>,
+        handler: &dyn TrackStatusHandler,
+    ) {
         let refreshed = refresh_token(
             self.deps.token_verifier.as_ref(),
-            self.verified_token.as_deref(),
+            current,
             handler.authorization_tokens(),
         )
         .await;
@@ -422,7 +411,6 @@ impl SessionWorker {
                             expires_at = ?token.expires_at,
                             "authorization token refreshed"
                         );
-                        self.verified_token = Some(token);
                         handler.ok(0, ContentExists::False).await
                     }
                     None => {

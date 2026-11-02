@@ -1,7 +1,7 @@
 pub(crate) mod track;
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashSet, btree_map},
     sync::{Arc, OnceLock, PoisonError, RwLock},
 };
 
@@ -190,20 +190,8 @@ impl InMemoryLocalPubSubDirectory {
         &self,
         publisher_session_id: SessionId,
     ) -> Vec<(TrackKey, ReleasedUpstreamSubscription)> {
-        let unwatched: Vec<TrackKey> = self
-            .upstream_tracks
-            .iter()
-            .filter(|track| {
-                !track.downstream_remains()
-                    && track
-                        .producers
-                        .get(&publisher_session_id)
-                        .is_some_and(|producer| producer.state.origin == ProducerOrigin::Publish)
-            })
-            .map(|track| track.key().clone())
-            .collect();
         let mut released = Vec::new();
-        for track_key in unwatched {
+        for track_key in self.tracks_fed_by(publisher_session_id) {
             let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
                 continue;
             };
@@ -211,9 +199,14 @@ impl InMemoryLocalPubSubDirectory {
             if track.downstream_remains() {
                 continue;
             }
-            let Some(producer) = track.producers.remove(&publisher_session_id) else {
+            let btree_map::Entry::Occupied(producer) = track.producers.entry(publisher_session_id)
+            else {
                 continue;
             };
+            if producer.get().state.origin != ProducerOrigin::Publish {
+                continue;
+            }
+            let producer = producer.remove();
             if track.producers.is_empty() {
                 entry.remove();
             } else {
@@ -277,18 +270,7 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
 
-        let published_track_keys: Vec<_> = self
-            .upstream_tracks
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .value()
-                    .producers
-                    .contains_key(&session_id)
-                    .then(|| entry.key().clone())
-            })
-            .collect();
-        for track_key in published_track_keys {
+        for track_key in self.tracks_fed_by(session_id) {
             let Some((_, downstream_subscriptions)) = self.end_publisher_subscription(
                 &track_key,
                 session_id,
@@ -594,6 +576,16 @@ impl InMemoryLocalPubSubDirectory {
             .iter()
             .filter(|entry| entry.value().has_client_consumer())
             .map(|entry| entry.key().track_namespace.clone())
+            .collect()
+    }
+
+    /// The tracks the session holds a producer of, whatever its origin
+    /// (PUBLISH or SUBSCRIBE).
+    pub(crate) fn tracks_fed_by(&self, publisher_session_id: SessionId) -> Vec<TrackKey> {
+        self.upstream_tracks
+            .iter()
+            .filter(|entry| entry.value().producers.contains_key(&publisher_session_id))
+            .map(|entry| entry.key().clone())
             .collect()
     }
 
@@ -1495,6 +1487,16 @@ mod tests {
 
         // Assert
         assert_eq!(tracks, vec![(PUBLISHER_SESSION, track_key)]);
+    }
+
+    #[tokio::test]
+    async fn tracks_fed_by_lists_only_the_session_s_tracks() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+
+        // Act / Assert
+        assert_eq!(table.tracks_fed_by(PUBLISHER_SESSION), vec![track_key]);
+        assert!(table.tracks_fed_by(PUBLISHER_SESSION + 1).is_empty());
     }
 
     #[tokio::test]
