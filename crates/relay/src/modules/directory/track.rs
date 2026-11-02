@@ -150,6 +150,15 @@ impl Track {
             SessionPeer::Relay => self.has_client_consumer(),
         }
     }
+
+    /// Whether the track would take a producer from this publisher now.
+    pub(crate) fn takes(
+        &self,
+        publisher_session_id: SessionId,
+        publisher_peer: SessionPeer,
+    ) -> bool {
+        !self.producers.contains_key(&publisher_session_id) && self.wants(publisher_peer)
+    }
 }
 
 /// A track as a sequence reads it: its producers without their ingests.

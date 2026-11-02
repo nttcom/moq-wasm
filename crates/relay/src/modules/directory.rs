@@ -713,9 +713,9 @@ impl InMemoryLocalPubSubDirectory {
         publisher_session_id: SessionId,
         publisher_peer: SessionPeer,
     ) -> bool {
-        self.upstream_tracks.get(track_key).is_some_and(|track| {
-            !track.producers.contains_key(&publisher_session_id) && track.wants(publisher_peer)
-        })
+        self.upstream_tracks
+            .get(track_key)
+            .is_some_and(|track| track.takes(publisher_session_id, publisher_peer))
     }
 
     /// Returns false, adding nothing, when the track is gone, the publisher
@@ -729,8 +729,7 @@ impl InMemoryLocalPubSubDirectory {
         let Some(mut track) = self.upstream_tracks.get_mut(track_key) else {
             return false;
         };
-        if track.producers.contains_key(&publisher_session_id) || !track.wants(producer.state.peer)
-        {
+        if !track.takes(publisher_session_id, producer.state.peer) {
             return false;
         }
         track.producers.insert(publisher_session_id, producer);
