@@ -16,6 +16,8 @@ mod request_rejection;
 mod session;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod session_routes;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod span_sink;
 
 #[cfg(target_arch = "wasm32")]
 pub use log_sink::set_log_sink;

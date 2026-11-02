@@ -28,10 +28,11 @@ fn level_name(level: Level) -> &'static str {
     }
 }
 
+/// Collects the fields of an event or a span; an event's `message` is kept apart.
 #[derive(Default)]
-struct FieldVisitor {
+pub(crate) struct FieldVisitor {
     message: String,
-    fields: Map<String, Value>,
+    pub(crate) fields: Map<String, Value>,
 }
 
 impl FieldVisitor {
