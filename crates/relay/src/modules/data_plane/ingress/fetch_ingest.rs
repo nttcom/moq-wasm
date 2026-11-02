@@ -234,14 +234,10 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::modules::{
-        auth::verified_token::VerifiedToken,
         data_plane::cache::track_cache::FetchRangeResolution,
         session::session_event::SessionEvent,
         test_support::{
-            mock_session::{
-                MockUpstreamSession, RecordedControlMessages,
-                session_repository_with_session_and_mailbox,
-            },
+            mock_session::session_repository_with_upstream_session_and_mailbox,
             relay_harness::fixtures::{
                 cached_object::{status_object, stream_object, stream_object_with_payload},
                 location,
@@ -261,13 +257,8 @@ mod tests {
         const UPSTREAM_SESSION: SessionId = 1;
         const DOWNSTREAM_SESSION: SessionId = 2; // not registered: downstream reset is skipped
         const UPSTREAM_FETCH_REQUEST_ID: u64 = 7;
-        let recorded = RecordedControlMessages::default();
-        let (session_repo, mut publisher_mailbox_receiver) =
-            session_repository_with_session_and_mailbox(
-                UPSTREAM_SESSION,
-                Box::new(MockUpstreamSession::new(recorded.clone())),
-                VerifiedToken::full_access(),
-            );
+        let (session_repo, recorded, mut publisher_mailbox_receiver) =
+            session_repository_with_upstream_session_and_mailbox(UPSTREAM_SESSION);
 
         let cache = Arc::new(TrackCache::new());
         fill(

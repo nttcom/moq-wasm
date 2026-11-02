@@ -150,7 +150,7 @@ pub(crate) struct MockUpstreamSession {
 }
 
 impl MockUpstreamSession {
-    pub(crate) fn new(recorded: RecordedControlMessages) -> Self {
+    fn new(recorded: RecordedControlMessages) -> Self {
         Self {
             recorded,
             answer_subscribe: None,
@@ -300,21 +300,37 @@ pub(crate) fn session_repository_with_session_and_mailbox(
     mpsc::UnboundedReceiver<SessionEvent>,
 ) {
     let (mut repository, mut session_added_receiver) = session_repository();
-    let mailbox_receiver = add_session_with_mailbox(
-        &mut repository,
-        &mut session_added_receiver,
-        NewSession {
-            session_id,
-            session,
-            session_span: tracing::Span::none(),
-            peer: SessionPeer::Client,
-            verified_token,
-        },
-    );
+    repository.add(NewSession {
+        session_id,
+        session,
+        session_span: tracing::Span::none(),
+        peer: SessionPeer::Client,
+        verified_token,
+    });
+    let mailbox_receiver = session_added_receiver
+        .try_recv()
+        .expect("add announces the session")
+        .mailbox_receiver;
     (
         Arc::new(tokio::sync::Mutex::new(repository)),
         mailbox_receiver,
     )
+}
+
+pub(crate) fn session_repository_with_upstream_session_and_mailbox(
+    session_id: SessionId,
+) -> (
+    Arc<tokio::sync::Mutex<SessionRepository>>,
+    RecordedControlMessages,
+    mpsc::UnboundedReceiver<SessionEvent>,
+) {
+    let recorded = RecordedControlMessages::default();
+    let (repository, mailbox_receiver) = session_repository_with_session_and_mailbox(
+        session_id,
+        Box::new(MockUpstreamSession::new(recorded.clone())),
+        VerifiedToken::full_access(),
+    );
+    (repository, recorded, mailbox_receiver)
 }
 
 /// A repository with no session; every added session is announced on the
@@ -330,18 +346,6 @@ pub(crate) fn session_repository() -> (SessionRepository, mpsc::UnboundedReceive
 /// A repository whose added sessions get no worker.
 pub(crate) fn detached_session_repository() -> SessionRepository {
     session_repository().0
-}
-
-pub(crate) fn add_session_with_mailbox(
-    repository: &mut SessionRepository,
-    session_added_receiver: &mut mpsc::UnboundedReceiver<SessionAdded>,
-    new_session: NewSession,
-) -> mpsc::UnboundedReceiver<SessionEvent> {
-    repository.add(new_session);
-    session_added_receiver
-        .try_recv()
-        .expect("add announces the session")
-        .mailbox_receiver
 }
 
 pub(crate) fn runner_stopped(

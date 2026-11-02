@@ -108,11 +108,10 @@ mod tests {
         auth::verified_token::VerifiedToken,
         domain::session_peer::SessionPeer,
         session::session_event::SessionEvent,
-        session::session_repository::SessionRepository,
         test_support::{
             mock_session::{
-                RecordedControlMessages, add_session_with_mailbox, detached_session_repository,
-                mock_new_session, session_repository,
+                detached_session_repository, mock_new_session,
+                session_repository_with_upstream_session_and_mailbox,
             },
             stub_route_registry::StubRouteRegistry,
         },
@@ -120,28 +119,11 @@ mod tests {
 
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
-    fn repository_with_client_session(
-        session_id: u64,
-    ) -> (
-        Arc<tokio::sync::Mutex<SessionRepository>>,
-        RecordedControlMessages,
-        tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
-    ) {
-        let (mut repository, mut session_added_receiver) = session_repository();
-        let (new_session, recorded) = mock_new_session(session_id, VerifiedToken::full_access());
-        let mailbox_receiver =
-            add_session_with_mailbox(&mut repository, &mut session_added_receiver, new_session);
-        (
-            Arc::new(tokio::sync::Mutex::new(repository)),
-            recorded,
-            mailbox_receiver,
-        )
-    }
-
     #[tokio::test]
     async fn drain_marks_the_relay_draining_and_returns_once_the_clients_left() {
         // Arrange
-        let (repository, recorded, _mailbox_receiver) = repository_with_client_session(1);
+        let (repository, recorded, _mailbox_receiver) =
+            session_repository_with_upstream_session_and_mailbox(1);
         let registry = Arc::new(StubRouteRegistry::with_migration_target(Some(
             "relay-b.example:4433",
         )));
@@ -171,7 +153,8 @@ mod tests {
     #[tokio::test]
     async fn drain_closes_the_clients_that_stay_past_the_timeout() {
         // Arrange
-        let (repository, recorded, _mailbox_receiver) = repository_with_client_session(1);
+        let (repository, recorded, _mailbox_receiver) =
+            session_repository_with_upstream_session_and_mailbox(1);
         let registry = StubRouteRegistry::with_migration_target(None);
 
         // Act
@@ -231,7 +214,8 @@ mod tests {
     #[tokio::test]
     async fn each_client_session_hears_that_its_go_away_was_sent() {
         // Arrange
-        let (repository, _recorded, mut mailbox_receiver) = repository_with_client_session(7);
+        let (repository, _recorded, mut mailbox_receiver) =
+            session_repository_with_upstream_session_and_mailbox(7);
         let registry = StubRouteRegistry::with_migration_target(None);
 
         // Act
