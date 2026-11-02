@@ -13,7 +13,7 @@ Living document. Update this file in the same change whenever the track
 choice, the muxing flow or the file rules described here change.
 
 ## Scope
-`crates/recorder` is a subscriber: it joins an MSF broadcast through a relay
+`services/recorder` is a subscriber: it joins an MSF broadcast through a relay
 and writes what it receives to local disk as fragmented MP4: one file holding
 the video and the audio track, or with `--layout per-track` one file per
 track. With `--upload` it moves every closed file to an object store. It knows the catalog (`msf`), LOC objects and

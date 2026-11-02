@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    'services/*',
     'crates/*',
     'examples/rust/moq-cli',
     'tests/*',

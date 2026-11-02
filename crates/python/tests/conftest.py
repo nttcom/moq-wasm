@@ -14,7 +14,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TARGET = REPO_ROOT / "target" / "debug"
-APPS_FILE = "crates/vts/apps.example.json"
+APPS_FILE = "services/vts/apps.example.json"
 RELAY_APP_ID = "11111111-2222-3333-4444-555555555555"
 READY_TIMEOUT_SECONDS = 120
 

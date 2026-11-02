@@ -80,7 +80,7 @@ that origin's host matches `Host`.
 
 ## Image
 
-`crates/console/Dockerfile` builds `web/` with Node, the binary with
+`services/console/Dockerfile` builds `web/` with Node, the binary with
 `cargo-chef` as the VTS does, and puts both on `distroless/cc` with
 `CONSOLE_STATIC_DIR=/srv/console`. It runs as `nonroot` and listens on `PORT`.
 

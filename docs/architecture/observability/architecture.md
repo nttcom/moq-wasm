@@ -151,7 +151,7 @@ neither is reported.
   draining (sent GOAWAY) and `null` while it serves; a relay older than these
   fields reads as 0 and `null`.
 
-## Relay side (`crates/relay`, `modules/observability/`)
+## Relay side (`services/relay`, `modules/observability/`)
 
 `docs/architecture/relay/architecture.md` ("Observability") describes the
 collector, `StatsExportTask` and where each counter lives.
@@ -168,7 +168,7 @@ Cascading is not used for observability: each relay sends its own snapshots
 to the collector, so losing inter-relay routing does not hide the relays it
 affects.
 
-## Observability server (`crates/observability`)
+## Observability server (`services/observability`)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

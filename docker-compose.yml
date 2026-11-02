@@ -14,7 +14,7 @@ services:
     image: moqt-relay:local
     build:
       context: .
-      dockerfile: crates/relay/Dockerfile
+      dockerfile: services/relay/Dockerfile
     profiles:
       - build
     command: ["true"]
@@ -23,12 +23,12 @@ services:
     image: moqt-vts:local
     build:
       context: .
-      dockerfile: crates/vts/Dockerfile
+      dockerfile: services/vts/Dockerfile
     environment:
       VTS_PORT: "8081"
       VTS_APPS_FILE: /etc/vts/apps.json
     volumes:
-      - ${VTS_APPS_FILE:-./crates/vts/apps.example.json}:/etc/vts/apps.json:ro
+      - ${VTS_APPS_FILE:-./services/vts/apps.example.json}:/etc/vts/apps.json:ro
 
   relay-a:
     image: moqt-relay:local
@@ -43,7 +43,7 @@ services:
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
       AUTH_VTS_URL: ${AUTH_VTS_URL:-http://vts:8081/verify}
-      # Development relay token for this relay, minted from apps.example.json (see crates/vts/README.md).
+      # Development relay token for this relay, minted from apps.example.json (see services/vts/README.md).
       AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3OTMwODE5ODUsImV4cCI6MjEwODQ0MTk4NSwicmVsYXlJZCI6InJlbGF5LWEifQ.DyVb-XVwjuYKppQCGu2yI-n5-ENrlSou8Akmb4pBqU0}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://clickstack-otel-collector:4317}
@@ -59,7 +59,7 @@ services:
       - "host.docker.internal:host-gateway"
     # Playwright pins the host certificate SPKI; relay must serve the same keypair.
     volumes:
-      - ./crates/relay/keys:/workspace/crates/relay/keys:ro
+      - ./services/relay/keys:/workspace/services/relay/keys:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -79,7 +79,7 @@ services:
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
       AUTH_VTS_URL: ${AUTH_VTS_URL:-http://vts:8081/verify}
-      # Development relay token for this relay, minted from apps.example.json (see crates/vts/README.md).
+      # Development relay token for this relay, minted from apps.example.json (see services/vts/README.md).
       AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3OTMwODE5ODUsImV4cCI6MjEwODQ0MTk4NSwicmVsYXlJZCI6InJlbGF5LWIifQ.Di7-8H0eJQZqDWhfrKzNMTPJHTHaTvbK38lP0QfstG4}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://clickstack-otel-collector:4317}
@@ -94,7 +94,7 @@ services:
       - "host.docker.internal:host-gateway"
     # Playwright pins the host certificate SPKI; relay must serve the same keypair.
     volumes:
-      - ./crates/relay/keys:/workspace/crates/relay/keys:ro
+      - ./services/relay/keys:/workspace/services/relay/keys:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -123,7 +123,7 @@ services:
     image: moqt-observability:local
     build:
       context: .
-      dockerfile: crates/observability/Dockerfile
+      dockerfile: services/observability/Dockerfile
     environment:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: observability

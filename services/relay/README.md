@@ -1,0 +1,63 @@
+# relay
+
+MoQT relay. It accepts QUIC and WebTransport on one port, caches objects for
+FETCH, forwards subscriptions between relays, and authenticates every session
+through the [VTS](../vts/README.md).
+
+## Run
+
+```shell
+make relay
+```
+
+Starts a local VTS, mints the relay's own token and runs `cargo run -p relay`
+on `https://127.0.0.1:4433`. A self-signed certificate is generated under
+`services/relay/keys/` on the first run. For two relays, use `docker compose up -d`
+(ports 4433 and 4434).
+
+## Configuration
+
+An empty value counts as unset and selects the default.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RELAY_PORT` | `4433` | QUIC and WebTransport listen port |
+| `RELAY_INNER_PORT` | `RELAY_PORT + 1` | QUIC port other relays connect to |
+| `RELAY_ID` | `relay-local` | Name in logs and in the route registry |
+| `RELAY_ADVERTISE_HOST` | `localhost` | Host other relays use to reach this one |
+| `RELAY_PUBLIC_HOST` | `localhost:RELAY_PORT` | `host[:port]` clients connect to; a draining relay names it in the GOAWAY it sends for another relay |
+| `RELAY_CERT_DIR` | `services/relay/keys` | Directory holding `cert.pem` and `key.pem`; self-signed ones are generated there if missing |
+| `REDIS_URL` | unset | Route registry shared by cascading relays; unset runs standalone |
+| `RELAY_DRAIN_TIMEOUT_SECS` | `30` | On Ctrl+C or SIGTERM, how long to wait for clients to leave after GOAWAY before closing them with GOAWAY_TIMEOUT; a second signal exits at once |
+| `AUTH_VTS_URL` | required | VTS verify endpoint, e.g. `http://vts:8081/verify` |
+| `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays; sign it with `--relay-id` set to this relay's `RELAY_ID` (a different `relayId` is warned at startup) |
+| `AUTH_MAX_TOKEN_TTL_SECONDS` | `3600` | Longest client token lifetime accepted |
+| `AUTH_CLOCK_LEEWAY_SECONDS` | `5` | Tolerance when checking `iat` / `exp` |
+| `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in memory; with the disk cache, how long a payload stays in memory before only its disk copy is kept |
+| `RELAY_DISK_CACHE_DIR` | unset | Directory for the payloads of objects received from client publishers, kept up to 1 hour; unset keeps the cache in memory only. `*.seg` files in it are deleted at startup |
+| `RELAY_DISK_CACHE_BYTES` | `10737418240` (10 GiB) | Cap on the disk cache; the oldest segments go first |
+| `RELAY_CACHE_EVICT_INTERVAL_SECS` | `5` | How often expired objects are drained; at least 1 |
+| `MOQT_FETCH_FILL_TIMEOUT_SECS` | `20` | How long an upstream FETCH may take to complete before the relay resets the downstream FETCH |
+| `RELAY_STDOUT_FILTER` | `relay=info,moqt=info` | `tracing` filter for stdout |
+| `RELAY_OTEL_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry traces |
+| `RELAY_LOG_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry logs |
+| `RELAY_HOSTNAME` | `$HOSTNAME` | Host name reported in OpenTelemetry resources |
+
+## OpenTelemetry
+
+OTLP trace and log exporters are configured from the standard OpenTelemetry
+variables and run only once `OTEL_EXPORTER_OTLP_ENDPOINT` is set (and
+`OTEL_SDK_DISABLED` is not). Example for an OTLP/HTTP backend:
+
+```shell
+OTEL_SERVICE_NAME=moqt-relay
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
+OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=your-api-key,x-honeycomb-dataset=moqt-relay
+```
+
+`OTEL_EXPORTER_OTLP_HEADERS` is optional.
+
+## Design
+
+[Architecture document](../docs/architecture/relay/architecture.md).

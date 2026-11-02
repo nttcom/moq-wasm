@@ -35,7 +35,7 @@ connect to the cloud relay by default, so nothing needs to be installed.
 | Remote monitoring, data collection and control of robots | |
 | Remote monitoring, data collection and control of autonomous vehicles | |
 
-Publishers outside the browser: [`crates/live-ingest`](crates/live-ingest/README.md) (RTMP/SRT),
+Publishers outside the browser: [`services/live-ingest`](services/live-ingest/README.md) (RTMP/SRT),
 [`crates/gst-plugin-moqt`](crates/gst-plugin-moqt/README.md) (`moqtsink`),
 [`examples/rust/moq-cli`](examples/rust/moq-cli/README.md) and the
 [pipecat bots](examples/python). Details of every browser demo are in
@@ -112,18 +112,19 @@ flowchart LR
 Every client speaks MoQT to a relay over QUIC or WebTransport. Relays cache
 objects for FETCH, forward subscriptions to each other and authenticate
 sessions through the VTS. The `moqt` crate is the protocol library every other
-component builds on. Every Rust crate lives in `crates/<package name>/`.
+component builds on. Libraries live in `crates/<package name>/` and
+the servers and bridges built on them in `services/<package name>/`.
 
 | Path | Component |
 | --- | --- |
 | [`crates/moqt/`](crates/moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
-| [`crates/relay/`](crates/relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
+| [`services/relay/`](services/relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
 | [`crates/wasm/`](crates/wasm/README.md) | WebAssembly bindings used by the browser examples |
 | [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
-| [`crates/live-ingest/`](crates/live-ingest/README.md) | RTMP and SRT ingest into MoQT |
-| [`crates/onvif-ingest/`](crates/onvif-ingest/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
+| [`services/live-ingest/`](services/live-ingest/README.md) | RTMP and SRT ingest into MoQT |
+| [`services/onvif-ingest/`](services/onvif-ingest/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
 | [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, the broadcast's track layout, re-encoding |
-| [`crates/vts/`](crates/vts/README.md), [`auth-token/`](crates/auth-token/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type |
+| [`services/vts/`](services/vts/README.md), [`auth-token/`](crates/auth-token/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
 | [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |
@@ -141,4 +142,4 @@ Relays always authenticate. A session without a token is limited to
 `anon/**`, which every demo uses by default. Tokens are HS256 JWTs verified
 by the VTS; sign one with the `auth-token` CLI
 ([`crates/auth-token/README.md`](crates/auth-token/README.md)). See
-[`crates/vts/README.md`](crates/vts/README.md).
+[`services/vts/README.md`](services/vts/README.md).
