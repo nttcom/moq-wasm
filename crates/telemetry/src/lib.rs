@@ -1,9 +1,13 @@
 use anyhow::{Context, Result};
+use std::time::Duration;
+
 use opentelemetry::global;
+use opentelemetry::metrics::{Meter, MeterProvider as _};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::logs::{BatchLogProcessor, SdkLoggerProvider};
+use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::filter::filter_fn;
@@ -50,6 +54,7 @@ pub struct TelemetryConfig<'a> {
 pub struct TelemetryGuard {
     tracer_provider: Option<SdkTracerProvider>,
     logger_provider: Option<SdkLoggerProvider>,
+    meter_provider: Option<SdkMeterProvider>,
 }
 
 impl TelemetryGuard {
@@ -59,10 +64,21 @@ impl TelemetryGuard {
             .as_ref()
             .map(|provider| EventLogger::new(provider, scope))
     }
+
+    /// `None` while OTLP is off. Its instruments are exported every
+    /// `OTEL_METRIC_EXPORT_INTERVAL` ms, 10 s by default.
+    pub fn meter(&self, scope: &'static str) -> Option<Meter> {
+        self.meter_provider
+            .as_ref()
+            .map(|provider| provider.meter(scope))
+    }
 }
 
 impl Drop for TelemetryGuard {
     fn drop(&mut self) {
+        if let Some(provider) = self.meter_provider.take() {
+            let _ = provider.shutdown();
+        }
         if let Some(provider) = self.logger_provider.take() {
             let _ = provider.shutdown();
         }
@@ -200,6 +216,31 @@ fn build_logger_provider(resource: Resource, protocol: OtlpProtocol) -> Result<S
         .build())
 }
 
+/// The OpenTelemetry default of 60 s is coarser than a HyperDX chart of the
+/// last hour needs.
+const METRIC_EXPORT_INTERVAL: Duration = Duration::from_secs(10);
+
+fn build_meter_provider(resource: Resource, protocol: OtlpProtocol) -> Result<SdkMeterProvider> {
+    let exporter = match protocol {
+        OtlpProtocol::Grpc => opentelemetry_otlp::MetricExporter::builder()
+            .with_tonic()
+            .build(),
+        OtlpProtocol::HttpProtobuf => opentelemetry_otlp::MetricExporter::builder()
+            .with_http()
+            .build(),
+    }
+    .context("failed to build OTLP metric exporter")?;
+    let mut reader = PeriodicReader::builder(exporter);
+    if non_empty_env("OTEL_METRIC_EXPORT_INTERVAL").is_none() {
+        reader = reader.with_interval(METRIC_EXPORT_INTERVAL);
+    }
+
+    Ok(SdkMeterProvider::builder()
+        .with_reader(reader.build())
+        .with_resource(resource)
+        .build())
+}
+
 /// Installs the global `tracing` subscriber; call it before the first log.
 /// Fails when a subscriber is already installed, `OTEL_EXPORTER_OTLP_PROTOCOL`
 /// is unsupported, or an OTLP exporter cannot be built.
@@ -216,14 +257,15 @@ pub fn init(config: TelemetryConfig) -> Result<TelemetryGuard> {
 
     let service_name = otel_service_name(config.service_name);
     let protocol = otel_protocol()?;
-    let (tracer_provider, logger_provider) = if otel_is_enabled() {
+    let (tracer_provider, logger_provider, meter_provider) = if otel_is_enabled() {
         let resource = otel_resource(&config, &service_name);
         (
             Some(build_tracer_provider(resource.clone(), protocol)?),
-            Some(build_logger_provider(resource, protocol)?),
+            Some(build_logger_provider(resource.clone(), protocol)?),
+            Some(build_meter_provider(resource, protocol)?),
         )
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     let otel_trace_layer = tracer_provider.as_ref().map(|provider| {
@@ -264,6 +306,7 @@ pub fn init(config: TelemetryConfig) -> Result<TelemetryGuard> {
     Ok(TelemetryGuard {
         tracer_provider,
         logger_provider,
+        meter_provider,
     })
 }
 
