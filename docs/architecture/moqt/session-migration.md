@@ -67,11 +67,9 @@ never migrates.
 | Client | Setting | Why |
 | --- | --- | --- |
 | relay → relay (`inter_relay_connection_manager`) | `false` | a relay-peer GOAWAY is answered by subscribing other publishers ("GOAWAY sequence") |
-| relay stats publisher (`stats_publish_task`) | `false` | it connects to its own relay, which is the one draining |
-| broadcast, recorder, observability, live-egress, onvif-ingest command subscriber, moq-cli, wasm | `true` | |
+| broadcast, recorder, live-egress, onvif-ingest command subscriber, moq-cli, wasm | `true` | |
 
-The default is `true`; the two relay call sites set `false` in the same
-change.
+The default is `true`; the relay call site sets `false` in the same change.
 
 ### Request ids and track aliases
 

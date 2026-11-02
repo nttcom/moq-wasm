@@ -24,7 +24,7 @@ optionally cascades across relays via a Redis-backed route registry.
 | `control_plane/` | Control-message processing: `SessionWorkers` and the per-session `SessionWorker`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, the `PendingProducerTask` behind every upstream SUBSCRIBE |
 | `data_plane/` | Objects in flight: `ingress/` (`IngestTask`), `cache/`, `egress/` (`EgressTask`, `FetchDeliveryTask`), and the data-plane integration tests |
 | `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op) and `InterRelayConnectionManager` |
-| `observability/` | `StatsCollector` (snapshot of sessions, tracks, subscriptions and process memory) and `StatsPublishTask`, which publishes it once per second |
+| `observability/` | `StatsCollector` (snapshot of sessions, tracks, subscriptions and process memory) and `StatsExportTask`, which sends it once per second as an OTLP log record, and its process values as gauges |
 | `test_support/` | `cfg(test)` mocks, the data-plane `RelayHarness` and directory fixtures shared across modules |
 
 Dependencies point downwards in this order: `control_plane` → `cascading` →
@@ -56,7 +56,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    - `spawn_client_transport::<moqt::NATIVE>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
    - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint.
-   - `spawn_stats_exporter(relay_id, event_logger)`, with OTLP on — see "Observability".
+   - `spawn_stats_exporter(relay_id, event_logger, process_gauges)`, with OTLP on — see "Observability".
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
@@ -987,8 +987,10 @@ the path its traces and logs already take, so the observability server needs
 no list of relays and no session to each.
 
 - `StatsExportTask` runs only with OTLP on. Once per second it collects a
-  snapshot and emits it through `telemetry::EventLogger` (`EventName`
-  `relay.stats.snapshot`, the JSON in its `snapshot` attribute). It reads the
+  snapshot, emits it through `telemetry::EventLogger` (`EventName`
+  `relay.stats.snapshot`, the JSON in its `snapshot` attribute) and records
+  its `process` values through `telemetry::relay_stats::ProcessGauges`
+  ("Relay gauges" in the observability architecture). It reads the
   same locks as the control plane, so a stuck runtime or lock stops the
   records and the relay leaves the live view.
 - `StatsCollector` reads, without holding any lock across an await:
