@@ -67,9 +67,9 @@ pub(crate) fn subscribe_initiated(
 }
 
 /// One upstream SUBSCRIBE in flight, counted among the track's pending
-/// producers. SUBSCRIBE_OK starts the ingest and adds the producer, which
-/// completes the track's creation; a publisher the track does not take any
-/// more is unsubscribed again.
+/// producers. SUBSCRIBE_OK starts the ingest and adds the producer; the first
+/// producer completes the track's creation. A publisher the track no longer
+/// takes is unsubscribed.
 pub(crate) struct PendingProducerTask {
     _join_handle: JoinHandle<()>,
 }
@@ -299,8 +299,8 @@ mod tests {
         }
     }
 
-    /// Runs the SUBSCRIBE to `session`, a publisher answering SUBSCRIBE_OK,
-    /// to its end.
+    /// Runs one `PendingProducerTask` against `session`, which answers
+    /// SUBSCRIBE_OK, until the task ends.
     async fn answer_from(
         table: Arc<InMemoryLocalPubSubDirectory>,
         publisher_session_id: SessionId,

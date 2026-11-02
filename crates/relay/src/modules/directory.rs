@@ -754,8 +754,8 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Marks a PUBLISH for the track as on its way to `session_id`, so no
-    /// second one is sent meanwhile. `None` when the track is gone or the
-    /// session already receives it.
+    /// second one is sent meanwhile. `None` when the track is gone, the
+    /// session already receives it, or a PUBLISH to it is already on its way.
     pub(crate) fn begin_forwarded_publish(
         self: &Arc<Self>,
         track_key: &TrackKey,

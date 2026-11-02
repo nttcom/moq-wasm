@@ -190,9 +190,9 @@ impl Track {
         self.pending_producers += count;
     }
 
-    /// One upstream SUBSCRIBE ended without a producer. When it was the last
-    /// one and no producer came, the creation fails with the last failure and
-    /// the track entry is to be removed: returns true then.
+    /// One upstream SUBSCRIBE ended without a producer. Returns true, failing
+    /// the creation with the last failure, when it was the last one and no
+    /// producer came; the caller then removes the entry.
     pub(crate) fn pending_producer_ended(&mut self, failure: Option<CreationFailure>) -> bool {
         self.pending_producers = self.pending_producers.saturating_sub(1);
         if failure.is_some() {

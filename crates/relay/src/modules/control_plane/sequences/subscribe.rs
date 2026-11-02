@@ -268,7 +268,7 @@ impl Subscribe {
             if let Ok(CreationState::Failed(failure)) = state {
                 return Err(failure);
             }
-            // Created, or the entry went away meanwhile: then look again.
+            // Created, or the entry went away meanwhile.
             let Some(upstream_track) = table.track_state(&track_key) else {
                 continue;
             };
