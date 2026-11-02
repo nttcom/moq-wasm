@@ -1,6 +1,8 @@
 import { type ServiceUrls, resolveServiceUrl } from '../../../../utils/serviceUrl'
+import { readMeetingAuth } from '../session/authToken'
 
 export type RecordingLayout = 'combined' | 'per-track'
+export type RecordingFormat = 'mp4' | 'moq'
 
 export type RecordingState = 'starting' | 'recording' | 'stopping' | 'finished' | 'failed'
 
@@ -10,6 +12,7 @@ export interface RoomRecording {
   id: string
   namespace_prefix: string
   layout: RecordingLayout
+  format: RecordingFormat
   state: RecordingState
   error: string | null
   members: { namespace: string; started_at_ms: number; finished: boolean; error: string | null }[]
@@ -38,12 +41,13 @@ export async function startRecording(
   recorderUrl: string,
   namespacePrefix: string,
   layout: RecordingLayout,
-  composite: boolean
+  composite: boolean,
+  format: RecordingFormat = 'mp4'
 ): Promise<RoomRecording> {
   return request(`${recorderUrl}/recordings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ namespace_prefix: namespacePrefix, layout, composite })
+    body: JSON.stringify({ namespace_prefix: namespacePrefix, layout, composite, format })
   })
 }
 
@@ -58,7 +62,10 @@ export async function listRecordings(recorderUrl: string, namespacePrefix: strin
 }
 
 async function request<T>(url: string, init: RequestInit): Promise<T> {
-  const response = await fetch(url, init)
+  const headers = new Headers(init.headers)
+  const token = readMeetingAuth().token
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(url, { ...init, headers })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
     throw new Error(body.error ?? `recorder answered ${response.status}`)

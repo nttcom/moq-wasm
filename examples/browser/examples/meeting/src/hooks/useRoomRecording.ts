@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   type RecordingLayout,
+  type RecordingFormat,
   type RoomRecording,
   activeRecording,
   listRecordings,
@@ -15,8 +16,9 @@ export interface RoomRecordingControls {
   active: RoomRecording | undefined
   busy: boolean
   error: string | null
+  playbackUrl: string | undefined
   /// `composite` also makes one video of the whole room after the recording.
-  start: (layout: RecordingLayout, composite: boolean) => Promise<void>
+  start: (layout: RecordingLayout, composite: boolean, format?: RecordingFormat) => Promise<void>
   stop: () => Promise<void>
 }
 
@@ -27,10 +29,19 @@ export function useRoomRecording(recorderUrl: string, namespacePrefix: string): 
   const [active, setActive] = useState<RoomRecording | undefined>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [playbackUrl, setPlaybackUrl] = useState<string>()
 
   const refresh = useCallback(async () => {
     try {
-      setActive(activeRecording(await listRecordings(recorderUrl, namespacePrefix)))
+      const recordings = await listRecordings(recorderUrl, namespacePrefix)
+      setActive(activeRecording(recordings))
+      const latest = recordings.filter((recording) => recording.state === 'finished').at(-1)
+      const url = new URL('../recording-player/', window.location.href)
+      if (latest) {
+        url.searchParams.set('recorder', recorderUrl)
+        url.searchParams.set('id', latest.id)
+      }
+      setPlaybackUrl(latest ? url.href : undefined)
       setReachable(true)
       setError(null)
     } catch (caught) {
@@ -61,8 +72,8 @@ export function useRoomRecording(recorderUrl: string, namespacePrefix: string): 
   )
 
   const start = useCallback(
-    (layout: RecordingLayout, composite: boolean) =>
-      run((url) => startRecording(url, namespacePrefix, layout, composite)),
+    (layout: RecordingLayout, composite: boolean, format: RecordingFormat = 'mp4') =>
+      run((url) => startRecording(url, namespacePrefix, layout, composite, format)),
     [namespacePrefix, run]
   )
   const stop = useCallback(async () => {
@@ -75,5 +86,5 @@ export function useRoomRecording(recorderUrl: string, namespacePrefix: string): 
   if (!reachable) {
     return null
   }
-  return { active, busy, error, start, stop }
+  return { active, busy, error, start, stop, playbackUrl }
 }

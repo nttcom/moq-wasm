@@ -2696,6 +2696,7 @@ name = "recorder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth-token",
  "base64 0.23.1",
  "bytes",
  "clap",
@@ -2708,6 +2709,7 @@ dependencies = [
  "object_store",
  "reqwest",
  "serde_json",
+ "sha2",
  "telemetry",
  "tokio",
  "tracing",
