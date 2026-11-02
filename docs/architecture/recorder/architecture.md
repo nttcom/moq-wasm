@@ -371,8 +371,8 @@ screen-share and event archives. Camera archives also receive `chat`; the
 `<room>/bots/transcriber` namespace has a transcript archive and does not keep
 an otherwise empty room alive. Each track has immutable payload chunks and JSON
 indexes, including canonical object fields, subgroup headers, FIN events and
-capture timestamps. Duplicate object
-identities retain the first payload; conflicting duplicates fail the recording.
+capture timestamps. Duplicate object identities retain the first payload;
+conflicting duplicates fail the recording.
 The chunks go straight to the object store; no local copy is written. A reset
 subgroup stream ends only that stream, as in `moqt`'s `TrackReader`. The
 recording fails if a subscription, task or upload fails, and its final room
@@ -407,11 +407,11 @@ track types (H.264 video and its supported audio codecs).
 
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
-boundaries, supports ascending and descending group order, handles cancellation
-and checks for conflicting duplicates. Data and index checksums are verified
-before FETCH_OK so damaged data is rejected with a control response rather than
-an unreadable stream reset. This currently reads selected payload chunks twice,
-once for validation and once for sending. Four FETCH requests can run at once
+boundaries, supports ascending and descending group order and handles
+cancellation; the writer already rejected conflicting duplicates. Data and
+index checksums are verified before FETCH_OK so damaged data is rejected with a
+control response rather than an unreadable stream reset. This reads selected
+payload chunks twice, once for validation and once for sending. Four FETCH requests can run at once
 per replay. Active subscriptions and FETCH requests keep a replay alive. Once
 the last subscription leaves and all FETCH requests finish, it closes its
 relay session after 15 idle minutes, or at once on server shutdown. A new FETCH

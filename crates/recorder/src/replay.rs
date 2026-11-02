@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use moqt::{
     RequestErrorCode, Session, SessionEvent,
     fetch::{FetchHandler, FetchParams, resolve_fetch_range},
@@ -18,7 +18,6 @@ use tokio::{
 };
 
 use crate::{
-    archive_chunks::object_fingerprint,
     archive_reader::{StoredRecording, StoredTrack, decode_object},
     relay::RelayConnection,
 };
@@ -324,7 +323,6 @@ async fn send_fetch(
                     .then(a.location.object_id.cmp(&b.location.object_id))
             });
         }
-        let mut seen = HashMap::new();
         let mut cached_chunk = None;
         let mut data = bytes::Bytes::new();
         for entry in entries {
@@ -332,17 +330,9 @@ async fn send_fetch(
                 data = recording.data(&track.chunks[entry.chunk]).await?;
                 cached_chunk = Some(entry.chunk);
             }
-            let object = decode_object(&entry.value, &data)?;
-            let identity = (object.location.group_id, object.location.object_id);
-            let signature = object_fingerprint(&object);
-            if let Some(previous) = seen.insert(identity, signature) {
-                ensure!(
-                    previous == signature,
-                    "conflicting recorded object identity"
-                );
-                continue;
-            }
-            sender.send_object(&object).await?;
+            sender
+                .send_object(&decode_object(&entry.value, &data)?)
+                .await?;
         }
         anyhow::Ok(())
     }
@@ -365,22 +355,10 @@ async fn prepare_fetch(
     end: Location,
 ) -> Result<Vec<crate::archive_reader::StoredEntry>> {
     let entries = recording.entries(track, start, end).await?;
-    let mut chunks: HashMap<usize, Vec<&Value>> = HashMap::new();
-    for entry in &entries {
-        chunks.entry(entry.chunk).or_default().push(&entry.value);
-    }
-    let mut seen = HashMap::new();
-    // Reject damaged chunks before FETCH_OK: a reset can discard the stream header too.
-    for (chunk_index, values) in chunks {
-        let data = recording.data(&track.chunks[chunk_index]).await?;
-        for value in values {
-            let object = decode_object(value, &data)?;
-            let identity = (object.location.group_id, object.location.object_id);
-            let fingerprint = object_fingerprint(&object);
-            if let Some(first) = seen.insert(identity, fingerprint) {
-                ensure!(first == fingerprint, "conflicting recorded object identity");
-            }
-        }
+    let chunks: HashSet<usize> = entries.iter().map(|entry| entry.chunk).collect();
+    // Check the data before FETCH_OK: a failure after it resets the stream, which can discard the FETCH header too.
+    for chunk in chunks {
+        recording.data(&track.chunks[chunk]).await?;
     }
     Ok(entries)
 }

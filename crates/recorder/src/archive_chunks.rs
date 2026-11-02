@@ -204,7 +204,7 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 
-pub(crate) fn object_fingerprint(object: &moqt::object::Object) -> [u8; 32] {
+fn object_fingerprint(object: &moqt::object::Object) -> [u8; 32] {
     let mut hash = Sha256::new();
     match object.forwarding {
         moqt::object::ForwardingPreference::Datagram => hash.update([0]),
