@@ -42,10 +42,17 @@ impl ControlMessageForwarder {
         fields(subscriber_session_id = %session_id, track_namespace = %track_namespace)
     )]
     pub(crate) async fn publish_namespace(&self, session_id: SessionId, track_namespace: String) {
-        let Ok(publisher) = self.publisher(session_id).await.inspect_err(|error| {
-            tracing::warn!(%error, subscriber_session_id = %session_id, %track_namespace, "PUBLISH_NAMESPACE not forwarded");
-        }) else {
-            return;
+        let publisher = {
+            let mut repository = self.repository.lock().await;
+            let Some(publisher) = repository.publisher(session_id) else {
+                tracing::warn!(subscriber_session_id = %session_id, %track_namespace, "PUBLISH_NAMESPACE not forwarded: no publisher");
+                return;
+            };
+            if !repository.record_namespace_announced(session_id, &track_namespace) {
+                tracing::debug!("namespace already announced on the session");
+                return;
+            }
+            publisher
         };
         match publisher.send_publish_namespace(track_namespace).await {
             Ok(response) => {
@@ -54,6 +61,19 @@ impl ControlMessageForwarder {
             }
             Err(error) => tracing::error!(?error, "Failed to send publish namespace"),
         }
+    }
+
+    /// Lets the next PUBLISH_NAMESPACE under the prefix reach the session
+    /// again once it unsubscribed from the prefix.
+    pub(crate) async fn forget_announced_namespaces(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+    ) {
+        self.repository
+            .lock()
+            .await
+            .forget_announced_namespaces(session_id, track_namespace_prefix);
     }
 
     #[tracing::instrument(
@@ -67,10 +87,17 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
     ) {
-        let Ok(publisher) = self.publisher(session_id).await.inspect_err(|error| {
-            tracing::warn!(%error, subscriber_session_id = %session_id, %track_namespace, "PUBLISH_NAMESPACE_DONE not forwarded");
-        }) else {
-            return;
+        let publisher = {
+            let mut repository = self.repository.lock().await;
+            let Some(publisher) = repository.publisher(session_id) else {
+                tracing::warn!(subscriber_session_id = %session_id, %track_namespace, "PUBLISH_NAMESPACE_DONE not forwarded: no publisher");
+                return;
+            };
+            if !repository.record_namespace_withdrawn(session_id, &track_namespace) {
+                tracing::debug!("namespace not announced on the session");
+                return;
+            }
+            publisher
         };
         match publisher.send_publish_namespace_done(track_namespace).await {
             Ok(()) => tracing::debug!("forwarded PUBLISH_NAMESPACE_DONE"),

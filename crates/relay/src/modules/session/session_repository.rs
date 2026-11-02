@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use tokio::sync::{mpsc, watch};
 use tracing::Span;
@@ -31,6 +34,9 @@ struct SessionEntry {
     verified_token: Arc<VerifiedToken>,
     expiry_task: Option<SessionExpiryTask>,
     mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
+    /// Namespaces this relay sent PUBLISH_NAMESPACE for on the session and
+    /// has not withdrawn yet.
+    announced_namespaces: HashSet<String>,
 }
 
 pub(crate) struct SessionState {
@@ -105,6 +111,7 @@ impl SessionRepository {
                 verified_token: Arc::new(verified_token),
                 expiry_task,
                 mailbox_sender,
+                announced_namespaces: HashSet::new(),
             },
         );
         self.update_client_session_count();
@@ -204,6 +211,47 @@ impl SessionRepository {
         self.sessions
             .get(&session_id)
             .map(|entry| entry.session.as_publisher())
+    }
+
+    /// Returns false when the session is gone or the namespace is already
+    /// announced on it, i.e. no PUBLISH_NAMESPACE is to be sent.
+    pub(crate) fn record_namespace_announced(
+        &mut self,
+        session_id: SessionId,
+        track_namespace: &str,
+    ) -> bool {
+        self.sessions.get_mut(&session_id).is_some_and(|entry| {
+            entry
+                .announced_namespaces
+                .insert(track_namespace.to_string())
+        })
+    }
+
+    /// Returns false when the namespace was not announced on the session,
+    /// i.e. no PUBLISH_NAMESPACE_DONE is to be sent.
+    pub(crate) fn record_namespace_withdrawn(
+        &mut self,
+        session_id: SessionId,
+        track_namespace: &str,
+    ) -> bool {
+        self.sessions
+            .get_mut(&session_id)
+            .is_some_and(|entry| entry.announced_namespaces.remove(track_namespace))
+    }
+
+    /// After UNSUBSCRIBE_NAMESPACE the session no longer tracks the
+    /// namespaces under the prefix, so a later SUBSCRIBE_NAMESPACE announces
+    /// them again.
+    pub(crate) fn forget_announced_namespaces(
+        &mut self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+    ) {
+        if let Some(entry) = self.sessions.get_mut(&session_id) {
+            entry
+                .announced_namespaces
+                .retain(|track_namespace| !track_namespace.starts_with(track_namespace_prefix));
+        }
     }
 
     pub(crate) fn session_states(&self) -> Vec<SessionState> {
@@ -402,5 +450,21 @@ mod tests {
             .close_with_protocol_violation(8, "late");
         // Assert
         assert!(recorded.closes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn namespaces_forgotten_under_a_prefix_can_be_announced_again() {
+        // Arrange
+        let (repository, _recorded) = session_repository_with_upstream_session(7).await;
+        let mut repository = repository.lock().await;
+        repository.record_namespace_announced(7, "room/alice");
+        repository.record_namespace_announced(7, "lobby/bob");
+
+        // Act
+        repository.forget_announced_namespaces(7, "room");
+
+        // Assert
+        assert!(repository.record_namespace_announced(7, "room/alice"));
+        assert!(!repository.record_namespace_announced(7, "lobby/bob"));
     }
 }

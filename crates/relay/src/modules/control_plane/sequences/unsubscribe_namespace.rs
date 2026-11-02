@@ -31,6 +31,9 @@ impl UnsubscribeNamespace {
 
         let no_clients_remain =
             table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
+        forwarder
+            .forget_announced_namespaces(session_id, track_namespace_prefix)
+            .await;
         if !super::is_origin_client(session_id, forwarder).await {
             return;
         }
