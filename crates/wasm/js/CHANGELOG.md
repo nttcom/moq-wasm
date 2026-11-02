@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The audio `publish()` sends keeps its capture timestamps after a gap in the
+  microphone's timestamps; until now each one was off by the gap from then on.
 - `moq-wasm`: `init({ wasmUrl, onLog, logLevel })` loads the wasm module and
   hands its logs to `onLog` as `LogRecord`s at `logLevel` (default `'warn'`)
   or above.
