@@ -1,26 +1,10 @@
 import asyncio
-import json
-from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any
-
-from aiohttp import web
 
 from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot.testing import RecordingPublication
 
-READ_TIMEOUT_SECONDS = 2
 SETTLE_SECONDS = 0.05
-
-
-class RecordingPublication:
-    def __init__(self):
-        self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()
-
-    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
-        self._writes.put_nowait((new_group, json.loads(payload)))
-
-    async def next_write(self) -> tuple[bool, Any]:
-        return await asyncio.wait_for(self._writes.get(), READ_TIMEOUT_SECONDS)
 
 
 async def published_status(status: SystemOneStatus) -> RecordingPublication:

@@ -88,12 +88,11 @@ async def test_room_is_empty_when_the_pages_namespace_goes_unpublished_first():
     # Arrange
     session = FakeNamespaceSession()
     run = FakeRun()
-    presence = asyncio.create_task(
-        while_published(session, CAMERA_NAMESPACE, run, unpublished_seconds=SHORT_UNPUBLISHED_SECONDS)
-    )
 
     # Act
-    empty = await asyncio.wait_for(until_room_empty(session, presence), 1)
+    empty = await asyncio.wait_for(
+        until_room_empty(session, CAMERA_NAMESPACE, run, unpublished_seconds=SHORT_UNPUBLISHED_SECONDS), 1
+    )
 
     # Assert: a namespace never published counts from the start
     assert empty
@@ -103,13 +102,11 @@ async def test_room_is_empty_when_the_pages_namespace_goes_unpublished_first():
 async def test_room_is_not_empty_when_the_relay_session_closes_first():
     # Arrange
     session = FakeNamespaceSession()
-    presence = asyncio.create_task(while_published(session, CAMERA_NAMESPACE, FakeRun()))
     session.publish(CAMERA_NAMESPACE)
 
     # Act
     session.close()
-    empty = await asyncio.wait_for(until_room_empty(session, presence), 1)
+    empty = await asyncio.wait_for(until_room_empty(session, CAMERA_NAMESPACE, FakeRun()), 1)
 
     # Assert
     assert not empty
-    presence.cancel()

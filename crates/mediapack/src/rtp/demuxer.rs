@@ -371,7 +371,7 @@ mod tests {
         },
         test_support::{
             FIXTURE_PPS, FIXTURE_SPS, audio_samples, delta_frame_annexb, fixture_video_config,
-            h264_aac_configs, keyframe_annexb, video_samples,
+            h264_aac_configs, keyframe_annexb, keyframe_sample, video_samples,
         },
     };
 
@@ -385,12 +385,7 @@ mod tests {
     fn source_events() -> Vec<MediaEvent> {
         let mut events = h264_aac_configs();
         events.extend([
-            MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts: Timestamp::from_millis(1_000),
-                dts: Timestamp::from_millis(1_000),
-            }),
+            MediaEvent::Video(keyframe_sample(Timestamp::from_millis(1_000))),
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[0x21, 0x10, 0x04]),
                 pts: Timestamp::from_millis(1_000),
@@ -407,12 +402,7 @@ mod tests {
                 pts: Timestamp::from_millis(1_021),
                 audio_level: None,
             }),
-            MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts: Timestamp::from_millis(1_066),
-                dts: Timestamp::from_millis(1_066),
-            }),
+            MediaEvent::Video(keyframe_sample(Timestamp::from_millis(1_066))),
         ]);
         events
     }

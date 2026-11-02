@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 import moqt
+from moq_bot_rooms.rooms import GRACE_SECONDS
 
 
 async def while_published(
@@ -37,16 +38,25 @@ async def while_published(
             running.cancel()
 
 
-async def until_room_empty(session: moqt.Session, presence: asyncio.Task) -> bool:
-    """Waits until `presence` returns or the relay session closes. `presence` is a `while_published`
-    task with `unpublished_seconds` on the namespace the room's pages publish. True if `presence`
-    returned first (nobody is in the room), False if the session closed first; re-raises an
-    exception from `presence`."""
+async def until_room_empty(
+    session: moqt.Session,
+    namespace: list[str],
+    run: Callable[[], Awaitable[None]],
+    *,
+    unpublished_seconds: float = GRACE_SECONDS,
+) -> bool:
+    """Runs `run` through `while_published` on `namespace`, the namespace the room's pages publish. Returns
+    True once the namespace stays unpublished for `unpublished_seconds` (nobody is in the room), False if
+    the relay session closes first; re-raises an exception from `while_published`."""
+    presence = asyncio.create_task(
+        while_published(session, namespace, run, unpublished_seconds=unpublished_seconds)
+    )
     closed = asyncio.ensure_future(session.closed())
     try:
         await asyncio.wait([presence, closed], return_when=asyncio.FIRST_COMPLETED)
     finally:
         closed.cancel()
+        presence.cancel()
     if not presence.done():
         return False
     presence.result()

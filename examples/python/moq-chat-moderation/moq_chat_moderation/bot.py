@@ -6,12 +6,11 @@ import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_bot_rooms.rooms import GRACE_SECONDS
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_system_one_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.namespace import until_room_empty
 from moq_system_one_bot.relay import add_relay_arguments, stay_connected
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
@@ -78,18 +77,7 @@ async def moderate_session(
         )
     await session.publish_namespace(moderator_namespace)
     chat_namespace = [*room_namespace(room_id), "chat"]
-    following = asyncio.create_task(
-        while_published(
-            session,
-            chat_namespace,
-            partial(forward_chat, session, chat_namespace, worker),
-            unpublished_seconds=GRACE_SECONDS,
-        )
-    )
-    try:
-        return await until_room_empty(session, following)
-    finally:
-        following.cancel()
+    return await until_room_empty(session, chat_namespace, partial(forward_chat, session, chat_namespace, worker))
 
 
 async def moderate_room(

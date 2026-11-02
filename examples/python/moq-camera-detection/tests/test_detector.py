@@ -7,7 +7,8 @@ from pipecat.tests.utils import SleepFrame, run_test
 
 from moq_camera_detection.detector import STALE_PICTURE_SECONDS, CameraPicture, CameraDetector
 from moq_camera_detection.prompt import Prompt
-from tests.helpers import YES_NO_PROMPT, StubVision, next_records, published_timeline
+from moq_system_one_bot.testing import next_records, published_timeline
+from tests.helpers import YES_NO_PROMPT, StubVision
 
 NO_MORE_RECORDS_WAIT_SECONDS = 0.2
 

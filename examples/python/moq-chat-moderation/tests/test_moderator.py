@@ -4,14 +4,15 @@ from pipecat.tests.utils import run_test
 from moq_chat_moderation.chat import ChatMessage, Label
 from moq_system_one_bot.event_timeline import EventTimeline
 from moq_chat_moderation.moderator import ChatModerator
-from tests.helpers import StubSystemOne, published_timeline
+from moq_system_one_bot.testing import published_timeline
+from tests.helpers import StubSystemOne
 
 LABELS = (Label("喜", "喜んでいる、うれしい"), Label("暴言", "相手を侮辱・攻撃・脅す"))
 
 
 async def test_chat_is_recorded_with_each_label_probability_at_its_location():
     # Arrange
-    timeline, publication = await published_timeline()
+    timeline, publication = await published_timeline(replay=True)
     chat = ChatMessage(text="shut up", labels=LABELS, location=(7, 0))
 
     # Act

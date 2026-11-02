@@ -222,8 +222,8 @@ mod tests {
         sample::AudioLevel,
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, NON_IDR_SLICE, delta_frame_annexb,
-            fixture_record, fixture_video_config, ivf_frames, keyframe_annexb, mono_48k,
-            video_samples,
+            fixture_record, fixture_video_config, ivf_frames, keyframe_annexb, keyframe_sample,
+            mono_48k, video_samples,
         },
     };
 
@@ -273,12 +273,7 @@ mod tests {
         assert_eq!(events[1], MediaEvent::VideoConfig(fixture_video_config()));
         assert_eq!(
             events[2],
-            MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts: Timestamp::ZERO,
-                dts: Timestamp::ZERO
-            })
+            MediaEvent::Video(keyframe_sample(Timestamp::ZERO))
         );
     }
 
@@ -327,12 +322,7 @@ mod tests {
         // Assert
         assert_eq!(
             events.last(),
-            Some(&MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts: Timestamp::ZERO,
-                dts: Timestamp::ZERO
-            }))
+            Some(&MediaEvent::Video(keyframe_sample(Timestamp::ZERO)))
         );
     }
 
@@ -385,12 +375,7 @@ mod tests {
         // Assert
         assert_eq!(
             events.last(),
-            Some(&MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts: Timestamp::ZERO,
-                dts: Timestamp::ZERO
-            }))
+            Some(&MediaEvent::Video(keyframe_sample(Timestamp::ZERO)))
         );
     }
 
