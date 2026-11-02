@@ -65,6 +65,7 @@ pub(crate) struct Follow {
 /// `Session::receive_event` with logical ids, and moves the session to the
 /// connection a GOAWAY names (draft-14 §3.5).
 pub(crate) struct MigrationTask {
+    session: Arc<SessionContext>,
     join_handle: JoinHandle,
 }
 
@@ -82,13 +83,14 @@ impl MigrationTask {
             _tasks: first_tasks,
         };
         let router = Router {
-            session,
+            session: session.clone(),
             reconnect: follow.reconnect,
             url: follow.url,
             closed_sender,
             session_span,
         };
         Self {
+            session,
             join_handle: executor::spawn("Session Migration", router.route(current)),
         }
     }
@@ -97,6 +99,7 @@ impl MigrationTask {
 impl Drop for MigrationTask {
     fn drop(&mut self) {
         self.join_handle.abort();
+        self.session.end_moves();
     }
 }
 
@@ -323,6 +326,7 @@ impl Router {
 
     async fn finish(&self, current: &Live) {
         let close = current.connection.transport.closed().await;
+        self.session.end_moves();
         self.closed_sender.send_replace(Some(close));
         self.forward(SessionEvent::Disconnected());
     }
@@ -1758,5 +1762,153 @@ mod tests {
             event.unwrap().unwrap(),
             SessionEvent::Disconnected()
         ));
+    }
+
+    /// Leaves the client's next request on `first` unanswered and closes
+    /// `first`; returns the server session the client reconnects with.
+    async fn lose_after_request(first: Session, sessions: &mut AcceptedSessions) -> Session {
+        let unanswered = first.receive_event().await.unwrap();
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        drop(unanswered);
+        let (_, second) = next_session(sessions).await;
+        second
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_namespace_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-namespace");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let subscriber = client.subscriber();
+
+        // Act
+        let (subscribed, (_second, prefix)) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(subscriber.subscribe_namespace("room".into()), async {
+                let second = lose_after_request(first, &mut sessions).await;
+                let SessionEvent::SubscribeNameSpace(handler) =
+                    second.receive_event().await.unwrap()
+                else {
+                    panic!("expected SUBSCRIBE_NAMESPACE on the new connection");
+                };
+                handler.ok().await.unwrap();
+                let prefix = handler.track_namespace_prefix.clone();
+                (second, prefix)
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(subscribed.is_ok());
+        assert_eq!(prefix, "room");
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-subscribe");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let mut subscriber = client.subscriber();
+
+        // Act
+        let (subscribed, _second) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(
+                subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+                async {
+                    let second = lose_after_request(first, &mut sessions).await;
+                    serve_subscribe(&second).await;
+                    second
+                }
+            )
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(subscribed.is_ok());
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_publish_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-publish");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let publisher = client.publisher();
+
+        // Act
+        let (published, _second) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(
+                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                async {
+                    let second = lose_after_request(first, &mut sessions).await;
+                    accept_publish(&second).await;
+                    second
+                }
+            )
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(published.is_ok());
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_publish_namespace_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-announce");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let publisher = client.publisher();
+
+        // Act
+        let (announced, (_second, namespace)) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(publisher.publish_namespace("room/alice".into()), async {
+                let second = lose_after_request(first, &mut sessions).await;
+                let SessionEvent::PublishNamespace(handler) = second.receive_event().await.unwrap()
+                else {
+                    panic!("expected PUBLISH_NAMESPACE on the new connection");
+                };
+                handler.ok().await.unwrap();
+                let namespace = handler.track_namespace.clone();
+                (second, namespace)
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(announced.is_ok());
+        assert_eq!(namespace, "room/alice");
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_request_cut_off_by_a_session_that_does_not_reconnect_fails() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-no-reconnect");
+        let client = connect_with(port, "jwt".to_string().into()).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let subscriber = client.subscriber();
+
+        // Act
+        let (subscribed, _first) = tokio::time::timeout(DISCONNECT_TIMEOUT, async {
+            tokio::join!(subscriber.subscribe_namespace("room".into()), async {
+                let unanswered = first.receive_event().await.unwrap();
+                first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+                (unanswered, first)
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(matches!(subscribed, Err(RequestFailure::SessionClosed)));
     }
 }

@@ -52,8 +52,18 @@ impl Subscriber {
         fields(track_namespace_prefix = %namespace)
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
-        let mut carried = self.session.lock_carried().await;
-        send_subscribe_namespace(&self.session.connection(), namespace.clone()).await?;
+        let mut carried = loop {
+            let carried = self.session.lock_carried().await;
+            let connection = self.session.connection();
+            match send_subscribe_namespace(&connection, namespace.clone()).await {
+                Ok(()) => break carried,
+                Err(error) => {
+                    self.session
+                        .resend_after(carried, &connection, error)
+                        .await?
+                }
+            }
+        };
         if let Some(carried) = carried.as_mut() {
             carried.namespaces.push(namespace);
         }
@@ -72,10 +82,18 @@ impl Subscriber {
         track_name: String,
         option: SubscribeOption,
     ) -> Result<Subscription, RequestFailure> {
-        let mut carried = self.session.lock_carried().await;
-        let connection = self.session.connection();
-        let (message, response) =
-            send_subscribe(&connection, &track_namespace, &track_name, &option).await?;
+        let (mut carried, connection, message, response) = loop {
+            let carried = self.session.lock_carried().await;
+            let connection = self.session.connection();
+            match send_subscribe(&connection, &track_namespace, &track_name, &option).await {
+                Ok((message, response)) => break (carried, connection, message, response),
+                Err(error) => {
+                    self.session
+                        .resend_after(carried, &connection, error)
+                        .await?
+                }
+            }
+        };
         let logical_alias = match self
             .session
             .register_data_receiver(&connection, message.request_id, message.track_alias)

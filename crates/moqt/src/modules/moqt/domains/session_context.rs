@@ -15,7 +15,10 @@ use crate::{
             data_plane::stream::{
                 fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
             },
-            domains::connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
+            domains::{
+                connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
+                request_failure::RequestFailure,
+            },
             runtime::dispatch::incoming_object::{IncomingObjectReceiver, incoming_object_channel},
         },
     },
@@ -45,6 +48,9 @@ pub(crate) struct SessionContext {
     publications: std::sync::Mutex<HashMap<u64, Publication>>,
     /// Wakes `unserved` whenever a connection stops serving a track.
     served_changed: watch::Sender<()>,
+    /// Changes whenever a migration makes another connection current, and
+    /// turns `true` once the session will not move again.
+    moves: watch::Sender<bool>,
 }
 
 pub(crate) struct Publication {
@@ -135,6 +141,7 @@ impl SessionContext {
             carried: follows_go_away.then(|| tokio::sync::RwLock::new(CarriedRequests::default())),
             publications: std::sync::Mutex::default(),
             served_changed: watch::channel(()).0,
+            moves: watch::channel(false).0,
         }
     }
 
@@ -288,7 +295,58 @@ impl SessionContext {
         let mut connections = self.connections();
         let moved_from = std::mem::replace(&mut connections.current, next);
         connections.previous = Some(moved_from.clone());
+        drop(connections);
+        self.moves.send_modify(|_| {});
         moved_from
+    }
+
+    pub(crate) fn end_moves(&self) {
+        self.moves.send_replace(true);
+    }
+
+    /// `Ok` when a migration has replaced the lost `connection`, so the request
+    /// is sent again on the current one; otherwise `error`.
+    /// Drops `carried`, the lock the request was sent under, first: the
+    /// migration takes that lock to send the carried requests.
+    pub(crate) async fn resend_after<G>(
+        &self,
+        carried: G,
+        connection: &Arc<Connection>,
+        error: RequestFailure,
+    ) -> Result<(), RequestFailure> {
+        drop(carried);
+        if self.moved_after_loss(connection, &error).await {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    /// Waits until a migration replaces `connection`; `false` when `error` does
+    /// not mean `connection` was lost, or the session ends on it.
+    pub(crate) async fn moved_after_loss(
+        &self,
+        connection: &Arc<Connection>,
+        error: &RequestFailure,
+    ) -> bool {
+        if !self.follows_go_away()
+            || !matches!(
+                error,
+                RequestFailure::SessionClosed | RequestFailure::Send(_)
+            )
+        {
+            return false;
+        }
+        let mut moves = self.moves.subscribe();
+        loop {
+            let ended = *moves.borrow_and_update();
+            if !Arc::ptr_eq(&self.connection(), connection) {
+                return true;
+            }
+            if ended || moves.changed().await.is_err() {
+                return false;
+            }
+        }
     }
 
     pub(crate) fn forget_previous(&self, connection: &Arc<Connection>) {
