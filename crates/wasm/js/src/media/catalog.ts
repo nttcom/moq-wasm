@@ -91,7 +91,7 @@ export function resolveInitData(catalog: unknown, track: Record<string, unknown>
 /// screen, named by its video and audio tracks.
 export type LiveSource = { video: string; audio?: string }
 
-/// An absent video track, such as a muted camera's, leaves the audio.
+/// The audio is returned even when the video track is absent, such as a muted camera's.
 export function sourceTracks(tracks: MediaCatalogTrack[], source: LiveSource): MediaCatalogTrack[] {
   const altGroup = tracks.find((track) => track.name === source.video)?.altGroup
   const named = new Set([source.video, source.audio])
