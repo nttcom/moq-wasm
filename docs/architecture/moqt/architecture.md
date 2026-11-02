@@ -439,13 +439,17 @@ use these facades instead of the data-plane factories directly:
   is a `MalformedTrackError`, after which the track ends.
 - `Subscriber::subscribe_current_group` is how a late joiner reads a track
   from the start of its current group (draft-14 §9.16.2, the catalog join of
-  draft-ietf-moq-msf-01 §5). It subscribes with Largest Object and returns a
-  `TrackReader` whose task first sends a Relative Joining FETCH (offset 0) and
-  drains it into the channel, then accepts the subgroup streams, so the
-  fetched objects come before the live ones even when a live stream arrives
-  first. Until the FETCH ends, the live streams wait in the subscription's
-  channel. No FETCH is sent when SUBSCRIBE_OK reports no content. A refused or
-  failed FETCH is logged at DEBUG, and the reader yields only the live objects.
+  draft-ietf-moq-msf-01 §5). It subscribes with Largest Object and writes a
+  Relative Joining FETCH (offset 0) right behind the SUBSCRIBE on the same
+  connection, before SUBSCRIBE_OK, so both are answered within one round
+  trip. The peer handles its requests in order, so the FETCH finds the
+  subscription it joins. It returns a `TrackReader` whose task drains the
+  FETCH into the channel, then accepts the subgroup streams, so the fetched
+  objects come before the live ones even when a live stream arrives first.
+  Until the FETCH ends, the live streams wait in the subscription's channel.
+  For a track without content the peer refuses the FETCH with INVALID_RANGE
+  (§9.16.2); a refused or failed FETCH is logged at DEBUG, and the reader
+  yields only the live objects.
   `Origin` answers the FETCH, so this works against a moqt publisher as well as
   a relay.
 

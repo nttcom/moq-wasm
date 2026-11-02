@@ -5,10 +5,13 @@ use tokio::sync::mpsc;
 use crate::{
     Subscriber, Subscription,
     fetch::{Fetch, FetchOption},
-    modules::executor::{self, JoinHandle, MaybeSend},
+    modules::{
+        executor::{self, JoinHandle, MaybeSend},
+        moqt::domains::subscriber::{SentFetch, joining_remainder},
+    },
     object::{
-        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError,
-        Object, ObjectStatus, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
+        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, Object,
+        ObjectStatus, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
     },
 };
 
@@ -78,17 +81,20 @@ impl TrackReader {
     }
 
     /// Subgroup streams are accepted only after the FETCH ends, so the fetched
-    /// objects come first.
+    /// objects come first. `joining_fetch` is the Joining FETCH written behind
+    /// the SUBSCRIBE; `None` reads the live objects only.
     pub(crate) fn joining_current_group(
         subscriber: Subscriber,
         subscription: Subscription,
+        joining_fetch: Option<SentFetch>,
     ) -> Self {
         let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
         let fetch_sender = object_sender.clone();
         let factory = async move {
             let mut subscriber = subscriber;
             if let Err(error) =
-                send_current_group(&mut subscriber, &subscription, fetch_sender).await
+                send_current_group(&mut subscriber, &subscription, joining_fetch, fetch_sender)
+                    .await
             {
                 tracing::debug!(%error, "joining FETCH of the current group failed");
             }
@@ -119,17 +125,20 @@ async fn stream_factory(
     }
 }
 
+/// For a track without content the peer refuses the FETCH with INVALID_RANGE
+/// (draft-14 §9.16.2), which leaves the reader with the live objects only.
 async fn send_current_group(
     subscriber: &mut Subscriber,
     subscription: &Subscription,
+    joining_fetch: Option<SentFetch>,
     object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
 ) -> anyhow::Result<()> {
-    if subscription.content_exists() == ContentExists::False {
+    let Some(sent) = joining_fetch else {
         return Ok(());
-    }
-    let handle = subscriber
-        .fetch_relative_joining(subscription, 0, FetchOption::default())
-        .await?;
+    };
+    let option = FetchOption::default();
+    let remainder = joining_remainder(subscription, 0, &option);
+    let handle = subscriber.fetch_answered(sent, &option, remainder).await?;
     let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
     while let Fetch::Object(object) = receiver.receive().await? {
         if let Some(object) = TrackObject::from_object(object)
