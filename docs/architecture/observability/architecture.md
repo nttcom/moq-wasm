@@ -328,6 +328,10 @@ converts the report to OTLP/JSON and forwards it (`client_telemetry`).
 | `client.player.audio_breaks` | {break} | cumulative sum | `audioBreaks` |
 | `client.player.audio_concealed` | ms | cumulative sum | `audioConcealedMs` |
 | `client.player.shed` | ms | cumulative sum | `shedMs` |
+| `client.player.arrival_spread` | ms | gauge | `arrivalSpreadMs` |
+| `client.player.av_sync_offset` | ms | gauge, positive when the picture is ahead of the sound | `syncOffsetMs` |
+| `client.player.video_dropped` | {frame} | cumulative sum | `videoDroppedFrames` |
+| `client.player.video_late` | {frame} | cumulative sum | `videoLateFrames` |
 | `client.player.max_arrival_gap` | ms | gauge, `media_kind` attribute | `maxArrivalGapMs` |
 
 A collector that does not accept the export answers 502. Linking a browser

@@ -52,6 +52,10 @@ pub(super) struct PlayerStatValues {
     pub(super) audio_breaks: Option<f64>,
     pub(super) audio_concealed_ms: Option<f64>,
     pub(super) shed_ms: Option<f64>,
+    pub(super) arrival_spread_ms: Option<f64>,
+    pub(super) sync_offset_ms: Option<f64>,
+    pub(super) video_dropped_frames: Option<f64>,
+    pub(super) video_late_frames: Option<f64>,
     #[serde(default)]
     pub(super) max_arrival_gap_ms: ArrivalGaps,
 }
