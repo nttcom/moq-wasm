@@ -1,15 +1,10 @@
-use std::collections::BTreeMap;
-
-use Kind::{Counter, Gauge};
 use relay_stats::{ProcessStats, RelaySnapshot, SessionStats};
 use serde_json::{Value, json};
 
-#[derive(Clone, Copy)]
-enum Kind {
-    Gauge,
-    /// A total since the session started.
-    Counter,
-}
+use crate::otlp::{
+    Kind::{self, Counter, Gauge},
+    Metrics, string_attribute, time_unix_nano,
+};
 
 /// Name, unit, kind and value of one data point.
 type Measurement = (&'static str, &'static str, Kind, u64);
@@ -112,10 +107,6 @@ fn session_measurements(s: &SessionStats) -> [Measurement; 14] {
     ]
 }
 
-fn string_attribute(key: &str, value: impl Into<Value>) -> Value {
-    json!({ "key": key, "value": { "stringValue": value.into() } })
-}
-
 /// The OTLP/JSON `ExportMetricsServiceRequest` body.
 pub(crate) fn export_request(snapshots: &[RelaySnapshot]) -> Value {
     let resource_metrics: Vec<Value> = snapshots.iter().map(resource_metrics).collect();
@@ -123,18 +114,15 @@ pub(crate) fn export_request(snapshots: &[RelaySnapshot]) -> Value {
 }
 
 fn resource_metrics(snapshot: &RelaySnapshot) -> Value {
-    let time_unix_nano = (u128::from(snapshot.timestamp_ms) * 1_000_000).to_string();
-    let mut metrics: BTreeMap<&'static str, (&'static str, Kind, Vec<Value>)> = BTreeMap::new();
+    let time_unix_nano = time_unix_nano(snapshot.timestamp_ms);
+    let mut metrics = Metrics::default();
     let mut add = |(name, unit, kind, value): Measurement, attributes: &[Value]| {
-        let points = &mut metrics
-            .entry(name)
-            .or_insert_with(|| (unit, kind, Vec::new()))
-            .2;
-        points.push(json!({
+        let point = json!({
             "timeUnixNano": time_unix_nano,
             "asInt": value.to_string(),
             "attributes": attributes,
-        }));
+        });
+        metrics.add(name, unit, kind, point);
     };
     for measurement in process_measurements(&snapshot.process) {
         add(measurement, &[]);
@@ -149,26 +137,6 @@ fn resource_metrics(snapshot: &RelaySnapshot) -> Value {
             add(measurement, &attributes);
         }
     }
-    let metrics: Vec<Value> = metrics
-        .into_iter()
-        .map(|(name, (unit, kind, data_points))| match kind {
-            Kind::Gauge => json!({
-                "name": name,
-                "unit": unit,
-                "gauge": { "dataPoints": data_points },
-            }),
-            Kind::Counter => json!({
-                "name": name,
-                "unit": unit,
-                "sum": {
-                    // OTLP AggregationTemporality 2 is CUMULATIVE.
-                    "aggregationTemporality": 2,
-                    "isMonotonic": true,
-                    "dataPoints": data_points,
-                },
-            }),
-        })
-        .collect();
     json!({
         "resource": {
             "attributes": [
@@ -178,7 +146,7 @@ fn resource_metrics(snapshot: &RelaySnapshot) -> Value {
         },
         "scopeMetrics": [{
             "scope": { "name": "observability" },
-            "metrics": metrics,
+            "metrics": metrics.into_otlp(),
         }],
     })
 }

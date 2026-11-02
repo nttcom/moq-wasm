@@ -1,9 +1,8 @@
 use std::time::Duration;
 
-use anyhow::{Context, bail};
 use tokio::{task::JoinHandle, time};
 
-use crate::{latest_snapshots::LatestSnapshots, otlp_metrics::export_request};
+use crate::{latest_snapshots::LatestSnapshots, otlp, otlp_metrics::export_request};
 
 const EXPORT_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -23,7 +22,7 @@ impl OtlpMetricsExportTask {
                     continue;
                 }
                 let body = export_request(&snapshots).to_string();
-                if let Err(error) = post(&http, &endpoint, body).await {
+                if let Err(error) = otlp::post(&http, &endpoint, body).await {
                     tracing::warn!(%error, "relay metrics were not exported");
                 }
             }
@@ -36,24 +35,6 @@ impl Drop for OtlpMetricsExportTask {
     fn drop(&mut self) {
         self.join_handle.abort();
     }
-}
-
-async fn post(http: &reqwest::Client, endpoint: &str, body: String) -> anyhow::Result<()> {
-    let response = http
-        .post(endpoint)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(body)
-        .send()
-        .await
-        .context("the OTLP metrics endpoint is unreachable")?;
-    let status = response.status();
-    if !status.is_success() {
-        bail!(
-            "the OTLP metrics endpoint answered {status}: {}",
-            response.text().await?.trim()
-        );
-    }
-    Ok(())
 }
 
 #[cfg(test)]

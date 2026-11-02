@@ -4,6 +4,7 @@ pub mod clickhouse;
 pub mod config;
 pub mod latest_snapshots;
 pub mod namespaces;
+mod otlp;
 mod otlp_metrics;
 pub mod otlp_metrics_export_task;
 pub mod relay_subscription_task;
