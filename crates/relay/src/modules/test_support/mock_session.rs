@@ -375,10 +375,13 @@ impl Session for MockUpstreamSession {
     }
 
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
-        match self.recorded.event_receiver.lock().await.recv().await {
-            Some(event) => event,
-            None => std::future::pending().await,
-        }
+        self.recorded
+            .event_receiver
+            .lock()
+            .await
+            .recv()
+            .await
+            .expect("the session's RecordedControlMessages holds the event sender")
     }
 
     fn close(&self, code: TerminationErrorCode, reason: &str) {
