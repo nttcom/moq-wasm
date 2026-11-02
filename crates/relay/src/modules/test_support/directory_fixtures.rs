@@ -56,7 +56,6 @@ pub(crate) fn active_upstream(origin: ProducerOrigin) -> ProducerState {
     }
 }
 
-/// A producer whose ingest reads nothing.
 pub(crate) fn producer_with(state: ProducerState) -> Producer {
     Producer::new(state, IngestTask::idle())
 }

@@ -130,7 +130,7 @@ pub(crate) async fn release_upstream(
 
 /// Also unsubscribes the subscription from the same publisher that this one
 /// replaces, e.g. the SUBSCRIBE this relay sent before the publisher sent
-/// PUBLISH for the track; the replaced producer's ingest stops with it.
+/// PUBLISH for the track; dropping the replaced producer stops its ingest.
 pub(crate) async fn register_upstream_subscription(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,

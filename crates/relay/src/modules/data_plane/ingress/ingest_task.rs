@@ -38,7 +38,7 @@ pub(crate) struct IngestStart {
     pub(crate) cache: Arc<TrackCache>,
     pub(crate) publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
     pub(crate) stamp: CacheStamp,
-    /// The request that starts the ingest; the ingest outlives it and links to it.
+    /// The request that starts the ingest.
     pub(crate) request_span: Span,
     pub(crate) publisher_session_span: Span,
 }
@@ -150,7 +150,7 @@ impl IngestTask {
 
 #[cfg(test)]
 impl IngestTask {
-    /// An ingest that reads nothing, for registrations under test.
+    /// An ingest that reads nothing, for producers under test.
     pub(crate) fn idle() -> Self {
         let (stop_sender, _stop_receiver) = watch::channel(false);
         Self {
@@ -196,7 +196,8 @@ mod tests {
     }
 
     /// Starts the ingest of `publisher_session_id`, whose upstream request id
-    /// equals its session id, and waits until it reads the publisher.
+    /// equals its session id, and waits until it created the publisher's
+    /// data receiver.
     async fn start(cache: &Arc<TrackCache>, publisher_session_id: SessionId) -> UpstreamPublisher {
         let recorded = RecordedControlMessages::default();
         let stream_sender = recorded.feed_streams();

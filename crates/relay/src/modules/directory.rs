@@ -705,8 +705,7 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Whether `add_upstream_subscription_to_track` would take a producer
-    /// from this publisher now: the track exists, the publisher does not feed
-    /// it yet and the track wants its kind of publisher.
+    /// from this publisher now.
     pub(crate) fn track_takes_publisher(
         &self,
         track_key: &TrackKey,

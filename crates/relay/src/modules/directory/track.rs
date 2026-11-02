@@ -151,7 +151,6 @@ impl Track {
         }
     }
 
-    /// Whether the track would take a producer from this publisher now.
     pub(crate) fn takes(
         &self,
         publisher_session_id: SessionId,

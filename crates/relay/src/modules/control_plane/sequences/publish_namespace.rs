@@ -295,7 +295,6 @@ mod tests {
 
     const ANNOUNCING_PUBLISHER: SessionId = 3;
 
-    /// The announcing publisher answers SUBSCRIBE with request id 1.
     const ANNOUNCING_UPSTREAM_REQUEST_ID: u64 = 1;
 
     async fn announce(table: &Arc<InMemoryLocalPubSubDirectory>) -> RecordedControlMessages {

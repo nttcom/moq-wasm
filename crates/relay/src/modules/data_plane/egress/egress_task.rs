@@ -36,11 +36,10 @@ pub(crate) struct EgressStart {
     pub(crate) largest_location: Option<moqt::object::Location>,
 }
 
-/// The egress runner of one downstream subscription. It lives as long as
-/// the subscription's registration: the registration's stop sender ends it,
-/// and a runner that ends its subscription itself reports that to the
-/// subscriber session's mailbox, so the session worker removes the
-/// registration.
+/// The egress runner of one downstream subscription. The consumer's stop
+/// sender ends it; a runner that ends the subscription itself sends
+/// `DownstreamSubscriptionEnded` to the subscriber session's mailbox, whose
+/// worker then removes the consumer.
 pub(crate) struct EgressTask {
     _join_handle: JoinHandle<()>,
 }

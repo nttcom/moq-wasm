@@ -57,7 +57,8 @@ type StreamSource = mpsc::UnboundedReceiver<Box<dyn StreamReceiver>>;
 pub(crate) struct RecordedControlMessages {
     event_sender: mpsc::UnboundedSender<InjectedSessionEvent>,
     event_receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<InjectedSessionEvent>>>,
-    /// Streams the next data receiver hands to the ingest; none pends forever.
+    /// Streams the next data receiver yields to the ingest; without them it
+    /// pends forever.
     stream_source: Arc<Mutex<Option<StreamSource>>>,
     /// Request ids whose data receiver the ingest created.
     data_receivers: Arc<Mutex<Vec<u64>>>,
