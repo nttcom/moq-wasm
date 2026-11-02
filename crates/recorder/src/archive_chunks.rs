@@ -120,8 +120,9 @@ impl ChunkWriter {
                 flush(&self.store, &self.prefix, track).await?;
             }
         }
-        let mut tracks: Vec<_> = self
-            .tracks
+        let mut tracks: Vec<_> = self.tracks.into_iter().collect();
+        tracks.sort_by_key(|(_, track)| track.id);
+        let tracks: Vec<_> = tracks
             .into_iter()
             .map(|(name, track)| {
                 json!({
@@ -129,12 +130,6 @@ impl ChunkWriter {
                 })
             })
             .collect();
-        tracks.sort_by_key(|track| {
-            track["id"]
-                .as_str()
-                .and_then(|id| id.parse::<usize>().ok())
-                .unwrap_or(usize::MAX)
-        });
         let manifest = serde_json::to_vec(
             &json!({ "version": 1, "namespace": self.namespace, "tracks": tracks }),
         )?;
