@@ -6,7 +6,6 @@ use crate::otlp::{
     Metrics, string_attribute, time_unix_nano,
 };
 
-const SERVICE_NAME: &str = "browser";
 const SCOPE_NAME: &str = "client-telemetry";
 /// Attributes the server sets; a log field of the same name is dropped.
 const RESERVED_ATTRIBUTES: [&str; 3] = ["app_id", "client_id", "target"];
@@ -141,7 +140,7 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
 fn resource(report: &ClientReport) -> Value {
     json!({
         "attributes": [
-            string_attribute("service.name", SERVICE_NAME),
+            string_attribute("service.name", report.service.name()),
             string_attribute("page", report.page.as_str()),
         ],
     })

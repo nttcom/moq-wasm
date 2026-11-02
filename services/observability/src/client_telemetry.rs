@@ -25,7 +25,7 @@ pub struct ClientTelemetryConfig {
     pub otlp_metrics_endpoint: Option<String>,
 }
 
-/// Receives the logs and player stats browsers post and forwards them to the
+/// Receives the logs and player stats clients post and forwards them to the
 /// collector as OTLP.
 pub struct ClientTelemetry {
     http: reqwest::Client,

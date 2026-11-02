@@ -7,17 +7,40 @@ const MAX_RECORDS: usize = 100;
 /// Longest label a report may carry: each becomes a metric attribute.
 const MAX_LABEL_CHARS: usize = 128;
 
-/// The JSON body a browser posts. Unknown keys are ignored.
+/// The JSON body a client posts. Unknown keys are ignored.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ClientReport {
     pub(super) token: Option<String>,
+    #[serde(default)]
+    pub(super) service: ClientService,
     pub(super) client_id: String,
     pub(super) page: String,
     #[serde(default)]
     pub(super) logs: Vec<ClientLog>,
     #[serde(default)]
     pub(super) stats: Vec<PlayerStats>,
+}
+
+/// The kind of client, which becomes `service.name`. A fixed set, so a client
+/// cannot pose as a server's service.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum ClientService {
+    #[default]
+    Browser,
+    MoqCli,
+    Python,
+}
+
+impl ClientService {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Browser => "browser",
+            Self::MoqCli => "moq-cli",
+            Self::Python => "python",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,7 +121,7 @@ impl ClientReport {
 mod tests {
     use serde_json::json;
 
-    use super::{ClientReport, MAX_RECORDS};
+    use super::{ClientReport, ClientService, MAX_RECORDS};
 
     #[test]
     fn a_report_reads_the_stats_it_knows_and_ignores_the_rest() {
@@ -118,6 +141,30 @@ mod tests {
         assert_eq!(values.viewer_delay_ms, None);
         assert_eq!(values.max_arrival_gap_ms.video, Some(40.0));
         assert!(report.logs.is_empty());
+    }
+
+    #[test]
+    fn a_report_names_its_client_service_and_defaults_to_the_browser() {
+        // Arrange
+        let cli = json!({ "clientId": "c1", "page": "subscribe", "service": "moq-cli" });
+        let browser = json!({ "clientId": "c1", "page": "live-viewer" });
+
+        // Act
+        let cli = ClientReport::parse(cli.to_string().as_bytes()).unwrap();
+        let browser = ClientReport::parse(browser.to_string().as_bytes()).unwrap();
+
+        // Assert
+        assert_eq!(cli.service, ClientService::MoqCli);
+        assert_eq!(browser.service, ClientService::Browser);
+    }
+
+    #[test]
+    fn a_report_of_an_unknown_service_is_rejected() {
+        // Arrange
+        let body = json!({ "clientId": "c1", "page": "p", "service": "relay" });
+
+        // Act / Assert
+        assert!(ClientReport::parse(body.to_string().as_bytes()).is_err());
     }
 
     #[test]
