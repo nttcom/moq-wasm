@@ -87,7 +87,15 @@ function createPublishNamespaceHandler({
       return
     }
 
-    setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announced.userName, trackNamespace))
+    setRoom((currentRoom) => {
+      const rejoinedMember = currentRoom.remoteMembers.get(announced.userName)
+      if (rejoinedMember) {
+        // The relay keeps these subscriptions alive after a rejoin, so alongside
+        // the new ones every object would arrive twice.
+        unsubscribeMemberTracks(session, rejoinedMember)
+      }
+      return addOrUpdateRemoteMember(currentRoom, announced.userName, trackNamespace)
+    })
   }
 }
 
@@ -136,7 +144,7 @@ function unsubscribeMemberTracks(session: LocalSession, member: RemoteMember) {
       continue
     }
     void session.unsubscribe(track.subscribeId).catch((error) => {
-      console.warn(`[meeting] failed to unsubscribe departed member ${member.id} (${role})`, error)
+      console.warn(`[meeting] failed to unsubscribe member ${member.id} (${role})`, error)
     })
   }
 }
