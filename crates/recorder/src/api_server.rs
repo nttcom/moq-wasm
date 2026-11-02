@@ -38,7 +38,7 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 /// A POST from a page outside `allowed_origins` is refused: CORS alone would
 /// only hide the answer from that page, and a form or a `text/plain` fetch
 /// needs no preflight. Private rooms require a VTS-verified bearer token;
-/// anonymous rooms remain public. A failing store answers 500.
+/// anonymous rooms are public. A failing store answers 500.
 pub(crate) struct ApiServer {
     handle: JoinHandle<()>,
 }

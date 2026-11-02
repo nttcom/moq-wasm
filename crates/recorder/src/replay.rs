@@ -257,7 +257,6 @@ async fn serve(
     Ok(())
 }
 
-/// Frees the slot of a FETCH task that ended, including one that panicked.
 fn fetch_finished(
     result: Result<(u64, Result<()>), JoinError>,
     active: &mut HashMap<u64, AbortHandle>,

@@ -63,7 +63,7 @@ export function isKeyframe(codec: string, data: Uint8Array): boolean {
   if (codec === 'vp8')
     return data.length >= 6 && (data[0] & 1) === 0 && data[3] === 0x9d && data[4] === 1 && data[5] === 0x2a
   if (codec.startsWith('vp09')) {
-    // VP9's uncompressed header starts with a frame marker, profile and show_existing_frame.
+    // VP9 uncompressed header: frame_marker (2 bits), profile (2 bits, then a reserved bit in profile 3), show_existing_frame, frame_type (0 = key frame).
     const profile = ((data[0] >> 5) & 1) | (((data[0] >> 4) & 1) << 1)
     const shift = profile === 3 ? 1 : 0
     return (

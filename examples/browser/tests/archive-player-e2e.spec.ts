@@ -114,7 +114,7 @@ test('records a live broadcast and plays and seeks its archive', async ({ page }
       .map((track: { name: string }) => track.name)
     expect(saved.some((entry) => audioNames.includes(entry.track))).toBe(true)
 
-    // Exercise byte offsets when the manifest contains multibyte characters.
+    // A multibyte namespace makes byte offsets differ from string offsets.
     saved[0].namespace = 'anon/録画'
     await writeFile(path, saved.map((entry) => JSON.stringify(entry)).join('\n') + '\n')
 

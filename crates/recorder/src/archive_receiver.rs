@@ -267,7 +267,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Assert: the reset group 0 fails neither the track nor ends a subgroup
+        // Assert: the reset group 0 neither fails the track nor ends a subgroup
         assert_eq!(ended, 1);
         connection.close().await;
     }
