@@ -453,9 +453,12 @@ impl Subscriber {
         option: &FetchOption,
         remainder: Option<FetchRemainder>,
     ) -> Result<FetchHandle, RequestFailure> {
-        let remainder = remainder.filter(|_| {
-            self.session.follows_go_away() && option.group_order != GroupOrder::Descending
-        });
+        let track_namespace = remainder
+            .as_ref()
+            .map(|remainder| remainder.track_namespace.as_str());
+        let track_name = remainder
+            .as_ref()
+            .map(|remainder| remainder.track_name.as_str());
         let SentFetch {
             connection,
             sent_at,
@@ -468,6 +471,8 @@ impl Subscriber {
             ResponseMessage::FetchOk(fetch_ok) => {
                 tracing::info!(
                     request_id = fetch_ok.request_id,
+                    track_namespace,
+                    track_name,
                     duration_ms = elapsed_ms(sent_at),
                     "FETCH_OK received"
                 );
@@ -476,12 +481,16 @@ impl Subscriber {
                     request_id: logical_id(connection.generation, fetch_ok.request_id),
                     ..fetch_ok
                 });
-                handle.remainder = remainder;
+                handle.remainder = remainder.filter(|_| {
+                    self.session.follows_go_away() && option.group_order != GroupOrder::Descending
+                });
                 Ok(handle)
             }
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
                 tracing::info!(
                     request_id,
+                    track_namespace,
+                    track_name,
                     ?error_code,
                     %reason_phrase,
                     duration_ms = elapsed_ms(sent_at),
