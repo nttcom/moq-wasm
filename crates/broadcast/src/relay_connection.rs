@@ -63,9 +63,8 @@ struct RelayState {
     declared_tracks: HashMap<String, HashSet<String>>,
     /// Per namespace path, the tracks PUBLISH has been sent for. The relay
     /// takes them from the PUBLISH, and the origin keeps them after
-    /// `remove_track`, so `serve_subscribe` rejects a SUBSCRIBE for one that
-    /// is not subscribable instead of returning it to an owner that would hand
-    /// it to the origin.
+    /// `remove_track`. `serve_subscribe` rejects a SUBSCRIBE for one that is
+    /// not subscribable; the owner would hand it to the origin.
     published_tracks: HashMap<String, HashSet<String>>,
     /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
     /// disconnect, which ends every wait for one.
@@ -188,8 +187,8 @@ impl RelayConnection {
     /// for the broadcasts on a session given to `with_session`, and returns
     /// every other event. That includes a SUBSCRIBE in a namespace no
     /// broadcast here publishes, a SUBSCRIBE for a track no broadcast here
-    /// has published, which the owner may publish with the `origin` given to
-    /// `with_session`, and an UNSUBSCRIBE that this `origin` does not know.
+    /// has published (the owner may publish it with the `origin` given to
+    /// `with_session`), and an UNSUBSCRIBE that this `origin` does not know.
     /// `Disconnected` and `ProtocolViolation` are returned too, after they
     /// ended the broadcasts' sends.
     pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
