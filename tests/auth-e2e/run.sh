@@ -85,8 +85,8 @@ exec 3<>"$IDLE_STDIN"
 # the file's absence means it is still connected.
 moq_cli_publish() {
   local status=0
-  ./target/debug/moq-cli publish --relay "$RELAY_A_URL" --insecure --codec avc3 \
-    --track "$APP_ID/site1/$1" --auth-token-file "$2" < "$IDLE_STDIN" > "$MOQ_CLI_DIR/$1.log" 2>&1 || status=$?
+  ./target/debug/moq-cli publish --relay "$RELAY_A_URL" --insecure \
+    --namespace "$APP_ID/site1/$1" --auth-token-file "$2" < "$IDLE_STDIN" > "$MOQ_CLI_DIR/$1.log" 2>&1 || status=$?
   echo "$status" > "$MOQ_CLI_DIR/$1.exit"
 }
 moq_cli_publish refreshed "$REFRESHED_TOKEN_FILE" 3<&- &
