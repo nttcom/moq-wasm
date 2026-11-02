@@ -1,3 +1,5 @@
+import type { MediaKind } from './trackContext'
+
 const WINDOW_MS = 10_000
 const MICROS_PER_MILLI = 1_000
 
@@ -6,7 +8,7 @@ const MICROS_PER_MILLI = 1_000
 /// leaves the rarest delays to the audio concealment for less latency.
 export type BufferPolicy = { minimumMs: number; maximumMs: number; arrivalQuantile?: number }
 
-type Arrival = { atMs: number; delayMs: number }
+type Arrival = { atMs: number; delayMs: number; kind: MediaKind }
 
 /// Sizes the live playout buffer. The delay from capture to arrival of every
 /// sample of the last `WINDOW_MS` is kept; each delay carries the offset
@@ -25,9 +27,9 @@ export class JitterBuffer {
     return this.policy.minimumMs >= this.policy.maximumMs
   }
 
-  observe(captureMicros: number, arrivedAtMs: number): void {
+  observe(kind: MediaKind, captureMicros: number, arrivedAtMs: number): void {
     this.observingSinceMs ??= arrivedAtMs
-    this.arrivals.push({ atMs: arrivedAtMs, delayMs: arrivedAtMs - captureMicros / MICROS_PER_MILLI })
+    this.arrivals.push({ atMs: arrivedAtMs, delayMs: arrivedAtMs - captureMicros / MICROS_PER_MILLI, kind })
     while (this.arrivals[0].atMs < arrivedAtMs - WINDOW_MS) {
       this.arrivals.shift()
     }
@@ -45,6 +47,14 @@ export class JitterBuffer {
 
   fastestDelayMs(): number | undefined {
     return this.arrivals.length === 0 ? undefined : Math.min(...this.arrivals.map((arrival) => arrival.delayMs))
+  }
+
+  medianDelayMs(kind: MediaKind): number | undefined {
+    const delaysMs = this.arrivals
+      .filter((arrival) => arrival.kind === kind)
+      .map((arrival) => arrival.delayMs)
+      .sort((left, right) => left - right)
+    return delaysMs.length === 0 ? undefined : delaysMs[Math.floor(delaysMs.length / 2)]
   }
 
   /// Playback opens on a burst that says nothing about the spread, so the

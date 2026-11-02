@@ -46,6 +46,10 @@ export type LiveStats = {
   /// Longest wait between two objects of that kind within the last
   /// `ARRIVAL_GAP_WINDOW_MS`; undefined until two have arrived.
   maxArrivalGapMs: Record<MediaKind, number | undefined>
+  /// Median delay from capture to arrival of the live samples of that kind
+  /// within the last 10 s. Each carries the offset between the publisher's
+  /// and the viewer's clocks; the difference between audio and video cancels it.
+  arrivalDelayMs: Record<MediaKind, number | undefined>
 }
 
 export class LocLive {
@@ -206,7 +210,8 @@ export class LocLive {
       videoDroppedFrames: this.playout.videoDroppedFrames(),
       videoLateFrames: this.playout.videoLateFrames(),
       shedMs: this.playout.shedMs(),
-      maxArrivalGapMs: { video: longestGapMs(this.arrivalsMs.video), audio: longestGapMs(this.arrivalsMs.audio) }
+      maxArrivalGapMs: { video: longestGapMs(this.arrivalsMs.video), audio: longestGapMs(this.arrivalsMs.audio) },
+      arrivalDelayMs: { video: this.playout.arrivalDelayMs('video'), audio: this.playout.arrivalDelayMs('audio') }
     }
   }
 
@@ -250,7 +255,8 @@ export function formatLiveStats(stats: LiveStats): string {
     ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks}` +
     ` · concealed ${Math.round(stats.audioConcealedMs)} ms · video ${stats.videoDroppedFrames} dropped / ${stats.videoLateFrames} late` +
     ` · shed ${Math.round(stats.shedMs)} ms` +
-    ` · arrival gap A ${formatGap(stats.maxArrivalGapMs.audio)} / V ${formatGap(stats.maxArrivalGapMs.video)} ms`
+    ` · arrival gap A ${formatMs(stats.maxArrivalGapMs.audio)} / V ${formatMs(stats.maxArrivalGapMs.video)} ms` +
+    ` · arrival delay A ${formatMs(stats.arrivalDelayMs.audio)} / V ${formatMs(stats.arrivalDelayMs.video)} ms`
   )
 }
 
@@ -262,6 +268,6 @@ function longestGapMs(arrivalsMs: number[]): number | undefined {
   return arrivalsMs.length < 2 ? undefined : Math.max(...arrivalsMs.slice(1).map((ms, i) => ms - arrivalsMs[i]))
 }
 
-function formatGap(gapMs: number | undefined): string {
+function formatMs(gapMs: number | undefined): string {
   return gapMs === undefined ? '--' : String(Math.round(gapMs))
 }

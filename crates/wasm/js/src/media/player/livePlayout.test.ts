@@ -81,6 +81,18 @@ test('video arriving later than the audio raises the buffer target', () => {
   expect(withVideo.targetBufferMs()).toBeCloseTo(VIDEO_DELAY_MS - AUDIO_DELAY_MS + SCHEDULE_AHEAD_MS)
 })
 
+test('the arrival delay of each kind is the delay of its own samples', () => {
+  // Arrange
+  const playout = new LivePlayout((frame) => frame.close())
+
+  // Act
+  streamLive(playout, SETTLE_MS, VIDEO_DELAY_MS)
+
+  // Assert
+  expect(playout.arrivalDelayMs('audio')).toBeCloseTo(AUDIO_DELAY_MS)
+  expect(playout.arrivalDelayMs('video')).toBeCloseTo(VIDEO_DELAY_MS)
+})
+
 test('without a picture the presented position follows the sound', () => {
   // Arrange
   const playout = new LivePlayout((frame) => frame.close())
