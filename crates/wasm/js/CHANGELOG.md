@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - `LiveStats.arrivalDelayMs` gives the median delay from capture to arrival
   of the live audio and video over the last 10 s; their difference tells
@@ -24,6 +24,10 @@
 - `LivePlayerOptions.source` plays one source of a broadcast, named by its
   video and audio tracks (`LiveSource`), such as a shared screen next to a
   camera; its audio keeps playing while its video is absent.
+- `LiveStats.videoDroppedFrames` and `LiveStats.videoLateFrames` count,
+  since playback started, the video frames never shown and the frames shown
+  more than a frame period late; they replace `videoDrops`, which gave both
+  in one string.
 
 ## 0.1.0
 
