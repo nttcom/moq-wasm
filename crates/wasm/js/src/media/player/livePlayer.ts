@@ -23,7 +23,13 @@ import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../internal/status'
-import { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from '../catalog'
+import {
+  CATALOG_TRACK_NAME,
+  type LiveSource,
+  type MediaCatalogTrack,
+  extractCatalogTracks,
+  sourceTracks
+} from '../catalog'
 import { parseCatalog } from '../parseCatalog'
 
 const MICROS_PER_SECOND = 1_000_000
@@ -53,6 +59,9 @@ export type LivePlayerOptions = {
   /// waiting for the next group; it costs the live bandwidth and decoding
   /// while reviewing.
   keepLiveWhileReviewing?: boolean
+  /// Plays only this source of the catalog; without it, every video and audio
+  /// track is a choice.
+  source?: LiveSource
 }
 
 export type PlayerStatus = { text: string; state: StatusState }
@@ -101,6 +110,7 @@ export class LivePlayer {
   private readonly context: TrackContext
   private readonly callbacks: LivePlayerCallbacks
   private readonly keepLiveWhileReviewing: boolean
+  private readonly source: LiveSource | undefined
   private readonly textTracks: TextTracks
   private readonly catalog: CatalogFollower
   private readonly subscriptions: TrackSubscriptions
@@ -140,6 +150,7 @@ export class LivePlayer {
   constructor(options: LivePlayerOptions) {
     this.callbacks = options.callbacks
     this.keepLiveWhileReviewing = options.keepLiveWhileReviewing ?? false
+    this.source = options.source
     this.context = {
       session: undefined,
       namespace: [],
@@ -545,10 +556,14 @@ export class LivePlayer {
     }
     try {
       const catalog = parseCatalog(payload)
-      this.cmafTracks = extractCatalogTracks(catalog).filter((track) => track.packaging === 'cmaf')
+      const sourceNames =
+        this.source && new Set(sourceTracks(extractCatalogTracks(catalog), this.source).map(({ name }) => name))
+      const ofSource = (role?: 'video' | 'audio') =>
+        extractCatalogTracks(catalog, role).filter((track) => !sourceNames || sourceNames.has(track.name))
+      this.cmafTracks = ofSource().filter((track) => track.packaging === 'cmaf')
       const changed = this.replaceAllTracks(
-        extractCatalogTracks(catalog, 'video').filter(isLocTrack),
-        extractCatalogTracks(catalog, 'audio').filter(isLocTrack),
+        ofSource('video').filter(isLocTrack),
+        ofSource('audio').filter(isLocTrack),
         'Catalog loaded'
       )
       await this.subscribeMediaTimeline(catalog)
@@ -599,6 +614,10 @@ export class LivePlayer {
 
   private async subscribeMediaTimeline(catalog: unknown): Promise<void> {
     const [track] = extractCatalogTracks(catalog, 'mediatimeline')
+    // The media timeline follows the default video; another source has none.
+    if (this.source && !track?.depends?.includes(this.source.video)) {
+      return
+    }
     if (!track || !this.timeline.followMediaTimeline(track)) {
       return
     }
