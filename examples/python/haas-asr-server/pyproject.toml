@@ -5,8 +5,13 @@ description = "Serves Haas-ja on a GPU over the OpenAI-compatible transcription 
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
-    "haas-asr",
+    "numpy>=2",
+    "soundfile>=0.13",
 ]
+
+[project.optional-dependencies]
+# NeMo, torch and Triton: several GB that the tests never load.
+model = ["haas-asr"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
