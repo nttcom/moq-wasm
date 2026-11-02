@@ -111,6 +111,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `request_id` | The draft's Request ID (not `subscribe_id`) |
 | `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
+| `media_source` | Which of a member's videos a browser plays: `camera` or `screenshare` |
 | `track_alias` | The track alias on the session the log is about |
 | `error` | The failure, as `%error` or `?error` |
 | `outcome` | How a call the relay makes to another service ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`) |

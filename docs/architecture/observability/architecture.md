@@ -293,12 +293,13 @@ they post to the observability server behind its public load balancer, which
 converts the report to OTLP/JSON and forwards it (`client_telemetry`).
 
 - **Request.** `POST /api/client-telemetry` with a JSON body
-  `{ token?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, values }] }`.
+  `{ token?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }] }`.
   `clientId` is generated once per page load. The server does not read
   `Content-Type`: browsers send `text/plain`, a CORS simple request that
   `navigator.sendBeacon` can send and that needs no preflight.
 - **Limits.** The body is at most 64 KiB (413), a report carries at most 100
-  logs and 100 stats, `clientId` and `page` at most 128 characters (400).
+  logs and 100 stats, `clientId`, `page`, `trackNamespace` and `mediaSource`
+  at most 128 characters (400).
   Each client address has a token bucket of 10 reports refilled at 1 per
   second (429). The address is the second-to-last `X-Forwarded-For` entry,
   which the Google Cloud load balancer appends after the client's own value,
@@ -313,9 +314,13 @@ converts the report to OTLP/JSON and forwards it (`client_telemetry`).
   `page`, with `app_id`, `client_id`, `target` and the client's fields as
   attributes, and are posted to `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`.
 - **Stats** become metric points with `app_id` and `client_id`, posted to
-  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. Keys other than these are dropped:
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. A page playing several tracks at
+  once (meeting: each remote member's camera and screen share) sends one
+  sample per track with `trackNamespace` (`/`-joined, as the relay logs it)
+  and `mediaSource`, which become the `track_namespace` and `media_source`
+  attributes. Keys other than these are dropped:
 
-| Metric | Unit | Kind | `LivePlayerStats` field |
+| Metric | Unit | Kind | `LiveStats` field |
 | --- | --- | --- | --- |
 | `client.player.viewer_delay` | ms | gauge | `viewerDelayMs` |
 | `client.player.buffer` | ms | gauge | `bufferMs` |

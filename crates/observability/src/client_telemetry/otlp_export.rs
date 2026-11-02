@@ -68,12 +68,20 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
     if report.stats.is_empty() {
         return None;
     }
-    let identity = [
-        string_attribute("app_id", app_id),
-        string_attribute("client_id", report.client_id.as_str()),
-    ];
     let mut metrics = Metrics::default();
     for stats in &report.stats {
+        let mut identity = vec![
+            string_attribute("app_id", app_id),
+            string_attribute("client_id", report.client_id.as_str()),
+        ];
+        identity.extend(
+            [
+                ("track_namespace", &stats.track_namespace),
+                ("media_source", &stats.media_source),
+            ]
+            .into_iter()
+            .filter_map(|(key, label)| Some(string_attribute(key, label.as_deref()?))),
+        );
         let time_unix_nano = time_unix_nano(stats.time_ms);
         let mut add = |(name, unit, kind, value): Measurement, attributes: &[Value]| {
             if let Some(value) = value.filter(|value| value.is_finite()) {
@@ -90,7 +98,7 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
         }
         let gaps = &stats.values.max_arrival_gap_ms;
         for (media_kind, gap) in [("video", gaps.video), ("audio", gaps.audio)] {
-            let mut attributes = identity.to_vec();
+            let mut attributes = identity.clone();
             attributes.push(string_attribute("media_kind", media_kind));
             add(
                 ("client.player.max_arrival_gap", "ms", Gauge, gap),
@@ -257,6 +265,36 @@ mod tests {
             .unwrap();
         assert_eq!(gaps.len(), 1);
         assert_eq!(gaps[0]["attributes"][2]["value"]["stringValue"], "audio");
+    }
+
+    #[test]
+    fn stats_of_one_track_among_several_carry_its_namespace_and_source() {
+        // Arrange
+        let report = report(json!({
+            "clientId": "c1",
+            "page": "meeting",
+            "stats": [{
+                "timeMs": 1000,
+                "trackNamespace": "anon/meeting/room/alice",
+                "mediaSource": "screenshare",
+                "values": { "bufferMs": 80 },
+            }],
+        }));
+
+        // Act
+        let request = metrics_request(&report, "anon").unwrap();
+
+        // Assert
+        let buffer = &metric(&request, "client.player.buffer")["gauge"]["dataPoints"][0];
+        assert_eq!(
+            buffer["attributes"],
+            json!([
+                { "key": "app_id", "value": { "stringValue": "anon" } },
+                { "key": "client_id", "value": { "stringValue": "c1" } },
+                { "key": "track_namespace", "value": { "stringValue": "anon/meeting/room/alice" } },
+                { "key": "media_source", "value": { "stringValue": "screenshare" } },
+            ])
+        );
     }
 
     #[test]
