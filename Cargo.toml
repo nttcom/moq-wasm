@@ -6,3 +6,11 @@ members = [
     'tests/*',
 ]
 exclude = ['tests/browser-e2e']
+
+# Full debuginfo for every dependency dominates target/ size.
+# For lldb variable inspection, build with CARGO_PROFILE_DEV_DEBUG=true.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
