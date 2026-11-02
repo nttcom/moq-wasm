@@ -61,8 +61,9 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
 - `SessionRepository` (shared `Arc<Mutex<_>>`) — one `SessionEntry` per
-  session: the session, its span, `SessionPeer`, `VerifiedToken`, expiry task
-  and the sender of the session's mailbox (see "Event pipeline"). The
+  session: the session, its span, `SessionPeer`, `VerifiedToken`, expiry task,
+  the sender of the session's mailbox (see "Event pipeline") and the
+  namespaces announced on it (see "SUBSCRIBE_NAMESPACE sequence"). The
   repository announces every added session on the `SessionAdded` channel
   `RelayServer` creates with it.
 - `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`),
@@ -463,6 +464,16 @@ namespace-publisher routes. The OK goes first because draft-14 §9.28 forwards
 the existing messages once the subscription succeeded; a subscriber that
 handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise never
 answer the PUBLISH before the request timeout.
+
+A namespace published between the registration and the read of what already
+matches reaches the subscriber both from the PUBLISH_NAMESPACE sequence and
+from this one; so can a namespace announced by a second publisher or by both
+a local publisher and a relay. `ControlMessageForwarder` therefore records in
+`SessionRepository` each namespace it announces on a session and sends
+PUBLISH_NAMESPACE only for one not yet announced there, and
+PUBLISH_NAMESPACE_DONE only for one that was. UNSUBSCRIBE_NAMESPACE forgets the
+namespaces under its prefix, so a later SUBSCRIBE_NAMESPACE announces them
+again.
 
 ### SUBSCRIBE_UPDATE sequence
 Forward State, Start Location and End Group are applied; Subscriber Priority

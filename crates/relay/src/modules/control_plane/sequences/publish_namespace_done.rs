@@ -178,11 +178,15 @@ mod tests {
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             "unused-relay-token".to_string(),
         );
+        let forwarder = ControlMessageForwarder { repository };
+        forwarder
+            .publish_namespace(NAMESPACE_SUBSCRIBER, NAMESPACE.to_string())
+            .await;
         PublishNamespaceDone
             .handle(
                 publisher_session_id,
                 table,
-                &ControlMessageForwarder { repository },
+                &forwarder,
                 CascadingRelayContext {
                     route_registry: &NoopRelayRouteRegistry,
                     inter_relay_connection_manager: &inter_relay_connection_manager,

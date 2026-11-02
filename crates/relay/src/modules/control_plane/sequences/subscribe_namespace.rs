@@ -210,15 +210,23 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        cascading::route_registry::NoopRelayRouteRegistry,
+        cascading::{
+            inter_relay_connection_manager::InterRelayConnectionManager,
+            route_registry::NoopRelayRouteRegistry,
+        },
+        control_plane::sequences::{CascadingRelayContext, publish_namespace::PublishNamespace},
         directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
         domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                downstream_publish_context, table_with_upstream, track_key,
+                downstream_publish_context, local_publisher_resolver, table_with_upstream,
+                track_key,
             },
-            mock_session::{MockPublishHandler, PUBLISH_REQUEST_ID},
+            mock_session::{
+                MockPublishHandler, MockPublishNamespaceHandler, PUBLISH_REQUEST_ID,
+                detached_session_repository,
+            },
             stub_route_registry::StubRouteRegistry,
         },
     };
@@ -251,6 +259,53 @@ mod tests {
             _reason_phrase: String,
         ) -> Result<(), moqt::TransportSendError> {
             self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_ERROR");
+            Ok(())
+        }
+    }
+
+    /// Publishes `ns/alice` from inside SUBSCRIBE_NAMESPACE_OK: after the
+    /// subscription is registered and before the existing namespaces are read.
+    struct AnnouncingWhileAnswered {
+        ctx: DownstreamPublishContext,
+    }
+
+    #[async_trait::async_trait]
+    impl SubscribeNamespaceHandler for AnnouncingWhileAnswered {
+        fn track_namespace_prefix(&self) -> &str {
+            "ns"
+        }
+
+        fn track_namespace_prefix_tuple(&self) -> &[String] {
+            &[]
+        }
+
+        async fn ok(&self) -> Result<(), moqt::TransportSendError> {
+            let inter_relay_connection_manager = InterRelayConnectionManager::new(
+                Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
+                "unused-relay-token".to_string(),
+            );
+            PublishNamespace
+                .handle(
+                    PUBLISHER_SESSION,
+                    &self.ctx.table,
+                    &self.ctx.forwarder,
+                    &self.ctx.cache_store,
+                    &Arc::new(local_publisher_resolver()),
+                    CascadingRelayContext {
+                        route_registry: &NoopRelayRouteRegistry,
+                        inter_relay_connection_manager: &inter_relay_connection_manager,
+                    },
+                    &MockPublishNamespaceHandler::new("ns/alice"),
+                )
+                .await;
+            Ok(())
+        }
+
+        async fn error(
+            &self,
+            _code: RequestErrorCode,
+            _reason_phrase: String,
+        ) -> Result<(), moqt::TransportSendError> {
             Ok(())
         }
     }
@@ -382,5 +437,30 @@ mod tests {
             ctx.subscriber.publish_namespaces(),
             vec!["ns/alice", "ns/bob"]
         );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_published_while_subscribe_namespace_is_answered_is_announced_once() {
+        // Arrange
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let handler = AnnouncingWhileAnswered {
+            ctx: downstream_publish_context(table, || Ok(true)).await,
+        };
+        let ctx = &handler.ctx;
+
+        // Act
+        SubscribeNameSpace
+            .handle(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                &ctx.table,
+                &ctx.forwarder,
+                &ctx.downstream_publish(),
+                &NoopRelayRouteRegistry,
+                &handler,
+            )
+            .await;
+
+        // Assert
+        assert_eq!(ctx.subscriber.publish_namespaces(), vec!["ns/alice"]);
     }
 }
