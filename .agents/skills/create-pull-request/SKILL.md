@@ -11,12 +11,13 @@ description: Create a pull request for the current branch. Use when the user ask
 2. Run the ponytail review on the diff and apply its cuts (see *Ponytail Review*). Repeat until it answers `Lean already. Ship.`
 3. Have a subagent review the comments the diff adds (see *Comment Review*) and apply its edits.
 4. Delete each TODO in `docs/todos/` that the diff resolves, and update the docs it makes stale (see the `todo-start` skill).
-5. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
-6. Push the branch: `git push -u origin <branch>`.
-7. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
-8. Create the PR with `gh pr create --base master --title <title> --body <body>`.
+5. Run the lint CI runs and fix what it reports (see *Lint*).
+6. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
+7. Push the branch: `git push -u origin <branch>`.
+8. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
+9. Create the PR with `gh pr create --base master --title <title> --body <body>`.
    - If a PR already exists for the branch, push the new commits and update the existing PR with `gh pr edit` instead of creating a duplicate.
-9. Report the PR URL.
+10. Report the PR URL.
 
 ## Plugins
 
@@ -38,6 +39,15 @@ Apply every cut except those that remove something the user asked for by name (a
 ## Comment Review
 
 Pass every comment and doc comment the diff adds, each with the code around it, to a subagent running the two checks in *Review Before Posting*. Ask for the revised comments plus a one-line reason per edit. For a comment, the Redundancy check reads "restates the diff" as "restates what the surrounding names, types, control flow, or test names already say"; delete such a comment instead of shortening it.
+
+## Lint
+
+Run the checks for what the diff touches, every time, whether the files were changed with Edit, Write or a shell command. The PostToolUse hook in `.claude/settings.json` formats only files written with Edit and Write.
+
+- Rust: `cargo fmt --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- Files prettier checks (under `examples/browser/` or `crates/wasm/js/`): the `Lint (JavaScript)` command in `AGENTS.md`. Run `npm --prefix examples/browser ci` first in this checkout, so prettier is the version its lock file pins rather than one left in another checkout.
+
+Fix a failure with the formatter or by hand, never by loosening the check.
 
 ## Title
 
