@@ -179,6 +179,7 @@ affects.
 | `OBSERVABILITY_HTTP_PORT` | `8095` | API port |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | none | OTLP/HTTP metrics URL (`…/v1/metrics`) for player stats |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | none | OTLP/HTTP logs URL (`…/v1/logs`) for browser logs |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | none | OTLP/HTTP traces URL (`…/v1/traces`) for client request spans |
 | `AUTH_VTS_URL` | none | VTS `…/verify` URL that reads a browser report's app from its token; without it every report is `anon` |
 
 The server stores nothing of the relays itself; at startup `schema::apply`
@@ -186,7 +187,7 @@ creates the tables and the views that fill them (see Storage) and the API
 starts.
 
 - `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
-  - `POST /api/client-telemetry` — a browser's logs and player stats (see
+  - `POST /api/client-telemetry` — a client's logs, player stats and spans (see
     Client telemetry); 404 unless an OTLP endpoint is set.
   - `GET /api/snapshots` — the newest snapshot of every relay that logged one
     in the last 10 s (`RELAY_SILENCE`, by the snapshot's time), so a stopped
@@ -316,7 +317,7 @@ observability server behind its public load balancer, which converts the
 report to OTLP/JSON and forwards it (`client_telemetry`).
 
 - **Request.** `POST /api/client-telemetry` with a JSON body
-  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }] }`.
+  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.
   `service` is `browser` (the default), `moq-cli` or `python`; any other value
   answers 400, so a client cannot log as a relay. `page` names the page, the
   CLI subcommand or the bot. `clientId` is generated once per page load or
@@ -324,7 +325,8 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   `text/plain`, a CORS simple request that `navigator.sendBeacon` can send
   and that needs no preflight.
 - **Limits.** The body is at most 64 KiB (413), a report carries at most 100
-  logs and 100 stats, `clientId`, `page`, `trackNamespace` and `mediaSource`
+  logs, 100 stats and 100 spans, span ids must be 32 (trace) or 16 (span)
+  hex digits, `clientId`, `page`, `trackNamespace` and `mediaSource`
   at most 128 characters (400).
   Each client address has a token bucket of 10 reports refilled at 1 per
   second (429). The address is the second-to-last `X-Forwarded-For` entry,
@@ -340,6 +342,16 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   `service`) and `page`, with `app_id`, `client_id`, `target` and the
   client's fields as attributes, and are posted to
   `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`.
+- **Spans** are the closed INFO spans of `moqt` in the browser's wasm module
+  (`init({ onSpan })`) and in `moq-cli`, chiefly the request spans
+  (`moqt.subscriber.subscribe`, …; see "Request spans" in
+  `docs/architecture/moqt/architecture.md`). Each becomes an OTLP span of the
+  same resource as the logs, kind INTERNAL, with `app_id`, `client_id` and
+  the span's fields as attributes. `outcome` sets the status: `ok` is OK,
+  `rejected` and `failed` are ERROR with the outcome as message. They are
+  posted to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, so they land in
+  `otel_traces` with `ServiceName` `browser` or `moq-cli`. The Python bots
+  send none yet.
 - **Stats** become metric points with `app_id` and `client_id`, posted to
   `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. A page playing several tracks at
   once (meeting: each remote member's camera and screen share) sends one
@@ -362,8 +374,9 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
 | `client.player.max_arrival_gap` | ms | gauge, `media_kind` attribute | `maxArrivalGapMs` |
 | `client.player.arrival_delay` | ms | gauge, `media_kind` attribute; includes the publisher-to-viewer clock offset, which the audio-video difference cancels | `arrivalDelayMs` |
 
-A collector that does not accept the export answers 502. Linking a browser
-session to the relay's `relay.session` trace is not done yet.
+A collector that does not accept the export answers 502. A client's spans
+root their own traces: linking them to the relay's spans of the same request
+(trace context sent to the relay) is the next step.
 
 ## Browser page (`examples/browser/examples/observability`)
 
