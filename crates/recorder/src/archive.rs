@@ -14,8 +14,8 @@ use crate::{
     Args,
     archive_chunks::ChunkWriter,
     archive_receiver::{ArchiveTrack, Event},
-    recorder::{BroadcastOptions, Content, default_output_path},
-    track_selection::{self, AudioChoice, VideoChoice},
+    recorder::{BroadcastOptions, Content, audio_choice, default_output_path, video_choice},
+    track_selection,
 };
 
 pub(crate) async fn record(session: &Session, args: &Args) -> Result<()> {
@@ -122,15 +122,7 @@ pub(crate) async fn record_broadcast(
                     };
                     archive.write_event("catalog", event).await?;
                     let Some(document) = document else { continue };
-                    let video_choice = match options.content {
-                        Content::ScreenShare => VideoChoice::ScreenShare,
-                        Content::Camera => options.video_track.as_deref().map(VideoChoice::Named).unwrap_or(VideoChoice::MaxHeight(options.max_video_height)),
-                    };
-                    let audio_choice = match options.content {
-                        Content::ScreenShare => AudioChoice::None,
-                        Content::Camera => options.audio_track.as_deref().map(AudioChoice::Named).unwrap_or(AudioChoice::HighestBitrate),
-                    };
-                    let selection = track_selection::select_tracks(&document, video_choice, audio_choice)?;
+                    let selection = track_selection::select_tracks(&document, video_choice(options), audio_choice(options))?;
                     let video_name = selection.as_ref().and_then(|s| s.video.as_ref()).map(|v| v.name.as_str());
                     let audio_name = selection.as_ref().and_then(|s| s.audio.as_ref()).map(|a| a.name.as_str());
                     if video.as_ref().map(|t| t.subscription.track_name()) != video_name {

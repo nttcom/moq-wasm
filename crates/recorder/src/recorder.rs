@@ -289,7 +289,7 @@ async fn wait_for_selection(
     Ok(None)
 }
 
-fn video_choice(options: &BroadcastOptions) -> VideoChoice<'_> {
+pub(crate) fn video_choice(options: &BroadcastOptions) -> VideoChoice<'_> {
     match (options.content, &options.video_track) {
         (Content::ScreenShare, _) => VideoChoice::ScreenShare,
         (Content::Camera, Some(name)) => VideoChoice::Named(name),
@@ -297,7 +297,7 @@ fn video_choice(options: &BroadcastOptions) -> VideoChoice<'_> {
     }
 }
 
-fn audio_choice(options: &BroadcastOptions) -> AudioChoice<'_> {
+pub(crate) fn audio_choice(options: &BroadcastOptions) -> AudioChoice<'_> {
     match (options.content, &options.audio_track) {
         (Content::ScreenShare, _) => AudioChoice::None,
         (Content::Camera, Some(name)) => AudioChoice::Named(name),
