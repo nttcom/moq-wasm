@@ -4,7 +4,7 @@ use serde_json::json;
 use tokio::{sync::oneshot, task::JoinHandle};
 use url::Url;
 
-use super::LogBuffer;
+use super::ReportBuffer;
 use crate::{cli::RelayArgs, transport::current_auth_token};
 
 const REPORT_INTERVAL: Duration = Duration::from_secs(10);
@@ -25,7 +25,7 @@ pub struct ReportTask {
 }
 
 impl ReportTask {
-    pub fn run(target: ReportTarget, buffer: LogBuffer) -> Self {
+    pub fn run(target: ReportTarget, buffer: ReportBuffer) -> Self {
         let (finish_sender, finish_receiver) = oneshot::channel();
         let join_handle = tokio::spawn(report_loop(target, buffer, finish_receiver));
         Self {
@@ -34,7 +34,7 @@ impl ReportTask {
         }
     }
 
-    /// Sends the logs not reported yet and waits for the request to end.
+    /// Sends the logs and spans not reported yet and waits for the request to end.
     pub async fn finish(self) {
         let _ = self.finish_sender.send(());
         let _ = self.join_handle.await;
@@ -43,7 +43,7 @@ impl ReportTask {
 
 async fn report_loop(
     target: ReportTarget,
-    buffer: LogBuffer,
+    buffer: ReportBuffer,
     mut finish_receiver: oneshot::Receiver<()>,
 ) {
     let reporter = Reporter::new(target);
@@ -83,10 +83,10 @@ impl Reporter {
         }
     }
 
-    /// A failed report's logs are dropped, not retried.
-    async fn send(&self, buffer: &LogBuffer) {
-        let logs = buffer.take();
-        if logs.is_empty() {
+    /// A failed report's logs and spans are dropped, not retried.
+    async fn send(&self, buffer: &ReportBuffer) {
+        let (logs, spans) = buffer.take();
+        if logs.is_empty() && spans.is_empty() {
             return;
         }
         let token = current_auth_token(&self.target.relay).await.ok().flatten();
@@ -96,6 +96,7 @@ impl Reporter {
             "clientId": self.client_id,
             "page": self.target.page,
             "logs": logs,
+            "spans": spans,
         });
         let result = self
             .http

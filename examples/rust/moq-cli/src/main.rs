@@ -12,7 +12,7 @@ use tracing_subscriber::{
 };
 
 use cli::{Cli, Command};
-use telemetry::{LogBuffer, ReportLayer, ReportTarget, ReportTask};
+use telemetry::{ReportBuffer, ReportLayer, ReportTarget, ReportTask};
 
 #[tokio::main]
 async fn main() {
@@ -25,7 +25,7 @@ async fn main() {
             page: cli.command.name(),
             relay: cli.command.relay().clone(),
         });
-    let buffer = LogBuffer::default();
+    let buffer = ReportBuffer::default();
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()));
