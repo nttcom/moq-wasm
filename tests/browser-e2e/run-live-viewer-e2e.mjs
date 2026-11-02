@@ -32,6 +32,8 @@ import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const rtmpAddress = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? "127.0.0.1:1935";
 const srtAddress = process.env.LIVE_VIEWER_E2E_SRT_ADDR ?? "127.0.0.1:9000";
+const ingest = process.env.LIVE_VIEWER_E2E_INGEST ?? "rtmp";
+const ingestAddress = ingest === "srt" ? srtAddress : rtmpAddress;
 const transcode = process.env.LIVE_VIEWER_E2E_TRANSCODE !== "0";
 const specs =
   process.argv.length > 2
@@ -113,7 +115,7 @@ async function main() {
     childProcesses.push(bridge);
     await waitForOutput(
       bridge,
-      /RTMP listener started/,
+      ingest === "srt" ? /SRT listener started/ : /RTMP listener started/,
       "live-ingest",
       180_000,
     );
@@ -127,7 +129,7 @@ async function main() {
     const ffmpeg = spawnProcess(
       "ffmpeg",
       "ffmpeg",
-      buildLiveIngestFfmpegArgs(rtmpAddress, namespace),
+      buildLiveIngestFfmpegArgs(ingest, ingestAddress, namespace),
       {
         cwd: repoRoot,
       },
