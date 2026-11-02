@@ -17,8 +17,8 @@ pub(crate) struct SessionRepository {
     session_added_sender: mpsc::UnboundedSender<SessionAdded>,
 }
 
-/// Announces a session to the worker that will handle it, together with the
-/// receiving end of the session's mailbox.
+/// Sent by `SessionRepository::add`; `SessionWorkers` spawns the session's
+/// worker from it.
 pub(crate) struct SessionAdded {
     pub(crate) session_id: SessionId,
     pub(crate) mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,

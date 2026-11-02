@@ -81,8 +81,7 @@ impl Default for RecordedControlMessages {
 }
 
 impl RecordedControlMessages {
-    /// Delivers `event` from the session's `receive_moqt_session_event`, the
-    /// way moqt would.
+    /// Makes the session's next `receive_moqt_session_event` return `event`.
     pub(crate) fn send_event(&self, event: MoqtSessionEvent) {
         self.event_sender
             .send(Ok(event))
