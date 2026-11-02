@@ -440,9 +440,15 @@ jobs:
         include:
           - name: live
             specs: tests/live-viewer-e2e.spec.ts tests/live-viewer-delivery-e2e.spec.ts
+            ingest: rtmp
             goaway: true
+          - name: live-srt
+            specs: tests/live-viewer-e2e.spec.ts tests/live-viewer-delivery-e2e.spec.ts
+            ingest: srt
+            goaway: false
           - name: mp4-recorder
             specs: tests/live-viewer-mp4-e2e.spec.ts tests/recorder-serve-e2e.spec.ts
+            ingest: rtmp
             goaway: false
     name: live_viewer_e2e (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -497,9 +503,18 @@ jobs:
       - name: Install Playwright Chromium
         uses: ./.github/actions/install-playwright-chromium
 
+      - name: Check that ffmpeg has the srt protocol
+        if: ${{ matrix.ingest == 'srt' }}
+        run: |
+          ffmpeg -hide_banner -protocols | grep -qw srt || {
+            echo "::error::ffmpeg lacks the srt protocol, so this row cannot push to live-ingest over SRT"
+            exit 1
+          }
+
       - name: Run live viewer E2E
         env:
           CI: "true"
+          LIVE_VIEWER_E2E_INGEST: ${{ matrix.ingest }}
         run: node tests/browser-e2e/run-live-viewer-e2e.mjs ${{ matrix.specs }}
 
       - name: Run GOAWAY E2E
