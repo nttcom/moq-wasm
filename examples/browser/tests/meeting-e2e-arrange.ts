@@ -13,6 +13,8 @@ export interface ArrangeMeetingClientOptions {
   params?: Record<string, string>
   // Also the size of the tab a screen share captures.
   viewport?: { width: number; height: number }
+  // The camera sends no frame for this long after it is turned on, as a real one warming up.
+  cameraWarmupMs?: number
 }
 
 // Use a short camera keyframe interval (~1s at 15fps) so newly-subscribed clients
@@ -76,15 +78,46 @@ function createMeetingClientPageModel(page: Page) {
 
 export type MeetingClientPageModel = ReturnType<typeof createMeetingClientPageModel>
 
+type TrackProcessorConstructor = new (init: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> }
+
+// Serialized into the page by addInitScript, so nothing outside its body is in scope.
+function withholdCameraFrames(warmupMs: number): void {
+  const page = window as unknown as { MediaStreamTrackProcessor?: TrackProcessorConstructor }
+  const NativeProcessor = page.MediaStreamTrackProcessor
+  if (typeof NativeProcessor !== 'function') {
+    return
+  }
+  page.MediaStreamTrackProcessor = function (init: { track: MediaStreamTrack }) {
+    const processor = new NativeProcessor(init)
+    if (init.track.kind !== 'video') {
+      return processor
+    }
+    const constructedAtMs = performance.now()
+    const warmup = new TransformStream<VideoFrame, VideoFrame>({
+      transform(frame, controller) {
+        if (performance.now() - constructedAtMs < warmupMs) {
+          frame.close()
+        } else {
+          controller.enqueue(frame)
+        }
+      }
+    })
+    return { readable: processor.readable.pipeThrough(warmup) }
+  } as unknown as TrackProcessorConstructor
+}
+
 export async function arrangeMeetingClient(
   browser: Browser,
-  { jwt = MEETING_JWT, params = {}, viewport }: ArrangeMeetingClientOptions = {}
+  { jwt = MEETING_JWT, params = {}, viewport, cameraWarmupMs }: ArrangeMeetingClientOptions = {}
 ) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone'],
     viewport
   })
+  if (cameraWarmupMs !== undefined) {
+    await context.addInitScript(withholdCameraFrames, cameraWarmupMs)
+  }
   const rawPage = await context.newPage()
   const label = `meeting-client-${++meetingClientCounter}`
   forwardFilteredPageConsole(rawPage, label)
