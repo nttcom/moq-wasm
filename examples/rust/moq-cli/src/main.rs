@@ -36,6 +36,9 @@ async fn main() {
         .with(stderr_layer)
         .with(report_layer)
         .init();
+    if report_target.is_some() {
+        moqt::set_trace_context_provider(telemetry::current_traceparent);
+    }
     let report_task = report_target.map(|target| ReportTask::run(target, buffer));
 
     let result = run(cli.command).await;

@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     fmt::{Debug, Write},
     hash::{BuildHasher, Hasher, RandomState},
     sync::atomic::{AtomicU64, Ordering},
@@ -25,6 +26,21 @@ struct OpenSpan {
     parent_span_id: Option<String>,
     start_ms: u64,
     fields: FieldVisitor,
+}
+
+thread_local! {
+    /// The `(trace_id, span_id)` of each span entered on this thread,
+    /// innermost last. An `Instrumented` future enters and exits its span on
+    /// the thread that polls it, so the stack stays balanced per thread.
+    static ENTERED: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The innermost entered span as a W3C `traceparent`; `None` outside any span.
+pub fn current_traceparent() -> Option<String> {
+    ENTERED.with_borrow(|entered| {
+        let (trace_id, span_id) = entered.last()?;
+        Some(format!("00-{trace_id}-{span_id}-01"))
+    })
 }
 
 impl<S> Layer<S> for ReportLayer
@@ -73,6 +89,23 @@ where
             && let Some(open) = span.extensions_mut().get_mut::<OpenSpan>()
         {
             values.record(&mut open.fields);
+        }
+    }
+
+    fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id)
+            && let Some(open) = span.extensions().get::<OpenSpan>()
+        {
+            let ids = (open.trace_id.clone(), open.span_id.clone());
+            ENTERED.with_borrow_mut(|entered| entered.push(ids));
+        }
+    }
+
+    fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id)
+            && span.extensions().get::<OpenSpan>().is_some()
+        {
+            ENTERED.with_borrow_mut(Vec::pop);
         }
     }
 
@@ -166,7 +199,7 @@ impl Visit for FieldVisitor {
 mod tests {
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::{ReportBuffer, ReportLayer};
+    use super::{ReportBuffer, ReportLayer, current_traceparent};
 
     #[test]
     fn an_event_becomes_a_log_with_its_message_and_fields() {
@@ -223,5 +256,44 @@ mod tests {
         assert_eq!(parent["spanId"].as_str().unwrap().len(), 16);
         assert_ne!(child["spanId"], parent["spanId"]);
         assert!(parent.get("parentSpanId").is_none());
+    }
+
+    #[test]
+    fn inside_an_entered_span_the_traceparent_names_that_span() {
+        // Arrange
+        let buffer = ReportBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(ReportLayer(buffer.clone()));
+
+        // Act
+        let traceparent = tracing::subscriber::with_default(subscriber, || {
+            tracing::info_span!("request").in_scope(current_traceparent)
+        });
+
+        // Assert
+        let (_, spans) = buffer.take();
+        let [span] = spans.as_slice() else {
+            panic!("{spans:?}");
+        };
+        let expected = format!(
+            "00-{}-{}-01",
+            span["traceId"].as_str().unwrap(),
+            span["spanId"].as_str().unwrap()
+        );
+        assert_eq!(traceparent, Some(expected));
+    }
+
+    #[test]
+    fn outside_any_span_there_is_no_traceparent() {
+        // Arrange
+        let subscriber = tracing_subscriber::registry().with(ReportLayer(ReportBuffer::default()));
+
+        // Act
+        let traceparent = tracing::subscriber::with_default(subscriber, || {
+            tracing::info_span!("closed").in_scope(|| {});
+            current_traceparent()
+        });
+
+        // Assert
+        assert_eq!(traceparent, None);
     }
 }
