@@ -10,29 +10,16 @@ use moqt::{
 
 const SUBSCRIBER_PRIORITY: u8 = 128;
 
-pub struct RelaySession {
-    pub session: Arc<Session>,
-    endpoint: Endpoint<NATIVE>,
-}
-
-impl RelaySession {
-    pub async fn connect(url: &str, config: &ClientConfig) -> Result<Self> {
-        let endpoint = Endpoint::<NATIVE>::create_client(config)?;
-        tracing::info!(relay = %url, "connecting to relay");
-        let connecting = endpoint
-            .connect(url)
-            .await
-            .context("connect moqt transport")?;
-        let session = Arc::new(connecting.await.context("establish moqt session")?);
-        Ok(Self { session, endpoint })
-    }
-
-    /// Every other handle to the session must already be dropped, or the
-    /// wait for the close to be sent never ends.
-    pub async fn close(self) {
-        drop(self.session);
-        self.endpoint.wait_idle().await;
-    }
+pub async fn connect(url: &str, config: &ClientConfig) -> Result<Arc<Session>> {
+    let endpoint = Endpoint::<NATIVE>::create_client(config)?;
+    tracing::info!(relay = %url, "connecting to relay");
+    let connecting = endpoint
+        .connect(url)
+        .await
+        .context("connect moqt transport")?;
+    Ok(Arc::new(
+        connecting.await.context("establish moqt session")?,
+    ))
 }
 
 pub async fn subscribe(

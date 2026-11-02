@@ -11,6 +11,7 @@ use crate::modules::moqt::control_plane::control_messages::messages::go_away::Go
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
+use crate::modules::moqt::domains::session_creator::WaitIdle;
 use crate::modules::moqt::runtime::tasks::connection_tasks::ConnectionTasks;
 use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
@@ -32,6 +33,8 @@ pub struct Session {
     /// `None` for a session that does not follow GOAWAY.
     closed: Option<watch::Receiver<Option<TransportClose>>>,
     server_setup: Option<ServerSetup>,
+    /// The endpoint a client session was opened on; `None` on a server.
+    endpoint: Option<Arc<dyn WaitIdle>>,
 }
 
 /// What reads the session's connections.
@@ -52,6 +55,7 @@ impl Session {
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         server_setup: Option<ServerSetup>,
         follow: Option<Follow>,
+        endpoint: Option<Arc<dyn WaitIdle>>,
     ) -> Self {
         let inner = Arc::new(inner);
         let parent_span = Span::current();
@@ -82,6 +86,7 @@ impl Session {
             _driver: driver,
             closed,
             server_setup,
+            endpoint,
         }
     }
 
@@ -106,6 +111,18 @@ impl Session {
     /// `SessionEvent::ProtocolViolation`.
     pub fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
         self.inner.close_with_error(code, reason);
+    }
+
+    /// Terminates the session with NO_ERROR; other handles to it may still be
+    /// alive. On a client, resolves once the close has been sent and every
+    /// other session opened on the same `Endpoint` has closed, so the process
+    /// can exit right after.
+    pub async fn close(&self) {
+        self.inner
+            .close_with_error(TerminationErrorCode::NoError, "");
+        if let Some(endpoint) = &self.endpoint {
+            endpoint.wait_idle().await;
+        }
     }
 
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent> {
@@ -189,13 +206,51 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use crate::{
-        SessionEvent, TerminationErrorCode,
+        ClientConfig, SessionEvent, TerminationErrorCode,
         modules::test_support::{
-            DISCONNECT_TIMEOUT, connect_sessions, receive_disconnected,
-            spawn_connected_native_sessions, spawn_native_server,
+            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, connect_sessions, native_client_with_config,
+            receive_disconnected, spawn_connected_native_sessions, spawn_native_server,
         },
         wire::MOQ_TRANSPORT_VERSION,
     };
+
+    #[tokio::test]
+    async fn server_observes_a_client_that_exits_right_after_close() {
+        // Arrange
+        let (port, accept) = spawn_native_server("session-close");
+
+        // Act: the client's single-threaded runtime runs nothing after `close`
+        // returns; the endpoint is dropped and a publisher is still alive
+        tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let endpoint = native_client_with_config(ClientConfig {
+                    verify_certificate: false,
+                    ..ClientConfig::default()
+                });
+                let connecting = endpoint
+                    .connect(&format!("moqt://127.0.0.1:{port}"))
+                    .await
+                    .unwrap();
+                let session = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                drop(endpoint);
+                let _publisher = session.publisher();
+                session.close().await;
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        let server = accept.await.unwrap();
+        receive_disconnected(&server).await.unwrap();
+    }
 
     #[tokio::test]
     async fn transport_stats_reports_the_established_quic_path() {

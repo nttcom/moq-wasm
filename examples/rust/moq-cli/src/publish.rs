@@ -28,8 +28,6 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     }
 
     let connection = connect_relay(&args.relay, args.track.app_id()).await?;
-    // `publish_stdin` drops every handle to the session on return, errors
-    // included, so `close` can finish.
     let result = publish_stdin(&connection.session, &args).await;
     connection.close().await;
     result

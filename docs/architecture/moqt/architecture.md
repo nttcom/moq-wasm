@@ -856,8 +856,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   alive. The transport closes (code 0) once the last handle to the context
   (`Session`, `Publisher`, `Subscriber`, stream writers) is gone, but the
   CONNECTION_CLOSE is sent by quinn's background driver: a process must
-  await `Endpoint::wait_idle()` before exiting, or the peer only notices
-  through its idle timeout.
+  await `Session::close()` (or `Endpoint::wait_idle()` after the last handle
+  is gone) before exiting, or the peer only notices through its idle timeout.
+  A client session keeps the endpoint it was opened on. `close` therefore
+  closes the connection with NO_ERROR even while other handles are alive, then
+  waits for that endpoint to be idle. The application need not keep the
+  `Endpoint`.
 - **No direct runtime calls in the session stack**: `modules/moqt` spawns,
   yields, bounds waits and reads the clock only through `modules/executor`
   (`spawn`, `try_spawn`, `yield_now`, `timeout`, `now`, `system_time`); `tokio::sync`

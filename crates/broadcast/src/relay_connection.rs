@@ -7,8 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TerminationErrorCode,
-    TransportStats,
+    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TransportStats,
     executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
     subscribe::SubscribeHandler,
@@ -140,7 +139,6 @@ pub(crate) struct ConnectedRelay {
 }
 
 struct OwnedSession {
-    endpoint: Endpoint<RelayTransport>,
     event_task: JoinHandle,
 }
 
@@ -175,7 +173,7 @@ impl RelayConnection {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn with_session(session: Arc<Session>, origin: Origin) -> Self {
         let ledger = StreamLedger::default();
-        let relay = ConnectedRelay::new(None, session, origin, ledger.clone());
+        let relay = ConnectedRelay::new(false, session, origin, ledger.clone());
         Self {
             target: None,
             connected: Arc::new(Mutex::new(Some(Arc::new(relay)))),
@@ -208,12 +206,9 @@ impl RelayConnection {
     pub async fn close(&self) {
         let connected = self.connected.lock().await.clone();
         if let Some(connected) = connected
-            && let Some(owned) = &connected.owned
+            && connected.owned.is_some()
         {
-            connected
-                .session
-                .close_with_error(TerminationErrorCode::NoError, "");
-            owned.endpoint.wait_idle().await;
+            connected.session.close().await;
         }
     }
 
@@ -254,17 +249,12 @@ impl ConnectedRelay {
             .await
             .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);
-        Ok(Self::new(
-            Some(endpoint),
-            session,
-            Origin::default(),
-            ledger,
-        ))
+        Ok(Self::new(true, session, Origin::default(), ledger))
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     fn new(
-        endpoint: Option<Endpoint<RelayTransport>>,
+        owns_session: bool,
         session: Arc<Session>,
         origin: Origin,
         ledger: StreamLedger,
@@ -275,8 +265,7 @@ impl ConnectedRelay {
             state: state.clone(),
             ledger: ledger.clone(),
         };
-        let owned = endpoint.map(|endpoint| OwnedSession {
-            endpoint,
+        let owned = owns_session.then(|| OwnedSession {
             event_task: Self::spawn_event_loop(session.clone(), events.clone()),
         });
         Self {

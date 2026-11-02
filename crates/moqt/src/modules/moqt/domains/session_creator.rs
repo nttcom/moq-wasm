@@ -49,6 +49,19 @@ pub(crate) trait Reconnect: MaybeSend + MaybeSync {
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>>;
 }
 
+/// The endpoint of a client session, whose transport `Session::close` waits
+/// to finish closing.
+pub(crate) trait WaitIdle: MaybeSend + MaybeSync {
+    fn wait_idle(&self) -> BoxFuture<()>;
+}
+
+impl<T: TransportProtocol> WaitIdle for Arc<SessionCreator<T>> {
+    fn wait_idle(&self) -> BoxFuture<()> {
+        let creator = self.clone();
+        Box::pin(async move { creator.transport_creator.wait_idle().await })
+    }
+}
+
 impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
     fn refreshes_token(&self) -> bool {
         self.authorization_token
@@ -113,6 +126,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                         url,
                         connection_events,
                     }),
+                    Some(Arc::new(creator.clone())),
                 )
             } else {
                 let (connection, control_receiver, server_setup) = creator
@@ -124,6 +138,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     event_receiver,
                     Some(server_setup),
                     None,
+                    Some(Arc::new(creator.clone())),
                 )
             };
             tracing::info!("session established");

@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use moqt::{
-    ClientConfig, Endpoint, NATIVE, Session, Subscription, TerminationErrorCode, TrackReader,
+    ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
     fetch::{FetchDataReceiver, FetchOption},
     object::{ContentExists, GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption},
@@ -16,7 +16,6 @@ const SUBSCRIBER_PRIORITY: u8 = 128;
 /// a relay drain.
 pub(crate) struct RelayConnection {
     pub(crate) session: Arc<Session>,
-    endpoint: Endpoint<NATIVE>,
     _token_refresh: Option<TokenRefreshTask>,
 }
 
@@ -39,7 +38,6 @@ impl RelayConnection {
         let session = Arc::new(connecting.await?);
         Ok(Self {
             session,
-            endpoint,
             _token_refresh: None,
         })
     }
@@ -66,12 +64,8 @@ impl RelayConnection {
         Ok(connection)
     }
 
-    /// Waiting lets the CONNECTION_CLOSE reach the relay before the process
-    /// exits.
     pub(crate) async fn close(&self) {
-        self.session
-            .close_with_error(TerminationErrorCode::NoError, "");
-        self.endpoint.wait_idle().await;
+        self.session.close().await;
     }
 }
 
