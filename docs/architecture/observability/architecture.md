@@ -351,7 +351,9 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   `rejected` and `failed` are ERROR with the outcome as message. They are
   posted to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, so they land in
   `otel_traces` with `ServiceName` `browser` or `moq-cli`. The Python bots
-  send none yet.
+  send none yet. A request span's `traceparent` travels with the request
+  (`TRACE_CONTEXT`), so the relay's span for it is its child in the same
+  trace.
 - **Stats** become metric points with `app_id` and `client_id`, posted to
   `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. A page playing several tracks at
   once (meeting: each remote member's camera and screen share) sends one

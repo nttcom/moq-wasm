@@ -611,6 +611,18 @@ attempt; it adds no field for the retry.
 - `begin_publish_namespace` returns before the response and has no span; the
   other `Subscriber` / `Publisher` spans and `moqt.session` stay at DEBUG.
 
+The five requests carry the span's W3C `traceparent` in a `TRACE_CONTEXT`
+parameter (type `0x1fff`, not in draft-14; draft-14 §9.2 makes other
+implementations ignore it), so the receiver's span joins the sender's trace.
+`moqt` has no OpenTelemetry dependency: the application gives it the current
+span's `traceparent` with `set_trace_context_provider` (the relay through
+`telemetry::current_traceparent`, the wasm module and `moq-cli` from their span
+layers), and the send functions read it inside the request span. Without a
+provider the parameter is omitted. On receipt, `trace_context()` on
+`SubscribeHandler`, `PublishHandler`, `FetchHandler`,
+`SubscribeNamespaceHandler` and `PublishNamespaceHandler` returns the
+`TraceContext`; a value that is not a traceparent counts as absent.
+
 ## Control plane (`modules/moqt/control_plane`)
 
 - `control_messages/messages/*` — one struct per draft-14 control message with
