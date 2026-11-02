@@ -3,7 +3,7 @@ import { LivePlayer } from 'moq-wasm/media'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'
-import { startPageTelemetry } from '../../utils/pageTelemetry'
+import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
@@ -26,7 +26,7 @@ type TargetBox = [number, BoxEdges]
 const telemetry = startPageTelemetry(
   'moq-ptz-tracking',
   () => element<HTMLInputElement>('url').value.trim(),
-  () => player
+  () => playerSamples(player)
 )
 const player = new LivePlayer({
   container: element('stage'),

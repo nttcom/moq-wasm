@@ -1,6 +1,6 @@
 import { MoqSession } from 'moq-wasm'
 import type { TrackWriter } from 'moq-wasm'
-import { startPageTelemetry } from '../../utils/pageTelemetry'
+import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { element, parseTrackNamespace } from '../../utils/page'
@@ -38,7 +38,7 @@ const stage = element<HTMLDivElement>('stage')
 const telemetry = startPageTelemetry(
   'onvif',
   () => inputValue('moqt-url'),
-  () => player
+  () => playerSamples(player)
 )
 const player = new LivePlayer({
   container: stage,
