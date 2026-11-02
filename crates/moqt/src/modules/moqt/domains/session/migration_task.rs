@@ -427,7 +427,7 @@ async fn migrate(
         .carried
         .as_ref()
         .context("a session that follows GOAWAY carries its requests")?;
-    let mut carried = carried.lock().await;
+    let mut carried = carried.write().await;
     let moved_from = session.connection();
     for namespace in &carried.namespaces {
         retry_until(deadline, || {
