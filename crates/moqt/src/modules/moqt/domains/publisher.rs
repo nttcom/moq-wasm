@@ -1,3 +1,4 @@
+use crate::modules::telemetry::current_trace_context;
 use std::sync::Arc;
 
 use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
@@ -295,11 +296,10 @@ pub(crate) async fn send_publish_namespace(
         .control
         .send_request(
             reservation,
-            OutgoingRequest::PublishNamespace(PublishNamespace::new(
-                request_id,
-                vec_namespace,
-                vec![],
-            )),
+            OutgoingRequest::PublishNamespace(PublishNamespace {
+                trace_context: current_trace_context(),
+                ..PublishNamespace::new(request_id, vec_namespace, vec![])
+            }),
         )
         .await?;
     Ok(PendingPublishNamespace {
@@ -330,6 +330,7 @@ pub(crate) async fn send_publish(
         authorization_tokens: vec![],
         delivery_timeout: None,
         max_duration: option.max_cache_duration,
+        trace_context: current_trace_context(),
     };
     let pending = connection
         .control

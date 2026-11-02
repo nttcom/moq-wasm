@@ -992,6 +992,7 @@ mod tests {
             filter_type: FilterType::LargestObject,
             authorization_tokens: vec![],
             delivery_timeout: None,
+            trace_context: None,
         };
         let connection = session.publisher().session.connection();
         ControlChannel::of(&connection)

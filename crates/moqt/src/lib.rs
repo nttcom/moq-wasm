@@ -13,6 +13,7 @@ pub mod wire;
 
 pub use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken;
+pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 pub use crate::modules::moqt::control_plane::enums::SessionEvent;
 pub use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 pub use crate::modules::moqt::control_plane::handler::go_away_handler::GoAwayHandler;
@@ -41,6 +42,7 @@ pub use crate::modules::moqt::protocol::QUIC;
 pub use crate::modules::moqt::protocol::TransportProtocol;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::modules::moqt::protocol::WEBTRANSPORT;
+pub use crate::modules::telemetry::set_trace_context_provider;
 pub use crate::modules::transport::accept_error::AcceptError;
 pub use crate::modules::transport::transport_connection::TransportClose;
 pub use crate::modules::transport::transport_send_stream::TransportSendError;

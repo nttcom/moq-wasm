@@ -1,3 +1,4 @@
+use crate::modules::telemetry::current_trace_context;
 use std::{sync::Arc, time::Duration};
 
 use tracing::Instrument;
@@ -253,6 +254,7 @@ impl Subscriber {
             filter_type: FilterType::LargestObject,
             authorization_tokens,
             delivery_timeout: None,
+            trace_context: None,
         };
         let response = connection
             .control
@@ -433,6 +435,7 @@ impl Subscriber {
             group_order: option.group_order,
             fetch_params,
             authorization_tokens: vec![],
+            trace_context: current_trace_context(),
         };
         let response = connection
             .control
@@ -821,11 +824,10 @@ pub(crate) async fn send_subscribe_namespace(
         .control
         .send_request(
             reservation,
-            OutgoingRequest::SubscribeNamespace(SubscribeNamespace::new(
-                request_id,
-                vec_namespace,
-                vec![],
-            )),
+            OutgoingRequest::SubscribeNamespace(SubscribeNamespace {
+                trace_context: current_trace_context(),
+                ..SubscribeNamespace::new(request_id, vec_namespace, vec![])
+            }),
         )
         .await?;
     tracing::debug!(request_id, track_namespace_prefix = %namespace, "SUBSCRIBE_NAMESPACE sent");
@@ -932,6 +934,7 @@ async fn send_subscribe_request(
         filter_type: option.filter_type,
         authorization_tokens: vec![],
         delivery_timeout: None,
+        trace_context: current_trace_context(),
     };
     let pending = connection
         .control

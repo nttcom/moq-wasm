@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
@@ -19,10 +20,16 @@ use crate::{
 pub struct SubscribeNamespaceHandler {
     pub track_namespace_prefix: String,
     pub track_namespace_prefix_tuple: Vec<String>,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl SubscribeNamespaceHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     pub(crate) fn new(
         connection: Arc<Connection>,
         subscribe_namespace: SubscribeNamespace,
@@ -34,6 +41,7 @@ impl SubscribeNamespaceHandler {
         );
         Self {
             guard,
+            trace_context: subscribe_namespace.trace_context,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
             track_namespace_prefix_tuple: subscribe_namespace.track_namespace_prefix,
         }

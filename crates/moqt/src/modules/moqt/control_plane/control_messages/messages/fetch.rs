@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
@@ -150,6 +151,7 @@ pub struct Fetch {
     pub group_order: GroupOrder,
     pub fetch_params: FetchParams,
     pub authorization_tokens: Vec<AuthorizationToken>,
+    pub trace_context: Option<TraceContext>,
 }
 
 impl Fetch {
@@ -163,12 +165,14 @@ impl Fetch {
         let authorization_tokens = odd_values(&parameters, 0x03)
             .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
+        let trace_context = TraceContext::find(&parameters);
         Ok(Fetch {
             request_id,
             subscriber_priority,
             group_order,
             fetch_params,
             authorization_tokens,
+            trace_context,
         })
     }
 
@@ -182,6 +186,7 @@ impl Fetch {
             .authorization_tokens
             .iter()
             .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
@@ -191,6 +196,7 @@ impl Fetch {
 #[cfg(test)]
 mod tests {
     mod success {
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TEST_TRACEPARENT;
         use super::super::*;
 
         #[test]
@@ -212,6 +218,7 @@ mod tests {
                     },
                 },
                 authorization_tokens: vec![],
+                trace_context: None,
             };
             let buf = fetch.encode();
             let mut cursor = std::io::Cursor::new(&buf[..]);
@@ -238,6 +245,7 @@ mod tests {
                     },
                 },
                 authorization_tokens: vec![],
+                trace_context: None,
             };
             let result = fetch.encode();
             let expected = [
@@ -292,6 +300,7 @@ mod tests {
                     },
                 },
                 authorization_tokens: vec![],
+                trace_context: None,
             };
             assert_eq!(result, expected);
         }
@@ -307,6 +316,7 @@ mod tests {
                     joining_start: 2,
                 },
                 authorization_tokens: vec![],
+                trace_context: None,
             };
             let result = fetch.encode();
             let expected = [
@@ -343,6 +353,7 @@ mod tests {
                     joining_start: 2,
                 },
                 authorization_tokens: vec![],
+                trace_context: None,
             };
             assert_eq!(result, expected);
         }
@@ -358,6 +369,7 @@ mod tests {
                     joining_start: 100,
                 },
                 authorization_tokens: vec![],
+                trace_context: None,
             };
             let result = fetch.encode();
             let expected = [
@@ -394,8 +406,33 @@ mod tests {
                     joining_start: 100,
                 },
                 authorization_tokens: vec![],
+                trace_context: None,
             };
             assert_eq!(result, expected);
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let message = Fetch {
+                request_id: 1,
+                subscriber_priority: 0,
+                group_order: GroupOrder::Ascending,
+                fetch_params: FetchParams::RelativeJoining {
+                    joining_request_id: 0,
+                    joining_start: 1,
+                },
+                authorization_tokens: vec![],
+                trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+            };
+
+            // Act
+            let bytes = message.encode();
+            let decoded = Fetch::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context.is_some());
+            assert_eq!(decoded.trace_context, message.trace_context);
         }
     }
 
