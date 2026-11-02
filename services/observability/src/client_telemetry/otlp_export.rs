@@ -120,14 +120,22 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
         for measurement in player_measurements(&stats.values) {
             add(measurement, &identity);
         }
-        let gaps = &stats.values.max_arrival_gap_ms;
-        for (media_kind, gap) in [("video", gaps.video), ("audio", gaps.audio)] {
-            let mut attributes = identity.clone();
-            attributes.push(string_attribute("media_kind", media_kind));
-            add(
-                ("client.player.max_arrival_gap", "ms", Gauge, gap),
-                &attributes,
-            );
+        let per_media_kind = [
+            (
+                "client.player.max_arrival_gap",
+                &stats.values.max_arrival_gap_ms,
+            ),
+            (
+                "client.player.arrival_delay",
+                &stats.values.arrival_delay_ms,
+            ),
+        ];
+        for (name, values) in per_media_kind {
+            for (media_kind, value) in [("video", values.video), ("audio", values.audio)] {
+                let mut attributes = identity.clone();
+                attributes.push(string_attribute("media_kind", media_kind));
+                add((name, "ms", Gauge, value), &attributes);
+            }
         }
     }
     Some(json!({
@@ -269,6 +277,7 @@ mod tests {
                     "syncOffsetMs": -6.5,
                     "videoDroppedFrames": 4,
                     "maxArrivalGapMs": { "audio": 25 },
+                    "arrivalDelayMs": { "audio": 8, "video": 2254 },
                 },
             }],
         }));
@@ -299,6 +308,14 @@ mod tests {
             .unwrap();
         assert_eq!(gaps.len(), 1);
         assert_eq!(gaps[0]["attributes"][2]["value"]["stringValue"], "audio");
+        let delays = metric(&request, "client.player.arrival_delay")["gauge"]["dataPoints"]
+            .as_array()
+            .unwrap();
+        assert_eq!(delays.len(), 2);
+        assert_eq!(delays[0]["attributes"][2]["value"]["stringValue"], "video");
+        assert_eq!(delays[0]["asDouble"], 2254.0);
+        assert_eq!(delays[1]["attributes"][2]["value"]["stringValue"], "audio");
+        assert_eq!(delays[1]["asDouble"], 8.0);
     }
 
     #[test]

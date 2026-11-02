@@ -333,6 +333,7 @@ converts the report to OTLP/JSON and forwards it (`client_telemetry`).
 | `client.player.video_dropped` | {frame} | cumulative sum | `videoDroppedFrames` |
 | `client.player.video_late` | {frame} | cumulative sum | `videoLateFrames` |
 | `client.player.max_arrival_gap` | ms | gauge, `media_kind` attribute | `maxArrivalGapMs` |
+| `client.player.arrival_delay` | ms | gauge, `media_kind` attribute; includes the publisher-to-viewer clock offset, which the audio-video difference cancels | `arrivalDelayMs` |
 
 A collector that does not accept the export answers 502. Linking a browser
 session to the relay's `relay.session` trace is not done yet.
