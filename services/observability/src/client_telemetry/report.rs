@@ -2,7 +2,7 @@ use anyhow::ensure;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-/// The most logs, and the most stats, one report may carry.
+/// The most logs, the most stats, and the most spans one report may carry.
 const MAX_RECORDS: usize = 100;
 /// Longest label a report may carry: each becomes a metric attribute.
 const MAX_LABEL_CHARS: usize = 128;
@@ -20,6 +20,8 @@ pub(super) struct ClientReport {
     pub(super) logs: Vec<ClientLog>,
     #[serde(default)]
     pub(super) stats: Vec<PlayerStats>,
+    #[serde(default)]
+    pub(super) spans: Vec<ClientSpan>,
 }
 
 /// The kind of client, which becomes `service.name`. A fixed set, so a client
@@ -50,6 +52,20 @@ pub(super) struct ClientLog {
     pub(super) level: String,
     pub(super) target: String,
     pub(super) message: String,
+    #[serde(default)]
+    pub(super) fields: Map<String, Value>,
+}
+
+/// A closed `tracing` span. Ids are lowercase hex, as OTLP/JSON carries them.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ClientSpan {
+    pub(super) trace_id: String,
+    pub(super) span_id: String,
+    pub(super) parent_span_id: Option<String>,
+    pub(super) name: String,
+    pub(super) start_time_ms: u64,
+    pub(super) end_time_ms: u64,
     #[serde(default)]
     pub(super) fields: Map<String, Value>,
 }
@@ -95,9 +111,23 @@ impl ClientReport {
     pub(super) fn parse(body: &[u8]) -> anyhow::Result<Self> {
         let report: Self = serde_json::from_slice(body)?;
         ensure!(
-            report.logs.len() <= MAX_RECORDS && report.stats.len() <= MAX_RECORDS,
-            "a report carries at most {MAX_RECORDS} logs and {MAX_RECORDS} stats"
+            report.logs.len() <= MAX_RECORDS
+                && report.stats.len() <= MAX_RECORDS
+                && report.spans.len() <= MAX_RECORDS,
+            "a report carries at most {MAX_RECORDS} logs, stats and spans each"
         );
+        // A malformed id makes the collector reject the whole batch.
+        for span in &report.spans {
+            let ids = [(&span.trace_id, 32), (&span.span_id, 16)]
+                .into_iter()
+                .chain(span.parent_span_id.iter().map(|id| (id, 16)));
+            for (id, len) in ids {
+                ensure!(
+                    id.len() == len && id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                    "span id {id:?} is not {len} hex digits"
+                );
+            }
+        }
         let stats_labels = report
             .stats
             .iter()
@@ -176,6 +206,16 @@ mod tests {
         // Arrange
         let log = json!({ "timeMs": 1, "level": "warn", "target": "moqt", "message": "m" });
         let body = json!({ "clientId": "c1", "page": "p", "logs": vec![log; MAX_RECORDS + 1] });
+
+        // Act / Assert
+        assert!(ClientReport::parse(body.to_string().as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_span_with_a_malformed_trace_id_is_rejected() {
+        // Arrange
+        let span = json!({ "traceId": "xyz", "spanId": "0123456789abcdef", "name": "s", "startTimeMs": 1, "endTimeMs": 2 });
+        let body = json!({ "clientId": "c1", "page": "p", "spans": [span] });
 
         // Act / Assert
         assert!(ClientReport::parse(body.to_string().as_bytes()).is_err());

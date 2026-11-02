@@ -1,13 +1,16 @@
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-use super::report::{ClientLog, ClientReport, PlayerStatValues};
+use super::report::{ClientLog, ClientReport, ClientSpan, PlayerStatValues};
 use crate::otlp::{
     Kind::{self, Counter, Gauge},
     Metrics, string_attribute, time_unix_nano,
 };
 
 const SCOPE_NAME: &str = "client-telemetry";
-/// Attributes the server sets; a log field of the same name is dropped.
+const SPAN_KIND_INTERNAL: u8 = 1;
+const STATUS_CODE_OK: u8 = 1;
+const STATUS_CODE_ERROR: u8 = 2;
+/// Attributes the server sets; a log or span field of the same name is dropped.
 const RESERVED_ATTRIBUTES: [&str; 3] = ["app_id", "client_id", "target"];
 
 /// Name, unit, kind and value of one player data point.
@@ -145,6 +148,24 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
     }))
 }
 
+/// The OTLP/JSON `ExportTraceServiceRequest` body, or `None` when the report has no spans.
+pub(super) fn traces_request(report: &ClientReport, app_id: &str) -> Option<Value> {
+    if report.spans.is_empty() {
+        return None;
+    }
+    let spans: Vec<Value> = report
+        .spans
+        .iter()
+        .map(|span| span_record(span, app_id, &report.client_id))
+        .collect();
+    Some(json!({
+        "resourceSpans": [{
+            "resource": resource(report),
+            "scopeSpans": [{ "scope": { "name": SCOPE_NAME }, "spans": spans }],
+        }],
+    }))
+}
+
 fn resource(report: &ClientReport) -> Value {
     json!({
         "attributes": [
@@ -160,12 +181,7 @@ fn log_record(log: &ClientLog, app_id: &str, client_id: &str) -> Value {
         string_attribute("client_id", client_id),
         string_attribute("target", log.target.as_str()),
     ];
-    attributes.extend(
-        log.fields
-            .iter()
-            .filter(|(key, _)| !RESERVED_ATTRIBUTES.contains(&key.as_str()))
-            .map(|(key, value)| json!({ "key": key, "value": any_value(value) })),
-    );
+    attributes.extend(field_attributes(&log.fields));
     let (severity_number, severity_text) = severity(&log.level);
     json!({
         "timeUnixNano": time_unix_nano(log.time_ms),
@@ -174,6 +190,41 @@ fn log_record(log: &ClientLog, app_id: &str, client_id: &str) -> Value {
         "body": { "stringValue": log.message },
         "attributes": attributes,
     })
+}
+
+fn span_record(span: &ClientSpan, app_id: &str, client_id: &str) -> Value {
+    let mut attributes = vec![
+        string_attribute("app_id", app_id),
+        string_attribute("client_id", client_id),
+    ];
+    attributes.extend(field_attributes(&span.fields));
+    let mut record = json!({
+        "traceId": span.trace_id,
+        "spanId": span.span_id,
+        "name": span.name,
+        "kind": SPAN_KIND_INTERNAL,
+        "startTimeUnixNano": time_unix_nano(span.start_time_ms),
+        "endTimeUnixNano": time_unix_nano(span.end_time_ms),
+        "attributes": attributes,
+    });
+    if let Some(parent_span_id) = &span.parent_span_id {
+        record["parentSpanId"] = json!(parent_span_id);
+    }
+    match span.fields.get("outcome").and_then(Value::as_str) {
+        Some("ok") => record["status"] = json!({ "code": STATUS_CODE_OK }),
+        Some(outcome @ ("rejected" | "failed")) => {
+            record["status"] = json!({ "code": STATUS_CODE_ERROR, "message": outcome });
+        }
+        _ => {}
+    }
+    record
+}
+
+fn field_attributes(fields: &Map<String, Value>) -> impl Iterator<Item = Value> + '_ {
+    fields
+        .iter()
+        .filter(|(key, _)| !RESERVED_ATTRIBUTES.contains(&key.as_str()))
+        .map(|(key, value)| json!({ "key": key, "value": any_value(value) }))
 }
 
 /// OTLP's SeverityNumber and text for a `tracing` level name; an unknown name is UNSPECIFIED.
@@ -206,7 +257,7 @@ fn any_value(value: &Value) -> Value {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{logs_request, metrics_request};
+    use super::{logs_request, metrics_request, traces_request};
     use crate::client_telemetry::report::ClientReport;
 
     fn report(body: Value) -> ClientReport {
@@ -259,6 +310,90 @@ mod tests {
                 { "key": "target", "value": { "stringValue": "wasm::media_broadcast" } },
                 { "key": "track_name", "value": { "stringValue": "video" } },
             ])
+        );
+    }
+
+    fn span_report(fields: Value, parent_span_id: Option<&str>) -> ClientReport {
+        report(json!({
+            "clientId": "c1",
+            "page": "subscribe",
+            "service": "moq-cli",
+            "spans": [{
+                "traceId": "0123456789abcdef0123456789abcdef",
+                "spanId": "0123456789abcdef",
+                "parentSpanId": parent_span_id,
+                "name": "moqt.subscriber.subscribe",
+                "startTimeMs": 2,
+                "endTimeMs": 5,
+                "fields": fields,
+            }],
+        }))
+    }
+
+    fn first_span(request: &Value) -> &Value {
+        &request["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    }
+
+    #[test]
+    fn a_span_carries_the_server_s_app_id_and_not_the_client_s() {
+        // Arrange
+        let report = span_report(json!({ "app_id": "spoofed", "request_id": 4 }), None);
+
+        // Act
+        let request = traces_request(&report, "anon").unwrap();
+
+        // Assert
+        assert_eq!(
+            request["resourceSpans"][0]["resource"]["attributes"][0]["value"]["stringValue"],
+            "moq-cli"
+        );
+        let span = first_span(&request);
+        assert_eq!(span["traceId"], "0123456789abcdef0123456789abcdef");
+        assert_eq!(span["spanId"], "0123456789abcdef");
+        assert_eq!(span["name"], "moqt.subscriber.subscribe");
+        assert_eq!(span["kind"], 1);
+        assert_eq!(span["startTimeUnixNano"], "2000000");
+        assert_eq!(span["endTimeUnixNano"], "5000000");
+        assert_eq!(
+            span["attributes"],
+            json!([
+                { "key": "app_id", "value": { "stringValue": "anon" } },
+                { "key": "client_id", "value": { "stringValue": "c1" } },
+                { "key": "request_id", "value": { "intValue": "4" } },
+            ])
+        );
+    }
+
+    #[test]
+    fn a_span_without_a_parent_or_an_outcome_omits_them() {
+        // Arrange
+        let report = span_report(json!({}), None);
+
+        // Act
+        let request = traces_request(&report, "anon").unwrap();
+
+        // Assert
+        let span = first_span(&request).as_object().unwrap();
+        assert!(!span.contains_key("parentSpanId"));
+        assert!(!span.contains_key("status"));
+    }
+
+    #[test]
+    fn a_span_s_outcome_becomes_its_status() {
+        // Arrange
+        let ok = span_report(json!({ "outcome": "ok" }), Some("fedcba9876543210"));
+        let rejected = span_report(json!({ "outcome": "rejected" }), None);
+
+        // Act
+        let ok = traces_request(&ok, "anon").unwrap();
+        let rejected = traces_request(&rejected, "anon").unwrap();
+
+        // Assert
+        assert_eq!(first_span(&ok)["parentSpanId"], "fedcba9876543210");
+        assert_eq!(first_span(&ok)["status"], json!({ "code": 1 }));
+        assert_eq!(
+            first_span(&rejected)["status"],
+            json!({ "code": 2, "message": "rejected" })
         );
     }
 
@@ -348,12 +483,13 @@ mod tests {
     }
 
     #[test]
-    fn a_report_without_logs_or_stats_exports_nothing() {
+    fn a_report_without_logs_stats_or_spans_exports_nothing() {
         // Arrange
         let report = report(json!({ "clientId": "c1", "page": "p" }));
 
         // Act / Assert
         assert!(logs_request(&report, "anon").is_none());
         assert!(metrics_request(&report, "anon").is_none());
+        assert!(traces_request(&report, "anon").is_none());
     }
 }

@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
         vts_url: config.vts_url.clone(),
         otlp_logs_endpoint: config.otlp_logs_endpoint.clone(),
         otlp_metrics_endpoint: config.otlp_metrics_endpoint.clone(),
+        otlp_traces_endpoint: config.otlp_traces_endpoint.clone(),
     })?;
     let listener = TcpListener::bind(("0.0.0.0", config.http_port)).await?;
     let _api = ApiServer::run(
@@ -39,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
         http_port = config.http_port,
         otlp_metrics = config.otlp_metrics_endpoint.is_some(),
         otlp_logs = config.otlp_logs_endpoint.is_some(),
+        otlp_traces = config.otlp_traces_endpoint.is_some(),
         client_token_verification = config.vts_url.is_some(),
         "observability started"
     );

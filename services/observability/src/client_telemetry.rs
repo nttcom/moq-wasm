@@ -23,15 +23,17 @@ pub struct ClientTelemetryConfig {
     pub vts_url: Option<String>,
     pub otlp_logs_endpoint: Option<String>,
     pub otlp_metrics_endpoint: Option<String>,
+    pub otlp_traces_endpoint: Option<String>,
 }
 
-/// Receives the logs and player stats clients post and forwards them to the
+/// Receives the logs, player stats and spans clients post and forwards them to the
 /// collector as OTLP.
 pub struct ClientTelemetry {
     http: reqwest::Client,
     verifier: Option<AppVerifier>,
     otlp_logs_endpoint: Option<String>,
     otlp_metrics_endpoint: Option<String>,
+    otlp_traces_endpoint: Option<String>,
     rate_limiter: RateLimiter,
 }
 
@@ -71,7 +73,10 @@ impl Rejection {
 impl ClientTelemetry {
     /// `None` when no OTLP endpoint is set, so there is nowhere to forward to.
     pub fn new(config: ClientTelemetryConfig) -> anyhow::Result<Option<Self>> {
-        if config.otlp_logs_endpoint.is_none() && config.otlp_metrics_endpoint.is_none() {
+        if config.otlp_logs_endpoint.is_none()
+            && config.otlp_metrics_endpoint.is_none()
+            && config.otlp_traces_endpoint.is_none()
+        {
             return Ok(None);
         }
         Ok(Some(Self {
@@ -79,6 +84,7 @@ impl ClientTelemetry {
             verifier: config.vts_url.map(AppVerifier::new).transpose()?,
             otlp_logs_endpoint: config.otlp_logs_endpoint,
             otlp_metrics_endpoint: config.otlp_metrics_endpoint,
+            otlp_traces_endpoint: config.otlp_traces_endpoint,
             rate_limiter: RateLimiter::new(),
         }))
     }
@@ -129,8 +135,12 @@ impl ClientTelemetry {
             self.otlp_metrics_endpoint.as_deref(),
             otlp_export::metrics_request(report, app_id),
         );
-        let (logs, metrics) = tokio::join!(logs, metrics);
-        logs.and(metrics).map_err(|error| {
+        let traces = self.forward(
+            self.otlp_traces_endpoint.as_deref(),
+            otlp_export::traces_request(report, app_id),
+        );
+        let (logs, metrics, traces) = tokio::join!(logs, metrics, traces);
+        logs.and(metrics).and(traces).map_err(|error| {
             tracing::warn!(%error, app_id, "client telemetry was not exported");
             Rejection::CollectorUnavailable
         })
@@ -189,6 +199,7 @@ mod tests {
             vts_url,
             otlp_logs_endpoint: Some(format!("{}/v1/logs", collector.url)),
             otlp_metrics_endpoint: Some(format!("{}/v1/metrics", collector.url)),
+            otlp_traces_endpoint: Some(format!("{}/v1/traces", collector.url)),
         })
         .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -219,6 +230,13 @@ mod tests {
             "page": "live-viewer",
             "logs": [{ "timeMs": 1, "level": "warn", "target": "moqt", "message": "m" }],
             "stats": [{ "timeMs": 1, "values": { "bufferMs": 100 } }],
+            "spans": [{
+                "traceId": "0123456789abcdef0123456789abcdef",
+                "spanId": "0123456789abcdef",
+                "name": "moqt.subscriber.subscribe",
+                "startTimeMs": 1,
+                "endTimeMs": 2,
+            }],
         })
     }
 
@@ -234,7 +252,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_anonymous_report_is_forwarded_as_anon_logs_and_metrics() {
+    async fn an_anonymous_report_is_forwarded_as_anon_logs_metrics_and_traces() {
         // Arrange
         let mut collector = collector().await;
         let observability = observability(&collector, None).await;
@@ -247,10 +265,12 @@ mod tests {
         let mut forwarded = [
             collector.request_receiver.recv().await.unwrap(),
             collector.request_receiver.recv().await.unwrap(),
+            collector.request_receiver.recv().await.unwrap(),
         ];
         forwarded.sort();
         assert_eq!(forwarded[0].0, "/v1/logs");
         assert_eq!(forwarded[1].0, "/v1/metrics");
+        assert_eq!(forwarded[2].0, "/v1/traces");
         assert!(forwarded.iter().all(|(_, body)| body.contains("\"anon\"")));
     }
 
@@ -328,6 +348,7 @@ mod tests {
             vts_url: None,
             otlp_logs_endpoint: None,
             otlp_metrics_endpoint: None,
+            otlp_traces_endpoint: None,
         })
         .unwrap();
 
