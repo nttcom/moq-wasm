@@ -435,7 +435,7 @@ impl Subscriber {
             group_order: option.group_order,
             fetch_params,
             authorization_tokens: vec![],
-            trace_context: current_trace_context(),
+            trace_context: current_trace_context(&connection.control),
         };
         let response = connection
             .control
@@ -825,7 +825,7 @@ pub(crate) async fn send_subscribe_namespace(
         .send_request(
             reservation,
             OutgoingRequest::SubscribeNamespace(SubscribeNamespace {
-                trace_context: current_trace_context(),
+                trace_context: current_trace_context(&connection.control),
                 ..SubscribeNamespace::new(request_id, vec_namespace, vec![])
             }),
         )
@@ -934,7 +934,7 @@ async fn send_subscribe_request(
         filter_type: option.filter_type,
         authorization_tokens: vec![],
         delivery_timeout: None,
-        trace_context: current_trace_context(),
+        trace_context: current_trace_context(&connection.control),
     };
     let pending = connection
         .control

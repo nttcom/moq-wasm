@@ -20,6 +20,11 @@ wire_enum! {
     }
 }
 
+/// The TRACE_CONTEXT Setup Option, not in draft-14: an odd type with an
+/// empty value whose presence says the sender reads the TRACE_CONTEXT
+/// request parameter (see `TraceContext`).
+const TRACE_CONTEXT: u64 = 0x1fff;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetupParameter {
     // 0x01
@@ -34,6 +39,8 @@ pub struct SetupParameter {
     pub authority: Option<String>,
     // 0x07
     pub moq_implementation: Option<String>,
+    // 0x1fff
+    pub trace_context: bool,
 }
 
 impl SetupParameter {
@@ -91,6 +98,7 @@ impl SetupParameter {
                     VariantType::Odd(value) => String::from_utf8(value.to_vec()).unwrap(),
                     VariantType::Even(_) => unreachable!(),
                 });
+        let trace_context = kv_pairs.iter().any(|kv_pair| kv_pair.key == TRACE_CONTEXT);
 
         Ok(SetupParameter {
             path,
@@ -99,6 +107,7 @@ impl SetupParameter {
             max_auth_token_cache_size,
             authority,
             moq_implementation,
+            trace_context,
         })
     }
 
@@ -165,6 +174,10 @@ impl SetupParameter {
             );
             number_of_parameters += 1;
         }
+        if self.trace_context {
+            buf.unsplit(KeyValuePair::odd(TRACE_CONTEXT, Bytes::new()).encode());
+            number_of_parameters += 1;
+        }
         let mut result_bytes = BytesMut::new();
         result_bytes.put_varint(number_of_parameters);
         result_bytes.unsplit(buf);
@@ -195,6 +208,7 @@ mod tests {
                 max_auth_token_cache_size: Some(10),
                 authority: Some("auth".to_string()),
                 moq_implementation: Some("MOQ-WASM".to_string()),
+                trace_context: false,
             };
 
             let buf = setup_parameter.encode();
@@ -270,6 +284,37 @@ mod tests {
                 depacketized_setup_parameter.moq_implementation,
                 Some("MOQ-WASM".to_string())
             );
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let setup_parameter = SetupParameter {
+                max_request_id: 0,
+                path: None,
+                authorization_token: vec![],
+                max_auth_token_cache_size: None,
+                authority: None,
+                moq_implementation: None,
+                trace_context: true,
+            };
+
+            // Act
+            let buf = setup_parameter.encode();
+            let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&buf[..])).unwrap();
+
+            // Assert
+            assert_eq!(
+                buf.as_ref(),
+                [
+                    2,    // Number of Parameters (i)
+                    2,    // Max Request ID
+                    0,    // Value(0)
+                    0x5f, // Parameter Type (i): TRACE_CONTEXT (0x1fff), 2 bytes
+                    0xff, 0, // Length
+                ]
+            );
+            assert!(decoded.trace_context);
         }
 
         // #[test]

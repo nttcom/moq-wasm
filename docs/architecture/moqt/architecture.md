@@ -612,8 +612,15 @@ attempt; it adds no field for the retry.
   other `Subscriber` / `Publisher` spans and `moqt.session` stay at DEBUG.
 
 The five requests carry the span's W3C `traceparent` in a `TRACE_CONTEXT`
-parameter (type `0x1fff`, not in draft-14; draft-14 §9.2 makes other
-implementations ignore it), so the receiver's span joins the sender's trace.
+parameter (type `0x1fff`, not in draft-14), so the receiver's span joins the
+sender's trace. Draft-14 §9.2 makes a receiver ignore an unknown parameter,
+but from draft-18 an unknown Message Parameter is a PROTOCOL_VIOLATION and an
+extension is agreed through a Setup Option (§6.3.2). So both CLIENT_SETUP and
+SERVER_SETUP always carry a `TRACE_CONTEXT` Setup Option (type `0x1fff`, an
+empty value), and a connection sends the parameter only when the peer's SETUP
+carried it (`ControlChannel::peer_reads_trace_context`). Setup Options have no
+private range, so publishing the extension would need a provisional
+registration.
 `moqt` has no OpenTelemetry dependency: the application gives it the current
 span's `traceparent` with `set_trace_context_provider` (the relay through
 `telemetry::current_traceparent`, the wasm module and `moq-cli` from their span

@@ -8,8 +8,11 @@ use crate::modules::moqt::control_plane::control_messages::key_value_pair::{
 /// the request, so the receiver's span for it joins the sender's trace.
 ///
 /// Not in draft-14. Its type is a private odd number, so the value is
-/// length-prefixed bytes, and draft-14 §9.2 makes a receiver ignore a
-/// parameter it does not recognize.
+/// length-prefixed bytes. Draft-14 §9.2 makes a receiver ignore a parameter
+/// it does not recognize, but from draft-18 an unknown Message Parameter is a
+/// PROTOCOL_VIOLATION and an extension is agreed through a Setup Option
+/// (§6.3.2), so it is sent only to a peer whose SETUP carried the
+/// TRACE_CONTEXT Setup Option.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceContext(String);
 

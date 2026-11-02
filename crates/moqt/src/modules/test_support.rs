@@ -824,3 +824,18 @@ where
         });
     }
 }
+
+thread_local! {
+    static SERVER_DECLARES_TRACE_CONTEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Whether a server on this thread puts TRACE_CONTEXT in its SERVER_SETUP.
+pub(crate) fn server_declares_trace_context() -> bool {
+    SERVER_DECLARES_TRACE_CONTEXT.get()
+}
+
+/// Makes the servers of this thread's current-thread runtime answer with a
+/// SERVER_SETUP that does not declare TRACE_CONTEXT.
+pub(crate) fn without_trace_context_declaration() {
+    SERVER_DECLARES_TRACE_CONTEXT.set(false);
+}

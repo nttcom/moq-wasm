@@ -301,6 +301,13 @@ impl ControlChannel {
         }
     }
 
+    /// Whether the peer's SETUP declared the TRACE_CONTEXT Setup Option.
+    pub(crate) fn peer_reads_trace_context(&self) -> bool {
+        match self {
+            Self::Draft14(channel) => channel.peer_reads_trace_context,
+        }
+    }
+
     /// Blocks other requests on this channel until the reservation is
     /// passed to `send_request` or `send_subscribe_update`, or dropped.
     /// Dropping it leaves the Request ID unused. Fails with

@@ -297,7 +297,7 @@ pub(crate) async fn send_publish_namespace(
         .send_request(
             reservation,
             OutgoingRequest::PublishNamespace(PublishNamespace {
-                trace_context: current_trace_context(),
+                trace_context: current_trace_context(&connection.control),
                 ..PublishNamespace::new(request_id, vec_namespace, vec![])
             }),
         )
@@ -330,7 +330,7 @@ pub(crate) async fn send_publish(
         authorization_tokens: vec![],
         delivery_timeout: None,
         max_duration: option.max_cache_duration,
-        trace_context: current_trace_context(),
+        trace_context: current_trace_context(&connection.control),
     };
     let pending = connection
         .control
