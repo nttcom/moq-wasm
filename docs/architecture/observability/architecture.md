@@ -9,7 +9,8 @@ An admin view of the relay mesh: per-session network statistics, per-track /
 per-subscription delivery counters, relay memory, and the pub/sub topology
 that links them, live and as history.
 
-- Every relay sends one snapshot per second as an OTLP log record.
+- Every relay sends one snapshot per second as an OTLP log record, and the
+  relay-wide values of it as OTLP gauges for HyperDX (see Relay gauges).
 - The ClickStack collector stores it in the `otel` database of ClickHouse,
   and materialized views copy it into the `observability` database's tables.
 - The `observability` server serves those tables to the browser over HTTP.
@@ -285,6 +286,27 @@ Alternatives considered: OTLP metrics from the relay, read from
 (10 s or more), one row per metric and entity, and without the relations
 between sessions, tracks and subscriptions; querying the snapshot JSON in
 `otel.otel_logs` directly would parse a week of payloads for a 7-day chart.
+
+### Relay gauges
+
+The page reads the tables above, but HyperDX dashboards and alerts read
+`otel_metrics_*`. So the relay also records each snapshot's `process` values
+as OTLP gauges (`telemetry::relay_stats::ProcessGauges`), exported every 10 s
+with resource `service.name=relay` and `relay.id`:
+
+| Metric | Unit | `process` field |
+| --- | --- | --- |
+| `relay.process.rss` | By | `rss_bytes` (no point when unknown) |
+| `relay.cache.tracks` | {track} | `cache_tracks` |
+| `relay.cache.objects` | {object} | `cache_objects` |
+| `relay.cache.payload` | By | `cache_payload_bytes` |
+| `relay.disk_cache.payload` | By | `disk_cache_bytes` |
+| `relay.disk_cache.max` | By | `disk_cache_max_bytes` |
+| `relay.client_sessions` | {session} | `client_sessions` |
+| `relay.draining` | 1 | 1 while `draining_since_ms` is set, else 0 |
+
+Per-session, per-track and per-subscription values are not gauges: each
+session would add a series, and their relations exist only in the snapshot.
 
 ## Client telemetry
 

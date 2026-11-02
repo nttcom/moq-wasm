@@ -52,6 +52,15 @@ as one string attribute. The data is not the body because the ClickStack
 collector parses any body containing a JSON object into one attribute per
 field, which would store it twice.
 
+## Metrics
+
+`TelemetryGuard::meter` returns a `Meter` (`None` while OTLP is off) whose
+instruments the OTLP metric exporter sends every
+`OTEL_METRIC_EXPORT_INTERVAL` ms, 10 s by default rather than the
+OpenTelemetry 60 s, so a HyperDX chart of the last hour has enough points.
+The relay records the relay-wide values of its stats snapshot through
+`relay_stats::ProcessGauges` (see the observability architecture).
+
 ## HTTP trace context
 
 `inject_trace_context` writes a span's context into an `http::HeaderMap` as

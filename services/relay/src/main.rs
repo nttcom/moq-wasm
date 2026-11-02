@@ -4,6 +4,7 @@ use std::{
 };
 
 use moqt::server::write_self_signed_cert;
+use telemetry::relay_stats::ProcessGauges;
 use tokio::signal::unix::{SignalKind, signal};
 
 const CERT_DIR: &str = "keys";
@@ -54,7 +55,14 @@ async fn main() -> anyhow::Result<()> {
     let _inner_handler = server.spawn_inner_transport::<moqt::QUIC>(config.inner_port)?;
     let _stats_exporter = logging
         .event_logger("relay")
-        .map(|event_logger| server.spawn_stats_exporter(config.relay_id.clone(), event_logger));
+        .zip(logging.meter("relay"))
+        .map(|(event_logger, meter)| {
+            server.spawn_stats_exporter(
+                config.relay_id.clone(),
+                event_logger,
+                ProcessGauges::new(&meter),
+            )
+        });
 
     tracing::info!(
         port = config.port,

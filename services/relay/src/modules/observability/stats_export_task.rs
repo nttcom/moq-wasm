@@ -1,6 +1,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use telemetry::{EventLogger, relay_stats};
+use telemetry::{
+    EventLogger,
+    relay_stats::{self, ProcessGauges},
+};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::observability::{process_memory, stats_collector::StatsCollector};
@@ -20,8 +23,13 @@ pub(crate) fn unix_millis_now() -> u64 {
 }
 
 impl StatsExportTask {
-    /// Sends one snapshot per second as an OTLP log record.
-    pub(crate) fn run(collector: StatsCollector, event_logger: EventLogger) -> Self {
+    /// Sends one snapshot per second as an OTLP log record, and its process
+    /// stats as gauges.
+    pub(crate) fn run(
+        collector: StatsCollector,
+        event_logger: EventLogger,
+        process_gauges: ProcessGauges,
+    ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(SNAPSHOT_INTERVAL);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -31,6 +39,7 @@ impl StatsExportTask {
                 let snapshot = collector
                     .collect(timestamp_ms, process_memory::resident_set_bytes().await)
                     .await;
+                process_gauges.record(&snapshot.process);
                 let json = String::from_utf8(snapshot.to_json()).expect("serde_json writes UTF-8");
                 event_logger.emit(
                     relay_stats::EVENT_NAME,

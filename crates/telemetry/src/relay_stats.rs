@@ -1,6 +1,10 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+mod process_gauges;
+
+pub use process_gauges::ProcessGauges;
+
 /// First namespace element of the former stats tracks; snapshots within the
 /// retention may still list it.
 pub const NAMESPACE_ROOT: &str = "observability";
