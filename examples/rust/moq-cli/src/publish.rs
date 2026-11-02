@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
-use mediapack::{Timestamp, h264::ElementaryStreamDemuxer};
+use mediapack::{MediaEvent, Timestamp, h264::ElementaryStreamDemuxer};
 use moqt::{RequestErrorCode, Session, SessionEvent, publish::Origin};
 use tokio::{io::AsyncReadExt, time::Instant};
 use tracing::{debug, info, warn};
@@ -62,6 +62,9 @@ async fn publish_stdin(session: &Arc<Session>, namespace: &Namespace) -> Result<
             demuxer.push(&read_buf[..read], arrival())?
         };
         for event in events {
+            if let MediaEvent::VideoConfig(config) = &event {
+                info!(codec = %config.codec_string(), "codec resolved");
+            }
             writer.push(event)?;
         }
         if read == 0 {
