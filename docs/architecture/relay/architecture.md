@@ -56,7 +56,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    - `spawn_client_transport::<moqt::NATIVE>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
    - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint.
-   - `spawn_stats_publisher(relay_id, inner_port, event_logger)` — see "Observability".
+   - `spawn_stats_exporter(relay_id, event_logger)`, with OTLP on — see "Observability".
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
@@ -970,21 +970,16 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
 
 ## Observability (`modules/observability`)
 
-The relay publishes its own statistics as an ordinary MoQT track,
-`observability/<RELAY_ID>` / `network_stats` (format: `telemetry::relay_stats`),
-so cache, fan-out, FETCH and authorization need no separate path.
+The relay sends its own statistics as OTLP log records (format:
+`telemetry::relay_stats`, consumer: `docs/architecture/observability/architecture.md`),
+the path its traces and logs already take, so the observability server needs
+no list of relays and no session to each.
 
-- `StatsPublishTask` dials the relay's own inner endpoint over loopback QUIC
-  with `AUTH_RELAY_TOKEN`, sends PUBLISH, and writes one group per second
-  whose Group ID is the snapshot's Unix time in milliseconds (never below
-  the next id, so a clock step back cannot reuse a location). A failed
-  session is retried every 5 s. The loopback session is a `SessionPeer::Relay`
-  with full access; the snapshot reports it as `stats_publisher`, and a session
-  subscribed to the relay's own stats track as `stats_subscriber`.
-- With OTLP on, the same task also sends each snapshot as an OTLP log record
-  (`EventName` `relay.stats.snapshot`, the JSON in its `snapshot` attribute)
-  through `telemetry::EventLogger`, so the ClickStack collector stores it in
-  the `otel` database next to the relay's traces and logs.
+- `StatsExportTask` runs only with OTLP on. Once per second it collects a
+  snapshot and emits it through `telemetry::EventLogger` (`EventName`
+  `relay.stats.snapshot`, the JSON in its `snapshot` attribute). It reads the
+  same locks as the control plane, so a stuck runtime or lock stops the
+  records and the relay leaves the live view.
 - `StatsCollector` reads, without holding any lock across an await:
   `SessionRepository::session_states` (peer, `app_id`, `Session::transport_stats`
   and `transport_addresses`), `InterRelayConnectionManager::dialed_relay_ids`

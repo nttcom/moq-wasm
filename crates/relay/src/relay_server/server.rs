@@ -12,7 +12,7 @@ use crate::{
         },
         data_plane::cache::disk_cache::prepare_directory,
         domain::session_peer::SessionPeer,
-        observability::stats_publish_task::{StatsPublishConfig, StatsPublishTask},
+        observability::stats_export_task::StatsExportTask,
         session::session_repository::{SessionAdded, SessionRepository},
     },
     relay_server::{
@@ -34,7 +34,6 @@ pub(crate) struct RelayServerDeps {
 pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     authenticator: Arc<SessionAuthenticator>,
-    relay_token: String,
     route_registry: Arc<dyn RelayRouteRegistry>,
     runtime: RelayRuntime,
     key_path: String,
@@ -102,7 +101,7 @@ impl RelayServer {
         let runtime = RelayRuntime::new(
             repo.clone(),
             route_registry.clone(),
-            relay_token.clone(),
+            relay_token,
             authenticator.verifier.clone(),
             data_plane,
             session_added_receiver,
@@ -111,7 +110,6 @@ impl RelayServer {
         Self {
             repo,
             authenticator: Arc::new(authenticator),
-            relay_token,
             route_registry,
             runtime,
             key_path: key_path.to_string(),
@@ -171,20 +169,12 @@ impl RelayServer {
         drain_client_sessions(&self.repo, self.route_registry.as_ref(), timeout).await;
     }
 
-    pub fn spawn_stats_publisher(
+    pub fn spawn_stats_exporter(
         &self,
         relay_id: String,
-        inner_port: u16,
-        event_logger: Option<telemetry::EventLogger>,
-    ) -> StatsPublishTask {
-        StatsPublishTask::run(
-            self.runtime.stats_collector(relay_id),
-            StatsPublishConfig {
-                inner_port,
-                relay_token: self.relay_token.clone(),
-                event_logger,
-            },
-        )
+        event_logger: telemetry::EventLogger,
+    ) -> StatsExportTask {
+        StatsExportTask::run(self.runtime.stats_collector(relay_id), event_logger)
     }
 }
 

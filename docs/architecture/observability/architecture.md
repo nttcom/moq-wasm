@@ -112,11 +112,12 @@ neither is reported.
 }
 ```
 
-- `peer` is `client` or `relay` from the endpoint the session arrived on,
-  `stats_publisher` for the relay's own loopback session, and `stats_subscriber`
-  for a session subscribed to the relay's own stats track (the observability
-  server, which presents the relay token). The page hides both stats peers, and
-  the relay totals in `/api/series` count only `client` and `relay` sessions.
+- `peer` is `client` or `relay` from the endpoint the session arrived on.
+  Snapshots stored while relays published stats over MoQT (see Relay side)
+  also carry `stats_publisher` and `stats_subscriber` sessions; until they
+  expire, the page hides them and the relay totals in `/api/series` count
+  only `client` and `relay` sessions, and `/api/namespaces` leaves out
+  `observability/…`.
 - `dialed_relay_id` is set on an inter-relay session this relay dialed. The
   accepting relay only sees a relay token, so consumers identify the far end
   of an accepted relay session by its remote IP: a relay's addresses are the
@@ -146,25 +147,22 @@ neither is reported.
   `disk_cache_max_mb` under Storage, the space the relay may use rather than
   the host's disk.
 - `client_sessions` is the count a drain waits for: client sessions only, no
-  relay peer and no stats session. `draining_since_ms` is when the relay began
+  relay peer. `draining_since_ms` is when the relay began
   draining (sent GOAWAY) and `null` while it serves; a relay older than these
   fields reads as 0 and `null`.
 
 ## Relay side (`crates/relay`, `modules/observability/`)
 
 `docs/architecture/relay/architecture.md` ("Observability") describes the
-collector, the loopback `StatsPublishTask` and where each counter lives.
+collector, `StatsExportTask` and where each counter lives.
 
-Alternative considered: registering an in-process publisher directly in the
-pub/sub directory and writing into `TrackCache`. It saves one loopback QUIC
-connection but adds a second kind of publisher to the directory, the upstream
-resolver, ingress ownership and session cleanup — every path that today
-assumes a publisher is a session. At 1 Hz the loopback cost is negligible, so
-the loopback session wins.
-
-The relay still publishes each snapshot on the MoQT track
-`observability/<RELAY_ID>` / `network_stats` too, which nothing reads any
-more.
+Alternative considered: publishing the snapshot on a MoQT track
+(`observability/<RELAY_ID>` / `network_stats`) through a loopback session, which
+the server subscribed to on every relay. Delivery went through the relay's
+own data plane, so a stalled data plane also stopped the stats, but the
+server needed a fixed list of relays, the loopback and server sessions showed
+up in the relay's statistics and traces, and the snapshots took a storage
+path of their own beside the relays' logs.
 
 Cascading is not used for observability: each relay sends its own snapshots
 to the collector, so losing inter-relay routing does not hide the relays it
@@ -200,8 +198,7 @@ starts.
     sends `previous` 2 s before `at` to derive rates. One scan reads both, so
     `previous` must lie within 10 s before `at` (400 otherwise).
   - `GET /api/namespaces?from=…&to=…[&app_id=…]` — every namespace with a
-    track in the range (from `track_stats`, at most 1000, `observability/…`
-    excluded), with its tracks, relays, first / last time seen and the
+    track in the range (from `track_stats`, at most 1000), with its tracks, relays, first / last time seen and the
     number of distinct client subscriptions, plus the range's totals of
     client subscriptions and client sessions.
   - `GET /api/series?relay_id=…&target=process|relay|session|track|subscription&…&from=…&to=…&points=…`
