@@ -588,6 +588,29 @@ state name the connection:
   on (`SendTargets::Connection`). Concurrent PUBLISH requests share a read
   lock; migration holds the write lock while carrying them, so none is missed.
 
+### Request spans
+
+Each request a client sends and waits on has one INFO span, from writing the
+request to receiving its response. On a GOAWAY migration the span covers every
+attempt; it adds no field for the retry.
+
+| Span | Fields |
+| --- | --- |
+| `moqt.subscriber.subscribe` | `track_namespace`, `track_name`, `subscriber_priority`, `forward`, `request_id`, `outcome` |
+| `moqt.subscriber.subscribe_namespace` | `track_namespace_prefix`, `request_id`, `outcome` |
+| `moqt.subscriber.fetch` | `track_namespace`, `track_name`, `request_id`, `outcome` |
+| `moqt.publisher.publish` | `track_namespace`, `track_name`, `request_id`, `outcome` |
+| `moqt.publisher.publish_namespace` | `track_namespace`, `request_id`, `outcome` |
+
+- `request_id` is the wire Request ID of the last attempt, the one the
+  `*_OK received` / `*_ERROR received` logs print; those logs carry
+  `duration_ms`, the time from writing the request to its response.
+- `outcome` is `ok` when the `*_OK` arrived, `rejected` when the peer answered
+  `*_ERROR`, and `failed` for any other error (transport, protocol violation,
+  session closed).
+- `begin_publish_namespace` returns before the response and has no span; the
+  other `Subscriber` / `Publisher` spans and `moqt.session` stay at DEBUG.
+
 ## Control plane (`modules/moqt/control_plane`)
 
 - `control_messages/messages/*` — one struct per draft-14 control message with
