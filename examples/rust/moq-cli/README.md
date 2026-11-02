@@ -18,8 +18,21 @@ moq-cli subscribe --relay <relay> --track <namespace>/video | ffplay -
 | `--insecure` | ● | ● | Skip certificate verification, for self-signed relays |
 | `--auth-token` | ● | ● | JWT for the relay. Also `MOQT_AUTH_TOKEN` |
 | `--auth-token-file` | ● | ● | File holding the JWT. Also `MOQT_AUTH_TOKEN_FILE`. Exclusive with `--auth-token` |
+| `--telemetry` | ● | ● | Observability server that receives the logs. Also `MOQT_TELEMETRY_URL` |
+| `--no-telemetry` | ● | ● | Send no logs to an observability server |
 
 Input and output are always stdin and stdout.
+
+## Telemetry
+
+The CLI posts its `info` and higher logs to an observability server's
+`/api/client-telemetry` every 10 s and once more on exit, where they appear in
+HyperDX as `service.name=moq-cli` with `page` set to the subcommand. Without
+`--telemetry`, a relay on `localhost`, `127.0.0.1` or `[::1]` reports to
+`http://localhost:8095`, and any other relay to
+`https://observability.moqt.research.skyway.io`. The relay token, when given,
+is sent with the logs so they belong to its app; without one they are `anon`.
+A failed report is dropped.
 
 ## Publish
 
