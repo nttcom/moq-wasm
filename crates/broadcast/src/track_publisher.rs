@@ -135,6 +135,7 @@ impl TrackPublisher {
                     label: self.tracks.audio_label.clone(),
                     config: config.clone(),
                     cmaf: self.tracks.cmaf,
+                    switching_set: self.tracks.switching_set.clone(),
                 };
                 self.broadcast
                     .update_audio_catalog(&self.tracks.audio, info)

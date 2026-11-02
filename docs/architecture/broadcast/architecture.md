@@ -103,7 +103,11 @@ interchangeable; each format forms its own switching set. The video tracks of
 one source and its renditions are alternates; a source of another picture,
 such as a shared screen, names its own `SourceTracks::switching_set`. Each
 switching set with more than one track takes an odd `altGroup` for LOC and the
-next one for CMAF.
+next one for CMAF. Every switching set also takes a `renderGroup` (msf-01
+§5.2.11) shared by its video, its CMAF siblings and the audio of the same
+`SourceTracks`, so a player that shows several sources of one broadcast pairs
+each picture with its sound. The numbers carry no meaning beyond the grouping:
+a player picks a source by its video track's name.
 
 ## FETCH cache
 Every object is numbered and kept for 60 seconds from the moment it is
