@@ -112,8 +112,9 @@ flowchart LR
 Every client speaks MoQT to a relay over QUIC or WebTransport. Relays cache
 objects for FETCH, forward subscriptions to each other and authenticate
 sessions through the VTS. The `moqt` crate is the protocol library every other
-component builds on. Libraries live in `crates/<package name>/` and
-the servers and bridges built on them in `services/<package name>/`.
+component builds on. Libraries, bindings and plugins live in
+`crates/<package name>/` and the servers and bridges built on them in
+`services/<package name>/`.
 
 | Path | Component |
 | --- | --- |
