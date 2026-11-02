@@ -33,12 +33,11 @@ pub(crate) struct SessionContext {
     pub(crate) receiver_map: tokio::sync::Mutex<HashMap<u64, IncomingObjectReceiver>>,
     pub(crate) fetch_receiver_map:
         std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
-    /// `None` for a session that does not follow GOAWAY. A migration holds
-    /// the write lock while it sends every carried request again, and a
-    /// request holds a lock while it is sent, so none sent during a
-    /// migration is skipped. PUBLISH records itself in `publications`, so
-    /// it needs only the read lock and concurrent PUBLISHes do not wait for
-    /// each other's responses.
+    /// `None` for a session that does not follow GOAWAY. A request holds
+    /// this lock while it is sent, and a migration holds the write lock while
+    /// it sends every carried request again, so no request sent during a
+    /// migration is skipped. PUBLISH takes only the read lock because it
+    /// records itself in `publications`.
     pub(crate) carried: Option<tokio::sync::RwLock<CarriedRequests>>,
     /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
     /// keyed by logical request id, with every connection each is on. Read

@@ -144,10 +144,6 @@ impl ControlChannel {
         channel
     }
 
-    /// Waits while the next Request ID reaches the peer's Maximum Request
-    /// ID, sending one REQUESTS_BLOCKED per limit (§9.6). Fails with
-    /// `RequestFailure::Timeout` when the peer does not raise its limit
-    /// within `CONTROL_MESSAGE_RESPONSE_TIMEOUT`.
     pub(super) async fn reserve_request_id(
         &self,
     ) -> Result<RequestIdReservation<'_>, RequestFailure> {
@@ -156,6 +152,8 @@ impl ControlChannel {
             .map_err(|()| RequestFailure::Timeout)
     }
 
+    /// Waits while the next Request ID reaches the peer's Maximum Request
+    /// ID, sending one REQUESTS_BLOCKED per limit (§9.6).
     async fn wait_for_request_id(&self) -> RequestIdReservation<'_> {
         let mut request_ids = self.request_ids.lock().await;
         let mut peer_request_id_limit = self.peer_request_id_limit.subscribe();
