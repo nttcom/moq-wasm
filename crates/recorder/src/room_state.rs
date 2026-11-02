@@ -4,21 +4,13 @@ use serde_json::{Value, json};
 
 use crate::recording::Layout;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum RecordingFormat {
     Mp4,
     Moq,
 }
 
 impl RecordingFormat {
-    pub(crate) fn parse(name: &str) -> Result<Self> {
-        match name {
-            "mp4" => Ok(Self::Mp4),
-            "moq" => Ok(Self::Moq),
-            _ => bail!("unknown recording format {name}"),
-        }
-    }
-
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Mp4 => "mp4",
@@ -170,7 +162,8 @@ impl RoomRecord {
                 .map_err(|error| anyhow::anyhow!("layout {layout}: {error}"))?,
             format: match value.get("format") {
                 None => RecordingFormat::Mp4,
-                Some(Value::String(format)) => RecordingFormat::parse(format)?,
+                Some(Value::String(format)) => RecordingFormat::from_str(format, false)
+                    .map_err(|error| anyhow::anyhow!("recording format {format}: {error}"))?,
                 Some(_) => bail!("recording format must be a string"),
             },
             composite: value["composite"].as_bool().unwrap_or_default(),

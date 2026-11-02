@@ -217,7 +217,7 @@ async fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
     };
     let format = match body.get("format") {
         None => RecordingFormat::Mp4,
-        Some(Value::String(name)) => match RecordingFormat::parse(name) {
+        Some(Value::String(name)) => match RecordingFormat::from_str(name, false) {
             Ok(format) => format,
             Err(_) => return error_response(StatusCode::BAD_REQUEST, "format must be mp4 or moq"),
         },
