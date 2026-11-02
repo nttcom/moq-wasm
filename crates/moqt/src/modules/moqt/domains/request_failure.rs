@@ -24,3 +24,14 @@ pub enum RequestFailure {
     #[error("protocol violation: {0}")]
     ProtocolViolation(&'static str),
 }
+
+/// Records on the current span how a request ended: `ok` when its `*_OK`
+/// arrived, `rejected` when the peer answered `*_ERROR`, `failed` otherwise.
+pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {
+    let outcome = match result {
+        Ok(_) => "ok",
+        Err(RequestFailure::Rejected { .. }) => "rejected",
+        Err(_) => "failed",
+    };
+    tracing::Span::current().record("outcome", outcome);
+}
