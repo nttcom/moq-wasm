@@ -9,6 +9,7 @@ Meeting（`examples/browser/examples/meeting`）のルームに HTTP で呼ば�
 | `granite-speech-5-470m` | Granite Speech 5.0 470m | bot の中の CPU。最初に選ばれたときに読み込む |
 | `qwen3-asr` | Qwen3-ASR-1.7B | GPU の Cloud Run（[音声認識を Cloud Run の GPU にデプロイする](../asr-on-cloud-run.md)） |
 | `granite-speech-5-2b` | Granite Speech 5.0 2b | GPU の Cloud Run（同上） |
+| `haas-ja` | Haas-ja-v1.0 | GPU の Cloud Run（[haas-asr-server](../haas-asr-server/README.md)） |
 
 書き起こしは MSF の event timeline として publish します。設計は [Live transcription for the Meeting example](../../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
