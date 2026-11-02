@@ -146,19 +146,13 @@ impl SessionContext {
     pub(crate) async fn lock_carried(
         &self,
     ) -> Option<tokio::sync::RwLockWriteGuard<'_, CarriedRequests>> {
-        match &self.carried {
-            Some(carried) => Some(carried.write().await),
-            None => None,
-        }
+        Some(self.carried.as_ref()?.write().await)
     }
 
     pub(crate) async fn read_carried(
         &self,
     ) -> Option<tokio::sync::RwLockReadGuard<'_, CarriedRequests>> {
-        match &self.carried {
-            Some(carried) => Some(carried.read().await),
-            None => None,
-        }
+        Some(self.carried.as_ref()?.read().await)
     }
 
     /// The live connection a logical id belongs to, with its wire part.
