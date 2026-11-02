@@ -135,7 +135,7 @@ component builds on. Libraries, bindings and plugins live in
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
 | [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |
 
-Architecture documents: [`docs/architecture/<package name>/`](docs/architecture), one directory per crate, service and example.
+Architecture documents: [`docs/architecture/<package name>/`](docs/architecture).
 Contributor rules: [`AGENTS.md`](AGENTS.md).
 
 ## Authentication
