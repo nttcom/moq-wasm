@@ -39,7 +39,9 @@ export type LiveStats = {
   syncOffsetMs: number | undefined
   audioBreaks: number
   audioConcealedMs: number
-  videoDrops: string
+  /// Since playback started: video frames never shown, and frames shown more than a frame period late.
+  videoDroppedFrames: number
+  videoLateFrames: number
   shedMs: number
   /// Longest wait between two objects of that kind within the last
   /// `ARRIVAL_GAP_WINDOW_MS`; undefined until two have arrived.
@@ -197,7 +199,8 @@ export class LocLive {
       syncOffsetMs: this.playout.syncOffsetMs(),
       audioBreaks: this.playout.audioBreaks(),
       audioConcealedMs: this.playout.audioConcealedMs(),
-      videoDrops: this.playout.videoDrops(),
+      videoDroppedFrames: this.playout.videoDroppedFrames(),
+      videoLateFrames: this.playout.videoLateFrames(),
       shedMs: this.playout.shedMs(),
       maxArrivalGapMs: { video: longestGapMs(this.arrivalsMs.video), audio: longestGapMs(this.arrivalsMs.audio) }
     }
@@ -241,7 +244,7 @@ export function formatLiveStats(stats: LiveStats): string {
   return (
     `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps)} kbps · audio ${Math.round(stats.receivedAudioKbps)} kbps` +
     ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks}` +
-    ` · concealed ${Math.round(stats.audioConcealedMs)} ms · video ${stats.videoDrops}` +
+    ` · concealed ${Math.round(stats.audioConcealedMs)} ms · video ${stats.videoDroppedFrames} dropped / ${stats.videoLateFrames} late` +
     ` · shed ${Math.round(stats.shedMs)} ms` +
     ` · arrival gap A ${formatGap(stats.maxArrivalGapMs.audio)} / V ${formatGap(stats.maxArrivalGapMs.video)} ms`
   )

@@ -218,8 +218,12 @@ export class LivePlayout {
     return this.audio.concealedMs
   }
 
-  videoDrops(): string {
-    return `${this.video.dropped} dropped / ${this.video.late} late`
+  videoDroppedFrames(): number {
+    return this.video.dropped
+  }
+
+  videoLateFrames(): number {
+    return this.video.late
   }
 
   /// How much latency the catch-up has taken out since playback started.
