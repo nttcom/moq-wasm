@@ -167,6 +167,10 @@ export class LocLive {
     this.applyDecoderConfig()
   }
 
+  joinAudio(): void {
+    this.playout.joinAudio()
+  }
+
   reset(): void {
     this.shownCaptureMicros = undefined
     this.picture.detach()
