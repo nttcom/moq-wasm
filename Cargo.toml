@@ -6,3 +6,10 @@ members = [
     'tests/*',
 ]
 exclude = ['tests/browser-e2e']
+
+# Keep dev builds small: full debuginfo for ~400 deps dominates target/ size.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
