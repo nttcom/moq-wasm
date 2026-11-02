@@ -14,7 +14,8 @@ const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
 
 /// Reads a raw H.264 Annex-B elementary stream in chunks of any size and
 /// reports its access units as `MediaEvent`s. The stream carries no timestamps, so each access unit takes
-/// the `arrival` of the chunk that completed it; a keyframe without its
+/// the `arrival` of the chunk that completed it, moved 1 µs past the previous
+/// access unit when one chunk completes several; a keyframe without its
 /// SPS/PPS gets the last ones seen.
 #[derive(Default)]
 pub struct ElementaryStreamDemuxer {
@@ -24,6 +25,7 @@ pub struct ElementaryStreamDemuxer {
     access_unit: Vec<Bytes>,
     access_unit_has_slice: bool,
     parameter_sets: ParameterSetTracker,
+    last_pts: Option<Timestamp>,
 }
 
 impl ElementaryStreamDemuxer {
@@ -95,7 +97,11 @@ impl ElementaryStreamDemuxer {
         }
         let annexb = with_start_codes(nals.iter().map(Bytes::as_ref));
         if let Some(unit) = self.parameter_sets.track(&annexb)? {
-            events.extend(unit.into_events(arrival, arrival));
+            let pts = self.last_pts.map_or(arrival, |last| {
+                arrival.max(last.saturating_add(Timestamp::from_micros(1)))
+            });
+            self.last_pts = Some(pts);
+            events.extend(unit.into_events(pts, pts));
         }
         Ok(())
     }
@@ -226,6 +232,23 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert!(samples[0].is_keyframe);
         assert_eq!(samples[0].pts, Timestamp::from_millis(33));
+    }
+
+    #[test]
+    fn access_units_completed_by_one_chunk_get_increasing_timestamps() {
+        // Arrange: a producer faster than real time hands over two keyframes in one read
+        let keyframes = [keyframe_annexb(), keyframe_annexb(), delta_frame_annexb()].concat();
+        let mut demuxer = ElementaryStreamDemuxer::new();
+
+        // Act
+        let events = demuxer.push(&keyframes, Timestamp::from_millis(5)).unwrap();
+
+        // Assert: a group is keyed by its keyframe's timestamp, so two keyframes must not share one
+        let pts: Vec<_> = samples(&events).iter().map(|sample| sample.pts).collect();
+        assert_eq!(
+            pts,
+            [Timestamp::from_millis(5), Timestamp::from_micros(5_001)]
+        );
     }
 
     #[test]
