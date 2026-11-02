@@ -49,6 +49,11 @@ export class LivePlayout {
   private readonly video: VideoPlayout
   private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
   private newestAudioCaptureMicros: number | undefined
+  /// Audio that joins a playing picture is dropped while it is older than the
+  /// picture (`beforeMicros`), so the relay's cached burst cannot push the
+  /// clock, and the picture with it, back by the burst's age. The drop ends at
+  /// `untilMs` so that audio that is always behind the picture still plays.
+  private audioJoin: { beforeMicros: number; untilMs: number } | undefined
   private paused = false
   private catchUp: CatchUp = 'skip'
   private videoShedMs = 0
@@ -120,6 +125,16 @@ export class LivePlayout {
     if (this.scheduleAudio(audioData, captureMicros)) {
       this.jitterBuffer.observe(captureMicros, arrivedAtMs)
     }
+  }
+
+  /// Call when an audio track starts on a picture that is already playing,
+  /// before its first sample. The clock and the picture run on instead of
+  /// warming up again.
+  joinAudio(): void {
+    const nowMs = performance.now()
+    const beforeMicros = this.video.positionMicrosAt(nowMs + this.audio.scheduleAheadMs())
+    this.audioJoin = beforeMicros === undefined ? undefined : { beforeMicros, untilMs: nowMs + WARMUP_MS }
+    this.newestAudioCaptureMicros = undefined
   }
 
   setVolume(volume: number): void {
@@ -249,6 +264,13 @@ export class LivePlayout {
   /// scheduled. The write head has moved past it, and as master it would
   /// drag the clock back, so it is dropped.
   private scheduleAudio(audioData: AudioData, captureMicros: number): boolean {
+    if (this.audioJoin) {
+      if (captureMicros < this.audioJoin.beforeMicros && performance.now() < this.audioJoin.untilMs) {
+        audioData.close()
+        return false
+      }
+      this.audioJoin = undefined
+    }
     if (this.newestAudioCaptureMicros !== undefined && captureMicros <= this.newestAudioCaptureMicros) {
       audioData.close()
       return false

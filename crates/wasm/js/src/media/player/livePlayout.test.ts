@@ -157,3 +157,31 @@ test('cached frames arriving after the live ones leave the buffer target alone',
   // Assert
   expect(playout.targetBufferMs()).toBeCloseTo(200)
 })
+
+test('audio joining a playing picture with a cached burst leaves the picture running', () => {
+  // Arrange
+  const shownAtMs: number[] = []
+  const playout = new LivePlayout((frame) => {
+    shownAtMs.push(environment.nowMs)
+    frame.close()
+  })
+  streamLiveVideo(playout, 3_000)
+  const joinedAtMs = environment.nowMs
+
+  // Act: the audio joins with the relay's last second of it, then both stream live
+  playout.joinAudio()
+  for (let ageMs = 1_000; ageMs > LIVE_VIDEO_DELAY_MS; ageMs -= AUDIO_CHUNK_MS) {
+    playout.playAudio(
+      fakeAudioData(SAMPLE_RATE, (SAMPLE_RATE * AUDIO_CHUNK_MS) / 1_000),
+      (joinedAtMs - ageMs) * MICROS_PER_MILLI
+    )
+  }
+  streamLive(playout, 2_000, LIVE_VIDEO_DELAY_MS)
+
+  // Assert: frames keep coming at the camera's pace, and the sound plays
+  const shownAfterJoin = shownAtMs.filter((atMs) => atMs >= joinedAtMs - VIDEO_FRAME_MS)
+  const longestGapMs = Math.max(...shownAfterJoin.slice(1).map((atMs, index) => atMs - shownAfterJoin[index]))
+  expect(longestGapMs).toBeLessThanOrEqual(2 * VIDEO_FRAME_MS)
+  expect(playout.positionMicros()).toBeDefined()
+  expect(playout.audioBreaks()).toBe(0)
+})

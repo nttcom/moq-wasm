@@ -184,10 +184,8 @@ export class MediaSubscriber {
     }
     this.registrations.set(trackId, registration)
     const pipeline = this.pipelines.get(registration.userId)?.[registration.source]
-    // Audio joining a running picture warms up again so the relay's cached
-    // burst does not drag the clock back as the new master.
     if (pipeline && registration.kind === 'audio') {
-      pipeline.reset()
+      pipeline.joinAudio()
     }
     this.attach(trackId, registration)
   }
