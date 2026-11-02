@@ -6,8 +6,8 @@ const MAX_PENDING_FRAMES = 1024
 /// Half the 10 ms spacing of the capture inputs keeps a match unambiguous.
 const MATCH_TOLERANCE_MICROS = 5_000
 
-/// An encoder output carries the timestamp of the input it was encoded from,
-/// which is how its wall-clock capture time is found again. Outputs are
+/// An encoder output carries the key its input was recorded under, which is
+/// how its wall-clock capture time is found again. Outputs are
 /// restamped from the first one so that every stream starts at zero.
 export class CaptureTimestamps {
   private readonly captureMicrosByTimestamp = new Map<number, number>()

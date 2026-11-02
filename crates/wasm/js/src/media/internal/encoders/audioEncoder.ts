@@ -4,6 +4,7 @@ import { createBitrateLogger } from '../bitrate'
 import { CaptureTimestamps } from './captureTimestamps'
 import { encoderConfigForInput } from './audioInputFormat'
 import { pcmFrames } from './pcmCapture'
+import { EncoderSamplePosition } from './encoderSamplePosition'
 
 let audioEncoder: AudioEncoder | undefined
 let encoderConfig: AudioEncoderConfig = {
@@ -13,6 +14,7 @@ let encoderConfig: AudioEncoderConfig = {
   bitrate: 64_000
 }
 const captureTimestamps = new CaptureTimestamps()
+const samplePosition = new EncoderSamplePosition()
 /// An output frame spans several inputs, whose timestamps it does not keep, so
 /// it carries the loudest level measured since the previous output.
 let pendingAudioLevel: AudioLevel | undefined
@@ -49,7 +51,7 @@ async function initializeAudioEncoder() {
     self.postMessage({ type: 'configError', media: 'audio', reason: 'unsupported', config: encoderConfig })
     return undefined
   }
-  encoder.configure(encoderConfig)
+  configure(encoder)
   console.info('[audioEncoder] initialized', encoderConfig)
   return encoder
 }
@@ -66,11 +68,16 @@ async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) 
       audio.close()
       return
     }
-    captureTimestamps.recordCapture(audio.timestamp)
+    captureTimestamps.recordCapture(samplePosition.take(audio))
     pendingAudioLevel = louderAudioLevel(pendingAudioLevel, measureAudioLevel(audio))
     encoder.encode(audio)
     audio.close()
   }
+}
+
+function configure(encoder: AudioEncoder): void {
+  encoder.configure(encoderConfig)
+  samplePosition.reset()
 }
 
 /// An encoder error closes the encoder, so replace a closed one to keep the track sending.
@@ -83,7 +90,7 @@ async function encoderFor(audio: AudioData): Promise<AudioEncoder | undefined> {
     })
     encoderConfig = inputConfig
     if (audioEncoder?.state === 'configured') {
-      audioEncoder.configure(encoderConfig)
+      configure(audioEncoder)
     }
   }
   if (!audioEncoder || audioEncoder.state === 'closed') {
@@ -109,7 +116,7 @@ self.onmessage = async (event) => {
           self.postMessage({ type: 'configError', media: 'audio', reason: 'unsupported', config: encoderConfig })
           return
         }
-        audioEncoder.configure(encoderConfig)
+        configure(audioEncoder)
         console.info('[audioEncoder] reconfigured', encoderConfig)
       } catch (e) {
         self.postMessage({ type: 'configError', media: 'audio', reason: 'unsupported', config: encoderConfig })
