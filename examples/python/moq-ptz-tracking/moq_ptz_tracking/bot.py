@@ -45,7 +45,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Pan and tilt the ONVIF camera so every box of the MoQ PTZ tracking page's targets stays in the picture"
     )
-    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=1)
+    add_serve_arguments(
+        parser, bot="moq-ptz-tracking", default_port=DEFAULT_PORT, default_max_rooms=1
+    )
     add_relay_arguments(parser)
     parser.add_argument(
         "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"
