@@ -43,7 +43,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Answer the MoQ camera page's question about its camera, one bot per camera room"
     )
-    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
+    add_serve_arguments(
+        parser, bot="moq-camera-detection", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS
+    )
     add_relay_arguments(parser)
     parser.add_argument(
         "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"

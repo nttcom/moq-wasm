@@ -35,7 +35,9 @@ RESUBSCRIBE_DELAY_SECONDS = 1.0
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Judge MoQ chat messages with d1-2B, one bot per chat room")
-    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
+    add_serve_arguments(
+        parser, bot="moq-chat-moderation", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS
+    )
     add_relay_arguments(parser)
     parser.add_argument("--system-one-url", required=True, help="a System One /v1/systemone endpoint, such as system-one-server")
     add_identity_token_arguments(parser)

@@ -30,6 +30,12 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 | `--max-room-seconds` | `3600` | ルームを動かし続ける最長時間（秒） |
 | `--open-hours` | なし（常時） | ルームを動かす曜日と時間。例: `'Mon-Fri 09:00-17:30 +09:00'` |
 | `--allowed-origin` | なし（すべて） | ルームを要求できるページの origin。複数指定できる |
+| `--telemetry-url` | relay がローカルなら `http://localhost:8095`、それ以外は `https://observability.moqt.research.skyway.io` | ログを送る observability サーバー |
+| `--no-telemetry` | なし | ログを送らない |
+
+## テレメトリー
+
+bot の `INFO` 以上のログ（loguru）を 10 秒ごとと終了時に observability サーバーの `/api/client-telemetry` へ送ります。HyperDX では `service.name=python`、`page` が bot の名前（例: `moq-camera-detection`）になります。送信に失敗したログと、10 秒間に 100 件を超えた古いログは捨てます。
 
 ## テスト
 

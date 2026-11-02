@@ -27,7 +27,9 @@ ROOM_ID_PATTERN = re.compile(r"[^/]{1,64}")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Transcribe every participant of a MoQ Meeting room")
-    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
+    add_serve_arguments(
+        parser, bot="moq-meeting-transcriber", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS
+    )
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",

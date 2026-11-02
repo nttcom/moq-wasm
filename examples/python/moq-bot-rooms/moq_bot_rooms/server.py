@@ -9,6 +9,11 @@ from loguru import logger
 
 from moq_bot_rooms.open_hours import OpenHours
 from moq_bot_rooms.rooms import Membership, RoomEnd, Rooms, RunBot
+from moq_bot_rooms.telemetry import (
+    add_telemetry_arguments,
+    report_logs,
+    telemetry_endpoint,
+)
 
 # One namespace element, so a room ID cannot reach outside the bot's namespace.
 ROOM_ID_PATTERN = re.compile(r"[a-z0-9-]{1,32}")
@@ -16,7 +21,12 @@ HEARTBEAT_SECONDS = 15.0
 HOURS_CHECK_SECONDS = 10.0
 
 
-def add_serve_arguments(parser: argparse.ArgumentParser, *, default_port: int, default_max_rooms: int) -> None:
+def add_serve_arguments(
+    parser: argparse.ArgumentParser, *, bot: str, default_port: int, default_max_rooms: int
+) -> None:
+    """`bot` names the bot in its telemetry. The parser must also define `--relay-url`."""
+    parser.set_defaults(bot=bot)
+    add_telemetry_arguments(parser)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=default_port)
     parser.add_argument("--max-rooms", type=int, default=default_max_rooms, help="rooms that may run at once")
@@ -124,30 +134,34 @@ async def serve_rooms(
     bot_from_query: Callable[[Mapping[str, str]], RunBot] | None = None,
 ) -> None:
     """Serves rooms until SIGINT or SIGTERM, then stops every bot before it returns."""
-    rooms = Rooms(
-        run_bot,
-        max_rooms=args.max_rooms,
-        max_room_seconds=args.max_room_seconds,
-        open_hours=args.open_hours,
-    )
-    runner = web.AppRunner(
-        room_app(rooms, args.allowed_origin, only_room, room_id_pattern=room_id_pattern, bot_from_query=bot_from_query)
-    )
-    await runner.setup()
-    await web.TCPSite(runner, args.host, args.port).start()
-    logger.info(f"serving rooms on http://{args.host}:{args.port}")
+    endpoint = telemetry_endpoint(args.telemetry_url, args.no_telemetry, args.relay_url)
+    async with report_logs(endpoint, args.bot):
+        rooms = Rooms(
+            run_bot,
+            max_rooms=args.max_rooms,
+            max_room_seconds=args.max_room_seconds,
+            open_hours=args.open_hours,
+        )
+        runner = web.AppRunner(
+            room_app(
+                rooms, args.allowed_origin, only_room, room_id_pattern=room_id_pattern, bot_from_query=bot_from_query
+            )
+        )
+        await runner.setup()
+        await web.TCPSite(runner, args.host, args.port).start()
+        logger.info(f"serving rooms on http://{args.host}:{args.port}")
 
-    stopping = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signum, stopping.set)
-    checking_hours = asyncio.create_task(close_outside_hours(rooms))
-    try:
-        await stopping.wait()
-    finally:
-        checking_hours.cancel()
-        await rooms.shutdown()
-        await runner.cleanup()
+        stopping = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(signum, stopping.set)
+        checking_hours = asyncio.create_task(close_outside_hours(rooms))
+        try:
+            await stopping.wait()
+        finally:
+            checking_hours.cancel()
+            await rooms.shutdown()
+            await runner.cleanup()
 
 
 async def close_outside_hours(rooms: Rooms) -> None:
