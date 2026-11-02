@@ -62,7 +62,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 
 - `SessionRepository` (shared `Arc<Mutex<_>>`) — one `SessionEntry` per
   session: the session, its span, `SessionPeer`, `VerifiedToken`, expiry task,
-  the sender of the session's mailbox (see "Event pipeline") and the
+  remote-address watch task (see "Observability"), the sender of the session's mailbox (see "Event pipeline") and the
   namespaces announced on it (see "SUBSCRIBE_NAMESPACE sequence"). The
   repository announces every added session on the `SessionAdded` channel
   `RelayServer` creates with it.
@@ -1015,6 +1015,13 @@ no list of relays and no session to each.
   bytes and resets egress sent, plus the `received_at` of the newest object
   sent, from which the collector derives how far the subscriber trails the
   newest object the track received.
+- `RemoteAddressWatchTask` (`session/remote_address_watch_task.rs`) runs for
+  every session, with or without OTLP: quinn reports no event when the peer
+  migrates its connection (RFC 9000 §9), so the task polls
+  `Session::transport_addresses` once per second and logs `connection
+  migrated` at INFO with `session_id`, `previous_remote_address` and
+  `remote_address` when the address changes, NAT rebinding included. The
+  `SessionEntry` owns it, so removing the session stops it.
 - QUIC statistics are per connection and describe what the relay sent, so a
   client's uplink shows no loss or cwnd; the received flow-control and
   reset frame counts are its uplink signals.

@@ -9,7 +9,10 @@ use tracing::Span;
 use crate::modules::{
     auth::{session_expiry_task::SessionExpiryTask, verified_token::VerifiedToken},
     domain::{session_id::SessionId, session_peer::SessionPeer},
-    session::{Session, publisher::Publisher, session_event::SessionEvent, subscriber::Subscriber},
+    session::{
+        Session, publisher::Publisher, remote_address_watch_task::RemoteAddressWatchTask,
+        session_event::SessionEvent, subscriber::Subscriber,
+    },
 };
 
 pub(crate) struct SessionRepository {
@@ -33,6 +36,7 @@ struct SessionEntry {
     peer: SessionPeer,
     verified_token: Arc<VerifiedToken>,
     expiry_task: Option<SessionExpiryTask>,
+    _remote_address_watch_task: RemoteAddressWatchTask,
     mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
     /// Namespaces this relay sent PUBLISH_NAMESPACE for on the session and
     /// has not withdrawn yet.
@@ -101,6 +105,8 @@ impl SessionRepository {
             "session started"
         );
         let expiry_task = expiry_task(&session, &verified_token);
+        let remote_address_watch_task =
+            RemoteAddressWatchTask::run(Arc::downgrade(&session), session_id, session_span.clone());
         let (mailbox_sender, mailbox_receiver) = mpsc::unbounded_channel();
         self.sessions.insert(
             session_id,
@@ -110,6 +116,7 @@ impl SessionRepository {
                 peer,
                 verified_token: Arc::new(verified_token),
                 expiry_task,
+                _remote_address_watch_task: remote_address_watch_task,
                 mailbox_sender,
                 announced_namespaces: HashSet::new(),
             },
