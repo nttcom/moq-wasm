@@ -10,6 +10,7 @@ import {
   type TimelineEvent,
   type IndexedChunk
 } from './timeline'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 
 type Track = {
   namespace: string
@@ -40,6 +41,9 @@ const params = new URLSearchParams(location.search)
 recorder.value = params.get('recorder') ?? recorder.value
 recording.value = params.get('id') ?? ''
 let session: MoqSession | undefined
+/// Empty until the recorder's replay answer names the relay.
+let relayUrl = ''
+startPageTelemetry('recording-player', () => relayUrl)
 let presence: MoqSubscription | undefined
 let generation = 0
 let media: Media[] = []
@@ -245,6 +249,7 @@ element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
     )
     const replay = await response.json()
     if (!response.ok) throw new Error(replay.error ?? `Recorder returned ${response.status}`)
+    relayUrl = replay.relay
     session = await MoqSession.connect(replay.relay, { token: token.value || undefined })
     const tracks: Track[] = replay.tracks
     const presenceTrack = tracks.find((track) => track.name === 'catalog') ?? tracks[0]

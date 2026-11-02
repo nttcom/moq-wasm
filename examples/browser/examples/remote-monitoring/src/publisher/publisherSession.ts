@@ -1,4 +1,5 @@
 import { MoqSession } from 'moq-wasm'
+import { reportRelay } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)
@@ -13,6 +14,7 @@ export class PublisherSession {
   }
 
   async connect(relayUrl: string): Promise<void> {
+    reportRelay(relayUrl)
     const session = await MoqSession.connect(relayUrl)
     this.session = session
     log('connected', { relayUrl })

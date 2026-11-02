@@ -3,8 +3,10 @@ import { type Publication, type SourcePublication, publish } from 'moq-wasm/medi
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { getMediaVideoEncodingOverrides } from '../common'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../../../utils/page'
+import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 const form = document.getElementById('form') as HTMLFormElement
+startPageTelemetry('media-publisher', () => form.url.value)
 let mediaStream: MediaStream | undefined
 let session: MoqSession | undefined
 let publication: Publication | undefined

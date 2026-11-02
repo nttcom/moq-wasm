@@ -2,6 +2,7 @@ import type { TrackWriter } from 'moq-wasm'
 import { pageRoomId } from '../../utils/botRoom'
 import { onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 import {
   type Label,
   type LabelProbability,
@@ -14,6 +15,7 @@ import {
   parseModerationVerdicts
 } from './chatWire'
 
+startPageTelemetry('moq-chat-moderation', () => element<HTMLInputElement>('url').value.trim())
 const ROOM = pageRoomId()
 const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', ROOM, 'chat']
 const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', ROOM, 'moderator']

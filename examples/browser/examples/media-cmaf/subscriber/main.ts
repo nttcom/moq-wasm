@@ -3,9 +3,11 @@ import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage
 import { setUpCatalogPicker } from '../../media/catalogPicker'
 import { readObjects } from '../../media/readObjects'
 import { setUpVisualizerToggle } from '../../media/visualizerToggle'
+import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
+startPageTelemetry('media-cmaf-subscriber', () => form.url.value)
 
 const catalogPicker = setUpCatalogPicker(() => session, form)
 

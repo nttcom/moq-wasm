@@ -5,9 +5,18 @@ import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage
 import { setUpCatalogPicker } from '../catalogPicker'
 import { readObjects } from '../readObjects'
 import { type MediaKind, formatLiveStats } from 'moq-wasm/media'
+import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
+startPageTelemetry(
+  'media-subscriber',
+  () => form.url.value,
+  () => {
+    const stats = locLive.stats()
+    return stats.bufferMs === undefined ? [] : [{ values: stats }]
+  }
+)
 
 const PLAYOUT_STATS_INTERVAL_MS = 1000
 
