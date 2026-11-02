@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fmt::Write;
 
 use serde_json::{Value, json};
@@ -22,6 +23,19 @@ struct OpenSpan {
     parent_span_id: Option<[u8; 8]>,
     start_ms: f64,
     fields: FieldVisitor,
+}
+
+thread_local! {
+    /// The `(trace_id, span_id)` of each span entered on this thread, innermost last.
+    static ENTERED: RefCell<Vec<([u8; 16], [u8; 8])>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The innermost entered span as a W3C `traceparent`; `None` outside any span.
+pub(crate) fn current_traceparent() -> Option<String> {
+    ENTERED.with_borrow(|entered| {
+        let (trace_id, span_id) = entered.last()?;
+        Some(format!("00-{}-{}-01", hex(trace_id), hex(span_id)))
+    })
 }
 
 impl<E> SpanRecordLayer<E> {
@@ -63,6 +77,22 @@ where
         }
     }
 
+    fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id)
+            && let Some(open) = span.extensions().get::<OpenSpan>()
+        {
+            ENTERED.with_borrow_mut(|entered| entered.push((open.trace_id, open.span_id)));
+        }
+    }
+
+    fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id)
+            && span.extensions().get::<OpenSpan>().is_some()
+        {
+            ENTERED.with_borrow_mut(Vec::pop);
+        }
+    }
+
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(&id) else {
             return;
@@ -100,7 +130,7 @@ mod tests {
     use serde_json::Value;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::SpanRecordLayer;
+    use super::{SpanRecordLayer, current_traceparent};
 
     fn capture(emit_spans: impl FnOnce()) -> Vec<Value> {
         static NEXT_BYTE: AtomicU8 = AtomicU8::new(0);
@@ -166,5 +196,40 @@ mod tests {
         assert_eq!(child["traceId"], parent["traceId"]);
         assert_eq!(child["parentSpanId"], parent["spanId"]);
         assert_ne!(child["spanId"], parent["spanId"]);
+    }
+
+    #[test]
+    fn inside_an_entered_span_the_traceparent_names_that_span() {
+        // Arrange
+        let mut traceparent = None;
+
+        // Act
+        let records = capture(|| {
+            traceparent = tracing::info_span!("request").in_scope(current_traceparent);
+        });
+
+        // Assert
+        let [record] = records.as_slice() else {
+            panic!("{records:?}");
+        };
+        let expected = format!(
+            "00-{}-{}-01",
+            record["traceId"].as_str().unwrap(),
+            record["spanId"].as_str().unwrap()
+        );
+        assert_eq!(traceparent, Some(expected));
+    }
+
+    #[test]
+    fn outside_any_span_there_is_no_traceparent() {
+        // Act
+        let mut traceparent = Some(String::new());
+        capture(|| {
+            tracing::info_span!("closed").in_scope(|| {});
+            traceparent = current_traceparent();
+        });
+
+        // Assert
+        assert_eq!(traceparent, None);
     }
 }

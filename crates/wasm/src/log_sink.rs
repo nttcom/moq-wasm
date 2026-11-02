@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::js_error;
 use crate::log_record::log_record;
-use crate::span_sink::SpanRecordLayer;
+use crate::span_sink::{self, SpanRecordLayer};
 
 thread_local! {
     static LOG_CALLBACK: RefCell<Option<Function>> = const { RefCell::new(None) };
@@ -46,6 +46,9 @@ pub fn set_log_sink(
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|_| js_error("the log sink is already set"))?;
     LOG_CALLBACK.with(|slot| *slot.borrow_mut() = Some(callback));
+    if span_callback.is_some() {
+        moqt::set_trace_context_provider(span_sink::current_traceparent);
+    }
     SPAN_CALLBACK.with(|slot| *slot.borrow_mut() = span_callback);
     Ok(())
 }
