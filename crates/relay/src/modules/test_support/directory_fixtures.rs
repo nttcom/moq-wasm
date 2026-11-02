@@ -92,33 +92,15 @@ pub(crate) struct UpstreamReleaseContext {
 /// session, so `recorded` sees the ingest start and stop.
 pub(crate) async fn upstream_release_context(origin: ProducerOrigin) -> UpstreamReleaseContext {
     let (repository, recorded) = session_repository_with_upstream_session(PUBLISHER_SESSION).await;
-    let forwarder = ControlMessageForwarder { repository };
-    let cache_store = Arc::new(TrackCacheStore::new());
-    let ingest = start_ingest(
-        &forwarder,
-        &cache_store,
-        IngestRequest {
-            subscriber_session_id: 2,
-            publisher_session_id: PUBLISHER_SESSION,
-            track_key: track_key(),
-            subscription: upstream_subscription(UPSTREAM_REQUEST_ID),
-        },
-    )
-    .await
-    .expect("the publisher session is in the repository");
-    let table = InMemoryLocalPubSubDirectory::new();
-    table.register_upstream_subscription(
-        track_key(),
-        PUBLISHER_SESSION,
-        Producer::new(active_upstream(origin), ingest),
-    );
-    recorded.wait_ingest_started(UPSTREAM_REQUEST_ID).await;
-    UpstreamReleaseContext {
-        table,
-        forwarder,
-        cache_store,
+    let ctx = UpstreamReleaseContext {
+        table: InMemoryLocalPubSubDirectory::new(),
+        forwarder: ControlMessageForwarder { repository },
+        cache_store: Arc::new(TrackCacheStore::new()),
         recorded,
-    }
+    };
+    ctx.feed(PUBLISHER_SESSION, active_upstream(origin), &ctx.recorded)
+        .await;
+    ctx
 }
 
 impl UpstreamReleaseContext {
@@ -136,6 +118,21 @@ impl UpstreamReleaseContext {
             peer: SessionPeer::Client,
             verified_token: VerifiedToken::full_access(),
         });
+        let state = ProducerState {
+            subscription: upstream_subscription(upstream_request_id),
+            ..active_upstream(ProducerOrigin::Subscribe)
+        };
+        self.feed(session_id, state, &recorded).await;
+        recorded
+    }
+
+    async fn feed(
+        &self,
+        session_id: SessionId,
+        state: ProducerState,
+        recorded: &RecordedControlMessages,
+    ) {
+        let upstream_request_id = state.subscription.request_id();
         let ingest = start_ingest(
             &self.forwarder,
             &self.cache_store,
@@ -143,24 +140,17 @@ impl UpstreamReleaseContext {
                 subscriber_session_id: 2,
                 publisher_session_id: session_id,
                 track_key: track_key(),
-                subscription: upstream_subscription(upstream_request_id),
+                subscription: state.subscription.clone(),
             },
         )
         .await
-        .expect("the publisher session was just added");
+        .expect("the publisher session is in the repository");
         self.table.register_upstream_subscription(
             track_key(),
             session_id,
-            Producer::new(
-                ProducerState {
-                    subscription: upstream_subscription(upstream_request_id),
-                    ..active_upstream(ProducerOrigin::Subscribe)
-                },
-                ingest,
-            ),
+            Producer::new(state, ingest),
         );
         recorded.wait_ingest_started(upstream_request_id).await;
-        recorded
     }
 }
 
