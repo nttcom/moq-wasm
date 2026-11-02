@@ -552,7 +552,8 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
    `{ cmaf: true }` で作る。他の publisher（live-ingest など）の既定は変えない
    （変更8）。
 7. **パッケージ名: `moq-wasm`。** `package.json` の `name` と import パスに使う。
-   npm で空いているかは、公開を決めたときに確かめる。
+   `docs/architecture/moqt/sdk.md` は3言語の SDK の名前を `moqt` に揃えると決めたので、
+   その移行計画の改名の手順で `moqt` に変える。それまでは `moq-wasm` のままである。
 8. **対応ブラウザ: Chrome、Edge、Safari。** Safari の違いは「Safari 対応」に書いた
    代替経路で吸収する。
 9. **プレイヤー UI: `PlayerControls` も含める。** 今の `PlayerControls` は、

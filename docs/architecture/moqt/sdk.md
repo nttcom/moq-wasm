@@ -62,7 +62,7 @@ Rust の列は `moqt` の今の API で同じことをする方法である。
 | `ReceivedObject` の `groupId`、`subgroupId`、`objectId`、`objectStatus`、`objectPayload`、`locHeader` | `Object` の `group_id`、`object_id`、`payload`。**subgroup、status、拡張ヘッダーが無い** | `TrackObject` |
 | `RequestError`（draft のエラーコード） | **無い**（`RuntimeError` の文字列） | `RequestFailure::Rejected { code, .. }` |
 | `closed` → `CloseInfo` | `closed()`。**code と reason が無い** | `Session::closed` → `TransportClose` |
-| `close()` | `close()` | `close_with_error` → `Endpoint::wait_idle` |
+| `close()` | `close()` | `Session::close`（NO_ERROR で閉じ、`Endpoint::wait_idle` まで待つ） |
 | `broadcast(ns)` → `MediaBroadcast` | 範囲外 | `broadcast::RelayConnection` と `BroadcastWriter` |
 
 ## `moqt::client`: Rust の入口
@@ -102,7 +102,7 @@ session.close().await;
 
 | `moqt::client` | JS | 中身 |
 | --- | --- | --- |
-| `Session` | `MoqSession` | `Endpoint`、`Arc<moqt::Session>`、`Origin`、`NamespaceWatchers`、PUBLISH_DONE の待ち手、イベントループの `JoinHandle` を持つ。`close` は `close_with_error` のあと `Endpoint::wait_idle` まで待つ |
+| `Session` | `MoqSession` | `Arc<moqt::Session>`、`Origin`、`NamespaceWatchers`、PUBLISH_DONE の待ち手、イベントループの `JoinHandle` を持つ。`close` はイベントループを止め、`moqt::Session::close` を呼ぶ |
 | `Subscription` | `MoqSubscription` | `next`、`groups`、`largest`、`done`、`set_forward`、`end_before_group`、`close` |
 | `Group` | `MoqGroup` | 1本の subgroup stream |
 | `Fetch` | `MoqFetch` | 1つの FETCH の応答 |
