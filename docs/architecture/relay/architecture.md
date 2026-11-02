@@ -55,7 +55,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    - `spawn_client_transport::<moqt::NATIVE>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
    - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint.
-   - `spawn_stats_publisher(relay_id, inner_port)` — see "Observability".
+   - `spawn_stats_publisher(relay_id, inner_port, event_logger)` — see "Observability".
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
@@ -948,6 +948,10 @@ so cache, fan-out, FETCH and authorization need no separate path.
   session is retried every 5 s. The loopback session is a `SessionPeer::Relay`
   with full access; the snapshot reports it as `stats_publisher`, and a session
   subscribed to the relay's own stats track as `stats_subscriber`.
+- With OTLP on, the same task also sends each snapshot as an OTLP log record
+  (`EventName` `relay.stats.snapshot`, the JSON in its `snapshot` attribute)
+  through `telemetry::EventLogger`, so the ClickStack collector stores it in
+  the `otel` database next to the relay's traces and logs.
 - `StatsCollector` reads, without holding any lock across an await:
   `SessionRepository::session_states` (peer, `app_id`, `Session::transport_stats`
   and `transport_addresses`), `InterRelayConnectionManager::dialed_relay_ids`

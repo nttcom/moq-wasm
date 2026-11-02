@@ -41,7 +41,7 @@ fn create_certs_for_test_if_needed(cert_dir: &Path) -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _logging = relay::init_logging("relay")?;
+    let logging = relay::init_logging("relay")?;
     let cert_dir = cert_dir();
     create_certs_for_test_if_needed(&cert_dir)?;
     let config = relay::RelayConfig::from_env()?;
@@ -52,7 +52,11 @@ async fn main() -> anyhow::Result<()> {
     let server = relay::RelayServer::new_with_config(&key_path, &cert_path, config.clone()).await?;
     let mut client_handler = server.spawn_client_transport::<moqt::NATIVE>(config.port)?;
     let _inner_handler = server.spawn_inner_transport::<moqt::QUIC>(config.inner_port)?;
-    let _stats_publisher = server.spawn_stats_publisher(config.relay_id.clone(), config.inner_port);
+    let _stats_publisher = server.spawn_stats_publisher(
+        config.relay_id.clone(),
+        config.inner_port,
+        logging.event_logger("relay"),
+    );
 
     tracing::info!(
         port = config.port,

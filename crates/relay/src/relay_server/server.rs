@@ -175,12 +175,18 @@ impl RelayServer {
         .await;
     }
 
-    pub fn spawn_stats_publisher(&self, relay_id: String, inner_port: u16) -> StatsPublishTask {
+    pub fn spawn_stats_publisher(
+        &self,
+        relay_id: String,
+        inner_port: u16,
+        event_logger: Option<telemetry::EventLogger>,
+    ) -> StatsPublishTask {
         StatsPublishTask::run(
             self.runtime.stats_collector(relay_id),
             StatsPublishConfig {
                 inner_port,
                 relay_token: self.relay_token.clone(),
+                event_logger,
             },
         )
     }

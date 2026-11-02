@@ -3,6 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use bytes::Bytes;
 use moqt::{TrackWriter, publish::PublishOption};
+use telemetry::EventLogger;
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::observability::{process_memory, stats_collector::StatsCollector};
@@ -13,6 +14,8 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 pub(crate) struct StatsPublishConfig {
     pub(crate) inner_port: u16,
     pub(crate) relay_token: String,
+    /// Also sends each snapshot as an OTLP log record when set.
+    pub(crate) event_logger: Option<EventLogger>,
 }
 
 pub struct StatsPublishTask {
@@ -86,6 +89,14 @@ async fn publish_snapshots(
         let snapshot = collector
             .collect(timestamp_ms, process_memory::resident_set_bytes().await)
             .await;
+        if let Some(event_logger) = &config.event_logger {
+            event_logger.emit(
+                relay_stats::EVENT_NAME,
+                UNIX_EPOCH + Duration::from_millis(timestamp_ms),
+                relay_stats::EVENT_ATTRIBUTE,
+                String::from_utf8(snapshot.to_json())?,
+            );
+        }
         writer
             .start_group_at(timestamp_ms.max(writer.next_group_id()))
             .await?;
