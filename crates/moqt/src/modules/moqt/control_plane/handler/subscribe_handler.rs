@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
@@ -37,10 +38,16 @@ pub struct SubscribeHandler {
     /// SUBSCRIBE_OK.
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl SubscribeHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     pub(crate) fn new(
         session_context: Arc<SessionContext>,
         connection: Arc<Connection>,
@@ -65,6 +72,7 @@ impl SubscribeHandler {
             group_order: subscribe_message.group_order,
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
+            trace_context: subscribe_message.trace_context,
             max_cache_duration: None,
             delivery_timeout: None,
         }

@@ -115,6 +115,8 @@ pub(crate) struct ControlChannel {
     /// MAX_REQUEST_ID this side sent.
     request_id_limit: AtomicU64,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
+    /// The peer's SETUP carried the TRACE_CONTEXT Setup Option.
+    pub(super) peer_reads_trace_context: bool,
 }
 
 impl ControlChannel {
@@ -125,6 +127,7 @@ impl ControlChannel {
         send_stream: BiStreamSender,
         first_request_id: RequestId,
         peer_request_id_limit: RequestId,
+        peer_reads_trace_context: bool,
     ) -> Self {
         Self {
             send_stream,
@@ -136,6 +139,7 @@ impl ControlChannel {
             next_peer_request_id: AtomicU64::new(first_request_id ^ 1),
             request_id_limit: AtomicU64::new(REQUEST_ID_WINDOW),
             inflight_requests: Arc::default(),
+            peer_reads_trace_context,
         }
     }
 
@@ -992,6 +996,7 @@ mod tests {
             filter_type: FilterType::LargestObject,
             authorization_tokens: vec![],
             delivery_timeout: None,
+            trace_context: None,
         };
         let connection = session.publisher().session.connection();
         ControlChannel::of(&connection)

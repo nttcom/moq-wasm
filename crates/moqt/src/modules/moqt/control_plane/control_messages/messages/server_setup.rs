@@ -63,6 +63,7 @@ mod tests {
                 max_auth_token_cache_size: None,
                 authority: None,
                 moq_implementation: Some("MOQ-WASM".to_string()),
+                trace_context: false,
             };
             let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
             let buf = server_setup.encode();

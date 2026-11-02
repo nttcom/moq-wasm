@@ -240,6 +240,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl SubscribeNamespaceHandler for MockSubscribeNamespaceHandler {
+        fn trace_context(&self) -> Option<&moqt::TraceContext> {
+            None
+        }
         fn track_namespace_prefix(&self) -> &str {
             self.prefix
         }
@@ -271,6 +274,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl SubscribeNamespaceHandler for AnnouncingWhileAnswered {
+        fn trace_context(&self) -> Option<&moqt::TraceContext> {
+            None
+        }
         fn track_namespace_prefix(&self) -> &str {
             "ns"
         }

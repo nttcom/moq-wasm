@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
@@ -20,10 +21,16 @@ pub struct PublishNamespaceHandler {
     request_id: u64,
     pub track_namespace: String,
     pub track_namespace_tuple: Vec<String>,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl PublishNamespaceHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     pub(crate) fn new(connection: Arc<Connection>, publish_namespace: PublishNamespace) -> Self {
         let guard = ResponseGuard::new(
             connection,
@@ -35,6 +42,7 @@ impl PublishNamespaceHandler {
                 .connection()
                 .logical_request_id(publish_namespace.request_id),
             guard,
+            trace_context: publish_namespace.trace_context,
             track_namespace: publish_namespace.track_namespace.join("/"),
             track_namespace_tuple: publish_namespace.track_namespace,
         }

@@ -1,7 +1,7 @@
-import type { LogRecord } from 'moq-wasm'
+import type { LogRecord, SpanRecord } from 'moq-wasm'
 import type { LiveStats } from 'moq-wasm/media'
 
-/// The observability server takes at most this many logs, and as many stats, per report.
+/// The observability server takes at most this many logs, stats and spans each per report.
 const MAX_RECORDS = 100
 
 type ReportLog = Omit<LogRecord, 'level'> & { level: string }
@@ -11,12 +11,13 @@ export type StatsSample = { trackNamespace?: string; mediaSource?: string; value
 type ReportStats = StatsSample & { timeMs: number }
 type Send = (url: string, body: string, beacon: boolean) => void
 
-/// Collects a page's logs and player stats and posts them to the observability
+/// Collects a page's logs, player stats and wasm spans and posts them to the observability
 /// server's `/api/client-telemetry`, which forwards them to the collector.
 export class ClientTelemetry {
   readonly clientId = crypto.randomUUID()
   private logs: ReportLog[] = []
   private stats: ReportStats[] = []
+  private spans: SpanRecord[] = []
 
   constructor(
     private readonly page: string,
@@ -32,18 +33,29 @@ export class ClientTelemetry {
     keepNewest(this.logs, record)
   }
 
+  readonly wasmSpan = (record: SpanRecord): void => {
+    keepNewest(this.spans, record)
+  }
+
   sample(sample: StatsSample): void {
     keepNewest(this.stats, { timeMs: Date.now(), ...sample })
   }
 
   /// `beacon` sends with `navigator.sendBeacon`, which outlives the page.
   flush(beacon = false): void {
-    if (this.logs.length === 0 && this.stats.length === 0) {
+    if (this.logs.length === 0 && this.stats.length === 0 && this.spans.length === 0) {
       return
     }
-    const body = JSON.stringify({ clientId: this.clientId, page: this.page, logs: this.logs, stats: this.stats })
+    const body = JSON.stringify({
+      clientId: this.clientId,
+      page: this.page,
+      logs: this.logs,
+      stats: this.stats,
+      spans: this.spans
+    })
     this.logs = []
     this.stats = []
+    this.spans = []
     this.send(this.endpoint(), body, beacon)
   }
 }

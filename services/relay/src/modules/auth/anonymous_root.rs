@@ -52,6 +52,9 @@ struct AnonymousRootSubscribeNamespace {
 
 #[async_trait]
 impl SubscribeNamespaceHandler for AnonymousRootSubscribeNamespace {
+    fn trace_context(&self) -> Option<&moqt::TraceContext> {
+        self.inner.trace_context()
+    }
     fn track_namespace_prefix(&self) -> &str {
         ANONYMOUS_APP_ID
     }
@@ -105,6 +108,9 @@ mod tests {
 
     #[async_trait]
     impl SubscribeNamespaceHandler for StubSubscribeNamespace {
+        fn trace_context(&self) -> Option<&moqt::TraceContext> {
+            None
+        }
         fn track_namespace_prefix(&self) -> &str {
             &self.track_namespace_prefix
         }

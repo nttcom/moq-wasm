@@ -21,7 +21,7 @@ export function startPageTelemetry(
     page,
     () => `${resolveServiceUrl(location.search, relayUrl(), TELEMETRY_URLS)}/api/client-telemetry`
   )
-  init({ onLog: telemetry.wasmLog, logLevel: 'info' }).catch((error) =>
+  init({ onLog: telemetry.wasmLog, onSpan: telemetry.wasmSpan, logLevel: 'info' }).catch((error) =>
     telemetry.log('error', `wasm init: ${String(error)}`)
   )
   setInterval(() => {

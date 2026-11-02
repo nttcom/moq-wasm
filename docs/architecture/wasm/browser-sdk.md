@@ -346,6 +346,11 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   なく `init` の option にし、`onLog` を付けた `init` を2回呼ぶと reject する。
   subscriber は `tracing-subscriber` の registry に自前の `Layer` を載せたもので、
   `crates/wasm/src/log_sink.rs` にある（`tracing-subscriber.md` を参照）。
+- `init({ onSpan })` を渡すと、閉じた INFO 以上の span（request span
+  `moqt.subscriber.subscribe` など）が `SpanRecord`
+  （`{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`、id は小文字 hex）で
+  渡る。`logLevel` は span には効かない。span を記録する `Layer` は
+  `crates/wasm/src/span_sink.rs` にある。
 
 形（TypeScript、抜粋）:
 
@@ -354,6 +359,7 @@ export function init(options?: {
   wasmUrl?: string | URL
   onLog?: (record: LogRecord) => void
   logLevel?: LogLevel                                          // 既定は 'warn'
+  onSpan?: (record: SpanRecord) => void
 }): Promise<void>
 export function connect(url: string, options?: ConnectOptions): Promise<Session>
 

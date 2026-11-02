@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
@@ -32,6 +33,11 @@ pub struct FetchHandler {
 }
 
 impl FetchHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.fetch.trace_context.as_ref()
+    }
+
     pub(crate) fn new(
         session_context: Arc<SessionContext>,
         connection: Arc<Connection>,

@@ -588,6 +588,48 @@ state name the connection:
   on (`SendTargets::Connection`). Concurrent PUBLISH requests share a read
   lock; migration holds the write lock while carrying them, so none is missed.
 
+### Request spans
+
+Each request a client sends and waits on has one INFO span, from writing the
+request to receiving its response. On a GOAWAY migration the span covers every
+attempt; it adds no field for the retry.
+
+| Span | Fields |
+| --- | --- |
+| `moqt.subscriber.subscribe` | `track_namespace`, `track_name`, `subscriber_priority`, `forward`, `request_id`, `outcome` |
+| `moqt.subscriber.subscribe_namespace` | `track_namespace_prefix`, `request_id`, `outcome` |
+| `moqt.subscriber.fetch` | `track_namespace`, `track_name`, `request_id`, `outcome` |
+| `moqt.publisher.publish` | `track_namespace`, `track_name`, `request_id`, `outcome` |
+| `moqt.publisher.publish_namespace` | `track_namespace`, `request_id`, `outcome` |
+
+- `request_id` is the wire Request ID of the last attempt, the one the
+  `*_OK received` / `*_ERROR received` logs print; those logs carry
+  `duration_ms`, the time from writing the request to its response.
+- `outcome` is `ok` when the `*_OK` arrived, `rejected` when the peer answered
+  `*_ERROR`, and `failed` for any other error (transport, protocol violation,
+  session closed).
+- `begin_publish_namespace` returns before the response and has no span; the
+  other `Subscriber` / `Publisher` spans and `moqt.session` stay at DEBUG.
+
+The five requests carry the span's W3C `traceparent` in a `TRACE_CONTEXT`
+parameter (type `0x1fff`, not in draft-14), so the receiver's span joins the
+sender's trace. Draft-14 §9.2 makes a receiver ignore an unknown parameter,
+but from draft-18 an unknown Message Parameter is a PROTOCOL_VIOLATION and an
+extension is agreed through a Setup Option (§6.3.2). So both CLIENT_SETUP and
+SERVER_SETUP always carry a `TRACE_CONTEXT` Setup Option (type `0x1fff`, an
+empty value), and a connection sends the parameter only when the peer's SETUP
+carried it (`ControlChannel::peer_reads_trace_context`). Setup Options have no
+private range, so publishing the extension would need a provisional
+registration.
+`moqt` has no OpenTelemetry dependency: the application gives it the current
+span's `traceparent` with `set_trace_context_provider` (the relay through
+`telemetry::current_traceparent`, the wasm module and `moq-cli` from their span
+layers), and the send functions read it inside the request span. Without a
+provider the parameter is omitted. On receipt, `trace_context()` on
+`SubscribeHandler`, `PublishHandler`, `FetchHandler`,
+`SubscribeNamespaceHandler` and `PublishNamespaceHandler` returns the
+`TraceContext`; a value that is not a traceparent counts as absent.
+
 ## Control plane (`modules/moqt/control_plane`)
 
 - `control_messages/messages/*` — one struct per draft-14 control message with

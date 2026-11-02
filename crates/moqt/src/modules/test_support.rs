@@ -1,15 +1,26 @@
 use std::{
+    collections::HashMap,
     net::Ipv4Addr,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
 
 use bytes::Bytes;
-use tracing_subscriber::EnvFilter;
+use tracing::{
+    Event,
+    field::{Field, Visit},
+    span::{Attributes, Id, Record},
+    subscriber::DefaultGuard,
+};
+use tracing_subscriber::{
+    EnvFilter, Layer,
+    layer::{Context, SubscriberExt},
+    registry::LookupSpan,
+};
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 use crate::modules::moqt::version::APPLICATION_PROTOCOLS;
@@ -705,4 +716,126 @@ pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
         sender,
         receiver,
     }
+}
+
+/// A captured span or event: its name (an event's message) and its fields,
+/// formatted with `Debug`.
+#[derive(Clone)]
+pub(crate) struct Captured {
+    name: String,
+    fields: HashMap<String, String>,
+}
+
+impl Captured {
+    pub(crate) fn field(&self, name: &str) -> Option<&str> {
+        self.fields.get(name).map(String::as_str)
+    }
+}
+
+/// Install it with `capture_telemetry`.
+#[derive(Clone, Default)]
+pub(crate) struct CapturedTelemetry {
+    closed_spans: Arc<Mutex<Vec<Captured>>>,
+    events: Arc<Mutex<Vec<Captured>>>,
+}
+
+impl CapturedTelemetry {
+    pub(crate) fn closed_spans(&self, name: &str) -> Vec<Captured> {
+        named(&self.closed_spans, name)
+    }
+
+    pub(crate) fn events(&self, message: &str) -> Vec<Captured> {
+        named(&self.events, message)
+    }
+}
+
+fn named(captured: &Mutex<Vec<Captured>>, name: &str) -> Vec<Captured> {
+    let captured = captured.lock().unwrap();
+    captured
+        .iter()
+        .filter(|captured| captured.name == name)
+        .cloned()
+        .collect()
+}
+
+/// Installs a `CapturedTelemetry` as this thread's subscriber until the guard
+/// drops; on a current-thread runtime it captures the spawned tasks too.
+pub(crate) fn capture_telemetry() -> (CapturedTelemetry, DefaultGuard) {
+    let telemetry = CapturedTelemetry::default();
+    let subscriber = tracing_subscriber::registry().with(telemetry.clone());
+    (telemetry, tracing::subscriber::set_default(subscriber))
+}
+
+#[derive(Default)]
+struct FieldMap(HashMap<String, String>);
+
+impl Visit for FieldMap {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.0
+            .insert(field.name().to_string(), format!("{value:?}"));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+}
+
+impl<S> Layer<S> for CapturedTelemetry
+where
+    S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let mut fields = FieldMap::default();
+        attrs.record(&mut fields);
+        if let Some(span) = ctx.span(id) {
+            span.extensions_mut().insert(fields);
+        }
+    }
+
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id)
+            && let Some(fields) = span.extensions_mut().get_mut::<FieldMap>()
+        {
+            values.record(fields);
+        }
+    }
+
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut fields = FieldMap::default();
+        event.record(&mut fields);
+        let name = fields.0.remove("message").unwrap_or_default();
+        self.events.lock().unwrap().push(Captured {
+            name,
+            fields: fields.0,
+        });
+    }
+
+    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+        let Some(span) = ctx.span(&id) else {
+            return;
+        };
+        let fields = span
+            .extensions_mut()
+            .remove::<FieldMap>()
+            .unwrap_or_default();
+        self.closed_spans.lock().unwrap().push(Captured {
+            name: span.name().to_string(),
+            fields: fields.0,
+        });
+    }
+}
+
+thread_local! {
+    static SERVER_DECLARES_TRACE_CONTEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Whether a server on this thread puts TRACE_CONTEXT in its SERVER_SETUP.
+pub(crate) fn server_declares_trace_context() -> bool {
+    SERVER_DECLARES_TRACE_CONTEXT.get()
+}
+
+/// Makes the servers of this thread's current-thread runtime answer with a
+/// SERVER_SETUP that does not declare TRACE_CONTEXT.
+pub(crate) fn without_trace_context_declaration() {
+    SERVER_DECLARES_TRACE_CONTEXT.set(false);
 }

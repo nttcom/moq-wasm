@@ -1,9 +1,11 @@
+use crate::modules::telemetry::current_trace_context;
 use std::sync::Arc;
 
 use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
 use crate::{
     RequestFailure,
+    modules::executor::now,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -18,8 +20,9 @@ use crate::{
         },
         domains::{
             connection::{Connection, logical_id},
-            namespace_tuple,
+            elapsed_ms, namespace_tuple,
             pending_publish_namespace::PendingPublishNamespace,
+            request_failure::{record_outcome, record_request_id},
             send_targets::SendTargets,
             session_context::{Publication, PublicationTarget, SessionContext},
             subscription::{PublisherInitiatedSubscription, Subscription},
@@ -34,8 +37,25 @@ pub struct Publisher {
 }
 
 impl Publisher {
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.publisher.publish_namespace",
+        skip_all,
+        fields(
+            track_namespace = %namespace,
+            request_id = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+        )
+    )]
     pub async fn publish_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
+        let result = self.publish_namespace_answered(namespace).await;
+        record_outcome(&result);
+        result
+    }
+
+    async fn publish_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
         let (connection, pending) = self.announce(namespace).await?;
+        tracing::Span::current().record("request_id", pending.request_id);
         match pending.accepted().await {
             // The namespace is carried from the moment it was sent, and a
             // migration fails unless the new connection accepts it.
@@ -149,7 +169,31 @@ impl Publisher {
         Ok(())
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.publisher.publish",
+        skip_all,
+        fields(
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            request_id = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+        )
+    )]
     pub async fn publish(
+        &self,
+        track_namespace: String,
+        track_name: String,
+        option: PublishOption,
+    ) -> Result<Subscription, RequestFailure> {
+        let result = self
+            .publish_answered(track_namespace, track_name, option)
+            .await;
+        record_outcome(&result);
+        result
+    }
+
+    async fn publish_answered(
         &self,
         track_namespace: String,
         track_name: String,
@@ -158,7 +202,9 @@ impl Publisher {
         let (_carried, connection, publish_ok, track_alias) = loop {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
-            match send_publish(&connection, &track_namespace, &track_name, &option).await {
+            let sent = send_publish(&connection, &track_namespace, &track_name, &option).await;
+            record_request_id(&sent, |(publish_ok, _)| publish_ok.request_id);
+            match sent {
                 Ok((publish_ok, track_alias)) => {
                     break (carried, connection, publish_ok, track_alias);
                 }
@@ -250,11 +296,10 @@ pub(crate) async fn send_publish_namespace(
         .control
         .send_request(
             reservation,
-            OutgoingRequest::PublishNamespace(PublishNamespace::new(
-                request_id,
-                vec_namespace,
-                vec![],
-            )),
+            OutgoingRequest::PublishNamespace(PublishNamespace {
+                trace_context: current_trace_context(&connection.control),
+                ..PublishNamespace::new(request_id, vec_namespace, vec![])
+            }),
         )
         .await?;
     Ok(PendingPublishNamespace {
@@ -285,14 +330,14 @@ pub(crate) async fn send_publish(
         authorization_tokens: vec![],
         delivery_timeout: None,
         max_duration: option.max_cache_duration,
+        trace_context: current_trace_context(&connection.control),
     };
-    let response = connection
+    let pending = connection
         .control
         .send_request(reservation, OutgoingRequest::Publish(publish))
-        .await?
-        .response()
-        .await?
-        .accept();
+        .await?;
+    let sent_at = now();
+    let response = pending.response().await?.accept();
     match response {
         ResponseMessage::PublishOk(message) if message.request_id == request_id => {
             tracing::info!(
@@ -300,6 +345,7 @@ pub(crate) async fn send_publish(
                 track_namespace,
                 track_name,
                 track_alias,
+                duration_ms = elapsed_ms(sent_at),
                 "PUBLISH_OK received"
             );
             Ok((message, track_alias))
@@ -314,6 +360,7 @@ pub(crate) async fn send_publish(
                 track_name,
                 ?error_code,
                 %reason_phrase,
+                duration_ms = elapsed_ms(sent_at),
                 "PUBLISH_ERROR received"
             );
             Err(RequestFailure::Rejected {
@@ -340,10 +387,10 @@ mod tests {
         modules::{
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
-                HANDSHAKE_TIMEOUT, first_subgroup_stream, object_with_extensions,
-                read_subgroup_objects, send_subgroup_object, send_without_waiting,
-                spawn_connected_native_sessions, subgroup_receiver, wait_for_control_delivery,
-                within,
+                HANDSHAKE_TIMEOUT, capture_telemetry, first_subgroup_stream,
+                object_with_extensions, read_subgroup_objects, send_subgroup_object,
+                send_without_waiting, spawn_connected_native_sessions, subgroup_receiver,
+                wait_for_control_delivery, within,
             },
         },
         object::{Location, Object},
@@ -685,5 +732,24 @@ mod tests {
         assert_eq!(second_peer.track_alias(), second.track_alias());
         assert_eq!(first_received, vec![first_object]);
         assert_eq!(second_received, vec![second_object]);
+    }
+
+    #[tokio::test]
+    async fn publish_span_records_request_id_and_outcome() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("publisher-span-ok").await;
+
+        // Act
+        active_publish(&client, &server, "span").await;
+
+        // Assert
+        let logged = telemetry.events("PUBLISH_OK received");
+        let spans = telemetry.closed_spans("moqt.publisher.publish");
+        assert_eq!(logged.len(), 1);
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].field("request_id").is_some());
+        assert_eq!(spans[0].field("request_id"), logged[0].field("request_id"));
+        assert_eq!(spans[0].field("outcome"), Some("ok"));
     }
 }

@@ -110,6 +110,7 @@ mod tests {
                 max_auth_token_cache_size: None,
                 authority: None,
                 moq_implementation: Some("wire-test".to_string()),
+                trace_context: false,
             },
         )
         .encode();

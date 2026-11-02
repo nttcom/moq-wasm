@@ -1,10 +1,12 @@
-use std::sync::Arc;
+use crate::modules::telemetry::current_trace_context;
+use std::{sync::Arc, time::Duration};
 
 use tracing::Instrument;
 
 use crate::{
     RequestErrorCode, RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
     fetch::FetchOption,
+    modules::executor::now,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -23,8 +25,10 @@ use crate::{
         },
         domains::{
             connection::{Connection, generation_of, logical_id},
+            elapsed_ms,
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
+            request_failure::{record_outcome, record_request_id},
             session_context::{CarriedSubscription, PendingFetch, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
@@ -46,17 +50,29 @@ pub struct Subscriber {
 
 impl Subscriber {
     #[tracing::instrument(
-        level = "debug",
+        level = "info",
         name = "moqt.subscriber.subscribe_namespace",
         skip_all,
-        fields(track_namespace_prefix = %namespace)
+        fields(
+            track_namespace_prefix = %namespace,
+            request_id = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+        )
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
+        let result = self.subscribe_namespace_answered(namespace).await;
+        record_outcome(&result);
+        result
+    }
+
+    async fn subscribe_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
         let mut carried = loop {
             let carried = self.session.lock_carried().await;
             let connection = self.session.connection();
-            match send_subscribe_namespace(&connection, namespace.clone()).await {
-                Ok(()) => break carried,
+            let sent = send_subscribe_namespace(&connection, namespace.clone()).await;
+            record_request_id(&sent, |request_id| *request_id);
+            match sent {
+                Ok(_) => break carried,
                 Err(error) => {
                     self.session
                         .resend_after(carried, &connection, error)
@@ -71,10 +87,17 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "debug",
+        level = "info",
         name = "moqt.subscriber.subscribe",
         skip_all,
-        fields(track_namespace = %track_namespace, track_name = %track_name, subscriber_priority = option.subscriber_priority, forward = option.forward)
+        fields(
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            subscriber_priority = option.subscriber_priority,
+            forward = option.forward,
+            request_id = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+        )
     )]
     pub async fn subscribe(
         &mut self,
@@ -82,10 +105,12 @@ impl Subscriber {
         track_name: String,
         option: SubscribeOption,
     ) -> Result<Subscription, RequestFailure> {
-        let (subscription, _) = self
+        let result = self
             .subscribe_joining(track_namespace, track_name, option, false)
-            .await?;
-        Ok(subscription)
+            .await
+            .map(|(subscription, _)| subscription);
+        record_outcome(&result);
+        result
     }
 
     /// With `joining`, a Relative Joining FETCH of the current group is written
@@ -105,11 +130,12 @@ impl Subscriber {
             let carried = self.session.lock_carried().await;
             let connection = self.session.connection();
             let sent = async {
-                let (request_id, pending) =
+                let sent =
                     send_subscribe_request(&connection, &track_namespace, &track_name, &option)
                         .await?;
+                tracing::Span::current().record("request_id", sent.request_id);
                 let joining_fetch = if joining {
-                    self.send_joining_fetch(&connection, request_id)
+                    self.send_joining_fetch(&connection, sent.request_id)
                         .await
                         .inspect_err(|error| {
                             tracing::debug!(%error, "joining FETCH could not be sent");
@@ -118,8 +144,7 @@ impl Subscriber {
                 } else {
                     None
                 };
-                let (message, response) =
-                    subscribe_ok(request_id, pending, &track_namespace, &track_name).await?;
+                let (message, response) = subscribe_ok(sent, &track_namespace, &track_name).await?;
                 Ok((message, response, joining_fetch))
             }
             .await;
@@ -229,6 +254,7 @@ impl Subscriber {
             filter_type: FilterType::LargestObject,
             authorization_tokens,
             delivery_timeout: None,
+            trace_context: None,
         };
         let response = connection
             .control
@@ -267,10 +293,15 @@ impl Subscriber {
     }
 
     #[tracing::instrument(
-        level = "debug",
+        level = "info",
         name = "moqt.subscriber.fetch",
         skip_all,
-        fields(track_namespace = %track_namespace, track_name = %track_name)
+        fields(
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            request_id = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+        )
     )]
     pub async fn fetch(
         &mut self,
@@ -292,13 +323,16 @@ impl Subscriber {
             start_location,
             end_location,
         };
-        self.send_fetch(
-            self.session.connection(),
-            fetch_params,
-            option,
-            Some(remainder),
-        )
-        .await
+        let result = self
+            .send_fetch(
+                self.session.connection(),
+                fetch_params,
+                option,
+                Some(remainder),
+            )
+            .await;
+        record_outcome(&result);
+        result
     }
 
     #[tracing::instrument(
@@ -382,6 +416,7 @@ impl Subscriber {
         let sent = self
             .send_fetch_request(connection, fetch_params, &option)
             .await?;
+        tracing::Span::current().record("request_id", sent.request_id);
         self.fetch_answered(sent, &option, remainder).await
     }
 
@@ -400,6 +435,7 @@ impl Subscriber {
             group_order: option.group_order,
             fetch_params,
             authorization_tokens: vec![],
+            trace_context: current_trace_context(&connection.control),
         };
         let response = connection
             .control
@@ -407,6 +443,8 @@ impl Subscriber {
             .await?;
         Ok(SentFetch {
             connection,
+            request_id,
+            sent_at: now(),
             pending_fetch,
             response,
         })
@@ -418,26 +456,49 @@ impl Subscriber {
         option: &FetchOption,
         remainder: Option<FetchRemainder>,
     ) -> Result<FetchHandle, RequestFailure> {
-        let remainder = remainder.filter(|_| {
-            self.session.follows_go_away() && option.group_order != GroupOrder::Descending
-        });
+        let track_namespace = remainder
+            .as_ref()
+            .map(|remainder| remainder.track_namespace.as_str());
+        let track_name = remainder
+            .as_ref()
+            .map(|remainder| remainder.track_name.as_str());
         let SentFetch {
             connection,
+            sent_at,
             pending_fetch,
             response,
+            ..
         } = sent;
         let response = response.response().await?.accept();
         match response {
             ResponseMessage::FetchOk(fetch_ok) => {
+                tracing::info!(
+                    request_id = fetch_ok.request_id,
+                    track_namespace,
+                    track_name,
+                    duration_ms = elapsed_ms(sent_at),
+                    "FETCH_OK received"
+                );
                 pending_fetch.keep();
                 let mut handle = FetchHandle::new(FetchOk {
                     request_id: logical_id(connection.generation, fetch_ok.request_id),
                     ..fetch_ok
                 });
-                handle.remainder = remainder;
+                handle.remainder = remainder.filter(|_| {
+                    self.session.follows_go_away() && option.group_order != GroupOrder::Descending
+                });
                 Ok(handle)
             }
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
+                tracing::info!(
+                    request_id,
+                    track_namespace,
+                    track_name,
+                    ?error_code,
+                    %reason_phrase,
+                    duration_ms = elapsed_ms(sent_at),
+                    "FETCH_ERROR received"
+                );
                 Err(RequestFailure::Rejected {
                     request_id,
                     code: error_code,
@@ -755,7 +816,7 @@ fn repeated_update(subscription: &Subscription, forward: bool) -> SubscribeUpdat
 pub(crate) async fn send_subscribe_namespace(
     connection: &Connection,
     namespace: String,
-) -> Result<(), RequestFailure> {
+) -> Result<RequestId, RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
@@ -763,11 +824,10 @@ pub(crate) async fn send_subscribe_namespace(
         .control
         .send_request(
             reservation,
-            OutgoingRequest::SubscribeNamespace(SubscribeNamespace::new(
-                request_id,
-                vec_namespace,
-                vec![],
-            )),
+            OutgoingRequest::SubscribeNamespace(SubscribeNamespace {
+                trace_context: current_trace_context(&connection.control),
+                ..SubscribeNamespace::new(request_id, vec_namespace, vec![])
+            }),
         )
         .await?;
     tracing::debug!(request_id, track_namespace_prefix = %namespace, "SUBSCRIBE_NAMESPACE sent");
@@ -784,7 +844,7 @@ pub(crate) async fn send_subscribe_namespace(
                     track_namespace_prefix = %namespace,
                     "SUBSCRIBE_NAMESPACE_OK received"
                 );
-                Ok(())
+                Ok(request_id)
             }
         }
         ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
@@ -810,6 +870,8 @@ pub(crate) async fn send_subscribe_namespace(
 /// A FETCH written to the peer; `Subscriber::fetch_answered` reads its answer.
 pub(crate) struct SentFetch {
     connection: Arc<Connection>,
+    request_id: RequestId,
+    sent_at: Duration,
     pending_fetch: PendingFetch,
     response: PendingResponse,
 }
@@ -843,9 +905,15 @@ pub(crate) async fn send_subscribe(
     track_name: &str,
     option: &SubscribeOption,
 ) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
-    let (request_id, pending) =
-        send_subscribe_request(connection, track_namespace, track_name, option).await?;
-    subscribe_ok(request_id, pending, track_namespace, track_name).await
+    let sent = send_subscribe_request(connection, track_namespace, track_name, option).await?;
+    subscribe_ok(sent, track_namespace, track_name).await
+}
+
+/// A SUBSCRIBE written to the peer; `subscribe_ok` reads its answer.
+struct SentSubscribe {
+    request_id: RequestId,
+    sent_at: Duration,
+    pending: PendingResponse,
 }
 
 async fn send_subscribe_request(
@@ -853,7 +921,7 @@ async fn send_subscribe_request(
     track_namespace: &str,
     track_name: &str,
     option: &SubscribeOption,
-) -> Result<(RequestId, PendingResponse), RequestFailure> {
+) -> Result<SentSubscribe, RequestFailure> {
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let subscribe = Subscribe {
@@ -866,17 +934,25 @@ async fn send_subscribe_request(
         filter_type: option.filter_type,
         authorization_tokens: vec![],
         delivery_timeout: None,
+        trace_context: current_trace_context(&connection.control),
     };
     let pending = connection
         .control
         .send_request(reservation, OutgoingRequest::Subscribe(subscribe))
         .await?;
-    Ok((request_id, pending))
+    Ok(SentSubscribe {
+        request_id,
+        sent_at: now(),
+        pending,
+    })
 }
 
 async fn subscribe_ok(
-    request_id: RequestId,
-    pending: PendingResponse,
+    SentSubscribe {
+        request_id,
+        sent_at,
+        pending,
+    }: SentSubscribe,
     track_namespace: &str,
     track_name: &str,
 ) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
@@ -889,6 +965,7 @@ async fn subscribe_ok(
             track_namespace,
             track_name,
             track_alias = message.track_alias,
+            duration_ms = elapsed_ms(sent_at),
             "SUBSCRIBE_OK received"
         );
         return Ok((message.clone(), response));
@@ -904,6 +981,7 @@ async fn subscribe_ok(
                 track_name,
                 ?error_code,
                 %reason_phrase,
+                duration_ms = elapsed_ms(sent_at),
                 "SUBSCRIBE_ERROR received"
             );
             Err(RequestFailure::Rejected {
@@ -935,11 +1013,11 @@ mod tests {
         modules::{
             moqt::domains::connection::IncomingObjectNotification,
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, first_subgroup_stream, location,
-                notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                send_subgroup_object, send_without_waiting, spawn_connected_native_sessions,
-                subgroup_receiver, subscribe_namespace_accepted, subscription,
-                wait_for_control_delivery, within,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, capture_telemetry, first_subgroup_stream,
+                location, notify_datagram, object_with_extensions, read_fetch_objects,
+                read_subgroup_objects, send_subgroup_object, send_without_waiting,
+                spawn_connected_native_sessions, subgroup_receiver, subscribe_namespace_accepted,
+                subscription, wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -2085,5 +2163,67 @@ mod tests {
             panic!("expected UNSUBSCRIBE_NAMESPACE, got {event:?}");
         };
         assert_eq!(handler.track_namespace_prefix(), "room/a");
+    }
+
+    #[tokio::test]
+    async fn subscribe_span_records_request_id_and_ok_outcome() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("subscriber-span-ok").await;
+        let (request, handler) = start_subscribe(&client, &server, "span").await;
+
+        // Act
+        handler.ok(0, ContentExists::False).await.unwrap();
+        within(request).await.unwrap().unwrap();
+
+        // Assert
+        let logged = telemetry.events("SUBSCRIBE_OK received");
+        let spans = telemetry.closed_spans("moqt.subscriber.subscribe");
+        assert_eq!(logged.len(), 1);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].field("request_id"), logged[0].field("request_id"));
+        assert!(spans[0].field("request_id").is_some());
+        assert_eq!(spans[0].field("outcome"), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn subscribe_error_marks_the_span_rejected() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("subscriber-span-rejected").await;
+        let (request, handler) = start_subscribe(&client, &server, "span").await;
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, "rejected".to_string())
+            .await
+            .unwrap();
+        let result = within(request).await.unwrap();
+
+        // Assert
+        assert!(matches!(result, Err(RequestFailure::Rejected { .. })));
+        let spans = telemetry.closed_spans("moqt.subscriber.subscribe");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].field("outcome"), Some("rejected"));
+    }
+
+    #[tokio::test]
+    async fn subscribe_ok_received_log_carries_duration_ms() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("subscriber-duration").await;
+        let (request, handler) = start_subscribe(&client, &server, "span").await;
+
+        // Act
+        handler.ok(0, ContentExists::False).await.unwrap();
+        within(request).await.unwrap().unwrap();
+
+        // Assert
+        let logged = telemetry.events("SUBSCRIBE_OK received");
+        assert_eq!(logged.len(), 1);
+        let duration_ms = logged[0]
+            .field("duration_ms")
+            .expect("duration_ms is logged");
+        assert!(duration_ms.parse::<u64>().unwrap() < HANDSHAKE_TIMEOUT.as_millis() as u64);
     }
 }

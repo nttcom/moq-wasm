@@ -61,13 +61,21 @@ OpenTelemetry 60 s, so a HyperDX chart of the last hour has enough points.
 The relay records the relay-wide values of its stats snapshot through
 `relay_stats::ProcessGauges` (see the observability architecture).
 
-## HTTP trace context
+## Trace context
 
-`inject_trace_context` writes a span's context into an `http::HeaderMap` as
-W3C `traceparent`, and `continue_trace_from` makes a server's span a child of
-the context a request carries. The relay injects it into its `POST /verify`
-call and the VTS continues it, so one trace covers both processes. Both are
-no-ops while OTLP is off, because the global propagator is then a no-op.
+A span's context crosses a process boundary as a W3C `traceparent`.
+`inject_trace_context` writes it into an `http::HeaderMap`, and
+`continue_trace_from` makes a server's span a child of the context a request
+carries. The relay injects it into its `POST /verify` call and the VTS
+continues it, so one trace covers both processes.
+
+`current_traceparent` returns the current span's `traceparent` as a string
+and `continue_trace_from_traceparent` continues one, for carriers other than
+HTTP headers: the relay gives `current_traceparent` to `moqt` as its trace
+context provider, so a request it forwards upstream carries it in
+TRACE_CONTEXT, and continues the TRACE_CONTEXT a client's request carries.
+All four are no-ops while OTLP is off, because the global propagator is then
+a no-op.
 
 ## Lifecycle
 

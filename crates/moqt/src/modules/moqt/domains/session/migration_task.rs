@@ -332,6 +332,10 @@ impl Router {
     }
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a select! result that is matched right away, never stored"
+)]
 enum PreviousSignal {
     Event(Option<SessionEvent>),
     Released,

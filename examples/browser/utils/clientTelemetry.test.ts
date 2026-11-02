@@ -57,3 +57,25 @@ test('a report keeps only the newest 100 logs, the server limit', () => {
   expect(logs[0].message).toBe('log 1')
   expect(sent[0].beacon).toBe(true)
 })
+
+test('a flush sends the wasm spans alone', () => {
+  // Arrange
+  const { telemetry: subject, sent } = telemetry()
+  const span = {
+    traceId: '0123456789abcdef0123456789abcdef',
+    spanId: '0123456789abcdef',
+    name: 'moqt.subscriber.subscribe',
+    startTimeMs: 1,
+    endTimeMs: 2,
+    fields: { outcome: 'ok' }
+  }
+  subject.wasmSpan(span)
+
+  // Act
+  subject.flush()
+
+  // Assert
+  expect(sent).toHaveLength(1)
+  expect(sent[0].body.spans).toEqual([span])
+  expect(sent[0].body.logs).toEqual([])
+})

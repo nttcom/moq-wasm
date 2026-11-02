@@ -11,6 +11,17 @@ export interface LogRecord {
   fields: Record<string, string | number | boolean>
 }
 
+/// A closed INFO or higher `tracing` span from the wasm module. Ids are lowercase hex.
+export interface SpanRecord {
+  traceId: string
+  spanId: string
+  parentSpanId?: string
+  name: string
+  startTimeMs: number
+  endTimeMs: number
+  fields: Record<string, string | number | boolean>
+}
+
 export interface InitOptions {
   /// Overrides where the `.wasm` file is fetched from, for bundlers that do not
   /// rewrite `new URL('moqt_bg.wasm', import.meta.url)`.
@@ -19,17 +30,19 @@ export interface InitOptions {
   onLog?: (record: LogRecord) => void
   /// The lowest level passed to `onLog`. Defaults to `'warn'`.
   logLevel?: LogLevel
+  /// Receives the wasm module's closed spans. Without it, they are discarded.
+  onSpan?: (record: SpanRecord) => void
 }
 
 let loading: Promise<MoqtModule> | null = null
 
-/// Loads the wasm module and, with `onLog`, installs its log sink. The sink is
-/// page-wide, so a second call with `onLog` rejects. Call it before the first
+/// Loads the wasm module and, with `onLog` or `onSpan`, installs its log sink.
+/// The sink is page-wide, so a second call with either rejects. Call it before the first
 /// `MoqSession.connect` to override `wasmUrl`: the first load decides the URL.
 export async function init(options: InitOptions = {}): Promise<void> {
   const moqt = await loadMoqt(options.wasmUrl)
-  if (options.onLog) {
-    moqt.setLogSink(options.onLog, options.logLevel ?? 'warn')
+  if (options.onLog || options.onSpan) {
+    moqt.setLogSink(options.onLog ?? (() => {}), options.logLevel ?? 'warn', options.onSpan)
   }
 }
 

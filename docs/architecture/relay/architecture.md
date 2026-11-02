@@ -222,7 +222,12 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
 - Each session worker opens the event's span (`relay.subscribe`,
   `relay.publish`, …), the one place that lists the event's fields, and logs
   `Received session event` at debug in it; the sequence runs in that span. A request's
-  span roots its own trace, carries `session_id` and `app_id`, and links to
+  span roots its own trace, unless the request carries `TRACE_CONTEXT`: then
+  it continues the client's trace as a child of the client's request span,
+  and a request the relay forwards upstream from inside that span carries
+  the same trace on, so browser → relay-2 → relay-1 is one trace. The relay
+  declares the `TRACE_CONTEXT` Setup Option in its SERVER_SETUP, and an
+  upstream relay's SERVER_SETUP gates the forwarded requests the same way. It carries `session_id` and `app_id`, and links to
   the `relay.session` span, so a session's trace holds only its lifecycle
   (`relay.session.disconnected` or `relay.session.protocol_violation` ends
   it) and a request's trace holds only that request's work. A span that
