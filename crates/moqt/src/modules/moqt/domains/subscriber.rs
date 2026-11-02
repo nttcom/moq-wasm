@@ -27,7 +27,7 @@ use crate::{
             elapsed_ms,
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
-            request_failure::record_outcome,
+            request_failure::{record_outcome, record_request_id},
             session_context::{CarriedSubscription, PendingFetch, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
@@ -68,8 +68,10 @@ impl Subscriber {
         let mut carried = loop {
             let carried = self.session.lock_carried().await;
             let connection = self.session.connection();
-            match send_subscribe_namespace(&connection, namespace.clone()).await {
-                Ok(()) => break carried,
+            let sent = send_subscribe_namespace(&connection, namespace.clone()).await;
+            record_request_id(&sent, |request_id| *request_id);
+            match sent {
+                Ok(_) => break carried,
                 Err(error) => {
                     self.session
                         .resend_after(carried, &connection, error)
@@ -130,6 +132,7 @@ impl Subscriber {
                 let sent =
                     send_subscribe_request(&connection, &track_namespace, &track_name, &option)
                         .await?;
+                tracing::Span::current().record("request_id", sent.request_id);
                 let joining_fetch = if joining {
                     self.send_joining_fetch(&connection, sent.request_id)
                         .await
@@ -801,11 +804,10 @@ fn repeated_update(subscription: &Subscription, forward: bool) -> SubscribeUpdat
 pub(crate) async fn send_subscribe_namespace(
     connection: &Connection,
     namespace: String,
-) -> Result<(), RequestFailure> {
+) -> Result<RequestId, RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
-    tracing::Span::current().record("request_id", request_id);
     let pending = connection
         .control
         .send_request(
@@ -831,7 +833,7 @@ pub(crate) async fn send_subscribe_namespace(
                     track_namespace_prefix = %namespace,
                     "SUBSCRIBE_NAMESPACE_OK received"
                 );
-                Ok(())
+                Ok(request_id)
             }
         }
         ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
@@ -911,7 +913,6 @@ async fn send_subscribe_request(
 ) -> Result<SentSubscribe, RequestFailure> {
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
-    tracing::Span::current().record("request_id", request_id);
     let subscribe = Subscribe {
         request_id,
         track_namespace: namespace_tuple(track_namespace),

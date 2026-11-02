@@ -21,7 +21,7 @@ use crate::{
             connection::{Connection, logical_id},
             elapsed_ms, namespace_tuple,
             pending_publish_namespace::PendingPublishNamespace,
-            request_failure::record_outcome,
+            request_failure::{record_outcome, record_request_id},
             send_targets::SendTargets,
             session_context::{Publication, PublicationTarget, SessionContext},
             subscription::{PublisherInitiatedSubscription, Subscription},
@@ -54,6 +54,7 @@ impl Publisher {
 
     async fn publish_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
         let (connection, pending) = self.announce(namespace).await?;
+        tracing::Span::current().record("request_id", pending.request_id);
         match pending.accepted().await {
             // The namespace is carried from the moment it was sent, and a
             // migration fails unless the new connection accepts it.
@@ -200,7 +201,9 @@ impl Publisher {
         let (_carried, connection, publish_ok, track_alias) = loop {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
-            match send_publish(&connection, &track_namespace, &track_name, &option).await {
+            let sent = send_publish(&connection, &track_namespace, &track_name, &option).await;
+            record_request_id(&sent, |(publish_ok, _)| publish_ok.request_id);
+            match sent {
                 Ok((publish_ok, track_alias)) => {
                     break (carried, connection, publish_ok, track_alias);
                 }
@@ -288,7 +291,6 @@ pub(crate) async fn send_publish_namespace(
     let vec_namespace = namespace_tuple(&namespace);
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
-    tracing::Span::current().record("request_id", request_id);
     let pending = connection
         .control
         .send_request(
@@ -317,7 +319,6 @@ pub(crate) async fn send_publish(
     let track_alias = connection.allocate_track_alias();
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
-    tracing::Span::current().record("request_id", request_id);
     let publish = Publish {
         request_id,
         track_namespace_tuple: namespace_tuple(track_namespace),

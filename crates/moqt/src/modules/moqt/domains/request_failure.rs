@@ -25,6 +25,21 @@ pub enum RequestFailure {
     ProtocolViolation(&'static str),
 }
 
+/// Records on the current span the id of the request a response answered:
+/// the one `request_id` reads from an `Ok`, or the one a rejection names. A
+/// request that was never answered records nothing.
+pub(crate) fn record_request_id<T>(
+    result: &Result<T, RequestFailure>,
+    request_id: impl FnOnce(&T) -> u64,
+) {
+    let request_id = match result {
+        Ok(answered) => request_id(answered),
+        Err(RequestFailure::Rejected { request_id, .. }) => *request_id,
+        Err(_) => return,
+    };
+    tracing::Span::current().record("request_id", request_id);
+}
+
 /// Records on the current span how a request ended: `ok` when its `*_OK`
 /// arrived, `rejected` when the peer answered `*_ERROR`, `failed` otherwise.
 pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {
