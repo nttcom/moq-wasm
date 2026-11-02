@@ -33,7 +33,7 @@ export const LOAD_BALANCED_RELAY_PRESET: RelayPreset = {
   helper: 'Load-balanced cloud relay'
 }
 
-const RELAY_URL_PARAM_NAMES = ['relayUrl', 'moqtUrl', 'url', 'relay']
+export const RELAY_URL_PARAM_NAMES = ['relayUrl', 'moqtUrl', 'url', 'relay']
 
 function getLocalRelayUrls(): { relayAUrl: string; relayBUrl: string } {
   return {
