@@ -8,7 +8,7 @@ function observeArrivals(buffer: JitterBuffer): void {
   const delaysMs = [0, ...Array<number>(94).fill(50), ...Array<number>(5).fill(500)]
   delaysMs.forEach((delayMs, index) => {
     const captureMs = index * ARRIVAL_INTERVAL_MS
-    buffer.observe(captureMs * MICROS_PER_MILLI, captureMs + delayMs)
+    buffer.observe('audio', captureMs * MICROS_PER_MILLI, captureMs + delayMs)
   })
 }
 

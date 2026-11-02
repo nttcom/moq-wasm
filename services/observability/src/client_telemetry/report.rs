@@ -57,11 +57,13 @@ pub(super) struct PlayerStatValues {
     pub(super) video_dropped_frames: Option<f64>,
     pub(super) video_late_frames: Option<f64>,
     #[serde(default)]
-    pub(super) max_arrival_gap_ms: ArrivalGaps,
+    pub(super) max_arrival_gap_ms: PerMediaKind,
+    #[serde(default)]
+    pub(super) arrival_delay_ms: PerMediaKind,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub(super) struct ArrivalGaps {
+pub(super) struct PerMediaKind {
     pub(super) video: Option<f64>,
     pub(super) audio: Option<f64>,
 }
@@ -106,7 +108,7 @@ mod tests {
         let body = json!({
             "clientId": "c1",
             "page": "live-viewer",
-            "stats": [{ "timeMs": 1, "values": { "bufferMs": 120.5, "videoDrops": "0/0", "maxArrivalGapMs": { "video": 40 } } }],
+            "stats": [{ "timeMs": 1, "values": { "bufferMs": 120.5, "videoDrops": "0/0", "maxArrivalGapMs": { "video": 40 }, "arrivalDelayMs": { "audio": 8, "video": 2254 } } }],
         });
 
         // Act
@@ -117,6 +119,8 @@ mod tests {
         assert_eq!(values.buffer_ms, Some(120.5));
         assert_eq!(values.viewer_delay_ms, None);
         assert_eq!(values.max_arrival_gap_ms.video, Some(40.0));
+        assert_eq!(values.arrival_delay_ms.audio, Some(8.0));
+        assert_eq!(values.arrival_delay_ms.video, Some(2254.0));
         assert!(report.logs.is_empty());
     }
 

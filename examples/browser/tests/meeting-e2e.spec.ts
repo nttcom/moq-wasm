@@ -151,6 +151,45 @@ test('cross-relay: two clients on different relays see each other and receive vi
   }
 })
 
+// NaN while the stats line shows no delays yet, so a poll on them keeps waiting.
+async function arrivalDelaysMs(stats: import('@playwright/test').Locator): Promise<{ audio: number; video: number }> {
+  const match = (await stats.textContent())?.match(/arrival delay A (-?\d+) \/ V (-?\d+) ms/)
+  return match ? { audio: Number(match[1]), video: Number(match[2]) } : { audio: Number.NaN, video: Number.NaN }
+}
+
+test('a camera whose first frame comes seconds after it is turned on stays in step with the audio', async ({
+  browser
+}) => {
+  // Arrange: alice's camera sends no frame for 2.4 s after it is turned on
+  const alice = await arrangeMeetingClient(browser, { cameraWarmupMs: 2_400 })
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-camera-warmup-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+
+    // Act
+    await enableMedia(alice.page)
+    await subscribeAndExpectMedia(bob.page.page, 'alice')
+
+    // Assert: alice's video arrives at bob as far behind its capture as her audio does
+    const stats = getMemberStats(bob.page.page, 'alice')
+    await expect
+      .poll(
+        async () => {
+          const { audio, video } = await arrivalDelaysMs(stats)
+          return Math.abs(audio - video)
+        },
+        { timeout: 30_000 }
+      )
+      .toBeLessThan(300)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
 test('unmuting a member microphone keeps their picture on the viewer page', async ({ browser }) => {
   // Arrange: alice plays bob's video and audio, then bob turns his microphone off
   const alice = await arrangeMeetingClient(browser)

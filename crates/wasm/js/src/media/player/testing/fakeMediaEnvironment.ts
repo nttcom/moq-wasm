@@ -56,7 +56,7 @@ export class FakeMediaEnvironment {
   private fakeGlobals(): Record<(typeof FAKED_GLOBALS)[number], unknown> {
     const environment = this
     return {
-      performance: { now: () => environment.nowMs },
+      performance: { now: () => environment.nowMs, timeOrigin: 0 },
       setTimeout: (callback: () => void, delayMs = 0) => {
         const id = environment.nextTimerId++
         environment.timers.push({ id, dueMs: environment.nowMs + delayMs, callback })

@@ -1,6 +1,7 @@
 import { AudioPlayout } from './audioPlayout'
 import { type BufferPolicy, JitterBuffer } from './jitterBuffer'
 import { PlayoutClock, syncOffsetMs, type PlayoutOrigin } from './playoutClock'
+import type { MediaKind } from './trackContext'
 import { VideoPlayout } from './videoPlayout'
 
 export const DEFAULT_BUFFER_POLICY: BufferPolicy = { minimumMs: 200, maximumMs: Number.POSITIVE_INFINITY }
@@ -81,7 +82,7 @@ export class LivePlayout {
       this.hold({ kind: 'video', frame, captureMicros, arrivedAtMs })
       return
     }
-    this.jitterBuffer.observe(captureMicros, arrivedAtMs)
+    this.jitterBuffer.observe('video', captureMicros, arrivedAtMs)
     const nowMs = performance.now()
     const master = !this.audioActive()
     if (master) {
@@ -123,7 +124,7 @@ export class LivePlayout {
     }
     const arrivedAtMs = performance.now()
     if (this.scheduleAudio(audioData, captureMicros)) {
-      this.jitterBuffer.observe(captureMicros, arrivedAtMs)
+      this.jitterBuffer.observe('audio', captureMicros, arrivedAtMs)
     }
   }
 
@@ -171,6 +172,13 @@ export class LivePlayout {
   fastestArrivalDelayMs(): number | undefined {
     const fastestDelayMs = this.jitterBuffer.fastestDelayMs()
     return fastestDelayMs === undefined ? undefined : fastestDelayMs + performance.timeOrigin
+  }
+
+  /// Median capture-to-arrival delay of the window's live samples of `kind`,
+  /// on the Unix clock like `fastestArrivalDelayMs`.
+  arrivalDelayMs(kind: MediaKind): number | undefined {
+    const medianDelayMs = this.jitterBuffer.medianDelayMs(kind)
+    return medianDelayMs === undefined ? undefined : medianDelayMs + performance.timeOrigin
   }
 
   arrivalSpreadMs(): number | undefined {

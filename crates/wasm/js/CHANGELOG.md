@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `LiveStats.arrivalDelayMs` gives the median delay from capture to arrival
+  of the live audio and video over the last 10 s; their difference tells
+  which kind lags the other and by how much.
 - `publish()` stamps each encoder's chunks from the capture time of its first
   frame instead of from when the encoder started; until now a camera whose
   first frame came seconds after the encoder started had its video stamped
