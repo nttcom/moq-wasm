@@ -14,7 +14,7 @@ const RESERVED_ATTRIBUTES: [&str; 3] = ["app_id", "client_id", "target"];
 /// Name, unit, kind and value of one player data point.
 type Measurement = (&'static str, &'static str, Kind, Option<f64>);
 
-fn player_measurements(values: &PlayerStatValues) -> [Measurement; 6] {
+fn player_measurements(values: &PlayerStatValues) -> [Measurement; 10] {
     [
         (
             "client.player.viewer_delay",
@@ -42,6 +42,30 @@ fn player_measurements(values: &PlayerStatValues) -> [Measurement; 6] {
             values.audio_concealed_ms,
         ),
         ("client.player.shed", "ms", Counter, values.shed_ms),
+        (
+            "client.player.arrival_spread",
+            "ms",
+            Gauge,
+            values.arrival_spread_ms,
+        ),
+        (
+            "client.player.av_sync_offset",
+            "ms",
+            Gauge,
+            values.sync_offset_ms,
+        ),
+        (
+            "client.player.video_dropped",
+            "{frame}",
+            Counter,
+            values.video_dropped_frames,
+        ),
+        (
+            "client.player.video_late",
+            "{frame}",
+            Counter,
+            values.video_late_frames,
+        ),
     ]
 }
 
@@ -239,7 +263,13 @@ mod tests {
             "page": "live-viewer",
             "stats": [{
                 "timeMs": 1000,
-                "values": { "bufferMs": 120.5, "audioBreaks": 3, "maxArrivalGapMs": { "audio": 25 } },
+                "values": {
+                    "bufferMs": 120.5,
+                    "audioBreaks": 3,
+                    "syncOffsetMs": -6.5,
+                    "videoDroppedFrames": 4,
+                    "maxArrivalGapMs": { "audio": 25 },
+                },
             }],
         }));
 
@@ -260,6 +290,10 @@ mod tests {
         let breaks = &metric(&request, "client.player.audio_breaks")["sum"];
         assert_eq!(breaks["isMonotonic"], true);
         assert_eq!(breaks["dataPoints"][0]["asDouble"], 3.0);
+        let sync_offset = &metric(&request, "client.player.av_sync_offset")["gauge"];
+        assert_eq!(sync_offset["dataPoints"][0]["asDouble"], -6.5);
+        let dropped = &metric(&request, "client.player.video_dropped")["sum"];
+        assert_eq!(dropped["dataPoints"][0]["asDouble"], 4.0);
         let gaps = metric(&request, "client.player.max_arrival_gap")["gauge"]["dataPoints"]
             .as_array()
             .unwrap();
