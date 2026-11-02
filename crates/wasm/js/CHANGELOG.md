@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `publish()` stamps each encoder's chunks from the capture time of its first
+  frame instead of from when the encoder started; until now a camera whose
+  first frame came seconds after the encoder started had its video stamped
+  that much early, and receivers played audio that much late.
 - The audio `publish()` sends keeps its capture timestamps after a gap in the
   microphone's timestamps; until now each one was off by the gap from then on.
 - `moq-wasm`: `init({ wasmUrl, onLog, logLevel })` loads the wasm module and

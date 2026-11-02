@@ -2,6 +2,7 @@ import type { MoqSession } from '../core/session'
 import type { MediaSource } from '../../pkg/moqt'
 import type { AudioLevel } from './internal/loc'
 import { capturePcm } from './internal/encoders/pcmCapture'
+import { EncoderTimeline } from './internal/encoders/encoderTimeline'
 
 export type SourceOptions = {
   /// The video's label in the catalog.
@@ -62,7 +63,12 @@ export type Publication = SourcePublication & {
 
 const DEFAULT_KEYFRAME_INTERVAL_FRAMES = 60
 
-type ChunkMessage<Chunk, Metadata> = { type: 'chunk'; chunk: Chunk; metadata: Metadata | undefined }
+type ChunkMessage<Chunk, Metadata> = {
+  type: 'chunk'
+  chunk: Chunk
+  metadata: Metadata | undefined
+  captureTimestampMicros: number | undefined
+}
 
 /// Stops one kind's encoder worker and what feeds it.
 type Encoder = { stop: () => void }
@@ -89,9 +95,9 @@ export async function publish(
   }
   const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
   // A new encoder worker stamps its first chunk 0, so the chunks of a worker
-  // started after an unmute or a replaced track are shifted by the time since
-  // the publication began: a source's timestamps never run backwards, which
-  // would reuse its group ids and capture times.
+  // started after an unmute or a replaced track are placed from the
+  // publication's start (see `EncoderTimeline`): a source's timestamps never
+  // run backwards, which would reuse its group ids and capture times.
   const startedAtMs = performance.now()
   const camera = publishSource(
     broadcast.addSource('video', options.videoLabel ?? 'Video', videoBitrate(options), 'audio', 'Audio'),
@@ -150,10 +156,13 @@ function publishSource(
     source.addRendition(name, label, bitrate)
   )
   const encode = (kind: MediaKind, track: MediaStreamTrack) => {
-    const offsetMicros = Math.round((performance.now() - startedAtMs) * 1000)
+    const timeline = new EncoderTimeline(
+      Math.round((performance.timeOrigin + startedAtMs) * 1000),
+      Math.round((performance.now() - startedAtMs) * 1000)
+    )
     return kind === 'video'
-      ? encodeVideo(source, track, options, renditionIndices, offsetMicros, report)
-      : encodeAudio(source, track, offsetMicros, report)
+      ? encodeVideo(source, track, options, renditionIndices, timeline, report)
+      : encodeAudio(source, track, timeline, report)
   }
   const kinds = new Map<MediaKind, Encoding>()
   for (const [kind, track] of [
@@ -233,7 +242,7 @@ function encodeVideo(
   track: MediaStreamTrack,
   options: SourceOptions,
   renditionIndices: number[],
-  offsetMicros: number,
+  timeline: EncoderTimeline,
   report: (error: unknown) => void
 ): Encoder {
   const worker = new Worker(new URL('./internal/encoders/videoEncoder.ts', import.meta.url), {
@@ -254,7 +263,8 @@ function encodeVideo(
     if (event.data.type !== 'chunk') {
       return
     }
-    const { chunk, metadata, rendition } = event.data
+    const { chunk, metadata, rendition, captureTimestampMicros } = event.data
+    const timestampMicros = timeline.place(chunk.timestamp, captureTimestampMicros)
     const renditionIndex = rendition === 0 ? undefined : renditionIndices[rendition - 1]
     try {
       const codec = metadata?.decoderConfig?.codec
@@ -267,9 +277,9 @@ function encodeVideo(
         configuredCodecs[rendition] = codec
       }
       if (renditionIndex === undefined) {
-        source.pushVideo(copied(chunk), chunk.timestamp + offsetMicros)
+        source.pushVideo(copied(chunk), timestampMicros)
       } else {
-        source.pushRenditionVideo(renditionIndex, copied(chunk), chunk.timestamp + offsetMicros)
+        source.pushRenditionVideo(renditionIndex, copied(chunk), timestampMicros)
       }
     } catch (error) {
       report(error)
@@ -316,7 +326,7 @@ function encodeVideo(
 function encodeAudio(
   source: MediaSource,
   track: MediaStreamTrack,
-  offsetMicros: number,
+  timeline: EncoderTimeline,
   report: (error: unknown) => void
 ): Encoder {
   const worker = new Worker(new URL('./internal/encoders/audioEncoder.ts', import.meta.url), {
@@ -329,7 +339,8 @@ function encodeAudio(
     if (event.data.type !== 'chunk') {
       return
     }
-    const { chunk, metadata, audioLevel } = event.data
+    const { chunk, metadata, audioLevel, captureTimestampMicros } = event.data
+    const timestampMicros = timeline.place(chunk.timestamp, captureTimestampMicros)
     try {
       const config = metadata?.decoderConfig
       if (config) {
@@ -342,7 +353,7 @@ function encodeAudio(
         configured = true
       }
       if (configured) {
-        source.pushAudio(copied(chunk), chunk.timestamp + offsetMicros, audioLevel?.level, audioLevel?.voiceActivity)
+        source.pushAudio(copied(chunk), timestampMicros, audioLevel?.level, audioLevel?.voiceActivity)
       }
     } catch (error) {
       report(error)
