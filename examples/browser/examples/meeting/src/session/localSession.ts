@@ -6,7 +6,7 @@ import {
   type ReceivedObject,
   type TrackWriter
 } from 'moq-wasm'
-import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
+import { CATALOG_TRACK_NAME } from 'moq-wasm/media'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'

@@ -4,7 +4,7 @@ import { AdaptiveBitrate, type Rung, capLadderToHeight } from 'moq-wasm/media/pl
 import { RenditionSplice } from 'moq-wasm/media/player/renditionSplice'
 import { monotonicUnixMicros } from 'moq-wasm/media/internal/clock'
 import { type AudioLevel, readLocHeader } from 'moq-wasm/media/internal/loc'
-import type { MediaKind } from 'moq-wasm/media/player/trackContext'
+import type { MediaKind } from 'moq-wasm/media'
 import type { TrackMediaConfig } from '../types/catalog'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
