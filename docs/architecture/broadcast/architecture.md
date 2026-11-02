@@ -51,8 +51,10 @@ sent; `Broadcast::wait_for_subscriber` resolves on the first SUBSCRIBE accepted
 in the namespace, so a source such as an ONVIF camera can be started only when
 a viewer arrives. `Broadcast::declare_tracks` extends the same to tracks a
 subscriber knows by name before any catalog lists them, such as the camera
-video a tracking bot subscribes to directly. A SUBSCRIBE for any other track is rejected with
-TRACK_DOES_NOT_EXIST.
+video a tracking bot subscribes to directly. A SUBSCRIBE for another track
+this crate has published, such as one `remove_track` dropped, is rejected with
+TRACK_DOES_NOT_EXIST; one for any other track is handled like a SUBSCRIBE in a
+namespace no broadcast publishes (see "Sharing a session").
 
 A source that stops, such as a muted microphone or an ended screen share,
 leaves with `Broadcast::remove_track`: the catalog without the track is sent
@@ -140,10 +142,11 @@ events and passes each to `RelayConnection::handle`, which answers SUBSCRIBE,
 UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS for the broadcasts and
 returns the rest, `Disconnected` included after it ended the broadcasts'
 sends. The broadcasts write into the `Origin` the owner passes, so the owner
-can publish tracks of its own on the same session: a SUBSCRIBE in a namespace
-no broadcast here publishes, and an UNSUBSCRIBE that `Origin` does not know,
-go back to the owner, while FETCH and TRACK_STATUS are answered from the shared
-`Origin`. The stream ledger and catalog state belong to the connection; the
+can publish tracks of its own on the same session. These go back to the owner:
+a SUBSCRIBE in a namespace no broadcast here publishes or for a track no
+broadcast here has published, such as a page's prompt track next to its
+camera, and an UNSUBSCRIBE that `Origin` does not know. FETCH and TRACK_STATUS
+are answered from the shared `Origin`. The stream ledger and catalog state belong to the connection; the
 session's lifetime belongs to its owner, so `close` leaves it open. A
 connection that opened its own session rejects the SUBSCRIBEs no broadcast
 takes with TRACK_DOES_NOT_EXIST.
