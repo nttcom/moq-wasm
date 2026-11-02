@@ -4,7 +4,9 @@ import { pageRoomId } from '../../utils/botRoom'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 
+startPageTelemetry('moq-camera-detection', () => element<HTMLInputElement>('url').value.trim())
 const ROOM = pageRoomId()
 const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', ROOM, 'camera']
 const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', ROOM, 'detector']

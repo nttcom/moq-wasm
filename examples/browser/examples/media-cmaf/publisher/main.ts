@@ -11,11 +11,13 @@ import {
 } from 'mediabunny'
 import { setUpVisualizerToggle } from '../../media/visualizerToggle'
 import { element, parseTrackNamespace, initializeMediaExamplePage } from '../../../utils/page'
+import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let mediaStream: MediaStream | null = null
 let session: MoqSession | undefined
 const writers: Record<'video' | 'audio', TrackWriter[]> = { video: [], audio: [] }
 const form = element<HTMLFormElement>('form')
+startPageTelemetry('media-cmaf-publisher', () => form.url.value)
 const videoTrackNames = MEDIA_VIDEO_PROFILES.map((profile) => profile.trackName)
 const audioTrackNames = MEDIA_AUDIO_PROFILES.map((profile) => profile.trackName)
 

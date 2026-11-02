@@ -8,12 +8,14 @@ import {
 } from 'moq-wasm'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { element, getErrorMessage, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 let announcement: Announcement | undefined
 let watch: MoqNamespaceWatch | undefined
 let writer: TrackWriter | undefined
 let subscription: MoqSubscription | undefined
+startPageTelemetry('message', () => value('url'))
 
 function value(id: string): string {
   return element<HTMLInputElement>(id).value.trim()
