@@ -105,35 +105,37 @@ flowchart LR
         BOT[AI agents<br/>pipecat bots]
         CLI2[moq-cli]
     end
-    Publishers -- PUBLISH / SUBSCRIBE / FETCH<br/>QUIC or WebTransport --> RA
+    Publishers -- PUBLISH / SUBSCRIBE / FETCH<br/>QUIC, WebTransport or WebSocket --> RA
     RB --> Subscribers
 ```
 
-Every client speaks MoQT to a relay over QUIC or WebTransport. Relays cache
-objects for FETCH, forward subscriptions to each other and authenticate
-sessions through the VTS. The `moqt` crate is the protocol library every other
-component builds on. Libraries live in `crates/<package name>/` and
-the servers and bridges built on them in `services/<package name>/`.
+Every client speaks MoQT to a relay over QUIC, WebTransport or WebSocket.
+Relays cache objects for FETCH, forward subscriptions to each other and
+authenticate sessions through the VTS. The `moqt` crate is the protocol
+library every other component builds on. Libraries, bindings and plugins live
+in `crates/<package name>/` and the servers and bridges built on them in
+`services/<package name>/`.
 
 | Path | Component |
 | --- | --- |
 | [`crates/moqt/`](crates/moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
-| [`services/relay/`](services/relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
+| [`services/relay/`](services/relay/README.md) | Relay: QUIC, WebTransport and WebSocket on one port, cache, FETCH, cascading, JWT auth |
 | [`crates/wasm/`](crates/wasm/README.md) | WebAssembly bindings used by the browser examples |
+| [`crates/python/`](crates/python/README.md) | Python (PyO3) bindings used by the pipecat bots |
 | [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
 | [`services/live-ingest/`](services/live-ingest/README.md) | RTMP and SRT ingest into MoQT |
 | [`services/onvif-ingest/`](services/onvif-ingest/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
+| [`services/live-egress/`](services/live-egress/README.md) | Subscribes to a broadcast and sends it as plain RTP |
+| [`services/recorder/`](services/recorder/README.md) | Records a broadcast from a relay into a fragmented MP4 file |
 | [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, the broadcast's track layout, re-encoding |
-| [`services/vts/`](services/vts/README.md), [`auth-token/`](crates/auth-token/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type |
+| [`services/vts/`](services/vts/README.md), [`auth-token/`](crates/auth-token/README.md), [`app-registry/`](crates/app-registry/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type; the registry of apps whose secrets sign the JWTs |
+| [`services/console/`](services/console/README.md) | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
+| [`crates/telemetry/`](crates/telemetry), [`services/observability/`](services/observability) | Shared `tracing` setup and the relay stats snapshot format; the server that fills ClickHouse from the relays' snapshots |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
 | [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |
 
-Architecture documents:
-[`moqt`](docs/architecture/moqt/architecture.md),
-[`relay`](docs/architecture/relay/architecture.md),
-[`broadcast`](docs/architecture/broadcast/architecture.md),
-[Live Player](docs/architecture/browser-examples/live-player.md).
+Architecture documents: [`docs/architecture/<package name>/`](docs/architecture).
 Contributor rules: [`AGENTS.md`](AGENTS.md).
 
 ## Authentication
