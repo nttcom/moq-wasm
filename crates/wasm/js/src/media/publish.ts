@@ -78,7 +78,12 @@ export async function publish(
   options: PublishOptions = {}
 ): Promise<Publication> {
   const broadcast = session.broadcast(namespace)
-  await broadcast.announce()
+  // The catalog lists a track only at its first frame; a subscriber that knows
+  // the track's name may subscribe before that.
+  await broadcast.declareTracks([
+    ...(stream.getVideoTracks().length > 0 ? ['video'] : []),
+    ...(stream.getAudioTracks().length > 0 ? ['audio'] : [])
+  ])
   if (options.offerChat) {
     await broadcast.offerChat()
   }

@@ -9,6 +9,9 @@
   (`BufferPolicy`, `CatchUp`, `LivePictureKind`, `LiveStats`,
   `DeliveryObserver`, `Playhead`, `StreamKind`), `formatLiveStats`, and
   `monotonicUnixMicros`, the clock of the capture timestamps.
+- `publish()` accepts a SUBSCRIBE for the `video` and `audio` of the stream it
+  is given before their first frame; `MediaBroadcast.declareTracks` does the
+  same for any track.
 
 ## 0.1.0
 
