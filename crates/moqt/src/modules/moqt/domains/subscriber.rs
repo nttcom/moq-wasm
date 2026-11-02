@@ -1,10 +1,11 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tracing::Instrument;
 
 use crate::{
     RequestErrorCode, RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
     fetch::FetchOption,
+    modules::executor::now,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -23,6 +24,7 @@ use crate::{
         },
         domains::{
             connection::{Connection, generation_of, logical_id},
+            elapsed_ms,
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
             request_failure::record_outcome,
@@ -436,6 +438,7 @@ impl Subscriber {
         Ok(SentFetch {
             connection,
             request_id,
+            sent_at: now(),
             pending_fetch,
             response,
         })
@@ -452,6 +455,7 @@ impl Subscriber {
         });
         let SentFetch {
             connection,
+            sent_at,
             pending_fetch,
             response,
             ..
@@ -459,6 +463,11 @@ impl Subscriber {
         let response = response.response().await?.accept();
         match response {
             ResponseMessage::FetchOk(fetch_ok) => {
+                tracing::info!(
+                    request_id = fetch_ok.request_id,
+                    duration_ms = elapsed_ms(sent_at),
+                    "FETCH_OK received"
+                );
                 pending_fetch.keep();
                 let mut handle = FetchHandle::new(FetchOk {
                     request_id: logical_id(connection.generation, fetch_ok.request_id),
@@ -468,6 +477,13 @@ impl Subscriber {
                 Ok(handle)
             }
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
+                tracing::info!(
+                    request_id,
+                    ?error_code,
+                    %reason_phrase,
+                    duration_ms = elapsed_ms(sent_at),
+                    "FETCH_ERROR received"
+                );
                 Err(RequestFailure::Rejected {
                     request_id,
                     code: error_code,
@@ -842,6 +858,7 @@ pub(crate) async fn send_subscribe_namespace(
 pub(crate) struct SentFetch {
     connection: Arc<Connection>,
     request_id: RequestId,
+    sent_at: Duration,
     pending_fetch: PendingFetch,
     response: PendingResponse,
 }
@@ -882,6 +899,7 @@ pub(crate) async fn send_subscribe(
 /// A SUBSCRIBE written to the peer; `subscribe_ok` reads its answer.
 struct SentSubscribe {
     request_id: RequestId,
+    sent_at: Duration,
     pending: PendingResponse,
 }
 
@@ -911,6 +929,7 @@ async fn send_subscribe_request(
         .await?;
     Ok(SentSubscribe {
         request_id,
+        sent_at: now(),
         pending,
     })
 }
@@ -918,6 +937,7 @@ async fn send_subscribe_request(
 async fn subscribe_ok(
     SentSubscribe {
         request_id,
+        sent_at,
         pending,
     }: SentSubscribe,
     track_namespace: &str,
@@ -932,6 +952,7 @@ async fn subscribe_ok(
             track_namespace,
             track_name,
             track_alias = message.track_alias,
+            duration_ms = elapsed_ms(sent_at),
             "SUBSCRIBE_OK received"
         );
         return Ok((message.clone(), response));
@@ -947,6 +968,7 @@ async fn subscribe_ok(
                 track_name,
                 ?error_code,
                 %reason_phrase,
+                duration_ms = elapsed_ms(sent_at),
                 "SUBSCRIBE_ERROR received"
             );
             Err(RequestFailure::Rejected {
@@ -2170,5 +2192,25 @@ mod tests {
         let spans = telemetry.closed_spans("moqt.subscriber.subscribe");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].field("outcome"), Some("rejected"));
+    }
+
+    #[tokio::test]
+    async fn subscribe_ok_received_log_carries_duration_ms() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("subscriber-duration").await;
+        let (request, handler) = start_subscribe(&client, &server, "span").await;
+
+        // Act
+        handler.ok(0, ContentExists::False).await.unwrap();
+        within(request).await.unwrap().unwrap();
+
+        // Assert
+        let logged = telemetry.events("SUBSCRIBE_OK received");
+        assert_eq!(logged.len(), 1);
+        let duration_ms = logged[0]
+            .field("duration_ms")
+            .expect("duration_ms is logged");
+        assert!(duration_ms.parse::<u64>().unwrap() < HANDSHAKE_TIMEOUT.as_millis() as u64);
     }
 }

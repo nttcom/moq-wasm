@@ -121,6 +121,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `url` | The URL a client connects to |
 | `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |
 | `remote_address` / `previous_remote_address` | The peer's address on a session's connection, and the one it replaced when the peer migrated |
+| `duration_ms` | Milliseconds from writing a request to receiving its response |
 
 A span that lives longer than the request that starts it (a track, a session) roots its own trace and links to the request's span: a span closes only after its children, so a long-lived child would hold its parent's trace unexported.
 

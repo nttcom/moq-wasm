@@ -4,6 +4,7 @@ use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestE
 
 use crate::{
     RequestFailure,
+    modules::executor::now,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -18,7 +19,7 @@ use crate::{
         },
         domains::{
             connection::{Connection, logical_id},
-            namespace_tuple,
+            elapsed_ms, namespace_tuple,
             pending_publish_namespace::PendingPublishNamespace,
             request_failure::record_outcome,
             send_targets::SendTargets,
@@ -329,13 +330,12 @@ pub(crate) async fn send_publish(
         delivery_timeout: None,
         max_duration: option.max_cache_duration,
     };
-    let response = connection
+    let pending = connection
         .control
         .send_request(reservation, OutgoingRequest::Publish(publish))
-        .await?
-        .response()
-        .await?
-        .accept();
+        .await?;
+    let sent_at = now();
+    let response = pending.response().await?.accept();
     match response {
         ResponseMessage::PublishOk(message) if message.request_id == request_id => {
             tracing::info!(
@@ -343,6 +343,7 @@ pub(crate) async fn send_publish(
                 track_namespace,
                 track_name,
                 track_alias,
+                duration_ms = elapsed_ms(sent_at),
                 "PUBLISH_OK received"
             );
             Ok((message, track_alias))
@@ -357,6 +358,7 @@ pub(crate) async fn send_publish(
                 track_name,
                 ?error_code,
                 %reason_phrase,
+                duration_ms = elapsed_ms(sent_at),
                 "PUBLISH_ERROR received"
             );
             Err(RequestFailure::Rejected {
