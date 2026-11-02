@@ -579,7 +579,8 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
-    /// The tracks the session holds a producer of.
+    /// The tracks the session holds a producer of, whatever its origin
+    /// (PUBLISH or SUBSCRIBE).
     pub(crate) fn tracks_fed_by(&self, publisher_session_id: SessionId) -> Vec<TrackKey> {
         self.upstream_tracks
             .iter()
