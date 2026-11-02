@@ -1,6 +1,6 @@
 use std::{mem, time::Duration};
 
-use relay_stats::RelaySnapshot;
+use telemetry::relay_stats::RelaySnapshot;
 use tokio::{
     sync::mpsc,
     task::{JoinHandle, JoinSet},

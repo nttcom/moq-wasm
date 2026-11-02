@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use relay_stats::RelaySnapshot;
+use telemetry::relay_stats::RelaySnapshot;
 use tokio::time::Instant;
 
 /// A relay that sent no snapshot for this long has stopped or lost its
@@ -39,7 +39,7 @@ impl LatestSnapshots {
 
 #[cfg(test)]
 mod tests {
-    use relay_stats::RelaySnapshot;
+    use telemetry::relay_stats::RelaySnapshot;
 
     use super::{LatestSnapshots, RELAY_SILENCE};
     use crate::test_support;

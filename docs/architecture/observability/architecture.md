@@ -50,7 +50,7 @@ time *t* is the snapshot at *t*.
 
 ### Snapshot payload
 
-The type is `relay_stats::RelaySnapshot` (`crates/relay-stats`). Counters are
+The type is `telemetry::relay_stats::RelaySnapshot`. Counters are
 cumulative since the session, track cache or subscription started; rates are
 derived from consecutive snapshots, so a lost snapshot loses no traffic.
 `…_since_last_snapshot_…` and `lag_…` fields are gauges.
@@ -265,7 +265,7 @@ relay and table every second, and with `wait_for_async_insert = 0` a failed
 flush shows only in the ClickHouse log. A failed INSERT is logged and its batch
 dropped, and a restart loses the snapshots of the last interval, so charts
 trail the live view by up to 30 seconds. Inserts set `input_format_skip_unknown_fields`, so a
-field added to `relay-stats` is ignored until a column exists for it.
+field added to the snapshot is ignored until a column exists for it.
 Tables are created with `IF NOT EXISTS`, and every startup also runs
 `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for each column, so a database
 created by an older build gains the columns added since. A removed or retyped

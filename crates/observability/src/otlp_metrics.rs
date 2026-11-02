@@ -1,5 +1,5 @@
-use relay_stats::{ProcessStats, RelaySnapshot, SessionStats};
 use serde_json::{Value, json};
+use telemetry::relay_stats::{ProcessStats, RelaySnapshot, SessionStats};
 
 use crate::otlp::{
     Kind::{self, Counter, Gauge},
@@ -153,8 +153,8 @@ fn resource_metrics(snapshot: &RelaySnapshot) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use relay_stats::{SessionPeer, SessionStats};
     use serde_json::Value;
+    use telemetry::relay_stats::{SessionPeer, SessionStats};
 
     use super::export_request;
     use crate::test_support;

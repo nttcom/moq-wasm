@@ -6,7 +6,7 @@ use moqt::{
     object::{DataReceiver, GroupOrder},
     subscribe::{FilterType, SubscribeOption},
 };
-use relay_stats::RelaySnapshot;
+use telemetry::relay_stats::{self, RelaySnapshot};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::config::RelayEndpoint;

@@ -938,7 +938,7 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 ## Observability (`modules/observability`)
 
 The relay publishes its own statistics as an ordinary MoQT track,
-`observability/<RELAY_ID>` / `network_stats` (format: `crates/relay-stats`),
+`observability/<RELAY_ID>` / `network_stats` (format: `telemetry::relay_stats`),
 so cache, fan-out, FETCH and authorization need no separate path.
 
 - `StatsPublishTask` dials the relay's own inner endpoint over loopback QUIC
