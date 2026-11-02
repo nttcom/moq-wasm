@@ -78,14 +78,17 @@ flushing the batches still queued, so a binary holds it for the life of
 
 ## Relay snapshots
 
-`telemetry::relay_stats` defines the snapshot a relay publishes once per
-second on `observability/<relay id>` / `network_stats` (`track_namespace`,
-`TRACK_NAME`), so the producer and its consumers share one type:
+`telemetry::relay_stats` defines the snapshot a relay sends once per second
+as an OTLP log record (`EVENT_NAME` `relay.stats.snapshot` as the record's
+`EventName` and body, `RelaySnapshot::to_json` in its `EVENT_ATTRIBUTE`
+`snapshot`), so the producer and its consumers share one type:
 
-- `services/relay` (`modules/observability`) builds and publishes `RelaySnapshot`.
-- `services/observability` subscribes to it on every relay and stores it.
+- `services/relay` (`modules/observability`) builds `RelaySnapshot` and
+  emits it through `EventLogger`.
+- `services/observability` fills its tables from the records in
+  `otel.otel_logs`, selected by the same `EVENT_NAME` and `EVENT_ATTRIBUTE`,
+  and decodes a stored snapshot with `RelaySnapshot::from_json`.
 
-The payload is `RelaySnapshot::to_json`, one JSON object per MoQT object.
 The [observability architecture](../observability/architecture.md) describes
 the fields and what each direction of a session can observe. The snapshot
 types do not require `init` or an OTLP exporter to be used.

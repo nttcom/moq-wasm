@@ -11,9 +11,10 @@ Accepted
 
 ## Context
 
-The relay publishes snapshots over MoQT, and the observability server reads
-and stores them. Both already depend on `telemetry`, so its `relay_stats`
-module holds their shared format without a separate package.
+The relay sends snapshots as the JSON attribute of an OTLP log record, and
+the observability server decodes the ones it stored for `?at=` reads. Both
+already depend on `telemetry`, so its `relay_stats` module holds their shared
+format without a separate package.
 
 ## Alternatives
 
