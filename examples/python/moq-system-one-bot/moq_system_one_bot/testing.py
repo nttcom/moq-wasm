@@ -1,6 +1,12 @@
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
+
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
 from moq_system_one_bot.event_timeline import EventRecord, EventTimeline
 
@@ -32,3 +38,26 @@ async def published_timeline(*, replay: bool = False) -> tuple[EventTimeline, Re
     await timeline.publish_on(publication)
     await publication.next_write()
     return timeline, publication
+
+
+@dataclass
+class FakeSystemOneServer:
+    """`requests` keeps each request's Authorization header and JSON body."""
+
+    answers: dict[str, Any]
+    url: str = ""
+    requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
+
+    async def handle(self, request: web.Request) -> web.Response:
+        self.requests.append((request.headers.get("Authorization"), await request.json()))
+        return web.json_response({"answers": self.answers})
+
+
+@asynccontextmanager
+async def fake_system_one(answers: dict[str, Any]) -> AsyncIterator[FakeSystemOneServer]:
+    server = FakeSystemOneServer(answers)
+    app = web.Application()
+    app.router.add_post("/v1/systemone", server.handle)
+    async with TestServer(app) as test_server:
+        server.url = str(test_server.make_url("/v1/systemone"))
+        yield server

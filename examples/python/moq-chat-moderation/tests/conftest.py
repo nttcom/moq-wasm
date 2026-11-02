@@ -1,15 +1,8 @@
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestServer
-
-from tests.helpers import FakeSystemOneServer
+from moq_system_one_bot.testing import fake_system_one
 
 
 @pytest.fixture
 async def fake_system_one_server():
-    server = FakeSystemOneServer(nouls=[0.9, 0.1])
-    app = web.Application()
-    app.router.add_post("/v1/systemone", server.handle)
-    async with TestServer(app) as test_server:
-        server.url = str(test_server.make_url("/v1/systemone"))
+    async with fake_system_one({"l0": {"type": "noul", "noul": 0.9}, "l1": {"type": "noul", "noul": 0.1}}) as server:
         yield server

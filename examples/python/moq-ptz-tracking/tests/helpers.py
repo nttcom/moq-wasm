@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import av
-from aiohttp import web
 
 from moq_system_one_bot import testing
 from moq_system_one_bot.testing import READ_TIMEOUT_SECONDS
@@ -82,14 +81,3 @@ class StubVision:
     async def locate(self, jpeg: bytes, descriptions: tuple[str, ...]) -> Sighting | Answer:
         self.images.append(jpeg)
         return self.answer
-
-
-@dataclass
-class FakeVisionServer:
-    answers: dict[str, Any]
-    url: str = ""
-    requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
-
-    async def handle(self, request: web.Request) -> web.Response:
-        self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"model": "d1-2B", "answers": self.answers})

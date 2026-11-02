@@ -1,15 +1,8 @@
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestServer
-
-from tests.helpers import FakeVisionServer
+from moq_system_one_bot.testing import fake_system_one
 
 
 @pytest.fixture
 async def fake_vision_server():
-    server = FakeVisionServer(answers={"q0": {"choice": "no"}})
-    app = web.Application()
-    app.router.add_post("/v1/systemone", server.handle)
-    async with TestServer(app) as test_server:
-        server.url = str(test_server.make_url("/v1/systemone"))
+    async with fake_system_one({"q0": {"choice": "no"}}) as server:
         yield server
