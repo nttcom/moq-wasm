@@ -1,5 +1,7 @@
-/// Shares one PUBLISH of a track between its callers. A failed PUBLISH is
-/// dropped, so the next caller publishes the track again.
+/**
+ * Shares one PUBLISH of a track between its callers. A failed PUBLISH is
+ * dropped, so the next caller publishes the track again.
+ */
 export class TrackPublication<T> {
   private pending: Promise<T> | null = null
 
