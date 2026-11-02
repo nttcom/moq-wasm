@@ -26,7 +26,6 @@ pub(crate) struct ChunkWriter {
     prefix: Path,
     namespace: String,
     tracks: HashMap<String, Track>,
-    sequence: u64,
 }
 
 impl ChunkWriter {
@@ -36,7 +35,6 @@ impl ChunkWriter {
             prefix,
             namespace,
             tracks: HashMap::new(),
-            sequence: 0,
         }
     }
 
@@ -102,43 +100,17 @@ impl ChunkWriter {
                     .as_ref()
                     .and_then(crate::pipeline::capture_timestamp)
                     .map(|timestamp| timestamp.micros().to_string());
-                let event_times = if name == "chat" || name == "transcript" {
-                    serde_json::from_slice::<Value>(&object.payload)
-                        .ok()
-                        .and_then(|value| value.as_array().cloned())
-                        .map(|records| {
-                            records
-                                .iter()
-                                .map(|record| {
-                                    record["t"]
-                                        .as_u64()
-                                        .and_then(|millis| millis.checked_mul(1_000))
-                                        .map(|micros| micros.to_string())
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                } else {
-                    None
-                };
                 track.entries.push(json!({
                     "type": "object", "group": object.location.group_id.to_string(),
                     "subgroup": subgroup, "object": object.location.object_id.to_string(),
                     "priority": object.publisher_priority, "status": object.status as u8,
                     "ends_group": object.ends_group,
                     "capture_us": capture,
-                    "event_times_us": event_times,
                     "extensions": STANDARD.encode(object.extension_headers.encode()),
                     "offset": offset.to_string(), "length": length.to_string(),
                 }));
             }
         }
-        if let Some(entry) = track.entries.last_mut() {
-            entry["receipt_sequence"] = self.sequence.to_string().into();
-        }
-        self.sequence = self
-            .sequence
-            .checked_add(1)
-            .context("archive sequence overflow")?;
         Ok(())
     }
 
@@ -420,41 +392,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(&second[..], b"next");
-    }
-
-    #[tokio::test]
-    async fn indexes_event_times_without_replacing_missing_timestamps() {
-        // Arrange
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let mut writer = ChunkWriter::new(store.clone(), Path::from("events"), "anon/a".into());
-        let object = Object {
-            location: Location {
-                group_id: 1,
-                object_id: 0,
-            },
-            forwarding: ForwardingPreference::Datagram,
-            publisher_priority: 1,
-            status: ObjectStatus::Normal,
-            extension_headers: ExtensionHeaders::default(),
-            payload: Bytes::from_static(br#"[{"t":42,"data":{"text":"hi"}},{"data":{}}]"#),
-            ends_group: false,
-        };
-
-        // Act
-        writer.push("chat", &Event::Object(object)).await.unwrap();
-        let key = writer.finish().await.unwrap();
-
-        // Assert
-        let manifest: Value =
-            serde_json::from_slice(&store.get(&key).await.unwrap().bytes().await.unwrap()).unwrap();
-        let index = Path::from(
-            manifest["tracks"][0]["chunks"][0]["index"]
-                .as_str()
-                .unwrap(),
-        );
-        let entries: Value =
-            serde_json::from_slice(&store.get(&index).await.unwrap().bytes().await.unwrap())
-                .unwrap();
-        assert_eq!(entries[0]["event_times_us"], json!(["42000", null]));
     }
 }

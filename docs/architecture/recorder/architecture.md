@@ -370,8 +370,8 @@ settings, so a request cannot point the recorder at another relay or bucket.
 screen-share and event archives. Camera archives also receive `chat`; the
 `<room>/bots/transcriber` namespace has a transcript archive and does not keep
 an otherwise empty room alive. Each track has immutable payload chunks and JSON
-indexes, including canonical object fields, subgroup headers and FIN events,
-receipt sequence, capture timestamps and source event times. Duplicate object
+indexes, including canonical object fields, subgroup headers, FIN events and
+capture timestamps. Duplicate object
 identities retain the first payload; conflicting duplicates fail the recording.
 The chunks go straight to the object store; no local copy is written. A reset
 subgroup stream ends only that stream, as in `moqt`'s `TrackReader`. The

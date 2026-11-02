@@ -151,7 +151,6 @@ impl StoredRecording {
                     "data_size": chunk["data_size"],
                 })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
-            "clock": { "source": "publisher_unix", "alignment": "approximate", "uncertainty_us": null },
         })
     }
 

@@ -88,7 +88,6 @@ impl ReplayTask {
     pub(crate) fn description(&self) -> Value {
         let mut description = self.description.clone();
         description["idle_timeout_seconds"] = REPLAY_IDLE_TIMEOUT.as_secs().into();
-        description["delivery"] = "fetch".into();
         description
     }
 }

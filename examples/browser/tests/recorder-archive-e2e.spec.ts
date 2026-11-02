@@ -137,9 +137,7 @@ test('records and replays participants, screen share, chat and transcript', asyn
       const entries = JSON.parse(await readFile(join('/', chunk.index), 'utf8'))
       for (const entry of entries) {
         if (entry.type === 'object') {
-          const payload = data.subarray(Number(entry.offset), Number(entry.offset) + Number(entry.length)).toString()
-          payloads.push(payload)
-          if (payload.includes('archive chat message')) expect(entry.event_times_us[0]).toMatch(/^\d+$/)
+          payloads.push(data.subarray(Number(entry.offset), Number(entry.offset) + Number(entry.length)).toString())
         }
       }
     }
