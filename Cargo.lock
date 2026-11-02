@@ -2054,7 +2054,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "relay-stats",
  "reqwest",
  "serde",
  "serde_json",
@@ -2695,6 +2694,7 @@ name = "recorder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth-token",
  "base64 0.23.1",
  "bytes",
  "clap",
@@ -2707,6 +2707,7 @@ dependencies = [
  "object_store",
  "reqwest",
  "serde_json",
+ "sha2",
  "telemetry",
  "tokio",
  "tracing",
@@ -2812,7 +2813,6 @@ dependencies = [
  "moqt",
  "opentelemetry",
  "redis",
- "relay-stats",
  "reqwest",
  "serde",
  "serde_json",
@@ -2821,15 +2821,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-opentelemetry",
-]
-
-[[package]]
-name = "relay-stats"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3465,6 +3456,8 @@ dependencies = [
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",

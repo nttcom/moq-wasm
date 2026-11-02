@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use telemetry::EventLogger;
+use telemetry::{EventLogger, relay_stats};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::observability::{process_memory, stats_collector::StatsCollector};

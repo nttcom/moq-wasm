@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use relay_stats::{EVENT_ATTRIBUTE, EVENT_NAME};
 use serde::Deserialize;
+use telemetry::relay_stats::{EVENT_ATTRIBUTE, EVENT_NAME};
 
 use crate::clickhouse::ClickHouse;
 

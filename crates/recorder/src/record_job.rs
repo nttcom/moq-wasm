@@ -63,6 +63,7 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
             segment_length: args.room.segment_seconds.map(Duration::from_secs),
             upload: None,
         },
+        format: record_state.format,
         limits: args.room.limits(),
     };
     let result = record(config, stop, &status).await;

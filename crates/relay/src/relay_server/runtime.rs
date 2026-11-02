@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc;
 
 use crate::{
     config::{CacheConfig, DiskCacheConfig},
@@ -12,24 +12,19 @@ use crate::{
         },
         control_plane::{
             control_message_forwarder::ControlMessageForwarder,
-            event_handler::{EventHandler, WorkerDeps},
-            upstream_creation_serializer::UpstreamCreationSerializer,
+            session_workers::{SessionWorkers, WorkerDeps},
             upstream_publisher_resolver::UpstreamPublisherResolver,
         },
-        data_plane::{
-            cache::{
-                disk_cache::DiskCacheTask, eviction_job::spawn_cache_eviction_job,
-                store::TrackCacheStore,
-            },
-            egress::coordinator::EgressCoordinator,
-            ingress::ingress_coordinator::IngressCoordinator,
+        data_plane::cache::{
+            disk_cache::DiskCacheTask, eviction_job::spawn_cache_eviction_job,
+            store::TrackCacheStore,
         },
-        domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
+        directory::InMemoryLocalPubSubDirectory,
         observability::{
             stats_collector::{StatsCollector, StatsSources},
             stats_export_task::unix_millis_now,
         },
-        session::{session_event::SessionEvent, session_repository::SessionRepository},
+        session::session_repository::{SessionAdded, SessionRepository},
     },
 };
 
@@ -45,9 +40,7 @@ pub(crate) struct RelayRuntime {
     local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
     cache_store: Arc<TrackCacheStore>,
     inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
-    _ingress: IngressCoordinator,
-    _egress: EgressCoordinator,
-    _manager: EventHandler,
+    _session_workers: SessionWorkers,
     _evict_job: tokio::task::JoinHandle<()>,
     _watched_namespace_job: WatchedNamespaceJob,
     _disk_cache: Option<DiskCacheTask>,
@@ -60,17 +53,14 @@ impl RelayRuntime {
         relay_token: String,
         token_verifier: Arc<dyn TokenVerifier>,
         data_plane: DataPlaneConfig,
-    ) -> (UnboundedSender<SessionEvent>, Self) {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
+        session_added_receiver: mpsc::UnboundedReceiver<SessionAdded>,
+    ) -> Self {
         let disk_cache = data_plane.disk_cache.map(DiskCacheTask::run);
         let cache_store = Arc::new(TrackCacheStore::with_disk(
             disk_cache.as_ref().map(DiskCacheTask::handle),
         ));
-        let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
-            repo.clone(),
-            sender.clone(),
-            relay_token,
-        ));
+        let inter_relay_connection_manager =
+            Arc::new(InterRelayConnectionManager::new(repo.clone(), relay_token));
         let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
             route_registry.clone(),
             inter_relay_connection_manager.clone(),
@@ -80,44 +70,33 @@ impl RelayRuntime {
             upstream_publisher_resolver.watched_namespace_routes.clone(),
             local_pub_sub_directory.clone(),
         );
-        let ingress = IngressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());
-        let egress = EgressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());
-        let manager = EventHandler::run(
-            receiver,
+        let session_workers = SessionWorkers::run(
+            session_added_receiver,
             WorkerDeps {
                 control_message_forwarder: ControlMessageForwarder {
                     repository: repo.clone(),
                 },
                 repo: repo.clone(),
-                relay_event_sender: sender.clone(),
                 local_pub_sub_directory: local_pub_sub_directory.clone(),
-                ingress_sender: ingress.sender(),
-                egress_sender: egress.sender(),
                 route_registry,
                 inter_relay_connection_manager: inter_relay_connection_manager.clone(),
                 upstream_publisher_resolver,
                 cache_store: cache_store.clone(),
-                upstream_serializer: UpstreamCreationSerializer::default(),
                 token_verifier,
                 fetch_fill_timeout: data_plane.fetch_fill_timeout,
             },
         );
         let evict_job = spawn_cache_eviction_job(cache_store.clone(), data_plane.cache);
-        (
-            sender,
-            Self {
-                repo,
-                local_pub_sub_directory,
-                cache_store,
-                inter_relay_connection_manager,
-                _ingress: ingress,
-                _egress: egress,
-                _manager: manager,
-                _evict_job: evict_job,
-                _watched_namespace_job: watched_namespace_job,
-                _disk_cache: disk_cache,
-            },
-        )
+        Self {
+            repo,
+            local_pub_sub_directory,
+            cache_store,
+            inter_relay_connection_manager,
+            _session_workers: session_workers,
+            _evict_job: evict_job,
+            _watched_namespace_job: watched_namespace_job,
+            _disk_cache: disk_cache,
+        }
     }
 
     pub(crate) fn begin_draining(&self) {

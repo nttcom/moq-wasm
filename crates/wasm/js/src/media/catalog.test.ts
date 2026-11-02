@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { buildMsfCatalogJson, extractCatalogTracks } from './catalog'
+import { type MediaCatalogTrack, buildMsfCatalogJson, extractCatalogTracks, sourceTracks } from './catalog'
 
 const AUDIO_SPECIFIC_CONFIG = 'ERA='
 
@@ -93,4 +93,46 @@ test('a video track keeps its alternate group and bitrate', () => {
   expect(source.bitrate).toBeUndefined()
   expect(rendition.altGroup).toBe(1)
   expect(rendition.bitrate).toBe(1_200_000)
+})
+
+/// The tracks `publish()` lists for a camera with a rendition and a shared screen.
+function cameraAndScreenTracks({ withoutCamera = false } = {}): MediaCatalogTrack[] {
+  const track = (name: string, packaging: string, altGroup?: number): MediaCatalogTrack => ({
+    name,
+    label: name,
+    packaging,
+    altGroup
+  })
+  return [
+    ...(withoutCamera ? [] : [track('video', 'loc', 1), track('video_cmaf', 'cmaf', 2)]),
+    track('video_low', 'loc', 1),
+    track('video_low_cmaf', 'cmaf', 2),
+    track('audio', 'loc'),
+    track('screenshare', 'loc'),
+    track('screenshare_audio', 'loc')
+  ]
+}
+
+test('a source keeps its video, the renditions of its alternate group, its audio and their CMAF siblings', () => {
+  // Arrange
+  const tracks = cameraAndScreenTracks()
+
+  // Act
+  const camera = sourceTracks(tracks, { video: 'video', audio: 'audio' })
+  const screen = sourceTracks(tracks, { video: 'screenshare', audio: 'screenshare_audio' })
+
+  // Assert
+  expect(camera.map(({ name }) => name).sort()).toEqual(['audio', 'video', 'video_cmaf', 'video_low', 'video_low_cmaf'])
+  expect(screen.map(({ name }) => name).sort()).toEqual(['screenshare', 'screenshare_audio'])
+})
+
+test('a source whose video is absent keeps its audio', () => {
+  // Arrange: the camera is muted while its microphone is not
+  const tracks = cameraAndScreenTracks({ withoutCamera: true })
+
+  // Act
+  const camera = sourceTracks(tracks, { video: 'video', audio: 'audio' })
+
+  // Assert
+  expect(camera.map(({ name }) => name)).toEqual(['audio'])
 })

@@ -580,8 +580,8 @@ state name the connection:
 - `publications` — for a session that follows GOAWAY, the tracks PUBLISHed
   on it with every connection each is on (`SendTargets::Publication`); a
   track served for a SUBSCRIBE goes to the connection the SUBSCRIBE arrived
-  on (`SendTargets::Connection`). It is locked while one of them is
-  sent and while a migration sends them all, so none is missed.
+  on (`SendTargets::Connection`). Concurrent PUBLISH requests share a read
+  lock; migration holds the write lock while carrying them, so none is missed.
 
 ## Control plane (`modules/moqt/control_plane`)
 

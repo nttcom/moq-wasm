@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MoQ recording player</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font:
+          16px system-ui,
+          sans-serif;
+        color: #172033;
+        background: #f4f6fa;
+      }
+      main {
+        max-width: 1200px;
+        margin: auto;
+      }
+      form,
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: end;
+        margin-bottom: 20px;
+      }
+      label {
+        display: grid;
+        gap: 4px;
+      }
+      input,
+      button {
+        font: inherit;
+        padding: 8px;
+      }
+      #seek {
+        width: min(500px, 65vw);
+      }
+      #videos {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+        gap: 16px;
+      }
+      figure {
+        margin: 0;
+        padding: 12px;
+        background: white;
+        border-radius: 10px;
+      }
+      canvas {
+        width: 100%;
+        background: #111827;
+        aspect-ratio: 16 / 9;
+      }
+      figcaption {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      figcaption label {
+        display: block;
+      }
+      #events {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 24px;
+      }
+      li {
+        margin: 12px 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      #alignment {
+        color: #684d00;
+      }
+      #status {
+        display: block;
+        margin: 12px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>MoQ recording player</h1>
+      <form id="open">
+        <label>Recorder URL <input id="recorder" type="url" value="http://127.0.0.1:8096" required /></label>
+        <label>Recording ID <input id="recording" required /></label>
+        <label>Access token <input id="token" type="password" autocomplete="off" /></label>
+        <button id="load">Open recording</button>
+      </form>
+      <output id="status" role="status">Choose a recording.</output>
+      <p id="alignment">Approximate alignment: source clocks have not been calibrated.</p>
+      <div class="controls">
+        <button id="play" disabled>Play</button>
+        <label>Position <input id="seek" type="range" min="0" max="0" step="0.1" value="0" disabled /></label>
+        <output id="position">0.0 s</output>
+      </div>
+      <div id="videos"></div>
+      <div id="events">
+        <section>
+          <h2>Chat</h2>
+          <ol id="chat"></ol>
+        </section>
+        <section>
+          <h2>Transcript</h2>
+          <ol id="transcript"></ol>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

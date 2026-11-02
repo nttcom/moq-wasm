@@ -12,10 +12,7 @@ use crate::{
             session_id::{SessionId, generate_session_id},
             session_peer::SessionPeer,
         },
-        session::{
-            session_event::SessionEvent,
-            session_repository::{NewSession, SessionRepository},
-        },
+        session::session_repository::{NewSession, SessionRepository},
     },
 };
 
@@ -23,7 +20,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     relay_token: String,
     sessions: DashMap<String, SessionId>,
 }
@@ -31,12 +27,10 @@ pub(crate) struct InterRelayConnectionManager {
 impl InterRelayConnectionManager {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         relay_token: String,
     ) -> Self {
         Self {
             repo,
-            session_event_sender,
             relay_token,
             sessions: DashMap::new(),
         }
@@ -86,23 +80,16 @@ impl InterRelayConnectionManager {
         .await
         .map_err(|_| anyhow::anyhow!("timed out connecting relay {}", relay.relay_id))??;
 
-        self.repo
-            .lock()
-            .await
-            .add(
-                NewSession {
-                    session_id,
-                    session: Box::new(session),
-                    session_span,
-                    peer: SessionPeer::Relay,
-                    verified_token: VerifiedToken {
-                        relay_id: Some(relay.relay_id.clone()),
-                        ..VerifiedToken::full_access()
-                    },
-                },
-                self.session_event_sender.clone(),
-            )
-            .await;
+        self.repo.lock().await.add(NewSession {
+            session_id,
+            session: Box::new(session),
+            session_span,
+            peer: SessionPeer::Relay,
+            verified_token: VerifiedToken {
+                relay_id: Some(relay.relay_id.clone()),
+                ..VerifiedToken::full_access()
+            },
+        });
         self.sessions.insert(relay.relay_id.clone(), session_id);
         tracing::info!(
             relay_id = %relay.relay_id,

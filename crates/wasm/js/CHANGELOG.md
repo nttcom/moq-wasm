@@ -5,6 +5,16 @@
 - `moq-wasm`: `init({ wasmUrl, onLog, logLevel })` loads the wasm module and
   hands its logs to `onLog` as `LogRecord`s at `logLevel` (default `'warn'`)
   or above.
+- `moq-wasm/media` exports the types `LivePlayer` takes and returns
+  (`BufferPolicy`, `CatchUp`, `LivePictureKind`, `LiveStats`,
+  `DeliveryObserver`, `Playhead`, `StreamKind`), `formatLiveStats`, and
+  `monotonicUnixMicros`, the clock of the capture timestamps.
+- `publish()` accepts a SUBSCRIBE for the `video` and `audio` of the stream it
+  is given before their first frame; `MediaBroadcast.declareTracks` does the
+  same for any track.
+- `LivePlayerOptions.source` plays one source of a broadcast, named by its
+  video and audio tracks (`LiveSource`), such as a shared screen next to a
+  camera; its audio keeps playing while its video is absent.
 
 ## 0.1.0
 

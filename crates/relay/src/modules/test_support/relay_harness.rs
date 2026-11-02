@@ -6,7 +6,6 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::Span;
 
 use crate::modules::{
-    auth::verified_token::VerifiedToken,
     data_plane::{
         cache::{
             cached_object::CacheStamp,
@@ -14,49 +13,46 @@ use crate::modules::{
             track_cache::{NextObject, SubgroupRun, TrackCache},
         },
         egress::{
-            coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
+            fetch_delivery::{EgressFetchRequest, deliver_fetch},
+            runner::EgressRunner,
         },
         ingress::{
             datagram_reader::read_datagrams,
+            ingest_task::TrackIngest,
             stream_reader::{accept_streams, read_stream},
-            track_ingest_task::TrackIngest,
         },
     },
     domain::{
         delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
-        pub_sub_directory::{DownstreamRunnerSignals, entry::PublishDoneReason},
-        session_id::SessionId,
+        publish_done_reason::PublishDoneReason,
+        runner_signals::DownstreamRunnerSignals,
         track_key::TrackKey,
     },
-    session::{
-        data_object::DataObject, session_event::SessionEvent, session_repository::SessionRepository,
-    },
-    test_support::mock_session::session_repository_with_session,
+    session::{data_object::DataObject, session_event::SessionEvent},
 };
 
 pub(crate) mod fixtures;
 mod mocks;
 
-pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObservers, Sent};
+pub(crate) use self::mocks::downstream_client::{
+    FetchSent, MockPublisher, MockPublisherObservers, Sent,
+};
 pub(crate) use self::mocks::upstream_client::{FailingUpstream, UpstreamSubgroupStream};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
     fixtures::{location, subscription::make_subscription},
-    mocks::downstream_client::{
-        MockDownstreamSession, MockFetchSender, MockPublisher, SentPublishDone,
-    },
+    mocks::downstream_client::{MockFetchSender, SentPublishDone},
 };
 
 pub(crate) const OBJECT_COUNT: usize = 50;
-pub(crate) const PUBLISHER_SESSION_ID: SessionId = 1;
 const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct RelayHarness {
     ingest: TrackIngest,
-    session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
+    publisher_mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     stop_sender: watch::Sender<bool>,
 }
 
@@ -214,18 +210,17 @@ impl RelayHarness {
 
     /// Ingests into `cache`, a store's cache when the test needs its disk.
     pub(crate) fn with_cache(cache: Arc<TrackCache>, stamp: CacheStamp) -> Self {
-        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
+        let (publisher_mailbox_sender, publisher_mailbox_receiver) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = watch::channel(false);
         Self {
             ingest: TrackIngest {
                 track_key: TrackKey::new("ns", "track"),
-                publisher_session_id: PUBLISHER_SESSION_ID,
                 cache,
-                session_event_sender,
+                publisher_mailbox_sender,
                 stop_receiver,
                 stamp,
             },
-            session_event_receiver,
+            publisher_mailbox_receiver,
             stop_sender,
         }
     }
@@ -239,10 +234,10 @@ impl RelayHarness {
     }
 
     pub(crate) async fn expect_session_event(&mut self) -> SessionEvent {
-        tokio::time::timeout(RECV_TIMEOUT, self.session_event_receiver.recv())
+        tokio::time::timeout(RECV_TIMEOUT, self.publisher_mailbox_receiver.recv())
             .await
             .expect("a session event should be reported")
-            .expect("session event channel should stay open")
+            .expect("the publisher mailbox should stay open")
     }
 
     pub(crate) fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
@@ -450,22 +445,6 @@ pub(crate) async fn wait_largest_location(
         );
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
-}
-
-pub(crate) async fn session_repository_with_downstream_session(
-    session_id: SessionId,
-) -> (
-    Arc<tokio::sync::Mutex<SessionRepository>>,
-    MockPublisherObservers,
-) {
-    let (publisher, observers) = MockPublisher::channel();
-    let repository = session_repository_with_session(
-        session_id,
-        Box::new(MockDownstreamSession { publisher }),
-        VerifiedToken::full_access(),
-    )
-    .await;
-    (repository, observers)
 }
 
 pub(crate) async fn receive_objects_until_close(

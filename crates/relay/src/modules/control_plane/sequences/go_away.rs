@@ -1,23 +1,17 @@
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
             session_peer,
-            subscribe::upstream_join_task::{
-                UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, send_upstream_subscribes,
-            },
+            subscribe::pending_producer_task::{PendingProducerDeps, subscribe_publishers},
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
-    data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
-    },
+    data_plane::cache::store::TrackCacheStore,
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer},
 };
 
 pub(crate) struct GoAway;
@@ -34,32 +28,28 @@ impl GoAway {
         session_id: SessionId,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &mpsc::Sender<IngressCommand>,
+        cache_store: &Arc<TrackCacheStore>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
     ) {
         if session_peer(session_id, forwarder).await == SessionPeer::Client {
             tracing::info!("client announced that it is leaving");
             return;
         }
-        let fed_tracks: Vec<TrackKey> = table
-            .active_upstream_tracks()
-            .into_iter()
-            .filter(|(publisher_session_id, _)| *publisher_session_id == session_id)
-            .map(|(_, track_key)| track_key)
-            .collect();
+        let fed_tracks = table.tracks_fed_by(session_id);
         tracing::info!(
             tracks = fed_tracks.len(),
             "upstream relay is going away; subscribing the other publishers of its tracks"
         );
-        let join_deps = UpstreamJoinDeps {
+        let join_deps = PendingProducerDeps {
             table: table.clone(),
             forwarder: forwarder.clone(),
-            ingress_sender: ingress_sender.clone(),
+            cache_store: cache_store.clone(),
+            resolver: upstream_publisher_resolver.clone(),
         };
         for track_key in fed_tracks {
             let feeding = table
-                .get_upstream_track(&track_key)
-                .map(|track| track.subscriptions.keys().copied().collect::<Vec<_>>())
+                .track_state(&track_key)
+                .map(|track| track.producers.keys().copied().collect::<Vec<_>>())
                 .unwrap_or_default();
             let publishers: Vec<UpstreamPublisher> = upstream_publisher_resolver
                 .resolve(
@@ -84,20 +74,7 @@ impl GoAway {
                 publishers = publishers.len(),
                 "subscribing other publishers"
             );
-            let pending = send_upstream_subscribes(
-                upstream_publisher_resolver,
-                &join_deps.forwarder,
-                &track_key,
-                publishers,
-            );
-            let _upstream_join = UpstreamJoinTask::run(
-                UpstreamJoin {
-                    subscriber_session_id: session_id,
-                    track_key,
-                    pending,
-                },
-                join_deps.clone(),
-            );
+            subscribe_publishers(&join_deps, &track_key, session_id, publishers);
         }
     }
 }
@@ -106,22 +83,19 @@ impl GoAway {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use tokio::sync::mpsc;
-
     use super::GoAway;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         control_plane::control_message_forwarder::ControlMessageForwarder,
-        domain::{
-            pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
-            session_id::SessionId,
-            session_peer::SessionPeer,
-        },
-        session::session_repository::{NewSession, SessionRepository},
+        data_plane::cache::store::TrackCacheStore,
+        directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
+        domain::{session_id::SessionId, session_peer::SessionPeer},
+        session::session_repository::NewSession,
         test_support::{
-            directory_fixtures::{active_upstream, local_publisher_resolver, track_key},
+            directory_fixtures::{local_publisher_resolver, producer, track_key},
             mock_session::{
-                RecordedControlMessages, mock_new_session, recorded_session_answering_subscribe,
+                RecordedControlMessages, detached_session_repository, mock_new_session,
+                recorded_session_answering_subscribe,
             },
         },
     };
@@ -138,30 +112,24 @@ mod tests {
         ControlMessageForwarder,
         RecordedControlMessages,
     ) {
-        let mut repository = SessionRepository::new();
-        let (event_sender, _event_receiver) = mpsc::unbounded_channel();
+        let mut repository = detached_session_repository();
         let (mut departing, _) = mock_new_session(DEPARTING_RELAY, VerifiedToken::full_access());
         departing.peer = departing_peer;
-        repository.add(departing, event_sender.clone()).await;
+        repository.add(departing);
         let (other, recorded) =
             recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
-        repository
-            .add(
-                NewSession {
-                    session_id: OTHER_PUBLISHER,
-                    session: other,
-                    session_span: tracing::Span::none(),
-                    peer: SessionPeer::Client,
-                    verified_token: VerifiedToken::full_access(),
-                },
-                event_sender,
-            )
-            .await;
+        repository.add(NewSession {
+            session_id: OTHER_PUBLISHER,
+            session: other,
+            session_span: tracing::Span::none(),
+            peer: SessionPeer::Client,
+            verified_token: VerifiedToken::full_access(),
+        });
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_upstream_subscription(
             track_key(),
             DEPARTING_RELAY,
-            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+            producer(ProducerOrigin::Subscribe),
         );
         table.register_publish_namespace(OTHER_PUBLISHER, "ns".to_string(), SessionPeer::Client);
         let forwarder = ControlMessageForwarder {
@@ -184,18 +152,12 @@ mod tests {
     async fn go_away_from_an_upstream_relay_subscribes_the_other_publishers_of_its_tracks() {
         // Arrange
         let (table, forwarder, recorded) = context(SessionPeer::Relay).await;
-        let (ingress_sender, _ingress_receiver) = mpsc::channel(8);
+        let cache_store = Arc::new(TrackCacheStore::new());
         let resolver = Arc::new(local_publisher_resolver());
 
         // Act
         GoAway
-            .handle(
-                DEPARTING_RELAY,
-                &table,
-                &forwarder,
-                &ingress_sender,
-                &resolver,
-            )
+            .handle(DEPARTING_RELAY, &table, &forwarder, &cache_store, &resolver)
             .await;
 
         // Assert: the other publisher was subscribed; nobody watches the track,
@@ -207,18 +169,12 @@ mod tests {
     async fn go_away_from_a_client_resolves_nothing() {
         // Arrange
         let (table, forwarder, recorded) = context(SessionPeer::Client).await;
-        let (ingress_sender, _ingress_receiver) = mpsc::channel(8);
+        let cache_store = Arc::new(TrackCacheStore::new());
         let resolver = Arc::new(local_publisher_resolver());
 
         // Act
         GoAway
-            .handle(
-                DEPARTING_RELAY,
-                &table,
-                &forwarder,
-                &ingress_sender,
-                &resolver,
-            )
+            .handle(DEPARTING_RELAY, &table, &forwarder, &cache_store, &resolver)
             .await;
 
         // Assert

@@ -14,6 +14,7 @@ use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
 mod event_logger;
 mod http_trace_context;
+pub mod relay_stats;
 
 pub use event_logger::EventLogger;
 pub use http_trace_context::{continue_trace_from, inject_trace_context};

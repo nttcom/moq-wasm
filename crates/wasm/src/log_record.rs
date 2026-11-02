@@ -95,7 +95,7 @@ mod tests {
         let records = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::registry().with(CaptureLayer(records.clone()));
         tracing::subscriber::with_default(subscriber, emit);
-        Arc::try_unwrap(records).unwrap().into_inner().unwrap()
+        std::mem::take(&mut *records.lock().unwrap())
     }
 
     #[test]

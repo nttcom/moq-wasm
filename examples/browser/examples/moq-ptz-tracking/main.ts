@@ -1,5 +1,5 @@
 import type { TrackWriter } from 'moq-wasm'
-import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
+import { LivePlayer } from 'moq-wasm/media'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'
@@ -55,11 +55,11 @@ const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 
 setUpSystemOneBotPage({
   logTag: 'moq-ptz-tracking',
-  ownNamespace: VIEWER_NAMESPACE,
   botNamespace: TRACKER_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
   onConnect: async (session) => {
+    await session.announce(VIEWER_NAMESPACE)
     promptWriter = await session.publishTrack(VIEWER_NAMESPACE, PROMPT_TRACK)
     onEachSubscriber(promptWriter, async () => {
       setTrackerStatus(true)

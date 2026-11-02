@@ -234,7 +234,7 @@ mod tests {
     use super::*;
     use crate::{
         recording::Layout,
-        room_state::{MemberStatus, RoomState},
+        room_state::{MemberStatus, RecordingFormat, RoomState},
         test_support::scratch_dir,
     };
 
@@ -243,6 +243,7 @@ mod tests {
             id: "1700000000000-a1b2c3".to_string(),
             namespace_prefix: "anon/research".to_string(),
             layout: Layout::Combined,
+            format: RecordingFormat::Mp4,
             composite: false,
             state: RoomState::Recording,
             members: vec![MemberStatus {

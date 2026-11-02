@@ -4,7 +4,7 @@ use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::{
     cascading::watched_namespace_routes::WatchedNamespaceRoutes,
-    domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
+    directory::InMemoryLocalPubSubDirectory,
 };
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);

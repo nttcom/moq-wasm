@@ -570,12 +570,14 @@ mod tests {
             .control
             .reserve_request_id()
             .await
+            .unwrap()
             .request_id();
         let server_id = server_context
             .connection()
             .control
             .reserve_request_id()
             .await
+            .unwrap()
             .request_id();
 
         // Assert

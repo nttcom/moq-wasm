@@ -1,7 +1,21 @@
-import { type StatusState, getErrorMessage } from 'moq-wasm/media/internal/status'
+import type { PlayerStatus } from 'moq-wasm/media'
 import { firstSearchParam, setUpRelayUrlControls } from './relayPresets'
 
-export { type StatusState, getErrorMessage }
+export type StatusState = PlayerStatus['state']
+
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+  try {
+    return JSON.stringify(error)
+  } catch (_error) {
+    return String(error)
+  }
+}
 
 export function setStatus(id: string, text: string, state: StatusState): void {
   const element = document.getElementById(id)

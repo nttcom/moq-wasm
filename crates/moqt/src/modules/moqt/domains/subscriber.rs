@@ -147,7 +147,7 @@ impl Subscriber {
     ) -> Result<TrackStatusOk, RequestFailure> {
         let connection = self.session.connection();
         let vec_namespace = namespace_tuple(&track_namespace);
-        let reservation = connection.control.reserve_request_id().await;
+        let reservation = connection.control.reserve_request_id().await?;
         let request_id = reservation.request_id();
         let track_status = Subscribe {
             request_id,
@@ -323,7 +323,7 @@ impl Subscriber {
         let remainder = remainder.filter(|_| {
             self.session.follows_go_away() && option.group_order != GroupOrder::Descending
         });
-        let reservation = connection.control.reserve_request_id().await;
+        let reservation = connection.control.reserve_request_id().await?;
         let request_id = reservation.request_id();
 
         let pending_fetch = self.session.register_pending_fetch(&connection, request_id);
@@ -398,7 +398,7 @@ impl Subscriber {
         for (connection, subscription_request_id) in
             self.on_live_connections(subscription.request_id())
         {
-            let reservation = connection.control.reserve_request_id().await;
+            let reservation = connection.control.reserve_request_id().await?;
             let subscribe_update = SubscribeUpdate {
                 request_id: reservation.request_id(),
                 subscription_request_id,
@@ -669,7 +669,7 @@ pub(crate) async fn send_subscribe_namespace(
     namespace: String,
 ) -> Result<(), RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
-    let reservation = connection.control.reserve_request_id().await;
+    let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let pending = connection
         .control
@@ -727,7 +727,7 @@ pub(crate) async fn send_subscribe(
     track_name: &str,
     option: &SubscribeOption,
 ) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
-    let reservation = connection.control.reserve_request_id().await;
+    let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let subscribe = Subscribe {
         request_id,

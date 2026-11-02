@@ -8,6 +8,8 @@ intent, module boundaries, runtime flow, or invariants described here change.
 One `init` that installs the global `tracing` subscriber for a binary of the
 workspace, so every binary writes the same readable log and exports the same
 OTLP traces and logs. What to put in a span stays with each crate.
+The `relay_stats` module defines the snapshot format shared by the relay
+and the observability server.
 
 ## Outputs
 
@@ -65,7 +67,33 @@ unknown. It returns a `TelemetryGuard` whose drop shuts the providers down,
 flushing the batches still queued, so a binary holds it for the life of
 `main`.
 
+## Relay snapshots
+
+`telemetry::relay_stats` defines the snapshot a relay publishes once per
+second on `observability/<relay id>` / `network_stats` (`track_namespace`,
+`TRACK_NAME`), so the producer and its consumers share one type:
+
+- `crates/relay` (`modules/observability`) builds and publishes `RelaySnapshot`.
+- `crates/observability` subscribes to it on every relay and stores it.
+
+The payload is `RelaySnapshot::to_json`, one JSON object per MoQT object.
+The [observability architecture](../observability/architecture.md) describes
+the fields and what each direction of a session can observe. The snapshot
+types do not require `init` or an OTLP exporter to be used.
+
+### Invariants
+
+- Counters are cumulative since the session, track cache or subscription
+  started; consumers derive rates from consecutive snapshots and treat a
+  decrease as a restart. Fields named `…_since_last_snapshot_…` and `lag_…`
+  are gauges, as are `ProcessStats::client_sessions` and
+  `ProcessStats::draining_since_ms`.
+- A field added to the snapshot has `#[serde(default)]`, so a consumer reads
+  the snapshots of relays that predate it.
+- Durations are microseconds, sizes bytes, timestamps Unix milliseconds.
+
 ## Dependencies
 
 `opentelemetry.md` records why the OpenTelemetry crates are used, and
-`http.md` why the trace context helpers take an `http::HeaderMap`.
+`http.md` why the trace context helpers take an `http::HeaderMap`, and
+`serde.md` why the relay snapshots use Serde and JSON.

@@ -10,12 +10,13 @@ description: Create a pull request for the current branch. Use when the user ask
 1. Review the change: `git status`, `git diff origin/master...HEAD`, and `git log origin/master..HEAD --oneline`.
 2. Run the ponytail review on the diff and apply its cuts (see *Ponytail Review*). Repeat until it answers `Lean already. Ship.`
 3. Have a subagent review the comments the diff adds (see *Comment Review*) and apply its edits.
-4. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
-5. Push the branch: `git push -u origin <branch>`.
-6. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
-7. Create the PR with `gh pr create --base master --title <title> --body <body>`.
+4. Delete each TODO in `docs/todos/` that the diff resolves, and update the docs it makes stale (see the `todo-start` skill).
+5. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
+6. Push the branch: `git push -u origin <branch>`.
+7. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
+8. Create the PR with `gh pr create --base master --title <title> --body <body>`.
    - If a PR already exists for the branch, push the new commits and update the existing PR with `gh pr edit` instead of creating a duplicate.
-8. Report the PR URL.
+9. Report the PR URL.
 
 ## Plugins
 

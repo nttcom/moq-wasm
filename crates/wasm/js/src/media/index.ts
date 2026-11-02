@@ -20,7 +20,13 @@ export {
   type PlayerStatus,
   LivePlayer
 } from './player/livePlayer'
+export type { BufferPolicy } from './player/jitterBuffer'
+export type { CatchUp } from './player/livePlayout'
+export type { LivePictureKind } from './player/livePictureSink'
+export { type LiveStats, formatLiveStats } from './player/locLive'
+export type { DeliveryObserver, Playhead, StreamKind } from './player/deliveryObserver'
+export { monotonicUnixMicros } from './internal/clock'
 export { PlayerControls } from './controls/playerControls'
-export { CATALOG_TRACK_NAME, type MediaCatalogTrack, extractCatalogTracks } from './catalog'
+export { CATALOG_TRACK_NAME, type LiveSource, type MediaCatalogTrack, extractCatalogTracks } from './catalog'
 export { parseCatalog } from './parseCatalog'
 export { Mp4AudioTrack, Mp4Broadcast, Mp4Index, Mp4SampleTable, Mp4VideoTrack } from '../../pkg/moqt'

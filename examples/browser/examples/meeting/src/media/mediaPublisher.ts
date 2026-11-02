@@ -1,5 +1,5 @@
 import type { MoqSession } from 'moq-wasm'
-import { type Publication, type SourcePublication, publish } from 'moq-wasm/media/publish'
+import { type Publication, type SourcePublication, publish } from 'moq-wasm/media'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import { DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import {

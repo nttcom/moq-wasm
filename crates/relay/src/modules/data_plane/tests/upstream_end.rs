@@ -1,7 +1,7 @@
 use moqt::publish::PublishDoneCode;
 
 use crate::modules::{
-    domain::pub_sub_directory::entry::PublishDoneReason, test_support::relay_harness::RelayHarness,
+    domain::publish_done_reason::PublishDoneReason, test_support::relay_harness::RelayHarness,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
