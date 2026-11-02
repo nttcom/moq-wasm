@@ -705,20 +705,14 @@ impl InMemoryLocalPubSubDirectory {
 
     /// An upstream SUBSCRIBE for the track ended without a producer. When it
     /// was the last one of a track still being created, the creation fails
-    /// and the entry goes; returns whether the entry is gone.
+    /// and the entry goes.
     pub(crate) fn pending_producer_ended(
         &self,
         track_key: &TrackKey,
         failure: Option<CreationFailure>,
-    ) -> bool {
-        let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
-            return true;
-        };
-        if !entry.get_mut().pending_producer_ended(failure) {
-            return false;
-        }
-        entry.remove();
-        true
+    ) {
+        self.upstream_tracks
+            .remove_if_mut(track_key, |_, track| track.pending_producer_ended(failure));
     }
 
     fn with_consumer<T>(
@@ -2091,14 +2085,12 @@ mod tests {
         table.add_pending_producers(&track_key(), 2);
 
         // Act
-        let gone_after_first =
-            table.pending_producer_ended(&track_key(), Some(creation_failure("first")));
-        let gone_after_last =
-            table.pending_producer_ended(&track_key(), Some(creation_failure("last")));
+        table.pending_producer_ended(&track_key(), Some(creation_failure("first")));
+        let kept_after_first = table.upstream_tracks.contains_key(&track_key());
+        table.pending_producer_ended(&track_key(), Some(creation_failure("last")));
 
         // Assert
-        assert!(!gone_after_first);
-        assert!(gone_after_last);
+        assert!(kept_after_first);
         assert_eq!(
             *creation.borrow(),
             CreationState::Failed(creation_failure("last"))
@@ -2123,11 +2115,10 @@ mod tests {
             PUBLISHER_SESSION,
             producer(ProducerOrigin::Publish),
         );
-        let gone = table.pending_producer_ended(&track_key(), Some(creation_failure("refused")));
+        table.pending_producer_ended(&track_key(), Some(creation_failure("refused")));
 
         // Assert
         assert_eq!(*creation.borrow(), CreationState::Created);
-        assert!(!gone);
         assert!(table.track_state(&track_key()).is_some());
     }
 
