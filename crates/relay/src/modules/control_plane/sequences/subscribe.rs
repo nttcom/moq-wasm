@@ -39,18 +39,6 @@ enum Acceptance {
     UpstreamGone,
 }
 
-/// The creation's outcome once it is no longer `Creating`; `None` when the
-/// track entry went away first.
-async fn wait_created(
-    mut receiver: tokio::sync::watch::Receiver<CreationState>,
-) -> Option<CreationState> {
-    receiver
-        .wait_for(|state| *state != CreationState::Creating)
-        .await
-        .ok()
-        .map(|state| state.clone())
-}
-
 pub(super) fn cached_largest(
     cache_store: &TrackCacheStore,
     track_key: &TrackKey,
@@ -242,7 +230,7 @@ impl Subscribe {
     ) -> Result<UpstreamTrackAccess, CreationFailure> {
         let track_key = TrackKey::new(track_namespace, track_name);
         loop {
-            let (receiver, reservation, cache_before_subscribe) =
+            let (mut receiver, reservation, cache_before_subscribe) =
                 match table.track_or_begin_creation(&track_key, requester) {
                     TrackLookup::Ready(upstream_track, reservation) => {
                         let largest_location =
@@ -273,7 +261,11 @@ impl Subscribe {
                         (receiver, reservation, Some(cache_before_subscribe))
                     }
                 };
-            if let Some(CreationState::Failed(failure)) = wait_created(receiver).await {
+            let state = receiver
+                .wait_for(|state| *state != CreationState::Creating)
+                .await
+                .map(|state| state.clone());
+            if let Ok(CreationState::Failed(failure)) = state {
                 return Err(failure);
             }
             // Created, or the entry went away meanwhile: then look again.
