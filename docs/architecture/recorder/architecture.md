@@ -6,8 +6,7 @@ event tracks without muxing. Closed data and index chunks are uploaded before
 their manifest. `POST /recordings/{id}/publish` exposes a finished archive
 through relay FETCH, and `examples/recording-player` plays the meeting with
 chat and transcript. The separate experimental archive player handles a local
-single-broadcast JSON Lines file. See
-[moq-recording-proposal.md](moq-recording-proposal.md) for the proposed design.
+single-broadcast JSON Lines file.
 
 ## Status
 Living document. Update this file in the same change whenever the track
@@ -444,6 +443,14 @@ chunk descriptors and text history remain in memory. The player rejects
 codec/configuration changes within a track instead of playing them with an
 incorrect configuration. This restriction is separate from the persisted
 format and relay range serving.
+
+The recorder subscribes through the relay rather than reading the relay's disk
+cache, which is optional, drops data under pressure and loses its index on
+restart. The archive is application-specific, not a standard MoQ file format.
+Still open: the common-clock mechanism and its error bound, archive retention,
+whether partial recordings may be viewed, edit and delete semantics for chat
+and transcript events, MP4 export from an archive, and the recording and
+playback cost compared with per-participant MP4.
 
 ## Composite
 On a recorder started with `--composite`, a `POST /recordings` with
