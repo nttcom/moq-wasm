@@ -12,7 +12,7 @@ registered app, and whether that app is a relay. Signing tokens is
 
 The service deliberately answers only the signature question. Token lifetime
 (`iat`, `exp`, the maximum TTL, clock leeway) and the meaning of `publish` /
-`subscribe` are the relay's policy (`crates/relay/src/modules/auth/`), so one
+`subscribe` are the relay's policy (`services/relay/src/modules/auth/`), so one
 clock and one rule set govern both accepting a session and expiring it later.
 
 ## Modules
@@ -80,5 +80,5 @@ sequenceDiagram
 - Every request runs in a `vts.request` span that continues the caller's
   trace from its W3C `traceparent` header, so a verification shows up under
   the relay's `relay.vts.verify` span.
-- The Docker image (`crates/vts/Dockerfile`) is a `cargo-chef` build onto
+- The Docker image (`services/vts/Dockerfile`) is a `cargo-chef` build onto
   `distroless/cc`, the same base as the relay, and ships `vts`.

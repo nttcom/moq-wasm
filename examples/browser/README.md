@@ -18,7 +18,7 @@ make chrome         # Chrome trusting the local relay certificate (make chrome:l
 | `webcodecs`                                     | Encoder and decoder behaviour without MoQ in between                                                                       |
 | [`live-viewer`](examples/live-viewer/README.md) | Player for `live-ingest`, `moqtsink` and in-browser MP4 publishing, with rewind                                            |
 | [`meeting`](examples/meeting/README.md)         | Multi-party video meeting                                                                                                  |
-| `onvif`                                         | Remote control and monitoring of a PTZ camera through `crates/onvif-ingest`                                                |
+| `onvif`                                         | Remote control and monitoring of a PTZ camera through `services/onvif-ingest`                                                |
 | `remote-monitoring`                             | Remote monitoring from a USB camera                                                                                        |
 | `moq-chat-moderation`                           | Chat moderated by a pipecat bot, see [`examples/python`](../python/moq-chat-moderation/README.md)                          |
 | `moq-camera-detection`                          | Questions about a camera feed answered by a pipecat bot, see [`examples/python`](../python/moq-camera-detection/README.md) |
@@ -42,7 +42,7 @@ Playwright's WebKit has no WebTransport, so check Safari on a Mac by hand.
    checkout's relay reads it through `RELAY_CERT_DIR`:
 
    ```shell
-   mkdir -p ~/.config/moqt/relay-keys && cp crates/relay/keys/*.pem ~/.config/moqt/relay-keys/
+   mkdir -p ~/.config/moqt/relay-keys && cp services/relay/keys/*.pem ~/.config/moqt/relay-keys/
    security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.config/moqt/relay-keys/cert.pem
    ```
 

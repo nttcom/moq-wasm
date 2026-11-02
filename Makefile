@@ -34,7 +34,7 @@ GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s
 .PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
-VTS_APPS_FILE ?= crates/vts/apps.example.json
+VTS_APPS_FILE ?= services/vts/apps.example.json
 DEV_RELAY_APP_ID := 11111111-2222-3333-4444-555555555555
 
 # Starts a VTS on 127.0.0.1:8081 for the lifetime of the relay process.

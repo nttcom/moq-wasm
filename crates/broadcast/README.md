@@ -1,8 +1,8 @@
 # broadcast
 
 Publishes an MSF broadcast, a catalog and H.264/AAC tracks, into a MoQT relay.
-It is the publishing side shared by `crates/live-ingest`,
-`crates/gst-plugin-moqt` (`moqtsink`), `crates/onvif-ingest` and, built into
+It is the publishing side shared by `services/live-ingest`,
+`crates/gst-plugin-moqt` (`moqtsink`), `services/onvif-ingest` and, built into
 `crates/wasm`, the Live Viewer's in-browser MP4 publisher. Every publisher built
 on it produces the tracks below, so one player,
 `examples/browser/examples/live-viewer`, plays and rewinds all of them.

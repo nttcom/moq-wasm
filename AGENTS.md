@@ -6,7 +6,9 @@
 
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
-- Every Rust crate lives in `crates/<package name>/`, where `<package name>` is the `name` in its `Cargo.toml`; architecture documents use the same name under `docs/architecture/`.
+- Every Rust crate lives in `crates/<package name>/` or `services/<package name>/`, where `<package name>` is the `name` in its `Cargo.toml`; architecture documents use the same name under `docs/architecture/`.
+  - `services/` holds the crates whose product is a process that is deployed or run on its own: servers and bridges (`relay`, `vts`, `live-ingest`).
+  - `crates/` holds the code other crates, the browser, Python or GStreamer link against: libraries, bindings and plugins (`moqt`, `wasm`, `gst-plugin-moqt`). A library that also ships a small CLI behind a feature (`auth-token`) stays here.
 - Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
   1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
   2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
@@ -31,16 +33,16 @@ Application and integration components (draft reference is normally not required
 | `crates/python` | Python (PyO3) bindings to use `moqt` from the Python bots |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
-| `crates/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |
-| `crates/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
-| `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
-| `crates/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
+| `services/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |
+| `services/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
+| `services/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
+| `services/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
 | `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
-| `crates/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
-| `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
-| `crates/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
+| `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
+| `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
+| `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
@@ -70,7 +72,7 @@ Application and integration components (draft reference is normally not required
 - Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore`
 - Test (browser unit): `npm test --workspaces`
 - Wasm: `npm --prefix crates/wasm/js run wasm`
-- Console web: `npm --prefix crates/console/web run lint && npm --prefix crates/console/web run build`
+- Console web: `npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`

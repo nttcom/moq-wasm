@@ -1,6 +1,6 @@
 # Crates
 
-Every Rust crate in the workspace lives in `crates/<package name>/`. This page shows how they depend on each other. What each crate does is listed in `AGENTS.md` §2, and its design in `docs/architecture/<package name>/architecture.md`.
+Libraries live in `crates/<package name>/` and the servers and bridges built on them in `services/<package name>/`. This page shows how the crates in both directories depend on each other. What each crate does is listed in `AGENTS.md` §2, and its design in `docs/architecture/<package name>/architecture.md`.
 
 An arrow `A --> B` means `A` depends on `B`, as declared in `A`'s `Cargo.toml`. Only dependencies between workspace crates are shown.
 

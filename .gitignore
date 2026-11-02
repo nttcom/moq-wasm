@@ -29,7 +29,7 @@ examples/browser/examples/*/dist/*
 log/*
 
 /.env
-crates/vts/apps.json
+services/vts/apps.json
 test-results
 
 cargo-flamegraph.trace/*

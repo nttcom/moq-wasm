@@ -26,10 +26,10 @@ The payload claims:
 
 Producers and consumers:
 
-- `crates/vts` (`verify.rs`) reads the payload with `decode_unverified_payload` and checks
+- `services/vts` (`verify.rs`) reads the payload with `decode_unverified_payload` and checks
   it with `verify_signature`.
-- `crates/console` (`apps.rs`) signs `Claims::issued` with `sign_token`; so does the CLI.
-- `crates/relay` (`modules/auth/token_claims.rs`) deserialises `Claims` from the
+- `services/console` (`apps.rs`) signs `Claims::issued` with `sign_token`; so does the CLI.
+- `services/relay` (`modules/auth/token_claims.rs`) deserialises `Claims` from the
   VTS `/verify` response and applies its time and path policy. It holds no
   secret and never signs or verifies.
 

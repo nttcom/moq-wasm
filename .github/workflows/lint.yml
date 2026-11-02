@@ -242,7 +242,7 @@ jobs:
       image: cimg/node:22.23.4@sha256:097391155ab978930031757a857cf57278b907da8a994f278bbd27443c5018bf
     defaults:
       run:
-        working-directory: crates/console/web
+        working-directory: services/console/web
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:

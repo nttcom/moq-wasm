@@ -73,8 +73,8 @@ flushing the batches still queued, so a binary holds it for the life of
 second on `observability/<relay id>` / `network_stats` (`track_namespace`,
 `TRACK_NAME`), so the producer and its consumers share one type:
 
-- `crates/relay` (`modules/observability`) builds and publishes `RelaySnapshot`.
-- `crates/observability` subscribes to it on every relay and stores it.
+- `services/relay` (`modules/observability`) builds and publishes `RelaySnapshot`.
+- `services/observability` subscribes to it on every relay and stores it.
 
 The payload is `RelaySnapshot::to_json`, one JSON object per MoQT object.
 The [observability architecture](../observability/architecture.md) describes

@@ -5,7 +5,7 @@ Living document. Update this file in the same change whenever the reading
 flow, the outputs or the invariants described here change.
 
 ## Scope
-`crates/live-egress` is the reverse of `live-ingest`: it subscribes to an MSF
+`services/live-egress` is the reverse of `live-ingest`: it subscribes to an MSF
 broadcast on a relay and hands its media to a protocol outside MoQT. Plain
 RTP is the one output today. The broadcast is the one `crates/broadcast`
 publishes, so the tracks are the ones its
