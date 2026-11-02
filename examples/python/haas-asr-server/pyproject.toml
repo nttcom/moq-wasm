@@ -19,6 +19,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv]
+# haas-asr tests torch 2.14 and the Triton 3.8 it requires: Triton 3.9 refuses the autotune keys of
+# flash-linear-attention 0.5.2's kernels, so the model fails to load.
+constraint-dependencies = ["torch==2.14.0"]
 # NeMo 2.7.3's CUDA-graph decoder corrupts Python's shared b" " when a module is compiled at run
 # time, so every module is compiled at install time, as haas-asr's own repository does.
 compile-bytecode = true
