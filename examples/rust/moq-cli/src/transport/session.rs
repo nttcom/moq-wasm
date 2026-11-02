@@ -5,7 +5,7 @@ use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, Subscription, TrackReader,
     fetch::{Fetch, FetchOption},
-    object::{DataReceiver, GroupOrder, Object},
+    object::{DataReceiver, Object},
     subscribe::{FilterType, SubscribeOption},
 };
 use tracing::info;
@@ -13,7 +13,6 @@ use tracing::info;
 use super::{auth_token_file::read_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
 use crate::cli::RelayArgs;
 
-const SUBSCRIBER_PRIORITY: u8 = 128;
 pub struct RelayConnection {
     pub session: Arc<Session>,
     auth_token_refresh: Option<AuthTokenRefreshTask>,
@@ -85,10 +84,8 @@ pub async fn subscribe(
     filter_type: FilterType,
 ) -> Result<Subscription> {
     let option = SubscribeOption {
-        subscriber_priority: SUBSCRIBER_PRIORITY,
-        group_order: GroupOrder::Ascending,
-        forward: true,
         filter_type,
+        ..SubscribeOption::default()
     };
     session
         .subscriber()
