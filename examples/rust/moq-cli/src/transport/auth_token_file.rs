@@ -2,6 +2,16 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
+use crate::cli::RelayArgs;
+
+/// `--auth-token-file` read now, else `--auth-token`.
+pub(crate) async fn current_auth_token(relay: &RelayArgs) -> Result<Option<String>> {
+    match &relay.auth_token_file {
+        Some(path) => read_auth_token(path).await.map(Some),
+        None => Ok(relay.auth_token.clone()),
+    }
+}
+
 pub(super) async fn read_auth_token(path: &Path) -> Result<String> {
     let content = tokio::fs::read_to_string(path)
         .await

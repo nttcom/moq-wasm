@@ -1836,6 +1836,7 @@ dependencies = [
  "mediapack",
  "moqt",
  "msf",
+ "reqwest",
  "serde_json",
  "tokio",
  "tracing",

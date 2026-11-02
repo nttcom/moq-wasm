@@ -4,7 +4,7 @@ use anyhow::Result;
 use moqt::{ClientConfig, Endpoint, QUIC, Session};
 use tracing::info;
 
-use super::{auth_token_file::read_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
+use super::{auth_token_file::current_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
 use crate::cli::RelayArgs;
 
 pub struct RelayConnection {
@@ -20,10 +20,7 @@ impl RelayConnection {
 }
 
 pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConnection> {
-    let auth_token = match &relay.auth_token_file {
-        Some(path) => Some(read_auth_token(path).await?),
-        None => relay.auth_token.clone(),
-    };
+    let auth_token = current_auth_token(relay).await?;
     let config = ClientConfig {
         verify_certificate: !relay.insecure,
         authorization_token: auth_token.clone().map(Into::into),
