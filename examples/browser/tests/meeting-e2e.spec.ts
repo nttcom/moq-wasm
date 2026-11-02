@@ -151,6 +151,61 @@ test('cross-relay: two clients on different relays see each other and receive vi
   }
 })
 
+test('unmuting a member microphone keeps their picture on the viewer page', async ({ browser }) => {
+  // Arrange: alice plays bob's video and audio, then bob turns his microphone off
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-unmute-picture-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await enableMedia(bob.page)
+    await subscribeAndExpectMedia(alice.page.page, 'bob')
+    await bob.page.toggleMicrophoneButton.click()
+    await expect(alice.page.page.getByTestId('member-chip-bob')).not.toHaveAttribute(
+      'data-audio-status',
+      'Subscribed',
+      {
+        timeout: 15_000
+      }
+    )
+    const bobVideo = getMemberVideo(alice.page.page, 'bob')
+    await bobVideo.evaluate((element) => {
+      const video = element as HTMLVideoElement & { emptySamples?: number }
+      video.emptySamples = 0
+      setInterval(() => {
+        if (!video.srcObject || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          video.emptySamples! += 1
+        }
+      }, 50)
+    })
+
+    // Act
+    await bob.page.toggleMicrophoneButton.click()
+    await expectTrackStatus(alice.page.page, 'audio', 'bob', 'Subscribed', 30_000)
+    const framesAtUnmute = await bobVideo.evaluate(
+      (element) => (element as HTMLVideoElement).getVideoPlaybackQuality().totalVideoFrames
+    )
+    // 2 s of bob's 15 fps camera, which spans the audio joining the picture
+    await expect
+      .poll(
+        async () =>
+          bobVideo.evaluate((element) => (element as HTMLVideoElement).getVideoPlaybackQuality().totalVideoFrames),
+        { timeout: 15_000 }
+      )
+      .toBeGreaterThanOrEqual(framesAtUnmute + 30)
+
+    // Assert: the picture never went blank while bob's audio joined it
+    expect(
+      await bobVideo.evaluate((element) => (element as HTMLVideoElement & { emptySamples: number }).emptySamples)
+    ).toBe(0)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+  }
+})
+
 test('leave and rejoin with same memberName succeeds without stale-member failure', async ({ browser }) => {
   // Arrange: 同一ルームに relay-a 経由で 2 クライアントを参加させる。
   const client1 = await arrangeMeetingClient(browser)

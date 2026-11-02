@@ -683,7 +683,9 @@ named `live-player-*`.
   one `LocLive` for the camera and the audio and another for a screen share;
   the pipeline is replaced when its video track is unsubscribed, so the next
   video track starts on fresh decoders, and audio joining a running picture
-  warms the playout up again. A video track that starts a picture fetches
+  (`LocLive.joinAudio`) leaves the clock and the picture running and, for the
+  warm-up's length, drops audio older than the picture, so the relay's cached
+  burst cannot push the clock back as the new master. A video track that starts a picture fetches
   its current group with a joining FETCH, since a still screen share may not
   send another keyframe for minutes; `LocLive` shows those cached frames as
   they decode without anchoring the clock or sizing the buffer on them, and
