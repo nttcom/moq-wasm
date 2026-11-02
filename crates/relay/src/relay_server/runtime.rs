@@ -27,7 +27,7 @@ use crate::{
         domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
         observability::{
             stats_collector::{StatsCollector, StatsSources},
-            stats_publish_task::unix_millis_now,
+            stats_export_task::unix_millis_now,
         },
         session::{session_event::SessionEvent, session_repository::SessionRepository},
     },

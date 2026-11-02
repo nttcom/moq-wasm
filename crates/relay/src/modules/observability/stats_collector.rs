@@ -42,10 +42,6 @@ impl StatsCollector {
         Self { relay_id, sources }
     }
 
-    pub(crate) fn relay_id(&self) -> &str {
-        &self.relay_id
-    }
-
     pub(crate) async fn collect(&self, timestamp_ms: u64, rss_bytes: Option<u64>) -> RelaySnapshot {
         let (sessions, client_sessions) = {
             let repo = self.sources.repo.lock().await;
@@ -66,7 +62,6 @@ impl StatsCollector {
             *newest = (*newest).max(*publisher_session_id);
         }
         let subscription_states = self.sources.directory.downstream_subscription_states();
-        let stats_peers = self.stats_peers(&upstream_tracks, &subscription_states);
         let subscriptions = subscription_states
             .into_iter()
             .map(|state| {
@@ -97,9 +92,8 @@ impl StatsCollector {
             sessions: sessions
                 .into_iter()
                 .map(|session| {
-                    let stats_peer = stats_peers.get(&session.session_id).copied();
                     let dialed_relay_id = dialed_relay_ids.get(&session.session_id).cloned();
-                    session_stats(session, stats_peer, dialed_relay_id)
+                    session_stats(session, dialed_relay_id)
                 })
                 .collect(),
             tracks: upstream_tracks
@@ -132,34 +126,9 @@ impl StatsCollector {
             })
             .collect()
     }
-
-    fn stats_peers(
-        &self,
-        upstream_tracks: &[(SessionId, TrackKey)],
-        subscription_states: &[DownstreamSubscriptionState],
-    ) -> HashMap<SessionId, SnapshotPeer> {
-        let namespace = relay_stats::track_namespace(&self.relay_id);
-        let is_stats_track = |track_key: &TrackKey| {
-            track_key.track_namespace == namespace
-                && track_key.track_name == relay_stats::TRACK_NAME
-        };
-        let publishers = upstream_tracks
-            .iter()
-            .filter(|(_, track_key)| is_stats_track(track_key))
-            .map(|(publisher_session_id, _)| (*publisher_session_id, SnapshotPeer::StatsPublisher));
-        let subscribers = subscription_states
-            .iter()
-            .filter(|state| is_stats_track(&state.track_key))
-            .map(|state| (state.subscriber_session_id, SnapshotPeer::StatsSubscriber));
-        subscribers.chain(publishers).collect()
-    }
 }
 
-fn session_stats(
-    session: SessionState,
-    stats_peer: Option<SnapshotPeer>,
-    dialed_relay_id: Option<String>,
-) -> SessionStats {
+fn session_stats(session: SessionState, dialed_relay_id: Option<String>) -> SessionStats {
     let SessionState {
         session_id,
         peer,
@@ -169,10 +138,10 @@ fn session_stats(
     } = session;
     SessionStats {
         session_id,
-        peer: stats_peer.unwrap_or(match peer {
+        peer: match peer {
             SessionPeer::Client => SnapshotPeer::Client,
             SessionPeer::Relay => SnapshotPeer::Relay,
-        }),
+        },
         app_id,
         remote_address: addresses.remote.map(|address| address.to_string()),
         local_ip: addresses.local_ip.map(|ip| ip.to_string()),
@@ -371,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_carry_their_transport_stats_and_the_stats_sessions_are_marked() {
+    async fn sessions_carry_their_peer_and_transport_stats() {
         // Arrange
         let fixture = Fixture::new();
         let client_transport = moqt::TransportStats {
@@ -386,40 +355,20 @@ mod tests {
         fixture
             .add_session(2, SessionPeer::Relay, moqt::TransportStats::default())
             .await;
-        fixture
-            .add_session(3, SessionPeer::Relay, moqt::TransportStats::default())
-            .await;
-        let stats_track = fixture.publish(
-            2,
-            &relay_stats::track_namespace(RELAY_ID),
-            relay_stats::TRACK_NAME,
-        );
-        fixture
-            .directory
-            .register_downstream_subscription(
-                3,
-                0,
-                SessionPeer::Relay,
-                stats_track,
-                JoinPoint::Largest(None),
-                delivery_control(true),
-            )
-            .unwrap();
 
         // Act
         let mut snapshot = fixture.collector().collect(1_000, Some(4_096)).await;
 
         // Assert
         snapshot.sessions.sort_by_key(|session| session.session_id);
-        let [client, publisher, subscriber] = &snapshot.sessions[..] else {
-            panic!("expected three sessions, got {:?}", snapshot.sessions);
+        let [client, relay] = &snapshot.sessions[..] else {
+            panic!("expected two sessions, got {:?}", snapshot.sessions);
         };
         assert_eq!(client.peer, SnapshotPeer::Client);
         assert_eq!(client.rtt_us, 12_000);
         assert_eq!(client.lost_packets, 3);
         assert_eq!(client.received_reset_stream, 2);
-        assert_eq!(publisher.peer, SnapshotPeer::StatsPublisher);
-        assert_eq!(subscriber.peer, SnapshotPeer::StatsSubscriber);
+        assert_eq!(relay.peer, SnapshotPeer::Relay);
         assert_eq!(snapshot.relay_id, RELAY_ID);
         assert_eq!(snapshot.timestamp_ms, 1_000);
         assert_eq!(snapshot.process.rss_bytes, Some(4_096));

@@ -52,11 +52,9 @@ async fn main() -> anyhow::Result<()> {
     let server = relay::RelayServer::new_with_config(&key_path, &cert_path, config.clone()).await?;
     let mut client_handler = server.spawn_client_transport::<moqt::NATIVE>(config.port)?;
     let _inner_handler = server.spawn_inner_transport::<moqt::QUIC>(config.inner_port)?;
-    let _stats_publisher = server.spawn_stats_publisher(
-        config.relay_id.clone(),
-        config.inner_port,
-        logging.event_logger("relay"),
-    );
+    let _stats_exporter = logging
+        .event_logger("relay")
+        .map(|event_logger| server.spawn_stats_exporter(config.relay_id.clone(), event_logger));
 
     tracing::info!(
         port = config.port,

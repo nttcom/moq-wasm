@@ -38,7 +38,7 @@ Application and integration components (draft reference is normally not required
 | `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/telemetry` | `tracing` setup shared by the binaries: stdout and OTLP traces and logs |
-| `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
+| `crates/relay-stats` | Snapshot a relay sends every second as an OTLP log record |
 | `crates/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
 | `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
 | `crates/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |

@@ -1,16 +1,13 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+/// First namespace element of the former stats tracks; snapshots within the
+/// retention may still list it.
 pub const NAMESPACE_ROOT: &str = "observability";
-pub const TRACK_NAME: &str = "network_stats";
 /// `EventName` of the OTLP log record that carries a snapshot.
 pub const EVENT_NAME: &str = "relay.stats.snapshot";
 /// Attribute of that record holding the snapshot as JSON.
 pub const EVENT_ATTRIBUTE: &str = "snapshot";
-
-pub fn track_namespace(relay_id: &str) -> String {
-    format!("{NAMESPACE_ROOT}/{relay_id}")
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelaySnapshot {
@@ -35,7 +32,7 @@ pub struct ProcessStats {
     /// `RELAY_DISK_CACHE_BYTES`; 0 without a disk cache.
     #[serde(default)]
     pub disk_cache_max_bytes: u64,
-    /// Sessions a drain waits for; excludes relay peers and the stats sessions.
+    /// Sessions a drain waits for; excludes relay peers.
     #[serde(default)]
     pub client_sessions: u64,
     /// Unix milliseconds when the relay sent GOAWAY; `None` while it serves.
@@ -48,6 +45,8 @@ pub struct ProcessStats {
 pub enum SessionPeer {
     Client,
     Relay,
+    /// Ends of the former stats track; kept so snapshots within the retention
+    /// still decode.
     StatsPublisher,
     StatsSubscriber,
 }
@@ -215,11 +214,5 @@ mod tests {
 
         // Assert
         assert!(json.contains(r#""peer":"client""#));
-    }
-
-    #[test]
-    fn track_namespace_is_rooted_at_observability() {
-        // Act / Assert
-        assert_eq!(track_namespace("relay-a"), "observability/relay-a");
     }
 }

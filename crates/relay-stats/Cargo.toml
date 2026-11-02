@@ -2,7 +2,7 @@
 name = "relay-stats"
 version = "0.1.0"
 edition = "2024"
-description = "Snapshot a relay publishes on observability/<relay id>/network_stats"
+description = "Snapshot a relay sends every second as an OTLP log record"
 
 [dependencies]
 anyhow = "1.0.102"
