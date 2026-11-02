@@ -688,7 +688,7 @@ impl InMemoryLocalPubSubDirectory {
                 }
             }
             Entry::Vacant(entry) => {
-                let mut track = Track::creating();
+                let mut track = Track::new(CreationState::Creating);
                 track.reserve(requester);
                 let creation = track.creation();
                 entry.insert(track);
@@ -782,7 +782,7 @@ impl InMemoryLocalPubSubDirectory {
         let mut track = self
             .upstream_tracks
             .entry(track_key.clone())
-            .or_insert_with(Track::created);
+            .or_insert_with(|| Track::new(CreationState::Created));
         let replaced = track.producers.insert(publisher_session_id, producer);
         track.mark_created();
         drop(track);

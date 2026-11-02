@@ -156,7 +156,7 @@ pub(crate) struct Track {
 }
 
 impl Track {
-    fn new(state: CreationState) -> Self {
+    pub(crate) fn new(state: CreationState) -> Self {
         Self {
             producers: BTreeMap::new(),
             consumers: HashMap::new(),
@@ -166,16 +166,6 @@ impl Track {
             reservations: Reservations::default(),
             pending_consumers: HashSet::new(),
         }
-    }
-
-    /// A track whose first SUBSCRIBE is being forwarded upstream.
-    pub(crate) fn creating() -> Self {
-        Self::new(CreationState::Creating)
-    }
-
-    /// A track a PUBLISH feeds without any SUBSCRIBE having asked for it.
-    pub(crate) fn created() -> Self {
-        Self::new(CreationState::Created)
     }
 
     pub(crate) fn is_creating(&self) -> bool {
