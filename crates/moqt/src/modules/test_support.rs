@@ -720,10 +720,10 @@ pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
 
 /// A span or event a `CapturedTelemetry` layer saw: its name (an event's
 /// message) and its recorded fields, formatted with `Debug`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct Captured {
-    pub(crate) name: String,
-    pub(crate) fields: HashMap<String, String>,
+    name: String,
+    fields: HashMap<String, String>,
 }
 
 impl Captured {
