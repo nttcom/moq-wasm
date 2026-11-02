@@ -718,8 +718,8 @@ pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
     }
 }
 
-/// A span or event a `CapturedTelemetry` layer saw: its name (an event's
-/// message) and its recorded fields, formatted with `Debug`.
+/// A captured span or event: its name (an event's message) and its fields,
+/// formatted with `Debug`.
 #[derive(Clone)]
 pub(crate) struct Captured {
     name: String,
@@ -732,7 +732,7 @@ impl Captured {
     }
 }
 
-/// Records closed spans and events; install it with `capture_telemetry`.
+/// Install it with `capture_telemetry`.
 #[derive(Clone, Default)]
 pub(crate) struct CapturedTelemetry {
     closed_spans: Arc<Mutex<Vec<Captured>>>,

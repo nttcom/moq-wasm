@@ -25,9 +25,8 @@ pub enum RequestFailure {
     ProtocolViolation(&'static str),
 }
 
-/// Records on the current span the id of the request a response answered:
-/// the one `request_id` reads from an `Ok`, or the one a rejection names. A
-/// request that was never answered records nothing.
+/// Records the answered request's id on the current span; records nothing
+/// when the request was never answered.
 pub(crate) fn record_request_id<T>(
     result: &Result<T, RequestFailure>,
     request_id: impl FnOnce(&T) -> u64,
