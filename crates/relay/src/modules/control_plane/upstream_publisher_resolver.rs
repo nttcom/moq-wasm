@@ -7,10 +7,8 @@ use crate::modules::{
         watched_namespace_routes::WatchedNamespaceRoutes,
     },
     control_plane::sequences::connect_relay,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
-    },
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
 };
 
 /// A remote relay is only dialled by whoever sends it the request, so a relay
@@ -124,10 +122,8 @@ impl UpstreamPublisherResolver {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{
-            pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-            session_peer::SessionPeer,
-        },
+        directory::InMemoryLocalPubSubDirectory,
+        domain::{session_id::SessionId, session_peer::SessionPeer},
         test_support::{
             mock_session::detached_session_repository,
             stub_route_registry::{PublisherLookup, StubRouteRegistry},

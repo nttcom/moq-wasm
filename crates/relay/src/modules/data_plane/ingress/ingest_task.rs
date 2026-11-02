@@ -1,0 +1,264 @@
+use std::sync::Arc;
+
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
+use tracing::{Instrument, Span};
+
+use crate::logging::{link_span, relay_hostname};
+use crate::modules::{
+    data_plane::{
+        cache::{cached_object::CacheStamp, track_cache::TrackCache},
+        ingress::{datagram_reader::read_datagrams, stream_reader::accept_streams},
+    },
+    domain::{session_id::SessionId, track_key::TrackKey},
+    session::{
+        data_receiver::receiver::DataReceiver, session_event::SessionEvent, subscriber::Subscriber,
+        subscription::UpstreamSubscription,
+    },
+};
+
+/// What every reader of one publisher's track shares.
+#[derive(Clone)]
+pub(crate) struct TrackIngest {
+    pub(crate) track_key: TrackKey,
+    pub(crate) cache: Arc<TrackCache>,
+    pub(crate) publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) stop_receiver: watch::Receiver<bool>,
+    pub(crate) stamp: CacheStamp,
+}
+
+pub(crate) struct IngestStart {
+    pub(crate) track_key: TrackKey,
+    pub(crate) subscriber_session_id: SessionId,
+    pub(crate) publisher_session_id: SessionId,
+    pub(crate) subscriber: Box<dyn Subscriber>,
+    pub(crate) subscription: UpstreamSubscription,
+    pub(crate) cache: Arc<TrackCache>,
+    pub(crate) publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) stamp: CacheStamp,
+    /// The request that starts the ingest.
+    pub(crate) request_span: Span,
+    pub(crate) publisher_session_span: Span,
+}
+
+/// The ingest of one publisher's track: waits for the publisher's data
+/// receiver, then reads every subgroup stream or datagram into the track's
+/// cache. Dropping it stops the readers.
+pub(crate) struct IngestTask {
+    _stop_sender: watch::Sender<bool>,
+    _join_handle: JoinHandle<()>,
+}
+
+impl IngestTask {
+    pub(crate) fn run(start: IngestStart) -> Self {
+        let (stop_sender, stop_receiver) = watch::channel(false);
+        // The ingest outlives the request that starts it, so its span roots
+        // its own trace, linked to the request and to the publisher session.
+        let span = tracing::info_span!(
+            parent: None,
+            "relay.upstream.ingress",
+            subscriber_session_id = start.subscriber_session_id,
+            publisher_session_id = start.publisher_session_id,
+            track_alias = start.subscription.track_alias(),
+            track_namespace = %start.track_key.track_namespace,
+            track_name = %start.track_key.track_name,
+        );
+        link_span(&span, &start.request_span);
+        link_span(&span, &start.publisher_session_span);
+        let join_handle = tokio::spawn(Self::ingest(start, stop_receiver).instrument(span));
+        Self {
+            _stop_sender: stop_sender,
+            _join_handle: join_handle,
+        }
+    }
+
+    async fn ingest(start: IngestStart, mut stop_receiver: watch::Receiver<bool>) {
+        let IngestStart {
+            track_key,
+            subscriber_session_id,
+            publisher_session_id,
+            mut subscriber,
+            subscription,
+            cache,
+            publisher_mailbox_sender,
+            stamp,
+            publisher_session_span,
+            ..
+        } = start;
+        tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "creating upstream data receiver");
+        let receiver = tokio::select! {
+            _ = stop_receiver.changed() => {
+                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "upstream ingress stopped before it started");
+                return;
+            }
+            receiver = subscriber.create_data_receiver(&subscription) => receiver,
+        };
+        let receiver = match receiver {
+            Ok(receiver) => receiver,
+            Err(error) => {
+                tracing::warn!(%error, track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "failed to start upstream ingress");
+                return;
+            }
+        };
+        let kind = match &receiver {
+            DataReceiver::Stream(_) => "stream",
+            DataReceiver::Datagram(_) => "datagram",
+        };
+        tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, kind, "track ingress started");
+        let ingest = TrackIngest {
+            track_key: track_key.clone(),
+            cache: cache.clone(),
+            publisher_mailbox_sender,
+            stop_receiver,
+            stamp,
+        };
+        cache.begin_live_ingest();
+        match receiver {
+            DataReceiver::Stream(factory) => {
+                let track_span = tracing::info_span!(
+                    parent: &publisher_session_span,
+                    "relay.dataplane.ingress.track",
+                    subscriber_session_id,
+                    publisher_session_id,
+                    track_alias = subscription.track_alias(),
+                    track_namespace = %track_key.track_namespace,
+                    track_name = %track_key.track_name,
+                );
+                link_span(&track_span, &Span::current());
+                let factory_span = tracing::debug_span!(
+                    parent: &track_span,
+                    "relay.dataplane.ingress.stream_factory",
+                    track_namespace = %track_key.track_namespace, track_name = %track_key.track_name,
+                );
+                // Also instrument with the track span, so the task stays inside it
+                // when the debug factory span is disabled.
+                accept_streams(ingest, factory, track_span.clone())
+                    .instrument(factory_span)
+                    .instrument(track_span)
+                    .await;
+            }
+            DataReceiver::Datagram(datagram_receiver) => {
+                read_datagrams(ingest, datagram_receiver).await
+            }
+        }
+        cache.end_live_ingest();
+        tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, kind, relay_hostname = relay_hostname(), "track ingress stopped");
+    }
+}
+
+#[cfg(test)]
+impl IngestTask {
+    /// An ingest that reads nothing, for producers under test.
+    pub(crate) fn idle() -> Self {
+        let (stop_sender, _stop_receiver) = watch::channel(false);
+        Self {
+            _stop_sender: stop_sender,
+            _join_handle: tokio::spawn(async {}),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::{
+        session::{Session, data_receiver::stream_receiver::StreamReceiver},
+        test_support::{
+            mock_session::{MockUpstreamSession, RecordedControlMessages},
+            relay_harness::{
+                UpstreamSubgroupStream,
+                fixtures::{location, subscription::upstream_subscription},
+                wait_largest_location,
+            },
+        },
+    };
+
+    const FIRST_PUBLISHER: SessionId = 1;
+    const SECOND_PUBLISHER: SessionId = 2;
+
+    struct UpstreamPublisher {
+        recorded: RecordedControlMessages,
+        stream_sender: mpsc::UnboundedSender<Box<dyn StreamReceiver>>,
+        _ingest: IngestTask,
+    }
+
+    impl UpstreamPublisher {
+        fn open_stream(&self) -> UpstreamSubgroupStream {
+            UpstreamSubgroupStream::open(|receiver| {
+                self.stream_sender
+                    .send(receiver)
+                    .expect("ingest should accept streams");
+                tokio::spawn(async {})
+            })
+        }
+    }
+
+    /// Starts the ingest of `publisher_session_id`, whose upstream request id
+    /// equals its session id, and waits until it created the publisher's
+    /// data receiver.
+    async fn start(cache: &Arc<TrackCache>, publisher_session_id: SessionId) -> UpstreamPublisher {
+        let recorded = RecordedControlMessages::default();
+        let stream_sender = recorded.feed_streams();
+        let session = MockUpstreamSession::new(recorded.clone());
+        let (publisher_mailbox_sender, _publisher_mailbox_receiver) = mpsc::unbounded_channel();
+        let ingest = IngestTask::run(IngestStart {
+            track_key: TrackKey::new("ns", "track"),
+            subscriber_session_id: 3,
+            publisher_session_id,
+            subscriber: session.as_subscriber(),
+            subscription: upstream_subscription(publisher_session_id),
+            cache: cache.clone(),
+            publisher_mailbox_sender,
+            stamp: CacheStamp::default(),
+            request_span: Span::none(),
+            publisher_session_span: Span::none(),
+        });
+        recorded.wait_ingest_started(publisher_session_id).await;
+        UpstreamPublisher {
+            recorded,
+            stream_sender,
+            _ingest: ingest,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_second_publisher_of_an_active_track_is_ingested() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let _first = start(&cache, FIRST_PUBLISHER).await;
+        let second = start(&cache, SECOND_PUBLISHER).await;
+
+        // Act
+        let stream = second.open_stream();
+        stream.header(0);
+        stream.object(0);
+
+        // Assert
+        wait_largest_location(&cache, location(0, 0)).await;
+    }
+
+    #[tokio::test]
+    async fn dropping_one_ingest_stops_its_reader_and_keeps_the_other() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let first = start(&cache, FIRST_PUBLISHER).await;
+        let second = start(&cache, SECOND_PUBLISHER).await;
+        let first_stream = first.open_stream();
+        first_stream.header(0);
+        first_stream.object(0);
+        wait_largest_location(&cache, location(0, 0)).await;
+        let first_recorded = first.recorded.clone();
+
+        // Act
+        drop(first);
+        let second_stream = second.open_stream();
+        second_stream.header(1);
+        second_stream.object(0);
+
+        // Assert
+        first_recorded.wait_ingest_stopped(FIRST_PUBLISHER).await;
+        wait_largest_location(&cache, location(1, 0)).await;
+    }
+}

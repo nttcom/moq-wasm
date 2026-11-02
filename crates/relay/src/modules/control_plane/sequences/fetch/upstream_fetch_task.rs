@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use tokio::{sync::mpsc::Sender, task::JoinHandle};
+use tokio::task::JoinHandle;
 use tracing::Instrument;
 
 use super::{Fetch, FetchTarget};
@@ -11,10 +11,11 @@ use crate::modules::{
     },
     data_plane::{
         cache::store::TrackCacheStore,
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::fetch_delivery::EgressFetchRequest,
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    directory::InMemoryLocalPubSubDirectory,
+    domain::session_id::SessionId,
     session::handler::fetch::FetchHandler,
 };
 
@@ -26,7 +27,6 @@ pub(super) struct UpstreamFetchStart {
     pub(super) forwarder: ControlMessageForwarder,
     pub(super) upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
     pub(super) cache_store: Arc<TrackCacheStore>,
-    pub(super) egress_sender: Sender<EgressCommand>,
     pub(super) fill_timeout: Duration,
 }
 
@@ -81,7 +81,6 @@ impl UpstreamFetchTask {
         };
         let _fetch_ingest = FetchIngest::run(
             start.forwarder.repository.clone(),
-            start.egress_sender,
             FetchIngestStart {
                 track_key: start.target.track_key,
                 upstream_publisher_session_id: prepared.upstream_publisher_session_id,

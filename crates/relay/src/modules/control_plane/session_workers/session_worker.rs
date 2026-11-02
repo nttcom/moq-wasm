@@ -24,7 +24,7 @@ use crate::modules::{
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
     domain::{
-        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
+        delivery_control::DeliveryControl, publish_done_reason::PublishDoneReason,
         session_id::SessionId,
     },
     session::{
@@ -125,7 +125,6 @@ impl SessionWorker {
         DownstreamPublish {
             table: self.deps.local_pub_sub_directory.clone(),
             forwarder: self.deps.control_message_forwarder.clone(),
-            egress_sender: self.deps.egress_sender.clone(),
             cache_store: self.deps.cache_store.clone(),
         }
     }
@@ -147,7 +146,6 @@ impl SessionWorker {
                         &track_key,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
-                        &self.deps.ingress_sender,
                     )
                     .instrument(event_span)
                     .await;
@@ -158,7 +156,6 @@ impl SessionWorker {
                         session_id,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
-                        &self.deps.ingress_sender,
                     )
                     .instrument(self.session_span.clone())
                     .await;
@@ -177,7 +174,6 @@ impl SessionWorker {
                         session_id,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
-                        &self.deps.ingress_sender,
                         request_id,
                     )
                     .instrument(event_span)
@@ -227,7 +223,7 @@ impl SessionWorker {
                         session_id,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
+                        &deps.cache_store,
                         &deps.upstream_publisher_resolver,
                         self.cascading_relay_context(),
                         handler.as_ref(),
@@ -281,7 +277,7 @@ impl SessionWorker {
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
+                        &deps.cache_store,
                         &self.downstream_publish(),
                         self.cascading_relay_context(),
                         handler,
@@ -295,8 +291,6 @@ impl SessionWorker {
                         session_id,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
-                        &deps.egress_sender,
                         &deps.upstream_publisher_resolver,
                         &deps.cache_store,
                         &deps.upstream_serializer,
@@ -311,7 +305,6 @@ impl SessionWorker {
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
                         handler.subscribe_id(),
                     )
                     .instrument(event_span)
@@ -325,7 +318,6 @@ impl SessionWorker {
                     session_id,
                     &deps.local_pub_sub_directory,
                     &deps.cache_store,
-                    &deps.egress_sender,
                     &deps.control_message_forwarder,
                     &deps.upstream_publisher_resolver,
                     handler,
@@ -372,7 +364,6 @@ impl SessionWorker {
                             error_reason: handler.error_reason().to_string(),
                         },
                         deps.local_pub_sub_directory.as_ref(),
-                        &deps.ingress_sender,
                         &deps.cache_store,
                         deps.route_registry.as_ref(),
                     )
@@ -385,7 +376,7 @@ impl SessionWorker {
                         session_id,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
+                        &deps.cache_store,
                         &deps.upstream_publisher_resolver,
                     )
                     .instrument(event_span)

@@ -1,10 +1,11 @@
 use super::WorkerDeps;
 use crate::modules::{
     control_plane::sequences::{
-        publish::Publish, publish_namespace_done::PublishNamespaceDone, stop_ingress,
+        publish::Publish, publish_namespace_done::PublishNamespaceDone,
         unsubscribe_namespace::UnsubscribeNamespace,
     },
-    domain::{pub_sub_directory::entry::RemovedSessionSubscriptions, session_id::SessionId},
+    directory::track::RemovedSessionSubscriptions,
+    domain::session_id::SessionId,
 };
 
 /// Idempotent: safe to call when the session is already absent. The session
@@ -44,18 +45,10 @@ async fn cleanup_removed_session(
                     "failed to forward upstream unsubscribe during session cleanup"
                 );
             }
-
-            stop_ingress(
-                &deps.ingress_sender,
-                released.publisher_session_id,
-                &removed_downstream.track_key,
-            )
-            .await;
         }
     }
 
     for track_key in removed.upstream_track_keys {
-        stop_ingress(&deps.ingress_sender, removed_session_id, &track_key).await;
         if !table.has_track_publisher(&track_key) {
             deps.cache_store.publisher_left(&track_key);
         }

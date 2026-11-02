@@ -2,9 +2,8 @@ use moqt::RequestErrorCode;
 use moqt::object::ContentExists;
 
 use crate::modules::{
-    control_plane::sequences::subscribe::cached_largest,
-    data_plane::cache::store::TrackCacheStore,
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, track_key::TrackKey},
+    control_plane::sequences::subscribe::cached_largest, data_plane::cache::store::TrackCacheStore,
+    directory::InMemoryLocalPubSubDirectory, domain::track_key::TrackKey,
     session::handler::track_status::TrackStatusHandler,
 };
 
@@ -21,7 +20,7 @@ impl TrackStatus {
         handler: &dyn TrackStatusHandler,
     ) {
         let track_key = TrackKey::new(handler.track_namespace(), handler.track_name());
-        let response = match table.get_upstream_track(&track_key) {
+        let response = match table.track_state(&track_key) {
             Some(upstream_track) => {
                 let content_exists = match cached_largest(cache_store, &track_key) {
                     Some(location) => ContentExists::True { location },
@@ -55,7 +54,8 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
+        directory::track::ProducerOrigin,
+        domain::track_key::TrackKey,
         test_support::{
             directory_fixtures::table_with_upstream,
             relay_harness::fixtures::{cached_object::insert_closed_group, location},
@@ -129,7 +129,7 @@ mod tests {
     #[tokio::test]
     async fn subscribed_track_reports_the_largest_cached_location() {
         // Arrange
-        let (table, _) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, _) = table_with_upstream(ProducerOrigin::Subscribe);
         let cache_store = TrackCacheStore::new();
         let cache = cache_store.get_or_create(&TrackKey::new("ns", "track"));
         insert_closed_group(&cache, 4, &[0, 1]);
@@ -154,7 +154,7 @@ mod tests {
     #[tokio::test]
     async fn subscribed_track_without_cached_objects_reports_the_upstream_status() {
         // Arrange
-        let (table, _) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, _) = table_with_upstream(ProducerOrigin::Subscribe);
         let handler = MockTrackStatusHandler::default();
 
         // Act

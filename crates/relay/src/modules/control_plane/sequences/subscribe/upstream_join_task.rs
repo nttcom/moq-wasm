@@ -1,25 +1,21 @@
 use std::sync::Arc;
 
-use tokio::{
-    sync::mpsc,
-    task::{JoinHandle, JoinSet},
-};
+use tokio::task::{JoinHandle, JoinSet};
 use tracing::{Instrument, Span};
 
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::{session_peer, start_ingress, stop_ingress},
+        sequences::{IngestRequest, session_peer, start_ingest},
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
-    data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
+    data_plane::cache::store::TrackCacheStore,
+    directory::{
+        InMemoryLocalPubSubDirectory,
+        track::{Producer, ProducerOrigin, ProducerState},
+    },
     domain::{
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{ActiveUpstreamSubscription, PublishDoneReason, UpstreamSubscriptionOrigin},
-        },
-        session_id::SessionId,
-        session_peer::SessionPeer,
+        publish_done_reason::PublishDoneReason, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::subscription::UpstreamSubscription,
@@ -83,26 +79,24 @@ pub(crate) async fn next_answered(
 pub(crate) fn subscribe_initiated(
     subscription: &UpstreamSubscription,
     publisher_peer: SessionPeer,
-) -> ActiveUpstreamSubscription {
-    ActiveUpstreamSubscription {
+) -> ProducerState {
+    ProducerState {
         subscription: subscription.clone(),
         expires: subscription.expires(),
         content_exists: subscription.content_exists(),
-        origin: UpstreamSubscriptionOrigin::Subscribe,
-        publisher_peer,
+        origin: ProducerOrigin::Subscribe,
+        peer: publisher_peer,
     }
 }
 
-/// Ends the registered upstream subscription and its ingress when the
-/// publisher session has left the repository; returns true in that case.
+/// Ends the registered upstream subscription, and with it its ingest, when
+/// the publisher session has left the repository; returns true in that case.
 /// Call it after `register_upstream_subscription`: a session leaves the
 /// repository before its cleanup reads the directory, so either this check or
 /// the cleanup sees the subscription.
 pub(crate) async fn end_if_publisher_gone(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
-    ingress_sender: &mpsc::Sender<IngressCommand>,
-    track_key: &TrackKey,
     publisher_session_id: SessionId,
     upstream_request_id: u64,
 ) -> bool {
@@ -122,7 +116,6 @@ pub(crate) async fn end_if_publisher_gone(
             upstream_request_id,
             PublishDoneReason::publisher_session_closed(),
         );
-        stop_ingress(ingress_sender, publisher_session_id, track_key).await;
     }
     publisher_session_gone
 }
@@ -137,7 +130,7 @@ pub(crate) struct UpstreamJoin {
 pub(crate) struct UpstreamJoinDeps {
     pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) forwarder: ControlMessageForwarder,
-    pub(crate) ingress_sender: mpsc::Sender<IngressCommand>,
+    pub(crate) cache_store: Arc<TrackCacheStore>,
 }
 
 /// Adds every publisher that answers a pending upstream SUBSCRIBE to the
@@ -165,7 +158,6 @@ impl UpstreamJoinTask {
                         answered.publisher_session_id,
                         join.subscriber_session_id,
                         subscribe_initiated(&subscription, answered.publisher_peer),
-                        subscription,
                     )
                     .await;
                 }
@@ -180,25 +172,42 @@ impl UpstreamJoinTask {
     }
 }
 
-/// The subscription is added before ingress starts, so a publisher already
-/// feeding the track keeps its ingest; a removal racing the start is caught by
-/// the check after it.
+/// The ingest starts before the producer is added, since the producer owns
+/// it; a track that stopped taking the publisher meanwhile drops the ingest
+/// with the producer, and the publisher is unsubscribed either way.
 async fn join_track(
     deps: &UpstreamJoinDeps,
     track_key: &TrackKey,
     publisher_session_id: SessionId,
     subscriber_session_id: SessionId,
-    active_upstream: ActiveUpstreamSubscription,
-    subscription: UpstreamSubscription,
+    state: ProducerState,
 ) {
+    let subscription = state.subscription.clone();
     let upstream_request_id = subscription.request_id();
-    let joined = deps.table.add_upstream_subscription_to_track(
-        track_key,
-        publisher_session_id,
-        active_upstream,
-    );
+    let joined = deps
+        .table
+        .track_takes_publisher(track_key, publisher_session_id, state.peer)
+        && match start_ingest(
+            &deps.forwarder,
+            &deps.cache_store,
+            IngestRequest {
+                subscriber_session_id,
+                publisher_session_id,
+                track_key: track_key.clone(),
+                subscription: subscription.clone(),
+            },
+        )
+        .await
+        {
+            Some(ingest) => deps.table.add_upstream_subscription_to_track(
+                track_key,
+                publisher_session_id,
+                Producer::new(state, ingest),
+            ),
+            None => return,
+        };
     if !joined {
-        tracing::info!(
+        tracing::debug!(
             publisher_session_id = %publisher_session_id,
             track_namespace = %track_key.track_namespace,
             track_name = %track_key.track_name,
@@ -216,32 +225,9 @@ async fn join_track(
         }
         return;
     }
-    if !start_ingress(
-        &deps.ingress_sender,
-        IngressStartRequest {
-            subscriber_session_id,
-            publisher_session_id,
-            track_key: track_key.clone(),
-            subscription,
-            parent_span: Span::current(),
-        },
-    )
-    .await
-    {
-        return;
-    }
-    if !deps
-        .table
-        .has_upstream_subscription(track_key, publisher_session_id, upstream_request_id)
-    {
-        stop_ingress(&deps.ingress_sender, publisher_session_id, track_key).await;
-        return;
-    }
     if end_if_publisher_gone(
         &deps.table,
         &deps.forwarder,
-        &deps.ingress_sender,
-        track_key,
         publisher_session_id,
         upstream_request_id,
     )
@@ -281,10 +267,21 @@ mod tests {
     const LATE_PUBLISHER_SESSION: SessionId = 3;
     const LATE_UPSTREAM_REQUEST_ID: u64 = 1;
 
+    fn deps(
+        table: Arc<InMemoryLocalPubSubDirectory>,
+        forwarder: ControlMessageForwarder,
+    ) -> UpstreamJoinDeps {
+        UpstreamJoinDeps {
+            table,
+            forwarder,
+            cache_store: Arc::new(TrackCacheStore::new()),
+        }
+    }
+
     async fn join_after_answer(
         table: Arc<InMemoryLocalPubSubDirectory>,
         publisher_session_id: SessionId,
-    ) -> (RecordedControlMessages, mpsc::Receiver<IngressCommand>) {
+    ) -> RecordedControlMessages {
         let (session, recorded) =
             recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         let repository = session_repository_with_session(
@@ -294,7 +291,6 @@ mod tests {
         )
         .await;
         let forwarder = ControlMessageForwarder { repository };
-        let (ingress_sender, ingress_receiver) = mpsc::channel(8);
         let pending = send_upstream_subscribes(
             &Arc::new(local_publisher_resolver()),
             &forwarder,
@@ -307,17 +303,13 @@ mod tests {
                 subscriber_session_id: 2,
                 pending,
             },
-            UpstreamJoinDeps {
-                table,
-                forwarder,
-                ingress_sender,
-            },
+            deps(table, forwarder),
         );
         tokio::time::timeout(Duration::from_secs(1), task._join_handle)
             .await
             .expect("the join should end once every publisher answered")
             .unwrap();
-        (recorded, ingress_receiver)
+        recorded
     }
 
     #[tokio::test]
@@ -326,34 +318,32 @@ mod tests {
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
 
         // Act
-        let (recorded, mut ingress_receiver) =
-            join_after_answer(table.clone(), LATE_PUBLISHER_SESSION).await;
+        let recorded = join_after_answer(table.clone(), LATE_PUBLISHER_SESSION).await;
 
         // Assert
         assert_eq!(
             recorded.unsubscribed_request_ids(),
             vec![LATE_UPSTREAM_REQUEST_ID]
         );
-        assert!(ingress_receiver.try_recv().is_err());
+        assert!(recorded.data_receivers().is_empty());
         assert!(table.upstream_tracks.is_empty());
     }
 
     #[tokio::test]
     async fn a_publisher_already_feeding_the_track_keeps_its_ingest() {
         // Arrange
-        let (table, _) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, _) = table_with_upstream(ProducerOrigin::Subscribe);
         let table = Arc::new(table);
 
         // Act
-        let (recorded, mut ingress_receiver) =
-            join_after_answer(table.clone(), PUBLISHER_SESSION).await;
+        let recorded = join_after_answer(table.clone(), PUBLISHER_SESSION).await;
 
-        // Assert
+        // Assert: the second answer is unsubscribed without an ingest; the first stays
         assert_eq!(
             recorded.unsubscribed_request_ids(),
             vec![LATE_UPSTREAM_REQUEST_ID]
         );
-        assert!(ingress_receiver.try_recv().is_err());
+        assert!(recorded.data_receivers().is_empty());
         assert!(table.has_upstream_subscription(
             &TrackKey::new("ns", "track"),
             PUBLISHER_SESSION,
@@ -364,7 +354,7 @@ mod tests {
     #[tokio::test]
     async fn a_publisher_answering_while_the_track_lives_joins_it() {
         // Arrange
-        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
         table
             .register_downstream_subscription(
                 2,
@@ -378,15 +368,12 @@ mod tests {
         let table = Arc::new(table);
 
         // Act
-        let (recorded, mut ingress_receiver) =
-            join_after_answer(table.clone(), LATE_PUBLISHER_SESSION).await;
+        let recorded = join_after_answer(table.clone(), LATE_PUBLISHER_SESSION).await;
 
         // Assert
         assert!(recorded.unsubscribed_request_ids().is_empty());
-        assert!(matches!(
-            ingress_receiver.try_recv(),
-            Ok(IngressCommand::Start(request)) if request.publisher_session_id == LATE_PUBLISHER_SESSION
-        ));
+        recorded.wait_ingest_started(LATE_UPSTREAM_REQUEST_ID).await;
+        assert!(recorded.ingests_stopped().is_empty());
         assert!(table.has_upstream_subscription(
             &TrackKey::new("ns", "track"),
             LATE_PUBLISHER_SESSION,
@@ -397,19 +384,18 @@ mod tests {
     #[tokio::test]
     async fn a_publisher_answering_after_every_subscriber_left_is_unsubscribed() {
         // Arrange
-        let (table, _) = table_with_upstream(UpstreamSubscriptionOrigin::Publish);
+        let (table, _) = table_with_upstream(ProducerOrigin::Publish);
         let table = Arc::new(table);
 
         // Act
-        let (recorded, mut ingress_receiver) =
-            join_after_answer(table.clone(), LATE_PUBLISHER_SESSION).await;
+        let recorded = join_after_answer(table.clone(), LATE_PUBLISHER_SESSION).await;
 
         // Assert
         assert_eq!(
             recorded.unsubscribed_request_ids(),
             vec![LATE_UPSTREAM_REQUEST_ID]
         );
-        assert!(ingress_receiver.try_recv().is_err());
+        assert!(recorded.data_receivers().is_empty());
         assert!(!table.has_upstream_subscription(
             &TrackKey::new("ns", "track"),
             LATE_PUBLISHER_SESSION,
@@ -420,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn a_publisher_whose_session_ended_while_answering_is_not_kept_on_the_track() {
         // Arrange
-        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
         table
             .register_downstream_subscription(
                 2,
@@ -432,7 +418,7 @@ mod tests {
             )
             .unwrap();
         let table = Arc::new(table);
-        let (session, _recorded) =
+        let (session, recorded) =
             recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         let repository = session_repository_with_session(
             LATE_PUBLISHER_SESSION,
@@ -462,7 +448,6 @@ mod tests {
                 subscribed: Ok(subscription),
             })
         });
-        let (ingress_sender, mut ingress_receiver) = mpsc::channel(8);
 
         // Act
         let task = UpstreamJoinTask::run(
@@ -471,31 +456,19 @@ mod tests {
                 subscriber_session_id: 2,
                 pending,
             },
-            UpstreamJoinDeps {
-                table: table.clone(),
-                forwarder,
-                ingress_sender,
-            },
+            deps(table.clone(), forwarder),
         );
         tokio::time::timeout(Duration::from_secs(1), task._join_handle)
             .await
             .unwrap()
             .unwrap();
 
-        // Assert
+        // Assert: a session that already left gets no ingest and no producer
         assert!(!table.has_upstream_subscription(
             &track_key,
             LATE_PUBLISHER_SESSION,
             LATE_UPSTREAM_REQUEST_ID
         ));
-        assert!(matches!(
-            ingress_receiver.try_recv(),
-            Ok(IngressCommand::Start(_))
-        ));
-        assert!(matches!(
-            ingress_receiver.try_recv(),
-            Ok(IngressCommand::StopTrack { publisher_session_id, .. })
-                if publisher_session_id == LATE_PUBLISHER_SESSION
-        ));
+        assert!(recorded.data_receivers().is_empty());
     }
 }

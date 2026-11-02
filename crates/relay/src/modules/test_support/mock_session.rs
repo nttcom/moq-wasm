@@ -12,12 +12,15 @@ use tokio::sync::{mpsc, oneshot};
 use crate::modules::{
     auth::verified_token::VerifiedToken,
     domain::{
-        pub_sub_directory::entry::PublishDoneReason, session_id::SessionId,
-        session_peer::SessionPeer,
+        publish_done_reason::PublishDoneReason, session_id::SessionId, session_peer::SessionPeer,
     },
     session::{
         Session,
-        data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
+        data_receiver::{
+            fetch_receiver::UpstreamFetchReceiver,
+            receiver::DataReceiver,
+            stream_receiver::{StreamReceiver, StreamReceiverFactory},
+        },
         data_sender::{
             DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
         },
@@ -48,10 +51,19 @@ pub(crate) struct SentPublish {
 
 type InjectedSessionEvent = anyhow::Result<MoqtSessionEvent>;
 
+type StreamSource = mpsc::UnboundedReceiver<Box<dyn StreamReceiver>>;
+
 #[derive(Clone)]
 pub(crate) struct RecordedControlMessages {
     event_sender: mpsc::UnboundedSender<InjectedSessionEvent>,
     event_receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<InjectedSessionEvent>>>,
+    /// Streams the next data receiver yields to the ingest; without them it
+    /// pends forever.
+    stream_source: Arc<Mutex<Option<StreamSource>>>,
+    /// Request ids whose data receiver the ingest created.
+    data_receivers: Arc<Mutex<Vec<u64>>>,
+    /// Request ids whose ingest dropped its data receiver.
+    ingests_stopped: Arc<Mutex<Vec<u64>>>,
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
@@ -68,6 +80,9 @@ impl Default for RecordedControlMessages {
         Self {
             event_sender,
             event_receiver: Arc::new(tokio::sync::Mutex::new(event_receiver)),
+            stream_source: Arc::default(),
+            data_receivers: Arc::default(),
+            ingests_stopped: Arc::default(),
             unsubscribed_request_ids: Arc::default(),
             fetch_cancelled_request_ids: Arc::default(),
             closes: Arc::default(),
@@ -97,6 +112,35 @@ impl RecordedControlMessages {
 
     pub(crate) fn unsubscribed_request_ids(&self) -> Vec<u64> {
         self.unsubscribed_request_ids.lock().unwrap().clone()
+    }
+
+    /// The streams sent here reach the ingest of the next data receiver.
+    pub(crate) fn feed_streams(&self) -> mpsc::UnboundedSender<Box<dyn StreamReceiver>> {
+        let (stream_sender, stream_receiver) = mpsc::unbounded_channel();
+        *self.stream_source.lock().unwrap() = Some(stream_receiver);
+        stream_sender
+    }
+
+    pub(crate) fn data_receivers(&self) -> Vec<u64> {
+        self.data_receivers.lock().unwrap().clone()
+    }
+
+    pub(crate) fn ingests_stopped(&self) -> Vec<u64> {
+        self.ingests_stopped.lock().unwrap().clone()
+    }
+
+    /// Resolves once the ingest of `request_id` created its data receiver.
+    pub(crate) async fn wait_ingest_started(&self, request_id: u64) {
+        wait_until(|| self.data_receivers().contains(&request_id))
+            .await
+            .unwrap_or_else(|_| panic!("ingest of request {request_id} never started"));
+    }
+
+    /// Resolves once the ingest of `request_id` dropped its data receiver.
+    pub(crate) async fn wait_ingest_stopped(&self, request_id: u64) {
+        wait_until(|| self.ingests_stopped().contains(&request_id))
+            .await
+            .unwrap_or_else(|_| panic!("ingest of request {request_id} never stopped"));
     }
 
     pub(crate) fn closes(&self) -> Vec<(TerminationErrorCode, String)> {
@@ -149,7 +193,7 @@ pub(crate) struct MockUpstreamSession {
 }
 
 impl MockUpstreamSession {
-    fn new(recorded: RecordedControlMessages) -> Self {
+    pub(crate) fn new(recorded: RecordedControlMessages) -> Self {
         Self {
             recorded,
             answer_subscribe: None,
@@ -345,6 +389,49 @@ pub(crate) fn session_repository() -> (SessionRepository, mpsc::UnboundedReceive
 /// A repository whose added sessions get no worker.
 pub(crate) fn detached_session_repository() -> SessionRepository {
     session_repository().0
+}
+
+/// Resolves `Ok` once `condition` holds, `Err` after one second.
+pub(crate) async fn wait_until(
+    mut condition: impl FnMut() -> bool,
+) -> Result<(), tokio::time::error::Elapsed> {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !condition() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+}
+
+/// The stream factory of a mock data receiver: yields the fed streams, or
+/// pends; records its drop as the end of the ingest.
+struct RecordingStreamFactory {
+    request_id: u64,
+    recorded: RecordedControlMessages,
+    source: Option<StreamSource>,
+}
+
+#[async_trait::async_trait]
+impl StreamReceiverFactory for RecordingStreamFactory {
+    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
+        match &mut self.source {
+            Some(source) => source
+                .recv()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("upstream subscription ended")),
+            None => std::future::pending().await,
+        }
+    }
+}
+
+impl Drop for RecordingStreamFactory {
+    fn drop(&mut self) {
+        self.recorded
+            .ingests_stopped
+            .lock()
+            .unwrap()
+            .push(self.request_id);
+    }
 }
 
 pub(crate) fn runner_stopped(
@@ -558,9 +645,20 @@ impl Subscriber for MockUpstreamSubscriber {
 
     async fn create_data_receiver(
         &mut self,
-        _subscription: &UpstreamSubscription,
+        subscription: &UpstreamSubscription,
     ) -> anyhow::Result<DataReceiver> {
-        unimplemented!("not used by MockUpstreamSession tests")
+        let request_id = subscription.request_id();
+        self.recorded
+            .data_receivers
+            .lock()
+            .unwrap()
+            .push(request_id);
+        let source = self.recorded.stream_source.lock().unwrap().take();
+        Ok(DataReceiver::Stream(Box::new(RecordingStreamFactory {
+            request_id,
+            recorded: self.recorded.clone(),
+            source,
+        })))
     }
 
     async fn send_fetch(
@@ -619,6 +717,9 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 pub(crate) struct MockSubscribeHandler {
     pub(crate) subscribe_ok_count: Arc<Mutex<usize>>,
     pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
+    /// Runs when the sequence allocates the track alias, i.e. after it found
+    /// the upstream and before it registers the downstream subscription.
+    pub(crate) on_allocate_track_alias: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[async_trait::async_trait]
@@ -664,6 +765,9 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 
     fn allocate_track_alias(&self) -> u64 {
+        if let Some(hook) = &self.on_allocate_track_alias {
+            hook();
+        }
         0
     }
 

@@ -4,23 +4,18 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use moqt::{object::ContentExists, publish::PublishDoneCode};
-use tokio::sync::{mpsc, oneshot};
-use tracing::Span;
+use tokio::sync::oneshot;
 
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::subscribe::existing_track_largest,
+        sequences::{EgressRequest, start_egress, subscribe::existing_track_largest},
     },
-    data_plane::{
-        cache::store::TrackCacheStore,
-        egress::coordinator::{EgressCommand, EgressStartRequest},
-    },
+    data_plane::cache::store::TrackCacheStore,
+    directory::InMemoryLocalPubSubDirectory,
     domain::{
-        delivery_control::DeliveryControl,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
-        session_id::SessionId,
-        track_key::TrackKey,
+        delivery_control::DeliveryControl, publish_done_reason::PublishDoneReason,
+        session_id::SessionId, track_key::TrackKey,
     },
 };
 use moqt::fetch::JoinPoint;
@@ -29,7 +24,6 @@ use moqt::fetch::JoinPoint;
 pub(crate) struct DownstreamPublish {
     pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) forwarder: ControlMessageForwarder,
-    pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
     pub(crate) cache_store: Arc<TrackCacheStore>,
 }
 
@@ -53,7 +47,7 @@ impl DownstreamPublish {
         {
             return Ok(());
         }
-        let Some(upstream_track) = self.table.get_upstream_track(track_key) else {
+        let Some(upstream_track) = self.table.track_state(track_key) else {
             bail!("upstream track ended before PUBLISH was sent");
         };
         let largest_location =
@@ -100,23 +94,23 @@ impl DownstreamPublish {
         let (ready_sender, _ready_receiver) = oneshot::channel();
         let (publish_ok_sender, publish_ok_receiver) = oneshot::channel();
         let _ = publish_ok_sender.send(());
-        if self
-            .egress_sender
-            .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
+        if !start_egress(
+            &self.forwarder,
+            &self.cache_store,
+            EgressRequest {
                 subscriber_session_id,
-                downstream_subscribe_id: request_id,
+                request_id,
                 track_key: track_key.clone(),
                 downstream_subscription,
-                parent_span: Span::current(),
                 ready_sender,
                 runner_signals,
                 subscribe_ok_receiver: publish_ok_receiver,
                 largest_location,
-            })))
-            .await
-            .is_err()
+            },
+        )
+        .await
         {
-            bail!("failed to send EgressStartRequest");
+            bail!("subscriber session left before its egress started");
         }
         Ok(())
     }
@@ -126,16 +120,15 @@ impl DownstreamPublish {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{
-            pub_sub_directory::entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
-            session_peer::SessionPeer,
-        },
+        directory::track::{ProducerOrigin, ProducerState},
+        domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                UPSTREAM_REQUEST_ID, downstream_publish_context, table_with_upstream, track_key,
+                UPSTREAM_REQUEST_ID, downstream_publish_context, producer_with,
+                table_with_upstream, track_key,
             },
-            mock_session::{PUBLISH_REQUEST_ID, SentPublish},
+            mock_session::{PUBLISH_REQUEST_ID, SentPublish, wait_until},
             relay_harness::fixtures::{
                 cached_object::insert_closed_group, location,
                 subscription::upstream_subscription_with_max_cache_duration,
@@ -144,7 +137,7 @@ mod tests {
     };
 
     fn published_table() -> Arc<InMemoryLocalPubSubDirectory> {
-        Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Publish).0)
+        Arc::new(table_with_upstream(ProducerOrigin::Publish).0)
     }
 
     async fn context_accepting_publish() -> DownstreamPublishContext {
@@ -157,11 +150,9 @@ mod tests {
             .await
     }
 
-    fn take_egress_start(ctx: &mut DownstreamPublishContext) -> EgressStartRequest {
-        match ctx.egress_receiver.try_recv() {
-            Ok(EgressCommand::StartReader(request)) => *request,
-            _ => panic!("expected the forwarded PUBLISH to start an egress reader"),
-        }
+    /// The egress runner holds the track cache while it runs.
+    fn egress_runs(ctx: &DownstreamPublishContext, idle_cache_references: usize) -> bool {
+        Arc::strong_count(&ctx.cache_store.get_or_create(&track_key())) > idle_cache_references + 1
     }
 
     #[tokio::test]
@@ -171,16 +162,16 @@ mod tests {
         table.register_upstream_subscription(
             track_key(),
             PUBLISHER_SESSION,
-            ActiveUpstreamSubscription {
+            producer_with(ProducerState {
                 subscription: upstream_subscription_with_max_cache_duration(
                     UPSTREAM_REQUEST_ID,
                     2_000,
                 ),
                 expires: None,
                 content_exists: ContentExists::False,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-                publisher_peer: SessionPeer::Client,
-            },
+                origin: ProducerOrigin::Subscribe,
+                peer: SessionPeer::Client,
+            }),
         );
         let ctx = downstream_publish_context(Arc::new(table), || Ok(true)).await;
 
@@ -196,7 +187,8 @@ mod tests {
     #[tokio::test]
     async fn publish_ok_registers_the_downstream_subscription_and_starts_its_egress() {
         // Arrange
-        let mut ctx = context_accepting_publish().await;
+        let ctx = context_accepting_publish().await;
+        let idle_cache_references = Arc::strong_count(&ctx.cache_store.get_or_create(&track_key()));
 
         // Act
         send_publish(&ctx).await.unwrap();
@@ -207,19 +199,15 @@ mod tests {
             .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
             .expect("PUBLISH_OK should register a downstream subscription");
         assert_eq!(registered.track_key, track_key());
-        let egress_start = take_egress_start(&mut ctx);
-        assert_eq!(
-            egress_start.subscriber_session_id,
-            NAMESPACE_SUBSCRIBER_SESSION
-        );
-        assert_eq!(egress_start.downstream_subscribe_id, PUBLISH_REQUEST_ID);
-        assert_eq!(egress_start.track_key, track_key());
+        wait_until(|| egress_runs(&ctx, idle_cache_references))
+            .await
+            .expect("the forwarded PUBLISH should start an egress runner");
     }
 
     #[tokio::test]
     async fn publish_advertises_the_largest_location_egress_starts_after() {
         // Arrange
-        let mut ctx = context_accepting_publish().await;
+        let ctx = context_accepting_publish().await;
         let cache = ctx.cache_store.get_or_create(&track_key());
         insert_closed_group(&cache, 4, &[0, 1]);
 
@@ -239,45 +227,45 @@ mod tests {
             }]
         );
         assert_eq!(
-            take_egress_start(&mut ctx).largest_location,
-            Some(location(4, 1))
+            ctx.table
+                .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
+                .map(|registered| registered.join_point),
+            Some(JoinPoint::Largest(Some(location(4, 1))))
         );
     }
 
     #[tokio::test]
     async fn egress_starts_with_the_forward_state_of_the_publish_ok() {
         // Arrange
-        let mut ctx = downstream_publish_context(published_table(), || Ok(false)).await;
+        let ctx = downstream_publish_context(published_table(), || Ok(false)).await;
 
         // Act
         send_publish(&ctx).await.unwrap();
 
         // Assert
-        assert!(
-            !take_egress_start(&mut ctx)
-                .runner_signals
-                .delivery_control_receiver
-                .borrow()
-                .forward
-        );
+        let control = ctx
+            .table
+            .downstream_delivery_control(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
+            .expect("PUBLISH_OK should register a downstream subscription");
+        assert!(!control.forward);
     }
 
     #[tokio::test]
     async fn publisher_session_cleanup_ends_the_forwarded_publish_with_publish_done() {
         // Arrange
-        let mut ctx = context_accepting_publish().await;
+        let ctx = context_accepting_publish().await;
         send_publish(&ctx).await.unwrap();
-        let mut egress_start = take_egress_start(&mut ctx);
 
         // Act
         ctx.table.remove_session(PUBLISHER_SESSION);
 
-        // Assert: the runner sends PUBLISH_DONE once stopped with a reason after its subscription was acknowledged
-        assert_eq!(
-            egress_start.runner_signals.stop_receiver.try_recv(),
-            Ok(PublishDoneReason::publisher_session_closed())
-        );
-        assert_eq!(egress_start.subscribe_ok_receiver.try_recv(), Ok(()));
+        // Assert: the runner, stopped with a reason after its PUBLISH_OK, sends PUBLISH_DONE
+        wait_until(|| {
+            ctx.subscriber.publish_dones()
+                == vec![(PUBLISH_REQUEST_ID, PublishDoneCode::TrackEnded)]
+        })
+        .await
+        .expect("the runner should send PUBLISH_DONE TRACK_ENDED");
     }
 
     #[tokio::test]
@@ -285,7 +273,7 @@ mod tests {
         // Arrange
         let table = published_table();
         let ended_table = table.clone();
-        let mut ctx = downstream_publish_context(table, move || {
+        let ctx = downstream_publish_context(table, move || {
             ended_table.remove_session(PUBLISHER_SESSION);
             Ok(true)
         })
@@ -299,29 +287,27 @@ mod tests {
             ctx.subscriber.publish_dones(),
             vec![(PUBLISH_REQUEST_ID, PublishDoneCode::TrackEnded)]
         );
-        assert!(ctx.table.downstream_subscriptions.is_empty());
-        assert!(ctx.egress_receiver.try_recv().is_err());
+        assert!(ctx.table.downstream_subscription_states().is_empty());
     }
 
     #[tokio::test]
     async fn a_subscriber_already_receiving_the_track_gets_no_second_publish() {
         // Arrange
-        let mut ctx = context_accepting_publish().await;
+        let ctx = context_accepting_publish().await;
         send_publish(&ctx).await.unwrap();
-        take_egress_start(&mut ctx);
 
         // Act
         send_publish(&ctx).await.unwrap();
 
         // Assert
         assert_eq!(ctx.subscriber.publishes().len(), 1);
-        assert!(ctx.egress_receiver.try_recv().is_err());
+        assert_eq!(ctx.table.downstream_subscription_states().len(), 1);
     }
 
     #[tokio::test]
     async fn publish_error_registers_nothing() {
         // Arrange
-        let mut ctx =
+        let ctx =
             downstream_publish_context(published_table(), || anyhow::bail!("PUBLISH_ERROR")).await;
 
         // Act
@@ -329,7 +315,6 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        assert!(ctx.table.downstream_subscriptions.is_empty());
-        assert!(ctx.egress_receiver.try_recv().is_err());
+        assert!(ctx.table.downstream_subscription_states().is_empty());
     }
 }

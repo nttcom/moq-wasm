@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
@@ -13,11 +11,9 @@ use crate::modules::{
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
-    data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
-    },
+    data_plane::cache::store::TrackCacheStore,
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
 };
 
 pub(crate) struct GoAway;
@@ -34,7 +30,7 @@ impl GoAway {
         session_id: SessionId,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &mpsc::Sender<IngressCommand>,
+        cache_store: &Arc<TrackCacheStore>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
     ) {
         if session_peer(session_id, forwarder).await == SessionPeer::Client {
@@ -54,12 +50,12 @@ impl GoAway {
         let join_deps = UpstreamJoinDeps {
             table: table.clone(),
             forwarder: forwarder.clone(),
-            ingress_sender: ingress_sender.clone(),
+            cache_store: cache_store.clone(),
         };
         for track_key in fed_tracks {
             let feeding = table
-                .get_upstream_track(&track_key)
-                .map(|track| track.subscriptions.keys().copied().collect::<Vec<_>>())
+                .track_state(&track_key)
+                .map(|track| track.producers.keys().copied().collect::<Vec<_>>())
                 .unwrap_or_default();
             let publishers: Vec<UpstreamPublisher> = upstream_publisher_resolver
                 .resolve(
@@ -106,20 +102,16 @@ impl GoAway {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use tokio::sync::mpsc;
-
     use super::GoAway;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         control_plane::control_message_forwarder::ControlMessageForwarder,
-        domain::{
-            pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
-            session_id::SessionId,
-            session_peer::SessionPeer,
-        },
+        data_plane::cache::store::TrackCacheStore,
+        directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
+        domain::{session_id::SessionId, session_peer::SessionPeer},
         session::session_repository::NewSession,
         test_support::{
-            directory_fixtures::{active_upstream, local_publisher_resolver, track_key},
+            directory_fixtures::{local_publisher_resolver, producer, track_key},
             mock_session::{
                 RecordedControlMessages, detached_session_repository, mock_new_session,
                 recorded_session_answering_subscribe,
@@ -156,7 +148,7 @@ mod tests {
         table.register_upstream_subscription(
             track_key(),
             DEPARTING_RELAY,
-            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+            producer(ProducerOrigin::Subscribe),
         );
         table.register_publish_namespace(OTHER_PUBLISHER, "ns".to_string(), SessionPeer::Client);
         let forwarder = ControlMessageForwarder {
@@ -179,18 +171,12 @@ mod tests {
     async fn go_away_from_an_upstream_relay_subscribes_the_other_publishers_of_its_tracks() {
         // Arrange
         let (table, forwarder, recorded) = context(SessionPeer::Relay).await;
-        let (ingress_sender, _ingress_receiver) = mpsc::channel(8);
+        let cache_store = Arc::new(TrackCacheStore::new());
         let resolver = Arc::new(local_publisher_resolver());
 
         // Act
         GoAway
-            .handle(
-                DEPARTING_RELAY,
-                &table,
-                &forwarder,
-                &ingress_sender,
-                &resolver,
-            )
+            .handle(DEPARTING_RELAY, &table, &forwarder, &cache_store, &resolver)
             .await;
 
         // Assert: the other publisher was subscribed; nobody watches the track,
@@ -202,18 +188,12 @@ mod tests {
     async fn go_away_from_a_client_resolves_nothing() {
         // Arrange
         let (table, forwarder, recorded) = context(SessionPeer::Client).await;
-        let (ingress_sender, _ingress_receiver) = mpsc::channel(8);
+        let cache_store = Arc::new(TrackCacheStore::new());
         let resolver = Arc::new(local_publisher_resolver());
 
         // Act
         GoAway
-            .handle(
-                DEPARTING_RELAY,
-                &table,
-                &forwarder,
-                &ingress_sender,
-                &resolver,
-            )
+            .handle(DEPARTING_RELAY, &table, &forwarder, &cache_store, &resolver)
             .await;
 
         // Assert

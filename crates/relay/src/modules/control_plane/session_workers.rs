@@ -18,11 +18,9 @@ use crate::modules::{
         upstream_creation_serializer::UpstreamCreationSerializer,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
-    data_plane::{
-        cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
-        ingress::ingress_coordinator::IngressCommand,
-    },
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    data_plane::cache::store::TrackCacheStore,
+    directory::InMemoryLocalPubSubDirectory,
+    domain::session_id::SessionId,
     session::session_repository::{SessionAdded, SessionRepository},
 };
 
@@ -37,8 +35,6 @@ pub(crate) struct WorkerDeps {
     pub(crate) repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     pub(crate) control_message_forwarder: ControlMessageForwarder,
     pub(crate) local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
-    pub(crate) ingress_sender: mpsc::Sender<IngressCommand>,
-    pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
     pub(crate) upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
@@ -98,7 +94,6 @@ mod tests {
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::mpsc;
 
     use super::{SessionWorkers, WorkerDeps};
     use crate::modules::{
@@ -115,14 +110,9 @@ mod tests {
             upstream_creation_serializer::UpstreamCreationSerializer,
             upstream_publisher_resolver::UpstreamPublisherResolver,
         },
-        data_plane::{
-            cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
-            ingress::ingress_coordinator::IngressCommand,
-        },
-        domain::{
-            pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-            session_peer::SessionPeer,
-        },
+        data_plane::cache::store::TrackCacheStore,
+        directory::InMemoryLocalPubSubDirectory,
+        domain::{session_id::SessionId, session_peer::SessionPeer},
         session::{moqt_session_event::MoqtSessionEvent, session_repository::SessionRepository},
         test_support::mock_session::{
             MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,
@@ -135,8 +125,6 @@ mod tests {
     struct RunningSessionWorkers {
         _session_workers: SessionWorkers,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        _ingress_receiver: mpsc::Receiver<IngressCommand>,
-        _egress_receiver: mpsc::Receiver<EgressCommand>,
         local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
         cache_store: Arc<TrackCacheStore>,
         cache_store_references_without_workers: usize,
@@ -146,8 +134,6 @@ mod tests {
         fn start() -> Self {
             let (repo, session_added_receiver) = session_repository();
             let repo = Arc::new(tokio::sync::Mutex::new(repo));
-            let (ingress_sender, ingress_receiver) = mpsc::channel(64);
-            let (egress_sender, egress_receiver) = mpsc::channel(64);
             let route_registry: Arc<dyn RelayRouteRegistry> = Arc::new(NoopRelayRouteRegistry);
             let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
                 repo.clone(),
@@ -167,8 +153,6 @@ mod tests {
                     },
                     repo: repo.clone(),
                     local_pub_sub_directory: local_pub_sub_directory.clone(),
-                    ingress_sender,
-                    egress_sender,
                     route_registry,
                     inter_relay_connection_manager,
                     upstream_publisher_resolver,
@@ -182,8 +166,6 @@ mod tests {
             Self {
                 _session_workers: session_workers,
                 repo,
-                _ingress_receiver: ingress_receiver,
-                _egress_receiver: egress_receiver,
                 local_pub_sub_directory,
                 cache_store,
                 cache_store_references_without_workers,
