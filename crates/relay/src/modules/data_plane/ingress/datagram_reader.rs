@@ -6,16 +6,15 @@ use crate::modules::{
         cache::{cached_object::CachedObject, track_cache::OpenSubgroupGuard},
         ingress::track_ingest_task::TrackIngest,
     },
-    domain::{session_id::SessionId, track_key::TrackKey},
+    domain::track_key::TrackKey,
     session::{data_receiver::datagram_receiver::DatagramReceiver, session_event::SessionEvent},
 };
 
 pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn DatagramReceiver>) {
     let TrackIngest {
         track_key,
-        publisher_session_id,
         cache,
-        session_event_sender,
+        publisher_mailbox_sender,
         mut stop_receiver,
         stamp,
     } = ingest;
@@ -45,13 +44,13 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
                 };
                 let object = stamp.apply(CachedObject::from_object(object));
                 if open.insert(object).is_err() {
-                    report_malformed_track(&session_event_sender, publisher_session_id, &track_key);
+                    report_malformed_track(&publisher_mailbox_sender, &track_key);
                     break;
                 }
             }
             Err(error) if error.is::<moqt::object::MalformedTrackError>() => {
                 cache.mark_malformed();
-                report_malformed_track(&session_event_sender, publisher_session_id, &track_key);
+                report_malformed_track(&publisher_mailbox_sender, &track_key);
                 break;
             }
             Err(_) => {
@@ -63,21 +62,17 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
 }
 
 fn report_malformed_track(
-    session_event_sender: &mpsc::UnboundedSender<SessionEvent>,
-    publisher_session_id: SessionId,
+    publisher_mailbox_sender: &mpsc::UnboundedSender<SessionEvent>,
     track_key: &TrackKey,
 ) {
     tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "malformed track detected; stopping datagram ingest");
-    let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
-        publisher_session_id,
-        track_key.clone(),
-    ));
+    let _ = publisher_mailbox_sender.send(SessionEvent::MalformedTrackDetected(track_key.clone()));
 }
 
 #[cfg(test)]
 mod tests {
     use crate::modules::{
-        session::session_event::EventKind,
+        session::session_event::SessionEvent,
         test_support::relay_harness::{FailingUpstream, RelayHarness},
     };
 
@@ -92,6 +87,6 @@ mod tests {
         // Assert
         harness.wait_track_malformed().await;
         let event = harness.expect_session_event().await;
-        assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
+        assert!(matches!(event, SessionEvent::MalformedTrackDetected(_)));
     }
 }

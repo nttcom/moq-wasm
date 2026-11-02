@@ -28,10 +28,9 @@ use crate::modules::{
         session_peer::SessionPeer,
         track_key::TrackKey,
     },
-    session::session_repository::SessionRepository,
     test_support::mock_session::{
-        RecordedControlMessages, mock_session_answering_publish, session_repository_with_session,
-        session_repository_with_upstream_session,
+        RecordedControlMessages, detached_session_repository, mock_session_answering_publish,
+        session_repository_with_session, session_repository_with_upstream_session,
     },
     test_support::relay_harness::fixtures::subscription::upstream_subscription,
 };
@@ -99,12 +98,10 @@ pub(crate) async fn upstream_release_context(
 }
 
 pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
-    let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
     UpstreamPublisherResolver::new(
         Arc::new(NoopRelayRouteRegistry),
         Arc::new(InterRelayConnectionManager::new(
-            Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
-            session_event_sender,
+            Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             "unused-relay-token".to_string(),
         )),
     )

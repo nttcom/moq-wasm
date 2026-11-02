@@ -56,6 +56,7 @@ impl IngestKind {
 pub(crate) struct IngestStart {
     pub(crate) track_key: TrackKey,
     pub(crate) publisher_session_id: SessionId,
+    pub(crate) publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
     pub(crate) source: IngestSource,
     pub(crate) stamp: CacheStamp,
 }
@@ -71,9 +72,8 @@ pub(crate) enum IngestCommand {
 #[derive(Clone)]
 pub(crate) struct TrackIngest {
     pub(crate) track_key: TrackKey,
-    pub(crate) publisher_session_id: SessionId,
     pub(crate) cache: Arc<TrackCache>,
-    pub(crate) session_event_sender: mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
     pub(crate) stop_receiver: watch::Receiver<bool>,
     pub(crate) stamp: CacheStamp,
 }
@@ -88,7 +88,6 @@ impl TrackIngestTask {
     pub(crate) fn run(
         mut receiver: mpsc::Receiver<IngestCommand>,
         cache_store: Arc<TrackCacheStore>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut ingests = JoinSet::new();
@@ -110,8 +109,7 @@ impl TrackIngestTask {
                             let ingest = TrackIngest {
                                 cache: cache_store.get_or_create(&start.track_key),
                                 track_key: start.track_key,
-                                publisher_session_id: start.publisher_session_id,
-                                session_event_sender: session_event_sender.clone(),
+                                publisher_mailbox_sender: start.publisher_mailbox_sender,
                                 stop_receiver,
                                 stamp: start.stamp,
                             };
@@ -227,23 +225,21 @@ mod tests {
         _task: TrackIngestTask,
         command_sender: mpsc::Sender<IngestCommand>,
         cache_store: Arc<TrackCacheStore>,
-        _session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
+        publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
+        _publisher_mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     }
 
     impl IngestContext {
         fn new() -> Self {
             let (command_sender, command_receiver) = mpsc::channel(8);
             let cache_store = Arc::new(TrackCacheStore::new());
-            let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
+            let (publisher_mailbox_sender, publisher_mailbox_receiver) = mpsc::unbounded_channel();
             Self {
-                _task: TrackIngestTask::run(
-                    command_receiver,
-                    cache_store.clone(),
-                    session_event_sender,
-                ),
+                _task: TrackIngestTask::run(command_receiver, cache_store.clone()),
                 command_sender,
                 cache_store,
-                _session_event_receiver: session_event_receiver,
+                publisher_mailbox_sender,
+                _publisher_mailbox_receiver: publisher_mailbox_receiver,
             }
         }
 
@@ -253,6 +249,7 @@ mod tests {
                 .send(IngestCommand::Start(IngestStart {
                     track_key: track_key(),
                     publisher_session_id,
+                    publisher_mailbox_sender: self.publisher_mailbox_sender.clone(),
                     source: IngestSource::Stream {
                         factory: Box::new(ChannelStreamReceiverFactory { stream_receiver }),
                         track_span: Span::none(),

@@ -23,7 +23,7 @@ use crate::modules::{
         pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
         session_peer::SessionPeer, track_key::TrackKey,
     },
-    session::{handler::fetch::FetchHandler, session_event::SessionEvent},
+    session::handler::fetch::FetchHandler,
 };
 
 pub(crate) struct Fetch {
@@ -99,7 +99,6 @@ impl Fetch {
         table: &Arc<InMemoryLocalPubSubDirectory>,
         cache_store: &Arc<TrackCacheStore>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
-        session_event_sender: &tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         handler: Box<dyn FetchHandler>,
@@ -117,9 +116,16 @@ impl Fetch {
                             let _ = handler.error(code, reason).await;
                         }
                         None => {
-                            let _ = session_event_sender.send(
-                                SessionEvent::protocol_violation_detected(session_id, reason),
+                            tracing::error!(
+                                session_id,
+                                %reason,
+                                "protocol violation detected; closing session"
                             );
+                            forwarder
+                                .repository
+                                .lock()
+                                .await
+                                .close_with_protocol_violation(session_id, &reason);
                         }
                     }
                     return;
@@ -170,7 +176,6 @@ impl Fetch {
                     upstream_publisher_resolver: upstream_publisher_resolver.clone(),
                     cache_store: cache_store.clone(),
                     egress_sender: egress_sender.clone(),
-                    session_event_sender: session_event_sender.clone(),
                     fill_timeout: self.fill_timeout,
                 });
             }

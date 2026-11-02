@@ -96,11 +96,13 @@ pub(crate) async fn spawn_relay(
         cert_path,
         key_path,
     } = write_self_signed_cert(cert_dir.path(), &["localhost", "127.0.0.1"]).unwrap();
+    let (session_added_sender, session_added_receiver) = tokio::sync::mpsc::unbounded_channel();
     let server = RelayServer::new_with_deps(
         &key_path,
         &cert_path,
         RelayServerDeps {
-            repo: SessionRepository::new(),
+            repo: SessionRepository::new(session_added_sender),
+            session_added_receiver,
             route_registry,
             authenticator: SessionAuthenticator {
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),

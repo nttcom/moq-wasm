@@ -1,10 +1,9 @@
 use moqt::publish::PublishDoneCode;
 
 use crate::modules::{
-    session::session_event::EventKind,
+    session::session_event::SessionEvent,
     test_support::relay_harness::{
-        PUBLISHER_SESSION_ID, RelayHarness, fixtures::location, ordered_payload, payloads_of,
-        receive_objects_until_close,
+        RelayHarness, fixtures::location, ordered_payload, payloads_of, receive_objects_until_close,
     },
 };
 
@@ -67,7 +66,7 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn detection_reports_the_publisher_session_and_track() {
+async fn detection_reports_the_track_to_the_publisher_session() {
     // Arrange
     let mut harness = RelayHarness::new();
 
@@ -76,9 +75,8 @@ async fn detection_reports_the_publisher_session_and_track() {
 
     // Assert
     let event = harness.expect_session_event().await;
-    assert_eq!(event.session_id, PUBLISHER_SESSION_ID);
     assert!(matches!(
-        event.kind,
-        EventKind::MalformedTrackDetected(ref track_key) if track_key == harness.track_key()
+        event,
+        SessionEvent::MalformedTrackDetected(ref track_key) if track_key == harness.track_key()
     ));
 }

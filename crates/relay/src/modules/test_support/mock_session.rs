@@ -7,7 +7,7 @@ use moqt::{
     object::{ContentExists, GroupOrder},
     subscribe::FilterType,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
@@ -27,7 +27,8 @@ use crate::modules::{
         },
         moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
-        session_repository::{NewSession, SessionRepository},
+        session_event::SessionEvent,
+        session_repository::{NewSession, SessionAdded, SessionRepository},
         subscriber::Subscriber,
         subscription::{DownstreamSubscription, UpstreamSubscription},
     },
@@ -45,8 +46,12 @@ pub(crate) struct SentPublish {
     pub(crate) max_cache_duration: Option<u64>,
 }
 
-#[derive(Clone, Default)]
+type InjectedSessionEvent = anyhow::Result<MoqtSessionEvent>;
+
+#[derive(Clone)]
 pub(crate) struct RecordedControlMessages {
+    event_sender: mpsc::UnboundedSender<InjectedSessionEvent>,
+    event_receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<InjectedSessionEvent>>>,
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
@@ -57,7 +62,39 @@ pub(crate) struct RecordedControlMessages {
     publish_dones: Arc<Mutex<Vec<(u64, PublishDoneCode)>>>,
 }
 
+impl Default for RecordedControlMessages {
+    fn default() -> Self {
+        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        Self {
+            event_sender,
+            event_receiver: Arc::new(tokio::sync::Mutex::new(event_receiver)),
+            unsubscribed_request_ids: Arc::default(),
+            fetch_cancelled_request_ids: Arc::default(),
+            closes: Arc::default(),
+            go_aways: Arc::default(),
+            publish_namespaces: Arc::default(),
+            publish_namespace_dones: Arc::default(),
+            publishes: Arc::default(),
+            publish_dones: Arc::default(),
+        }
+    }
+}
+
 impl RecordedControlMessages {
+    /// Makes the session's next `receive_moqt_session_event` return `event`.
+    pub(crate) fn send_event(&self, event: MoqtSessionEvent) {
+        self.event_sender
+            .send(Ok(event))
+            .expect("the mock session owns the event receiver");
+    }
+
+    /// Makes the session's `receive_moqt_session_event` fail once.
+    pub(crate) fn fail_event_stream(&self) {
+        self.event_sender
+            .send(Err(anyhow::anyhow!("session event stream failed")))
+            .expect("the mock session owns the event receiver");
+    }
+
     pub(crate) fn unsubscribed_request_ids(&self) -> Vec<u64> {
         self.unsubscribed_request_ids.lock().unwrap().clone()
     }
@@ -240,23 +277,74 @@ pub(crate) async fn session_repository_with_sessions(
     sessions: Vec<(SessionId, Box<dyn Session>)>,
     verified_token: VerifiedToken,
 ) -> Arc<tokio::sync::Mutex<SessionRepository>> {
-    let mut repository = SessionRepository::new();
-    let (session_event_sender, _session_event_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (mut repository, _session_added_receiver) = session_repository();
     for (session_id, session) in sessions {
-        repository
-            .add(
-                NewSession {
-                    session_id,
-                    session,
-                    session_span: tracing::Span::none(),
-                    peer: SessionPeer::Client,
-                    verified_token: verified_token.clone(),
-                },
-                session_event_sender.clone(),
-            )
-            .await;
+        repository.add(NewSession {
+            session_id,
+            session,
+            session_span: tracing::Span::none(),
+            peer: SessionPeer::Client,
+            verified_token: verified_token.clone(),
+        });
     }
     Arc::new(tokio::sync::Mutex::new(repository))
+}
+
+pub(crate) fn session_repository_with_session_and_mailbox(
+    session_id: SessionId,
+    session: Box<dyn Session>,
+    verified_token: VerifiedToken,
+) -> (
+    Arc<tokio::sync::Mutex<SessionRepository>>,
+    mpsc::UnboundedReceiver<SessionEvent>,
+) {
+    let (mut repository, mut session_added_receiver) = session_repository();
+    repository.add(NewSession {
+        session_id,
+        session,
+        session_span: tracing::Span::none(),
+        peer: SessionPeer::Client,
+        verified_token,
+    });
+    let mailbox_receiver = session_added_receiver
+        .try_recv()
+        .expect("add announces the session")
+        .mailbox_receiver;
+    (
+        Arc::new(tokio::sync::Mutex::new(repository)),
+        mailbox_receiver,
+    )
+}
+
+pub(crate) fn session_repository_with_upstream_session_and_mailbox(
+    session_id: SessionId,
+) -> (
+    Arc<tokio::sync::Mutex<SessionRepository>>,
+    RecordedControlMessages,
+    mpsc::UnboundedReceiver<SessionEvent>,
+) {
+    let recorded = RecordedControlMessages::default();
+    let (repository, mailbox_receiver) = session_repository_with_session_and_mailbox(
+        session_id,
+        Box::new(MockUpstreamSession::new(recorded.clone())),
+        VerifiedToken::full_access(),
+    );
+    (repository, recorded, mailbox_receiver)
+}
+
+/// A repository with no session; every added session is announced on the
+/// returned receiver.
+pub(crate) fn session_repository() -> (SessionRepository, mpsc::UnboundedReceiver<SessionAdded>) {
+    let (session_added_sender, session_added_receiver) = mpsc::unbounded_channel();
+    (
+        SessionRepository::new(session_added_sender),
+        session_added_receiver,
+    )
+}
+
+/// A repository whose added sessions get no worker.
+pub(crate) fn detached_session_repository() -> SessionRepository {
+    session_repository().0
 }
 
 pub(crate) fn runner_stopped(
@@ -286,7 +374,13 @@ impl Session for MockUpstreamSession {
     }
 
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
-        std::future::pending().await
+        self.recorded
+            .event_receiver
+            .lock()
+            .await
+            .recv()
+            .await
+            .expect("the session's RecordedControlMessages holds the event sender")
     }
 
     fn close(&self, code: TerminationErrorCode, reason: &str) {

@@ -138,17 +138,16 @@ mod tests {
     use std::sync::Arc;
 
     use moqt::namespace::PublishNamespaceDoneHandler;
-    use tokio::sync::mpsc;
 
     use super::*;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         cascading::route_registry::NoopRelayRouteRegistry,
         domain::session_peer::SessionPeer,
-        session::session_repository::SessionRepository,
         test_support::mock_session::{
-            RecordedControlMessages, mock_session_with_transport_stats,
-            recorded_session_answering_subscribe, session_repository_with_sessions,
+            RecordedControlMessages, detached_session_repository,
+            mock_session_with_transport_stats, recorded_session_answering_subscribe,
+            session_repository_with_sessions,
         },
     };
 
@@ -174,10 +173,8 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
         let inter_relay_connection_manager = InterRelayConnectionManager::new(
-            Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
-            session_event_sender,
+            Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             "unused-relay-token".to_string(),
         );
         PublishNamespaceDone

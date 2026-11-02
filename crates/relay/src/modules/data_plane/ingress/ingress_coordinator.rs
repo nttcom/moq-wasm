@@ -11,8 +11,8 @@ use crate::modules::{
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{
-        data_receiver::receiver::DataReceiver, session_event::SessionEvent,
-        session_repository::SessionRepository, subscription::UpstreamSubscription,
+        data_receiver::receiver::DataReceiver, session_repository::SessionRepository,
+        subscription::UpstreamSubscription,
     },
 };
 
@@ -42,10 +42,9 @@ impl IngressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let (ingest_tx, ingest_rx) = mpsc::channel::<IngestCommand>(64);
-        let track_ingest = TrackIngestTask::run(ingest_rx, cache_store, session_event_sender);
+        let track_ingest = TrackIngestTask::run(ingest_rx, cache_store);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngressCommand>(512);
 
@@ -71,9 +70,12 @@ impl IngressCoordinator {
                             track_name = %track_key.track_name,
                             "ingress start command received"
                         );
-                        let (subscriber, publisher_session_span, persist) = {
+                        let (subscriber, publisher_session_span, persist, publisher_mailbox_sender) = {
                             let session_repo = session_repo.lock().await;
-                            let Some(subscriber) = session_repo.subscriber(command.publisher_session_id) else {
+                            let Some((subscriber, publisher_mailbox_sender)) = session_repo
+                                .subscriber(command.publisher_session_id)
+                                .zip(session_repo.mailbox(command.publisher_session_id))
+                            else {
                                 tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "publisher session not found for subscription");
                                 continue;
                             };
@@ -83,7 +85,7 @@ impl IngressCoordinator {
                             // Only the relay a client publishes to keeps the
                             // payloads on disk; downstream relays fetch from it.
                             let persist = session_repo.is_client_session(command.publisher_session_id);
-                            (subscriber, publisher_session_span, persist)
+                            (subscriber, publisher_session_span, persist, publisher_mailbox_sender)
                         };
                         tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "upstream subscriber found; spawning data receiver task");
                         let ingest_tx = ingest_tx.clone();
@@ -147,6 +149,7 @@ impl IngressCoordinator {
                                 .send(IngestCommand::Start(IngestStart {
                                     track_key: track_key.clone(),
                                     publisher_session_id: command.publisher_session_id,
+                                    publisher_mailbox_sender,
                                     source,
                                     stamp: CacheStamp {
                                         max_cache_duration: subscription.max_cache_duration(),

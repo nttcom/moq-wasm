@@ -20,7 +20,7 @@ optionally cascades across relays via a Redis-backed route registry.
 | `session/` | The session as the relay sees it: `Session` / `Publisher` / `Subscriber` traits implemented by `moqt::Session` and by the test mocks, the per-message `handler::*` traits, data stream adapters, `SessionRepository`, `SessionEvent` |
 | `domain/` | Relay vocabulary and state shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, the pub/sub directory and its entries (error codes are `moqt`'s typed enums) |
 | `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
-| `control_plane/` | Control-message processing: `EventHandler`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
+| `control_plane/` | Control-message processing: `SessionWorkers` and the per-session `SessionWorker`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
 | `data_plane/` | Objects in flight: `ingress/`, `cache/`, `egress/`, and the data-plane integration tests |
 | `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op) and `InterRelayConnectionManager` |
 | `observability/` | `StatsCollector` (snapshot of sessions, tracks, subscriptions and process memory) and `StatsPublishTask`, which publishes it once per second |
@@ -61,11 +61,13 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 
 - `SessionRepository` (shared `Arc<Mutex<_>>`) — one `SessionEntry` per
   session: the session, its span, `SessionPeer`, `VerifiedToken`, expiry task
-  and event forwarder task.
+  and the sender of the session's mailbox (see "Event pipeline"). The
+  repository announces every added session on the `SessionAdded` channel
+  `RelayServer` creates with it.
 - `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`),
   `InterRelayConnectionManager`, `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
-  `EventHandler` (with the `WorkerDeps` every session worker clones), and the
-  cache-eviction job, and returns the relay-wide `SessionEvent` sender.
+  `SessionWorkers` (consuming the `SessionAdded` channel, with the
+  `WorkerDeps` every session worker clones) and the cache-eviction job.
 
 ## Shutdown
 
@@ -179,36 +181,39 @@ relay logic is unit-tested against recorded control messages instead of a live
 transport. Everything past the repository works with `Box<dyn …>`;
 `MoqtSessionEvent` carries the `moqt` handlers without a relay-side trait
 (GOAWAY, PUBLISH_DONE, …) as they are. The same module holds
-`SessionRepository` and the relay-wide `SessionEvent` (`session_event.rs`),
-so everything the relay knows about a session lives in one place.
+`SessionRepository` and `SessionEvent` (`session_event.rs`), the relay-internal
+events addressed to one session's worker, so everything the relay knows about
+a session lives in one place.
 
 ### Event pipeline
 
 ```
-moqt session ──receive_event()──► Session Event Forwarder (one task per session)
-      │  MoqtSessionEvent → SessionEvent { session_id, kind: EventKind::FromSession }
-      ▼
-EventHandler reader (single task, never awaits handlers)
-      │  per-session unbounded channel (created on SessionRegistered)
-      ▼
-session worker (one task per session, FIFO)
-      │
-      ▼
-sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
+SessionRepository::add ──SessionAdded { session_id, mailbox_receiver }──► SessionWorkers (one task)
+                                                                              │ spawns, reaps
+                                                                              ▼
+moqt session ──receive_moqt_session_event()──────────────────────► session worker (one task per session)
+session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──►   │  select!, FIFO per source
+                                                                        ▼
+                                                     sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 ```
 
-- `SessionRepository::add` sends `EventKind::SessionRegistered` on the
-  relay-wide channel before `SessionEventForwardTask::run` spawns the
-  session's forwarder task (aborted when the session's entry leaves the
-  repository), which pumps `moqt` events into the same channel,
-  stopping after `Disconnected` / `ProtocolViolation`. The reader spawns a
-  session's worker only on `SessionRegistered` and drops events for a session
-  that has no worker: every other event for a session (from its forwarder or
-  from ingress, which only starts for registered sessions) is sent after the
-  registration, so it can only lack a worker once the worker has exited on its
-  terminal event. A late relay-internal event for a departed session (e.g. a
-  reader reporting `MalformedTrackDetected` after the publisher disconnected)
-  therefore never resurrects a worker.
+- `SessionRepository::add` inserts the entry with a fresh mailbox and then
+  sends `SessionAdded` with the mailbox's receiver; `SessionWorkers`
+  (`control_plane/session_workers.rs`) spawns the session's worker for it
+  and reaps workers as they exit. The worker reads its session's `moqt` events
+  itself (`Session::receive_moqt_session_event`) and `select!`s them with the
+  mailbox, mailbox first; each source is FIFO, their interleaving is not
+  ordered. A relay-internal event (`SessionEvent`: `MalformedTrackDetected`,
+  `ProtocolViolationDetected`, `GoAwaySent`, `DownstreamSubscriptionEnded`)
+  is sent to the target session's mailbox, whose sender the sender captured
+  when it was created (ingress hands the publisher's mailbox to its readers,
+  egress keeps the subscriber's for its runner) or looks up in the repository
+  (drain, FETCH ingest). A session that already left has no mailbox, so a
+  late event for it (e.g. `MalformedTrackDetected` after the publisher
+  disconnected) is dropped at the sender and never resurrects a worker.
+- A `receive_moqt_session_event` error (the session's event channel closed
+  without `Disconnected`) is treated like `Disconnected`: the worker runs the
+  terminal cleanup and exits.
 - Each session worker opens the event's span (`relay.subscribe`,
   `relay.publish`, …), the one place that lists the event's fields, and logs
   `Received session event` at debug in it; the sequence runs in that span. A request's
@@ -230,11 +235,11 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   message pass through (they reference an already authorized request). A
   denied request is answered with the message's `*_ERROR` carrying
   `UNAUTHORIZED (0x1)` and the sequence is never invoked.
-- `EventHandler` implements a **reader/worker** structure (`event_handler.rs` is the
-  reader, `event_handler/session_worker.rs` the per-session worker,
-  `event_handler/session_cleanup.rs` the terminal cleanup): the single reader
-  only dispatches to per-session unbounded channels, so a slow or blocked
-  session can never head-of-line-block another. Workers process one event at a time, fully
+- `SessionWorkers` (`session_workers.rs` spawns and reaps,
+  `session_workers/session_worker.rs` is the per-session worker,
+  `session_workers/session_cleanup.rs` the terminal cleanup): each worker
+  reads only its own session, so a slow or blocked session can never
+  head-of-line-block another. Workers process one event at a time, fully
   awaiting each sequence (including upstream round-trips) — events within a
   session are strictly ordered. The one exception is the upstream round-trip of
   a FETCH the cache cannot serve: it runs in an `UpstreamFetchTask` (see "FETCH
@@ -257,9 +262,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 - Events for control messages without relay-side logic yet
   (PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are logged in the
   event span and dropped by the worker; they have no `sequences` entry.
-- Two relay-internal events exist, both reported by the ingest path (not by
-  a peer) and routed to the upstream publisher session's worker:
-  - `MalformedTrackDetected(session_id, track_key)`, raised by the reader that
+- Two relay-internal events are reported by the ingest path (not by a peer)
+  to the upstream publisher session's mailbox:
+  - `MalformedTrackDetected(track_key)`, raised by the reader that
     latched the track. Handled by
     `sequences::malformed_track::MalformedTrackCleanup`: remove every
     `ActiveUpstreamSubscription` of the track, since the cache latch makes the
@@ -784,7 +789,7 @@ PUBLISH_DONE). A malformed track ends the runner the same way with MALFORMED_TRA
 subscription with an End Group ends the runner once its range is delivered (see
 `EgressScheduler`): it sends PUBLISH_DONE SUBSCRIPTION_ENDED after every stream it opened
 was closed or reset (§9.12), and the coordinator then sends
-`EventKind::DownstreamSubscriptionEnded` to the subscriber's session worker, which removes
+`SessionEvent::DownstreamSubscriptionEnded` to the subscriber session's mailbox, whose worker removes
 the registration through the UNSUBSCRIBE sequence, releasing the upstream subscriptions it
 leaves unneeded. The
 runner sends PUBLISH_DONE only once the subscribe sequence signals that SUBSCRIBE_OK went
@@ -978,14 +983,15 @@ so cache, fan-out, FETCH and authorization need no separate path.
 
 ## Key invariants
 
-- **Reader never awaits**: the `EventHandler` reader only routes; all awaiting
-  happens in per-session workers. Cross-session deadlock is structurally
+- **A worker reads only its own session**: nothing shared sits between a
+  session and its worker, so cross-session deadlock is structurally
   impossible; per-session ordering is FIFO, except that an upstream FETCH,
   the replies to forwarded PUBLISH_NAMESPACE messages and forwarded PUBLISHes
   complete in their own tasks after the events that followed them.
 - **Worker lifetime is the session's**: a session worker exists from the
-  session's registration until its terminal event; events arriving outside
-  that window are dropped by the reader.
+  session's registration until its terminal event; its mailbox leaves the
+  repository with the session, so an event for a departed session has no
+  destination and is dropped by its sender.
 - **One upstream subscription per track and publisher**: creation is
   serialized by the `UpstreamCreationSerializer` per-track lock with a
   double-check, and a publisher answering after the track already holds its
@@ -1036,10 +1042,40 @@ so cache, fan-out, FETCH and authorization need no separate path.
   GOAWAY the relay only waits; it closes a client session itself only at the
   drain timeout, with `GOAWAY_TIMEOUT`.
 
+## Planned direction
+
+The relay is being reshaped so that fewer parts carry the same state. The
+target, agreed in November 2026, is three aggregates and a registry:
+
+- `Track` owns the session↔track edges — a `Producer` per upstream
+  subscription (its `moqt` handle, origin, peer and the ingest task) and a
+  `Consumer` per downstream subscription (its handle, `DeliveryControl`,
+  stats, stop signal and the egress runner) — and with them the draft-14 §8.2
+  lifetime rules. `IngressCoordinator`, `EgressCoordinator`, their command
+  channels and stop-sender maps go away; dropping a `Producer` or `Consumer`
+  stops its task.
+- Waits on another session's answer (`UpstreamJoinTask`,
+  `DownstreamPublishTask`, `UpstreamFetchTask`) become `Pending → Active`
+  states of a `Producer` / `Consumer` owned by the `Track`, which also replaces
+  `UpstreamCreationSerializer` ("no producer and a pending one" is the
+  creating state).
+- The session keeps only session-level state (handle, token, span, expiry)
+  and the ids of its edges, for cleanup, GOAWAY and drain.
+- A relay-wide `Relay` is a registry of sessions, tracks and namespaces with
+  no rules of its own; the sequences stay as thin choreography over it, and
+  the per-session worker stays the dispatcher that reads in order, runs the
+  authorization gate and performs the effects the aggregates return.
+
+A state transition returns effects; the caller performs the I/O. Nothing
+sends a control message under a `Track` lock or from a `Drop`.
+
+The event pipeline described above is the first step; the `Track` and its
+edges, then the pending states, follow in their own changes.
+
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —
-e.g. reader/worker non-blocking and terminal-event handling in
-`control_plane/event_handler.rs`, largest-location resolution in `control_plane/sequences/subscribe.rs`,
+e.g. worker non-blocking and terminal-event handling in
+`control_plane/session_workers.rs`, largest-location resolution in `control_plane/sequences/subscribe.rs`,
 eviction refcount rules in `data_plane/cache/store.rs`. Shared mocks and the
 data-plane `RelayHarness` live in `test_support/`. Multi-process behaviour
 (cascading relays, cache eviction, fetch, multiple publishers, dedup) lives in

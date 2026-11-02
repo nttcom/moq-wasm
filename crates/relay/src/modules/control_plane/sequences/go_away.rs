@@ -117,11 +117,12 @@ mod tests {
             session_id::SessionId,
             session_peer::SessionPeer,
         },
-        session::session_repository::{NewSession, SessionRepository},
+        session::session_repository::NewSession,
         test_support::{
             directory_fixtures::{active_upstream, local_publisher_resolver, track_key},
             mock_session::{
-                RecordedControlMessages, mock_new_session, recorded_session_answering_subscribe,
+                RecordedControlMessages, detached_session_repository, mock_new_session,
+                recorded_session_answering_subscribe,
             },
         },
     };
@@ -138,25 +139,19 @@ mod tests {
         ControlMessageForwarder,
         RecordedControlMessages,
     ) {
-        let mut repository = SessionRepository::new();
-        let (event_sender, _event_receiver) = mpsc::unbounded_channel();
+        let mut repository = detached_session_repository();
         let (mut departing, _) = mock_new_session(DEPARTING_RELAY, VerifiedToken::full_access());
         departing.peer = departing_peer;
-        repository.add(departing, event_sender.clone()).await;
+        repository.add(departing);
         let (other, recorded) =
             recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
-        repository
-            .add(
-                NewSession {
-                    session_id: OTHER_PUBLISHER,
-                    session: other,
-                    session_span: tracing::Span::none(),
-                    peer: SessionPeer::Client,
-                    verified_token: VerifiedToken::full_access(),
-                },
-                event_sender,
-            )
-            .await;
+        repository.add(NewSession {
+            session_id: OTHER_PUBLISHER,
+            session: other,
+            session_span: tracing::Span::none(),
+            peer: SessionPeer::Client,
+            verified_token: VerifiedToken::full_access(),
+        });
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_upstream_subscription(
             track_key(),

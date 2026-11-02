@@ -28,9 +28,8 @@ use crate::modules::{
         session_id::SessionId,
     },
     session::{
-        handler::track_status::TrackStatusHandler,
-        moqt_session_event::MoqtSessionEvent,
-        session_event::{EventKind, SessionEvent},
+        Session, handler::track_status::TrackStatusHandler, moqt_session_event::MoqtSessionEvent,
+        session_event::SessionEvent,
     },
 };
 
@@ -46,18 +45,21 @@ pub(super) struct SessionWorker {
 impl SessionWorker {
     pub(super) async fn run(
         session_id: SessionId,
-        mut rx: mpsc::UnboundedReceiver<SessionEvent>,
+        mut mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
         deps: WorkerDeps,
     ) -> SessionId {
-        let (session_span, verified_token) = {
+        let (session, session_span, verified_token) = {
             let repo = deps.repo.lock().await;
             (
+                repo.session(session_id),
                 repo.session_span(session_id),
                 repo.verified_token(session_id),
             )
         };
-        // The span is registered before SessionRegistered is sent and removed
-        // only by this worker's terminal cleanup.
+        // The entry is inserted before SessionAdded is sent and removed only
+        // by this worker's terminal cleanup.
+        let session: Arc<dyn Session> = session
+            .unwrap_or_else(|| unreachable!("worker started for a session not in the repository"));
         let session_span = session_span
             .unwrap_or_else(|| unreachable!("worker started for a session without a span"));
         if verified_token.is_none() {
@@ -73,16 +75,39 @@ impl SessionWorker {
             deps,
         };
 
-        while let Some(event) = rx.recv().await {
-            let is_terminal = matches!(
-                event.kind,
-                EventKind::FromSession(
-                    MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
-                )
-            );
-            worker.handle(event.kind).await;
-            if is_terminal {
-                break;
+        loop {
+            tokio::select! {
+                biased;
+                event = mailbox_receiver.recv() => {
+                    // The entry owns the sender, so `None` means the session left.
+                    let Some(event) = event else { break };
+                    worker.handle_relay_event(event).await;
+                }
+                received = session.receive_moqt_session_event() => match received {
+                    Ok(event) => {
+                        let is_terminal = matches!(
+                            event,
+                            MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
+                        );
+                        worker.handle_moqt_event(event).await;
+                        if is_terminal {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        worker.session_span.in_scope(|| {
+                            tracing::warn!(
+                                session_id,
+                                %error,
+                                "session event stream ended without a close; cleaning up"
+                            );
+                        });
+                        cleanup_session(session_id, &worker.deps)
+                            .instrument(worker.session_span.clone())
+                            .await;
+                        break;
+                    }
+                },
             }
         }
 
@@ -105,13 +130,10 @@ impl SessionWorker {
         }
     }
 
-    async fn handle(&mut self, kind: EventKind) {
+    async fn handle_relay_event(&mut self, event: SessionEvent) {
         let session_id = self.session_id;
-        match kind {
-            // The reader consumes registrations to spawn this worker and never forwards them.
-            EventKind::SessionRegistered => unreachable!("registration forwarded to a worker"),
-            EventKind::FromSession(event) => self.handle_moqt_event(event).await,
-            EventKind::MalformedTrackDetected(track_key) => {
+        match event {
+            SessionEvent::MalformedTrackDetected(track_key) => {
                 let event_span = tracing::info_span!(
                     parent: None,
                     "relay.malformed_track_detected",
@@ -130,7 +152,7 @@ impl SessionWorker {
                     .instrument(event_span)
                     .await;
             }
-            EventKind::GoAwaySent => {
+            SessionEvent::GoAwaySent => {
                 ReleaseUnwatchedPublishes
                     .handle(
                         session_id,
@@ -141,7 +163,7 @@ impl SessionWorker {
                     .instrument(self.session_span.clone())
                     .await;
             }
-            EventKind::DownstreamSubscriptionEnded { request_id } => {
+            SessionEvent::DownstreamSubscriptionEnded { request_id } => {
                 let event_span = tracing::info_span!(
                     parent: None,
                     "relay.downstream_subscription_ended",
@@ -161,7 +183,7 @@ impl SessionWorker {
                     .instrument(event_span)
                     .await;
             }
-            EventKind::ProtocolViolationDetected { reason } => {
+            SessionEvent::ProtocolViolationDetected { reason } => {
                 self.session_span.in_scope(|| {
                     tracing::error!(session_id, %reason, "protocol violation detected; closing session");
                 });
@@ -304,7 +326,6 @@ impl SessionWorker {
                     &deps.local_pub_sub_directory,
                     &deps.cache_store,
                     &deps.egress_sender,
-                    &deps.relay_event_sender,
                     &deps.control_message_forwarder,
                     &deps.upstream_publisher_resolver,
                     handler,

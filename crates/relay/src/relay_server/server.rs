@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use moqt::server::ServerConfig;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc;
 
 use crate::{
     RelayConfig,
@@ -13,7 +13,7 @@ use crate::{
         data_plane::cache::disk_cache::prepare_directory,
         domain::session_peer::SessionPeer,
         observability::stats_publish_task::{StatsPublishConfig, StatsPublishTask},
-        session::{session_event::SessionEvent, session_repository::SessionRepository},
+        session::session_repository::{SessionAdded, SessionRepository},
     },
     relay_server::{
         drain::drain_client_sessions,
@@ -24,6 +24,7 @@ use crate::{
 
 pub(crate) struct RelayServerDeps {
     pub(crate) repo: SessionRepository,
+    pub(crate) session_added_receiver: mpsc::UnboundedReceiver<SessionAdded>,
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) authenticator: SessionAuthenticator,
     pub(crate) relay_token: String,
@@ -32,7 +33,6 @@ pub(crate) struct RelayServerDeps {
 
 pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    sender: UnboundedSender<SessionEvent>,
     authenticator: Arc<SessionAuthenticator>,
     relay_token: String,
     route_registry: Arc<dyn RelayRouteRegistry>,
@@ -52,7 +52,8 @@ impl RelayServer {
             host: config.advertise_host,
             port: config.inner_port,
         };
-        let repo = SessionRepository::new();
+        let (session_added_sender, session_added_receiver) = mpsc::unbounded_channel();
+        let repo = SessionRepository::new(session_added_sender);
         let route_registry: Arc<dyn RelayRouteRegistry> = if let Some(redis_url) = config.redis_url
         {
             RedisRelayRouteRegistry::connect(
@@ -75,6 +76,7 @@ impl RelayServer {
             cert_path,
             RelayServerDeps {
                 repo,
+                session_added_receiver,
                 route_registry,
                 authenticator,
                 relay_token: config.auth.relay_token,
@@ -90,23 +92,24 @@ impl RelayServer {
     pub(crate) fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
         let RelayServerDeps {
             repo,
+            session_added_receiver,
             route_registry,
             authenticator,
             relay_token,
             data_plane,
         } = deps;
         let repo = Arc::new(tokio::sync::Mutex::new(repo));
-        let (sender, runtime) = RelayRuntime::new(
+        let runtime = RelayRuntime::new(
             repo.clone(),
             route_registry.clone(),
             relay_token.clone(),
             authenticator.verifier.clone(),
             data_plane,
+            session_added_receiver,
         );
 
         Self {
             repo,
-            sender,
             authenticator: Arc::new(authenticator),
             relay_token,
             route_registry,
@@ -137,7 +140,6 @@ impl RelayServer {
             server_config,
             SessionIntake {
                 repo: self.repo.clone(),
-                relay_session_event_sender: self.sender.clone(),
                 accepted_peer,
                 authenticator: self.authenticator.clone(),
             },
@@ -166,13 +168,7 @@ impl RelayServer {
     /// arrives after the GOAWAYs were sent.
     pub async fn drain(&self, timeout: Duration) {
         self.runtime.begin_draining();
-        drain_client_sessions(
-            &self.repo,
-            self.route_registry.as_ref(),
-            &self.sender,
-            timeout,
-        )
-        .await;
+        drain_client_sessions(&self.repo, self.route_registry.as_ref(), timeout).await;
     }
 
     pub fn spawn_stats_publisher(&self, relay_id: String, inner_port: u16) -> StatsPublishTask {

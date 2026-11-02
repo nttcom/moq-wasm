@@ -58,13 +58,12 @@ pub(crate) struct EgressCoordinator {
 }
 
 impl EgressCoordinator {
-    /// A runner that ends its subscription itself reports it on
-    /// `session_event_sender`, so the subscriber's session worker removes the
+    /// A runner that ends its subscription itself reports it to the
+    /// subscriber session's mailbox, so that session's worker removes the
     /// registration.
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -83,7 +82,6 @@ impl EgressCoordinator {
                                     &mut runners,
                                     session_repo.clone(),
                                     cache_store.clone(),
-                                    session_event_sender.clone(),
                                     *request,
                                 )
                                 .await;
@@ -136,14 +134,18 @@ impl EgressCoordinator {
         runners: &mut JoinSet<()>,
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
         request: EgressStartRequest,
     ) {
-        let publisher = session_repo
-            .lock()
-            .await
-            .publisher(request.subscriber_session_id);
-        let Some(publisher) = publisher else {
+        let (publisher, subscriber_mailbox_sender) = {
+            let session_repo = session_repo.lock().await;
+            (
+                session_repo.publisher(request.subscriber_session_id),
+                session_repo.mailbox(request.subscriber_session_id),
+            )
+        };
+        let (Some(publisher), Some(subscriber_mailbox_sender)) =
+            (publisher, subscriber_mailbox_sender)
+        else {
             tracing::error!("subscriber session not found for egress start");
             let _ = request
                 .ready_sender
@@ -180,14 +182,13 @@ impl EgressCoordinator {
         );
 
         let subscribe_ok_receiver = request.subscribe_ok_receiver;
-        let subscription_ended = SessionEvent::downstream_subscription_ended(
-            request.subscriber_session_id,
-            request.downstream_subscribe_id,
-        );
+        let subscription_ended = SessionEvent::DownstreamSubscriptionEnded {
+            request_id: request.downstream_subscribe_id,
+        };
         runners.spawn(
             async move {
                 if let RunnerExit::SubscriptionEnded = runner.run(subscribe_ok_receiver).await {
-                    let _ = session_event_sender.send(subscription_ended);
+                    let _ = subscriber_mailbox_sender.send(subscription_ended);
                 }
             }
             .instrument(egress_track_span),
@@ -211,7 +212,6 @@ mod tests {
     use crate::modules::domain::{
         delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
     };
-    use crate::modules::session::session_event::EventKind;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::relay_harness::{
         MockPublisherObservers, fixtures::subscription::make_subscription,
@@ -229,25 +229,24 @@ mod tests {
         cache: Arc<TrackCache>,
         idle_cache_reference_count: usize,
         observers: MockPublisherObservers,
-        session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
+        subscriber_mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     }
 
     async fn setup() -> TestContext {
-        let (session_repo, observers) =
-            session_repository_with_downstream_session(SUBSCRIBER_SESSION_ID).await;
+        let (session_repo, observers, subscriber_mailbox_receiver) =
+            session_repository_with_downstream_session(SUBSCRIBER_SESSION_ID);
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let idle_cache_reference_count = Arc::strong_count(&cache);
-        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
-        let coordinator = EgressCoordinator::new(session_repo, cache_store, session_event_sender);
+        let coordinator = EgressCoordinator::new(session_repo, cache_store);
         TestContext {
             coordinator,
             track_key,
             cache,
             idle_cache_reference_count,
             observers,
-            session_event_receiver,
+            subscriber_mailbox_receiver,
         }
     }
 
@@ -430,14 +429,13 @@ mod tests {
             moqt::publish::PublishDoneCode::SubscriptionEnded
         );
         assert_eq!(publish_done.stream_count, 0);
-        let event = tokio::time::timeout(TEST_TIMEOUT, ctx.session_event_receiver.recv())
+        let event = tokio::time::timeout(TEST_TIMEOUT, ctx.subscriber_mailbox_receiver.recv())
             .await
-            .expect("runner should report the ended subscription")
-            .expect("session event channel should stay open");
-        assert_eq!(event.session_id, SUBSCRIBER_SESSION_ID);
+            .expect("runner should report the ended subscription to the subscriber session")
+            .expect("the subscriber mailbox should stay open");
         assert!(matches!(
-            event.kind,
-            EventKind::DownstreamSubscriptionEnded {
+            event,
+            SessionEvent::DownstreamSubscriptionEnded {
                 request_id: DOWNSTREAM_SUBSCRIBE_ID
             }
         ));
