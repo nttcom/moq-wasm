@@ -5,22 +5,16 @@ use observability::{
     clickhouse::ClickHouse,
     client_telemetry::{ClientTelemetry, ClientTelemetryConfig},
     config::ObservabilityConfig,
-    latest_snapshots::LatestSnapshots,
-    otlp_metrics_export_task::OtlpMetricsExportTask,
-    relay_subscription_task::{RelayConnectionOptions, RelaySubscriptionTask},
     schema,
-    snapshot_ingest_task::SnapshotIngestTask,
 };
-use tokio::{net::TcpListener, sync::mpsc};
-
-const SNAPSHOT_QUEUE: usize = 64;
+use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _telemetry = telemetry::init(telemetry::TelemetryConfig {
         service_name: "observability",
         service_version: env!("CARGO_PKG_VERSION"),
-        default_directives: &["observability=info", "moqt=info"],
+        default_directives: &["observability=info"],
         resource_attributes: Vec::new(),
         log_output: telemetry::LogOutput::Stdout,
     })?;
@@ -28,27 +22,6 @@ async fn main() -> anyhow::Result<()> {
     let clickhouse = ClickHouse::new(config.clickhouse.clone());
     schema::apply(&clickhouse).await?;
 
-    let latest = LatestSnapshots::default();
-    let (snapshot_sender, snapshot_receiver) = mpsc::channel(SNAPSHOT_QUEUE);
-    let _ingest = SnapshotIngestTask::run(snapshot_receiver, latest.clone(), clickhouse.clone());
-    let _metrics_export = config
-        .otlp_metrics_endpoint
-        .clone()
-        .map(|endpoint| OtlpMetricsExportTask::run(latest.clone(), endpoint));
-    let _subscriptions: Vec<RelaySubscriptionTask> = config
-        .relays
-        .iter()
-        .map(|relay| {
-            RelaySubscriptionTask::run(
-                relay.clone(),
-                RelayConnectionOptions {
-                    auth_token: config.auth_token.clone(),
-                    verify_certificate: config.verify_relay_certificate,
-                },
-                snapshot_sender.clone(),
-            )
-        })
-        .collect();
     let client_telemetry = ClientTelemetry::new(ClientTelemetryConfig {
         vts_url: config.vts_url.clone(),
         otlp_logs_endpoint: config.otlp_logs_endpoint.clone(),
@@ -58,13 +31,11 @@ async fn main() -> anyhow::Result<()> {
     let _api = ApiServer::run(
         listener,
         ApiState {
-            latest,
             clickhouse,
             client_telemetry,
         },
     );
     tracing::info!(
-        relays = config.relays.len(),
         http_port = config.http_port,
         otlp_metrics = config.otlp_metrics_endpoint.is_some(),
         otlp_logs = config.otlp_logs_endpoint.is_some(),

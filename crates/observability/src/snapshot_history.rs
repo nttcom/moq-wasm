@@ -1,7 +1,12 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use relay_stats::RelaySnapshot;
 use serde::Deserialize;
 
-use crate::{clickhouse::ClickHouse, latest_snapshots::RELAY_SILENCE, schema::SNAPSHOTS};
+use crate::{clickhouse::ClickHouse, schema::SNAPSHOTS};
+
+/// How long a relay may go without a snapshot before it leaves the view.
+pub const RELAY_SILENCE: Duration = Duration::from_secs(10);
 
 /// The snapshots the browser shows at a past time, and the earlier ones it
 /// derives rates from.
@@ -65,4 +70,15 @@ pub async fn snapshots_at(
             .filter_map(|row| decoded(&row.previous_payload))
             .collect::<Result<_, _>>()?,
     })
+}
+
+/// Each relay's newest snapshot, if it published one within `RELAY_SILENCE`,
+/// so a stopped relay leaves the live view instead of freezing on its last
+/// state.
+pub async fn latest_snapshots(clickhouse: &ClickHouse) -> anyhow::Result<Vec<RelaySnapshot>> {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_millis()
+        .try_into()?;
+    Ok(snapshots_at(clickhouse, now_ms, now_ms).await?.snapshots)
 }

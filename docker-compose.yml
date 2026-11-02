@@ -125,10 +125,6 @@ services:
       context: .
       dockerfile: crates/observability/Dockerfile
     environment:
-      OBSERVABILITY_RELAYS: relay-a=moqt://relay-a:444,relay-b=moqt://relay-b:444
-      # The relay token opens the inner endpoint without expiring; see docs/architecture/observability/architecture.md.
-      OBSERVABILITY_AUTH_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
-      OBSERVABILITY_INSECURE: "1"
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: observability
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-observability}
@@ -142,18 +138,14 @@ services:
         condition: service_healthy
       clickstack-otel-collector:
         condition: service_started
-      relay-a:
-        condition: service_started
-      relay-b:
-        condition: service_started
       hyperdx:
         condition: service_started
 
-  # ClickStack: its collector writes the relays' OTLP logs and traces and
-  # observability's relay metrics into the `otel` database of the clickhouse
-  # service. HyperDX (http://localhost:8080) searches them. Both start with
-  # observability.
-  # Relays export only with OTEL_SDK_DISABLED=false.
+  # ClickStack: its collector writes into the `otel` database of the clickhouse service:
+  # - the relays' OTLP logs, traces and stats snapshots
+  # - the browser telemetry observability forwards
+  # HyperDX (http://localhost:8080) searches them. Both start with observability.
+  # Relays export only with OTEL_SDK_DISABLED=false; otherwise observability shows no relays.
   clickstack-otel-collector:
     image: docker.clickhouse.com/clickhouse/clickstack-otel-collector:2.42.0@sha256:90ca453137798285871190722fcd7c79e7731e9376cf23a922d6f855bf94f3c7
     environment:

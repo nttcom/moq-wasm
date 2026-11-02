@@ -25,26 +25,6 @@ impl ClickHouse {
         self.post(&[], sql.to_string()).await.map(drop)
     }
 
-    /// An empty body sends nothing.
-    pub async fn insert_json_lines(&self, table: &str, body: String) -> anyhow::Result<()> {
-        if body.is_empty() {
-            return Ok(());
-        }
-        let query = format!(
-            "INSERT INTO {}.{table} FORMAT JSONEachRow",
-            self.config.database
-        );
-        self.post(
-            &[
-                ("query", query.as_str()),
-                ("input_format_skip_unknown_fields", "1"),
-            ],
-            body,
-        )
-        .await
-        .map(drop)
-    }
-
     pub async fn select<T: DeserializeOwned>(
         &self,
         sql: &str,
