@@ -63,8 +63,6 @@ impl ControlMessageForwarder {
         }
     }
 
-    /// Lets the next PUBLISH_NAMESPACE under the prefix reach the session
-    /// again once it unsubscribed from the prefix.
     pub(crate) async fn forget_announced_namespaces(
         &self,
         session_id: SessionId,

@@ -263,9 +263,8 @@ mod tests {
         }
     }
 
-    /// Runs a PUBLISH_NAMESPACE of `ns/alice` while SUBSCRIBE_NAMESPACE_OK is
-    /// sent, i.e. after the subscription is registered and before the
-    /// existing namespaces are read.
+    /// Publishes `ns/alice` from inside SUBSCRIBE_NAMESPACE_OK: after the
+    /// subscription is registered and before the existing namespaces are read.
     struct AnnouncingWhileAnswered {
         ctx: DownstreamPublishContext,
     }

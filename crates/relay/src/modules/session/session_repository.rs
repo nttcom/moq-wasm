@@ -227,8 +227,8 @@ impl SessionRepository {
         })
     }
 
-    /// Returns false when the namespace was not announced on the session,
-    /// i.e. no PUBLISH_NAMESPACE_DONE is to be sent.
+    /// Returns false when the session is gone or the namespace was not
+    /// announced on it, i.e. no PUBLISH_NAMESPACE_DONE is to be sent.
     pub(crate) fn record_namespace_withdrawn(
         &mut self,
         session_id: SessionId,
@@ -239,9 +239,8 @@ impl SessionRepository {
             .is_some_and(|entry| entry.announced_namespaces.remove(track_namespace))
     }
 
-    /// After UNSUBSCRIBE_NAMESPACE the session no longer tracks the
-    /// namespaces under the prefix, so a later SUBSCRIBE_NAMESPACE announces
-    /// them again.
+    /// Call after UNSUBSCRIBE_NAMESPACE; otherwise a later SUBSCRIBE_NAMESPACE
+    /// for the prefix gets no PUBLISH_NAMESPACE for these namespaces.
     pub(crate) fn forget_announced_namespaces(
         &mut self,
         session_id: SessionId,
