@@ -10,8 +10,6 @@ use crate::transport::{connect_relay, read_catalog, subscribe, track_reader};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let connection = connect_relay(&args.relay, args.track.app_id()).await?;
-    // `watch` drops every handle to the session on return, errors included,
-    // so `close` can finish.
     let result = watch(&connection.session, &args.track).await;
     connection.close().await;
     result

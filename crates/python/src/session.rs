@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use moqt::{
-    ClientConfig, Endpoint, NATIVE, RequestErrorCode, SessionEvent, TerminationErrorCode,
+    ClientConfig, Endpoint, NATIVE, RequestErrorCode, SessionEvent,
     executor::{self, JoinHandle},
     namespace::NamespaceWatchers,
     publish::{Origin, Retention},
@@ -34,7 +34,6 @@ pub fn connect(
         );
         Ok(Session {
             session,
-            endpoint: Arc::new(endpoint),
             origin,
             watchers,
             event_loop,
@@ -90,7 +89,6 @@ async fn route_events(session: Arc<moqt::Session>, origin: Origin, watchers: Nam
 #[pyclass(module = "moqt")]
 pub struct Session {
     session: Arc<moqt::Session>,
-    endpoint: Arc<Endpoint<NATIVE>>,
     origin: Origin,
     watchers: NamespaceWatchers,
     event_loop: JoinHandle,
@@ -199,10 +197,8 @@ impl Session {
         self.event_loop.abort();
         self.watchers.close();
         let session = self.session.clone();
-        let endpoint = self.endpoint.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            session.close_with_error(TerminationErrorCode::NoError, "");
-            endpoint.wait_idle().await;
+            session.close().await;
             Ok(())
         })
     }

@@ -209,9 +209,9 @@ the first video track.
   video sample, whose duration is unknown until the next one, is lost.
 - **Never overwrite.** The output file is created with `create_new`; a name
   clash is an error, not a truncated recording.
-- **Shutdown reaches the relay.** `RelayConnection::close` closes the
-  session and awaits `Endpoint::wait_idle` before exit, so the CONNECTION_CLOSE is sent
-  instead of the relay waiting for the idle timeout.
+- **Shutdown reaches the relay.** `RelayConnection::close` awaits
+  `Session::close` before exit, so the CONNECTION_CLOSE is sent instead of the
+  relay waiting for the idle timeout.
 
 ## Upload
 With `--upload <URL>` the recorder builds an `ObjectStore` from the URL with

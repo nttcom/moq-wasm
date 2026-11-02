@@ -213,7 +213,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{relay_session::RelaySession, test_support::FakePublisher};
+    use crate::{relay_session, test_support::FakePublisher};
     use msf::KnownPackaging;
 
     const NAMESPACE: &str = "anon/room/alice";
@@ -404,7 +404,7 @@ mod tests {
         write("audio", audio_group, opus_object(video_capture - 40_000))
             .await
             .unwrap();
-        let relay = RelaySession::connect(
+        let relay = relay_session::connect(
             &publisher.url,
             &ClientConfig {
                 verify_certificate: false,
@@ -413,7 +413,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let session = relay.session.clone();
+        let session = relay.clone();
         let reading = tokio::spawn(async move { BroadcastReader::run(&session, NAMESPACE).await });
         assert_eq!(
             publisher.served.recv().await.as_deref(),

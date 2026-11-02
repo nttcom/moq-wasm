@@ -12,9 +12,9 @@ use mediapack::rtp::{
     Destination, MuxerOptions,
     muxer::{AUDIO_PAYLOAD_TYPE, VIDEO_PAYLOAD_TYPE},
 };
-use moqt::ClientConfig;
+use moqt::{ClientConfig, Session};
 
-use crate::{broadcast_reader::BroadcastReader, relay_session::RelaySession, rtp::RtpOutput};
+use crate::{broadcast_reader::BroadcastReader, rtp::RtpOutput};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
 
     let namespace = normalize_namespace(&args.namespace)?;
     let output = args.rtp_output();
-    let relay = RelaySession::connect(
+    let session = relay_session::connect(
         &args.moqt_url,
         &ClientConfig {
             verify_certificate: !args.insecure_skip_tls_verify,
@@ -103,8 +103,8 @@ async fn main() -> Result<()> {
         },
     )
     .await?;
-    let result = run(&relay, &namespace, &output).await;
-    relay.close().await;
+    let result = run(&session, &namespace, &output).await;
+    session.close().await;
     result
 }
 
@@ -139,11 +139,11 @@ fn normalize_namespace(text: &str) -> Result<String> {
     Ok(parts.join("/"))
 }
 
-async fn run(relay: &RelaySession, namespace: &str, output: &RtpOutput) -> Result<()> {
-    let mut reader = BroadcastReader::run(&relay.session, namespace).await?;
+async fn run(session: &Session, namespace: &str, output: &RtpOutput) -> Result<()> {
+    let mut reader = BroadcastReader::run(session, namespace).await?;
     tokio::select! {
         result = rtp::run_rtp_output(&mut reader, output) => result,
-        close = relay.session.closed() => bail!("relay session ended: {close}"),
+        close = session.closed() => bail!("relay session ended: {close}"),
     }
 }
 
