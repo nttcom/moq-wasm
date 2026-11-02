@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, net::IpAddr, sync::Arc};
 
 use anyhow::Context;
 use http_body_util::Full;
@@ -17,6 +17,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 use crate::{
     browser_json::snapshots_for_browser,
     clickhouse::ClickHouse,
+    client_telemetry::ClientTelemetry,
     latest_snapshots::{LatestSnapshots, RELAY_SILENCE},
     namespaces::{NamespaceQuery, published_namespaces},
     schema::RETENTION_DAYS,
@@ -31,6 +32,8 @@ const MAX_SPAN_MS: u64 = RETENTION_DAYS as u64 * 86_400_000;
 pub struct ApiState {
     pub latest: LatestSnapshots,
     pub clickhouse: ClickHouse,
+    /// `None` answers `POST /api/client-telemetry` with 404.
+    pub client_telemetry: Option<ClientTelemetry>,
 }
 
 pub struct ApiServer {
@@ -56,7 +59,7 @@ async fn accept_connections(listener: TcpListener, state: Arc<ApiState>) {
         };
         let state = state.clone();
         tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, state.clone()));
+            let service = service_fn(move |request| handle(request, peer.ip(), state.clone()));
             if let Err(error) = http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), service)
                 .await
@@ -83,8 +86,12 @@ fn query_params(request: &Request<Incoming>) -> HashMap<String, String> {
 
 async fn handle(
     request: Request<Incoming>,
+    peer: IpAddr,
     state: Arc<ApiState>,
 ) -> Result<JsonResponse, Infallible> {
+    if request.method() == Method::POST && request.uri().path() == "/api/client-telemetry" {
+        return Ok(client_telemetry(request, peer, &state).await);
+    }
     let params = query_params(&request);
     let response = match (request.method(), request.uri().path()) {
         (&Method::GET, "/api/snapshots") => snapshots(&state, &params).await,
@@ -97,6 +104,22 @@ async fn handle(
         tracing::warn!(?error, "request failed");
         error_response(StatusCode::BAD_REQUEST, &format!("{error:#}"))
     }))
+}
+
+/// Browsers post as `text/plain`, a CORS simple request, so there is no preflight to answer.
+async fn client_telemetry(
+    request: Request<Incoming>,
+    peer: IpAddr,
+    state: &ApiState,
+) -> JsonResponse {
+    let Some(client_telemetry) = &state.client_telemetry else {
+        return error_response(StatusCode::NOT_FOUND, "not_found");
+    };
+    let (parts, body) = request.into_parts();
+    match client_telemetry.receive(peer, &parts.headers, body).await {
+        Ok(()) => json_response(StatusCode::ACCEPTED, &json!({ "status": "accepted" })),
+        Err(rejection) => error_response(rejection.status(), &rejection.code()),
+    }
 }
 
 fn required<'a>(params: &'a HashMap<String, String>, name: &str) -> anyhow::Result<&'a str> {
