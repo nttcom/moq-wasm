@@ -3,7 +3,7 @@ use moqt::{
     Session, Subscription,
     fetch::{Fetch, FetchOption},
     object::ContentExists,
-    object::{DataReceiver, GroupOrder, MalformedTrackError, Object, Subgroup, SubgroupStart},
+    object::{DataReceiver, MalformedTrackError, Object, Subgroup, SubgroupStart},
     subscribe::{FilterType, SubscribeOption},
 };
 use tokio::{
@@ -37,10 +37,8 @@ impl ArchiveTrack {
                 namespace.to_owned(),
                 name.to_owned(),
                 SubscribeOption {
-                    subscriber_priority: 128,
-                    group_order: GroupOrder::Ascending,
-                    forward: true,
                     filter_type,
+                    ..SubscribeOption::default()
                 },
             )
             .await?;

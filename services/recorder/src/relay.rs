@@ -4,13 +4,11 @@ use anyhow::{Context, Result};
 use moqt::{
     ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
     fetch::{FetchDataReceiver, FetchOption},
-    object::{ContentExists, GroupOrder, Location},
+    object::{ContentExists, Location},
     subscribe::{FilterType, SubscribeOption},
 };
 
 use crate::token_refresh_task::{TokenRefreshTask, read_token_file};
-
-const SUBSCRIBER_PRIORITY: u8 = 128;
 
 /// The session follows the relay's GOAWAY by itself, so a recording outlives
 /// a relay drain.
@@ -83,10 +81,8 @@ pub(crate) async fn subscribe(
     filter_type: FilterType,
 ) -> Result<Track> {
     let option = SubscribeOption {
-        subscriber_priority: SUBSCRIBER_PRIORITY,
-        group_order: GroupOrder::Ascending,
-        forward: true,
         filter_type,
+        ..SubscribeOption::default()
     };
     let mut subscriber = session.subscriber();
     let subscription = subscriber
