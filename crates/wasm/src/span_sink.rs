@@ -8,8 +8,7 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::log_record::FieldVisitor;
 
-/// Hands every closed span to `emit` as a `SpanRecord`
-/// (`{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`).
+/// Hands every closed span to `emit` as a `SpanRecord`.
 /// The clock and the random source are injected so the layer runs on the host in tests.
 pub(crate) struct SpanRecordLayer<E> {
     pub(crate) now_ms: fn() -> f64,

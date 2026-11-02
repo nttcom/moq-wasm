@@ -11,8 +11,7 @@ export interface LogRecord {
   fields: Record<string, string | number | boolean>
 }
 
-/// One closed INFO or higher `tracing` span from inside the wasm module, such as
-/// a request span (`moqt.subscriber.subscribe`). Ids are lowercase hex.
+/// A closed INFO or higher `tracing` span from the wasm module. Ids are lowercase hex.
 export interface SpanRecord {
   traceId: string
   spanId: string

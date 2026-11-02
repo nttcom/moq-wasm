@@ -14,8 +14,7 @@ struct Records {
     spans: VecDeque<Value>,
 }
 
-/// The logs and closed spans collected since the last report, the newest
-/// `MAX_RECORDS` of each.
+/// The newest `MAX_RECORDS` logs and closed spans since the last report.
 #[derive(Clone, Default)]
 pub struct ReportBuffer(Arc<Mutex<Records>>);
 
