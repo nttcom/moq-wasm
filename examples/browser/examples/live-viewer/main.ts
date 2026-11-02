@@ -13,7 +13,7 @@ import {
   summarizeStreams
 } from './streamMonitor'
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
-import { startPageTelemetry } from '../../utils/pageTelemetry'
+import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import {
   CATALOG_TRACK_NAME,
   type LivePictureKind,
@@ -33,7 +33,7 @@ let session: MoqSession | undefined
 const telemetry = startPageTelemetry(
   'live-viewer',
   () => element<HTMLInputElement>('url').value.trim(),
-  () => player
+  () => playerSamples(player)
 )
 const streamMonitor = new StreamMonitor()
 const stage = element<HTMLDivElement>('stage')

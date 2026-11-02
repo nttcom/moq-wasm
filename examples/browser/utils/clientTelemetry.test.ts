@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import type { LivePlayerStats } from 'moq-wasm/media/player/livePlayer'
+import type { LiveStats } from 'moq-wasm/media'
 import { ClientTelemetry } from './clientTelemetry'
 
 type Sent = { url: string; body: Record<string, unknown[]> & { clientId: string; page: string }; beacon: boolean }
@@ -18,7 +18,11 @@ test('a flush sends the queued logs and stats once', () => {
   // Arrange
   const { telemetry: subject, sent } = telemetry()
   subject.log('warn', 'decoder reset', { track_name: 'video' })
-  subject.sample({ bufferMs: 120 } as LivePlayerStats)
+  subject.sample({
+    trackNamespace: 'anon/meeting/room/alice',
+    mediaSource: 'camera',
+    values: { bufferMs: 120 } as LiveStats
+  })
 
   // Act
   subject.flush()
@@ -32,7 +36,9 @@ test('a flush sends the queued logs and stats once', () => {
   expect(sent[0].body.logs).toMatchObject([
     { level: 'warn', target: 'live-viewer', message: 'decoder reset', fields: { track_name: 'video' } }
   ])
-  expect(sent[0].body.stats).toMatchObject([{ values: { bufferMs: 120 } }])
+  expect(sent[0].body.stats).toMatchObject([
+    { trackNamespace: 'anon/meeting/room/alice', mediaSource: 'camera', values: { bufferMs: 120 } }
+  ])
 })
 
 test('a report keeps only the newest 100 logs, the server limit', () => {

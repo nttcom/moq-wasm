@@ -1,6 +1,6 @@
 import { init } from 'moq-wasm'
-import type { LivePlayerStats } from 'moq-wasm/media/player/livePlayer'
-import { ClientTelemetry } from './clientTelemetry'
+import type { LiveStats } from 'moq-wasm/media'
+import { ClientTelemetry, type StatsSample } from './clientTelemetry'
 import { resolveServiceUrl } from './serviceUrl'
 
 const TELEMETRY_URLS = {
@@ -10,13 +10,12 @@ const TELEMETRY_URLS = {
 }
 const FLUSH_INTERVAL_MS = 10_000
 
-/// Starts sending `page`'s wasm logs and, while it plays, `player`'s stats every `FLUSH_INTERVAL_MS`.
-/// `player` is a getter so a page can start telemetry before it builds its player.
+/// Every `FLUSH_INTERVAL_MS`, sends `page`'s wasm logs and the stats `samples` returns.
 /// `relayUrl` picks the local or deployed observability server, as `resolveServiceUrl` does.
 export function startPageTelemetry(
   page: string,
   relayUrl: () => string,
-  player?: () => { readonly state: { started: boolean }; stats(): LivePlayerStats }
+  samples: () => StatsSample[] = () => []
 ): ClientTelemetry {
   const telemetry = new ClientTelemetry(
     page,
@@ -24,12 +23,13 @@ export function startPageTelemetry(
   )
   init({ onLog: telemetry.wasmLog }).catch((error) => telemetry.log('error', `wasm init: ${String(error)}`))
   setInterval(() => {
-    const playing = player?.()
-    if (playing?.state.started) {
-      telemetry.sample(playing.stats())
-    }
+    samples().forEach((sample) => telemetry.sample(sample))
     telemetry.flush()
   }, FLUSH_INTERVAL_MS)
   addEventListener('pagehide', () => telemetry.flush(true))
   return telemetry
+}
+
+export function playerSamples(player: { readonly state: { started: boolean }; stats(): LiveStats }): StatsSample[] {
+  return player.state.started ? [{ values: player.stats() }] : []
 }

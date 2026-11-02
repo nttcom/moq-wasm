@@ -1,11 +1,14 @@
 import type { LogRecord } from 'moq-wasm'
-import type { LivePlayerStats } from 'moq-wasm/media/player/livePlayer'
+import type { LiveStats } from 'moq-wasm/media'
 
 /// The observability server takes at most this many logs, and as many stats, per report.
 const MAX_RECORDS = 100
 
 type ReportLog = Omit<LogRecord, 'level'> & { level: string }
-type ReportStats = { timeMs: number; values: LivePlayerStats }
+/// One player's stats. A page playing several tracks sets `trackNamespace`
+/// (joined with `/`) and `mediaSource`; a single-player page omits both.
+export type StatsSample = { trackNamespace?: string; mediaSource?: string; values: LiveStats }
+type ReportStats = StatsSample & { timeMs: number }
 type Send = (url: string, body: string, beacon: boolean) => void
 
 /// Collects a page's logs and player stats and posts them to the observability
@@ -29,8 +32,8 @@ export class ClientTelemetry {
     keepNewest(this.logs, record)
   }
 
-  sample(values: LivePlayerStats): void {
-    keepNewest(this.stats, { timeMs: Date.now(), values })
+  sample(sample: StatsSample): void {
+    keepNewest(this.stats, { timeMs: Date.now(), ...sample })
   }
 
   /// `beacon` sends with `navigator.sendBeacon`, which outlives the page.
