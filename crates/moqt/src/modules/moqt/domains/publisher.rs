@@ -35,22 +35,43 @@ pub struct Publisher {
 
 impl Publisher {
     pub async fn publish_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
-        self.begin_publish_namespace(namespace)
-            .await?
-            .accepted()
-            .await
+        let (connection, pending) = self.announce(namespace).await?;
+        match pending.accepted().await {
+            // The namespace is carried from the moment it was sent, and a
+            // migration fails unless the new connection accepts it.
+            Err(error) if self.session.moved_after_loss(&connection, &error).await => Ok(()),
+            accepted => accepted,
+        }
     }
 
     pub async fn begin_publish_namespace(
         &self,
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
-        let mut carried = self.session.lock_carried().await;
-        let pending = send_publish_namespace(&self.session.connection(), namespace.clone()).await?;
+        let (_, pending) = self.announce(namespace).await?;
+        Ok(pending)
+    }
+
+    async fn announce(
+        &self,
+        namespace: String,
+    ) -> Result<(Arc<Connection>, PendingPublishNamespace), RequestFailure> {
+        let (mut carried, connection, pending) = loop {
+            let carried = self.session.lock_carried().await;
+            let connection = self.session.connection();
+            match send_publish_namespace(&connection, namespace.clone()).await {
+                Ok(pending) => break (carried, connection, pending),
+                Err(error) => {
+                    self.session
+                        .resend_after(carried, &connection, error)
+                        .await?
+                }
+            }
+        };
         if let Some(carried) = carried.as_mut() {
             carried.published_namespaces.push(namespace);
         }
-        Ok(pending)
+        Ok((connection, pending))
     }
 
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
@@ -134,10 +155,20 @@ impl Publisher {
         track_name: String,
         option: PublishOption,
     ) -> Result<Subscription, RequestFailure> {
-        let _carried = self.session.read_carried().await;
-        let connection = self.session.connection();
-        let (publish_ok, track_alias) =
-            send_publish(&connection, &track_namespace, &track_name, &option).await?;
+        let (_carried, connection, publish_ok, track_alias) = loop {
+            let carried = self.session.read_carried().await;
+            let connection = self.session.connection();
+            match send_publish(&connection, &track_namespace, &track_name, &option).await {
+                Ok((publish_ok, track_alias)) => {
+                    break (carried, connection, publish_ok, track_alias);
+                }
+                Err(error) => {
+                    self.session
+                        .resend_after(carried, &connection, error)
+                        .await?
+                }
+            }
+        };
         let request_id = logical_id(connection.generation, publish_ok.request_id);
         if self.session.follows_go_away() {
             self.session.add_publication(

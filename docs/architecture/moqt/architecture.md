@@ -349,7 +349,8 @@ group after the newest one delivered to its End Group, which is not sent
 again once that group has started; the range, Forward state and priority
 of the last SUBSCRIBE_UPDATE; a
 rejected namespace or SUBSCRIBE is repeated every 500 ms for up to 10 s),
-makes it the current connection, and closes the previous one with NO_ERROR
+makes it the current connection (one of those four requests that a lost
+connection cut off before its answer is sent again there), and closes the previous one with NO_ERROR
 once the server takes no track this side sends there any more and no
 carried subscription has a subgroup stream open there (each sink counts the
 streams it handed out until they end, `OpenSubgroups`), at the latest 5 s
