@@ -134,7 +134,7 @@ impl Publisher {
         track_name: String,
         option: PublishOption,
     ) -> Result<Subscription, RequestFailure> {
-        let _carried = self.session.lock_carried().await;
+        let _carried = self.session.read_carried().await;
         let connection = self.session.connection();
         let (publish_ok, track_alias) =
             send_publish(&connection, &track_namespace, &track_name, &option).await?;
@@ -213,7 +213,7 @@ pub(crate) async fn send_publish_namespace(
     namespace: String,
 ) -> Result<PendingPublishNamespace, RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
-    let reservation = connection.control.reserve_request_id().await;
+    let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let pending = connection
         .control
@@ -241,7 +241,7 @@ pub(crate) async fn send_publish(
     option: &PublishOption,
 ) -> Result<(PublishOk, u64), RequestFailure> {
     let track_alias = connection.allocate_track_alias();
-    let reservation = connection.control.reserve_request_id().await;
+    let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let publish = Publish {
         request_id,
@@ -321,6 +321,35 @@ mod tests {
     };
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(3);
+
+    #[tokio::test]
+    async fn concurrent_publishes_do_not_wait_for_an_earlier_response_when_following_go_away() {
+        // Arrange
+        use crate::ClientConfig;
+        use crate::modules::test_support::{
+            connect_sessions_from, native_client_with_config, spawn_native_server,
+        };
+
+        let (port, accept) = spawn_native_server("concurrent-carried-publish");
+        let endpoint = native_client_with_config(ClientConfig {
+            verify_certificate: false,
+            follow_go_away: true,
+            ..ClientConfig::default()
+        });
+        let (client, server) =
+            connect_sessions_from(&endpoint, &format!("moqt://127.0.0.1:{port}"), accept)
+                .await
+                .unwrap();
+
+        // Act
+        let (first, _first_handler) = pending_publish(&client, &server, "first").await;
+        let (second, second_handler) = within(pending_publish(&client, &server, "second")).await;
+
+        // Assert
+        assert_eq!(second_handler.track_name, "second");
+        first.abort();
+        second.abort();
+    }
 
     #[tokio::test]
     async fn publish_takes_its_track_alias_from_the_counter_subscribe_ok_uses() {

@@ -1,4 +1,4 @@
-import { monotonicUnixMicros } from 'moq-wasm/media/internal/clock'
+import { monotonicUnixMicros } from 'moq-wasm/media'
 
 const MICROS_PER_MILLI = 1_000
 

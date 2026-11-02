@@ -4,20 +4,16 @@ use std::{
     time::Duration,
 };
 
-use relay_stats::{
-    ProcessStats, RelaySnapshot, SessionPeer as SnapshotPeer, SessionStats, SubscriptionStats,
-    TrackStats,
+use telemetry::relay_stats::{
+    self, ProcessStats, RelaySnapshot, SessionPeer as SnapshotPeer, SessionStats,
+    SubscriptionStats, TrackStats,
 };
 
 use crate::modules::{
     cascading::inter_relay_connection_manager::InterRelayConnectionManager,
     data_plane::cache::{store::TrackCacheStore, track_cache::IngressCounters},
-    domain::{
-        pub_sub_directory::{DownstreamSubscriptionState, InMemoryLocalPubSubDirectory},
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
-    },
+    directory::{DownstreamSubscriptionState, InMemoryLocalPubSubDirectory},
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::session_repository::{SessionRepository, SessionState},
 };
 
@@ -245,25 +241,22 @@ mod tests {
 
     use bytes::Bytes;
     use moqt::object::ContentExists;
-    use relay_stats::SessionPeer as SnapshotPeer;
+    use telemetry::relay_stats::{self, SessionPeer as SnapshotPeer};
 
     use super::{StatsCollector, StatsSources};
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         cascading::inter_relay_connection_manager::InterRelayConnectionManager,
         data_plane::cache::store::TrackCacheStore,
-        domain::{
-            pub_sub_directory::{
-                InMemoryLocalPubSubDirectory,
-                entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
-            },
-            session_id::SessionId,
-            session_peer::SessionPeer,
-            track_key::TrackKey,
+        directory::{
+            InMemoryLocalPubSubDirectory,
+            track::{ProducerOrigin, ProducerState},
         },
+        domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
         session::session_repository::{NewSession, SessionRepository},
         test_support::{
-            mock_session::mock_session_with_transport_stats,
+            directory_fixtures::producer_with,
+            mock_session::{detached_session_repository, mock_session_with_transport_stats},
             relay_harness::fixtures::cached_object::{open_group, stream_object_with_payload},
         },
     };
@@ -279,14 +272,13 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             Self {
-                repo: Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
+                repo: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
                 directory: Arc::new(InMemoryLocalPubSubDirectory::new()),
                 cache_store: Arc::new(TrackCacheStore::new()),
             }
         }
 
         fn collector(&self) -> StatsCollector {
-            let (session_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
             StatsCollector::new(
                 RELAY_ID.to_string(),
                 StatsSources {
@@ -295,7 +287,6 @@ mod tests {
                     cache_store: self.cache_store.clone(),
                     inter_relay_connection_manager: Arc::new(InterRelayConnectionManager::new(
                         self.repo.clone(),
-                        session_event_sender,
                         "relay-token".to_string(),
                     )),
                 },
@@ -308,21 +299,13 @@ mod tests {
             peer: SessionPeer,
             transport: moqt::TransportStats,
         ) {
-            let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-            self.repo
-                .lock()
-                .await
-                .add(
-                    NewSession {
-                        session_id,
-                        session: mock_session_with_transport_stats(transport),
-                        session_span: tracing::Span::none(),
-                        peer,
-                        verified_token: VerifiedToken::full_access(),
-                    },
-                    sender,
-                )
-                .await;
+            self.repo.lock().await.add(NewSession {
+                session_id,
+                session: mock_session_with_transport_stats(transport),
+                session_span: tracing::Span::none(),
+                peer,
+                verified_token: VerifiedToken::full_access(),
+            });
         }
 
         fn publish(
@@ -335,13 +318,13 @@ mod tests {
             self.directory.register_upstream_subscription(
                 track_key.clone(),
                 publisher_session_id,
-                ActiveUpstreamSubscription {
+                producer_with(ProducerState {
                     subscription: upstream_subscription(0),
                     expires: None,
                     content_exists: ContentExists::False,
-                    origin: UpstreamSubscriptionOrigin::Publish,
-                    publisher_peer: SessionPeer::Client,
-                },
+                    origin: ProducerOrigin::Publish,
+                    peer: SessionPeer::Client,
+                }),
             );
             track_key
         }

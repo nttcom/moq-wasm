@@ -55,11 +55,11 @@ const sidebarLabels = element<HTMLOListElement>('sidebarLabels')
 
 setUpSystemOneBotPage({
   logTag: 'moq-chat-moderation',
-  ownNamespace: CHAT_NAMESPACE,
   botNamespace: MODERATOR_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
   onConnect: async (session) => {
+    await session.announce(CHAT_NAMESPACE)
     const writer = await session.publishTrack(CHAT_NAMESPACE, CHAT_TRACK)
     // The moderator subscribes from the largest object, so sending waits for it.
     onEachSubscriber(writer, () => setChatPublisher(writer))

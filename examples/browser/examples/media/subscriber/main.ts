@@ -1,10 +1,10 @@
 import { MoqSession, type MoqSubscription, type ReceivedObject } from 'moq-wasm'
-import { LocLive, formatLiveStats } from 'moq-wasm/media/player/locLive'
+import { LocLive } from 'moq-wasm/media/player/locLive'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../catalogPicker'
 import { readObjects } from '../readObjects'
-import type { MediaKind } from 'moq-wasm/media/player/trackContext'
+import { type MediaKind, formatLiveStats } from 'moq-wasm/media'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')

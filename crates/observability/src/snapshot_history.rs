@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use relay_stats::RelaySnapshot;
 use serde::Deserialize;
+use telemetry::relay_stats::RelaySnapshot;
 
 use crate::{clickhouse::ClickHouse, schema::SNAPSHOTS};
 

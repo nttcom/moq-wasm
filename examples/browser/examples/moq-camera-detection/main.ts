@@ -1,4 +1,5 @@
 import type { TrackWriter } from 'moq-wasm'
+import { publish } from 'moq-wasm/media'
 import { pageRoomId } from '../../utils/botRoom'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
@@ -12,14 +13,15 @@ const BOT_SERVICE = {
   local: 'http://127.0.0.1:8098',
   cloud: 'https://moq-camera-detection.moqt.research.skyway.io'
 }
-const VIDEO_TRACK = 'video'
 const PROMPT_TRACK = 'prompt'
 const MAX_QUESTIONS = 8
 const MAX_QUESTION_LENGTH = 200
 const MAX_TARGET_LENGTH = 100
 const MAX_CHOICES = 9
 const MAX_CHOICE_LENGTH = 40
-const VIDEO_ENCODER_CONFIG = {
+/// The detector starts a decoder per group, so a new detector waits for the next keyframe.
+const KEYFRAME_INTERVAL_FRAMES = 30
+const VIDEO_ENCODER_CONFIG: VideoEncoderConfig = {
   codec: 'avc1.42e01f',
   width: 640,
   height: 480,
@@ -33,12 +35,9 @@ type Prompt = { questions: Question[] }
 /// The choice picked (null when outside the choices), or every box found.
 type Answer = string | null | BoxEdges[]
 
-let videoWriter: TrackWriter | undefined
 let promptWriter: TrackWriter | undefined
 let promptGroupId: bigint | undefined
 let mediaStream: MediaStream | undefined
-let encoderWorker: Worker | undefined
-let sendQueue = Promise.resolve()
 
 const preview = element<HTMLVideoElement>('preview')
 const verdictList = element<HTMLUListElement>('verdicts')
@@ -51,7 +50,6 @@ let appliedPrompt = readPrompt()
 
 setUpSystemOneBotPage({
   logTag: 'moq-camera-detection',
-  ownNamespace: CAMERA_NAMESPACE,
   botNamespace: DETECTOR_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
@@ -63,16 +61,16 @@ setUpSystemOneBotPage({
     preview.srcObject = mediaStream
   },
   onConnect: async (session) => {
-    videoWriter = await session.publishTrack(CAMERA_NAMESPACE, VIDEO_TRACK)
-    promptWriter = await session.publishTrack(CAMERA_NAMESPACE, PROMPT_TRACK)
-    // A SUBSCRIBE joins mid-group, which the detector cannot decode.
-    onEachSubscriber(videoWriter, () => {
-      setDetectorStatus(true)
-      encoderWorker?.postMessage({ type: 'forceKeyframe' })
+    await publish(session, CAMERA_NAMESPACE, mediaStream!, {
+      keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
+      videoEncoderConfig: VIDEO_ENCODER_CONFIG
     })
-    onEachSubscriber(promptWriter, sendPrompt)
+    promptWriter = await session.publishTrack(CAMERA_NAMESPACE, PROMPT_TRACK)
+    onEachSubscriber(promptWriter, async () => {
+      setDetectorStatus(true)
+      await sendPrompt()
+    })
   },
-  afterConnect: async () => startEncoder(mediaStream!),
   onBotLeft: () => {
     setDetectorStatus(false)
     showVerdicts(undefined)
@@ -85,7 +83,6 @@ setUpSystemOneBotPage({
   },
   onReset: () => {
     setDetectorStatus(false)
-    videoWriter = undefined
     promptWriter = undefined
     promptGroupId = undefined
     for (const track of mediaStream?.getTracks() ?? []) {
@@ -152,27 +149,6 @@ function updateQuestionRows(): void {
     remove.disabled = rows.length === 1
   })
   addQuestionButton.disabled = rows.length >= MAX_QUESTIONS
-}
-
-function startEncoder(stream: MediaStream): void {
-  encoderWorker ??= new Worker(new URL('moq-wasm/media/internal/encoders/videoEncoder', import.meta.url), {
-    type: 'module'
-  })
-  encoderWorker.onmessage = (event: MessageEvent<{ type: string; chunk: EncodedVideoChunk }>) => {
-    if (event.data.type === 'chunk') {
-      const { chunk } = event.data
-      const payload = new Uint8Array(chunk.byteLength)
-      chunk.copyTo(payload)
-      // A keyframe starts a new group; the detector starts a decoder per group.
-      sendQueue = sendQueue
-        .then(async () => void (await videoWriter?.write(payload, chunk.type === 'key', undefined)))
-        .catch((error) => console.error('[moq-camera-detection] video send failed', error))
-    }
-  }
-  encoderWorker.postMessage({ type: 'encoderConfig', config: VIDEO_ENCODER_CONFIG })
-  const [videoTrack] = stream.getVideoTracks()
-  const videoStream = new MediaStreamTrackProcessor({ track: videoTrack }).readable
-  encoderWorker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
 }
 
 function rowFields(row: Element) {

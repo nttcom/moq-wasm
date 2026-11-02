@@ -1,16 +1,23 @@
+mod api_auth;
 mod api_server;
+mod archive;
+mod archive_chunks;
+mod archive_reader;
+mod archive_receiver;
 mod catalog_reader;
 mod composite;
 mod composite_job;
 mod file_writer;
 mod launcher;
 mod manifest;
+mod mp4_replay;
 mod pipeline;
 mod record_job;
 mod recorder;
 mod recording;
 mod recordings;
 mod relay;
+mod replay;
 mod room_recording;
 mod room_state;
 mod serve;
@@ -75,6 +82,10 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) output: Option<PathBuf>,
 
+    /// Record LOC objects and catalog updates as a JSON Lines archive
+    #[arg(long, conflicts_with_all = ["segment_seconds", "from_cache", "list_tracks"])]
+    pub(crate) archive: bool,
+
     /// Whether the video and the audio share one file or each track gets its own
     #[arg(long, value_enum, default_value_t = Layout::Combined)]
     pub(crate) layout: Layout,
@@ -124,10 +135,13 @@ pub(crate) struct ServeArgs {
     )]
     pub(crate) allowed_origins: Vec<String>,
 
-    /// First element of every namespace prefix a request may record; the API
-    /// has no authentication, so it records anonymous rooms only by default
+    /// First element of every namespace prefix a request may record
     #[arg(long, default_value = "anon")]
     pub(crate) namespace_root: String,
+
+    /// VTS verification endpoint for authenticated HTTP callers
+    #[arg(long, env = "AUTH_VTS_URL")]
+    pub(crate) auth_vts_url: Option<String>,
 
     /// Rooms that may be recorded at once
     #[arg(long, default_value_t = 4)]

@@ -51,8 +51,9 @@ sequenceDiagram
 
 - Every write is conditional on the generation that was read, so two writers
   never overwrite each other; the loser reloads and runs its change again. The
-  file backend checks and renames without a lock, so it holds this only for
-  one writing process; Cloud Storage holds it for any number of machines.
+  file backend serializes the check and rename within one process but takes
+  no lock across processes, so it holds this only for one writing process;
+  Cloud Storage holds it for any number of machines.
 - A reader of the file backend never sees a half-written registry, because a
   store renames a complete temporary file over it.
 - A change that leaves the registry invalid is never stored, and a change that

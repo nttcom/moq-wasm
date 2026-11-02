@@ -6,10 +6,8 @@ use crate::modules::{
             DownstreamPublish, downstream_publish_task::DownstreamPublishTask,
         },
     },
-    domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::MatchingPublication},
-        session_id::SessionId,
-    },
+    directory::{InMemoryLocalPubSubDirectory, track::MatchingPublication},
+    domain::session_id::SessionId,
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
 use std::collections::HashSet;
@@ -208,16 +206,13 @@ impl SubscribeNameSpace {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
-        domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
+        directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
+        domain::session_peer::SessionPeer,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
@@ -261,7 +256,7 @@ mod tests {
     }
 
     async fn context_with_published_track(sent: SentMessages) -> DownstreamPublishContext {
-        let table = Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Publish).0);
+        let table = Arc::new(table_with_upstream(ProducerOrigin::Publish).0);
         table.register_publish(
             PUBLISHER_SESSION,
             SessionPeer::Client,
@@ -288,9 +283,7 @@ mod tests {
                 &MockSubscribeNamespaceHandler { prefix: "ns", sent },
             )
             .await;
-        tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
-            .await
-            .expect("the accepted PUBLISH should start an egress reader");
+        ctx.wait_registered(PUBLISH_REQUEST_ID).await;
     }
 
     #[tokio::test]

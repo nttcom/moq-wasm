@@ -7,10 +7,8 @@ use crate::modules::{
         watched_namespace_routes::WatchedNamespaceRoutes,
     },
     control_plane::sequences::connect_relay,
-    domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-        session_peer::SessionPeer, track_key::TrackKey,
-    },
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
 };
 
 /// A remote relay is only dialled by whoever sends it the request, so a relay
@@ -124,23 +122,20 @@ impl UpstreamPublisherResolver {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{
-            pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
-            session_peer::SessionPeer,
+        directory::InMemoryLocalPubSubDirectory,
+        domain::{session_id::SessionId, session_peer::SessionPeer},
+        test_support::{
+            mock_session::detached_session_repository,
+            stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
-        session::session_repository::SessionRepository,
-        test_support::stub_route_registry::{PublisherLookup, StubRouteRegistry},
     };
 
     fn make_resolver(lookup: PublisherLookup) -> UpstreamPublisherResolver {
-        let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-        let (session_event_sender, _session_event_receiver) =
-            tokio::sync::mpsc::unbounded_channel();
+        let repository = Arc::new(tokio::sync::Mutex::new(detached_session_repository()));
         UpstreamPublisherResolver::new(
             Arc::new(StubRouteRegistry::new(lookup)),
             Arc::new(InterRelayConnectionManager::new(
                 repository,
-                session_event_sender,
                 "unused-relay-token".to_string(),
             )),
         )

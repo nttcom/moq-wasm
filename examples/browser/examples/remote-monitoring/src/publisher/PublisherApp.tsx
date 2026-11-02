@@ -67,14 +67,14 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   }
 
   const handlePublish = async () => {
-    const video = sessionRef.current?.video
-    if (!video) return
+    const publisherSession = sessionRef.current
+    if (!publisherSession?.session) return
     setStatus('starting')
     setError(null)
     try {
       const source: VideoSource = sourceType === 'file' ? { type: 'file', fileUrl } : { type: sourceType }
-      const publisher = new CameraPublisher(video, camId as CameraId, source)
-      const stream = await publisher.start()
+      const publisher = new CameraPublisher(camId as CameraId, source)
+      const stream = await publisher.start(publisherSession.session, publisherSession.namespace)
       publisherRef.current = publisher
       if (videoRef.current) videoRef.current.srcObject = stream
       setStatus('live')

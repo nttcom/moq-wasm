@@ -9,27 +9,22 @@ use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
-            CascadingRelayContext,
+            CascadingRelayContext, IngestRequest,
             downstream_publish::{
                 DownstreamPublish, downstream_publish_task::DownstreamPublishTask,
             },
         },
     },
-    data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    domain::{
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
-        },
-        session_id::SessionId,
-        session_peer::SessionPeer,
-        track_key::TrackKey,
+    data_plane::cache::store::TrackCacheStore,
+    directory::{
+        InMemoryLocalPubSubDirectory,
+        track::{Producer, ProducerOrigin, ProducerState},
     },
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
 
 use moqt::subscribe::FilterType;
-use tracing::Span;
 
 pub(crate) struct Publish;
 
@@ -40,7 +35,7 @@ impl Publish {
         session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+        cache_store: &TrackCacheStore,
         downstream_publish: &DownstreamPublish,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: Box<dyn PublishHandler>,
@@ -79,7 +74,7 @@ impl Publish {
                 publisher_peer,
                 table,
                 forwarder,
-                ingress_sender,
+                cache_store,
                 handler.clone(),
                 &upstream_subscription,
             )
@@ -248,42 +243,42 @@ impl Publish {
         publisher_peer: SessionPeer,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+        cache_store: &TrackCacheStore,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
     ) -> anyhow::Result<()> {
         let track_key = TrackKey::new(subscription.track_namespace(), subscription.track_name());
-        let active_upstream = ActiveUpstreamSubscription {
+        let state = ProducerState {
             subscription: subscription.clone(),
             expires: None,
             content_exists: subscription.content_exists(),
-            origin: UpstreamSubscriptionOrigin::Publish,
-            publisher_peer,
+            origin: ProducerOrigin::Publish,
+            peer: publisher_peer,
         };
 
         handler.accept_data_receiver().await;
 
-        if !super::start_ingress(
-            ingress_sender,
-            IngressStartRequest {
+        let Some(ingest) = super::start_ingest(
+            forwarder,
+            cache_store,
+            IngestRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: session_id,
                 track_key: track_key.clone(),
                 subscription: subscription.clone(),
-                parent_span: Span::current(),
             },
         )
         .await
-        {
-            anyhow::bail!("failed to send ingress start request");
-        }
+        else {
+            anyhow::bail!("publisher session not found");
+        };
 
         super::register_upstream_subscription(
             table,
             forwarder,
             track_key,
             session_id,
-            active_upstream,
+            Producer::new(state, ingest),
         )
         .await;
         table.register_publish(session_id, publisher_peer, handler);

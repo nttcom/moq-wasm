@@ -4,19 +4,15 @@ use std::sync::Arc;
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        upstream_creation_serializer::UpstreamCreationSerializer,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
-    data_plane::{
-        cache::store::TrackCacheStore,
-        egress::coordinator::{EgressCommand, EgressStartRequest},
-        ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
+    data_plane::cache::store::TrackCacheStore,
+    directory::{
+        InMemoryLocalPubSubDirectory, TrackLookup, TrackReservation,
+        track::{CreationFailure, CreationState, TrackState},
     },
     domain::{
-        delivery_control::DeliveryControl,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
-        session_id::SessionId,
-        session_peer::SessionPeer,
+        delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::handler::subscribe::SubscribeHandler,
@@ -24,19 +20,15 @@ use crate::modules::{
 use moqt::fetch::JoinPoint;
 
 use moqt::object::ContentExists;
-use tracing::Span;
 
-pub(crate) mod upstream_join_task;
+pub(crate) mod pending_producer_task;
 
-use upstream_join_task::{
-    UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, end_if_publisher_gone, next_answered,
-    send_upstream_subscribes, subscribe_initiated,
-};
+use pending_producer_task::{PendingProducerDeps, subscribe_publishers};
 
 pub(crate) struct Subscribe;
 
-/// Another session's cleanup can remove the upstream subscription between
-/// finding it and registering on it; each attempt finds or creates it again.
+/// Another session's cleanup can remove the track between finding it and
+/// registering on it; each attempt finds or creates it again.
 const UPSTREAM_ATTEMPTS: usize = 3;
 
 /// Clients that leave Forward at 0 in SUBSCRIBE still expect delivery.
@@ -63,7 +55,7 @@ pub(super) fn cached_largest(
 pub(super) fn existing_track_largest(
     cache_store: &TrackCacheStore,
     track_key: &TrackKey,
-    upstream_track: &UpstreamTrack,
+    upstream_track: &TrackState,
 ) -> Option<moqt::object::Location> {
     let upstream_largest = match upstream_track.content_exists() {
         ContentExists::True { location } => Some(location),
@@ -72,23 +64,26 @@ pub(super) fn existing_track_largest(
     cached_largest(cache_store, track_key).max(upstream_largest)
 }
 
-/// `late_publishers` are the upstream SUBSCRIBEs still unanswered when the
-/// first publisher answered; they join the track once the downstream
-/// subscription that asked for it is registered, so the track wants them.
+/// The track as found or created for a SUBSCRIBE, held wanting its producers
+/// (`_reservation`) until the downstream subscription is registered.
 struct UpstreamTrackAccess {
     track_key: TrackKey,
-    upstream_track: UpstreamTrack,
+    upstream_track: TrackState,
     largest_location: Option<moqt::object::Location>,
-    late_publishers: Option<UpstreamJoin>,
+    _reservation: TrackReservation,
 }
 
-enum UpstreamSubscriptionError {
+pub(crate) enum UpstreamSubscriptionError {
     PublisherNotFound,
     SubscribeFailed(anyhow::Error),
-    IngressStartFailed,
 }
 
 impl UpstreamSubscriptionError {
+    pub(crate) fn failure(&self) -> CreationFailure {
+        let (code, reason) = self.subscribe_error_response();
+        CreationFailure { code, reason }
+    }
+
     /// SUBSCRIBE_ERROR (code, reason) for the downstream subscriber. An
     /// upstream SUBSCRIBE_ERROR is relayed verbatim; an upstream timeout maps
     /// to TIMEOUT so one slow upstream request stays a request-scoped failure.
@@ -111,10 +106,6 @@ impl UpstreamSubscriptionError {
                     "Failed to create upstream subscription.".to_string(),
                 ),
             },
-            Self::IngressStartFailed => (
-                RequestErrorCode::InternalError,
-                "Failed to start upstream ingress.".to_string(),
-            ),
         }
     }
 }
@@ -126,11 +117,8 @@ impl Subscribe {
         session_id: SessionId,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
-        upstream_serializer: &UpstreamCreationSerializer,
         handler: Box<dyn SubscribeHandler>,
     ) {
         let track_namespace = handler.track_namespace();
@@ -152,18 +140,15 @@ impl Subscribe {
                     track_name,
                     table,
                     forwarder,
-                    ingress_sender,
                     upstream_publisher_resolver,
-                    upstream_serializer,
                     cache_store,
                 )
                 .await
             {
                 Ok(upstream_subscription) => upstream_subscription,
-                Err(err) => {
-                    let (code, reason_phrase) = err.subscribe_error_response();
+                Err(failure) => {
                     if let Err(send_error) = self
-                        .response_error(session_id, handler.as_ref(), code, reason_phrase)
+                        .response_error(session_id, handler.as_ref(), failure.code, failure.reason)
                         .await
                     {
                         tracing::error!(
@@ -180,10 +165,10 @@ impl Subscribe {
 
             if let Some((publisher_session_id, upstream)) = access
                 .upstream_track
-                .subscriptions
+                .producers
                 .iter()
                 .rev()
-                .find(|(_, upstream)| upstream.publisher_peer == SessionPeer::Relay)
+                .find(|(_, producer)| producer.peer == SessionPeer::Relay)
             {
                 super::record_upstream_relay(
                     forwarder,
@@ -200,21 +185,11 @@ impl Subscribe {
                     access.upstream_track,
                     access.largest_location,
                     table,
-                    egress_sender,
+                    forwarder,
                     cache_store,
                     handler.as_ref(),
                 )
                 .await;
-            if let Some(late_publishers) = access.late_publishers {
-                let _upstream_join = UpstreamJoinTask::run(
-                    late_publishers,
-                    UpstreamJoinDeps {
-                        table: table.clone(),
-                        forwarder: forwarder.clone(),
-                        ingress_sender: ingress_sender.clone(),
-                    },
-                );
-            }
             if let Acceptance::Answered = acceptance {
                 return;
             }
@@ -228,6 +203,9 @@ impl Subscribe {
         self.response_track_gone(session_id, handler.as_ref()).await;
     }
 
+    /// Finds the track or creates it: the first SUBSCRIBE for a track sends
+    /// the upstream SUBSCRIBEs and every SUBSCRIBE for it waits for the first
+    /// producer, or for the creation to fail (draft-14 §8.4).
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         level = "debug",
@@ -247,59 +225,78 @@ impl Subscribe {
         track_name: &str,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
-        upstream_serializer: &UpstreamCreationSerializer,
         cache_store: &Arc<TrackCacheStore>,
-    ) -> Result<UpstreamTrackAccess, UpstreamSubscriptionError> {
+    ) -> Result<UpstreamTrackAccess, CreationFailure> {
         let track_key = TrackKey::new(track_namespace, track_name);
-        // Fast path: cache hit without acquiring the per-track lock.
-        if let Some(upstream_track) = table.get_upstream_track(&track_key) {
-            let largest_location = existing_track_largest(cache_store, &track_key, &upstream_track);
+        loop {
+            let (mut receiver, reservation, cache_before_subscribe) =
+                match table.track_or_begin_creation(&track_key, requester) {
+                    TrackLookup::Ready(upstream_track, reservation) => {
+                        let largest_location =
+                            existing_track_largest(cache_store, &track_key, &upstream_track);
+                        return Ok(UpstreamTrackAccess {
+                            track_key,
+                            upstream_track,
+                            largest_location,
+                            _reservation: reservation,
+                        });
+                    }
+                    TrackLookup::Creating(receiver, reservation) => {
+                        tracing::debug!("another SUBSCRIBE is creating the track; waiting");
+                        (receiver, reservation, None)
+                    }
+                    TrackLookup::Started(receiver, reservation) => {
+                        let cache_before_subscribe = cached_largest(cache_store, &track_key);
+                        self.create_upstream_subscription(
+                            session_id,
+                            requester,
+                            &track_key,
+                            table,
+                            forwarder,
+                            upstream_publisher_resolver,
+                            cache_store,
+                        )
+                        .await;
+                        (receiver, reservation, Some(cache_before_subscribe))
+                    }
+                };
+            let state = receiver
+                .wait_for(|state| *state != CreationState::Creating)
+                .await
+                .map(|state| state.clone());
+            if let Ok(CreationState::Failed(failure)) = state {
+                return Err(failure);
+            }
+            // Created, or the entry went away meanwhile.
+            let Some(upstream_track) = table.track_state(&track_key) else {
+                continue;
+            };
+            // The creator advertises the Largest Location of subscribe time:
+            // the upstream SUBSCRIBE uses the Largest Object filter, so the
+            // objects a burst cached meanwhile are delivered, not skipped.
+            let largest_location = match cache_before_subscribe {
+                Some(cache_before_subscribe) => {
+                    let upstream_largest = match upstream_track.content_exists() {
+                        ContentExists::True { location } => Some(location),
+                        ContentExists::False => None,
+                    };
+                    upstream_largest.max(cache_before_subscribe)
+                }
+                None => existing_track_largest(cache_store, &track_key, &upstream_track),
+            };
             return Ok(UpstreamTrackAccess {
                 track_key,
                 upstream_track,
                 largest_location,
-                late_publishers: None,
+                _reservation: reservation,
             });
         }
-
-        // Cache miss: acquire the per-track lock so that concurrent tasks for
-        // the same track serialise here and only one of them calls
-        // create_upstream_subscription.
-        let _guard = upstream_serializer.lock(track_namespace, track_name).await;
-
-        // Re-check after acquiring the lock: a sibling task may have created
-        // and registered the upstream subscription while we were waiting.
-        if let Some(upstream_track) = table.get_upstream_track(&track_key) {
-            tracing::debug!(
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                "upstream subscription found after serializer lock (joined existing)"
-            );
-            let largest_location = existing_track_largest(cache_store, &track_key, &upstream_track);
-            return Ok(UpstreamTrackAccess {
-                track_key,
-                upstream_track,
-                largest_location,
-                late_publishers: None,
-            });
-        }
-
-        self.create_upstream_subscription(
-            session_id,
-            requester,
-            track_namespace,
-            track_name,
-            table,
-            forwarder,
-            ingress_sender,
-            upstream_publisher_resolver,
-            cache_store,
-        )
-        .await
     }
 
+    /// Resolves the track's publishers and sends each a SUBSCRIBE in a
+    /// `PendingProducerTask`; without any, the creation is abandoned, which
+    /// fails it unless a PUBLISH created the track meanwhile.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         level = "debug",
@@ -307,161 +304,52 @@ impl Subscribe {
         skip_all,
         fields(
             session_id = %session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name
+            track_namespace = %track_key.track_namespace,
+            track_name = %track_key.track_name
         )
     )]
     async fn create_upstream_subscription(
         &self,
         session_id: SessionId,
         requester: SessionPeer,
-        track_namespace: &str,
-        track_name: &str,
+        track_key: &TrackKey,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
-    ) -> Result<UpstreamTrackAccess, UpstreamSubscriptionError> {
+    ) {
         if requester == SessionPeer::Client {
             upstream_publisher_resolver
                 .watched_namespace_routes
-                .watch(track_namespace)
+                .watch(&track_key.track_namespace)
                 .await;
         }
         let publishers = upstream_publisher_resolver
-            .resolve(table, track_namespace, track_name, requester)
+            .resolve(
+                table,
+                &track_key.track_namespace,
+                &track_key.track_name,
+                requester,
+            )
             .await;
         if publishers.is_empty() {
-            return Err(UpstreamSubscriptionError::PublisherNotFound);
+            table.pending_producer_ended(
+                track_key,
+                Some(UpstreamSubscriptionError::PublisherNotFound.failure()),
+            );
+            return;
         }
-
-        let track_key = TrackKey::new(track_namespace, track_name);
-        let cache_before_subscribe = cached_largest(cache_store, &track_key);
-
-        // draft-14 §8.4
-        let mut pending = send_upstream_subscribes(
-            upstream_publisher_resolver,
-            forwarder,
-            &track_key,
+        subscribe_publishers(
+            &PendingProducerDeps {
+                table: table.clone(),
+                forwarder: forwarder.clone(),
+                cache_store: cache_store.clone(),
+                resolver: upstream_publisher_resolver.clone(),
+            },
+            track_key,
+            session_id,
             publishers,
         );
-        let mut last_error = None;
-        let mut publisher_left = false;
-        let (pub_session_id, active_upstream) = loop {
-            let Some(answered) = next_answered(&mut pending).await else {
-                return Err(match last_error {
-                    Some(error) => UpstreamSubscriptionError::SubscribeFailed(error),
-                    None if publisher_left => UpstreamSubscriptionError::PublisherNotFound,
-                    None => UpstreamSubscriptionError::SubscribeFailed(anyhow::anyhow!(
-                        "no upstream publisher could be reached"
-                    )),
-                });
-            };
-            let pub_session_id = answered.publisher_session_id;
-            let subscription = match answered.subscribed {
-                Ok(subscription) => subscription,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        publisher_session_id = %pub_session_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "upstream SUBSCRIBE failed"
-                    );
-                    last_error = Some(error);
-                    continue;
-                }
-            };
-            tracing::debug!(
-                publisher_session_id = %pub_session_id,
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                track_alias = subscription.track_alias(),
-                expires = subscription.expires().unwrap_or(0),
-                "upstream SUBSCRIBE_OK received"
-            );
-
-            // The publisher sent PUBLISH for the track while the SUBSCRIBE was
-            // pending: unsubscribing that PUBLISH would fail the publisher's writes.
-            if let Some(published) =
-                table.published_upstream_subscription(&track_key, pub_session_id)
-            {
-                if let Err(error) = forwarder.unsubscribe(pub_session_id, &subscription).await {
-                    tracing::warn!(
-                        ?error,
-                        publisher_session_id = %pub_session_id,
-                        "failed to unsubscribe the SUBSCRIBE a PUBLISH overtook"
-                    );
-                }
-                break (pub_session_id, published);
-            }
-            let active_upstream = subscribe_initiated(&subscription, answered.publisher_peer);
-            let upstream_request_id = subscription.request_id();
-            if !super::start_ingress(
-                ingress_sender,
-                IngressStartRequest {
-                    subscriber_session_id: session_id,
-                    publisher_session_id: pub_session_id,
-                    track_key: track_key.clone(),
-                    subscription,
-                    parent_span: Span::current(),
-                },
-            )
-            .await
-            {
-                return Err(UpstreamSubscriptionError::IngressStartFailed);
-            }
-            super::register_upstream_subscription(
-                table,
-                forwarder,
-                track_key.clone(),
-                pub_session_id,
-                active_upstream.clone(),
-            )
-            .await;
-            if end_if_publisher_gone(
-                table,
-                forwarder,
-                ingress_sender,
-                &track_key,
-                pub_session_id,
-                upstream_request_id,
-            )
-            .await
-            {
-                publisher_left = true;
-                continue;
-            }
-            break (pub_session_id, active_upstream);
-        };
-        tracing::debug!(
-            publisher_session_id = %pub_session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name,
-            "upstream subscription registered"
-        );
-        let late_publishers = (!pending.is_empty()).then(|| UpstreamJoin {
-            track_key: track_key.clone(),
-            subscriber_session_id: session_id,
-            pending,
-        });
-
-        let upstream_largest = match active_upstream.content_exists {
-            ContentExists::True { location } => Some(location),
-            ContentExists::False => None,
-        };
-        let subscribe_time_largest = upstream_largest.max(cache_before_subscribe);
-        let mut upstream_track = UpstreamTrack::default();
-        upstream_track
-            .subscriptions
-            .insert(pub_session_id, active_upstream);
-        Ok(UpstreamTrackAccess {
-            track_key,
-            upstream_track,
-            largest_location: subscribe_time_largest,
-            late_publishers,
-        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -478,10 +366,10 @@ impl Subscribe {
         session_id: SessionId,
         subscriber_peer: SessionPeer,
         track_key: TrackKey,
-        upstream_track: UpstreamTrack,
+        upstream_track: TrackState,
         largest_location: Option<moqt::object::Location>,
         table: &InMemoryLocalPubSubDirectory,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
+        forwarder: &ControlMessageForwarder,
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) -> Acceptance {
@@ -528,27 +416,22 @@ impl Subscribe {
 
         let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
         let (subscribe_ok_sender, subscribe_ok_receiver) = tokio::sync::oneshot::channel();
-        if egress_sender
-            .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
+        if !super::start_egress(
+            forwarder,
+            cache_store,
+            super::EgressRequest {
                 subscriber_session_id: session_id,
-                downstream_subscribe_id: handler.subscribe_id(),
+                request_id: handler.subscribe_id(),
                 track_key: track_key.clone(),
                 downstream_subscription,
-                parent_span: Span::current(),
                 ready_sender,
                 runner_signals,
                 subscribe_ok_receiver,
                 largest_location,
-            })))
-            .await
-            .is_err()
+            },
+        )
+        .await
         {
-            tracing::error!(
-                request_id = handler.subscribe_id(),
-                track_namespace = %track_key.track_namespace,
-                track_name = %track_key.track_name,
-                "failed to send EgressStartRequest"
-            );
             return Acceptance::Answered;
         }
         match ready_receiver.await {
@@ -639,29 +522,33 @@ impl Subscribe {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::OnceLock;
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use super::*;
     use crate::modules::auth::verified_token::VerifiedToken;
     use crate::modules::cascading::inter_relay_connection_manager::InterRelayConnectionManager;
     use crate::modules::cascading::route_registry::NoopRelayRouteRegistry;
     use crate::modules::data_plane::cache::track_cache::TrackCache;
-    use crate::modules::domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
-        session_peer::SessionPeer,
-    };
     use crate::modules::session::session_repository::SessionRepository;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
-        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, local_publisher_resolver,
-        track_key, upstream_track,
+        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, local_publisher_resolver, producer, track_key,
+        upstream_track,
     };
     use crate::modules::test_support::mock_session::{
-        MockSubscribeHandler, mock_session_answering_subscribe,
+        MockSubscribeHandler, MockUpstreamSession, RecordedControlMessages,
+        detached_session_repository, mock_session_answering_subscribe,
         mock_session_never_answering_subscribe, recorded_session_answering_subscribe,
         session_repository_with_session, session_repository_with_sessions,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
+    use crate::modules::{
+        directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
+        domain::session_peer::SessionPeer,
+    };
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
         insert_closed_group(cache, group_id, &[0]);
@@ -746,8 +633,6 @@ mod tests {
         .await;
         let forwarder = ControlMessageForwarder { repository };
         let resolver = Arc::new(local_publisher_resolver());
-        let serializer = UpstreamCreationSerializer::default();
-        let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
 
         let mut largest_locations = Vec::new();
         for _ in 0..subscribe_count {
@@ -761,9 +646,7 @@ mod tests {
                     &track_key.track_name,
                     &table,
                     &forwarder,
-                    &ingress_sender,
                     &resolver,
-                    &serializer,
                     &cache_store,
                 )
                 .await
@@ -782,7 +665,7 @@ mod tests {
         publishers: Vec<(SessionId, Box<dyn crate::modules::session::Session>)>,
     ) -> (
         Arc<InMemoryLocalPubSubDirectory>,
-        Result<UpstreamTrackAccess, UpstreamSubscriptionError>,
+        Result<UpstreamTrackAccess, CreationFailure>,
     ) {
         let publisher_session_ids = publishers.iter().map(|(id, _)| *id).collect();
         let repository =
@@ -795,7 +678,7 @@ mod tests {
         publisher_session_ids: Vec<SessionId>,
     ) -> (
         Arc<InMemoryLocalPubSubDirectory>,
-        Result<UpstreamTrackAccess, UpstreamSubscriptionError>,
+        Result<UpstreamTrackAccess, CreationFailure>,
     ) {
         const SUBSCRIBER_SESSION: SessionId = 2;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
@@ -808,9 +691,8 @@ mod tests {
         }
         let forwarder = ControlMessageForwarder { repository };
         let resolver = Arc::new(local_publisher_resolver());
-        let (ingress_sender, mut ingress_receiver) = tokio::sync::mpsc::channel(4);
-        tokio::spawn(async move { while ingress_receiver.recv().await.is_some() {} });
-        let mut created = tokio::time::timeout(
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let created = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             Subscribe.get_or_create_upstream_subscription(
                 SUBSCRIBER_SESSION,
@@ -819,15 +701,13 @@ mod tests {
                 "track",
                 &table,
                 &forwarder,
-                &ingress_sender,
                 &resolver,
-                &UpstreamCreationSerializer::default(),
-                &Arc::new(TrackCacheStore::new()),
+                &cache_store,
             ),
         )
         .await
         .expect("the SUBSCRIBE must not wait for a publisher that never answers");
-        if let Ok(access) = &mut created {
+        if let Ok(access) = &created {
             table
                 .register_downstream_subscription(
                     SUBSCRIBER_SESSION,
@@ -838,16 +718,6 @@ mod tests {
                     delivery_control(true),
                 )
                 .unwrap();
-            if let Some(late_publishers) = access.late_publishers.take() {
-                let _upstream_join = UpstreamJoinTask::run(
-                    late_publishers,
-                    UpstreamJoinDeps {
-                        table: table.clone(),
-                        forwarder,
-                        ingress_sender,
-                    },
-                );
-            }
         }
         (table, created)
     }
@@ -859,8 +729,8 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let publishers = || {
             table
-                .get_upstream_track(&track_key)
-                .map(|track| track.subscriptions.into_keys().collect::<Vec<_>>())
+                .track_state(&track_key)
+                .map(|track| track.producers.into_keys().collect::<Vec<_>>())
                 .unwrap_or_default()
         };
         let _ = tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -935,7 +805,7 @@ mod tests {
                 .register_upstream_subscription(
                     track_key(),
                     PUBLISHER_SESSION,
-                    active_upstream(UpstreamSubscriptionOrigin::Publish),
+                    producer(ProducerOrigin::Publish),
                 );
             moqt::object::ContentExists::False
         });
@@ -949,7 +819,6 @@ mod tests {
         table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
         let _ = table_cell.set(table.clone());
         let forwarder = ControlMessageForwarder { repository };
-        let (ingress_sender, mut ingress_receiver) = tokio::sync::mpsc::channel(4);
 
         // Act
         let created = Subscribe
@@ -960,17 +829,15 @@ mod tests {
                 "track",
                 &table,
                 &forwarder,
-                &ingress_sender,
                 &Arc::new(local_publisher_resolver()),
-                &UpstreamCreationSerializer::default(),
                 &Arc::new(TrackCacheStore::new()),
             )
             .await;
 
-        // Assert: only the SUBSCRIBE (request 1) is unsubscribed, and its ingress never replaces the PUBLISH's
+        // Assert: only the SUBSCRIBE (request 1) is unsubscribed, and its ingest never starts
         assert!(created.is_ok());
         assert_eq!(recorded.unsubscribed_request_ids(), vec![1]);
-        assert!(ingress_receiver.try_recv().is_err());
+        assert!(recorded.data_receivers().is_empty());
         assert!(table.has_upstream_subscription(
             &track_key(),
             PUBLISHER_SESSION,
@@ -1004,13 +871,12 @@ mod tests {
         // Assert
         assert!(matches!(
             created,
-            Err(UpstreamSubscriptionError::PublisherNotFound)
+            Err(CreationFailure {
+                code: RequestErrorCode::TrackDoesNotExist,
+                ..
+            })
         ));
-        assert!(
-            table
-                .get_upstream_track(&TrackKey::new("ns", "track"))
-                .is_none()
-        );
+        assert!(table.track_state(&TrackKey::new("ns", "track")).is_none());
     }
 
     #[tokio::test]
@@ -1111,7 +977,6 @@ mod tests {
 
     async fn accept_downstream(
         table: &InMemoryLocalPubSubDirectory,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &MockSubscribeHandler,
     ) -> Acceptance {
         Subscribe
@@ -1119,10 +984,12 @@ mod tests {
                 2,
                 SessionPeer::Client,
                 track_key(),
-                upstream_track(UpstreamSubscriptionOrigin::Subscribe),
+                upstream_track(ProducerOrigin::Subscribe),
                 None,
                 table,
-                egress_sender,
+                &ControlMessageForwarder {
+                    repository: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
+                },
                 &Arc::new(TrackCacheStore::new()),
                 handler,
             )
@@ -1138,121 +1005,78 @@ mod tests {
     async fn upstream_removed_before_registration_leaves_the_subscribe_unanswered() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
         let handler = MockSubscribeHandler::default();
 
         // Act
-        let acceptance = accept_downstream(&table, &egress_sender, &handler).await;
+        let acceptance = accept_downstream(&table, &handler).await;
 
         // Assert
-        assert!(matches!(acceptance, Acceptance::UpstreamGone));
-        assert_unanswered(&handler);
-        assert!(egress_receiver.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn registration_removed_before_runner_readiness_leaves_the_subscribe_unanswered() {
-        // Arrange
-        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        table.register_upstream_subscription(
-            track_key(),
-            PUBLISHER_SESSION,
-            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
-        );
-        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
-        let concurrent_cleanup = tokio::spawn({
-            let table = table.clone();
-            async move {
-                if let Some(EgressCommand::StartReader(request)) = egress_receiver.recv().await {
-                    table.remove_downstream_subscription(
-                        request.subscriber_session_id,
-                        request.downstream_subscribe_id,
-                    );
-                }
-            }
-        });
-        let handler = MockSubscribeHandler::default();
-
-        // Act
-        let acceptance = accept_downstream(&table, &egress_sender, &handler).await;
-
-        // Assert
-        concurrent_cleanup.await.unwrap();
         assert!(matches!(acceptance, Acceptance::UpstreamGone));
         assert_unanswered(&handler);
     }
 
     #[tokio::test]
     async fn a_subscribe_whose_upstream_ends_while_it_is_accepted_is_answered_on_a_new_upstream() {
-        // Arrange: the first runner start loses its registration, as when the last other subscriber leaves
+        // Arrange: the upstream ends between the SUBSCRIBE finding it and registering on it,
+        // as when the last other subscriber leaves; the publisher answers a new SUBSCRIBE
         const SUBSCRIBER_SESSION: SessionId = 2;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
         table.register_upstream_subscription(
             track_key(),
             PUBLISHER_SESSION,
-            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+            producer(ProducerOrigin::Subscribe),
         );
-        let repository = session_repository_with_session(
-            PUBLISHER_SESSION,
-            mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
+        let repository = session_repository_with_sessions(
+            vec![
+                (
+                    PUBLISHER_SESSION,
+                    mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
+                ),
+                (
+                    SUBSCRIBER_SESSION,
+                    Box::new(MockUpstreamSession::new(RecordedControlMessages::default())),
+                ),
+            ],
             VerifiedToken::full_access(),
         )
         .await;
-        let (session_event_sender, _session_event_receiver) =
-            tokio::sync::mpsc::unbounded_channel();
         let resolver = UpstreamPublisherResolver::new(
             Arc::new(NoopRelayRouteRegistry),
             Arc::new(InterRelayConnectionManager::new(
                 repository.clone(),
-                session_event_sender,
                 "unused-relay-token".to_string(),
             )),
         );
-        let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
-        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
-        let egress = tokio::spawn({
-            let table = table.clone();
-            async move {
-                let mut started = 0;
-                while let Some(EgressCommand::StartReader(request)) = egress_receiver.recv().await {
-                    started += 1;
-                    if started == 1 {
-                        table.remove_downstream_subscription(
-                            request.subscriber_session_id,
-                            request.downstream_subscribe_id,
-                        );
-                    } else {
-                        let _ = request.ready_sender.send(Ok(()));
-                        return started;
+        let upstream_ended = Arc::new(AtomicBool::new(false));
+        let handler = MockSubscribeHandler {
+            on_allocate_track_alias: Some(Arc::new({
+                let table = table.clone();
+                let upstream_ended = upstream_ended.clone();
+                move || {
+                    if !upstream_ended.swap(true, Ordering::SeqCst) {
+                        table.remove_upstream_track(&track_key());
                     }
                 }
-                started
-            }
-        });
-        let handler = MockSubscribeHandler::default();
+            })),
+            ..MockSubscribeHandler::default()
+        };
 
         // Act
         Subscribe
             .handle(
                 SUBSCRIBER_SESSION,
                 &table,
-                &ControlMessageForwarder {
-                    repository: repository.clone(),
-                },
-                &ingress_sender,
-                &egress_sender,
+                &ControlMessageForwarder { repository },
                 &Arc::new(resolver),
                 &Arc::new(TrackCacheStore::new()),
-                &UpstreamCreationSerializer::default(),
                 Box::new(handler.clone()),
             )
             .await;
-        drop(egress_sender);
 
         // Assert
-        assert_eq!(egress.await.unwrap(), 2);
         assert!(handler.subscribe_errors.lock().unwrap().is_empty());
         assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 1);
+        assert!(table.track_state(&track_key()).is_some());
     }
 }

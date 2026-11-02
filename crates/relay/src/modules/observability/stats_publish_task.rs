@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use bytes::Bytes;
 use moqt::{TrackWriter, publish::PublishOption};
-use telemetry::EventLogger;
+use telemetry::{EventLogger, relay_stats};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::observability::{process_memory, stats_collector::StatsCollector};

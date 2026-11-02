@@ -265,6 +265,54 @@ namespace から作り、`addSource` でソースごとに `MediaSource` を作�
 いる broadcast の `chat` track には、同じ `TrackWriter` 型の
 `broadcast.track('chat')` で書く。
 
+## 会議の再生を `LivePlayer` に載せる
+
+### 現状
+meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、`RenditionSplice`、
+`pictureElements`、`readLocHeader` を内部パスから組み合わせて、メンバーとソース（カメラ、
+画面共有）ごとに再生している。catalog の追従、rendition の切り替え、ABR は `LivePlayer`
+にもあり、同じ仕組みが2つある。
+
+### 方針
+メンバーのソースごとに `LivePlayer` を1つ作り、会議が要る機能を `LivePlayer` に足す。
+`LocLive` などの部品は公開しない。公開すると仕組みが2つ残り、内部の API が公開範囲に入る。
+
+1つの session に `LivePlayer` を複数載せる形は、remote-monitoring がすでに使っている。
+タイルは player に container の要素を渡し、React はその要素を置く場所を変えるだけにする。
+
+### 足す機能
+
+| 機能 | API | meeting での使い方 |
+| --- | --- | --- |
+| ソースの選択 | `LivePlayerOptions.source`（`{ video, audio? }`）。名前の映像 track と、その altGroup（draft-ietf-moq-msf-01 §5.2.12）の rendition、名前の音声 track だけを購読する。省略時は今と同じ | カメラと画面共有で player を分ける |
+| 表示の高さで ABR の上限を決める | 自動選択のとき、container の高さを監視し、ladder をその高さを満たす rendition までに絞る（今の `capLadderToHeight`） | 小さいタイルは低い rendition を受ける |
+| Audio Level | `LivePlayerCallbacks.onAudioLevel?(level: AudioLevel)`。音声 object の LOC Audio Level property（draft-ietf-moq-loc-04 §2.3.3.2）を渡す。`AudioLevel` を export する | 話者の検出（`dominantSpeaker.ts`） |
+| 最初の映像を joining FETCH で取る | 映像の最初の購読は `subscribeCurrentGroup` にする。rendition の切り替えは今と同じく次の group を待つ | 静止した画面共有も、参加した直後に映る |
+| 音声を映像より優先する | 音声の SUBSCRIBE の subscriber priority を映像より高くする。オプションにはしない | meeting の映像128、音声0 と同じ |
+
+ソースは映像と音声の track 名で渡す。rendition は、catalog が switching set ごとに
+付ける altGroup から見つかる。映像だけがミュートされて catalog から外れても、音声は名前で
+見つかるので再生を続けられる。catalog の render group（§5.2.11）で映像と音声を結び付ける
+方法は採らない。番号に意味が無いので、映像 track が catalog に無いときに、どの音声が
+そのソースのものかを決められない。track 名は `publish()` の命名（`video` と `audio`、
+`addSource` の `<name>` と `<name>_audio`）をアプリが渡し、player は命名の規則を持たない。
+`source` を `start` の引数でなく player のオプションにするのは、`start` の3つ目の引数が
+すでに `LiveTracks` で、meeting はソースごとに player を作るため。
+
+### 移行の手順
+1手順を1 PR にする。
+
+1. **feat(wasm): `LivePlayerOptions.source`。**
+2. **feat(wasm): 表示の高さによる ABR の上限。**
+3. **feat(wasm): `onAudioLevel`。**
+4. **feat(wasm): 映像の最初の購読を joining FETCH にする。**
+5. **feat(wasm): 音声の subscriber priority を映像より高くする。**
+6. **refactor(browser): meeting の再生を `LivePlayer` に移す。** `mediaSubscriber.ts` と、
+   `localSession.ts` の映像・音声の購読と切り替え、`meetingCatalog.ts` の解析を消す。
+   ブラウザ E2E（`run-meeting-e2e.mjs`）で守る。
+7. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
+   なってから行う。
+
 ## core API
 
 core API は、制御メッセージをそのまま出すのではなく、Rust の crate にすでにある

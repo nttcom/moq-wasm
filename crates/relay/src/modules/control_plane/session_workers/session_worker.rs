@@ -24,13 +24,12 @@ use crate::modules::{
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
     domain::{
-        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
+        delivery_control::DeliveryControl, publish_done_reason::PublishDoneReason,
         session_id::SessionId,
     },
     session::{
-        handler::track_status::TrackStatusHandler,
-        moqt_session_event::MoqtSessionEvent,
-        session_event::{EventKind, SessionEvent},
+        Session, handler::track_status::TrackStatusHandler, moqt_session_event::MoqtSessionEvent,
+        session_event::SessionEvent,
     },
 };
 
@@ -39,50 +38,64 @@ use crate::modules::{
 pub(super) struct SessionWorker {
     session_id: SessionId,
     session_span: Span,
-    verified_token: Option<Arc<VerifiedToken>>,
     deps: WorkerDeps,
 }
 
 impl SessionWorker {
     pub(super) async fn run(
         session_id: SessionId,
-        mut rx: mpsc::UnboundedReceiver<SessionEvent>,
+        mut mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
         deps: WorkerDeps,
     ) -> SessionId {
-        let (session_span, verified_token) = {
+        let (session, session_span) = {
             let repo = deps.repo.lock().await;
-            (
-                repo.session_span(session_id),
-                repo.verified_token(session_id),
-            )
+            (repo.session(session_id), repo.session_span(session_id))
         };
-        // The span is registered before SessionRegistered is sent and removed
-        // only by this worker's terminal cleanup.
+        // The entry is inserted before SessionAdded is sent and removed only
+        // by this worker's terminal cleanup.
+        let session: Arc<dyn Session> = session
+            .unwrap_or_else(|| unreachable!("worker started for a session not in the repository"));
         let session_span = session_span
             .unwrap_or_else(|| unreachable!("worker started for a session without a span"));
-        if verified_token.is_none() {
-            tracing::error!(
-                session_id,
-                "session has no verified token; every namespace request will be denied"
-            );
-        }
-        let mut worker = Self {
+        let worker = Self {
             session_id,
             session_span,
-            verified_token,
             deps,
         };
 
-        while let Some(event) = rx.recv().await {
-            let is_terminal = matches!(
-                event.kind,
-                EventKind::FromSession(
-                    MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
-                )
-            );
-            worker.handle(event.kind).await;
-            if is_terminal {
-                break;
+        loop {
+            tokio::select! {
+                biased;
+                event = mailbox_receiver.recv() => {
+                    // The entry owns the sender, so `None` means the session left.
+                    let Some(event) = event else { break };
+                    worker.handle_relay_event(event).await;
+                }
+                received = session.receive_moqt_session_event() => match received {
+                    Ok(event) => {
+                        let is_terminal = matches!(
+                            event,
+                            MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
+                        );
+                        worker.handle_moqt_event(event).await;
+                        if is_terminal {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        worker.session_span.in_scope(|| {
+                            tracing::warn!(
+                                session_id,
+                                %error,
+                                "session event stream ended without a close; cleaning up"
+                            );
+                        });
+                        cleanup_session(session_id, &worker.deps)
+                            .instrument(worker.session_span.clone())
+                            .await;
+                        break;
+                    }
+                },
             }
         }
 
@@ -100,18 +113,14 @@ impl SessionWorker {
         DownstreamPublish {
             table: self.deps.local_pub_sub_directory.clone(),
             forwarder: self.deps.control_message_forwarder.clone(),
-            egress_sender: self.deps.egress_sender.clone(),
             cache_store: self.deps.cache_store.clone(),
         }
     }
 
-    async fn handle(&mut self, kind: EventKind) {
+    async fn handle_relay_event(&self, event: SessionEvent) {
         let session_id = self.session_id;
-        match kind {
-            // The reader consumes registrations to spawn this worker and never forwards them.
-            EventKind::SessionRegistered => unreachable!("registration forwarded to a worker"),
-            EventKind::FromSession(event) => self.handle_moqt_event(event).await,
-            EventKind::MalformedTrackDetected(track_key) => {
+        match event {
+            SessionEvent::MalformedTrackDetected(track_key) => {
                 let event_span = tracing::info_span!(
                     parent: None,
                     "relay.malformed_track_detected",
@@ -125,23 +134,21 @@ impl SessionWorker {
                         &track_key,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
-                        &self.deps.ingress_sender,
                     )
                     .instrument(event_span)
                     .await;
             }
-            EventKind::GoAwaySent => {
+            SessionEvent::GoAwaySent => {
                 ReleaseUnwatchedPublishes
                     .handle(
                         session_id,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
-                        &self.deps.ingress_sender,
                     )
                     .instrument(self.session_span.clone())
                     .await;
             }
-            EventKind::DownstreamSubscriptionEnded { request_id } => {
+            SessionEvent::DownstreamSubscriptionEnded { request_id } => {
                 let event_span = tracing::info_span!(
                     parent: None,
                     "relay.downstream_subscription_ended",
@@ -155,13 +162,12 @@ impl SessionWorker {
                         session_id,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
-                        &self.deps.ingress_sender,
                         request_id,
                     )
                     .instrument(event_span)
                     .await;
             }
-            EventKind::ProtocolViolationDetected { reason } => {
+            SessionEvent::ProtocolViolationDetected { reason } => {
                 self.session_span.in_scope(|| {
                     tracing::error!(session_id, %reason, "protocol violation detected; closing session");
                 });
@@ -174,19 +180,16 @@ impl SessionWorker {
         }
     }
 
-    async fn handle_moqt_event(&mut self, event: MoqtSessionEvent) {
+    async fn handle_moqt_event(&self, event: MoqtSessionEvent) {
         let session_id = self.session_id;
         let session_span = self.session_span.clone();
         let deps = &self.deps;
-        let event = scope_anonymous_root_subscription(self.verified_token.as_deref(), event);
-        let event_span = session_event_span(
-            session_id,
-            &session_span,
-            self.verified_token.as_deref(),
-            &event,
-        );
+        let verified_token = deps.repo.lock().await.verified_token(session_id);
+        let verified_token = verified_token.as_deref();
+        let event = scope_anonymous_root_subscription(verified_token, event);
+        let event_span = session_event_span(session_id, &session_span, verified_token, &event);
         event_span.in_scope(|| tracing::debug!("Received session event"));
-        if let Err(denied) = authorize_request(self.verified_token.as_deref(), &event) {
+        if let Err(denied) = authorize_request(verified_token, &event) {
             let reject_span = tracing::info_span!(
                 parent: &event_span,
                 "relay.session.unauthorized_request",
@@ -205,7 +208,7 @@ impl SessionWorker {
                         session_id,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
+                        &deps.cache_store,
                         &deps.upstream_publisher_resolver,
                         self.cascading_relay_context(),
                         handler.as_ref(),
@@ -246,7 +249,7 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         self.cascading_relay_context(),
                         scope_anonymous_root_prefix(
-                            self.verified_token.as_deref(),
+                            verified_token,
                             handler.track_namespace_prefix(),
                         ),
                     )
@@ -259,7 +262,7 @@ impl SessionWorker {
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
+                        &deps.cache_store,
                         &self.downstream_publish(),
                         self.cascading_relay_context(),
                         handler,
@@ -273,11 +276,8 @@ impl SessionWorker {
                         session_id,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
-                        &deps.egress_sender,
                         &deps.upstream_publisher_resolver,
                         &deps.cache_store,
-                        &deps.upstream_serializer,
                         handler,
                     )
                     .instrument(event_span)
@@ -289,7 +289,6 @@ impl SessionWorker {
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
                         handler.subscribe_id(),
                     )
                     .instrument(event_span)
@@ -303,8 +302,6 @@ impl SessionWorker {
                     session_id,
                     &deps.local_pub_sub_directory,
                     &deps.cache_store,
-                    &deps.egress_sender,
-                    &deps.relay_event_sender,
                     &deps.control_message_forwarder,
                     &deps.upstream_publisher_resolver,
                     handler,
@@ -323,7 +320,7 @@ impl SessionWorker {
                     .await;
             }
             MoqtSessionEvent::TrackStatus(handler) => {
-                self.refresh_token(handler.as_ref())
+                self.refresh_token(verified_token, handler.as_ref())
                     .instrument(event_span)
                     .await;
             }
@@ -351,7 +348,6 @@ impl SessionWorker {
                             error_reason: handler.error_reason().to_string(),
                         },
                         deps.local_pub_sub_directory.as_ref(),
-                        &deps.ingress_sender,
                         &deps.cache_store,
                         deps.route_registry.as_ref(),
                     )
@@ -364,7 +360,7 @@ impl SessionWorker {
                         session_id,
                         &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
-                        &deps.ingress_sender,
+                        &deps.cache_store,
                         &deps.upstream_publisher_resolver,
                     )
                     .instrument(event_span)
@@ -390,10 +386,14 @@ impl SessionWorker {
         }
     }
 
-    async fn refresh_token(&mut self, handler: &dyn TrackStatusHandler) {
+    async fn refresh_token(
+        &self,
+        current: Option<&VerifiedToken>,
+        handler: &dyn TrackStatusHandler,
+    ) {
         let refreshed = refresh_token(
             self.deps.token_verifier.as_ref(),
-            self.verified_token.as_deref(),
+            current,
             handler.authorization_tokens(),
         )
         .await;
@@ -411,7 +411,6 @@ impl SessionWorker {
                             expires_at = ?token.expires_at,
                             "authorization token refreshed"
                         );
-                        self.verified_token = Some(token);
                         handler.ok(0, ContentExists::False).await
                     }
                     None => {

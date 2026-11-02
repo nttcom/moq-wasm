@@ -3,10 +3,10 @@ import {
   type MoqNamespaceWatch,
   MoqSession,
   type MoqSubscription,
-  type ReceivedObject
+  type ReceivedObject,
+  type TrackWriter
 } from 'moq-wasm'
-import type { TrackWriter } from 'moq-wasm'
-import { CATALOG_TRACK_NAME } from 'moq-wasm/media/catalog'
+import { CATALOG_TRACK_NAME } from 'moq-wasm/media'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'
@@ -26,6 +26,7 @@ import {
   buildTranscriberNamespace,
   parseTrackNamespace
 } from './trackNamespace'
+import { TrackPublication } from './trackPublication'
 
 interface LocalSessionOptions {
   roomName: string
@@ -58,7 +59,7 @@ export class LocalSession {
   /// Publishes the member's media and chat and subscribes to the others.
   private session: MoqSession | null = null
   private namespaceWatch: Promise<MoqNamespaceWatch> | null = null
-  private chatWriter: Promise<TrackWriter> | null = null
+  private readonly chatTrack = new TrackPublication<TrackWriter>()
   private readonly mediaController: MeetingMediaController
   private state: LocalSessionState = LocalSessionState.Idle
   private chatMessageHandler: ((message: ChatMessage) => void) | null = null
@@ -118,6 +119,11 @@ export class LocalSession {
           this.transitionToState(LocalSessionState.Disconnected)
         }
       })
+      // Published at join so a recorder can subscribe to the chat before the first message.
+      // A failure only affects chat: sendChatMessage publishes again.
+      this.chatTrack
+        .writer(() => session.publishTrack(this.trackNamespace, 'chat'))
+        .catch((error: unknown) => console.warn('[meeting] chat track publish failed', error))
       await this.mediaController.publisher.start(session)
       this.transitionToState(LocalSessionState.Ready)
     } catch (error) {
@@ -145,7 +151,7 @@ export class LocalSession {
       this.chatMessageHandler = null
       this.publishNamespaceHandler = null
       this.publishNamespaceDoneHandler = null
-      this.chatWriter = null
+      this.chatTrack.reset()
       const session = this.session
       this.session = null
       session?.close()
@@ -409,13 +415,7 @@ export class LocalSession {
       return
     }
     const session = this.connected('send chat message')
-    const chatWriter = (this.chatWriter ??= session.publishTrack(this.trackNamespace, 'chat'))
-    const writer = await chatWriter.catch((error: unknown) => {
-      if (this.chatWriter === chatWriter) {
-        this.chatWriter = null
-      }
-      throw error
-    })
+    const writer = await this.chatTrack.writer(() => session.publishTrack(this.trackNamespace, 'chat'))
     await writer.writeGroup(new TextEncoder().encode(encodeChatPayload(message)))
   }
 

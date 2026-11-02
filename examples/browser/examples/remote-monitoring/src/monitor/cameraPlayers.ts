@@ -1,9 +1,7 @@
 import { MoqSession } from 'moq-wasm'
-import { LivePlayer } from 'moq-wasm/media/player/livePlayer'
+import { LivePlayer } from 'moq-wasm/media'
 import type { CameraId } from '../types/monitoring'
 import 'moq-wasm/media/player.css'
-
-const CAMERA_VIDEO_CODEC = 'avc3.640028'
 
 const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 
@@ -61,9 +59,7 @@ export class CameraPlayers {
     })
     this.players.set(camId, player)
     try {
-      await player.start(this.session, ['anon', location, camId], {
-        video: [{ name: 'video', label: camId, codec: CAMERA_VIDEO_CODEC }]
-      })
+      await player.start(this.session, ['anon', location, camId])
     } catch (error) {
       this.players.delete(camId)
       throw error

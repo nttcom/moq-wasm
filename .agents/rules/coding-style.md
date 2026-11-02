@@ -5,6 +5,7 @@ Shared by all agents (Claude Code, Codex).
 ## Implementation Principles
 - Follow YAGNI: implement only what the current requirement needs. Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs — add them when a second concrete use case appears.
 - Prefer the smallest change that satisfies the requirement over a larger refactor, unless the task explicitly asks for the refactor.
+- When you find a bug or design issue outside the current task's scope, record it with the `todo-add` skill instead of fixing it or only mentioning it.
 - Before fixing a bug, investigate the cause first: reproduce it and explain the mechanism. A retry, sleep, widened timeout, defensive check, or call-site special case without a stated mechanism is a symptom patch, not a fix.
 - If the cause lies in a lower layer (typically the `moqt` crate), fix it there instead of working around it in the caller. The workaround becomes load-bearing and hides the bug from the next caller.
 - Refactor, as part of the same task rather than leaving a TODO, when any of the following applies:

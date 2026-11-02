@@ -1,7 +1,7 @@
 use moqt::object::DataStreamResetCode;
 use std::{sync::Arc, time::Duration};
 
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::task::JoinHandle;
 use tracing::{Instrument, Span};
 
 use crate::modules::{
@@ -10,7 +10,7 @@ use crate::modules::{
             cached_object::{CacheStamp, CachedObject},
             track_cache::TrackCache,
         },
-        egress::coordinator::{EgressCommand, EgressFetchRequest},
+        egress::fetch_delivery::{EgressFetchRequest, FetchDeliveryTask},
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
@@ -34,8 +34,6 @@ pub(crate) struct FetchIngest {
 impl FetchIngest {
     pub(crate) fn run(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        egress_sender: tokio::sync::mpsc::Sender<EgressCommand>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
         start: FetchIngestStart,
     ) -> Self {
         let downstream_subscriber_session_id = start.egress_start.subscriber_session_id;
@@ -46,17 +44,19 @@ impl FetchIngest {
         let cache = start.egress_start.cache.clone();
         let join_handle = tokio::spawn(
             async move {
-                if let Err(error) =
-                    Self::run_inner(session_repo.clone(), &egress_sender, start).await
-                {
+                if let Err(error) = Self::run_inner(session_repo.clone(), start).await {
                     // These failures are request-scoped and expected (timeout, upstream reset).
                     // Log the chain without anyhow's backtrace.
                     tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                     let error_code = if cache.is_malformed() {
-                        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
-                            upstream_publisher_session_id,
-                            track_key,
-                        ));
+                        let publisher_mailbox_sender = session_repo
+                            .lock()
+                            .await
+                            .mailbox(upstream_publisher_session_id);
+                        if let Some(publisher_mailbox_sender) = publisher_mailbox_sender {
+                            let _ = publisher_mailbox_sender
+                                .send(SessionEvent::MalformedTrackDetected(track_key));
+                        }
                         Self::cancel_upstream_fetch(
                             session_repo.clone(),
                             upstream_publisher_session_id,
@@ -85,21 +85,16 @@ impl FetchIngest {
 
     async fn run_inner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
         let timeout = start.fill_timeout;
-        tokio::time::timeout(
-            timeout,
-            Self::ingest_fetch_stream(session_repo, egress_sender, start),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("fetch ingest timed out after {:?}", timeout))?
+        tokio::time::timeout(timeout, Self::ingest_fetch_stream(session_repo, start))
+            .await
+            .map_err(|_| anyhow::anyhow!("fetch ingest timed out after {:?}", timeout))?
     }
 
     async fn ingest_fetch_stream(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
         let (mut subscriber, persist) = {
@@ -148,9 +143,14 @@ impl FetchIngest {
                         start.egress_start.start_location,
                         start.egress_start.end_location,
                     );
-                    egress_sender
-                        .send(EgressCommand::StartFetch(start.egress_start))
-                        .await?;
+                    let publisher = session_repo
+                        .lock()
+                        .await
+                        .publisher(start.egress_start.subscriber_session_id)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("downstream subscriber session not found")
+                        })?;
+                    let _delivery = FetchDeliveryTask::run(publisher, start.egress_start);
                     return Ok(());
                 }
             }
@@ -230,9 +230,9 @@ mod tests {
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::{
         data_plane::cache::track_cache::FetchRangeResolution,
-        session::session_event::EventKind,
+        session::session_event::SessionEvent,
         test_support::{
-            mock_session::session_repository_with_upstream_session,
+            mock_session::session_repository_with_upstream_session_and_mailbox,
             relay_harness::fixtures::{
                 cached_object::{status_object, stream_object, stream_object_with_payload},
                 location,
@@ -252,8 +252,8 @@ mod tests {
         const UPSTREAM_SESSION: SessionId = 1;
         const DOWNSTREAM_SESSION: SessionId = 2; // not registered: downstream reset is skipped
         const UPSTREAM_FETCH_REQUEST_ID: u64 = 7;
-        let (session_repo, recorded) =
-            session_repository_with_upstream_session(UPSTREAM_SESSION).await;
+        let (session_repo, recorded, mut publisher_mailbox_receiver) =
+            session_repository_with_upstream_session_and_mailbox(UPSTREAM_SESSION);
 
         let cache = Arc::new(TrackCache::new());
         fill(
@@ -267,8 +267,6 @@ mod tests {
         );
         assert!(cache.is_malformed());
 
-        let (egress_sender, _egress_receiver) = mpsc::channel(1);
-        let (session_event_sender, mut session_event_receiver) = mpsc::unbounded_channel();
         let start = FetchIngestStart {
             track_key: TrackKey::new("ns", "track"),
             upstream_publisher_session_id: UPSTREAM_SESSION,
@@ -293,7 +291,7 @@ mod tests {
 
         // Act: the receiver pends forever, so only the malformed latch can
         // make the ingest bail.
-        let _ingest = FetchIngest::run(session_repo, egress_sender, session_event_sender, start);
+        let _ingest = FetchIngest::run(session_repo, start);
 
         // Assert
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
@@ -316,14 +314,13 @@ mod tests {
             *recorded.fetch_cancelled_request_ids.lock().unwrap(),
             vec![UPSTREAM_FETCH_REQUEST_ID]
         );
-        // Assert: the detection is reported for upstream subscription teardown.
-        let event = session_event_receiver
+        // Assert: the detection reaches the publisher session for upstream subscription teardown.
+        let event = publisher_mailbox_receiver
             .try_recv()
-            .expect("malformed detection should be reported");
-        assert_eq!(event.session_id, UPSTREAM_SESSION);
+            .expect("malformed detection should be reported to the publisher session");
         assert!(matches!(
-            event.kind,
-            EventKind::MalformedTrackDetected(track_key) if track_key == TrackKey::new("ns", "track")
+            event,
+            SessionEvent::MalformedTrackDetected(track_key) if track_key == TrackKey::new("ns", "track")
         ));
     }
 

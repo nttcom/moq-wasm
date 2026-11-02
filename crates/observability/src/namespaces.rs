@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use telemetry::relay_stats;
 
 use crate::{
     clickhouse::ClickHouse,

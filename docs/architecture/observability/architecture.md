@@ -56,7 +56,7 @@ directory lock, stops logging and leaves the live view after 10 s.
 
 ### Snapshot payload
 
-The type is `relay_stats::RelaySnapshot` (`crates/relay-stats`). Counters are
+The type is `telemetry::relay_stats::RelaySnapshot`. Counters are
 cumulative since the session, track cache or subscription started; rates are
 derived from consecutive snapshots, so a lost snapshot loses no traffic.
 `…_since_last_snapshot_…` and `lag_…` fields are gauges.
