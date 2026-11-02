@@ -234,20 +234,6 @@ impl Archive {
         Ok(archive)
     }
 
-    #[cfg(test)]
-    async fn write(&mut self, track: &str, object: &TrackObject) -> Result<()> {
-        self.line(json!({
-            "track": track,
-            "group": object.group_id.to_string(),
-            "subgroup": object.subgroup_id.to_string(),
-            "object": object.object_id.to_string(),
-            "extensions": STANDARD.encode(object.extension_headers.encode()),
-            "payload": STANDARD.encode(&object.payload),
-            "capture_us": crate::pipeline::capture_timestamp(object).map(|timestamp| timestamp.micros().to_string()),
-        }))
-        .await
-    }
-
     async fn write_event(&mut self, track: &str, event: Event) -> Result<()> {
         if let Some(chunks) = &mut self.chunks {
             chunks.push(track, &event).await?;
@@ -345,19 +331,27 @@ mod tests {
         let path = dir.join("archive.jsonl");
         let mut headers = ExtensionHeaders::default();
         headers.push_immutable_extension(Bytes::from_static(b"header"));
-        let object = TrackObject {
-            group_id: u64::MAX,
-            subgroup_id: 2,
-            object_id: 3,
+        let object = moqt::object::Object {
+            location: moqt::object::Location {
+                group_id: u64::MAX,
+                object_id: 3,
+            },
+            forwarding: moqt::object::ForwardingPreference::Subgroup { subgroup_id: 2 },
+            publisher_priority: 0,
+            status: moqt::object::ObjectStatus::Normal,
             extension_headers: headers.clone(),
             payload: Bytes::from_static(b"frame"),
+            ends_group: false,
         };
         let mut archive = Archive::create(Some(path.clone()), "anon/test", None)
             .await
             .unwrap();
 
         // Act
-        archive.write("video", &object).await.unwrap();
+        archive
+            .write_event("video", Event::Object(object))
+            .await
+            .unwrap();
         archive.finish().await.unwrap();
         let bytes = tokio::fs::read_to_string(&path).await.unwrap();
         let lines: Vec<serde_json::Value> = bytes
