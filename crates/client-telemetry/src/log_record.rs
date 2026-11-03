@@ -4,8 +4,8 @@ use serde_json::{Map, Value, json};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level};
 
-/// Builds the `LogRecord` handed to the page's `onLog` callback.
-pub(crate) fn log_record(event: &Event<'_>, time_ms: f64) -> Value {
+/// `time_ms` is milliseconds since the Unix epoch.
+pub fn log_record(event: &Event<'_>, time_ms: u64) -> Value {
     let mut visitor = FieldVisitor::default();
     event.record(&mut visitor);
     let metadata = event.metadata();
@@ -88,7 +88,7 @@ mod tests {
 
     impl<S: Subscriber> Layer<S> for CaptureLayer {
         fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
-            self.0.lock().unwrap().push(log_record(event, 1234.5));
+            self.0.lock().unwrap().push(log_record(event, 1234));
         }
     }
 
@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(
             records,
             vec![json!({
-                "timeMs": 1234.5,
+                "timeMs": 1234,
                 "level": "warn",
                 "target": "wasm::media_broadcast",
                 "message": "frame dropped after 2 retries",
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(
             records,
             vec![json!({
-                "timeMs": 1234.5,
+                "timeMs": 1234,
                 "level": "error",
                 "target": "moqt",
                 "message": "session closed",

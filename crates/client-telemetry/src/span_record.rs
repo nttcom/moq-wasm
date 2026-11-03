@@ -9,29 +9,32 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::log_record::FieldVisitor;
 
-/// Hands every closed span to `emit` as a `SpanRecord`.
-/// The clock and the random source are injected so the layer runs on the host in tests.
-pub(crate) struct SpanRecordLayer<E> {
-    pub(crate) now_ms: fn() -> f64,
-    pub(crate) random_byte: fn() -> u8,
-    pub(crate) emit: E,
+/// Hands every closed span to `emit` as a span record. `now_ms` is the time
+/// since the Unix epoch. Trace and span ids need to be unique, not
+/// unpredictable, so `random_byte` need not be a cryptographic RNG.
+pub struct SpanRecordLayer<E> {
+    pub now_ms: fn() -> u64,
+    pub random_byte: fn() -> u8,
+    pub emit: E,
 }
 
 struct OpenSpan {
     trace_id: [u8; 16],
     span_id: [u8; 8],
     parent_span_id: Option<[u8; 8]>,
-    start_ms: f64,
+    start_ms: u64,
     fields: FieldVisitor,
 }
 
 thread_local! {
-    /// The `(trace_id, span_id)` of each span entered on this thread, innermost last.
+    /// The `(trace_id, span_id)` of each span entered on this thread,
+    /// innermost last. An `Instrumented` future enters and exits its span on
+    /// the thread that polls it, so the stack stays balanced per thread.
     static ENTERED: RefCell<Vec<([u8; 16], [u8; 8])>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The innermost entered span as a W3C `traceparent`; `None` outside any span.
-pub(crate) fn current_traceparent() -> Option<String> {
+pub fn current_traceparent() -> Option<String> {
     ENTERED.with_borrow(|entered| {
         let (trace_id, span_id) = entered.last()?;
         Some(format!("00-{}-{}-01", hex(trace_id), hex(span_id)))
@@ -137,7 +140,7 @@ mod tests {
         let records = Arc::new(Mutex::new(Vec::new()));
         let sink = records.clone();
         let layer = SpanRecordLayer {
-            now_ms: || 1000.0,
+            now_ms: || 1000,
             random_byte: || NEXT_BYTE.fetch_add(1, Ordering::Relaxed),
             emit: move |record| sink.lock().unwrap().push(record),
         };
@@ -174,8 +177,8 @@ mod tests {
         assert_eq!(record["name"], "moqt.subscriber.subscribe");
         assert_eq!(record["fields"]["track_name"], "video");
         assert_eq!(record["fields"]["request_id"], 4);
-        assert_eq!(record["startTimeMs"], 1000.0);
-        assert_eq!(record["endTimeMs"], 1000.0);
+        assert_eq!(record["startTimeMs"], 1000);
+        assert_eq!(record["endTimeMs"], 1000);
         assert!(is_hex(&record["traceId"], 32), "{record}");
         assert!(is_hex(&record["spanId"], 16), "{record}");
         assert!(record.get("parentSpanId").is_none());

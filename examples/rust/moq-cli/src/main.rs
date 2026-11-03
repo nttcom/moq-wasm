@@ -12,7 +12,7 @@ use tracing_subscriber::{
 };
 
 use cli::{Cli, Command};
-use telemetry::{ReportBuffer, ReportLayer, ReportTarget, ReportTask};
+use telemetry::{ReportBuffer, ReportTarget, ReportTask, report_layer};
 
 #[tokio::main]
 async fn main() {
@@ -31,13 +31,13 @@ async fn main() {
         .with_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()));
     let report_layer = report_target
         .is_some()
-        .then(|| ReportLayer(buffer.clone()).with_filter(LevelFilter::INFO));
+        .then(|| report_layer(buffer.clone()).with_filter(LevelFilter::INFO));
     tracing_subscriber::registry()
         .with(stderr_layer)
         .with(report_layer)
         .init();
     if report_target.is_some() {
-        moqt::set_trace_context_provider(telemetry::current_traceparent);
+        moqt::set_trace_context_provider(client_telemetry::current_traceparent);
     }
     let report_task = report_target.map(|target| ReportTask::run(target, buffer));
 

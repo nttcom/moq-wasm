@@ -14,7 +14,7 @@ The crates fall into five layers. A crate depends only on crates in its own laye
 | Media | `mediapack`, `broadcast`, `transcode` | Containers and codecs, and turning media into an MSF broadcast. |
 | Applications | `relay`, `live-ingest`, `live-egress`, `onvif-ingest`, `recorder`, `gst-plugin-moqt`, `observability`, `vts`, `console` | Binaries and plugins. Nothing in the workspace depends on them. |
 | Bindings | `wasm`, `python` | `moqt` exposed to the browser and to Python. Nothing in the workspace depends on them. |
-| Shared support | `telemetry`, `auth-token`, `app-registry` | Small crates with no workspace dependencies, shared by the applications. |
+| Shared support | `telemetry`, `client-telemetry`, `auth-token`, `app-registry` | Small crates with no workspace dependencies, shared by the applications. |
 
 ## Media and protocol
 
@@ -84,7 +84,7 @@ flowchart TD
 - `broadcast` is the shared original publisher: `live-ingest`, `onvif-ingest`, `gst-plugin-moqt` and `wasm` build their MSF broadcast through it instead of writing the catalog and tracks themselves.
 - `live-egress` and `recorder` are subscribers. They read the catalog with `msf` and the objects with `moqt` directly, without `broadcast`.
 - `mediapack` depends on `moqt` only when its `moqt` feature is on (the dotted arrow). The feature maps LOC properties to MoQT extension headers. `broadcast`, `live-ingest`, `live-egress`, `recorder` and `wasm` turn it on; `transcode`, `onvif-ingest` and `gst-plugin-moqt` use `mediapack` without it.
-- `live-ingest`, `onvif-ingest`, `live-egress` and `recorder` also depend on `telemetry`, and `recorder` on `auth-token`; those arrows are left out here to keep the diagram readable.
+- `live-ingest`, `onvif-ingest`, `live-egress` and `recorder` also depend on `telemetry`, `wasm` on `client-telemetry`, and `recorder` on `auth-token`; those arrows are left out here to keep the diagram readable.
 
 ## Relay and services
 

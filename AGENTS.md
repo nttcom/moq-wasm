@@ -38,6 +38,7 @@ Application and integration components (draft reference is normally not required
 | `services/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
 | `services/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
 | `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
+| `crates/client-telemetry` | The log and span records of the observability server's `/api/client-telemetry`, built from `tracing` by the wasm module and `moq-cli` |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
 | `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |

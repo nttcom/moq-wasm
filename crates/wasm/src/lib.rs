@@ -1,7 +1,6 @@
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod loc;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-mod log_record;
 #[cfg(target_arch = "wasm32")]
 mod log_sink;
 #[cfg(target_arch = "wasm32")]
@@ -17,8 +16,6 @@ mod session;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod session_routes;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-mod span_sink;
-
 #[cfg(target_arch = "wasm32")]
 pub use log_sink::set_log_sink;
 #[cfg(target_arch = "wasm32")]

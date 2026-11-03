@@ -130,7 +130,7 @@ in `crates/<package name>/` and the servers and bridges built on them in
 | [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, the broadcast's track layout, re-encoding |
 | [`services/vts/`](services/vts/README.md), [`auth-token/`](crates/auth-token/README.md), [`app-registry/`](crates/app-registry/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type; the registry of apps whose secrets sign the JWTs |
 | [`services/console/`](services/console/README.md) | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
-| [`crates/telemetry/`](crates/telemetry), [`services/observability/`](services/observability) | Shared `tracing` setup and the relay stats snapshot format; the server that fills ClickHouse from the relays' snapshots |
+| [`crates/telemetry/`](crates/telemetry), [`client-telemetry/`](crates/client-telemetry), [`services/observability/`](services/observability) | Shared `tracing` setup and the relay stats snapshot format; the log and span records the browser and `moq-cli` send; the server that fills ClickHouse from the relays' snapshots |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
 | [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |
