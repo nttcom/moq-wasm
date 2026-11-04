@@ -601,6 +601,7 @@ attempt; it adds no field for the retry.
 | `moqt.subscriber.fetch` | `track_namespace`, `track_name`, `request_id`, `outcome` |
 | `moqt.publisher.publish` | `track_namespace`, `track_name`, `request_id`, `outcome` |
 | `moqt.publisher.publish_namespace` | `track_namespace`, `request_id`, `outcome` |
+| `moqt.session.connect` | `url`, `outcome` |
 
 - `request_id` is the wire Request ID of the last attempt, the one the
   `*_OK received` / `*_ERROR received` logs print; those logs carry
@@ -610,6 +611,14 @@ attempt; it adds no field for the retry.
   session closed).
 - `begin_publish_namespace` returns before the response and has no span; the
   other `Subscriber` / `Publisher` spans and `moqt.session` stay at DEBUG.
+- `moqt.session.connect` is one connection attempt of a client endpoint
+  (`Endpoint::connect`, and each GOAWAY reconnect): opening the transport,
+  the authorization token provider, and CLIENT_SETUP until SERVER_SETUP.
+  `outcome` is `rejected` when the server closed the connection before
+  SERVER_SETUP. It roots its own trace and follows the caller's span, which
+  may live as long as the session. The transport is opened outside it,
+  because quinn runs a connection's driver in the span current at connect,
+  and it closes before the session's tasks start, so neither holds it open.
 
 The five requests carry the span's W3C `traceparent` in a `TRACE_CONTEXT`
 parameter (type `0x1fff`, not in draft-14), so the receiver's span joins the
@@ -618,7 +627,10 @@ but from draft-18 an unknown Message Parameter is a PROTOCOL_VIOLATION and an
 extension is agreed through a Setup Option (§6.3.2). So both CLIENT_SETUP and
 SERVER_SETUP always carry a `TRACE_CONTEXT` Setup Option (type `0x1fff`, an
 empty value), and a connection sends the parameter only when the peer's SETUP
-carried it (`ControlChannel::peer_reads_trace_context`). Setup Options have no
+carried it (`ControlChannel::peer_reads_trace_context`). In CLIENT_SETUP the
+option's value is the traceparent of `moqt.session.connect` (read before the
+server's SETUP is known; a server that does not know the option ignores it,
+draft-14 §9.3), and `Handshake::trace_context()` returns it. Setup Options have no
 private range, so publishing the extension would need a provisional
 registration.
 `moqt` has no OpenTelemetry dependency: the application gives it the current
