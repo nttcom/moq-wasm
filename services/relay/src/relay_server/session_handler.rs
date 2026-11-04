@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use moqt::{AcceptError, Endpoint, TransportProtocol, server::Accepting};
+use moqt::{AcceptError, Endpoint, TraceContext, TransportProtocol, server::Accepting};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 
 use crate::{
-    logging::{mark_current_span_failed, relay_hostname},
+    logging::{link_span, mark_current_span_failed, relay_hostname},
     modules::{
         auth::session_authenticator::SessionAuthenticator,
         domain::{
@@ -33,30 +33,49 @@ impl SessionIntake {
                 return;
             }
         };
+        let setup_span = session_setup_span(
+            session_id,
+            self.accepted_peer,
+            &session_span,
+            handshake.trace_context(),
+        );
         let verified_token = match self
             .authenticator
             .authenticate(handshake.authorization_tokens(), &self.accepted_peer)
+            .instrument(setup_span.clone())
             .await
         {
             Ok(verified_token) => {
-                session_span.record("app_id", verified_token.app_id.as_str());
+                for span in [&session_span, &setup_span] {
+                    span.record("app_id", verified_token.app_id.as_str());
+                }
                 if let Some(relay_id) = &verified_token.relay_id {
                     session_span.record("peer_relay_id", relay_id.as_str());
                 }
                 verified_token
             }
             Err(rejected) => {
-                tracing::warn!(
-                    code = ?rejected.code,
-                    reason = %rejected.reason,
-                    "session rejected at CLIENT_SETUP"
-                );
-                handshake.reject(rejected.code, &rejected.reason).await;
-                mark_current_span_failed(format!("{:?}", rejected.code));
+                let description = format!("{:?}", rejected.code);
+                async {
+                    tracing::warn!(
+                        code = ?rejected.code,
+                        reason = %rejected.reason,
+                        "session rejected at CLIENT_SETUP"
+                    );
+                    handshake.reject(rejected.code, &rejected.reason).await;
+                    mark_current_span_failed(description.clone());
+                }
+                .instrument(setup_span)
+                .await;
+                mark_current_span_failed(description);
                 return;
             }
         };
-        let session = match handshake.accept().await {
+        // Sent outside `setup_span` because the session's tasks start in the span
+        // current here; the span still closes only after SERVER_SETUP is sent.
+        let accepted = handshake.accept().await;
+        drop(setup_span);
+        let session = match accepted {
             Ok(session) => session,
             Err(error) => {
                 tracing::warn!(%error, "failed to establish session");
@@ -81,6 +100,28 @@ impl SessionIntake {
         .instrument(session_add_span)
         .await;
     }
+}
+
+/// The CLIENT_SETUP decision and the SERVER_SETUP that answers it.
+fn session_setup_span(
+    session_id: SessionId,
+    peer: SessionPeer,
+    session_span: &Span,
+    trace_context: Option<&TraceContext>,
+) -> Span {
+    let span = tracing::info_span!(
+        parent: None,
+        "relay.session.setup",
+        session_id = session_id,
+        session_peer = peer.kind(),
+        relay_hostname = relay_hostname(),
+        app_id = tracing::field::Empty,
+    );
+    if let Some(trace_context) = trace_context {
+        telemetry::continue_trace_from_traceparent(&span, trace_context.as_str());
+    }
+    link_span(&span, session_span);
+    span
 }
 
 pub struct SessionHandler {
@@ -195,12 +236,69 @@ mod tests {
 
     use moqt::QUIC;
 
-    use crate::modules::auth::{
-        test_support::{
-            client_endpoint, spawn_relay_and_connect_client, spawn_relay_with_verifier,
+    use opentelemetry::global;
+    use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing::Span;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use super::session_setup_span;
+    use crate::modules::{
+        auth::{
+            test_support::{
+                client_endpoint, spawn_relay_and_connect_client, spawn_relay_with_verifier,
+            },
+            verified_token::VerifiedToken,
         },
-        verified_token::VerifiedToken,
+        domain::session_peer::SessionPeer,
+        test_support::closed_spans::ClosedSpans,
     };
+
+    const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+    #[test]
+    fn a_client_setup_carrying_a_traceparent_continues_the_client_s_trace() {
+        // Arrange
+        global::set_text_map_propagator(TraceContextPropagator::new());
+        let provider = SdkTracerProvider::builder().build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
+        let _default = tracing::subscriber::set_default(subscriber);
+        let trace_context = moqt::TraceContext::parse(TRACEPARENT.as_bytes());
+
+        // Act
+        let span = session_setup_span(
+            1,
+            SessionPeer::Client,
+            &Span::none(),
+            trace_context.as_ref(),
+        );
+
+        // Assert
+        let trace_id = span.context().span().span_context().trace_id();
+        assert_eq!(trace_id.to_string(), "4bf92f3577b34da6a3ce929d0e0e4736");
+    }
+
+    #[tokio::test]
+    async fn the_setup_span_closes_while_the_session_lives() {
+        // Arrange
+        let closed_spans = ClosedSpans::default();
+        let _default = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(closed_spans.clone()),
+        );
+
+        // Act
+        let (_relay, _session) = spawn_relay_and_connect_client(VerifiedToken::anonymous()).await;
+
+        // Assert
+        assert!(
+            closed_spans.contains("relay.session.setup"),
+            "closed spans: {:?}",
+            closed_spans.names()
+        );
+    }
 
     #[tokio::test]
     async fn spawning_on_a_port_in_use_returns_an_error() {
