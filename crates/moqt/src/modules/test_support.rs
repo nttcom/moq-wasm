@@ -370,6 +370,20 @@ pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Ses
         .unwrap()
 }
 
+pub(crate) async fn spawn_connected_native_sessions_following_go_away(
+    name: &str,
+) -> (Session, Session) {
+    let (port, accept) = spawn_native_server(name);
+    let endpoint = native_client_with_config(ClientConfig {
+        verify_certificate: false,
+        follow_go_away: true,
+        ..ClientConfig::default()
+    });
+    connect_sessions_from(&endpoint, &format!("moqt://127.0.0.1:{port}"), accept)
+        .await
+        .unwrap()
+}
+
 pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Session, prefix: &str) {
     let subscriber = client.subscriber();
     let (subscribed, ()) = tokio::join!(subscriber.subscribe_namespace(prefix.into()), async {

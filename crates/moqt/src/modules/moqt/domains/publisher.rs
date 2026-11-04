@@ -24,7 +24,9 @@ use crate::{
             pending_publish_namespace::PendingPublishNamespace,
             request_failure::{record_outcome, record_request_id},
             send_targets::SendTargets,
-            session_context::{Publication, PublicationTarget, SessionContext},
+            session_context::{
+                CarriedPublishedNamespace, Publication, PublicationTarget, SessionContext,
+            },
             subscription::{PublisherInitiatedSubscription, Subscription},
         },
         version::{Notification, OutgoingRequest},
@@ -76,8 +78,8 @@ impl Publisher {
         &self,
         namespace: String,
     ) -> Result<(Arc<Connection>, PendingPublishNamespace), RequestFailure> {
-        let (mut carried, connection, pending) = loop {
-            let carried = self.session.lock_carried().await;
+        let (carried, connection, mut pending) = loop {
+            let carried = self.session.read_carried().await;
             let connection = self.session.connection();
             match send_publish_namespace(&connection, namespace.clone()).await {
                 Ok(pending) => break (carried, connection, pending),
@@ -88,8 +90,13 @@ impl Publisher {
                 }
             }
         };
-        if let Some(carried) = carried.as_mut() {
-            carried.published_namespaces.push(namespace);
+        if let Some(carried) = &carried {
+            let request_id = logical_id(connection.generation, pending.request_id);
+            carried.update(|carried| carried.published_namespaces.insert(request_id, namespace));
+            pending.carried = Some(CarriedPublishedNamespace {
+                session: self.session.clone(),
+                request_id,
+            });
         }
         Ok((connection, pending))
     }
@@ -97,10 +104,12 @@ impl Publisher {
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
     /// defines no response message for PUBLISH_NAMESPACE_DONE.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
-        if let Some(carried) = self.session.lock_carried().await.as_mut() {
-            carried
-                .published_namespaces
-                .retain(|carried| *carried != namespace);
+        if let Some(carried) = self.session.read_carried().await {
+            carried.update(|carried| {
+                carried
+                    .published_namespaces
+                    .retain(|_, carried| *carried != namespace)
+            });
         }
         let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
@@ -307,6 +316,7 @@ pub(crate) async fn send_publish_namespace(
         track_namespace: namespace,
         sent_at: now(),
         pending,
+        carried: None,
     })
 }
 
@@ -391,7 +401,8 @@ mod tests {
             test_support::{
                 HANDSHAKE_TIMEOUT, capture_telemetry, first_subgroup_stream,
                 object_with_extensions, read_subgroup_objects, send_subgroup_object,
-                send_without_waiting, spawn_connected_native_sessions, subgroup_receiver,
+                send_without_waiting, spawn_connected_native_sessions,
+                spawn_connected_native_sessions_following_go_away, subgroup_receiver,
                 wait_for_control_delivery, within,
             },
         },
@@ -405,21 +416,8 @@ mod tests {
     #[tokio::test]
     async fn concurrent_publishes_do_not_wait_for_an_earlier_response_when_following_go_away() {
         // Arrange
-        use crate::ClientConfig;
-        use crate::modules::test_support::{
-            connect_sessions_from, native_client_with_config, spawn_native_server,
-        };
-
-        let (port, accept) = spawn_native_server("concurrent-carried-publish");
-        let endpoint = native_client_with_config(ClientConfig {
-            verify_certificate: false,
-            follow_go_away: true,
-            ..ClientConfig::default()
-        });
         let (client, server) =
-            connect_sessions_from(&endpoint, &format!("moqt://127.0.0.1:{port}"), accept)
-                .await
-                .unwrap();
+            spawn_connected_native_sessions_following_go_away("concurrent-carried-publish").await;
 
         // Act
         let (first, _first_handler) = pending_publish(&client, &server, "first").await;
@@ -456,6 +454,40 @@ mod tests {
         // Assert
         assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
         request.abort();
+    }
+
+    #[tokio::test]
+    async fn a_rejected_publish_namespace_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-rejected-publish-namespace")
+                .await;
+        let publisher = client.publisher();
+        let session = publisher.session.clone();
+        let published = tokio::spawn(async move { publisher.publish_namespace("a".into()).await });
+        let SessionEvent::PublishNamespace(handler) = within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, "rejected".to_string())
+            .await
+            .unwrap();
+        let result = within(published).await.unwrap();
+
+        // Assert
+        assert!(
+            matches!(result, Err(RequestFailure::Rejected { .. })),
+            "{result:?}"
+        );
+        let carried = session
+            .read_carried()
+            .await
+            .unwrap()
+            .update(|carried| carried.published_namespaces.clone());
+        assert!(carried.is_empty(), "{carried:?}");
     }
 
     #[tokio::test]
