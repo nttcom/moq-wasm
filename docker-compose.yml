@@ -27,6 +27,8 @@ services:
     environment:
       VTS_PORT: "8081"
       VTS_APPS_FILE: /etc/vts/apps.json
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://clickstack-otel-collector:4317}
     volumes:
       - ${VTS_APPS_FILE:-./services/vts/apps.example.json}:/etc/vts/apps.json:ro
 
@@ -142,10 +144,10 @@ services:
         condition: service_started
 
   # ClickStack: its collector writes into the `otel` database of the clickhouse service:
-  # - the relays' OTLP logs, traces and stats snapshots
+  # - the relays' OTLP logs, traces and stats snapshots, and the VTS's logs and traces
   # - the browser telemetry observability forwards
   # HyperDX (http://localhost:8080) searches them. Both start with observability.
-  # Relays export only with OTEL_SDK_DISABLED=false; otherwise observability shows no relays.
+  # Relays and the VTS export only with OTEL_SDK_DISABLED=false; otherwise observability shows no relays.
   clickstack-otel-collector:
     image: docker.clickhouse.com/clickhouse/clickstack-otel-collector:2.42.0@sha256:90ca453137798285871190722fcd7c79e7731e9376cf23a922d6f855bf94f3c7
     environment:
