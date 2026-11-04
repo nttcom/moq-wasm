@@ -27,7 +27,8 @@ use crate::{
                 control_messages::messages::{
                     fetch::Fetch, fetch_cancel::FetchCancel, fetch_ok::FetchOk, go_away::GoAway,
                     max_request_id::MaxRequestId, namespace_ok::NamespaceOk,
-                    parameters::authorization_token::AuthorizationToken, publish::Publish,
+                    parameters::authorization_token::AuthorizationToken,
+                    parameters::trace_context::TraceContext, publish::Publish,
                     publish_namespace::PublishNamespace,
                     publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
                     requests_blocked::RequestsBlocked, server_setup::ServerSetup,
@@ -448,6 +449,14 @@ impl ServerHandshake {
         match self {
             Self::Draft14(handshake) => {
                 &handshake.client_setup.setup_parameters.authorization_token
+            }
+        }
+    }
+
+    pub(crate) fn trace_context(&self) -> Option<&TraceContext> {
+        match self {
+            Self::Draft14(handshake) => {
+                handshake.client_setup.setup_parameters.traceparent.as_ref()
             }
         }
     }

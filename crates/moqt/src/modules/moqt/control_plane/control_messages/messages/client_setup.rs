@@ -76,6 +76,7 @@ mod test {
                 authority: None,
                 moq_implementation: Some("MOQ-WASM".to_string()),
                 trace_context: false,
+                traceparent: None,
             };
             let client_setup = ClientSetup::new(supported_versions, setup_params);
             let buf = client_setup.encode();

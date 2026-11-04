@@ -4,7 +4,7 @@ use crate::modules::transport::transport_connection::BoxedConnection;
 use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
 
 use crate::{
-    AuthorizationToken, Session, TerminationErrorCode,
+    AuthorizationToken, Session, TerminationErrorCode, TraceContext,
     modules::moqt::{
         domains::{connection::Connection, session_context::SessionContext},
         version::ServerHandshake,
@@ -21,6 +21,12 @@ impl Handshake {
     /// application to decide between `accept` and `reject`.
     pub fn authorization_tokens(&self) -> &[AuthorizationToken] {
         self.setup.authorization_tokens()
+    }
+
+    /// The traceparent of the client's `moqt.session.connect` span, carried in
+    /// CLIENT_SETUP's TRACE_CONTEXT Setup Option.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.setup.trace_context()
     }
 
     #[cfg(test)]

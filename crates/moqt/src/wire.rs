@@ -111,6 +111,7 @@ mod tests {
                 authority: None,
                 moq_implementation: Some("wire-test".to_string()),
                 trace_context: false,
+                traceparent: None,
             },
         )
         .encode();
