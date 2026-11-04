@@ -1,16 +1,16 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use app_registry::Apps;
 use auth_token::sign_token;
 use serde_json::{Value, json};
 use tracing::{
-    Subscriber,
+    Dispatch, Subscriber,
     field::{Field, Visit},
     span::{Id, Record},
-    subscriber::DefaultGuard,
+    subscriber::{DefaultGuard, NoSubscriber},
 };
 use tracing_subscriber::{Layer, layer::Context, prelude::*, registry::LookupSpan};
 
@@ -63,9 +63,17 @@ impl RecordedFields {
     }
 }
 
+/// Keeps `tracing-core` out of its single-dispatcher mode, where a callsite's
+/// interest is cached from the default of whichever thread registers it first:
+/// a concurrent test without a subscriber would cache `never` and disable the
+/// capturing test's spans.
+static SECOND_DISPATCHER: LazyLock<Dispatch> =
+    LazyLock::new(|| Dispatch::new(NoSubscriber::default()));
+
 /// Captures the server's spawned tasks too, but only on a current-thread
 /// runtime.
 pub(crate) fn capture_recorded_fields() -> (RecordedFields, DefaultGuard) {
+    LazyLock::force(&SECOND_DISPATCHER);
     let fields = RecordedFields::default();
     let subscriber = tracing_subscriber::registry().with(fields.clone());
     (fields, tracing::subscriber::set_default(subscriber))
