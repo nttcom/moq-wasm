@@ -6,3 +6,5 @@ pub use crate::modules::executor::MaybeSync;
 pub use crate::modules::executor::now;
 pub use crate::modules::executor::spawn;
 pub use crate::modules::executor::system_time;
+#[cfg(target_arch = "wasm32")]
+pub use crate::modules::executor::{SpawnWrapper, set_spawn_wrapper};

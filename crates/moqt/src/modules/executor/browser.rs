@@ -1,6 +1,6 @@
-use std::{future::Future, pin::pin, time::Duration};
+use std::{future::Future, pin::pin, sync::OnceLock, time::Duration};
 
-use futures::future::{AbortHandle, Abortable};
+use futures::future::{AbortHandle, Abortable, LocalBoxFuture};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
@@ -14,11 +14,26 @@ impl JoinHandle {
     }
 }
 
+pub type SpawnWrapper = fn(LocalBoxFuture<'static, ()>) -> LocalBoxFuture<'static, ()>;
+
+static SPAWN_WRAPPER: OnceLock<SpawnWrapper> = OnceLock::new();
+
+/// `spawn` passes every task through `wrapper`, calling it where the task is
+/// spawned. Only the first call takes effect.
+pub fn set_spawn_wrapper(wrapper: SpawnWrapper) {
+    let _ = SPAWN_WRAPPER.set(wrapper);
+}
+
 pub fn spawn<F>(_name: &str, future: F) -> JoinHandle
 where
     F: Future<Output = ()> + 'static,
 {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let future: LocalBoxFuture<'static, ()> = Box::pin(future);
+    let future = match SPAWN_WRAPPER.get() {
+        Some(wrap) => wrap(future),
+        None => future,
+    };
     spawn_local(async move {
         let _ = Abortable::new(future, abort_registration).await;
     });
