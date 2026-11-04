@@ -69,6 +69,14 @@ A span's context crosses a process boundary as a W3C `traceparent`.
 carries. The relay injects it into its `POST /verify` call and the VTS
 continues it, so one trace covers both processes.
 
+Cloud Run's front end rewrites `traceparent` on the way to the VTS: it
+keeps the trace ID but makes the parent a span of its own that only Cloud
+Trace receives, so in HyperDX the VTS's span would have a parent that does
+not exist. `inject_trace_context` therefore writes the same value again as
+`x-original-traceparent`, which the front end leaves alone, and
+`continue_trace_from` reads that header first, falling back to
+`traceparent`.
+
 `current_traceparent` returns the current span's `traceparent` as a string
 and `continue_trace_from_traceparent` continues one, for carriers other than
 HTTP headers: the relay gives `current_traceparent` to `moqt` as its trace
