@@ -1,11 +1,11 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use client_telemetry::ReportBuffer;
 use reqwest::StatusCode;
 use serde_json::json;
 use tokio::{sync::oneshot, task::JoinHandle};
 use url::Url;
 
-use super::ReportBuffer;
 use crate::{cli::RelayArgs, transport::current_auth_token};
 
 const REPORT_INTERVAL: Duration = Duration::from_secs(10);

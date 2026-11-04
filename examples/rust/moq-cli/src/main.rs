@@ -12,7 +12,8 @@ use tracing_subscriber::{
 };
 
 use cli::{Cli, Command};
-use telemetry::{ReportBuffer, ReportTarget, ReportTask, report_layer};
+use client_telemetry::{ReportBuffer, report_layer};
+use telemetry::{ReportTarget, ReportTask};
 
 #[tokio::main]
 async fn main() {

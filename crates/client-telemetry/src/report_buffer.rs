@@ -19,16 +19,16 @@ struct Records {
 pub struct ReportBuffer(Arc<Mutex<Records>>);
 
 impl ReportBuffer {
-    pub(super) fn push_log(&self, log: Value) {
+    pub(crate) fn push_log(&self, log: Value) {
         keep_newest(&mut self.lock().logs, log);
     }
 
-    pub(super) fn push_span(&self, span: Value) {
+    pub(crate) fn push_span(&self, span: Value) {
         keep_newest(&mut self.lock().spans, span);
     }
 
     /// The logs and the spans, emptying the buffer.
-    pub(super) fn take(&self) -> (Vec<Value>, Vec<Value>) {
+    pub fn take(&self) -> (Vec<Value>, Vec<Value>) {
         let mut records = self.lock();
         (
             records.logs.drain(..).collect(),
