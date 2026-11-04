@@ -48,11 +48,17 @@ pub struct Session {
 impl Session {
     /// `token` is a string, a function returning a promise of one, which is
     /// called before each CLIENT_SETUP, or `undefined`. The session follows
-    /// GOAWAY and reconnects by itself.
+    /// GOAWAY and reconnects by itself. `wasm_load_wait_ms` is how long the
+    /// caller waited for this module to load.
     // The browser session is !Send, but wasm32 runs on one thread; `broadcast`
     // takes the session as an Arc.
     #[allow(clippy::arc_with_non_send_sync)]
-    pub async fn connect(url: String, token: JsValue) -> Result<Session, JsValue> {
+    pub async fn connect(
+        url: String,
+        token: JsValue,
+        wasm_load_wait_ms: f64,
+    ) -> Result<Session, JsValue> {
+        tracing::info!(%url, wasm_load_wait_ms, "session connect requested");
         let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
             authorization_token: token_source(token)?,
             ..ClientConfig::default()
