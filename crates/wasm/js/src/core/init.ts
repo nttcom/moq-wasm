@@ -9,6 +9,9 @@ export interface LogRecord {
   target: string
   message: string
   fields: Record<string, string | number | boolean>
+  /// Ids of the span the event was logged in, in the same form as `SpanRecord`. Set only with `onSpan`.
+  traceId?: string
+  spanId?: string
 }
 
 /// A closed INFO or higher `tracing` span from the wasm module. Ids are lowercase hex.

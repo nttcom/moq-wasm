@@ -183,13 +183,18 @@ fn log_record(log: &ClientLog, app_id: &str, client_id: &str) -> Value {
     ];
     attributes.extend(field_attributes(&log.fields));
     let (severity_number, severity_text) = severity(&log.level);
-    json!({
+    let mut record = json!({
         "timeUnixNano": time_unix_nano(log.time_ms),
         "severityNumber": severity_number,
         "severityText": severity_text,
         "body": { "stringValue": log.message },
         "attributes": attributes,
-    })
+    });
+    if let (Some(trace_id), Some(span_id)) = (&log.trace_id, &log.span_id) {
+        record["traceId"] = json!(trace_id);
+        record["spanId"] = json!(span_id);
+    }
+    record
 }
 
 fn span_record(span: &ClientSpan, app_id: &str, client_id: &str) -> Value {
@@ -311,6 +316,42 @@ mod tests {
                 { "key": "track_name", "value": { "stringValue": "video" } },
             ])
         );
+    }
+
+    #[test]
+    fn a_log_written_in_a_span_carries_the_span_s_ids() {
+        // Arrange
+        let in_span = report(json!({
+            "clientId": "c1",
+            "page": "meeting",
+            "logs": [{
+                "timeMs": 2,
+                "level": "info",
+                "target": "moqt",
+                "message": "PUBLISH_NAMESPACE_OK received",
+                "traceId": "0123456789abcdef0123456789abcdef",
+                "spanId": "0123456789abcdef",
+            }],
+        }));
+        let outside = report(json!({
+            "clientId": "c1",
+            "page": "meeting",
+            "logs": [{ "timeMs": 2, "level": "info", "target": "moqt", "message": "m" }],
+        }));
+
+        // Act
+        let in_span = logs_request(&in_span, "anon").unwrap();
+        let outside = logs_request(&outside, "anon").unwrap();
+
+        // Assert
+        let record = &in_span["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(record["traceId"], "0123456789abcdef0123456789abcdef");
+        assert_eq!(record["spanId"], "0123456789abcdef");
+        let record = outside["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+            .as_object()
+            .unwrap();
+        assert!(!record.contains_key("traceId"));
+        assert!(!record.contains_key("spanId"));
     }
 
     fn span_report(fields: Value, parent_span_id: Option<&str>) -> ClientReport {

@@ -13,7 +13,7 @@ records go stays with each client.
 
 | Item | Role |
 | --- | --- |
-| `log_record` | One event as `{ timeMs, level, target, message, fields }` |
+| `log_record` | One event as `{ timeMs, level, target, message, fields, traceId?, spanId? }`; the ids are those of the innermost span `SpanRecordLayer` saw entered |
 | `SpanRecordLayer` | A `Layer` that gives each span a trace and span id, and hands it to `emit` on close as `{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }` |
 | `current_traceparent` | The innermost span `SpanRecordLayer` saw entered on this thread, as a W3C `traceparent`; clients give it to `moqt::set_trace_context_provider` |
 
