@@ -2,8 +2,9 @@ use std::cell::RefCell;
 use std::fmt::Write;
 
 use serde_json::{Value, json};
-use tracing::Subscriber;
 use tracing::span::{Attributes, Id, Record};
+use tracing::{Span, Subscriber};
+use tracing_subscriber::Registry;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
@@ -46,6 +47,48 @@ thread_local! {
 pub fn current_traceparent() -> Option<String> {
     let (trace_id, span_id) = current_span_ids()?;
     Some(format!("00-{}-{}-01", hex(&trace_id), hex(&span_id)))
+}
+
+/// Makes `span` a child of the remote span a W3C `traceparent` names. Call it
+/// before `span` is first entered. A value that is not a version-00
+/// traceparent, or a subscriber other than a `Registry` carrying
+/// `SpanRecordLayer`, leaves `span` as it is.
+pub fn continue_trace_from_traceparent(span: &Span, traceparent: &str) {
+    let Some((trace_id, parent_span_id)) = parse_traceparent(traceparent) else {
+        return;
+    };
+    span.with_subscriber(|(id, dispatch)| {
+        let Some(span) = dispatch
+            .downcast_ref::<Registry>()
+            .and_then(|registry| registry.span(id))
+        else {
+            return;
+        };
+        if let Some(open) = span.extensions_mut().get_mut::<OpenSpan>() {
+            open.trace_id = trace_id;
+            open.parent_span_id = Some(parent_span_id);
+        }
+    });
+}
+
+/// `00-<trace id>-<parent id>-<flags>` with ids that are not all zero
+/// (W3C Trace Context §3.2).
+fn parse_traceparent(traceparent: &str) -> Option<([u8; 16], [u8; 8])> {
+    let ["00", trace_id, parent_id, flags] = traceparent.split('-').collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    lowercase_hex(flags, 2)?;
+    let trace_id = lowercase_hex(trace_id, 32).filter(|id| *id != 0)?;
+    let parent_id = lowercase_hex(parent_id, 16).filter(|id| *id != 0)? as u64;
+    Some((trace_id.to_be_bytes(), parent_id.to_be_bytes()))
+}
+
+fn lowercase_hex(text: &str, digits: usize) -> Option<u128> {
+    let valid = text.len() == digits
+        && text
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    valid.then(|| u128::from_str_radix(text, 16).ok())?
 }
 
 pub(crate) fn current_span_ids() -> Option<([u8; 16], [u8; 8])> {
@@ -159,7 +202,7 @@ mod tests {
     use serde_json::Value;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::{SpanRecordLayer, current_traceparent};
+    use super::{SpanRecordLayer, continue_trace_from_traceparent, current_traceparent};
     use crate::{current_scope, in_scope};
 
     fn capture(emit_spans: impl FnOnce()) -> Vec<Value> {
@@ -233,6 +276,56 @@ mod tests {
         assert_eq!(child["traceId"], parent["traceId"]);
         assert_eq!(child["parentSpanId"], parent["spanId"]);
         assert_ne!(child["spanId"], parent["spanId"]);
+    }
+
+    const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+    #[test]
+    fn a_span_continued_from_a_traceparent_joins_its_trace_with_its_children() {
+        // Act
+        let records = capture(|| {
+            let answer = tracing::info_span!(parent: None, "answer");
+            continue_trace_from_traceparent(&answer, TRACEPARENT);
+            answer.in_scope(|| tracing::info_span!("child").in_scope(|| {}));
+        });
+
+        // Assert
+        let [child, answer] = records.as_slice() else {
+            panic!("{records:?}");
+        };
+        assert_eq!(answer["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(answer["parentSpanId"], "00f067aa0ba902b7");
+        assert_eq!(child["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(child["parentSpanId"], answer["spanId"]);
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_traceparent_leaves_the_span_a_trace_root() {
+        // Arrange
+        let invalid = [
+            "",
+            "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+            "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-00",
+        ];
+
+        for traceparent in invalid {
+            // Act
+            let records = capture(|| {
+                let answer = tracing::info_span!(parent: None, "answer");
+                continue_trace_from_traceparent(&answer, traceparent);
+            });
+
+            // Assert
+            let [answer] = records.as_slice() else {
+                panic!("{records:?}");
+            };
+            assert!(answer.get("parentSpanId").is_none(), "{traceparent}");
+            assert_ne!(answer["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        }
     }
 
     #[test]
