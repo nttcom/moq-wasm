@@ -589,10 +589,10 @@ state name the connection:
 - `carried` — for a session that follows GOAWAY, the namespace and track
   subscriptions and the published namespaces a migration sends again. A
   request takes its read lock before it is sent and holds it until it is
-  recorded or fails (through the answer for SUBSCRIBE, SUBSCRIBE_NAMESPACE and
-  PUBLISH), editing the record through an inner mutex, so concurrent requests
-  do not wait for each other's answers. A migration holds the write lock while
-  it sends them again, so none is missed.
+  recorded or fails (through the answer for SUBSCRIBE and PUBLISH), editing
+  the record through an inner mutex, so concurrent requests do not wait for
+  each other's answers. A migration holds the write lock while it sends them
+  again, so none is missed.
 - `publications` — for a session that follows GOAWAY, the tracks PUBLISHed
   on it with every connection each is on (`SendTargets::Publication`); a
   track served for a SUBSCRIBE goes to the connection the SUBSCRIBE arrived

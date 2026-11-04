@@ -28,7 +28,7 @@ use crate::{
             elapsed_ms,
             fetch_handle::{FetchHandle, FetchRemainder},
             namespace_tuple,
-            request_failure::{record_outcome, record_request_id},
+            request_failure::record_outcome,
             session_context::{CarriedSubscription, PendingFetch, SessionContext},
         },
         runtime::dispatch::incoming_object::IncomingObject,
@@ -66,13 +66,19 @@ impl Subscriber {
     }
 
     async fn subscribe_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
-        let carried = loop {
+        let (connection, request_id, pending) = loop {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
-            let sent = send_subscribe_namespace(&connection, namespace.clone()).await;
-            record_request_id(&sent, |request_id| *request_id);
-            match sent {
-                Ok(_) => break carried,
+            match begin_subscribe_namespace(&connection, &namespace).await {
+                Ok((request_id, pending)) => {
+                    // Recorded under the lock it was sent with, before its answer: a
+                    // migration sends it again, and an UNSUBSCRIBE_NAMESPACE sent
+                    // meanwhile removes it.
+                    if let Some(carried) = &carried {
+                        carried.update(|carried| carried.namespaces.push(namespace.clone()));
+                    }
+                    break (connection, request_id, pending);
+                }
                 Err(error) => {
                     self.session
                         .resend_after(carried, &connection, error)
@@ -80,10 +86,24 @@ impl Subscriber {
                 }
             }
         };
-        if let Some(carried) = &carried {
-            carried.update(|carried| carried.namespaces.push(namespace));
+        tracing::Span::current().record("request_id", request_id);
+        match subscribe_namespace_ok(request_id, &namespace, pending).await {
+            Ok(_) => Ok(()),
+            // A migration sends it again if it is still carried, and the
+            // migration fails unless the new connection accepts it.
+            Err(error) if self.session.moved_after_loss(&connection, &error).await => Ok(()),
+            Err(error) => {
+                if let Some(carried) = self.session.read_carried().await {
+                    carried.update(|carried| {
+                        if let Some(index) = carried.namespaces.iter().position(|n| *n == namespace)
+                        {
+                            carried.namespaces.remove(index);
+                        }
+                    });
+                }
+                Err(error)
+            }
         }
-        Ok(())
     }
 
     #[tracing::instrument(
@@ -2224,6 +2244,73 @@ mod tests {
         assert_eq!(second_handler.track_name, "second");
         first.abort();
         second.abort();
+    }
+
+    #[tokio::test]
+    async fn an_unsubscribe_namespace_before_the_answer_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-unsubscribe-namespace")
+                .await;
+        let subscriber = client.subscriber();
+        let session = subscriber.session.clone();
+        let subscribed =
+            tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await });
+        let SessionEvent::SubscribeNameSpace(handler) =
+            within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE_NAMESPACE from the client");
+        };
+
+        // Act
+        within(client.subscriber().unsubscribe_namespace("a".into()))
+            .await
+            .unwrap();
+        handler.ok().await.unwrap();
+        within(subscribed).await.unwrap().unwrap();
+
+        // Assert
+        let carried = session
+            .read_carried()
+            .await
+            .unwrap()
+            .update(|carried| carried.namespaces.clone());
+        assert!(carried.is_empty(), "{carried:?}");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_subscribe_namespace_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-rejected-namespace").await;
+        let subscriber = client.subscriber();
+        let session = subscriber.session.clone();
+        let subscribed =
+            tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await });
+        let SessionEvent::SubscribeNameSpace(handler) =
+            within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE_NAMESPACE from the client");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, "rejected".to_string())
+            .await
+            .unwrap();
+        let result = within(subscribed).await.unwrap();
+
+        // Assert
+        assert!(
+            matches!(result, Err(RequestFailure::Rejected { .. })),
+            "{result:?}"
+        );
+        let carried = session
+            .read_carried()
+            .await
+            .unwrap()
+            .update(|carried| carried.namespaces.clone());
+        assert!(carried.is_empty(), "{carried:?}");
     }
 
     #[tokio::test]

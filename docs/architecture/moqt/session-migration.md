@@ -168,8 +168,12 @@ is delivered. A SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH or SUBSCRIBE
 the loss cuts off before its answer (its send fails or the control stream
 closes) releases the `carried` lock, waits for the new connection and is sent
 there; it fails only when the session ends without one. A PUBLISH_NAMESPACE
-is carried from the moment it was sent, so the migration itself sends it again
-and `publish_namespace` returns once the new connection accepted it. Other
+or SUBSCRIBE_NAMESPACE is carried from the moment it was sent, so the
+migration itself sends it again and `publish_namespace` or
+`subscribe_namespace` returns once the new connection accepted it. An
+UNSUBSCRIBE_NAMESPACE sent before the answer removes the SUBSCRIBE_NAMESPACE
+from `carried`, and a rejected or timed-out SUBSCRIBE_NAMESPACE is removed
+again. Other
 requests, and a request that times out, still fail. Once a new
 connection takes the requests again, the lost one is retired at once, since it
 delivers nothing more: each subscription continues from the next group start
