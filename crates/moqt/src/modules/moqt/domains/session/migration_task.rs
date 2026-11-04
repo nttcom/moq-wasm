@@ -1660,7 +1660,7 @@ mod tests {
                     continue;
                 };
                 let tokens = handshake.authorization_tokens().to_vec();
-                if let Ok(session) = handshake.accept().await {
+                if let Ok(session) = handshake.accept(&tracing::Span::current()).await {
                     let _ = session_sender.send((tokens, session));
                 }
             }

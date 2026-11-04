@@ -201,7 +201,14 @@ mod tests {
         .unwrap();
         let url = format!("moqt://127.0.0.1:{}", server.local_port().unwrap());
         let accept = tokio::spawn(async move {
-            let session = server.accept().await.unwrap().await.unwrap().accept().await;
+            let session = server
+                .accept()
+                .await
+                .unwrap()
+                .await
+                .unwrap()
+                .accept(&tracing::Span::current())
+                .await;
             (server, session.unwrap())
         });
         let client = Endpoint::<NATIVE>::create_client(&ClientConfig {

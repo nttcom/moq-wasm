@@ -73,7 +73,7 @@ impl SessionIntake {
         };
         // Sent outside `setup_span` because the session's tasks start in the span
         // current here; the span still closes only after SERVER_SETUP is sent.
-        let accepted = handshake.accept().await;
+        let accepted = handshake.accept(&session_span).await;
         drop(setup_span);
         let session = match accepted {
             Ok(session) => session,

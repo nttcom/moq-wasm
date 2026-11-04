@@ -144,6 +144,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                         connection_events,
                     }),
                     Some(Arc::new(creator.clone())),
+                    Span::current(),
                 )
             } else {
                 let (connection, control_receiver, server_setup) = creator
@@ -156,6 +157,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     Some(server_setup),
                     None,
                     Some(Arc::new(creator.clone())),
+                    Span::current(),
                 )
             };
             tracing::info!("session established");
@@ -402,7 +404,12 @@ mod tests {
         let (session_sender, session_receiver) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
             while let Ok(accepting) = server.accept().await {
-                let session = accepting.await.unwrap().accept().await.unwrap();
+                let session = accepting
+                    .await
+                    .unwrap()
+                    .accept(&tracing::Span::current())
+                    .await
+                    .unwrap();
                 if session_sender.send(session).is_err() {
                     return;
                 }

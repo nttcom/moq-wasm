@@ -33,7 +33,7 @@ impl FakePublisher {
         let serving = origin.clone();
         tokio::spawn(async move {
             let handshake = endpoint.accept().await.unwrap().await.unwrap();
-            let session = handshake.accept().await.unwrap();
+            let session = handshake.accept(&tracing::Span::current()).await.unwrap();
             while let Ok(event) = session.receive_event().await {
                 let subscribed = match &event {
                     SessionEvent::Subscribe(handler) => Some(handler.track_name.clone()),

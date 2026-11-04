@@ -56,10 +56,10 @@ impl Session {
         server_setup: Option<ServerSetup>,
         follow: Option<Follow>,
         endpoint: Option<Arc<dyn WaitIdle>>,
+        parent_span: Span,
     ) -> Self {
         let inner = Arc::new(inner);
-        let parent_span = Span::current();
-        // The caller's span already names the session.
+        // `parent_span` already names the session.
         let session_span = Some(tracing::debug_span!(parent: &parent_span, "moqt.session"))
             .filter(|span| !span.is_disabled())
             .unwrap_or(parent_span);

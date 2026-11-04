@@ -1,3 +1,5 @@
+use tracing::Span;
+
 use crate::modules::transport::transport_connection::BoxedConnection;
 
 #[cfg(test)]
@@ -35,7 +37,10 @@ impl Handshake {
         &handshake.client_setup
     }
 
-    pub async fn accept(self) -> anyhow::Result<Session> {
+    /// Sends SERVER_SETUP in the current span and starts the session's tasks
+    /// under `session_span`, so the current span can close once SERVER_SETUP
+    /// is sent.
+    pub async fn accept(self, session_span: &Span) -> anyhow::Result<Session> {
         let (control, control_receiver) = self.setup.accept().await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
         let context = SessionContext::new(
@@ -57,6 +62,7 @@ impl Handshake {
             None,
             None,
             None,
+            session_span.clone(),
         ))
     }
 
@@ -117,7 +123,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let server = handshake.accept().await;
+        let server = handshake.accept(&tracing::Span::current()).await;
         let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, client)
             .await
             .unwrap()
