@@ -20,7 +20,7 @@ where
     LogLayer(buffer).and_then(SpanRecordLayer {
         now_ms,
         random_byte: || random_u64() as u8,
-        emit: move |span| spans.push_span(span),
+        emit: move |span, _scope| spans.push_span(span),
     })
 }
 

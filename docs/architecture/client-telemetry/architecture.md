@@ -13,13 +13,22 @@ records go stays with each client.
 
 | Item | Role |
 | --- | --- |
+| `scope` | A number a client gives the spans and events of one of its parts (the wasm module: one session), so it can send each part's records apart: `scoped` polls a future in a scope, `in_scope` runs a closure in one, and `current_scope` reads it |
 | `log_record` | One event as `{ timeMs, level, target, message, fields, traceId?, spanId? }`; the ids are those of the innermost span `SpanRecordLayer` saw entered |
-| `SpanRecordLayer` | A `Layer` that gives each span a trace and span id, and hands it to `emit` on close as `{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }` |
+| `SpanRecordLayer` | A `Layer` that gives each span a trace and span id, and hands it to `emit` on close as `{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`, with its scope |
 | `current_traceparent` | The innermost span `SpanRecordLayer` saw entered on this thread, as a W3C `traceparent`; clients give it to `moqt::set_trace_context_provider` |
 
 ## Invariants
 - A child span takes its parent's trace id; a span without a parent starts a
   new trace.
+- A span takes its parent's scope, else the current scope where it was opened.
+  The current scope is that of the innermost span `SpanRecordLayer` saw
+  entered, else that of the running `scoped` future or `in_scope` call, so an
+  event and a span opened inside a span belong to the span's scope even in a
+  task that runs in no scope of its own. A span or event in neither has no
+  scope.
+- A scope is a bare number. What it stands for (a session's token) stays
+  with the client and never enters a record.
 - The clock and the random source are injected, because neither
   `SystemTime` nor an OS RNG exists on wasm32. Ids need to be unique, not
   unpredictable.
