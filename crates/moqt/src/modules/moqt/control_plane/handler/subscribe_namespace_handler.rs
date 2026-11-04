@@ -1,5 +1,5 @@
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -36,8 +36,12 @@ impl SubscribeNamespaceHandler {
     ) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            subscribe_namespace.request_id,
-            RequestKind::SubscribeNamespace,
+            RequestSummary::new(
+                RequestKind::SubscribeNamespace,
+                subscribe_namespace.request_id,
+                Some(&subscribe_namespace.track_namespace_prefix),
+                None,
+            ),
         );
         Self {
             guard,
@@ -48,14 +52,11 @@ impl SubscribeNamespaceHandler {
     }
 
     pub async fn ok(&self) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {
             request_id: self.guard.request_id(),
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
+            .accept(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
             .await?;
         Ok(())
     }

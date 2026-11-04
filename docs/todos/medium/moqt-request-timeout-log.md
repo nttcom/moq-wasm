@@ -1,6 +1,6 @@
 # [S] Log a request that times out and record it on its span
 
-Next: add an INFO log to the timeout arm of `PendingResponse::response` in `crates/moqt/src/modules/moqt/version/draft14.rs:501`; it needs the request kind, `request_id` and track, which `SentRequest` in `crates/moqt/src/modules/moqt/version.rs` already builds.
+Next: add an INFO log to the timeout arm of `PendingResponse::response` in `crates/moqt/src/modules/moqt/version/draft14.rs:501`; it needs the request kind, `request_id` and track, which `RequestSummary` in `crates/moqt/src/modules/moqt/version.rs` already builds.
 
 ## Goal
 

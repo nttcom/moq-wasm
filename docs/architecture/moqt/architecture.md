@@ -689,8 +689,12 @@ provider the parameter is omitted. On receipt, `trace_context()` on
     (`request_error_code_to_wire` / `request_error_code_from_wire`,
     `publish_done_code_from_wire`) for the wasm bindings, whose JavaScript
     API carries draft-14 numbers.
-  - `ResponseGuard` is the one place that encodes and sends a `*_ERROR`, for
-    both the handlers' `error()` and the drop-time NOT_SUPPORTED reply.
+  - `ResponseGuard` is the one place that sends a handler's answer: the
+    `*_OK` of its `ok()`, and the `*_ERROR` of both its `error()` and the
+    drop-time NOT_SUPPORTED reply. It logs each as `*_OK sent` /
+    `*_ERROR sent` with the request's `RequestSummary` (kind, wire Request
+    ID, track), the same summary `ControlChannel::send_request` logs as
+    `* sent`.
 
 The draft-14 `ControlMessageReceiveTask` splits every decoded message into
 one of three paths:

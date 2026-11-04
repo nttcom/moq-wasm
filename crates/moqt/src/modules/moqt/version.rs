@@ -246,78 +246,98 @@ pub(crate) enum OutgoingRequest {
     SubscribeNamespace(SubscribeNamespace),
 }
 
-struct SentRequest {
+#[derive(Debug, Clone)]
+pub(crate) struct RequestSummary {
     kind: RequestKind,
     request_id: RequestId,
     track_namespace: Option<String>,
     track_name: Option<String>,
 }
 
-impl SentRequest {
+impl RequestSummary {
+    /// `track_namespace` is the prefix for SUBSCRIBE_NAMESPACE; a joining
+    /// FETCH names no track.
+    pub(crate) fn new(
+        kind: RequestKind,
+        request_id: RequestId,
+        track_namespace: Option<&[String]>,
+        track_name: Option<&str>,
+    ) -> Self {
+        Self {
+            kind,
+            request_id,
+            track_namespace: track_namespace.map(|tuple| tuple.join("/")),
+            track_name: track_name.map(str::to_string),
+        }
+    }
+
     fn of(request: &OutgoingRequest) -> Self {
-        let (kind, request_id, track_namespace, track_name) = match request {
-            OutgoingRequest::Subscribe(subscribe) => (
+        match request {
+            OutgoingRequest::Subscribe(subscribe) => Self::new(
                 RequestKind::Subscribe,
                 subscribe.request_id,
                 Some(&subscribe.track_namespace),
                 Some(&subscribe.track_name),
             ),
-            OutgoingRequest::TrackStatus(track_status) => (
+            OutgoingRequest::TrackStatus(track_status) => Self::new(
                 RequestKind::TrackStatus,
                 track_status.request_id,
                 Some(&track_status.track_namespace),
                 Some(&track_status.track_name),
             ),
-            OutgoingRequest::Fetch(fetch) => match &fetch.fetch_params {
-                FetchParams::Standalone {
-                    track_namespace,
-                    track_name,
-                    ..
-                } => (
-                    RequestKind::Fetch,
-                    fetch.request_id,
-                    Some(track_namespace),
-                    Some(track_name),
-                ),
-                FetchParams::RelativeJoining { .. } | FetchParams::AbsoluteJoining { .. } => {
-                    (RequestKind::Fetch, fetch.request_id, None, None)
-                }
-            },
-            OutgoingRequest::Publish(publish) => (
+            OutgoingRequest::Fetch(fetch) => Self::of_fetch(fetch),
+            OutgoingRequest::Publish(publish) => Self::new(
                 RequestKind::Publish,
                 publish.request_id,
                 Some(&publish.track_namespace_tuple),
                 Some(&publish.track_name),
             ),
-            OutgoingRequest::PublishNamespace(publish_namespace) => (
+            OutgoingRequest::PublishNamespace(publish_namespace) => Self::new(
                 RequestKind::PublishNamespace,
                 publish_namespace.request_id,
                 Some(&publish_namespace.track_namespace),
                 None,
             ),
-            OutgoingRequest::SubscribeNamespace(subscribe_namespace) => (
+            OutgoingRequest::SubscribeNamespace(subscribe_namespace) => Self::new(
                 RequestKind::SubscribeNamespace,
                 subscribe_namespace.request_id,
                 Some(&subscribe_namespace.track_namespace_prefix),
                 None,
             ),
-        };
-        Self {
-            kind,
-            request_id,
-            track_namespace: track_namespace.map(|tuple| tuple.join("/")),
-            track_name: track_name.cloned(),
         }
     }
 
-    fn log(self) {
-        let Self {
-            kind,
-            request_id,
-            track_namespace,
-            track_name,
-        } = self;
-        match kind {
+    pub(crate) fn of_fetch(fetch: &Fetch) -> Self {
+        match &fetch.fetch_params {
+            FetchParams::Standalone {
+                track_namespace,
+                track_name,
+                ..
+            } => Self::new(
+                RequestKind::Fetch,
+                fetch.request_id,
+                Some(track_namespace),
+                Some(track_name),
+            ),
+            FetchParams::RelativeJoining { .. } | FetchParams::AbsoluteJoining { .. } => {
+                Self::new(RequestKind::Fetch, fetch.request_id, None, None)
+            }
+        }
+    }
+
+    pub(crate) fn kind(&self) -> RequestKind {
+        self.kind
+    }
+
+    pub(crate) fn request_id(&self) -> RequestId {
+        self.request_id
+    }
+
+    fn log_sent(&self) {
+        let request_id = self.request_id;
+        let track_namespace = self.track_namespace.as_deref();
+        let track_name = self.track_name.as_deref();
+        match self.kind {
             RequestKind::Subscribe => {
                 tracing::info!(request_id, track_namespace, track_name, "SUBSCRIBE sent")
             }
@@ -337,6 +357,91 @@ impl SentRequest {
                 request_id,
                 track_namespace_prefix = track_namespace,
                 "SUBSCRIBE_NAMESPACE sent"
+            ),
+        }
+    }
+
+    pub(crate) fn log_ok_sent(&self) {
+        let request_id = self.request_id;
+        let track_namespace = self.track_namespace.as_deref();
+        let track_name = self.track_name.as_deref();
+        match self.kind {
+            RequestKind::Subscribe => {
+                tracing::info!(request_id, track_namespace, track_name, "SUBSCRIBE_OK sent")
+            }
+            RequestKind::TrackStatus => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                "TRACK_STATUS_OK sent"
+            ),
+            RequestKind::Fetch => {
+                tracing::info!(request_id, track_namespace, track_name, "FETCH_OK sent")
+            }
+            RequestKind::Publish => {
+                tracing::info!(request_id, track_namespace, track_name, "PUBLISH_OK sent")
+            }
+            RequestKind::PublishNamespace => {
+                tracing::info!(request_id, track_namespace, "PUBLISH_NAMESPACE_OK sent")
+            }
+            RequestKind::SubscribeNamespace => tracing::info!(
+                request_id,
+                track_namespace_prefix = track_namespace,
+                "SUBSCRIBE_NAMESPACE_OK sent"
+            ),
+        }
+    }
+
+    pub(crate) fn log_error_sent(&self, error_code: RequestErrorCode, reason_phrase: &str) {
+        let request_id = self.request_id;
+        let track_namespace = self.track_namespace.as_deref();
+        let track_name = self.track_name.as_deref();
+        match self.kind {
+            RequestKind::Subscribe => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "SUBSCRIBE_ERROR sent"
+            ),
+            RequestKind::TrackStatus => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "TRACK_STATUS_ERROR sent"
+            ),
+            RequestKind::Fetch => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "FETCH_ERROR sent"
+            ),
+            RequestKind::Publish => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "PUBLISH_ERROR sent"
+            ),
+            RequestKind::PublishNamespace => tracing::info!(
+                request_id,
+                track_namespace,
+                ?error_code,
+                %reason_phrase,
+                "PUBLISH_NAMESPACE_ERROR sent"
+            ),
+            RequestKind::SubscribeNamespace => tracing::info!(
+                request_id,
+                track_namespace_prefix = track_namespace,
+                ?error_code,
+                %reason_phrase,
+                "SUBSCRIBE_NAMESPACE_ERROR sent"
             ),
         }
     }
@@ -427,13 +532,13 @@ impl ControlChannel {
         reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
-        let sent = SentRequest::of(&request);
+        let sent = RequestSummary::of(&request);
         let pending = match self {
             Self::Draft14(channel) => {
                 PendingResponse::Draft14(channel.send_request(reservation, request).await?)
             }
         };
-        sent.log();
+        sent.log_sent();
         Ok(pending)
     }
 

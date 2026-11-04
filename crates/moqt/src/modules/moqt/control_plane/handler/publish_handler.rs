@@ -1,5 +1,5 @@
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -53,8 +53,15 @@ impl PublishHandler {
         connection: Arc<Connection>,
         publish_message: Publish,
     ) -> Self {
-        let guard =
-            ResponseGuard::new(connection, publish_message.request_id, RequestKind::Publish);
+        let guard = ResponseGuard::new(
+            connection,
+            RequestSummary::new(
+                RequestKind::Publish,
+                publish_message.request_id,
+                Some(&publish_message.track_namespace_tuple),
+                Some(&publish_message.track_name),
+            ),
+        );
         let request_id = guard
             .connection()
             .logical_request_id(publish_message.request_id);
@@ -82,7 +89,6 @@ impl PublishHandler {
         subscriber_priority: u8,
         filter_type: FilterType,
     ) -> Result<Subscription, TransportSendError> {
-        self.guard.mark_responded();
         let publish_ok = PublishOk {
             request_id: self.guard.request_id(),
             forward: self.forward,
@@ -92,9 +98,7 @@ impl PublishHandler {
             delivery_timeout: self.delivery_timeout,
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::PublishOk(publish_ok))
+            .accept(OutgoingResponse::PublishOk(publish_ok))
             .await?;
 
         Ok(Subscription::PublisherInitiated(

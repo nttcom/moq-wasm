@@ -1,5 +1,5 @@
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -55,8 +55,12 @@ impl SubscribeHandler {
     ) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            subscribe_message.request_id,
-            RequestKind::Subscribe,
+            RequestSummary::new(
+                RequestKind::Subscribe,
+                subscribe_message.request_id,
+                Some(&subscribe_message.track_namespace),
+                Some(&subscribe_message.track_name),
+            ),
         );
         let request_id = guard
             .connection()
@@ -97,7 +101,6 @@ impl SubscribeHandler {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let subscribe_ok = SubscribeOk {
             request_id: self.guard.request_id(),
             track_alias: wire_part(track_alias),
@@ -108,9 +111,7 @@ impl SubscribeHandler {
             max_duration: self.max_cache_duration,
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::SubscribeOk(subscribe_ok))
+            .accept(OutgoingResponse::SubscribeOk(subscribe_ok))
             .await?;
         if self.session_context.follows_go_away() {
             self.guard.connection().serve(self.request_id);
