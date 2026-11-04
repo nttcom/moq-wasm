@@ -4,14 +4,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use client_telemetry::{SpanRecordLayer, log_record};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
-use super::ReportBuffer;
+use crate::{ReportBuffer, SpanRecordLayer, log_record};
 
 /// Copies each event and each closed span it sees into `buffer`, in the log
-/// and span shapes of the observability server's `/api/client-telemetry`.
+/// and span shapes of the observability server's `/api/client-telemetry`. It
+/// reads the time from `SystemTime`, so use it in native clients, not on wasm32.
 pub fn report_layer<S>(buffer: ReportBuffer) -> impl Layer<S>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -38,8 +38,8 @@ fn now_ms() -> u64 {
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
-/// A random 64-bit value from std's randomly keyed hasher, so the CLI needs no
-/// RNG crate.
+/// A random 64-bit value from std's randomly keyed hasher, so the crate needs
+/// no RNG crate.
 fn random_u64() -> u64 {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let mut hasher = RandomState::new().build_hasher();

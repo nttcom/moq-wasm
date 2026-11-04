@@ -17,6 +17,8 @@ records go stays with each client.
 | `log_record` | One event as `{ timeMs, level, target, message, fields, traceId?, spanId? }`; the ids are those of the innermost span `SpanRecordLayer` saw entered |
 | `SpanRecordLayer` | A `Layer` that gives each span a trace and span id, and hands it to `emit` on close as `{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`, with its scope |
 | `current_traceparent` | The innermost span `SpanRecordLayer` saw entered on this thread, as a W3C `traceparent`; clients give it to `moqt::set_trace_context_provider` |
+| `ReportBuffer` | The newest 100 logs and 100 spans since a client last took them, the most one report carries |
+| `report_layer` | `log_record` and `SpanRecordLayer` writing into a `ReportBuffer`, timed by `SystemTime` and std's randomly keyed hasher, for the native clients (`moq-cli`, the Python module) |
 
 ## Invariants
 - A child span takes its parent's trace id; a span without a parent starts a
@@ -29,9 +31,10 @@ records go stays with each client.
   scope.
 - A scope is a bare number. What it stands for (a session's token) stays
   with the client and never enters a record.
-- The clock and the random source are injected, because neither
-  `SystemTime` nor an OS RNG exists on wasm32. Ids need to be unique, not
-  unpredictable.
+- `SpanRecordLayer` takes its clock and random source from the client,
+  because neither `SystemTime` nor an OS RNG exists on wasm32; only
+  `report_layer`, which the wasm module does not use, reads std's. Ids need
+  to be unique, not unpredictable.
 - Times are milliseconds since the Unix epoch as integers, as the server
   parses them.
 
