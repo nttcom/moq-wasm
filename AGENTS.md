@@ -98,7 +98,7 @@ Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::
 | ERROR | Fatal failures requiring intervention. | · Connection failed after maximum retries<br>· Received a malformed or unrecognized MOQT message<br>· Authentication or TLS handshake failure |
 
 Logs and spans are exported over OTLP, where a log does not inherit its span's fields. For each INFO or higher log:
-- One event gets one INFO line. A step inside a request, a cleanup or a `Drop` is DEBUG.
+- One event gets one INFO line. Writing a request (SUBSCRIBE, FETCH, PUBLISH, …) is an event of its own, so a request that is never answered still shows. Any other step inside a request, a cleanup or a `Drop` is DEBUG.
 - The message is a fixed string; every value is a field (`tracing::info!(%error, request_id, "SUBSCRIBE_ERROR received")`, not `"... {}"`).
 - It carries the fields that identify what it is about, so it can be found without its span.
 

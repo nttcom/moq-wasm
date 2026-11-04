@@ -830,7 +830,6 @@ pub(crate) async fn send_subscribe_namespace(
             }),
         )
         .await?;
-    tracing::debug!(request_id, track_namespace_prefix = %namespace, "SUBSCRIBE_NAMESPACE sent");
     let response = pending.response().await?.accept();
     match response {
         ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
@@ -2163,6 +2162,27 @@ mod tests {
             panic!("expected UNSUBSCRIBE_NAMESPACE, got {event:?}");
         };
         assert_eq!(handler.track_namespace_prefix(), "room/a");
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_subscribe_is_logged_as_sent() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("subscriber-sent-log").await;
+
+        // Act
+        let (request, handler) = start_subscribe(&client, &server, "sent").await;
+
+        // Assert
+        let logged = telemetry.events("SUBSCRIBE sent");
+        assert_eq!(logged.len(), 1);
+        assert_eq!(
+            logged[0].field("request_id"),
+            Some(handler.request_id().to_string().as_str())
+        );
+        assert_eq!(logged[0].field("track_namespace"), Some("ns"));
+        assert_eq!(logged[0].field("track_name"), Some("sent"));
+        request.abort();
     }
 
     #[tokio::test]
