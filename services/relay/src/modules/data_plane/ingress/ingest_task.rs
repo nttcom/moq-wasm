@@ -162,16 +162,13 @@ impl IngestTask {
 
 #[cfg(test)]
 mod tests {
-    use tracing_subscriber::{
-        Layer,
-        layer::{Context, SubscriberExt},
-        registry::LookupSpan,
-    };
+    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
     use crate::modules::{
         session::{Session, data_receiver::stream_receiver::StreamReceiver},
         test_support::{
+            closed_spans::ClosedSpans,
             mock_session::{MockUpstreamSession, RecordedControlMessages},
             relay_harness::{
                 UpstreamSubgroupStream,
@@ -239,20 +236,6 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Default)]
-    struct ClosedSpans(Arc<std::sync::Mutex<Vec<&'static str>>>);
-
-    impl<S> Layer<S> for ClosedSpans
-    where
-        S: tracing::Subscriber + for<'a> LookupSpan<'a>,
-    {
-        fn on_close(&self, id: tracing::span::Id, ctx: Context<'_, S>) {
-            if let Some(span) = ctx.span(&id) {
-                self.0.lock().unwrap().push(span.name());
-            }
-        }
-    }
-
     #[tokio::test]
     async fn the_request_span_closes_while_the_ingest_runs() {
         // Arrange
@@ -268,10 +251,10 @@ mod tests {
         drop(request_span);
 
         // Assert
-        let closed = closed_spans.0.lock().unwrap().clone();
         assert!(
-            closed.contains(&"relay.publish"),
-            "closed spans: {closed:?}"
+            closed_spans.contains("relay.publish"),
+            "closed spans: {:?}",
+            closed_spans.names()
         );
     }
 
