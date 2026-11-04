@@ -54,6 +54,8 @@ pub(super) struct ClientLog {
     pub(super) message: String,
     #[serde(default)]
     pub(super) fields: Map<String, Value>,
+    pub(super) trace_id: Option<String>,
+    pub(super) span_id: Option<String>,
 }
 
 /// A closed `tracing` span. Ids are lowercase hex, as OTLP/JSON carries them.
@@ -117,16 +119,25 @@ impl ClientReport {
             "a report carries at most {MAX_RECORDS} logs, stats and spans each"
         );
         // A malformed id makes the collector reject the whole batch.
-        for span in &report.spans {
-            let ids = [(&span.trace_id, 32), (&span.span_id, 16)]
-                .into_iter()
-                .chain(span.parent_span_id.iter().map(|id| (id, 16)));
-            for (id, len) in ids {
-                ensure!(
-                    id.len() == len && id.bytes().all(|byte| byte.is_ascii_hexdigit()),
-                    "span id {id:?} is not {len} hex digits"
-                );
-            }
+        let span_ids = report.spans.iter().flat_map(|span| {
+            [
+                (Some(&span.trace_id), 32),
+                (Some(&span.span_id), 16),
+                (span.parent_span_id.as_ref(), 16),
+            ]
+        });
+        let log_ids = report
+            .logs
+            .iter()
+            .flat_map(|log| [(log.trace_id.as_ref(), 32), (log.span_id.as_ref(), 16)]);
+        for (id, len) in span_ids
+            .chain(log_ids)
+            .filter_map(|(id, len)| Some((id?, len)))
+        {
+            ensure!(
+                id.len() == len && id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "id {id:?} is not {len} hex digits"
+            );
         }
         let stats_labels = report
             .stats
@@ -216,6 +227,16 @@ mod tests {
         // Arrange
         let span = json!({ "traceId": "xyz", "spanId": "0123456789abcdef", "name": "s", "startTimeMs": 1, "endTimeMs": 2 });
         let body = json!({ "clientId": "c1", "page": "p", "spans": [span] });
+
+        // Act / Assert
+        assert!(ClientReport::parse(body.to_string().as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_log_with_a_malformed_span_id_is_rejected() {
+        // Arrange
+        let log = json!({ "timeMs": 1, "level": "info", "target": "moqt", "message": "m", "traceId": "0123456789abcdef0123456789abcdef", "spanId": "xyz" });
+        let body = json!({ "clientId": "c1", "page": "p", "logs": [log] });
 
         // Act / Assert
         assert!(ClientReport::parse(body.to_string().as_bytes()).is_err());

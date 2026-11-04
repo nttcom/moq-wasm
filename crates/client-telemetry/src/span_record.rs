@@ -35,10 +35,12 @@ thread_local! {
 
 /// The innermost entered span as a W3C `traceparent`; `None` outside any span.
 pub fn current_traceparent() -> Option<String> {
-    ENTERED.with_borrow(|entered| {
-        let (trace_id, span_id) = entered.last()?;
-        Some(format!("00-{}-{}-01", hex(trace_id), hex(span_id)))
-    })
+    let (trace_id, span_id) = current_span_ids()?;
+    Some(format!("00-{}-{}-01", hex(&trace_id), hex(&span_id)))
+}
+
+pub(crate) fn current_span_ids() -> Option<([u8; 16], [u8; 8])> {
+    ENTERED.with_borrow(|entered| entered.last().copied())
 }
 
 impl<E> SpanRecordLayer<E> {
@@ -118,7 +120,7 @@ where
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().fold(String::new(), |mut text, byte| {
         let _ = write!(text, "{byte:02x}");
         text

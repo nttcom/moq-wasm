@@ -317,7 +317,7 @@ observability server behind its public load balancer, which converts the
 report to OTLP/JSON and forwards it (`client_telemetry`).
 
 - **Request.** `POST /api/client-telemetry` with a JSON body
-  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.
+  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields, traceId?, spanId? }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.
   `service` is `browser` (the default), `moq-cli` or `python`; any other value
   answers 400, so a client cannot log as a relay. `page` names the page, the
   CLI subcommand or the bot. `clientId` is generated once per page load or
@@ -325,7 +325,7 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   `text/plain`, a CORS simple request that `navigator.sendBeacon` can send
   and that needs no preflight.
 - **Limits.** The body is at most 64 KiB (413), a report carries at most 100
-  logs, 100 stats and 100 spans, span ids must be 32 (trace) or 16 (span)
+  logs, 100 stats and 100 spans, the ids of spans and logs must be 32 (trace) or 16 (span)
   hex digits, `clientId`, `page`, `trackNamespace` and `mediaSource`
   at most 128 characters (400).
   Each client address has a token bucket of 10 reports refilled at 1 per
@@ -341,7 +341,8 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
 - **Logs** become OTLP log records of resource `service.name` (the report's
   `service`) and `page`, with `app_id`, `client_id`, `target` and the
   client's fields as attributes, and are posted to
-  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`.
+  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`. A log's `traceId` and `spanId` go on
+  its OTLP record.
 - **Spans** are the closed INFO spans of `moqt` in the browser's wasm module
   (`init({ onSpan })`) and in `moq-cli`, chiefly the request spans
   (`moqt.subscriber.subscribe`, …) and `moqt.session.connect` (see "Request spans" in

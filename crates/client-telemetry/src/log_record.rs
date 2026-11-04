@@ -4,18 +4,27 @@ use serde_json::{Map, Value, json};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level};
 
-/// `time_ms` is milliseconds since the Unix epoch.
+use crate::span_record::{current_span_ids, hex};
+
+/// `time_ms` is milliseconds since the Unix epoch. Inside a span that
+/// `SpanRecordLayer` saw entered, the record also carries that span's
+/// `traceId` and `spanId`.
 pub fn log_record(event: &Event<'_>, time_ms: u64) -> Value {
     let mut visitor = FieldVisitor::default();
     event.record(&mut visitor);
     let metadata = event.metadata();
-    json!({
+    let mut record = json!({
         "timeMs": time_ms,
         "level": level_name(*metadata.level()),
         "target": metadata.target(),
         "message": visitor.message,
         "fields": visitor.fields,
-    })
+    });
+    if let Some((trace_id, span_id)) = current_span_ids() {
+        record["traceId"] = json!(hex(&trace_id));
+        record["spanId"] = json!(hex(&span_id));
+    }
+    record
 }
 
 fn level_name(level: Level) -> &'static str {
@@ -83,6 +92,7 @@ mod tests {
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
     use super::*;
+    use crate::{SpanRecordLayer, current_traceparent};
 
     struct CaptureLayer(Arc<Mutex<Vec<Value>>>);
 
@@ -94,7 +104,14 @@ mod tests {
 
     fn capture(emit: impl FnOnce()) -> Vec<Value> {
         let records = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = tracing_subscriber::registry().with(CaptureLayer(records.clone()));
+        let span_layer = SpanRecordLayer {
+            now_ms: || 1000,
+            random_byte: || 7,
+            emit: |_| {},
+        };
+        let subscriber = tracing_subscriber::registry()
+            .with(span_layer)
+            .with(CaptureLayer(records.clone()));
         tracing::subscriber::with_default(subscriber, emit);
         std::mem::take(&mut *records.lock().unwrap())
     }
@@ -155,5 +172,30 @@ mod tests {
                 "fields": {},
             })]
         );
+    }
+
+    #[test]
+    fn a_record_inside_a_span_carries_that_span_s_ids() {
+        // Arrange
+        let mut traceparent = None;
+
+        // Act
+        let records = capture(|| {
+            tracing::info_span!("moqt.publisher.publish_namespace").in_scope(|| {
+                tracing::info!("PUBLISH_NAMESPACE_OK received");
+                traceparent = current_traceparent();
+            });
+        });
+
+        // Assert
+        let [record] = records.as_slice() else {
+            panic!("{records:?}");
+        };
+        let ids = format!(
+            "00-{}-{}-01",
+            record["traceId"].as_str().unwrap(),
+            record["spanId"].as_str().unwrap()
+        );
+        assert_eq!(traceparent, Some(ids));
     }
 }

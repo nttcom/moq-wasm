@@ -341,8 +341,9 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   `{ groupId, subgroupId, objectId, payload, extensions, status }`。
 - wasm 内の `tracing` のログは `init({ onLog, logLevel })` で受け取る。`onLog` は
   `logLevel`（既定は `'warn'`）以上の event ごとに `LogRecord`
-  （`{ timeMs, level, target, message, fields }`）で呼ばれる。`onLog` を渡さなければ
-  ログは捨てる。wasm の subscriber はページ全体で1つなので、session の option では
+  （`{ timeMs, level, target, message, fields, traceId?, spanId? }`）で呼ばれる。`onLog` を渡さなければ
+  ログは捨てる。`onSpan` も渡していれば、span の中で書かれたログには
+  その span の `traceId` と `spanId` が付く。wasm の subscriber はページ全体で1つなので、session の option では
   なく `init` の option にし、`onLog` を付けた `init` を2回呼ぶと reject する。
   subscriber は `tracing-subscriber` の registry に自前の `Layer` を載せたもので、
   `crates/wasm/src/log_sink.rs` にある（`tracing-subscriber.md` を参照）。
@@ -370,6 +371,8 @@ export interface LogRecord {
   target: string                                               // Rust の module path
   message: string
   fields: Record<string, string | number | boolean>
+  traceId?: string                                             // onSpan があり、span の中で書かれたとき
+  spanId?: string
 }
 
 export interface ConnectOptions {
