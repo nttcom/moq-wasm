@@ -36,12 +36,12 @@ pub(crate) struct SessionContext {
     pub(crate) receiver_map: tokio::sync::Mutex<HashMap<u64, IncomingObjectReceiver>>,
     pub(crate) fetch_receiver_map:
         std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
-    /// `None` for a session that does not follow GOAWAY. A request holds
-    /// this lock while it is sent, and a migration holds the write lock while
-    /// it sends every carried request again, so no request sent during a
-    /// migration is skipped. PUBLISH takes only the read lock because it
-    /// records itself in `publications`.
-    pub(crate) carried: Option<tokio::sync::RwLock<CarriedRequests>>,
+    /// `None` for a session that does not follow GOAWAY. A new request holds the
+    /// read lock from before it is sent until it is recorded (a PUBLISH in
+    /// `publications`) or fails; a migration holds the write lock while it sends
+    /// every carried request again, so none is skipped. Requests edit the record
+    /// through the inner mutex, so they do not wait for one another's answers.
+    pub(crate) carried: Option<tokio::sync::RwLock<std::sync::Mutex<CarriedRequests>>>,
     /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
     /// keyed by logical request id, with every connection each is on. Read
     /// for every subgroup sent, so not behind `carried`.
@@ -93,6 +93,22 @@ pub(crate) struct CarriedRequests {
     pub(crate) subscriptions: HashMap<u64, CarriedSubscription>,
 }
 
+/// Keeps a migration from starting while it is held.
+pub(crate) struct CarriedGuard<'a>(
+    tokio::sync::RwLockReadGuard<'a, std::sync::Mutex<CarriedRequests>>,
+);
+
+impl CarriedGuard<'_> {
+    pub(crate) fn update<T>(&self, update: impl FnOnce(&mut CarriedRequests) -> T) -> T {
+        update(
+            &mut self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+}
+
 pub(crate) struct CarriedSubscription {
     pub(crate) track_namespace: String,
     pub(crate) track_name: String,
@@ -138,7 +154,7 @@ impl SessionContext {
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
-            carried: follows_go_away.then(|| tokio::sync::RwLock::new(CarriedRequests::default())),
+            carried: follows_go_away.then(tokio::sync::RwLock::default),
             publications: std::sync::Mutex::default(),
             served_changed: watch::channel(()).0,
             moves: watch::channel(false).0,
@@ -149,16 +165,8 @@ impl SessionContext {
         self.carried.is_some()
     }
 
-    pub(crate) async fn lock_carried(
-        &self,
-    ) -> Option<tokio::sync::RwLockWriteGuard<'_, CarriedRequests>> {
-        Some(self.carried.as_ref()?.write().await)
-    }
-
-    pub(crate) async fn read_carried(
-        &self,
-    ) -> Option<tokio::sync::RwLockReadGuard<'_, CarriedRequests>> {
-        Some(self.carried.as_ref()?.read().await)
+    pub(crate) async fn read_carried(&self) -> Option<CarriedGuard<'_>> {
+        Some(CarriedGuard(self.carried.as_ref()?.read().await))
     }
 
     /// The live connection a logical id belongs to, with its wire part.

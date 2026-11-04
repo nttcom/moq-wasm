@@ -435,7 +435,10 @@ async fn migrate(
         .carried
         .as_ref()
         .context("a session that follows GOAWAY carries its requests")?;
-    let mut carried = carried.write().await;
+    let mut migrating = carried.write().await;
+    let carried = migrating
+        .get_mut()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let moved_from = session.connection();
     for namespace in &carried.namespaces {
         retry_until(deadline, || {
@@ -507,7 +510,7 @@ async fn migrate(
         }
     }
     session.move_to(connection.clone());
-    drop(carried);
+    drop(migrating);
     Ok(Migrated {
         live: Live {
             connection,

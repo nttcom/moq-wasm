@@ -66,8 +66,8 @@ impl Subscriber {
     }
 
     async fn subscribe_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
-        let mut carried = loop {
-            let carried = self.session.lock_carried().await;
+        let carried = loop {
+            let carried = self.session.read_carried().await;
             let connection = self.session.connection();
             let sent = send_subscribe_namespace(&connection, namespace.clone()).await;
             record_request_id(&sent, |request_id| *request_id);
@@ -80,8 +80,8 @@ impl Subscriber {
                 }
             }
         };
-        if let Some(carried) = carried.as_mut() {
-            carried.namespaces.push(namespace);
+        if let Some(carried) = &carried {
+            carried.update(|carried| carried.namespaces.push(namespace));
         }
         Ok(())
     }
@@ -126,8 +126,8 @@ impl Subscriber {
         option: SubscribeOption,
         joining: bool,
     ) -> Result<(Subscription, Option<SentFetch>), RequestFailure> {
-        let (mut carried, connection, message, response, joining_fetch) = loop {
-            let carried = self.session.lock_carried().await;
+        let (carried, connection, message, response, joining_fetch) = loop {
+            let carried = self.session.read_carried().await;
             let connection = self.session.connection();
             let sent = async {
                 let sent =
@@ -189,15 +189,17 @@ impl Subscriber {
             "subscriber registered incoming object receiver after SUBSCRIBE_OK"
         );
         let request_id = logical_id(connection.generation, message.request_id);
-        if let Some(carried) = carried.as_mut() {
-            carried.subscriptions.insert(
-                request_id,
-                CarriedSubscription {
-                    track_namespace: track_namespace.clone(),
-                    track_name: track_name.clone(),
-                    option: option.clone(),
-                },
-            );
+        if let Some(carried) = &carried {
+            carried.update(|carried| {
+                carried.subscriptions.insert(
+                    request_id,
+                    CarriedSubscription {
+                        track_namespace: track_namespace.clone(),
+                        track_name: track_name.clone(),
+                        option: option.clone(),
+                    },
+                )
+            });
         }
         let message = SubscribeOk {
             request_id,
@@ -527,19 +529,22 @@ impl Subscriber {
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
         subscription.last_update().set(option);
-        let mut carried = self.session.lock_carried().await;
-        if let Some(carried) = carried
-            .as_mut()
-            .and_then(|carried| carried.subscriptions.get_mut(&subscription.request_id()))
-        {
-            carried.option.forward = option.forward;
-            carried.option.subscriber_priority = option.subscriber_priority;
-            if let Some(end_group) = option.end_group.checked_sub(1) {
-                carried.option.filter_type = FilterType::AbsoluteRange {
-                    location: option.start_location,
-                    end_group,
+        let carried = self.session.read_carried().await;
+        if let Some(carried) = &carried {
+            carried.update(|carried| {
+                let Some(carried) = carried.subscriptions.get_mut(&subscription.request_id())
+                else {
+                    return;
                 };
-            }
+                carried.option.forward = option.forward;
+                carried.option.subscriber_priority = option.subscriber_priority;
+                if let Some(end_group) = option.end_group.checked_sub(1) {
+                    carried.option.filter_type = FilterType::AbsoluteRange {
+                        location: option.start_location,
+                        end_group,
+                    };
+                }
+            });
         }
         for (connection, subscription_request_id) in
             self.on_live_connections(subscription.request_id())
@@ -602,8 +607,8 @@ impl Subscriber {
         fields(request_id = %subscription.request_id())
     )]
     pub async fn unsubscribe(&self, subscription: &Subscription) -> anyhow::Result<()> {
-        if let Some(carried) = self.session.lock_carried().await.as_mut() {
-            carried.subscriptions.remove(&subscription.request_id());
+        if let Some(carried) = self.session.read_carried().await {
+            carried.update(|carried| carried.subscriptions.remove(&subscription.request_id()));
         }
         for (connection, request_id) in self.on_live_connections(subscription.request_id()) {
             self.session
@@ -624,8 +629,8 @@ impl Subscriber {
         fields(track_namespace_prefix = %namespace)
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
-        if let Some(carried) = self.session.lock_carried().await.as_mut() {
-            carried.namespaces.retain(|carried| *carried != namespace);
+        if let Some(carried) = self.session.read_carried().await {
+            carried.update(|carried| carried.namespaces.retain(|carried| *carried != namespace));
         }
         let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
@@ -1015,8 +1020,9 @@ mod tests {
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, capture_telemetry, first_subgroup_stream,
                 location, notify_datagram, object_with_extensions, read_fetch_objects,
                 read_subgroup_objects, send_subgroup_object, send_without_waiting,
-                spawn_connected_native_sessions, subgroup_receiver, subscribe_namespace_accepted,
-                subscription, wait_for_control_delivery, within,
+                spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
+                subgroup_receiver, subscribe_namespace_accepted, subscription,
+                wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -2162,6 +2168,46 @@ mod tests {
             panic!("expected UNSUBSCRIBE_NAMESPACE, got {event:?}");
         };
         assert_eq!(handler.track_namespace_prefix(), "room/a");
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_does_not_wait_for_an_earlier_answer_when_following_go_away() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("concurrent-carried-subscribe").await;
+        let (first, _first_handler) = start_subscribe(&client, &server, "first").await;
+
+        // Act
+        let (second, second_handler) = start_subscribe(&client, &server, "second").await;
+
+        // Assert
+        assert_eq!(second_handler.track_name, "second");
+        first.abort();
+        second.abort();
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_namespace_does_not_wait_for_an_earlier_answer_when_following_go_away() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions_following_go_away(
+            "concurrent-carried-subscribe-namespace",
+        )
+        .await;
+        let subscriber = client.subscriber();
+        let first = tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await });
+        let SessionEvent::SubscribeNameSpace(_first_handler) =
+            within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE_NAMESPACE from the client");
+        };
+
+        // Act
+        let (second, second_handler) = start_subscribe(&client, &server, "second").await;
+
+        // Assert
+        assert_eq!(second_handler.track_name, "second");
+        first.abort();
+        second.abort();
     }
 
     #[tokio::test]

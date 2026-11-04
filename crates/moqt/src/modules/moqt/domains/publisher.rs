@@ -76,8 +76,8 @@ impl Publisher {
         &self,
         namespace: String,
     ) -> Result<(Arc<Connection>, PendingPublishNamespace), RequestFailure> {
-        let (mut carried, connection, pending) = loop {
-            let carried = self.session.lock_carried().await;
+        let (carried, connection, pending) = loop {
+            let carried = self.session.read_carried().await;
             let connection = self.session.connection();
             match send_publish_namespace(&connection, namespace.clone()).await {
                 Ok(pending) => break (carried, connection, pending),
@@ -88,8 +88,8 @@ impl Publisher {
                 }
             }
         };
-        if let Some(carried) = carried.as_mut() {
-            carried.published_namespaces.push(namespace);
+        if let Some(carried) = &carried {
+            carried.update(|carried| carried.published_namespaces.push(namespace));
         }
         Ok((connection, pending))
     }
@@ -97,10 +97,12 @@ impl Publisher {
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
     /// defines no response message for PUBLISH_NAMESPACE_DONE.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
-        if let Some(carried) = self.session.lock_carried().await.as_mut() {
-            carried
-                .published_namespaces
-                .retain(|carried| *carried != namespace);
+        if let Some(carried) = self.session.read_carried().await {
+            carried.update(|carried| {
+                carried
+                    .published_namespaces
+                    .retain(|carried| *carried != namespace)
+            });
         }
         let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
@@ -391,7 +393,8 @@ mod tests {
             test_support::{
                 HANDSHAKE_TIMEOUT, capture_telemetry, first_subgroup_stream,
                 object_with_extensions, read_subgroup_objects, send_subgroup_object,
-                send_without_waiting, spawn_connected_native_sessions, subgroup_receiver,
+                send_without_waiting, spawn_connected_native_sessions,
+                spawn_connected_native_sessions_following_go_away, subgroup_receiver,
                 wait_for_control_delivery, within,
             },
         },
@@ -405,21 +408,8 @@ mod tests {
     #[tokio::test]
     async fn concurrent_publishes_do_not_wait_for_an_earlier_response_when_following_go_away() {
         // Arrange
-        use crate::ClientConfig;
-        use crate::modules::test_support::{
-            connect_sessions_from, native_client_with_config, spawn_native_server,
-        };
-
-        let (port, accept) = spawn_native_server("concurrent-carried-publish");
-        let endpoint = native_client_with_config(ClientConfig {
-            verify_certificate: false,
-            follow_go_away: true,
-            ..ClientConfig::default()
-        });
         let (client, server) =
-            connect_sessions_from(&endpoint, &format!("moqt://127.0.0.1:{port}"), accept)
-                .await
-                .unwrap();
+            spawn_connected_native_sessions_following_go_away("concurrent-carried-publish").await;
 
         // Act
         let (first, _first_handler) = pending_publish(&client, &server, "first").await;
