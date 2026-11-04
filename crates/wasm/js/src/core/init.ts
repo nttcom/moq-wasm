@@ -29,12 +29,16 @@ export interface InitOptions {
   /// Overrides where the `.wasm` file is fetched from, for bundlers that do not
   /// rewrite `new URL('moqt_bg.wasm', import.meta.url)`.
   wasmUrl?: string | URL
-  /// Receives the wasm module's logs. Without it, they are discarded.
-  onLog?: (record: LogRecord) => void
+  /// Receives the wasm module's logs. Without it, they are discarded. `token` is the one
+  /// the record's `MoqSession` connected with (its provider's newest), `undefined` for a
+  /// record of no session or of a session without one. Put it only in the telemetry
+  /// report's `token`: the server stores a record's fields as they are.
+  onLog?: (record: LogRecord, token: string | undefined) => void
   /// The lowest level passed to `onLog`. Defaults to `'warn'`.
   logLevel?: LogLevel
-  /// Receives the wasm module's closed spans. Without it, they are discarded.
-  onSpan?: (record: SpanRecord) => void
+  /// Receives the wasm module's closed spans, with `token` as for `onLog`. Without it,
+  /// they are discarded.
+  onSpan?: (record: SpanRecord, token: string | undefined) => void
 }
 
 let loading: Promise<MoqtModule> | null = null

@@ -352,15 +352,27 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   （`{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`、id は小文字 hex）で
   渡る。`logLevel` は span には効かない。span を記録する `Layer` は
   `crates/client-telemetry/src/span_record.rs` にある。
+- `onLog` と `onSpan` は、レコードが属する session のトークンを第2引数で受け取る
+  （provider なら最後に返した値）。session に属さないレコードと、トークンのない
+  session のレコードでは `undefined`。テレメトリのレポートの `token` に入れるためのもので、
+  レコードの `fields` には入れない（ClickHouse にそのまま残る）。アプリは何もしなくてよい。
+  - 仕組み: `MoqSession.connect` ごとに wasm が `client-telemetry` の scope（番号）を1つ
+    割り当て、トークンを scope に結び付ける。session と、それが返すオブジェクト
+    （`Subscription`、`MediaBroadcast` など）のメソッドは、その scope の中で poll される。
+    moqt の browser 用 `executor::spawn` は `set_spawn_wrapper` で、spawn した側の scope を
+    タスクに引き継ぐので、session のタスクと broadcast のタスクも同じ scope になる。
+    span は親の scope を継ぐ。
+  - session を持たない `Mp4Broadcast`（トークンなしで自分で接続する）や、
+    scope の外で生まれたレコードは、トークンなしで渡る。
 
 形（TypeScript、抜粋）:
 
 ```ts
 export function init(options?: {
   wasmUrl?: string | URL
-  onLog?: (record: LogRecord) => void
+  onLog?: (record: LogRecord, token: string | undefined) => void
   logLevel?: LogLevel                                          // 既定は 'warn'
-  onSpan?: (record: SpanRecord) => void
+  onSpan?: (record: SpanRecord, token: string | undefined) => void
 }): Promise<void>
 export function connect(url: string, options?: ConnectOptions): Promise<Session>
 

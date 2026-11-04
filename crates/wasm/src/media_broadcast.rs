@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
-use crate::{anyhow_error, js_error};
+use crate::{anyhow_error, js_error, log_sink::SessionScope};
 
 /// An MSF broadcast of media the page encodes: it publishes the catalog, the
 /// LOC tracks and the media timeline, keeps objects for FETCH and answers
@@ -24,11 +24,13 @@ use crate::{anyhow_error, js_error};
 #[wasm_bindgen]
 pub struct MediaBroadcast {
     broadcast: Broadcast,
+    scope: SessionScope,
 }
 
 #[wasm_bindgen]
 pub struct MediaSource {
     writer: BroadcastWriter,
+    scope: SessionScope,
     tracks: SourceTracks,
     /// Reads a chunk as it reads a received LOC object: into the track's
     /// configuration changes and a sample.
@@ -50,9 +52,14 @@ enum RenditionCommand {
 }
 
 impl MediaBroadcast {
-    pub(crate) fn new(connection: RelayConnection, namespace: Vec<String>) -> Self {
+    pub(crate) fn new(
+        connection: RelayConnection,
+        namespace: Vec<String>,
+        scope: SessionScope,
+    ) -> Self {
         Self {
             broadcast: Broadcast::new(connection, namespace),
+            scope,
         }
     }
 }
@@ -61,15 +68,18 @@ impl MediaBroadcast {
 impl MediaBroadcast {
     /// Resolves once the namespace is announced (PUBLISH_NAMESPACE).
     pub async fn announce(&self) -> Result<(), JsValue> {
-        self.broadcast.announce().await.map_err(anyhow_error)
+        self.scope
+            .scoped(self.broadcast.announce())
+            .await
+            .map_err(anyhow_error)
     }
 
     /// Announces the namespace like `announce` and accepts SUBSCRIBEs for
     /// `track_names` before the catalog lists them.
     #[wasm_bindgen(js_name = declareTracks)]
     pub async fn declare_tracks(&self, track_names: Vec<String>) -> Result<(), JsValue> {
-        self.broadcast
-            .declare_tracks(&track_names)
+        self.scope
+            .scoped(self.broadcast.declare_tracks(&track_names))
             .await
             .map_err(anyhow_error)
     }
@@ -79,13 +89,13 @@ impl MediaBroadcast {
     #[wasm_bindgen(js_name = offerChat)]
     pub fn offer_chat(&self) -> Promise {
         let broadcast = self.broadcast.clone();
-        future_to_promise(async move {
+        future_to_promise(self.scope.scoped(async move {
             broadcast
                 .offer_chat()
                 .await
                 .map(|()| JsValue::UNDEFINED)
                 .map_err(anyhow_error)
-        })
+        }))
     }
 
     /// Only a source on the tracks `video` and `audio` brings the media
@@ -111,7 +121,10 @@ impl MediaBroadcast {
             video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
         };
         MediaSource {
-            writer: BroadcastWriter::run(self.broadcast.clone(), tracks.clone()),
+            writer: self
+                .scope
+                .in_scope(|| BroadcastWriter::run(self.broadcast.clone(), tracks.clone())),
+            scope: self.scope,
             tracks,
             video: None,
             renditions: Vec::new(),
@@ -166,13 +179,13 @@ impl MediaSource {
         } else {
             Vec::new()
         };
-        Ok(future_to_promise(async move {
+        Ok(future_to_promise(self.scope.scoped(async move {
             let mut result = removal.await;
             for removed in renditions {
                 result = result.and(removed.await);
             }
             result.map(|()| JsValue::UNDEFINED).map_err(anyhow_error)
-        }))
+        })))
     }
 
     /// Adds a rendition of the video in the track `<video track>_<name>`, in the
@@ -193,7 +206,8 @@ impl MediaSource {
         let track_name = config.track.clone();
         let mut track = RenditionTrack::new(&self.writer, config);
         let (command_sender, mut command_receiver) = mpsc::unbounded_channel();
-        let task = executor::spawn("media-broadcast-rendition", async move {
+        let task = self.scope.in_scope(|| {
+            executor::spawn("media-broadcast-rendition", async move {
             while let Some(command) = command_receiver.recv().await {
                 match command {
                     RenditionCommand::Event(event) => {
@@ -206,6 +220,7 @@ impl MediaSource {
                     }
                 }
             }
+            })
         });
         self.renditions.push(Rendition {
             command_sender,
