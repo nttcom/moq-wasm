@@ -51,12 +51,6 @@ impl InterRelayConnectionManager {
         }
 
         let session_id = generate_session_id();
-        let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
-            verify_certificate: false,
-            authorization_token: Some(self.relay_token.clone().into()),
-            follow_go_away: false,
-            ..moqt::ClientConfig::default()
-        })?;
         let relay_hostname = relay_hostname();
         // A session outlives the request that dials it, so its span roots its own trace.
         // moqt creates its session span inside this one.
@@ -70,6 +64,16 @@ impl InterRelayConnectionManager {
             relay_host = %relay.host,
             relay_port = relay.port,
         );
+        // quinn spawns the endpoint driver in the span current at creation, which
+        // would hold the dialing request's span open for the endpoint's lifetime.
+        let endpoint = session_span.in_scope(|| {
+            moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
+                verify_certificate: false,
+                authorization_token: Some(self.relay_token.clone().into()),
+                follow_go_away: false,
+                ..moqt::ClientConfig::default()
+            })
+        })?;
         let session = tokio::time::timeout(CONNECT_TIMEOUT, async {
             endpoint
                 .connect(&format!("moqt://{}:{}", relay.host, relay.port))
@@ -99,5 +103,51 @@ impl InterRelayConnectionManager {
             "inter-relay QUIC session established"
         );
         Ok(session_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use super::*;
+    use crate::modules::{
+        auth::test_support::{app_token, spawn_relay_with_verifier},
+        test_support::{closed_spans::ClosedSpans, mock_session::detached_session_repository},
+    };
+
+    #[tokio::test]
+    async fn the_request_that_dials_a_relay_closes_while_the_session_lives() {
+        // Arrange
+        let closed_spans = ClosedSpans::default();
+        let _default = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(closed_spans.clone()),
+        );
+        let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;
+        let manager = InterRelayConnectionManager::new(
+            Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
+            "relay-token".to_string(),
+        );
+        let relay_info = RelayInfo {
+            relay_id: "relay-1".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: relay.port,
+        };
+        let request_span = tracing::info_span!("relay.publish_namespace");
+
+        // Act
+        manager
+            .get_or_connect(&relay_info)
+            .instrument(request_span.clone())
+            .await
+            .unwrap();
+        drop(request_span);
+
+        // Assert
+        assert!(
+            closed_spans.contains("relay.publish_namespace"),
+            "closed spans: {:?}",
+            closed_spans.names()
+        );
     }
 }

@@ -236,7 +236,8 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   `relay.inter_relay.session`) roots its own trace too, linked to the
   request: a tracing span closes only after its children, so a long-lived
   child would hold the request's trace open, unexported, for as long as it
-  lives. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
+  lives. The task behind such a span only borrows the request span to link
+  it; keeping a `Span` handle would hold the request span open the same way. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
   `VerifiedToken` (looked up once when the worker starts and replaced when a
   TRACK_STATUS token refresh succeeds). PUBLISH and
   PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,

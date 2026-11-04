@@ -200,18 +200,20 @@ pub(crate) async fn start_ingest(
         max_cache_duration: subscription.max_cache_duration(),
         persist,
     };
-    Some(IngestTask::run(IngestStart {
-        cache: cache_store.get_or_create(&track_key),
-        track_key,
-        subscriber_session_id,
-        publisher_session_id,
-        subscriber,
-        subscription,
-        publisher_mailbox_sender,
-        stamp,
-        request_span: Span::current(),
-        publisher_session_span,
-    }))
+    Some(IngestTask::run(
+        IngestStart {
+            cache: cache_store.get_or_create(&track_key),
+            track_key,
+            subscriber_session_id,
+            publisher_session_id,
+            subscriber,
+            subscription,
+            publisher_mailbox_sender,
+            stamp,
+            publisher_session_span,
+        },
+        &Span::current(),
+    ))
 }
 
 pub(crate) struct EgressRequest {
