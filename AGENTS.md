@@ -117,7 +117,8 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `media_source` | Which of a member's videos a browser plays: `camera` or `screenshare` |
 | `track_alias` | The track alias on the session the log is about |
 | `error` | The failure, as `%error` or `?error` |
-| `outcome` | How a call the relay makes to another service ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`) |
+| `is_relay` | Whether a token's app is a relay |
+| `outcome` | How a call between services ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`; `vts.request`: `verified`, `malformed_token`, `unknown_app` or `invalid_signature`) |
 | `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
 | `url` | The URL a client connects to |
 | `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |

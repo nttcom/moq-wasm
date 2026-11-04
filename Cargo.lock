@@ -3978,6 +3978,7 @@ dependencies = [
  "telemetry",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

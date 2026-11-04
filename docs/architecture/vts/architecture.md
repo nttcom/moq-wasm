@@ -79,6 +79,9 @@ sequenceDiagram
   falling back to `RUST_LOG`.
 - Every request runs in a `vts.request` span that continues the caller's
   trace from its W3C `traceparent` header, so a verification shows up under
-  the relay's `relay.vts.verify` span.
+  the relay's `relay.vts.verify` span. A `/verify` that reaches the registry
+  records `outcome` on the span: `verified`, with the token's `app_id` and
+  `is_relay`, or the rejection reason that `verify rejected` logs. The token
+  and secrets stay out of the span.
 - The Docker image (`services/vts/Dockerfile`) is a `cargo-chef` build onto
   `distroless/cc`, the same base as the relay, and ships `vts`.
