@@ -17,12 +17,15 @@ records go stays with each client.
 | `log_record` | One event as `{ timeMs, level, target, message, fields, traceId?, spanId? }`; the ids are those of the innermost span `SpanRecordLayer` saw entered |
 | `SpanRecordLayer` | A `Layer` that gives each span a trace and span id, and hands it to `emit` on close as `{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`, with its scope |
 | `current_traceparent` | The innermost span `SpanRecordLayer` saw entered on this thread, as a W3C `traceparent`; clients give it to `moqt::set_trace_context_provider` |
+| `continue_trace_from_traceparent` | Makes a span not yet entered the child of the remote span a `traceparent` names, as the wasm module does for the answers to a peer's request that carries TRACE_CONTEXT |
 | `ReportBuffer` | The newest 100 logs and 100 spans since a client last took them, the most one report carries |
 | `report_layer` | `log_record` and `SpanRecordLayer` writing into a `ReportBuffer`, timed by `SystemTime` and std's randomly keyed hasher, for the native clients (`moq-cli`, the Python module) |
 
 ## Invariants
 - A child span takes its parent's trace id; a span without a parent starts a
-  new trace.
+  new trace, unless `continue_trace_from_traceparent` gives it a remote
+  parent before it is entered. Under a subscriber not built on a `Registry`,
+  that function does nothing.
 - A span takes its parent's scope, else the current scope where it was opened.
   The current scope is that of the innermost span `SpanRecordLayer` saw
   entered, else that of the running `scoped` future or `in_scope` call, so an
