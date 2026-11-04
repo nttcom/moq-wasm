@@ -252,7 +252,7 @@ impl Origin {
                 join_point: None,
             },
         );
-        tracing::info!(
+        tracing::debug!(
             track_namespace = namespace,
             track_name,
             track_alias,
