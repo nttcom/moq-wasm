@@ -304,6 +304,8 @@ pub(crate) async fn send_publish_namespace(
         .await?;
     Ok(PendingPublishNamespace {
         request_id,
+        track_namespace: namespace,
+        sent_at: now(),
         pending,
     })
 }
@@ -482,6 +484,33 @@ mod tests {
             .await
             .expect("PUBLISH_NAMESPACE_OK should resolve the pending request")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn publish_namespace_ok_is_logged_with_the_request_id_of_the_span() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) =
+            spawn_connected_native_sessions("publisher-publish-namespace-ok-log").await;
+        let publisher = client.publisher();
+        let request =
+            tokio::spawn(async move { publisher.publish_namespace("a/b".to_string()).await });
+        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+
+        // Act
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+
+        // Assert
+        let logged = telemetry.events("PUBLISH_NAMESPACE_OK received");
+        let spans = telemetry.closed_spans("moqt.publisher.publish_namespace");
+        assert_eq!(logged.len(), 1);
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].field("request_id").is_some());
+        assert_eq!(spans[0].field("request_id"), logged[0].field("request_id"));
+        assert_eq!(logged[0].field("track_namespace"), Some("a/b"));
     }
 
     #[tokio::test]

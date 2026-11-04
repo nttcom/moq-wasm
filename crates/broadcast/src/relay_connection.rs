@@ -296,19 +296,19 @@ impl ConnectedRelay {
                 match event {
                     SessionEvent::PublishNamespace(handler) => {
                         if let Err(err) = handler.ok().await {
-                            tracing::warn!(namespace = %handler.track_namespace, ?err, "failed to ack PUBLISH_NAMESPACE");
+                            tracing::warn!(track_namespace = %handler.track_namespace, ?err, "failed to ack PUBLISH_NAMESPACE");
                         }
                     }
                     SessionEvent::PublishNamespaceDone(handler) => {
-                        tracing::info!(namespace = %handler.track_namespace, "PUBLISH_NAMESPACE_DONE received");
+                        tracing::info!(track_namespace = %handler.track_namespace, "PUBLISH_NAMESPACE_DONE received");
                     }
                     SessionEvent::SubscribeNameSpace(handler) => {
                         if let Err(err) = handler.ok().await {
-                            tracing::warn!(prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
+                            tracing::warn!(track_namespace_prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
                         }
                     }
                     SessionEvent::UnsubscribeNamespace(handler) => {
-                        tracing::info!(prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
+                        tracing::info!(track_namespace_prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
                     }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
                     SessionEvent::Subscribe(handler) => {
@@ -330,7 +330,7 @@ impl ConnectedRelay {
                         );
                     }
                     SessionEvent::Publish(handler) => {
-                        tracing::warn!(namespace = %handler.track_namespace, track = %handler.track_name, "unexpected PUBLISH received");
+                        tracing::warn!(track_namespace = %handler.track_namespace, track_name = %handler.track_name, "unexpected PUBLISH received");
                     }
                     event => {
                         tracing::debug!(?event, "unhandled control message");
@@ -359,7 +359,6 @@ impl ConnectedRelay {
                 .with_context(|| format!("publish_namespace {}", namespace_path))?;
             let mut guard = self.state.lock().await;
             guard.announced_namespaces.insert(namespace_path.clone());
-            tracing::info!(namespace = %namespace_path, "namespace published");
         }
         Ok(())
     }
@@ -430,13 +429,13 @@ impl ConnectedRelay {
                 )
                 .await
             {
-                tracing::warn!(%namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
+                tracing::warn!(track_namespace = %namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
             }
             return None;
         }
         ensure_origin_track(origin, &(namespace.clone(), track_name.clone())).await;
         if let Err(err) = origin.accept_subscribe(handler).await {
-            tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
+            tracing::warn!(track_namespace = %namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
             return None;
         }
         state
@@ -579,7 +578,7 @@ impl ConnectedRelay {
                 .await?;
         }
         let payload = Bytes::from(serde_json::to_vec(&catalog).context("serialize msf catalog")?);
-        tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
+        tracing::debug!(track_namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
         self.state.lock().await.catalog_sent.insert(
             namespace_path.to_string(),
             CatalogSent {
@@ -599,13 +598,13 @@ impl ConnectedRelay {
                     .open(CATALOG_TRACK_NAME, placement.location.group_id);
                 self.ledger.add_object(CATALOG_TRACK_NAME, bytes);
                 self.ledger.finish(CATALOG_TRACK_NAME);
-                tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
+                tracing::info!(track_namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
             }
             WriteOutcome::Stopped(placement) => {
                 self.ledger
                     .open(CATALOG_TRACK_NAME, placement.location.group_id);
                 self.ledger.finish(CATALOG_TRACK_NAME);
-                tracing::info!(namespace = %namespace_path, "subscriber stopped the catalog group");
+                tracing::info!(track_namespace = %namespace_path, "subscriber stopped the catalog group");
             }
             WriteOutcome::NotSent => {}
         }
@@ -642,7 +641,7 @@ impl RelayEvents {
                     return Some(SessionEvent::Unsubscribe(handler));
                 };
                 self.ledger.finish(&track_name);
-                tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
+                tracing::info!(request_id, track_namespace = %namespace, %track_name, "UNSUBSCRIBE received; track released");
                 None
             }
             event @ (SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()) => {
