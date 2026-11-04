@@ -172,7 +172,7 @@ async function main() {
     childProcesses.push(ffmpeg);
     await waitForOutput(
       bridge,
-      /namespace published/,
+      /PUBLISH_NAMESPACE_OK received/,
       "live-ingest publish",
       60_000,
     );

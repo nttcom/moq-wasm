@@ -359,7 +359,6 @@ impl ConnectedRelay {
                 .with_context(|| format!("publish_namespace {}", namespace_path))?;
             let mut guard = self.state.lock().await;
             guard.announced_namespaces.insert(namespace_path.clone());
-            tracing::info!(namespace = %namespace_path, "namespace published");
         }
         Ok(())
     }
