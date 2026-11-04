@@ -69,6 +69,9 @@ async fn handle(
         "http.request.method" = %head.method,
         "url.path" = head.uri.path(),
         "http.response.status_code" = tracing::field::Empty,
+        app_id = tracing::field::Empty,
+        is_relay = tracing::field::Empty,
+        outcome = tracing::field::Empty,
     );
     telemetry::continue_trace_from(&span, &head.headers);
     let response = async {
@@ -93,8 +96,12 @@ async fn verify(body: Incoming, registry: &Registry) -> JsonResponse {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
     let apps = registry.current().await;
+    let span = tracing::Span::current();
     match verify_token(&request.token, &apps) {
         Ok(verified) => {
+            span.record("app_id", verified.app_id.as_str());
+            span.record("is_relay", verified.is_relay);
+            span.record("outcome", "verified");
             tracing::info!(app_id = %verified.app_id, is_relay = verified.is_relay, "verify ok");
             json_response(
                 StatusCode::OK,
@@ -106,6 +113,7 @@ async fn verify(body: Incoming, registry: &Registry) -> JsonResponse {
             )
         }
         Err(reason) => {
+            span.record("outcome", reason.as_str());
             tracing::info!(reason = reason.as_str(), "verify rejected");
             error_response(StatusCode::UNAUTHORIZED, reason.as_str())
         }
@@ -130,7 +138,9 @@ mod tests {
     use app_registry::testing::TemporaryRegistryFile;
 
     use super::*;
-    use crate::test_support::{APP_SECRET, app_claims, test_apps_json, token};
+    use crate::test_support::{
+        APP_SECRET, app_claims, capture_recorded_fields, test_apps_json, token,
+    };
 
     struct TestServer {
         base_url: String,
@@ -197,6 +207,42 @@ mod tests {
             response.json::<Value>().await.unwrap(),
             json!({ "error": "invalid_signature" })
         );
+    }
+
+    #[tokio::test]
+    async fn post_verify_records_the_app_on_the_request_span_for_a_valid_token() {
+        // Arrange
+        let (recorded, _guard) = capture_recorded_fields();
+        let server = start_server().await;
+        let signed = token(&app_claims(), APP_SECRET);
+        let body = json!({ "token": signed }).to_string();
+
+        // Act
+        post_verify(&server, body).await;
+
+        // Assert
+        let fields = recorded.of("vts.request");
+        assert_eq!(fields["app_id"], "APP");
+        assert_eq!(fields["is_relay"], "false");
+        assert_eq!(fields["outcome"], "verified");
+        assert!(fields.values().all(|value| !value.contains(&signed)));
+    }
+
+    #[tokio::test]
+    async fn post_verify_records_the_reason_on_the_request_span_for_a_rejected_token() {
+        // Arrange
+        let (recorded, _guard) = capture_recorded_fields();
+        let server = start_server().await;
+        let body = json!({ "token": token(&app_claims(), "wrong") }).to_string();
+
+        // Act
+        post_verify(&server, body).await;
+
+        // Assert
+        let fields = recorded.of("vts.request");
+        assert_eq!(fields["outcome"], "invalid_signature");
+        assert!(!fields.contains_key("app_id"));
+        assert!(!fields.contains_key("is_relay"));
     }
 
     #[tokio::test]
