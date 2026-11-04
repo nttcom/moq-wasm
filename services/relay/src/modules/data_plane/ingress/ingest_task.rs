@@ -38,8 +38,6 @@ pub(crate) struct IngestStart {
     pub(crate) cache: Arc<TrackCache>,
     pub(crate) publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
     pub(crate) stamp: CacheStamp,
-    /// The request that starts the ingest.
-    pub(crate) request_span: Span,
     pub(crate) publisher_session_span: Span,
 }
 
@@ -52,7 +50,9 @@ pub(crate) struct IngestTask {
 }
 
 impl IngestTask {
-    pub(crate) fn run(start: IngestStart) -> Self {
+    /// Only links `request_span`: a clone kept by the task would hold the
+    /// request span open until the track ends.
+    pub(crate) fn run(start: IngestStart, request_span: &Span) -> Self {
         let (stop_sender, stop_receiver) = watch::channel(false);
         // The ingest outlives the request that starts it, so its span roots
         // its own trace, linked to the request and to the publisher session.
@@ -65,7 +65,7 @@ impl IngestTask {
             track_namespace = %start.track_key.track_namespace,
             track_name = %start.track_key.track_name,
         );
-        link_span(&span, &start.request_span);
+        link_span(&span, request_span);
         link_span(&span, &start.publisher_session_span);
         let join_handle = tokio::spawn(Self::ingest(start, stop_receiver).instrument(span));
         Self {
@@ -162,6 +162,12 @@ impl IngestTask {
 
 #[cfg(test)]
 mod tests {
+    use tracing_subscriber::{
+        Layer,
+        layer::{Context, SubscriberExt},
+        registry::LookupSpan,
+    };
+
     use super::*;
     use crate::modules::{
         session::{Session, data_receiver::stream_receiver::StreamReceiver},
@@ -199,28 +205,74 @@ mod tests {
     /// equals its session id, and waits until it created the publisher's
     /// data receiver.
     async fn start(cache: &Arc<TrackCache>, publisher_session_id: SessionId) -> UpstreamPublisher {
+        start_in_request(cache, publisher_session_id, &Span::none()).await
+    }
+
+    async fn start_in_request(
+        cache: &Arc<TrackCache>,
+        publisher_session_id: SessionId,
+        request_span: &Span,
+    ) -> UpstreamPublisher {
         let recorded = RecordedControlMessages::default();
         let stream_sender = recorded.feed_streams();
         let session = MockUpstreamSession::new(recorded.clone());
         let (publisher_mailbox_sender, _publisher_mailbox_receiver) = mpsc::unbounded_channel();
-        let ingest = IngestTask::run(IngestStart {
-            track_key: TrackKey::new("ns", "track"),
-            subscriber_session_id: 3,
-            publisher_session_id,
-            subscriber: session.as_subscriber(),
-            subscription: upstream_subscription(publisher_session_id),
-            cache: cache.clone(),
-            publisher_mailbox_sender,
-            stamp: CacheStamp::default(),
-            request_span: Span::none(),
-            publisher_session_span: Span::none(),
-        });
+        let ingest = IngestTask::run(
+            IngestStart {
+                track_key: TrackKey::new("ns", "track"),
+                subscriber_session_id: 3,
+                publisher_session_id,
+                subscriber: session.as_subscriber(),
+                subscription: upstream_subscription(publisher_session_id),
+                cache: cache.clone(),
+                publisher_mailbox_sender,
+                stamp: CacheStamp::default(),
+                publisher_session_span: Span::none(),
+            },
+            request_span,
+        );
         recorded.wait_ingest_started(publisher_session_id).await;
         UpstreamPublisher {
             recorded,
             stream_sender,
             _ingest: ingest,
         }
+    }
+
+    #[derive(Clone, Default)]
+    struct ClosedSpans(Arc<std::sync::Mutex<Vec<&'static str>>>);
+
+    impl<S> Layer<S> for ClosedSpans
+    where
+        S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_close(&self, id: tracing::span::Id, ctx: Context<'_, S>) {
+            if let Some(span) = ctx.span(&id) {
+                self.0.lock().unwrap().push(span.name());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_request_span_closes_while_the_ingest_runs() {
+        // Arrange
+        let closed_spans = ClosedSpans::default();
+        let _default = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(closed_spans.clone()),
+        );
+        let cache = Arc::new(TrackCache::new());
+        let request_span = tracing::info_span!("relay.publish");
+
+        // Act
+        let _publisher = start_in_request(&cache, FIRST_PUBLISHER, &request_span).await;
+        drop(request_span);
+
+        // Assert
+        let closed = closed_spans.0.lock().unwrap().clone();
+        assert!(
+            closed.contains(&"relay.publish"),
+            "closed spans: {closed:?}"
+        );
     }
 
     #[tokio::test]
