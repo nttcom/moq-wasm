@@ -47,7 +47,7 @@ async fn send_client_setup(
     send_stream
         .send(ControlMessageType::ClientSetup, payload)
         .await?;
-    tracing::debug!("Sent client setup.");
+    tracing::info!(supported_versions = ?[constants::MOQ_TRANSPORT_VERSION], "CLIENT_SETUP sent");
     Ok(())
 }
 
@@ -65,9 +65,9 @@ async fn receive_server_setup(
     };
     match received_message {
         ReceivedMessage::ServerSetup(server_setup) => {
-            tracing::debug!(
+            tracing::info!(
                 selected_version = server_setup.selected_version,
-                "Received server setup"
+                "SERVER_SETUP received"
             );
             Ok(server_setup)
         }
@@ -89,9 +89,9 @@ async fn receive_client_setup(
     };
     match received_message {
         ReceivedMessage::ClientSetup(client_setup) => {
-            tracing::debug!(
+            tracing::info!(
                 supported_versions = ?client_setup.supported_versions,
-                "Received client setup"
+                "CLIENT_SETUP received"
             );
             Ok(client_setup)
         }
@@ -124,7 +124,12 @@ async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<(
     Ok(send_stream
         .send(ControlMessageType::ServerSetup, payload)
         .await
-        .inspect(|_| tracing::debug!("ServerSetup is sent."))?)
+        .inspect(|_| {
+            tracing::info!(
+                selected_version = MOQ_TRANSPORT_VERSION,
+                "SERVER_SETUP sent"
+            )
+        })?)
 }
 
 /// Opens the control stream and exchanges CLIENT_SETUP / SERVER_SETUP
