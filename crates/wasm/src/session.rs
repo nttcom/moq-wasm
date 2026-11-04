@@ -25,6 +25,7 @@ use broadcast::RelayConnection;
 use crate::{
     anyhow_error, js_error,
     loc::{encode_loc_header, parse_loc_header},
+    log_sink::SessionScope,
     media_broadcast::MediaBroadcast,
     request_rejection::request_failure_code,
     session_routes::{NamespaceEvents, SessionRoutes},
@@ -40,6 +41,7 @@ const DEFAULT_RETENTION: Duration = Duration::from_secs(60);
 pub struct Session {
     session: Arc<MoqtSession>,
     routes: Rc<SessionRoutes>,
+    scope: SessionScope,
     closed: Promise,
     _endpoint: Endpoint<BROWSER>,
 }
@@ -50,50 +52,15 @@ impl Session {
     /// called before each CLIENT_SETUP, or `undefined`. The session follows
     /// GOAWAY and reconnects by itself. `wasm_load_wait_ms` is how long the
     /// caller waited for this module to load.
-    // The browser session is !Send, but wasm32 runs on one thread; `broadcast`
-    // takes the session as an Arc.
-    #[allow(clippy::arc_with_non_send_sync)]
     pub async fn connect(
         url: String,
         token: JsValue,
         wasm_load_wait_ms: f64,
     ) -> Result<Session, JsValue> {
-        tracing::info!(%url, wasm_load_wait_ms, "session connect requested");
-        let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
-            authorization_token: token_source(token)?,
-            ..ClientConfig::default()
-        })
-        .map_err(anyhow_error)?;
-        let session = endpoint
-            .connect(&url)
+        let scope = SessionScope::new();
+        scope
+            .scoped(connect_session(url, token, wasm_load_wait_ms, scope))
             .await
-            .map_err(anyhow_error)?
-            .await
-            .map_err(anyhow_error)?;
-        let session = Arc::new(session);
-        let routes = Rc::new(SessionRoutes::default());
-        spawn_local({
-            let session = session.clone();
-            let routes = routes.clone();
-            async move { routes.route(&session).await }
-        });
-        let closed = future_to_promise({
-            let session = session.clone();
-            async move {
-                let close = session.closed().await;
-                Ok(CloseInfo {
-                    code: close.code,
-                    reason: close.reason,
-                }
-                .into())
-            }
-        });
-        Ok(Self {
-            session,
-            routes,
-            closed,
-            _endpoint: endpoint,
-        })
     }
 
     /// `"webtransport"`, or `"websocket"` once the session fell back to QMux
@@ -124,19 +91,23 @@ impl Session {
         forward: Option<bool>,
         priority: Option<u8>,
     ) -> Result<Subscription, JsValue> {
-        let defaults = SubscribeOption::default();
-        let option = SubscribeOption {
-            filter_type: filter_type(filter.as_deref())?,
-            forward: forward.unwrap_or(true),
-            subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
-            ..defaults
-        };
-        let mut subscriber = self.session.subscriber();
-        let subscription = subscriber
-            .subscribe(namespace.join("/"), track, option)
+        self.scope
+            .scoped(async {
+                let defaults = SubscribeOption::default();
+                let option = SubscribeOption {
+                    filter_type: filter_type(filter.as_deref())?,
+                    forward: forward.unwrap_or(true),
+                    subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
+                    ..defaults
+                };
+                let mut subscriber = self.session.subscriber();
+                let subscription = subscriber
+                    .subscribe(namespace.join("/"), track, option)
+                    .await
+                    .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
+                Ok(Subscription::new(self, subscription, Reading::Unstarted))
+            })
             .await
-            .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
-        Ok(Subscription::new(self, subscription, Reading::Unstarted))
     }
 
     /// Subscribes and reads the group the largest object is in from its first
@@ -147,17 +118,21 @@ impl Session {
         namespace: Vec<String>,
         track: String,
     ) -> Result<Subscription, JsValue> {
-        let (subscription, reader) = self
-            .session
-            .subscriber()
-            .subscribe_current_group(namespace.join("/"), track)
+        self.scope
+            .scoped(async {
+                let (subscription, reader) = self
+                    .session
+                    .subscriber()
+                    .subscribe_current_group(namespace.join("/"), track)
+                    .await
+                    .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
+                Ok(Subscription::new(
+                    self,
+                    subscription,
+                    Reading::Objects(reader),
+                ))
+            })
             .await
-            .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
-        Ok(Subscription::new(
-            self,
-            subscription,
-            Reading::Objects(reader),
-        ))
     }
 
     /// A Standalone FETCH (draft-14 §9.16.1). `end_object` is the End
@@ -172,30 +147,35 @@ impl Session {
         end_group: u64,
         end_object: u64,
     ) -> Result<FetchStream, JsValue> {
-        let mut subscriber = self.session.subscriber();
-        let handle = subscriber
-            .fetch(
-                namespace.join("/"),
-                track,
-                Location {
-                    group_id: start_group,
-                    object_id: start_object,
-                },
-                Location {
-                    group_id: end_group,
-                    object_id: end_object,
-                },
-                FetchOption::default(),
-            )
+        self.scope
+            .scoped(async {
+                let mut subscriber = self.session.subscriber();
+                let handle = subscriber
+                    .fetch(
+                        namespace.join("/"),
+                        track,
+                        Location {
+                            group_id: start_group,
+                            object_id: start_object,
+                        },
+                        Location {
+                            group_id: end_group,
+                            object_id: end_object,
+                        },
+                        FetchOption::default(),
+                    )
+                    .await
+                    .map_err(|error| request_error(RequestKind::Fetch, &error))?;
+                let receiver = subscriber
+                    .accept_fetch_receiver(&handle)
+                    .await
+                    .map_err(anyhow_error)?;
+                Ok(FetchStream {
+                    receiver: Rc::new(Mutex::new(receiver)),
+                    scope: self.scope,
+                })
+            })
             .await
-            .map_err(|error| request_error(RequestKind::Fetch, &error))?;
-        let receiver = subscriber
-            .accept_fetch_receiver(&handle)
-            .await
-            .map_err(anyhow_error)?;
-        Ok(FetchStream {
-            receiver: Rc::new(Mutex::new(receiver)),
-        })
     }
 
     /// TRACK_STATUS (draft-14 §9.20). Resolves to the track's largest
@@ -206,42 +186,56 @@ impl Session {
         namespace: Vec<String>,
         track: String,
     ) -> Result<Option<MoqLocation>, JsValue> {
-        let status = self
-            .session
-            .subscriber()
-            .track_status(namespace.join("/"), track, Vec::new())
+        self.scope
+            .scoped(async {
+                let status = self
+                    .session
+                    .subscriber()
+                    .track_status(namespace.join("/"), track, Vec::new())
+                    .await
+                    .map_err(|error| request_error(RequestKind::TrackStatus, &error))?;
+                Ok(largest(status.content_exists))
+            })
             .await
-            .map_err(|error| request_error(RequestKind::TrackStatus, &error))?;
-        Ok(largest(status.content_exists))
     }
 
     #[wasm_bindgen(js_name = watchNamespaces)]
     pub async fn watch_namespaces(&self, prefix: Vec<String>) -> Result<NamespaceWatch, JsValue> {
-        let events = self.routes.watch(prefix.clone());
-        self.session
-            .subscriber()
-            .subscribe_namespace(prefix.join("/"))
+        self.scope
+            .scoped(async {
+                let events = self.routes.watch(prefix.clone());
+                self.session
+                    .subscriber()
+                    .subscribe_namespace(prefix.join("/"))
+                    .await
+                    .map_err(|error| request_error(RequestKind::SubscribeNamespace, &error))?;
+                Ok(NamespaceWatch {
+                    session: self.session.clone(),
+                    scope: self.scope,
+                    prefix,
+                    events: Rc::new(events),
+                })
+            })
             .await
-            .map_err(|error| request_error(RequestKind::SubscribeNamespace, &error))?;
-        Ok(NamespaceWatch {
-            session: self.session.clone(),
-            prefix,
-            events: Rc::new(events),
-        })
     }
 
     /// PUBLISH_NAMESPACE (draft-14 §9.23).
     pub async fn announce(&self, namespace: Vec<String>) -> Result<Announcement, JsValue> {
-        let namespace = namespace.join("/");
-        self.session
-            .publisher()
-            .publish_namespace(namespace.clone())
+        self.scope
+            .scoped(async {
+                let namespace = namespace.join("/");
+                self.session
+                    .publisher()
+                    .publish_namespace(namespace.clone())
+                    .await
+                    .map_err(|error| request_error(RequestKind::PublishNamespace, &error))?;
+                Ok(Announcement {
+                    session: self.session.clone(),
+                    scope: self.scope,
+                    namespace,
+                })
+            })
             .await
-            .map_err(|error| request_error(RequestKind::PublishNamespace, &error))?;
-        Ok(Announcement {
-            session: self.session.clone(),
-            namespace,
-        })
     }
 
     /// Registers a track to publish. The cache keeps objects for `retention_ms`
@@ -256,41 +250,48 @@ impl Session {
         retention_ms: Option<f64>,
         publish: Option<bool>,
     ) -> Result<TrackWriter, JsValue> {
-        let namespace = namespace.join("/");
-        let retention = match retention_ms {
-            None => Retention::For(DEFAULT_RETENTION),
-            Some(0.0) => Retention::NewestOnly,
-            Some(ms) => Retention::For(Duration::from_secs_f64(ms / 1000.0)),
-        };
-        let origin = &self.routes.origin;
-        origin
-            .ensure_track(
-                &namespace,
-                &track,
-                executor::system_time().as_micros() as u64,
-                retention,
-            )
-            .await;
-        if publish.unwrap_or(false) {
-            origin
-                .publish(&self.session, &namespace, &track)
-                .await
-                .map_err(anyhow_error)?;
-        }
-        Ok(TrackWriter {
-            subscribers: Mutex::new(self.routes.watch_subscribers(&namespace, &track)),
-            routes: self.routes.clone(),
-            namespace,
-            track,
-        })
+        self.scope
+            .scoped(async {
+                let namespace = namespace.join("/");
+                let retention = match retention_ms {
+                    None => Retention::For(DEFAULT_RETENTION),
+                    Some(0.0) => Retention::NewestOnly,
+                    Some(ms) => Retention::For(Duration::from_secs_f64(ms / 1000.0)),
+                };
+                let origin = &self.routes.origin;
+                origin
+                    .ensure_track(
+                        &namespace,
+                        &track,
+                        executor::system_time().as_micros() as u64,
+                        retention,
+                    )
+                    .await;
+                if publish.unwrap_or(false) {
+                    origin
+                        .publish(&self.session, &namespace, &track)
+                        .await
+                        .map_err(anyhow_error)?;
+                }
+                Ok(TrackWriter {
+                    subscribers: Mutex::new(self.routes.watch_subscribers(&namespace, &track)),
+                    routes: self.routes.clone(),
+                    scope: self.scope,
+                    namespace,
+                    track,
+                })
+            })
+            .await
     }
 
     /// The broadcast lists LOC tracks only.
     pub fn broadcast(&self, namespace: Vec<String>) -> MediaBroadcast {
-        let connection =
-            RelayConnection::with_session(self.session.clone(), self.routes.origin.clone());
-        self.routes.add_broadcast(connection.clone());
-        MediaBroadcast::new(connection, namespace)
+        self.scope.in_scope(|| {
+            let connection =
+                RelayConnection::with_session(self.session.clone(), self.routes.origin.clone());
+            self.routes.add_broadcast(connection.clone());
+            MediaBroadcast::new(connection, namespace, self.scope)
+        })
     }
 
     pub fn close(&self) {
@@ -302,6 +303,7 @@ impl Session {
 #[wasm_bindgen]
 pub struct Announcement {
     session: Arc<MoqtSession>,
+    scope: SessionScope,
     namespace: String,
 }
 
@@ -309,17 +311,22 @@ pub struct Announcement {
 impl Announcement {
     /// PUBLISH_NAMESPACE_DONE (draft-14 §9.26).
     pub async fn close(&self) -> Result<(), JsValue> {
-        self.session
-            .publisher()
-            .publish_namespace_done(self.namespace.clone())
+        self.scope
+            .scoped(async {
+                self.session
+                    .publisher()
+                    .publish_namespace_done(self.namespace.clone())
+                    .await
+                    .map_err(anyhow_error)
+            })
             .await
-            .map_err(anyhow_error)
     }
 }
 
 #[wasm_bindgen]
 pub struct TrackWriter {
     routes: Rc<SessionRoutes>,
+    scope: SessionScope,
     namespace: String,
     track: String,
     subscribers: Mutex<mpsc::UnboundedReceiver<()>>,
@@ -337,26 +344,30 @@ impl TrackWriter {
         new_group: bool,
         loc_header: JsValue,
     ) -> Result<Option<u64>, JsValue> {
-        let group = if new_group {
-            GroupBoundary::Next
-        } else {
-            GroupBoundary::Within
-        };
-        let object = OutgoingObject {
-            group,
-            extension_headers: parse_loc_header(loc_header)?,
-            payload: Bytes::from(payload),
-        };
-        let outcome = self
-            .routes
-            .origin
-            .write(&self.namespace, &self.track, object)
+        self.scope
+            .scoped(async {
+                let group = if new_group {
+                    GroupBoundary::Next
+                } else {
+                    GroupBoundary::Within
+                };
+                let object = OutgoingObject {
+                    group,
+                    extension_headers: parse_loc_header(loc_header)?,
+                    payload: Bytes::from(payload),
+                };
+                let outcome = self
+                    .routes
+                    .origin
+                    .write(&self.namespace, &self.track, object)
+                    .await
+                    .map_err(anyhow_error)?;
+                Ok(match outcome {
+                    WriteOutcome::Sent(placement) => Some(placement.location.group_id),
+                    _ => None,
+                })
+            })
             .await
-            .map_err(anyhow_error)?;
-        Ok(match outcome {
-            WriteOutcome::Sent(placement) => Some(placement.location.group_id),
-            _ => None,
-        })
     }
 
     /// Sends `payload` as a group of its own, the layout of an MSF catalog
@@ -364,16 +375,20 @@ impl TrackWriter {
     /// subscriber took it, and to `undefined` otherwise.
     #[wasm_bindgen(js_name = writeGroup)]
     pub async fn write_group(&self, payload: Vec<u8>) -> Result<Option<u64>, JsValue> {
-        let outcome = self
-            .routes
-            .origin
-            .write_group(&self.namespace, &self.track, Bytes::from(payload))
+        self.scope
+            .scoped(async {
+                let outcome = self
+                    .routes
+                    .origin
+                    .write_group(&self.namespace, &self.track, Bytes::from(payload))
+                    .await
+                    .map_err(anyhow_error)?;
+                Ok(match outcome {
+                    WriteOutcome::Sent(placement) => Some(placement.location.group_id),
+                    _ => None,
+                })
+            })
             .await
-            .map_err(anyhow_error)?;
-        Ok(match outcome {
-            WriteOutcome::Sent(placement) => Some(placement.location.group_id),
-            _ => None,
-        })
     }
 
     /// Resolves to `true` once a SUBSCRIBE for the track is answered, and to
@@ -390,6 +405,7 @@ impl TrackWriter {
 pub struct Subscription {
     session: Arc<MoqtSession>,
     routes: Rc<SessionRoutes>,
+    scope: SessionScope,
     subscription: MoqtSubscription,
     reading: Rc<Mutex<Reading>>,
     done: Promise,
@@ -407,9 +423,10 @@ impl Subscription {
         Self {
             session: session.session.clone(),
             routes: session.routes.clone(),
+            scope: session.scope,
             subscription,
             reading: Rc::new(Mutex::new(reading)),
-            done: future_to_promise(async move {
+            done: future_to_promise(session.scope.scoped(async move {
                 Ok(match done.await {
                     Ok(done) => PublishDoneInfo {
                         code: done.code,
@@ -418,7 +435,7 @@ impl Subscription {
                     .into(),
                     Err(_) => JsValue::UNDEFINED,
                 })
-            }),
+            })),
         }
     }
 }
@@ -442,16 +459,22 @@ impl Subscription {
     /// Objects of one subgroup come in order; status objects are skipped.
     /// Rejects once `nextGroup` read the subscription.
     pub async fn next(&self) -> Result<Option<MoqObject>, JsValue> {
-        let reading = self.reading.clone();
-        let mut reading = reading.lock().await;
-        if let Reading::Unstarted = *reading {
-            *reading = Reading::Objects(self.session.subscriber().track_reader(&self.subscription));
-        }
-        let Reading::Objects(reader) = &mut *reading else {
-            return Err(js_error("the subscription is read by group"));
-        };
-        let object = reader.next_object().await.map_err(anyhow_error)?;
-        Ok(object.map(MoqObject::from))
+        self.scope
+            .scoped(async {
+                let reading = self.reading.clone();
+                let mut reading = reading.lock().await;
+                if let Reading::Unstarted = *reading {
+                    *reading = Reading::Objects(
+                        self.session.subscriber().track_reader(&self.subscription),
+                    );
+                }
+                let Reading::Objects(reader) = &mut *reading else {
+                    return Err(js_error("the subscription is read by group"));
+                };
+                let object = reader.next_object().await.map_err(anyhow_error)?;
+                Ok(object.map(MoqObject::from))
+            })
+            .await
     }
 
     /// The next subgroup stream; `undefined` once the track has no more
@@ -459,75 +482,95 @@ impl Subscription {
     /// the subscription.
     #[wasm_bindgen(js_name = nextGroup)]
     pub async fn next_group(&self) -> Result<Option<Group>, JsValue> {
-        let reading = self.reading.clone();
-        let mut reading = reading.lock().await;
-        if let Reading::Unstarted = *reading {
-            let mut subscriber = self.session.subscriber();
-            match subscriber.accept_data_receiver(&self.subscription).await {
-                Ok(DataReceiver::Stream(factory)) => *reading = Reading::Groups(factory),
-                Ok(DataReceiver::Datagram(_)) => {
-                    return Err(anyhow_error(MalformedTrackError.into()));
+        self.scope
+            .scoped(async {
+                let reading = self.reading.clone();
+                let mut reading = reading.lock().await;
+                if let Reading::Unstarted = *reading {
+                    let mut subscriber = self.session.subscriber();
+                    match subscriber.accept_data_receiver(&self.subscription).await {
+                        Ok(DataReceiver::Stream(factory)) => *reading = Reading::Groups(factory),
+                        Ok(DataReceiver::Datagram(_)) => {
+                            return Err(anyhow_error(MalformedTrackError.into()));
+                        }
+                        Err(_) => return Ok(None),
+                    }
                 }
-                Err(_) => return Ok(None),
-            }
-        }
-        let Reading::Groups(factory) = &mut *reading else {
-            return Err(js_error("the subscription is read by object"));
-        };
-        let mut receiver = match factory.next().await {
-            Ok(receiver) => receiver,
-            Err(error) if error.is::<MalformedTrackError>() => return Err(anyhow_error(error)),
-            Err(_) => return Ok(None),
-        };
-        match receiver
-            .receive()
+                let Reading::Groups(factory) = &mut *reading else {
+                    return Err(js_error("the subscription is read by object"));
+                };
+                let mut receiver = match factory.next().await {
+                    Ok(receiver) => receiver,
+                    Err(error) if error.is::<MalformedTrackError>() => {
+                        return Err(anyhow_error(error));
+                    }
+                    Err(_) => return Ok(None),
+                };
+                match receiver
+                    .receive()
+                    .await
+                    .map_err(|error| js_error(error.to_string()))?
+                {
+                    Some(Subgroup::Header(start)) => Ok(Some(Group {
+                        group_id: start.group_id,
+                        subgroup_id: start.subgroup_id,
+                        receiver: Rc::new(Mutex::new(receiver)),
+                        scope: self.scope,
+                    })),
+                    Some(Subgroup::Object(_)) | None => {
+                        Err(js_error("a subgroup stream did not start with its header"))
+                    }
+                }
+            })
             .await
-            .map_err(|error| js_error(error.to_string()))?
-        {
-            Some(Subgroup::Header(start)) => Ok(Some(Group {
-                group_id: start.group_id,
-                subgroup_id: start.subgroup_id,
-                receiver: Rc::new(Mutex::new(receiver)),
-            })),
-            Some(Subgroup::Object(_)) | None => {
-                Err(js_error("a subgroup stream did not start with its header"))
-            }
-        }
     }
 
     /// SUBSCRIBE_UPDATE with the Forward flag (draft-14 §9.10).
     #[wasm_bindgen(js_name = setForward)]
     pub async fn set_forward(&self, forward: bool) -> Result<(), JsValue> {
-        self.session
-            .subscriber()
-            .update_forward(&self.subscription, forward)
+        self.scope
+            .scoped(async {
+                self.session
+                    .subscriber()
+                    .update_forward(&self.subscription, forward)
+                    .await
+                    .map_err(anyhow_error)
+            })
             .await
-            .map_err(anyhow_error)
     }
 
     /// SUBSCRIBE_UPDATE (draft-14 §9.10).
     #[wasm_bindgen(js_name = endBeforeGroup)]
     pub async fn end_before_group(&self, group_id: u64, forward: bool) -> Result<(), JsValue> {
-        self.session
-            .subscriber()
-            .end_before_group(&self.subscription, group_id, forward)
+        self.scope
+            .scoped(async {
+                self.session
+                    .subscriber()
+                    .end_before_group(&self.subscription, group_id, forward)
+                    .await
+                    .map_err(anyhow_error)
+            })
             .await
-            .map_err(anyhow_error)
     }
 
     pub async fn close(&self) -> Result<(), JsValue> {
-        self.routes.forget(self.subscription.request_id());
-        self.session
-            .subscriber()
-            .unsubscribe(&self.subscription)
+        self.scope
+            .scoped(async {
+                self.routes.forget(self.subscription.request_id());
+                self.session
+                    .subscriber()
+                    .unsubscribe(&self.subscription)
+                    .await
+                    .map_err(anyhow_error)
+            })
             .await
-            .map_err(anyhow_error)
     }
 }
 
 #[wasm_bindgen]
 pub struct FetchStream {
     receiver: Rc<Mutex<FetchDataReceiver>>,
+    scope: SessionScope,
 }
 
 #[wasm_bindgen]
@@ -535,22 +578,26 @@ impl FetchStream {
     /// The next object with a payload; `undefined` once the response ends.
     /// Rejects when the publisher resets the stream.
     pub async fn next(&self) -> Result<Option<MoqObject>, JsValue> {
-        let receiver = self.receiver.clone();
-        let mut receiver = receiver.lock().await;
-        loop {
-            match receiver
-                .receive()
-                .await
-                .map_err(|error| js_error(error.to_string()))?
-            {
-                Fetch::Object(object) => {
-                    if let Some(object) = TrackObject::from_object(object) {
-                        return Ok(Some(object.into()));
+        self.scope
+            .scoped(async {
+                let receiver = self.receiver.clone();
+                let mut receiver = receiver.lock().await;
+                loop {
+                    match receiver
+                        .receive()
+                        .await
+                        .map_err(|error| js_error(error.to_string()))?
+                    {
+                        Fetch::Object(object) => {
+                            if let Some(object) = TrackObject::from_object(object) {
+                                return Ok(Some(object.into()));
+                            }
+                        }
+                        Fetch::End => return Ok(None),
                     }
                 }
-                Fetch::End => return Ok(None),
-            }
-        }
+            })
+            .await
     }
 }
 
@@ -560,6 +607,7 @@ pub struct Group {
     group_id: u64,
     subgroup_id: u64,
     receiver: Rc<Mutex<StreamDataReceiver>>,
+    scope: SessionScope,
 }
 
 #[wasm_bindgen]
@@ -578,21 +626,25 @@ impl Group {
     /// `undefined` once the publisher finished the stream. Rejects when the
     /// stream was reset.
     pub async fn next(&self) -> Result<Option<MoqObject>, JsValue> {
-        let receiver = self.receiver.clone();
-        let mut receiver = receiver.lock().await;
-        loop {
-            match receiver
-                .receive()
-                .await
-                .map_err(|error| js_error(error.to_string()))?
-            {
-                Some(Subgroup::Object(object)) => {
-                    return Ok(Some(MoqObject::from_subgroup(object)));
+        self.scope
+            .scoped(async {
+                let receiver = self.receiver.clone();
+                let mut receiver = receiver.lock().await;
+                loop {
+                    match receiver
+                        .receive()
+                        .await
+                        .map_err(|error| js_error(error.to_string()))?
+                    {
+                        Some(Subgroup::Object(object)) => {
+                            return Ok(Some(MoqObject::from_subgroup(object)));
+                        }
+                        Some(Subgroup::Header(_)) => continue,
+                        None => return Ok(None),
+                    }
                 }
-                Some(Subgroup::Header(_)) => continue,
-                None => return Ok(None),
-            }
-        }
+            })
+            .await
     }
 }
 
@@ -600,6 +652,7 @@ impl Group {
 #[wasm_bindgen]
 pub struct NamespaceWatch {
     session: Arc<MoqtSession>,
+    scope: SessionScope,
     prefix: Vec<String>,
     events: Rc<NamespaceEvents>,
 }
@@ -619,12 +672,16 @@ impl NamespaceWatch {
 
     /// UNSUBSCRIBE_NAMESPACE; a `next` that waits resolves to `undefined`.
     pub async fn close(&self) -> Result<(), JsValue> {
-        self.events.close().await;
-        self.session
-            .subscriber()
-            .unsubscribe_namespace(self.prefix.join("/"))
+        self.scope
+            .scoped(async {
+                self.events.close().await;
+                self.session
+                    .subscriber()
+                    .unsubscribe_namespace(self.prefix.join("/"))
+                    .await
+                    .map_err(anyhow_error)
+            })
             .await
-            .map_err(anyhow_error)
     }
 }
 
@@ -742,11 +799,65 @@ pub struct CloseInfo {
     pub reason: String,
 }
 
-fn token_source(token: JsValue) -> Result<Option<AuthorizationTokenSource>, JsValue> {
+// The browser session is !Send, but wasm32 runs on one thread; `broadcast`
+// takes the session as an Arc.
+#[allow(clippy::arc_with_non_send_sync)]
+async fn connect_session(
+    url: String,
+    token: JsValue,
+    wasm_load_wait_ms: f64,
+    scope: SessionScope,
+) -> Result<Session, JsValue> {
+    let authorization_token = token_source(token, scope)?;
+    tracing::info!(%url, wasm_load_wait_ms, "session connect requested");
+    let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
+        authorization_token,
+        ..ClientConfig::default()
+    })
+    .map_err(anyhow_error)?;
+    let session = endpoint
+        .connect(&url)
+        .await
+        .map_err(anyhow_error)?
+        .await
+        .map_err(anyhow_error)?;
+    let session = Arc::new(session);
+    let routes = Rc::new(SessionRoutes::default());
+    spawn_local(scope.scoped({
+        let session = session.clone();
+        let routes = routes.clone();
+        async move { routes.route(&session).await }
+    }));
+    let closed = future_to_promise(scope.scoped({
+        let session = session.clone();
+        async move {
+            let close = session.closed().await;
+            Ok(CloseInfo {
+                code: close.code,
+                reason: close.reason,
+            }
+            .into())
+        }
+    }));
+    Ok(Session {
+        session,
+        routes,
+        scope,
+        closed,
+        _endpoint: endpoint,
+    })
+}
+
+/// Gives `scope` the token, or each token the provider resolves to.
+fn token_source(
+    token: JsValue,
+    scope: SessionScope,
+) -> Result<Option<AuthorizationTokenSource>, JsValue> {
     if token.is_undefined() || token.is_null() {
         return Ok(None);
     }
     if let Some(token) = token.as_string() {
+        scope.set_token(token.clone());
         return Ok(Some(token.into()));
     }
     let Some(provider) = token.dyn_ref::<Function>().cloned() else {
@@ -761,9 +872,11 @@ fn token_source(token: JsValue) -> Result<Option<AuthorizationTokenSource>, JsVa
             let token = JsFuture::from(Promise::resolve(&returned))
                 .await
                 .map_err(|error| anyhow::anyhow!("the token provider rejected: {error:?}"))?;
-            token
+            let token = token
                 .as_string()
-                .ok_or_else(|| anyhow::anyhow!("the token provider resolved to a non-string"))
+                .ok_or_else(|| anyhow::anyhow!("the token provider resolved to a non-string"))?;
+            scope.set_token(token.clone());
+            Ok(token)
         }
     })))
 }

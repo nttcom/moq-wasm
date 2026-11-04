@@ -107,7 +107,7 @@ mod tests {
         let span_layer = SpanRecordLayer {
             now_ms: || 1000,
             random_byte: || 7,
-            emit: |_| {},
+            emit: |_, _| {},
         };
         let subscriber = tracing_subscriber::registry()
             .with(span_layer)

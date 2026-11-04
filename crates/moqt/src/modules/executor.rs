@@ -6,7 +6,7 @@ mod browser;
 mod native;
 
 #[cfg(target_arch = "wasm32")]
-pub use browser::{JoinHandle, now, spawn, system_time};
+pub use browser::{JoinHandle, SpawnWrapper, now, set_spawn_wrapper, spawn, system_time};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use browser::{sleep, timeout, try_spawn, yield_now};
 #[cfg(not(target_arch = "wasm32"))]

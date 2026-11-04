@@ -9,15 +9,16 @@ type ReportLog = Omit<LogRecord, 'level'> & { level: string }
 /// (joined with `/`) and `mediaSource`; a single-player page omits both.
 export type StatsSample = { trackNamespace?: string; mediaSource?: string; values: LiveStats }
 type ReportStats = StatsSample & { timeMs: number }
-type Send = (url: string, body: string, beacon: boolean) => void
+type Batch = { logs: ReportLog[]; stats: ReportStats[]; spans: SpanRecord[] }
+/// Resolves to the response's HTTP status, or `undefined` when there is none to read.
+type Send = (url: string, body: string, beacon: boolean) => Promise<number | undefined>
 
 /// Collects a page's logs, player stats and wasm spans and posts them to the observability
 /// server's `/api/client-telemetry`, which forwards them to the collector.
 export class ClientTelemetry {
   readonly clientId = crypto.randomUUID()
-  private logs: ReportLog[] = []
-  private stats: ReportStats[] = []
-  private spans: SpanRecord[] = []
+  private batches = new Map<string | undefined, Batch>()
+  private readonly rejectedTokens = new Set<string>()
 
   constructor(
     private readonly page: string,
@@ -26,37 +27,46 @@ export class ClientTelemetry {
   ) {}
 
   log(level: string, message: string, fields: LogRecord['fields'] = {}): void {
-    this.wasmLog({ timeMs: Date.now(), level, target: this.page, message, fields })
+    this.wasmLog({ timeMs: Date.now(), level, target: this.page, message, fields }, undefined)
   }
 
-  readonly wasmLog = (record: ReportLog): void => {
-    keepNewest(this.logs, record)
+  readonly wasmLog = (record: ReportLog, token: string | undefined): void => {
+    keepNewest(this.batch(token).logs, record)
   }
 
-  readonly wasmSpan = (record: SpanRecord): void => {
-    keepNewest(this.spans, record)
+  readonly wasmSpan = (record: SpanRecord, token: string | undefined): void => {
+    keepNewest(this.batch(token).spans, record)
   }
 
   sample(sample: StatsSample): void {
-    keepNewest(this.stats, { timeMs: Date.now(), ...sample })
+    keepNewest(this.batch(undefined).stats, { timeMs: Date.now(), ...sample })
   }
 
-  /// `beacon` sends with `navigator.sendBeacon`, which outlives the page.
+  /// Sends one report per token. `beacon` sends with `navigator.sendBeacon`, which outlives the page.
   flush(beacon = false): void {
-    if (this.logs.length === 0 && this.stats.length === 0 && this.spans.length === 0) {
-      return
+    const batches = this.batches
+    this.batches = new Map()
+    for (const [batchToken, { logs, stats, spans }] of batches) {
+      if (logs.length === 0 && stats.length === 0 && spans.length === 0) {
+        continue
+      }
+      const token = batchToken !== undefined && this.rejectedTokens.has(batchToken) ? undefined : batchToken
+      const body = JSON.stringify({ token, clientId: this.clientId, page: this.page, logs, stats, spans })
+      void this.send(this.endpoint(), body, beacon).then((status) => {
+        if (status === 401 && token !== undefined) {
+          this.rejectedTokens.add(token)
+        }
+      })
     }
-    const body = JSON.stringify({
-      clientId: this.clientId,
-      page: this.page,
-      logs: this.logs,
-      stats: this.stats,
-      spans: this.spans
-    })
-    this.logs = []
-    this.stats = []
-    this.spans = []
-    this.send(this.endpoint(), body, beacon)
+  }
+
+  private batch(token: string | undefined): Batch {
+    let batch = this.batches.get(token)
+    if (!batch) {
+      batch = { logs: [], stats: [], spans: [] }
+      this.batches.set(token, batch)
+    }
+    return batch
   }
 }
 
@@ -68,10 +78,20 @@ function keepNewest<T>(records: T[], record: T): void {
 }
 
 /// `text/plain` keeps the POST a CORS simple request, with no preflight.
-function sendReport(url: string, body: string, beacon: boolean): void {
+async function sendReport(url: string, body: string, beacon: boolean): Promise<number | undefined> {
   if (beacon && navigator.sendBeacon(url, body)) {
-    return
+    return undefined
   }
-  // Telemetry is best effort: a page without an observability server keeps working.
-  fetch(url, { method: 'POST', body, keepalive: true, headers: { 'content-type': 'text/plain' } }).catch(() => {})
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      body,
+      keepalive: true,
+      headers: { 'content-type': 'text/plain' }
+    })
+    return response.status
+  } catch {
+    // Telemetry is best effort: a page without an observability server keeps working.
+    return undefined
+  }
 }

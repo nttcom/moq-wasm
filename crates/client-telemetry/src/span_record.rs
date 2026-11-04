@@ -8,8 +8,10 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::log_record::FieldVisitor;
+use crate::scope::current_scope;
 
-/// Hands every closed span to `emit` as a span record. `now_ms` is the time
+/// Hands every closed span to `emit` as a span record, with its scope: its
+/// parent's, else `current_scope()` where it was opened. `now_ms` is the time
 /// since the Unix epoch. Trace and span ids need to be unique, not
 /// unpredictable, so `random_byte` need not be a cryptographic RNG.
 pub struct SpanRecordLayer<E> {
@@ -23,14 +25,21 @@ struct OpenSpan {
     span_id: [u8; 8],
     parent_span_id: Option<[u8; 8]>,
     start_ms: u64,
+    scope: Option<u64>,
     fields: FieldVisitor,
 }
 
+#[derive(Clone, Copy)]
+struct EnteredSpan {
+    trace_id: [u8; 16],
+    span_id: [u8; 8],
+    scope: Option<u64>,
+}
+
 thread_local! {
-    /// The `(trace_id, span_id)` of each span entered on this thread,
-    /// innermost last. An `Instrumented` future enters and exits its span on
+    /// Each span entered on this thread, innermost last. An `Instrumented` future enters and exits its span on
     /// the thread that polls it, so the stack stays balanced per thread.
-    static ENTERED: RefCell<Vec<([u8; 16], [u8; 8])>> = const { RefCell::new(Vec::new()) };
+    static ENTERED: RefCell<Vec<EnteredSpan>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The innermost entered span as a W3C `traceparent`; `None` outside any span.
@@ -40,7 +49,15 @@ pub fn current_traceparent() -> Option<String> {
 }
 
 pub(crate) fn current_span_ids() -> Option<([u8; 16], [u8; 8])> {
-    ENTERED.with_borrow(|entered| entered.last().copied())
+    ENTERED.with_borrow(|entered| {
+        entered
+            .last()
+            .map(|entered| (entered.trace_id, entered.span_id))
+    })
+}
+
+pub(crate) fn entered_span_scope() -> Option<u64> {
+    ENTERED.with_borrow(|entered| entered.last().and_then(|entered| entered.scope))
 }
 
 impl<E> SpanRecordLayer<E> {
@@ -52,7 +69,7 @@ impl<E> SpanRecordLayer<E> {
 impl<S, E> Layer<S> for SpanRecordLayer<E>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    E: Fn(Value) + 'static,
+    E: Fn(Value, Option<u64>) + 'static,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(id) else {
@@ -61,15 +78,16 @@ where
         let parent = span.parent().and_then(|parent| {
             let extensions = parent.extensions();
             let open = extensions.get::<OpenSpan>()?;
-            Some((open.trace_id, open.span_id))
+            Some((open.trace_id, open.span_id, open.scope))
         });
         let mut fields = FieldVisitor::default();
         attrs.record(&mut fields);
         span.extensions_mut().insert(OpenSpan {
-            trace_id: parent.map_or_else(|| self.random(), |(trace_id, _)| trace_id),
+            trace_id: parent.map_or_else(|| self.random(), |(trace_id, ..)| trace_id),
             span_id: self.random(),
-            parent_span_id: parent.map(|(_, span_id)| span_id),
+            parent_span_id: parent.map(|(_, span_id, _)| span_id),
             start_ms: (self.now_ms)(),
+            scope: parent.and_then(|(.., scope)| scope).or_else(current_scope),
             fields,
         });
     }
@@ -86,7 +104,13 @@ where
         if let Some(span) = ctx.span(id)
             && let Some(open) = span.extensions().get::<OpenSpan>()
         {
-            ENTERED.with_borrow_mut(|entered| entered.push((open.trace_id, open.span_id)));
+            ENTERED.with_borrow_mut(|entered| {
+                entered.push(EnteredSpan {
+                    trace_id: open.trace_id,
+                    span_id: open.span_id,
+                    scope: open.scope,
+                });
+            });
         }
     }
 
@@ -116,7 +140,7 @@ where
         if let Some(parent_span_id) = open.parent_span_id {
             record["parentSpanId"] = json!(hex(&parent_span_id));
         }
-        (self.emit)(record);
+        (self.emit)(record, open.scope);
     }
 }
 
@@ -136,15 +160,23 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
 
     use super::{SpanRecordLayer, current_traceparent};
+    use crate::{current_scope, in_scope};
 
     fn capture(emit_spans: impl FnOnce()) -> Vec<Value> {
+        capture_with_scopes(emit_spans)
+            .into_iter()
+            .map(|(record, _)| record)
+            .collect()
+    }
+
+    fn capture_with_scopes(emit_spans: impl FnOnce()) -> Vec<(Value, Option<u64>)> {
         static NEXT_BYTE: AtomicU8 = AtomicU8::new(0);
         let records = Arc::new(Mutex::new(Vec::new()));
         let sink = records.clone();
         let layer = SpanRecordLayer {
             now_ms: || 1000,
             random_byte: || NEXT_BYTE.fetch_add(1, Ordering::Relaxed),
-            emit: move |record| sink.lock().unwrap().push(record),
+            emit: move |record, scope| sink.lock().unwrap().push((record, scope)),
         };
         let subscriber = tracing_subscriber::registry().with(layer);
         tracing::subscriber::with_default(subscriber, emit_spans);
@@ -236,5 +268,36 @@ mod tests {
 
         // Assert
         assert_eq!(traceparent, None);
+    }
+
+    #[test]
+    fn a_span_opened_in_a_scope_passes_it_on_to_its_children_and_events() {
+        // Arrange
+        let mut event_scope = None;
+
+        // Act
+        let records = capture_with_scopes(|| {
+            let connect = in_scope(5, || tracing::info_span!("moqt.session.connect"));
+            connect.in_scope(|| {
+                tracing::info_span!("child").in_scope(|| event_scope = current_scope());
+            });
+        });
+
+        // Assert: the child was opened and entered outside `in_scope`
+        let scopes: Vec<_> = records.iter().map(|(_, scope)| *scope).collect();
+        assert_eq!(scopes, vec![Some(5), Some(5)]);
+        assert_eq!(event_scope, Some(5));
+    }
+
+    #[test]
+    fn a_span_opened_outside_any_scope_has_none() {
+        // Act
+        let records = capture_with_scopes(|| tracing::info_span!("request").in_scope(|| {}));
+
+        // Assert
+        let [(_, scope)] = records.as_slice() else {
+            panic!("{records:?}");
+        };
+        assert_eq!(*scope, None);
     }
 }

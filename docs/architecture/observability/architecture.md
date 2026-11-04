@@ -337,7 +337,13 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   rejected token answers 401 and forwards nothing. A report without one is
   `anon`, the app the relay gives an anonymous session. The server sets
   `app_id` and `client_id` on every record, so a client cannot claim another
-  app's data.
+  app's data. A browser page sends one report per token: the wasm module hands
+  each record to the page with the token of its session (see
+  `docs/architecture/wasm/browser-sdk.md`), and the records of no session or
+  of a session without a token go in a report without one. A client whose
+  token was answered 401 sends that token's later records without it, so they
+  arrive as `anon` instead of being rejected again (`examples/browser/utils/clientTelemetry.ts`,
+  `moq-cli`).
 - **Logs** become OTLP log records of resource `service.name` (the report's
   `service`) and `page`, with `app_id`, `client_id`, `target` and the
   client's fields as attributes, and are posted to

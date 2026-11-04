@@ -942,7 +942,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   place that touches tokio I/O. `executor/native.rs` is the tokio
   implementation (`now` is the elapsed time since a process-wide `Instant`),
   `executor/browser.rs` the `spawn_local` one (`now` reads
-  `performance.now()`; `std::time::Instant` panics on wasm32); the executor also defines
+  `performance.now()`; `std::time::Instant` panics on wasm32, and
+  `set_spawn_wrapper` lets the application wrap every task where it is
+  spawned, which the wasm module uses to carry a session's telemetry scope
+  into its tasks); the executor also defines
   `MaybeSend` / `MaybeSync` / `BoxFuture`, which are `Send` / `Sync` bounds
   natively and empty on wasm32 because JavaScript values cannot cross
   threads. The transport traits and `async_trait` attributes use them.

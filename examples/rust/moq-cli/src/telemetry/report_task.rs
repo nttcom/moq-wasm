@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use reqwest::StatusCode;
 use serde_json::json;
 use tokio::{sync::oneshot, task::JoinHandle};
 use url::Url;
@@ -46,7 +47,7 @@ async fn report_loop(
     buffer: ReportBuffer,
     mut finish_receiver: oneshot::Receiver<()>,
 ) {
-    let reporter = Reporter::new(target);
+    let mut reporter = Reporter::new(target);
     let mut interval = tokio::time::interval_at(
         tokio::time::Instant::now() + REPORT_INTERVAL,
         REPORT_INTERVAL,
@@ -66,6 +67,9 @@ struct Reporter {
     http: reqwest::Client,
     client_id: String,
     target: ReportTarget,
+    /// The token the server last answered 401 to. Reports leave it out, so the
+    /// server takes them as anonymous instead of dropping them.
+    rejected_token: Option<String>,
 }
 
 impl Reporter {
@@ -80,16 +84,21 @@ impl Reporter {
                 .unwrap_or_default(),
             client_id: format!("{started:x}-{}", std::process::id()),
             target,
+            rejected_token: None,
         }
     }
 
     /// A failed report's logs and spans are dropped, not retried.
-    async fn send(&self, buffer: &ReportBuffer) {
+    async fn send(&mut self, buffer: &ReportBuffer) {
         let (logs, spans) = buffer.take();
         if logs.is_empty() && spans.is_empty() {
             return;
         }
-        let token = current_auth_token(&self.target.relay).await.ok().flatten();
+        let token = current_auth_token(&self.target.relay)
+            .await
+            .ok()
+            .flatten()
+            .filter(|token| self.rejected_token.as_ref() != Some(token));
         let body = json!({
             "service": SERVICE,
             "token": token,
@@ -103,9 +112,14 @@ impl Reporter {
             .post(self.target.endpoint.clone())
             .body(body.to_string())
             .send()
-            .await
-            .and_then(reqwest::Response::error_for_status);
-        if let Err(error) = result {
+            .await;
+        if let Ok(response) = &result
+            && response.status() == StatusCode::UNAUTHORIZED
+            && token.is_some()
+        {
+            self.rejected_token = token;
+        }
+        if let Err(error) = result.and_then(reqwest::Response::error_for_status) {
             tracing::debug!(%error, url = %self.target.endpoint, "telemetry report failed");
         }
     }

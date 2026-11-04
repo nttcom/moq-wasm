@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `init({ onLog, onSpan })` calls both with the token of the record's
+  `MoqSession` as a second argument (the provider's newest), and `undefined`
+  for a record of no session or of a session without a token, so a page can
+  send each session's telemetry under its own token.
+
 ## 0.2.0
 
 - `LiveStats.arrivalDelayMs` gives the median delay from capture to arrival
