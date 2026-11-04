@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -867,12 +867,14 @@ source = { editable = "../moq-bot-rooms" }
 dependencies = [
     { name = "aiohttp" },
     { name = "loguru" },
+    { name = "moqt" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "loguru", specifier = ">=0.7" },
+    { name = "moqt", directory = "../../../crates/python" },
 ]
 
 [package.metadata.requires-dev]

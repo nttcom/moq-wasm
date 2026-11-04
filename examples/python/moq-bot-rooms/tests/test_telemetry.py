@@ -57,3 +57,4 @@ async def test_the_logs_are_posted_as_the_bot_on_exit():
     assert [(log["level"], log["message"], log["fields"]) for log in report["logs"]] == [
         ("warn", "relay session closed", {"room_id": "abc"})
     ]
+    assert report["spans"] == []

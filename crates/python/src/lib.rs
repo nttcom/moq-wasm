@@ -1,6 +1,7 @@
 mod namespaces;
 mod publication;
 mod session;
+mod telemetry;
 mod track;
 
 use pyo3::prelude::*;
@@ -10,6 +11,8 @@ use pyo3::prelude::*;
 #[pymodule]
 fn moqt(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(session::connect, module)?)?;
+    module.add_function(wrap_pyfunction!(telemetry::start_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(telemetry::take_telemetry, module)?)?;
     module.add_class::<session::Session>()?;
     module.add_class::<namespaces::NamespaceEvent>()?;
     module.add_class::<namespaces::NamespaceEvents>()?;

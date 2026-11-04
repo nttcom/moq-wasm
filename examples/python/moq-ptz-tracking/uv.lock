@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -867,34 +867,13 @@ source = { editable = "../moq-bot-rooms" }
 dependencies = [
     { name = "aiohttp" },
     { name = "loguru" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.11" },
-    { name = "loguru", specifier = ">=0.7" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-]
-
-[[package]]
-name = "moq-system-one-bot"
-version = "0.1.0"
-source = { editable = "../moq-system-one-bot" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "moq-bot-rooms" },
     { name = "moqt" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
-    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "loguru", specifier = ">=0.7" },
     { name = "moqt", directory = "../../../crates/python" },
 ]
 
@@ -932,6 +911,29 @@ requires-dist = [
     { name = "moq-system-one-bot", editable = "../moq-system-one-bot" },
     { name = "moqt", directory = "../../../crates/python" },
     { name = "pipecat-ai", specifier = ">=1.12" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
+name = "moq-system-one-bot"
+version = "0.1.0"
+source = { editable = "../moq-system-one-bot" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "moq-bot-rooms" },
+    { name = "moqt" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11" },
+    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "moqt", directory = "../../../crates/python" },
 ]
 
 [package.metadata.requires-dev]

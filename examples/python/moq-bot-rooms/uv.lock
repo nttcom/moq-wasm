@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 5
 requires-python = ">=3.11"
 
 [[package]]
@@ -345,6 +345,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "loguru" },
+    { name = "moqt" },
 ]
 
 [package.dev-dependencies]
@@ -357,7 +358,21 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "loguru", specifier = ">=0.7" },
+    { name = "moqt", directory = "../../../crates/python" },
 ]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
+name = "moqt"
+version = "0.1.0"
+source = { directory = "../../../crates/python" }
+
+[package.metadata]
 
 [package.metadata.requires-dev]
 dev = [

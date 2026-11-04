@@ -95,6 +95,20 @@ A session has one event receiver, so the module runs one loop per session:
 `Origin::handle` is shared with `broadcast::RelayConnection`, so the module
 holds no copy of the publisher-side routing.
 
+### Telemetry
+`moqt.start_telemetry()` installs a global `tracing` subscriber with
+`client_telemetry::report_layer` at INFO, and gives
+`client_telemetry::current_traceparent` to `moqt::set_trace_context_provider`,
+so each request carries the trace context the relay continues.
+`moqt.take_telemetry()` drains the `ReportBuffer` as
+`{"logs": [...], "spans": [...]}` in the records of the observability
+server's `/api/client-telemetry`. The module does not post them: `moq-bot-rooms`
+merges them with the bot's loguru logs into its own report, as the wasm module
+leaves sending to the page.
+
+The subscriber only buffers. Calling into Python from it would make a tokio
+worker wait for the GIL inside every log line.
+
 ### Build and CI
 - `[lib] test = false`: an extension module cannot link as a test binary, so
   the module is tested with pytest.

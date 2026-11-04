@@ -2503,12 +2503,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "client-telemetry",
  "moqt",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
+ "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
