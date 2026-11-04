@@ -87,6 +87,11 @@ pub enum WriteOutcome {
 #[derive(Clone, Default)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
+    /// Makes `publish` calls run one at a time while `state` is not held across
+    /// the PUBLISH_OK wait, so two calls cannot both send PUBLISH. `release`
+    /// waits on it for a request it does not know yet. Taken before `state`,
+    /// never while holding it.
+    publishing: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]
@@ -211,12 +216,13 @@ impl Origin {
     ) -> Result<()> {
         let key = track_key(namespace, track_name);
         let context = session.context();
-        let mut state = self.state.lock().await;
-        let track = state.track_mut(&key)?;
-        let next_group_id = track.numbering.next_group_id();
-        let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
         let key_of_session = session_key(context);
-        if track
+        let _publishing = self.publishing.lock().await;
+        if self
+            .state
+            .lock()
+            .await
+            .track_mut(&key)?
             .outlets
             .iter()
             .any(|outlet| outlet.request.0 == key_of_session)
@@ -232,9 +238,13 @@ impl Origin {
             )
             .await
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
-        let request = (session_key(context), subscription.request_id());
+        let request = (key_of_session, subscription.request_id());
         let track_alias = subscription.track_alias();
-        state.track_mut(&key)?.outlets.push(Outlet {
+        let mut state = self.state.lock().await;
+        let track = state.track_mut(&key)?;
+        let next_group_id = track.numbering.next_group_id();
+        let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
+        track.outlets.push(Outlet {
             request,
             publication: Publication::Published,
             start,
@@ -450,6 +460,13 @@ impl Origin {
             handler.subscribe_id(),
         );
         let mut state = self.state.lock().await;
+        if !state.subscriptions.contains_key(&request) {
+            // The peer can UNSUBSCRIBE right after its PUBLISH_OK, before
+            // `publish` registers the request; wait for that `publish` to finish.
+            drop(state);
+            let _publishing = self.publishing.lock().await;
+            state = self.state.lock().await;
+        }
         let key = state.subscriptions.remove(&request)?.track;
         let mut released = None;
         if let Some(track) = state.tracks.get_mut(&key) {
@@ -1044,6 +1061,45 @@ mod tests {
             ]
         );
         assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+    }
+
+    #[tokio::test]
+    async fn a_write_does_not_wait_for_an_unanswered_publish() {
+        // Arrange
+        let peers = origin_with_track("origin-publish-unanswered", RETENTION).await;
+        let origin = &peers.origin;
+
+        // Act
+        let (published, (written, accepted)) = within(async {
+            tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
+                let SessionEvent::Publish(handler) = peers.server.receive_event().await.unwrap()
+                else {
+                    panic!("expected PUBLISH from the client");
+                };
+                let written = origin
+                    .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                    .await
+                    .unwrap();
+                let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
+                handler.accept_data_receiver().await;
+                (written, accepted)
+            })
+        })
+        .await;
+        let next_group = origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+            .await
+            .unwrap();
+        let received = next_object(&peers, &accepted).await;
+
+        // Assert: the write while PUBLISH_OK was pending is cached only; the track is sent from the next group
+        published.unwrap();
+        assert_eq!(written, WriteOutcome::NotSent);
+        assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+        assert_eq!(
+            (received.group_id, received.payload),
+            (FIRST_GROUP_ID + 1, Bytes::from_static(b"b"))
+        );
     }
 
     #[tokio::test]

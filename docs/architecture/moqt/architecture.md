@@ -485,9 +485,15 @@ forward from their own cache through the raw stream senders.
   after a stopped stream.
   `write_group` sends one object as a finished group (the MSF catalog layout).
 - `publish(session, …)` sends PUBLISH on that session and writes from the
-  next group; it is a no-op while the session takes the track and after it
-  released a PUBLISH, but publishes a track again whose SUBSCRIBE the peer
-  released; `accept_subscribe`
+  group after the largest one written when PUBLISH_OK arrives; it is a no-op
+  while the session takes the track and after it released a PUBLISH, but
+  publishes a track again whose SUBSCRIBE the peer released. The origin state
+  is not locked while PUBLISH_OK is awaited, so writes and requests on every
+  track go on. A second lock, `publishing`, makes `publish` calls run one at a
+  time across all tracks and is always taken before the state lock. The peer
+  can UNSUBSCRIBE right after its PUBLISH_OK, before `publish` registers the
+  request, so `release` of an unknown request first waits on `publishing`;
+  `accept_subscribe`
   answers a SUBSCRIBE the application decided to accept (Content Exists is the
   largest cached location, the last one FETCH can serve) and writes from its filter's Start Location
   (draft-14 §9.7), computed from the largest object written so far. Objects
