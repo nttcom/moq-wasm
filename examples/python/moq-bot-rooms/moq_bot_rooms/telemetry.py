@@ -1,5 +1,5 @@
-"""Sends a bot's logs to the observability server's `/api/client-telemetry`, which forwards them
-to HyperDX as `service.name=python`."""
+"""Sends a bot's logs, and the logs and spans of the moqt module, to the observability server's
+`/api/client-telemetry`, which forwards them to HyperDX as `service.name=python`."""
 
 import argparse
 import asyncio
@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from urllib.parse import urlsplit
 
 import aiohttp
+import moqt
 from loguru import logger
 
 LOCAL_TELEMETRY_URL = "http://localhost:8095"
@@ -61,10 +62,12 @@ def field_value(value):
 
 @contextlib.asynccontextmanager
 async def report_logs(endpoint: str | None, page: str) -> AsyncIterator[None]:
-    """Reports the `INFO` and higher logs every `REPORT_SECONDS` and on exit; a failed report is dropped."""
+    """Reports the `INFO` and higher logs and the moqt module's spans every `REPORT_SECONDS` and on exit;
+    a failed report is dropped."""
     if endpoint is None:
         yield
         return
+    moqt.start_telemetry()
     # The newest `MAX_LOGS` records since the last report.
     logs: deque[dict] = deque(maxlen=MAX_LOGS)
     sink_id = logger.add(lambda message: logs.append(log_entry(message.record)), level="INFO", format="{message}")
@@ -72,10 +75,18 @@ async def report_logs(endpoint: str | None, page: str) -> AsyncIterator[None]:
     async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
 
         async def send() -> None:
-            if not logs:
-                return
-            body = {"service": "python", "clientId": client_id, "page": page, "logs": list(logs)}
+            module = moqt.take_telemetry()
+            merged_logs = sorted([*logs, *module["logs"]], key=lambda log: log["timeMs"])[-MAX_LOGS:]
             logs.clear()
+            if not merged_logs and not module["spans"]:
+                return
+            body = {
+                "service": "python",
+                "clientId": client_id,
+                "page": page,
+                "logs": merged_logs,
+                "spans": module["spans"],
+            }
             try:
                 async with http.post(endpoint, json=body):
                     pass

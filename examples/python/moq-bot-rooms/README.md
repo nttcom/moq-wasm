@@ -35,7 +35,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 
 ## テレメトリー
 
-bot の `INFO` 以上のログ（loguru）を 10 秒ごとと終了時に observability サーバーの `/api/client-telemetry` へ送ります。HyperDX では `service.name=python`、`page` が bot の名前（例: `moq-camera-detection`）になります。送信に失敗したログと、10 秒間に 100 件を超えた古いログは捨てます。
+bot の `INFO` 以上のログ（loguru）と、moqt モジュールの `INFO` 以上のログと span を 10 秒ごとと終了時に observability サーバーの `/api/client-telemetry` へ送ります。HyperDX では `service.name=python`、`page` が bot の名前（例: `moq-camera-detection`）になります。moqt のリクエストは trace context を relay に送るので、relay 側の trace とつながります。送信に失敗したログと span、および 10 秒間にそれぞれ 100 件を超えた古いものは捨てます。
 
 ## テスト
 

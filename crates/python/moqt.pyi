@@ -1,9 +1,19 @@
 """Python bindings for this repository's MoQT implementation (docs/architecture/python)."""
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 async def connect(url: str, *, verify_certificate: bool = True) -> Session:
     """`moqt://` connects over raw QUIC, `https://` over WebTransport. The session follows the relay's GOAWAY."""
+
+def start_telemetry() -> None:
+    """Collects the module's `INFO` and higher logs and spans for `take_telemetry`, and sends each request's
+    trace context so the relay continues the trace. Calls after a successful one do nothing. Raises
+    RuntimeError when the process already has a global `tracing` subscriber."""
+
+def take_telemetry() -> dict[str, list[dict[str, Any]]]:
+    """`{"logs": [...], "spans": [...]}` collected since the last call, the newest 100 of each, in the records
+    of the observability server's `/api/client-telemetry`; empty before `start_telemetry`."""
 
 class Session:
     async def subscribe_namespace(self, prefix: list[str]) -> NamespaceEvents:
