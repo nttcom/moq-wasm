@@ -130,13 +130,14 @@ transport connection to a per-connection task owned by `SessionIntake`:
    token on the inter-relay endpoint is rejected. Other failures call
    `Handshake::reject` with `UNAUTHORIZED` (rejected token, endpoint mismatch)
    or `INTERNAL_ERROR` (VTS unreachable);
-3. `Handshake::accept()` sends SERVER_SETUP. Step 2 runs under a
-   `relay.session.setup` span (`session_id`, `session_peer`, `app_id`) that
-   continues the trace of the client's `moqt.session.connect` when
-   CLIENT_SETUP carries one (`Handshake::trace_context()`), roots its own
+3. `Handshake::accept(&session_span)` sends SERVER_SETUP. Steps 2 and 3 run
+   under a `relay.session.setup` span (`session_id`, `session_peer`,
+   `app_id`) that continues the trace of the client's `moqt.session.connect`
+   when CLIENT_SETUP carries one (`Handshake::trace_context()`), roots its own
    otherwise, and links to `relay.session`. `relay.vts.verify` is its child.
-   SERVER_SETUP is sent outside it, because the session's tasks start in the
-   span current at accept; the span closes once SERVER_SETUP is sent;
+   The session's tasks start under `relay.session`, so the setup span closes
+   once SERVER_SETUP is sent. `CLIENT_SETUP received` is logged before the
+   span exists;
 4. the session is boxed as `dyn session::Session` and added to
    `SessionRepository` as a `NewSession` carrying its `SessionPeer` (`Client`
    or `Relay` — the endpoint it arrived on) and its
