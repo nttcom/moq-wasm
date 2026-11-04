@@ -1,6 +1,7 @@
 use std::{pin::pin, sync::Arc};
 
 use anyhow::Context;
+use tracing::{Instrument, Span};
 
 use crate::SessionEvent;
 use crate::modules::executor::{self, BoxFuture, MaybeSend, MaybeSync};
@@ -27,6 +28,20 @@ const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 pub(crate) struct SetupRejected {
     pub(crate) code: u32,
     reason: String,
+}
+
+/// One connection attempt, from opening the transport to SERVER_SETUP. Not a
+/// child of the caller's span, which may live as long as the session (a
+/// relay's inter-relay session span) and would hold it unexported.
+fn connect_span(url: &str) -> Span {
+    let span = tracing::info_span!(
+        parent: None,
+        "moqt.session.connect",
+        url = %url,
+        outcome = tracing::field::Empty,
+    );
+    span.follows_from(Span::current());
+    span
 }
 
 pub(crate) struct SessionCreator<T: TransportProtocol> {
@@ -77,9 +92,10 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>> {
         let creator = self.clone();
         Box::pin(async move {
-            let transport_conn = creator.open_transport(&url).await?;
+            let connect_span = connect_span(&url);
+            let transport_conn = creator.open_transport_for(&url, &connect_span).await?;
             let (connection, control_receiver, _) = creator
-                .set_up(transport_conn, generation, event_sender)
+                .set_up_in(connect_span, transport_conn, generation, event_sender)
                 .await?;
             Ok((connection, control_receiver))
         })
@@ -105,7 +121,8 @@ impl<T: TransportProtocol> SessionCreator<T> {
         self: &Arc<Self>,
         url: &str,
     ) -> anyhow::Result<Connecting> {
-        let transport_conn = self.open_transport(url).await?;
+        let connect_span = connect_span(url);
+        let transport_conn = self.open_transport_for(url, &connect_span).await?;
         let creator = self.clone();
         let url = url.to_string();
         let handshake = async move {
@@ -114,7 +131,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 let (connection_event_sender, connection_events) =
                     tokio::sync::mpsc::unbounded_channel();
                 let (connection, control_receiver, server_setup) = creator
-                    .set_up(transport_conn, 0, connection_event_sender)
+                    .set_up_in(connect_span, transport_conn, 0, connection_event_sender)
                     .await?;
                 Session::new(
                     control_receiver,
@@ -130,7 +147,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 )
             } else {
                 let (connection, control_receiver, server_setup) = creator
-                    .set_up(transport_conn, 0, event_sender.clone())
+                    .set_up_in(connect_span, transport_conn, 0, event_sender.clone())
                     .await?;
                 Session::new(
                     control_receiver,
@@ -147,6 +164,43 @@ impl<T: TransportProtocol> SessionCreator<T> {
         Ok(Connecting {
             inner: Box::pin(handshake),
         })
+    }
+
+    /// Opens the transport outside `connect_span`: quinn runs a connection's
+    /// driver in the span current when it connects, which would hold the
+    /// connect span open for as long as the connection lives.
+    async fn open_transport_for(
+        &self,
+        url: &str,
+        connect_span: &Span,
+    ) -> anyhow::Result<BoxedConnection> {
+        let opened = self.open_transport(url).await;
+        if opened.is_err() {
+            connect_span.record("outcome", "failed");
+        }
+        opened
+    }
+
+    /// Closes `connect_span` before the caller starts the session, whose tasks
+    /// would otherwise hold it.
+    async fn set_up_in(
+        &self,
+        connect_span: Span,
+        transport_conn: BoxedConnection,
+        generation: u64,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
+        let set_up = self
+            .set_up(transport_conn, generation, event_sender)
+            .instrument(connect_span.clone())
+            .await;
+        let outcome = match &set_up {
+            Ok(_) => "ok",
+            Err(error) if error.downcast_ref::<SetupRejected>().is_some() => "rejected",
+            Err(_) => "failed",
+        };
+        connect_span.record("outcome", outcome);
+        set_up
     }
 
     async fn open_transport(&self, url: &str) -> anyhow::Result<BoxedConnection> {
@@ -312,9 +366,10 @@ mod tests {
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{
-                HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, native_client, native_client_with_config,
-                self_signed_server_config, slow_udp_path, spawn_connected_native_sessions,
-                spawn_native_server, spawn_native_server_handshake, udp_blocked_server, within,
+                HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, capture_telemetry, native_client,
+                native_client_with_config, self_signed_server_config, slow_udp_path,
+                spawn_connected_native_sessions, spawn_native_server,
+                spawn_native_server_handshake, udp_blocked_server, within,
             },
         },
     };
@@ -600,18 +655,14 @@ mod tests {
         assert_eq!(server_id, 1);
     }
 
-    #[tokio::test]
-    async fn a_rejected_client_setup_reports_the_peer_close_code_and_reason() {
-        // Arrange
-        let (port, accept) = spawn_native_server_handshake("session-creator-rejected-setup");
+    async fn connect_to_a_rejecting_server(name: &str) -> anyhow::Error {
+        let (port, accept) = spawn_native_server_handshake(name);
         let url = format!("moqt://127.0.0.1:{port}");
         let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
             .await
             .unwrap()
             .unwrap();
-
-        // Act
         handshake
             .reject(TerminationErrorCode::Unauthorized, "bad token")
             .await;
@@ -622,11 +673,47 @@ mod tests {
         else {
             panic!("expected the handshake to be rejected");
         };
+        error
+    }
+
+    #[tokio::test]
+    async fn a_rejected_client_setup_reports_the_peer_close_code_and_reason() {
+        // Act
+        let error = connect_to_a_rejecting_server("session-creator-rejected-setup").await;
 
         // Assert
         assert!(
             format!("{error:#}").contains("code 2: bad token"),
             "{error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_connect_span_closes_with_ok_while_the_session_lives() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+
+        // Act
+        let (_client, _server) =
+            spawn_connected_native_sessions("session-creator-connect-span").await;
+
+        // Assert
+        let spans = telemetry.closed_spans("moqt.session.connect");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].field("outcome"), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_client_setup_ends_the_connect_span_as_rejected() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+
+        // Act
+        connect_to_a_rejecting_server("session-creator-rejected-connect-span").await;
+
+        // Assert
+        let spans = telemetry.closed_spans("moqt.session.connect");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].field("outcome"), Some("rejected"));
     }
 }
