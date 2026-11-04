@@ -344,7 +344,7 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`.
 - **Spans** are the closed INFO spans of `moqt` in the browser's wasm module
   (`init({ onSpan })`) and in `moq-cli`, chiefly the request spans
-  (`moqt.subscriber.subscribe`, …; see "Request spans" in
+  (`moqt.subscriber.subscribe`, …) and `moqt.session.connect` (see "Request spans" in
   `docs/architecture/moqt/architecture.md`). Each becomes an OTLP span of the
   same resource as the logs, kind INTERNAL, with `app_id`, `client_id` and
   the span's fields as attributes. `outcome` sets the status: `ok` is OK,
@@ -353,7 +353,8 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   `otel_traces` with `ServiceName` `browser` or `moq-cli`. The Python bots
   send none yet. A request span's `traceparent` travels with the request
   (`TRACE_CONTEXT`), so the relay's span for it is its child in the same
-  trace.
+  trace; `moqt.session.connect`'s travels in CLIENT_SETUP, so the relay's
+  `relay.session.setup` is its child.
 - **Stats** become metric points with `app_id` and `client_id`, posted to
   `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. A page playing several tracks at
   once (meeting: each remote member's camera and screen share) sends one
@@ -376,9 +377,7 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
 | `client.player.max_arrival_gap` | ms | gauge, `media_kind` attribute | `maxArrivalGapMs` |
 | `client.player.arrival_delay` | ms | gauge, `media_kind` attribute; includes the publisher-to-viewer clock offset, which the audio-video difference cancels | `arrivalDelayMs` |
 
-A collector that does not accept the export answers 502. A client's spans
-root their own traces: linking them to the relay's spans of the same request
-(trace context sent to the relay) is the next step.
+A collector that does not accept the export answers 502.
 
 ## Browser page (`examples/browser/examples/observability`)
 

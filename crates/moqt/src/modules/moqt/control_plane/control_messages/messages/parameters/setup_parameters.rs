@@ -2,7 +2,9 @@ use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
-        messages::parameters::authorization_token::AuthorizationToken,
+        messages::parameters::{
+            authorization_token::AuthorizationToken, trace_context::TraceContext,
+        },
     },
 };
 use anyhow::Context;
@@ -20,9 +22,11 @@ wire_enum! {
     }
 }
 
-/// The TRACE_CONTEXT Setup Option, not in draft-14: an odd type with an
-/// empty value whose presence says the sender reads the TRACE_CONTEXT
-/// request parameter (see `TraceContext`).
+/// The TRACE_CONTEXT Setup Option, not in draft-14: an odd type whose
+/// presence says the sender reads the TRACE_CONTEXT request parameter (see
+/// `TraceContext`). Its value is empty, or in CLIENT_SETUP the traceparent of
+/// the client's connect span, which a server that does not know the option
+/// ignores (draft-14 §9.3).
 const TRACE_CONTEXT: u64 = 0x1fff;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +45,8 @@ pub struct SetupParameter {
     pub moq_implementation: Option<String>,
     // 0x1fff
     pub trace_context: bool,
+    /// The value of the TRACE_CONTEXT option; sent only with `trace_context`.
+    pub traceparent: Option<TraceContext>,
 }
 
 impl SetupParameter {
@@ -99,6 +105,7 @@ impl SetupParameter {
                     VariantType::Even(_) => unreachable!(),
                 });
         let trace_context = kv_pairs.iter().any(|kv_pair| kv_pair.key == TRACE_CONTEXT);
+        let traceparent = TraceContext::find(&kv_pairs);
 
         Ok(SetupParameter {
             path,
@@ -108,6 +115,7 @@ impl SetupParameter {
             authority,
             moq_implementation,
             trace_context,
+            traceparent,
         })
     }
 
@@ -175,7 +183,11 @@ impl SetupParameter {
             number_of_parameters += 1;
         }
         if self.trace_context {
-            buf.unsplit(KeyValuePair::odd(TRACE_CONTEXT, Bytes::new()).encode());
+            let option = match &self.traceparent {
+                Some(traceparent) => traceparent.encode(),
+                None => KeyValuePair::odd(TRACE_CONTEXT, Bytes::new()),
+            };
+            buf.unsplit(option.encode());
             number_of_parameters += 1;
         }
         let mut result_bytes = BytesMut::new();
@@ -191,7 +203,9 @@ mod tests {
         use bytes::{Bytes, BytesMut};
 
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
-            authorization_token::AuthorizationToken, setup_parameters::SetupParameter,
+            authorization_token::AuthorizationToken,
+            setup_parameters::SetupParameter,
+            trace_context::{TEST_TRACEPARENT, TraceContext},
         };
 
         #[test]
@@ -209,6 +223,7 @@ mod tests {
                 authority: Some("auth".to_string()),
                 moq_implementation: Some("MOQ-WASM".to_string()),
                 trace_context: false,
+                traceparent: None,
             };
 
             let buf = setup_parameter.encode();
@@ -297,6 +312,7 @@ mod tests {
                 authority: None,
                 moq_implementation: None,
                 trace_context: true,
+                traceparent: None,
             };
 
             // Act
@@ -315,6 +331,30 @@ mod tests {
                 ]
             );
             assert!(decoded.trace_context);
+        }
+
+        #[test]
+        fn a_traceparent_rides_in_the_trace_context_option() {
+            // Arrange
+            let traceparent = TraceContext::parse(TEST_TRACEPARENT.as_bytes());
+            let setup_parameter = SetupParameter {
+                max_request_id: 0,
+                path: None,
+                authorization_token: vec![],
+                max_auth_token_cache_size: None,
+                authority: None,
+                moq_implementation: None,
+                trace_context: true,
+                traceparent: traceparent.clone(),
+            };
+
+            // Act
+            let buf = setup_parameter.encode();
+            let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&buf[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context);
+            assert_eq!(decoded.traceparent, traceparent);
         }
 
         // #[test]

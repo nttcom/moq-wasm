@@ -8,8 +8,9 @@ static TRACE_CONTEXT_PROVIDER: OnceLock<fn() -> Option<String>> = OnceLock::new(
 
 /// Sets the function that returns the W3C `traceparent` of the current span.
 /// SUBSCRIBE, PUBLISH, FETCH, SUBSCRIBE_NAMESPACE and PUBLISH_NAMESPACE carry
-/// its value as TRACE_CONTEXT, read inside the request's span. Only the first
-/// call takes effect.
+/// its value as TRACE_CONTEXT, read inside the request's span, and
+/// CLIENT_SETUP carries the value read inside `moqt.session.connect`. Only
+/// the first call takes effect.
 pub fn set_trace_context_provider(provider: fn() -> Option<String>) {
     let _ = TRACE_CONTEXT_PROVIDER.set(provider);
 }
@@ -20,6 +21,10 @@ pub(crate) fn current_trace_context(control: &ControlChannel) -> Option<TraceCon
     if !control.peer_reads_trace_context() {
         return None;
     }
+    current_traceparent()
+}
+
+pub(crate) fn current_traceparent() -> Option<TraceContext> {
     let traceparent = TRACE_CONTEXT_PROVIDER.get()?()?;
     TraceContext::parse(traceparent.as_bytes())
 }
@@ -30,9 +35,11 @@ mod tests {
 
     use super::set_trace_context_provider;
     use crate::SessionEvent;
+    use crate::TraceContext;
     use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TEST_TRACEPARENT;
     use crate::modules::test_support::{
-        send_without_waiting, spawn_connected_native_sessions, without_trace_context_declaration,
+        native_client, send_without_waiting, spawn_connected_native_sessions,
+        spawn_native_server_handshake, within, without_trace_context_declaration,
     };
     use crate::subscribe::SubscribeOption;
 
@@ -74,6 +81,25 @@ mod tests {
 
         // Assert
         assert_eq!(trace_context.as_deref(), Some(TEST_TRACEPARENT));
+    }
+
+    #[tokio::test]
+    async fn client_setup_carries_the_trace_context() {
+        // Arrange
+        set_trace_context_provider(test_provider);
+        PROVIDES_TRACE_CONTEXT.set(true);
+        let (port, accept) = spawn_native_server_handshake("trace-context-client-setup");
+        let url = format!("moqt://127.0.0.1:{port}");
+
+        // Act
+        let _client = tokio::spawn(async move { native_client().connect(&url).await?.await });
+        let handshake = within(accept).await.unwrap();
+
+        // Assert
+        assert_eq!(
+            handshake.trace_context().map(TraceContext::as_str),
+            Some(TEST_TRACEPARENT)
+        );
     }
 
     #[tokio::test]

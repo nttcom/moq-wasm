@@ -22,6 +22,7 @@ use crate::modules::{
         data_plane::codec::control_message_decoder::ControlMessageDecoder,
         version::draft14::{ControlChannel, REQUEST_ID_WINDOW},
     },
+    telemetry::current_traceparent,
     transport::transport_connection::BoxedConnection,
 };
 
@@ -40,6 +41,7 @@ async fn send_client_setup(
         authority: None,
         moq_implementation: Some("MOQ-WASM".to_string()),
         trace_context: true,
+        traceparent: current_traceparent(),
     };
     let payload = ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_param).encode();
     send_stream
@@ -116,6 +118,7 @@ async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<(
         max_auth_token_cache_size: None,
         moq_implementation: Some("MOQ-WASM".to_string()),
         trace_context: declares_trace_context(),
+        traceparent: None,
     };
     let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode();
     Ok(send_stream
