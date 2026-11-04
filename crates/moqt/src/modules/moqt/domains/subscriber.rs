@@ -75,7 +75,10 @@ impl Subscriber {
                     // migration sends it again, and an UNSUBSCRIBE_NAMESPACE sent
                     // meanwhile removes it.
                     if let Some(carried) = &carried {
-                        carried.update(|carried| carried.namespaces.push(namespace.clone()));
+                        let request_id = logical_id(connection.generation, request_id);
+                        carried.update(|carried| {
+                            carried.namespaces.insert(request_id, namespace.clone())
+                        });
                     }
                     break (connection, request_id, pending);
                 }
@@ -94,12 +97,8 @@ impl Subscriber {
             Err(error) if self.session.moved_after_loss(&connection, &error).await => Ok(()),
             Err(error) => {
                 if let Some(carried) = self.session.read_carried().await {
-                    carried.update(|carried| {
-                        if let Some(index) = carried.namespaces.iter().position(|n| *n == namespace)
-                        {
-                            carried.namespaces.remove(index);
-                        }
-                    });
+                    let request_id = logical_id(connection.generation, request_id);
+                    carried.update(|carried| carried.namespaces.remove(&request_id));
                 }
                 Err(error)
             }
@@ -650,7 +649,11 @@ impl Subscriber {
     )]
     pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         if let Some(carried) = self.session.read_carried().await {
-            carried.update(|carried| carried.namespaces.retain(|carried| *carried != namespace));
+            carried.update(|carried| {
+                carried
+                    .namespaces
+                    .retain(|_, carried| *carried != namespace)
+            });
         }
         let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
@@ -2311,6 +2314,51 @@ mod tests {
             .unwrap()
             .update(|carried| carried.namespaces.clone());
         assert!(carried.is_empty(), "{carried:?}");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_subscribe_namespace_leaves_a_later_one_of_the_prefix_carried() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-resubscribed-namespace")
+                .await;
+        let session = client.subscriber().session.clone();
+        let subscribe = |subscriber: super::Subscriber| {
+            tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await })
+        };
+        let rejected = subscribe(client.subscriber());
+        let SessionEvent::SubscribeNameSpace(first) = within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE_NAMESPACE from the client");
+        };
+        within(client.subscriber().unsubscribe_namespace("a".into()))
+            .await
+            .unwrap();
+        let SessionEvent::UnsubscribeNamespace(_) = within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected UNSUBSCRIBE_NAMESPACE from the client");
+        };
+        let _accepted = subscribe(client.subscriber());
+        let SessionEvent::SubscribeNameSpace(_second) =
+            within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected the second SUBSCRIBE_NAMESPACE from the client");
+        };
+
+        // Act
+        first
+            .error(RequestErrorCode::InternalError, "rejected".to_string())
+            .await
+            .unwrap();
+        within(rejected).await.unwrap().unwrap_err();
+
+        // Assert
+        let carried = session
+            .read_carried()
+            .await
+            .unwrap()
+            .update(|carried| carried.namespaces.values().cloned().collect::<Vec<_>>());
+        assert_eq!(carried, ["a"]);
     }
 
     #[tokio::test]

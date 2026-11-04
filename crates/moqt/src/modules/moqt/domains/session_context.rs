@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt,
     sync::{Arc, Weak},
 };
@@ -87,8 +87,12 @@ struct Connections {
 
 #[derive(Default)]
 pub(crate) struct CarriedRequests {
-    pub(crate) namespaces: Vec<String>,
-    pub(crate) published_namespaces: Vec<String>,
+    /// Keyed by the logical id of the request that sent the namespace, so a
+    /// failed request removes only its own record, not another request's for
+    /// the same namespace.
+    pub(crate) namespaces: BTreeMap<u64, String>,
+    /// Keyed as `namespaces`.
+    pub(crate) published_namespaces: BTreeMap<u64, String>,
     /// Keyed by logical request id.
     pub(crate) subscriptions: HashMap<u64, CarriedSubscription>,
 }
@@ -106,6 +110,21 @@ impl CarriedGuard<'_> {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         )
+    }
+}
+
+/// The `published_namespaces` record one PUBLISH_NAMESPACE added, which
+/// `forget` removes.
+pub(crate) struct CarriedPublishedNamespace {
+    pub(crate) session: Arc<SessionContext>,
+    pub(crate) request_id: u64,
+}
+
+impl CarriedPublishedNamespace {
+    pub(crate) async fn forget(self) {
+        if let Some(carried) = self.session.read_carried().await {
+            carried.update(|carried| carried.published_namespaces.remove(&self.request_id));
+        }
     }
 }
 

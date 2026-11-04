@@ -24,7 +24,9 @@ use crate::{
             pending_publish_namespace::PendingPublishNamespace,
             request_failure::{record_outcome, record_request_id},
             send_targets::SendTargets,
-            session_context::{Publication, PublicationTarget, SessionContext},
+            session_context::{
+                CarriedPublishedNamespace, Publication, PublicationTarget, SessionContext,
+            },
             subscription::{PublisherInitiatedSubscription, Subscription},
         },
         version::{Notification, OutgoingRequest},
@@ -76,7 +78,7 @@ impl Publisher {
         &self,
         namespace: String,
     ) -> Result<(Arc<Connection>, PendingPublishNamespace), RequestFailure> {
-        let (carried, connection, pending) = loop {
+        let (carried, connection, mut pending) = loop {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
             match send_publish_namespace(&connection, namespace.clone()).await {
@@ -89,7 +91,12 @@ impl Publisher {
             }
         };
         if let Some(carried) = &carried {
-            carried.update(|carried| carried.published_namespaces.push(namespace));
+            let request_id = logical_id(connection.generation, pending.request_id);
+            carried.update(|carried| carried.published_namespaces.insert(request_id, namespace));
+            pending.carried = Some(CarriedPublishedNamespace {
+                session: self.session.clone(),
+                request_id,
+            });
         }
         Ok((connection, pending))
     }
@@ -101,7 +108,7 @@ impl Publisher {
             carried.update(|carried| {
                 carried
                     .published_namespaces
-                    .retain(|carried| *carried != namespace)
+                    .retain(|_, carried| *carried != namespace)
             });
         }
         let vec_namespace = namespace_tuple(&namespace);
@@ -309,6 +316,7 @@ pub(crate) async fn send_publish_namespace(
         track_namespace: namespace,
         sent_at: now(),
         pending,
+        carried: None,
     })
 }
 
@@ -446,6 +454,40 @@ mod tests {
         // Assert
         assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
         request.abort();
+    }
+
+    #[tokio::test]
+    async fn a_rejected_publish_namespace_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-rejected-publish-namespace")
+                .await;
+        let publisher = client.publisher();
+        let session = publisher.session.clone();
+        let published = tokio::spawn(async move { publisher.publish_namespace("a".into()).await });
+        let SessionEvent::PublishNamespace(handler) = within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, "rejected".to_string())
+            .await
+            .unwrap();
+        let result = within(published).await.unwrap();
+
+        // Assert
+        assert!(
+            matches!(result, Err(RequestFailure::Rejected { .. })),
+            "{result:?}"
+        );
+        let carried = session
+            .read_carried()
+            .await
+            .unwrap()
+            .update(|carried| carried.published_namespaces.clone());
+        assert!(carried.is_empty(), "{carried:?}");
     }
 
     #[tokio::test]

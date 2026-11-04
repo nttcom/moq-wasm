@@ -440,14 +440,14 @@ async fn migrate(
         .get_mut()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let moved_from = session.connection();
-    for namespace in &carried.namespaces {
+    for namespace in carried.namespaces.values() {
         retry_until(deadline, || {
             send_subscribe_namespace(&connection, namespace.clone())
         })
         .await
         .with_context(|| format!("SUBSCRIBE_NAMESPACE {namespace} on the new connection failed"))?;
     }
-    for namespace in &carried.published_namespaces {
+    for namespace in carried.published_namespaces.values() {
         retry_until(deadline, || async {
             send_publish_namespace(&connection, namespace.clone())
                 .await?
