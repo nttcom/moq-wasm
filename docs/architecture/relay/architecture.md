@@ -585,7 +585,8 @@ per-request authorization gate under "Event pipeline".
   handed to `build_verified_token`. 401 → `Unauthorized`, anything else or a
   transport error → `Unavailable`. 3 s timeout. The call runs in a
   `relay.vts.verify` span whose context goes out as a W3C `traceparent`
-  header, so the VTS's spans join the relay's trace.
+  header and its copy `x-original-traceparent`, so the VTS's spans join the
+  relay's trace.
 - `session_authenticator.rs` — `SessionAuthenticator`, built from
   `AuthConfig` around a `TokenVerifier`; combines the pieces above into the
   CLIENT_SETUP decision described under "Session intake".

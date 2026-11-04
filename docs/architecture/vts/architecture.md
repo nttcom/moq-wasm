@@ -78,10 +78,11 @@ sequenceDiagram
   `VTS_STDOUT_FILTER`, `VTS_OTEL_FILTER` and `VTS_LOG_FILTER` filter, each
   falling back to `RUST_LOG`.
 - Every request runs in a `vts.request` span that continues the caller's
-  trace from its W3C `traceparent` header, so a verification shows up under
-  the relay's `relay.vts.verify` span. A `/verify` that reaches the registry
-  records `outcome` on the span: `verified`, with the token's `app_id` and
-  `is_relay`, or the rejection reason that `verify rejected` logs. The token
-  and secrets stay out of the span.
+  trace from its `x-original-traceparent` header, else its W3C `traceparent`
+  (see "Trace context" in the telemetry architecture), so a verification
+  shows up under the relay's `relay.vts.verify` span. A `/verify` that
+  reaches the registry records `outcome` on the span: `verified`, with the
+  token's `app_id` and `is_relay`, or the rejection reason that
+  `verify rejected` logs. The token and secrets stay out of the span.
 - The Docker image (`services/vts/Dockerfile`) is a `cargo-chef` build onto
   `distroless/cc`, the same base as the relay, and ships `vts`.
