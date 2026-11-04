@@ -23,7 +23,7 @@ use wasm_bindgen_futures::{JsFuture, future_to_promise, spawn_local};
 use broadcast::RelayConnection;
 
 use crate::{
-    js_error,
+    anyhow_error, js_error,
     loc::{encode_loc_header, parse_loc_header},
     media_broadcast::MediaBroadcast,
     request_rejection::request_failure_code,
@@ -789,8 +789,4 @@ fn request_error(kind: RequestKind, error: &RequestFailure) -> JsValue {
         &JsValue::from(request_error_code_to_wire(code, kind)),
     );
     js_error.into()
-}
-
-fn anyhow_error(error: anyhow::Error) -> JsValue {
-    js_error(format!("{error:#}"))
 }

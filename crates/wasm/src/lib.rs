@@ -37,3 +37,8 @@ fn main() {
 pub(crate) fn js_error(message: impl Into<String>) -> JsValue {
     js_sys::Error::new(&message.into()).into()
 }
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn anyhow_error(error: anyhow::Error) -> JsValue {
+    js_error(format!("{error:#}"))
+}

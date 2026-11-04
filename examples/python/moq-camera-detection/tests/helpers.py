@@ -1,8 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any
 
 import av
-from aiohttp import web
 
 from moq_camera_detection.prompt import ChoiceQuestion, Prompt
 from moq_camera_detection.vision import Answer
@@ -32,14 +30,3 @@ class StubVision:
     async def answer(self, jpeg: bytes, prompt: Prompt) -> list[Answer]:
         self.images.append(jpeg)
         return self.answers
-
-
-@dataclass
-class FakeVisionServer:
-    answers: dict[str, Any]
-    url: str = ""
-    requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
-
-    async def handle(self, request: web.Request) -> web.Response:
-        self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"answers": self.answers})

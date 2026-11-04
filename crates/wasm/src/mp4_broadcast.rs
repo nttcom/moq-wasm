@@ -6,7 +6,7 @@ use mediapack::{AudioSample, MediaEvent, Timestamp, VideoConfig, VideoSample};
 use moqt::executor;
 use wasm_bindgen::prelude::*;
 
-use crate::{js_error, mp4::Mp4Index};
+use crate::{anyhow_error, js_error, mp4::Mp4Index};
 
 /// Publishes the samples of an MP4 file with `crates/broadcast`: the same
 /// catalog, LOC and CMAF tracks, media timeline and FETCH cache as
@@ -44,10 +44,7 @@ impl Mp4Broadcast {
             .video
             .clone()
             .ok_or_else(|| js_error("the file has no H.264 video track"))?;
-        let height = video
-            .sequence_parameter_set()
-            .map_err(|err| js_error(format!("{err:#}")))?
-            .height;
+        let height = video.sequence_parameter_set().map_err(anyhow_error)?.height;
         let connection = RelayConnection::new(Some(MoqtTarget {
             url,
             auth_token: None,
@@ -74,7 +71,7 @@ impl Mp4Broadcast {
             .broadcast()
             .announce()
             .await
-            .map_err(|err| js_error(format!("{err:#}")))
+            .map_err(anyhow_error)
     }
 
     /// `data` is Annex-B; `pts_micros` and `dts_micros` count from the start
@@ -139,7 +136,5 @@ impl Mp4Broadcast {
 }
 
 fn push(writer: &mut BroadcastWriter, event: MediaEvent) -> Result<(), JsValue> {
-    writer
-        .push(event)
-        .map_err(|err| js_error(format!("{err:#}")))
+    writer.push(event).map_err(anyhow_error)
 }

@@ -452,13 +452,12 @@ fn forward_bus_messages(
 mod tests {
     use std::time::Duration;
 
-    use bytes::Bytes;
-    use mediapack::{Timestamp, mp4::Mp4Index};
+    use mediapack::{Timestamp, loc::VideoCodec, mp4::Mp4Index};
 
     use super::*;
     use crate::test_support::{
         FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_events, decode_in_software,
-        fixture_events, fixture_video_samples, ivf_frames, shifted, source, transcode_54p,
+        fixture_events, fixture_video_samples, ivf_events, shifted, source, transcode_54p,
     };
 
     const SETTINGS: CompositeSettings = CompositeSettings {
@@ -491,27 +490,6 @@ mod tests {
         last.saturating_add(Timestamp::from_micros(
             1_000_000 / u64::from(SETTINGS.framerate),
         ))
-    }
-
-    fn ivf_events(
-        file: &[u8],
-        parse: impl Fn(&Bytes) -> (bool, Option<VideoConfig>),
-    ) -> Vec<MediaEvent> {
-        let mut events = Vec::new();
-        for (index, data) in ivf_frames(file).into_iter().enumerate() {
-            let (is_keyframe, config) = parse(&data);
-            if let Some(config) = config {
-                events.push(MediaEvent::VideoConfig(config));
-            }
-            let pts = Timestamp::from_ticks(index as u64, 30);
-            events.push(MediaEvent::Video(VideoSample {
-                data,
-                is_keyframe,
-                pts,
-                dts: pts,
-            }));
-        }
-        events
     }
 
     async fn composite(inputs: Vec<CompositeInput>, name: &str) -> Mp4Index {
@@ -705,23 +683,9 @@ mod tests {
     #[tokio::test]
     async fn decodes_vp8_vp9_and_av1_inputs() {
         // Arrange
-        let vp8 = ivf_events(FIXTURE_VP8_IVF, |data| {
-            let frame = mediapack::vp8::parse_frame(data).unwrap();
-            (frame.is_keyframe, frame.config.map(VideoConfig::Vp8))
-        });
-        let vp9 = ivf_events(FIXTURE_VP9_IVF, |data| {
-            let frame = mediapack::vp9::parse_frame(data).unwrap();
-            (frame.is_keyframe, frame.config.map(VideoConfig::Vp9))
-        });
-        let av1_config = std::sync::Mutex::new(None);
-        let av1 = ivf_events(FIXTURE_AV1_IVF, |data| {
-            let mut current = av1_config.lock().unwrap();
-            let unit = mediapack::av1::parse_temporal_unit(data, current.as_ref()).unwrap();
-            if let Some(config) = &unit.config {
-                *current = Some(config.clone());
-            }
-            (unit.is_keyframe, unit.config.map(VideoConfig::Av1))
-        });
+        let vp8 = ivf_events(VideoCodec::Vp8, FIXTURE_VP8_IVF);
+        let vp9 = ivf_events(VideoCodec::Vp9, FIXTURE_VP9_IVF);
+        let av1 = ivf_events(VideoCodec::Av1, FIXTURE_AV1_IVF);
         let inputs = [vp8, vp9, av1]
             .into_iter()
             .map(|events| CompositeInput {
