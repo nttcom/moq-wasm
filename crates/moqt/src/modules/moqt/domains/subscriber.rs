@@ -822,7 +822,15 @@ pub(crate) async fn send_subscribe_namespace(
     connection: &Connection,
     namespace: String,
 ) -> Result<RequestId, RequestFailure> {
-    let vec_namespace = namespace_tuple(&namespace);
+    let (request_id, pending) = begin_subscribe_namespace(connection, &namespace).await?;
+    subscribe_namespace_ok(request_id, &namespace, pending).await
+}
+
+async fn begin_subscribe_namespace(
+    connection: &Connection,
+    namespace: &str,
+) -> Result<(RequestId, PendingResponse), RequestFailure> {
+    let vec_namespace = namespace_tuple(namespace);
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let pending = connection
@@ -835,6 +843,14 @@ pub(crate) async fn send_subscribe_namespace(
             }),
         )
         .await?;
+    Ok((request_id, pending))
+}
+
+async fn subscribe_namespace_ok(
+    request_id: RequestId,
+    namespace: &str,
+    pending: PendingResponse,
+) -> Result<RequestId, RequestFailure> {
     let response = pending.response().await?.accept();
     match response {
         ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
