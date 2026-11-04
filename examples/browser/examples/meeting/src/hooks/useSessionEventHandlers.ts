@@ -67,23 +67,32 @@ interface PublishNamespaceHandlerOptions {
   setTranscriberPresent: Dispatch<SetStateAction<boolean>>
 }
 
-function createPublishNamespaceHandler({
-  session,
-  roomName,
-  userName,
-  setRoom,
-  setTranscriberPresent
-}: PublishNamespaceHandlerOptions) {
+/// The remote member a namespace in this room announces, once the session is ready. For the
+/// transcriber's namespace it sets whether the transcriber is `present` instead.
+function announcedRemoteMember(
+  { session, roomName, userName, setTranscriberPresent }: PublishNamespaceHandlerOptions,
+  trackNamespace: string[],
+  present: boolean
+) {
+  if (session.status !== LocalSessionState.Ready) {
+    return
+  }
+  if (isTranscriberNamespace(trackNamespace, roomName)) {
+    setTranscriberPresent(present)
+    return
+  }
+  const announced = parseTrackNamespace(trackNamespace)
+  if (!announced || announced.roomName !== roomName || announced.userName === userName) {
+    return
+  }
+  return announced
+}
+
+function createPublishNamespaceHandler(options: PublishNamespaceHandlerOptions) {
+  const { session, setRoom } = options
   return (trackNamespace: string[]) => {
-    if (session.status !== LocalSessionState.Ready) {
-      return
-    }
-    if (isTranscriberNamespace(trackNamespace, roomName)) {
-      setTranscriberPresent(true)
-      return
-    }
-    const announced = parseTrackNamespace(trackNamespace)
-    if (!announced || announced.roomName !== roomName || announced.userName === userName) {
+    const announced = announcedRemoteMember(options, trackNamespace, true)
+    if (!announced) {
       return
     }
 
@@ -99,23 +108,11 @@ function createPublishNamespaceHandler({
   }
 }
 
-function createPublishNamespaceDoneHandler({
-  session,
-  roomName,
-  userName,
-  setRoom,
-  setTranscriberPresent
-}: PublishNamespaceHandlerOptions) {
+function createPublishNamespaceDoneHandler(options: PublishNamespaceHandlerOptions) {
+  const { session, setRoom } = options
   return (trackNamespace: string[]) => {
-    if (session.status !== LocalSessionState.Ready) {
-      return
-    }
-    if (isTranscriberNamespace(trackNamespace, roomName)) {
-      setTranscriberPresent(false)
-      return
-    }
-    const announced = parseTrackNamespace(trackNamespace)
-    if (!announced || announced.roomName !== roomName || announced.userName === userName) {
+    const announced = announcedRemoteMember(options, trackNamespace, false)
+    if (!announced) {
       return
     }
 
