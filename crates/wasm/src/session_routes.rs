@@ -1,13 +1,15 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use broadcast::RelayConnection;
+use client_telemetry::continue_trace_from_traceparent;
 use moqt::{
-    RequestErrorCode, Session, SessionEvent,
+    RequestErrorCode, Session, SessionEvent, TraceContext,
     namespace::{NamespaceEvent, NamespaceWatchers},
     publish::Origin,
     wire::publish_done_code_to_wire,
 };
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tracing::{Instrument, Span};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PublishDone {
@@ -129,22 +131,56 @@ impl SessionRoutes {
                     }
                 }
                 SessionEvent::SubscribeNameSpace(handler) => {
-                    if let Err(error) = handler.ok().await {
-                        tracing::debug!(%error, "failed to acknowledge SUBSCRIBE_NAMESPACE");
+                    let span = answer_span(
+                        tracing::info_span!(
+                            parent: None,
+                            "wasm.subscribe_namespace",
+                            track_namespace_prefix = %handler.track_namespace_prefix,
+                        ),
+                        handler.trace_context(),
+                    );
+                    async {
+                        if let Err(error) = handler.ok().await {
+                            tracing::debug!(%error, "failed to acknowledge SUBSCRIBE_NAMESPACE");
+                        }
                     }
+                    .instrument(span)
+                    .await;
                 }
                 SessionEvent::Subscribe(handler) => {
+                    let span = answer_span(
+                        tracing::info_span!(
+                            parent: None,
+                            "wasm.subscribe",
+                            request_id = handler.request_id(),
+                            track_namespace = %handler.track_namespace,
+                            track_name = %handler.track_name,
+                        ),
+                        handler.trace_context(),
+                    );
                     let reason = format!("{} is not published here", handler.track_name);
                     let _ = handler
                         .error(RequestErrorCode::TrackDoesNotExist, reason)
+                        .instrument(span)
                         .await;
                 }
                 SessionEvent::Publish(handler) => {
+                    let span = answer_span(
+                        tracing::info_span!(
+                            parent: None,
+                            "wasm.publish",
+                            request_id = handler.request_id,
+                            track_namespace = %handler.track_namespace,
+                            track_name = %handler.track_name,
+                        ),
+                        handler.trace_context(),
+                    );
                     let _ = handler
                         .error(
                             RequestErrorCode::Uninterested,
                             "this session takes no PUBLISH".to_string(),
                         )
+                        .instrument(span)
                         .await;
                 }
                 SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
@@ -163,18 +199,33 @@ impl SessionRoutes {
     }
 }
 
+fn answer_span(span: Span, trace_context: Option<&TraceContext>) -> Span {
+    if let Some(trace_context) = trace_context {
+        continue_trace_from_traceparent(&span, trace_context.as_str());
+    }
+    span
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use std::sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicU8, Ordering},
+    };
+
     use bytes::Bytes;
+    use client_telemetry::{SpanRecordLayer, current_traceparent};
     use moqt::{
         ClientConfig, Endpoint, NATIVE, RequestFailure,
         object::ContentExists,
-        publish::{GroupBoundary, OutgoingObject, PublishDoneCode, Retention},
+        publish::{GroupBoundary, OutgoingObject, PublishDoneCode, PublishOption, Retention},
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
         subscribe::SubscribeOption,
     };
+    use serde_json::Value;
+    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
 
@@ -435,5 +486,62 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn the_answer_to_a_publish_joins_the_trace_of_the_peer_s_request() {
+        // Arrange
+        let Connected {
+            client,
+            server,
+            _endpoints,
+        } = connected_sessions("publish-trace").await;
+        let routes = SessionRoutes::default();
+        let records = Arc::new(StdMutex::new(Vec::<Value>::new()));
+        let sink = records.clone();
+        let subscriber = tracing_subscriber::registry().with(SpanRecordLayer {
+            now_ms: || 0,
+            random_byte: next_byte,
+            emit: move |record, _scope| sink.lock().unwrap().push(record),
+        });
+        let _default = tracing::subscriber::set_default(subscriber);
+        moqt::set_trace_context_provider(current_traceparent);
+
+        // Act
+        let published = tokio::time::timeout(TIMEOUT, async {
+            let publisher = server.publisher();
+            tokio::select! {
+                () = routes.route(&client) => panic!("the session ended"),
+                published = publisher.publish("ns".into(), "track".into(), PublishOption::default()) => published,
+            }
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(matches!(
+            published,
+            Err(RequestFailure::Rejected {
+                code: RequestErrorCode::Uninterested,
+                ..
+            })
+        ));
+        let records = records.lock().unwrap();
+        let span = |name: &str| {
+            records
+                .iter()
+                .find(|record| record["name"] == name)
+                .unwrap_or_else(|| panic!("no {name} span in {records:?}"))
+        };
+        let request = span("moqt.publisher.publish");
+        let answer = span("wasm.publish");
+        assert_eq!(answer["traceId"], request["traceId"]);
+        assert_eq!(answer["parentSpanId"], request["spanId"]);
+        assert_eq!(answer["fields"]["track_name"], "track");
+    }
+
+    fn next_byte() -> u8 {
+        static NEXT: AtomicU8 = AtomicU8::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
     }
 }
