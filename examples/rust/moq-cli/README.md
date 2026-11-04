@@ -32,7 +32,9 @@ HyperDX as `service.name=moq-cli` with `page` set to the subcommand. Without
 `http://localhost:8095`, and any other relay to
 `https://observability.moqt.research.skyway.io`. The relay token, when given,
 is sent with the logs so they belong to its app; without one they are `anon`.
-A failed report is dropped.
+A failed report is dropped. Once the server rejects the token (expired), the
+following reports go without it, as `anon`, until the token file holds
+another token.
 
 ## Publish
 
