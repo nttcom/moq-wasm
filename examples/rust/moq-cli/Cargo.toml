@@ -12,6 +12,7 @@ moqt = { path = "../../../crates/moqt" }
 msf = { path = "../../../crates/msf" }
 mediapack = { path = "../../../crates/mediapack" }
 broadcast = { path = "../../../crates/broadcast" }
+client-telemetry = { path = "../../../crates/client-telemetry" }
 serde_json = "1"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1.44"

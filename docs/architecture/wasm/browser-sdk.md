@@ -350,7 +350,7 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   `moqt.subscriber.subscribe` など）が `SpanRecord`
   （`{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`、id は小文字 hex）で
   渡る。`logLevel` は span には効かない。span を記録する `Layer` は
-  `crates/wasm/src/span_sink.rs` にある。
+  `crates/client-telemetry/src/span_record.rs` にある。
 
 形（TypeScript、抜粋）:
 

@@ -21,8 +21,9 @@ features = ["registry", "std"]`.
 
 On wasm32, `setLogSink` installs `registry()` with a `LevelFilter` and one custom `Layer` as the global default
 subscriber. The layer turns each event into a JSON record and calls the page's callback. Building the record
-(`log_record.rs`) does not depend on wasm32, so it is unit tested on the host. With `init({ onSpan })` a second
-layer (`span_sink.rs`, INFO and above) hands each closed span to the page as a `SpanRecord`.
+(`client_telemetry::log_record`) does not depend on wasm32, so it is unit tested on the host. With
+`init({ onSpan })` a second layer (`client_telemetry::SpanRecordLayer`, INFO and above) hands each closed span to
+the page as a `SpanRecord`.
 
 ## Consequences
 
