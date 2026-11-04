@@ -1,5 +1,5 @@
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
                 control_messages::messages::{
                     fetch::Fetch, fetch_ok::FetchOk, parameters::location::Location,
                 },
-                error_codes::{RequestErrorCode, RequestKind},
+                error_codes::RequestErrorCode,
                 handler::response_guard::ResponseGuard,
             },
             domains::{connection::Connection, session_context::SessionContext},
@@ -44,7 +44,7 @@ impl FetchHandler {
         fetch: Fetch,
     ) -> Self {
         let group_order = fetch.group_order;
-        let guard = ResponseGuard::new(connection, fetch.request_id, RequestKind::Fetch);
+        let guard = ResponseGuard::new(connection, RequestSummary::of_fetch(&fetch));
         let request_id = guard.connection().logical_request_id(fetch.request_id);
         Self {
             session_context,
@@ -61,7 +61,6 @@ impl FetchHandler {
         end_of_track: bool,
         end_location: Location,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let fetch_ok = FetchOk {
             request_id: self.guard.request_id(),
             group_order: self.group_order.delivered(),
@@ -69,11 +68,7 @@ impl FetchHandler {
             end_location,
             max_cache_duration: self.max_cache_duration,
         };
-        self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::FetchOk(fetch_ok))
-            .await
+        self.guard.accept(OutgoingResponse::FetchOk(fetch_ok)).await
     }
 
     pub async fn error(

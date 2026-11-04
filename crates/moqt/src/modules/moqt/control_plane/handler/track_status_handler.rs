@@ -1,4 +1,4 @@
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -39,8 +39,12 @@ impl TrackStatusHandler {
     pub(crate) fn new(connection: Arc<Connection>, track_status: Subscribe) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            track_status.request_id,
-            RequestKind::TrackStatus,
+            RequestSummary::new(
+                RequestKind::TrackStatus,
+                track_status.request_id,
+                Some(&track_status.track_namespace),
+                Some(&track_status.track_name),
+            ),
         );
         Self {
             request_id: guard
@@ -64,7 +68,6 @@ impl TrackStatusHandler {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let track_status_ok = SubscribeOk {
             request_id: self.guard.request_id(),
             track_alias: 0,
@@ -75,9 +78,7 @@ impl TrackStatusHandler {
             max_duration: None,
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::TrackStatusOk(track_status_ok))
+            .accept(OutgoingResponse::TrackStatusOk(track_status_ok))
             .await
     }
 
