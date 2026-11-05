@@ -313,6 +313,147 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 7. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
    なってから行う。
 
+## 録画を `LivePlayer` で再生する
+
+ステータス: 提案。議論の途中で、未決事項が残っている。
+
+### 現状
+`examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
+FETCH の範囲、時刻から位置への対応、track の一覧を、recorder の `POST /recordings/{id}/publish`
+の応答（JSON の `tracks[].chunks[]`）から得る。この JSON は recorder の保存単位（約 4 MiB の
+チャンク）に結び付いた独自の形式で、ライブの `LivePlayer` にはこの入口がない。
+
+`LivePlayer` に replay の namespace を渡しても再生できない。
+
+- catalog を joining FETCH 付きで購読するが、replay は joining FETCH を断り、SUBSCRIBE では
+  Object を送らないので、catalog が届かない。
+- 巻き戻しの時間軸は、ライブで観測した group から作る（`GroupTimeline`、60 秒で失効）。
+  見たことのない group へはシークできない。`MediaTimeline` は観測した group に時刻を
+  付けるのにしか使っていない。
+- 終わりの状態が無い。publisher の終了は「publisher が去った、戻るのを待つ」と扱う。
+- 時計と AudioContext は player ごとにあり、複数の player を1つの再生位置に揃えられない。
+
+### 方針
+MoQ では、過去の Object も FETCH で取れるので、録画とライブの違いは「publisher がまだ
+配信しているか」だけになる。録画を見るときは、元の publisher の代わりに recorder が
+保存した Object を配信する（replay）。そこで、録画を **MSF の VOD broadcast** として
+replay し、`LivePlayer` は catalog が示すとおりに再生する。
+
+- replay の catalog は、各 track を `isLive: false`（draft-ietf-moq-msf-01 §5.2.7）にし、
+  `trackDuration`（§5.2.35）を付け、catalog 全体を `isComplete: true`（§5.1.3）にする。
+- 時刻から位置への対応は、media timeline track（§7）で示す。MoQ は Object を時刻でなく
+  位置（Group ID と Object ID）で指定し、Group ID も group の長さも時刻と結び付かないので、
+  timeline が無いと、見たことのない group がいつのものかわからない。§7.3 は、独立した
+  timeline に「その時点でアクセスできる全記録」を含めると定める。ライブではそれが relay の
+  キャッシュにある範囲、録画では全期間になる。§7 は用途にライブの巻き戻しと VOD での
+  ランダムアクセスを挙げている。
+- どのメディアにも timeline を付ける。ライブでは publisher（`crates/broadcast`）が、
+  録画では replay が出す。
+- `LivePlayer` は、ライブか録画かを独自の情報で分けない。catalog の `isLive` と
+  timeline で振る舞いを決める。
+- recorder と player は、track の名前の規則に頼らない。ソースは `renderGroup`（§5.2.11）で、
+  rendition は `altGroup`（§5.2.12）で見分ける。カメラか画面共有かを示す独自のフィールドは
+  足さない。表示には `label` を使う。
+- recorder の HTTP API（再 publish の依頼と lease）は `LivePlayer` に入れない。SDK の
+  別の subpath（`moq-wasm/recording`）に置き、`LivePlayer` とライブだけ使うアプリの
+  バンドルには入れない。
+
+### publisher（`crates/broadcast`）に要る変更
+
+| 項目 | 今 | 変更後 |
+| --- | --- | --- |
+| timeline を出すソース | 名前が `video` の track（カメラ）だけ | すべてのソース。ソースごとに timeline track を1本出し、`depends` にそのソースの映像、rendition、音声を並べる。track 名の付け方は手順 1 で決める |
+| entry を書く時 | `video` のキーフレームごと | ソースの group が始まるごと。映像があるときはキーフレームで、無いとき（ミュート中、音声だけのソース）は音声が始める group で書く。1つのソースの映像と音声は同じ Group ID の列を使うので、1本で両方の位置を表せる |
+| group ID が飛んだとき | 一覧を空にする（映像をミュートすると起きる） | 音声の group でも entry を書くので、ID は飛ばない。一覧を空にするのは publisher が配信をやり直したときだけにする |
+
+保持する範囲は今と同じく relay のキャッシュの保持時間（60 秒）とする。
+
+### recorder（replay）に要る変更
+
+| 項目 | 今 | 変更後 |
+| --- | --- | --- |
+| track の選び方 | 画面共有を名前（`screenshare` で始まる）で見分ける。チャットは `chat` と決め打ち | catalog の `renderGroup` ごとに1ソースとして録画し、`altGroup` の中から1本を選ぶ。チャットは `eventtimeline` の track を catalog から選ぶ |
+| catalog | 元の catalog の Object をそのまま流す。track の `namespace` 欄は元の publisher のもの | replay の namespace ごとに、保存した track を並べた catalog を1つ作って流す。各 track は元の catalog から codec、幅、高さなどを引き継ぎ、`isLive: false` と `trackDuration` を付ける。catalog 全体は `isComplete: true` にし、`generatedAt` は付けない（§5.1.2） |
+| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | ソースごとに全期間の media timeline track を出す。entry は保存した group の先頭ごとに `[presentation ms, [group, 0], wallclock ms]`。索引の `capture_us` から作る。元の timeline は直近 60 秒分の一覧しか持たないので、保存しても使わない |
+| joining FETCH | 断る | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
+| 終わり | FETCH_OK の `end_of_track` だけ | catalog の `isLive: false` で示す。SUBSCRIBE は今どおり Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
+| 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の最後の要素（参加者名）を `<member-index>` の代わりに入れる |
+| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の namespace にも catalog を作り、`transcript` を event timeline として載せる |
+| HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）と `renew_after_seconds` だけにする |
+
+replay が作る catalog と timeline は、保存したデータだけから決める。draft-ietf-moq-transport-14
+§2.1 は、Object がどこから取っても同じバイト列で、中身が時間で変わらないことを求める
+（MUST NOT change）。同じ録画の replay は Cloud Run の別のインスタンスでも立ち、同じ
+namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取り込み、重複を1つに
+まとめる（§8.2、relay の architecture.md の Ingress）。作った時刻やインスタンスごとの値を
+入れると、同じ位置に別の中身が並ぶ。
+
+### SDK に要る変更
+
+`LivePlayer`:
+
+- catalog の track が `isLive: false` のとき、シークバーの範囲を timeline の最初から最後
+  （`trackDuration`）にし、`goLive` を出さない。再生位置が終わりに着いたら止まり、
+  `state.ended` を立てる。
+- 見たことのない group へも、timeline の entry を使ってシークする。FETCH の窓は今の巻き戻しと
+  同じ（group の先頭から、4 group ずつ）。ライブでも、timeline があればこれを使い、relay の
+  キャッシュに無い範囲は今どおり `FetchFailure` で扱う。
+- 複数の player で時計を共有する `PlaybackGroup` を足す。group は1つの AudioContext と、
+  wallclock（LOC の capture timestamp）で表した1つの再生位置を持ち、`play`、`pause`、
+  `seek` を全 player に当てる。player は `LivePlayerOptions.group` で group に入る。
+
+`moq-wasm/recording`:
+
+- `openRecording(session, recorderUrl, id, { token })` が、`POST /recordings/{id}/publish`
+  の応答を開いたまま持ち、replay の prefix を返す。`close()` で応答を閉じる。
+- `renew_after_seconds` ごとに次の応答を開き、session に進行中の FETCH が無くなってから
+  前の応答を閉じる。FETCH が進行中かどうかは player ではなく session の状態なので、
+  `Session` にそれを知らせる手段を足す。会議の録画は player を複数使うので、lease を
+  player に結び付けない。
+
+会議の録画を再生するアプリは、`openRecording` で prefix を得て、`watchNamespaces(prefix)`
+で参加者ごとの namespace を知り、ソースごとに `LivePlayer` を作って1つの `PlaybackGroup`
+に入れる。チャットと字幕は、catalog の event timeline track をアプリが FETCH して並べる。
+
+### 移行の手順
+publisher、recorder、player の順に進める。1手順を1 PR にする。3〜8 の間は、HTTP の応答の
+`tracks` と `chunks` を残し、今の recording-player を動かし続ける。
+
+1. **feat(broadcast): すべてのソースに media timeline を出す。** entry をソースの group の
+   始まりごとに書く。
+2. **feat(wasm): ライブの巻き戻しで、見たことのない group へも timeline でシークする。**
+3. **refactor(recorder): track を `renderGroup` と `altGroup` で選ぶ。** 名前の規則を消す。
+4. **feat(recorder): replay が VOD の catalog と media timeline を出し、joining FETCH を受ける。**
+5. **feat(recorder): replay の namespace に参加者名を入れ、transcriber の catalog を作る。**
+6. **feat(wasm): `isLive: false` の catalog を、timeline を使って最後まで再生する。**
+7. **feat(wasm): `PlaybackGroup`。**
+8. **feat(wasm): `moq-wasm/recording` の `openRecording`。**
+9. **refactor(browser): recording-player を `LivePlayer` に移す。** 独自の再生エンジンを消す。
+   recorder の E2E（`recorder-archive-e2e`、`recorder-mp4-replay-e2e`）で守る。
+10. **refactor(recorder): HTTP の応答から `tracks` と `chunks` を消す。**
+
+### 範囲外
+- MP4 で保存した録画の replay。生成する catalog に幅、高さ、ビットレートが無く、音声が
+  すべて group 0 に入るので、group 単位の FETCH と timeline に合わない。今の recording-player
+  が再生できる状態は手順 9 まで残すが、`LivePlayer` での再生は別に決める。
+- 録画の途中での codec や設定の変化。今の recording-player と同じく、再生を断る。
+- 録画の途中で選ばれた rendition が変わった track の切り替え。別の track として並ぶ。
+- カメラか画面共有かを catalog で示すこと。今は `renderGroup` と `label` で足りる。
+  画面共有だけ高い解像度で録画するなど、種類で振る舞いを変える必要が出たときに決める。
+
+### 未決事項
+- media timeline の presentation time。MSF は「最初のサンプルの presentation timestamp」と
+  定めるが、recorder の索引には capture timestamp しか無い。録画の始まりからの経過時間で
+  代えてよいか。
+- 参加者が入り直して session-index が分かれたとき、1人の参加者を時間ごとに別の namespace
+  で再生することになる。`PlaybackGroup` が、ある時刻に該当する player だけを鳴らすか。
+- `PlaybackGroup` を、ライブ会議の巻き戻しにも使うか。
+- `Session` が進行中の FETCH を知らせる手段の形（イベントか、Promise か）。
+- recorder は今、画面共有だけ高さの上限を 720p にしている（カメラは 480p）。`renderGroup`
+  で選ぶようにしたとき、すべてのソースに同じ上限を使ってよいか。
+- 同じ録画の replay が複数のインスタンスで立つことを許すか。許さないなら recorder を
+  1 インスタンス（`maxScale: 1`）にする。
+
 ## core API
 
 core API は、制御メッセージをそのまま出すのではなく、Rust の crate にすでにある
