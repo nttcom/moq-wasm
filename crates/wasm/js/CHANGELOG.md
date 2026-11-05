@@ -17,6 +17,11 @@
   `MoqSession` as a second argument (the provider's newest), and `undefined`
   for a record of no session or of a session without a token, so a page can
   send each session's telemetry under its own token.
+- `LivePlayer` starts its video subscription with a joining FETCH, from the
+  first object of the group the largest object is in, so a picture shows as
+  soon as playback starts even when its publisher sends no new group, such as
+  a still screen share. A switch between renditions still waits for the next
+  group.
 
 ## 0.2.0
 

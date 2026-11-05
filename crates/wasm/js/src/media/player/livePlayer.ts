@@ -662,15 +662,24 @@ export class LivePlayer {
       return
     }
 
+    const currentGroup = kind === 'video'
     if (this.packaging === 'cmaf') {
-      await this.subscriptions.subscribe(kind, wire.name, track, (groupId, object) =>
-        this.handleCmafObject(kind, wire.name, groupId, object)
+      await this.subscriptions.subscribe(
+        kind,
+        wire.name,
+        track,
+        (groupId, object) => this.handleCmafObject(kind, wire.name, groupId, object),
+        currentGroup
       )
       return
     }
     this.locLive.configureTrack(kind, track)
-    await this.subscriptions.subscribe(kind, wire.name, track, (groupId, object) =>
-      this.handleLocObject(kind, trackName, groupId, object)
+    await this.subscriptions.subscribe(
+      kind,
+      wire.name,
+      track,
+      (groupId, object, cached) => this.handleLocObject(kind, trackName, groupId, object, cached),
+      currentGroup
     )
   }
 
@@ -790,7 +799,13 @@ export class LivePlayer {
     }
   }
 
-  private handleLocObject(kind: MediaKind, trackName: string, groupId: bigint, object: ReceivedObject): void {
+  private handleLocObject(
+    kind: MediaKind,
+    trackName: string,
+    groupId: bigint,
+    object: ReceivedObject,
+    cached = false
+  ): void {
     if (kind === 'video') {
       const pending = this.videoSwitch
       if (pending?.outgoing.name === trackName && pending.splice.acceptOutgoing(groupId) === 'retire') {
@@ -800,14 +815,16 @@ export class LivePlayer {
       if (this.newestVideoGroup === undefined || groupId > this.newestVideoGroup) {
         this.newestVideoGroup = groupId
       }
-      this.observeVideoDelivery(object)
+      if (!cached) {
+        this.observeVideoDelivery(object)
+      }
       this.videoObjectCount += 1
       this.timeline.groups.record(groupId, object.locHeader)
       this.notePlaying(trackName)
     } else {
       this.timeline.audio.record(groupId, object.locHeader)
     }
-    this.locLive.push(kind, groupId, object)
+    this.locLive.push(kind, groupId, object, cached)
   }
 
   private handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: ReceivedObject): void {
