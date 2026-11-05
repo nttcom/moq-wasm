@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
-use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
+use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle, time::Instant};
 use tokio_tungstenite::{
     Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
     tungstenite::{Message, client::IntoClientRequest, http::header::AUTHORIZATION},
@@ -15,6 +15,7 @@ use super::{
 use crate::{pcm_framer::PcmFramer, translation_engine::TranslationOutput};
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 const INPUT_CHUNK_SAMPLES: usize = 1_600;
 
 type GeminiSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -58,7 +59,9 @@ async fn translate(
     translated_sender: mpsc::Sender<TranslationOutput>,
 ) {
     let mut resumption_handle = None;
+    let mut reconnect_delay = RECONNECT_DELAY;
     loop {
+        let connected_at = Instant::now();
         match translate_over_one_connection(
             &platform,
             target_language_code,
@@ -76,12 +79,19 @@ async fn translate(
                 );
             }
             Err(error) => {
+                // A connection that lasted a while worked; only quick failures
+                // in a row, such as an expired credential, back off.
+                if connected_at.elapsed() >= MAX_RECONNECT_DELAY {
+                    reconnect_delay = RECONNECT_DELAY;
+                }
                 tracing::warn!(
                     target_language_code,
                     ?error,
+                    retry_in_seconds = reconnect_delay.as_secs(),
                     "Gemini connection failed, retrying"
                 );
-                tokio::time::sleep(RECONNECT_DELAY).await;
+                tokio::time::sleep(reconnect_delay).await;
+                reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
             }
         }
     }
