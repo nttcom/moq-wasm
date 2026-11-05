@@ -184,6 +184,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
 | `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
+| `audioLane` | A second audio track on a `LivePlayout`'s clock: its own decoder worker and input, scheduled at the time its capture timestamps are due, for a page that crossfades a translation with the original |
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
