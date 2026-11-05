@@ -65,6 +65,16 @@ pub(crate) enum NegotiatedProtocol {
     },
 }
 
+impl NegotiatedProtocol {
+    pub(crate) fn transport_name(&self) -> &'static str {
+        match self {
+            Self::Quic { .. } => "QUIC",
+            Self::WebTransport { .. } => "WebTransport",
+            Self::WebSocket { .. } => "WebSocket",
+        }
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::ApplicationProtocols;
