@@ -13,19 +13,26 @@ declare global {
 }
 
 const MONITOR_ORIGINAL_PARAM = 'monitorOriginal'
+const DELAY_SECONDS_PARAM = 'delay'
 const STATS_INTERVAL_MS = 500
+const STATS_LOG_INTERVAL_MS = 10_000
 
 const urlInput = element<HTMLInputElement>('url')
 const languageSelect = element<HTMLSelectElement>('language')
 const monitorOriginal = element<HTMLInputElement>('monitor-original')
 let session: MoqSession | undefined
-const player = new TranslationPlayer(element<HTMLDivElement>('stage'), {
-  onStateChange: () => renderLanguages(),
-  onLog: (level, message) => appendLog(level, message)
-})
+const delaySeconds = Number(new URLSearchParams(location.search).get(DELAY_SECONDS_PARAM))
+const player = new TranslationPlayer(
+  element<HTMLDivElement>('stage'),
+  {
+    onStateChange: () => renderLanguages(),
+    onLog: (level, message) => appendLog(level, message)
+  },
+  { playbackDelayMs: delaySeconds > 0 ? delaySeconds * 1_000 : undefined }
+)
 window.liveTranslateViewer = { stats: () => player.stats(), selectLanguage: (lang) => player.selectLanguage(lang) }
 
-startPageTelemetry('live-translate-viewer', () => urlInput.value)
+const telemetry = startPageTelemetry('live-translate-viewer', () => urlInput.value)
 setUpRelayUrlControls(urlInput, element('urlPresets'))
 element<HTMLInputElement>('broadcast-id').value = new URLSearchParams(location.search).get(BROADCAST_ID_PARAM) ?? ''
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watch())
@@ -35,6 +42,7 @@ monitorOriginal.checked = new URLSearchParams(location.search).get(MONITOR_ORIGI
 player.setMonitorOriginal(monitorOriginal.checked)
 monitorOriginal.addEventListener('change', () => player.setMonitorOriginal(monitorOriginal.checked))
 setInterval(renderStats, STATS_INTERVAL_MS)
+setInterval(logStats, STATS_LOG_INTERVAL_MS)
 
 async function watch(): Promise<void> {
   const broadcastId = element<HTMLInputElement>('broadcast-id').value.trim()
@@ -94,6 +102,28 @@ function renderStats(): void {
       `映像 ${size} ${Math.round(stats.receivedVideoKbps)} kbps`
     ].join(' · ')
   )
+}
+
+/// Sent to the observability server so runs can be compared afterwards.
+function logStats(): void {
+  const stats = player.stats()
+  if (stats.playingAudioMicros === undefined) {
+    return
+  }
+  const defined = (value: number | undefined) => (value === undefined ? -1 : Math.round(value * 1_000) / 1_000)
+  telemetry.log('info', 'viewer stats', {
+    language: stats.language,
+    pending_language: stats.pendingLanguage ?? '',
+    playback_delay_ms: player.playbackDelayMs,
+    viewer_delay_ms: defined(stats.viewerDelayMs),
+    sync_offset_ms: defined(stats.syncOffsetMs),
+    translation_offset_ms: defined(stats.translationOffsetMs),
+    last_switch_seconds: defined(stats.lastSwitchSeconds),
+    dropped_late_audio: stats.droppedLateAudio,
+    dropped_late_video: stats.droppedLateVideo,
+    received_video_kbps: Math.round(stats.receivedVideoKbps),
+    forwarded_audio_objects: Object.values(stats.forwardedAudioObjects).reduce((sum, count) => sum + count, 0)
+  })
 }
 
 function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
