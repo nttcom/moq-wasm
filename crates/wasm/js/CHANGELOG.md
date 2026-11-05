@@ -11,7 +11,8 @@
   `PlayerControls` hand their `onLog`, with a `moq-wasm::…` `target` and no
   token. The console messages they replace now read
   `[<target>] <message> <field>=<value>…`.
-
+- `LivePlayer` subscribes to audio with subscriber priority 0 and to video
+  with 128, so a relay short of downlink bandwidth sends the audio first.
 - `init({ onLog, onSpan })` calls both with the token of the record's
   `MoqSession` as a second argument (the provider's newest), and `undefined`
   for a record of no session or of a session without a token, so a page can

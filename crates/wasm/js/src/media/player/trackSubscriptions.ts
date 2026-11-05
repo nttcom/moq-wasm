@@ -11,6 +11,10 @@ import {
 import { getErrorMessage } from '../internal/status'
 import type { MediaCatalogTrack } from '../catalog'
 
+/// draft-14 §7.2: the relay sends the lower subscriber priority value first,
+/// so audio takes the downlink ahead of video.
+const SUBSCRIBER_PRIORITY: Record<MediaKind, number> = { video: 128, audio: 0 }
+
 export type TrackSubscription = {
   id: bigint
   handle: MoqSubscription
@@ -59,7 +63,10 @@ export class TrackSubscriptions {
     handler: ObjectHandler
   ): Promise<TrackSubscription> {
     const { namespace } = this.context
-    const handle = await sessionOf(this.context).subscribe(namespace, wireName, { forward: !this.forwardPaused })
+    const handle = await sessionOf(this.context).subscribe(namespace, wireName, {
+      forward: !this.forwardPaused,
+      priority: SUBSCRIBER_PRIORITY[kind]
+    })
     const subscription: TrackSubscription = { id: streamId(), handle, name: wireName, track, forgotten: false }
     const observed = observedObjectHandler(this.context, subscription.id, wireName, handler)
     void readGroups(this.context, subscription.id, handle, (groupId, object) => {
