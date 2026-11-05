@@ -92,3 +92,33 @@ test('a repetition fades out after 300 ms and a chunk arriving after it is a bre
   expect(playout.concealedMs).toBeCloseTo(300)
   expect(playout.breaks).toBe(1)
 })
+
+test('an input opened on a playout plays in its context and leaves its clock alone', () => {
+  // Arrange
+  const createdContexts: number[] = []
+  const FakeAudioContext = globalThis.AudioContext
+  globalThis.AudioContext = class extends FakeAudioContext {
+    constructor(options: AudioContextOptions) {
+      super(options)
+      createdContexts.push(options.sampleRate ?? 0)
+    }
+  } as typeof AudioContext
+  const driftsMs: number[] = []
+  const host = new AudioPlayout((driftMs) => driftsMs.push(driftMs))
+  const input = host.openInput()
+  const startMs = environment.nowMs
+
+  // Act: the host plays on its clock and the input is placed at a time of its own
+  host.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_000_000, (nowMs) => nowMs)
+  input.setVolume(0, 0.25)
+  input.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_000_000, () => startMs + 100)
+  const inputPositionMicros = input.positionMicrosAt(startMs + 100)
+  input.close()
+  host.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_020_000, (nowMs) => nowMs)
+
+  // Assert: the host plays on after the input closed
+  expect(createdContexts).toEqual([SAMPLE_RATE])
+  expect(inputPositionMicros).toBe(1_000_000)
+  expect(driftsMs).toHaveLength(2)
+  expect(host.positionMicrosAt(environment.nowMs)).toBeDefined()
+})

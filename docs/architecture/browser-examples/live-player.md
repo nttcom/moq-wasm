@@ -487,7 +487,11 @@ so a chunk placed on its own target would leave a gap or an overlap each time.
 The distance between the write head and the target is fed back to the clock,
 which makes the audio device the master the picture follows; a late chunk is
 not trimmed but starts at once and moves the clock the same way, so the chunks
-behind it stay contiguous; that is how the buffer grows. When the scheduled
+behind it stay contiguous; that is how the buffer grows. Another stream that
+shares the timeline, such as a translated audio track, is scheduled as a second
+input of the same `AudioContext` with a gain of its own: it is placed at the
+time the clock gives for its capture timestamp and reports no drift, so the
+main audio stays the only master and the two can be crossfaded. When the scheduled
 sound is about to run out (within 20 ms) and no chunk follows, its last pitch
 period is repeated, fading out to silence over 300 ms (what NetEq calls
 expand); the chunk that ends the repetition fades in from it and starts where

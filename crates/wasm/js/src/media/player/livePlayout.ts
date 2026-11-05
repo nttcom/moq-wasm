@@ -149,8 +149,13 @@ export class LivePlayout {
     this.newestAudioCaptureMicros = undefined
   }
 
-  setVolume(volume: number): void {
-    this.audio.setVolume(volume)
+  setVolume(volume: number, rampSeconds?: number): void {
+    this.audio.setVolume(volume, rampSeconds)
+  }
+
+  /// A second audio stream, to be scheduled at `dueAt` of its capture timestamps.
+  openAudioInput(): AudioPlayout {
+    return this.audio.openInput()
   }
 
   /// Warms up again so a larger buffer applies to what arrives from now on;

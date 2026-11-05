@@ -84,12 +84,15 @@ export class FakeMediaEnvironment {
         }
       },
       GainNode: class {
+        readonly gain = { setTargetAtTime() {} }
         connect() {}
+        disconnect() {}
       },
       AudioBufferSourceNode: class {
         connect() {}
         addEventListener() {}
         start() {}
+        stop() {}
       }
     }
   }
