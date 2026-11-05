@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { TIMESCALE_ID, TIMESTAMP_ID, VIDEO_CONFIG_ID, buildLocHeader, readLocHeader } from './loc'
+import { AUDIO_LEVEL_ID, TIMESCALE_ID, TIMESTAMP_ID, VIDEO_CONFIG_ID, buildLocHeader, readLocHeader } from './loc'
 
 test('the capture time and video config round-trip as LOC-04 properties', () => {
   // Arrange
@@ -25,4 +25,12 @@ test('a Timestamp in media time is not read as the capture time', () => {
 
   // Act / Assert
   expect(readLocHeader(header).captureTimestampMicros).toBeUndefined()
+})
+
+test('an Audio Level without the V bit is read as a level without voice activity', () => {
+  // Arrange
+  const header = [{ id: AUDIO_LEVEL_ID, value: { varint: 90 } }]
+
+  // Act / Assert
+  expect(readLocHeader(header).audioLevel).toEqual({ level: 90, voiceActivity: false })
 })

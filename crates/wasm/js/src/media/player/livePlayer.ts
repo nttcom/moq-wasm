@@ -3,7 +3,7 @@ import { RequestError, RequestErrorCode } from '../../core/requestError'
 import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { monotonicUnixMicros } from '../internal/clock'
-import { readLocHeader } from '../internal/loc'
+import { type AudioLevel, readLocHeader } from '../internal/loc'
 import { AdaptiveBitrate, bitrateLadder } from './adaptiveBitrate'
 import type { MseTrackSource } from '../internal/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
@@ -48,6 +48,9 @@ export type LivePlayerCallbacks = {
   onStateChange(): void
   onLiveFrame(): void
   onLog(level: LogLevel, message: string): void
+  /// Called with the LOC Audio Level (draft-ietf-moq-loc-04 §2.3.3.2) of each
+  /// live LOC audio object that carries one.
+  onAudioLevel?(level: AudioLevel): void
 }
 
 export type LivePlayerOptions = {
@@ -806,6 +809,10 @@ export class LivePlayer {
       this.notePlaying(trackName)
     } else {
       this.timeline.audio.record(groupId, object.locHeader)
+      const audioLevel = readLocHeader(object.locHeader).audioLevel
+      if (audioLevel) {
+        this.callbacks.onAudioLevel?.(audioLevel)
+      }
     }
     this.locLive.push(kind, groupId, object)
   }

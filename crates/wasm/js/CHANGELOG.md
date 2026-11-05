@@ -13,6 +13,9 @@
   `[<target>] <message> <field>=<value>…`.
 - `LivePlayer` subscribes to audio with subscriber priority 0 and to video
   with 128, so a relay short of downlink bandwidth sends the audio first.
+- `LivePlayerCallbacks.onAudioLevel` receives the LOC Audio Level of each
+  live audio object that carries one, and `moq-wasm/media` exports its type
+  `AudioLevel`, so a page can tell who is speaking.
 - `init({ onLog, onSpan })` calls both with the token of the record's
   `MoqSession` as a second argument (the provider's newest), and `undefined`
   for a record of no session or of a session without a token, so a page can
