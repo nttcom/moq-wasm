@@ -206,7 +206,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.packagingSelect.selectOption('cmaf')
 
     // Assert: the LOC picture stays until the MediaSource has presented a frame, then a blob-backed element is the one on screen
-    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_cmaf/)
+    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video\S*_cmaf/)
     await expect(viewer.video).toBeVisible()
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).toMatch(/^blob:/)
     await expectVideoDecoded(viewer.visibleVideo)
@@ -219,10 +219,15 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'volume')).toBeCloseTo(0.3, 5)
 
     // Act: a quality change re-opens the MediaSource with the rendition's init segment
-    await viewer.videoTrackSelect.selectOption(await renditionOption(viewer, 'video'))
+    await expect(viewer.playbackStatus).toContainText('Playing ')
+    const playing = (await viewer.playbackStatus.innerText()).replace('Playing ', '').replace(/_cmaf$/, '')
+    const rendition = await renditionOption(viewer, playing)
+    const previousSource = await mediaProp(viewer.visibleVideo, 'src')
+    await viewer.videoTrackSelect.selectOption(rendition)
 
     // Assert
-    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p_cmaf/)
+    await expect(viewer.logPanel).toContainText(new RegExp(`subscribed \\S*/${rendition}_cmaf`))
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).not.toBe(previousSource)
     await expect
       .poll(async () => viewer.visibleVideo.evaluate((element) => (element as HTMLVideoElement).videoWidth), {
         timeout: 20_000

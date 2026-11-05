@@ -1,12 +1,18 @@
 import { expect, test } from '@playwright/test'
 import type { MediaCatalogTrack } from '../catalog'
-import { AdaptiveBitrate, type Rung, bitrateLadder, capLadderToHeight } from './adaptiveBitrate'
+import { AdaptiveBitrate, type Rung, bitrateLadder, capLadderToHeight, renditionAboveHeight } from './adaptiveBitrate'
 
 const LADDER: Rung[] = [
   { name: 'video_360p', bitrate: 700_000 },
   { name: 'video_480p', bitrate: 1_200_000 },
   { name: 'video_720p', bitrate: 2_500_000 },
   { name: 'video', bitrate: 6_000_000 }
+]
+const TALL_LADDER: Rung[] = [
+  { name: 'video_360p', bitrate: 700_000, height: 360 },
+  { name: 'video_480p', bitrate: 1_200_000, height: 480 },
+  { name: 'video_720p', bitrate: 2_500_000, height: 720 },
+  { name: 'video', bitrate: 6_000_000, height: 1080 }
 ]
 const FRAME_MS = 33
 const SETTLE_MS = 3_000
@@ -250,5 +256,54 @@ test('a minute without congestion halves a lengthened calm spell again', () => {
   const choice = abr.decide(91_000, LADDER, 'video_720p', false)
 
   // Assert: a 20 s spell would not have stepped up yet
+  expect(choice).toBe('video')
+})
+
+test('a rendition taller than the picture needs gives way to the top of the capped ladder', () => {
+  // Act / Assert
+  expect(renditionAboveHeight(TALL_LADDER, 'video', 400)).toBe('video_480p')
+  expect(renditionAboveHeight(TALL_LADDER, 'video_480p', 400)).toBeUndefined()
+  expect(renditionAboveHeight(TALL_LADDER, 'video', undefined)).toBeUndefined()
+  expect(renditionAboveHeight(TALL_LADDER, 'other', 400)).toBeUndefined()
+})
+
+test('a picture shrunk below the playing rendition steps down at once, before the switch settles', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+
+  // Act
+  const choice = abr.decideUnderHeight(1_000, TALL_LADDER, 'video', false, 400)
+
+  // Assert
+  expect(choice).toBe('video_480p')
+})
+
+test('a calm path steps up no higher than the picture needs', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 13_000, 4_000, () => 100)
+
+  // Act
+  const fromBelow = abr.decideUnderHeight(13_000, TALL_LADDER, 'video_360p', false, 400)
+  const atCap = abr.decideUnderHeight(13_000, TALL_LADDER, 'video_480p', false, 400)
+
+  // Assert
+  expect(fromBelow).toBe('video_480p')
+  expect(atCap).toBeUndefined()
+})
+
+test('a picture grown taller raises to the top of the new cap at once', () => {
+  // Arrange: settled on the cap of a 400 pixel picture
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 5_000, 4_000, () => 100)
+  abr.decideUnderHeight(5_000, TALL_LADDER, 'video_480p', false, 400)
+
+  // Act
+  const choice = abr.decideUnderHeight(5_500, TALL_LADDER, 'video_480p', false, 1_000)
+
+  // Assert
   expect(choice).toBe('video')
 })

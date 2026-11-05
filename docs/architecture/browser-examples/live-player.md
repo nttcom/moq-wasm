@@ -396,6 +396,14 @@ The first 3 s after a switch are left out, since the lag of the two renditions
 differs by the transcoding delay. Every change goes through the rendition
 switch above, so a step costs no picture gap; CMAF mode and review do not adapt.
 
+The ladder ends at the first rendition at least as tall as the container in
+device pixels, since a picture shown that small gains nothing from a taller
+one. A rendition above that cap steps down to it at once, and a container
+grown taller raises playback to the new cap at once unless the path was
+congested in the last 10 s. Under `Auto` the first video track the player
+subscribes to is already capped, so a small tile never starts on the top
+rendition.
+
 ### Review audio
 
 The bridge starts the audio groups at the video keyframes with the same ids,

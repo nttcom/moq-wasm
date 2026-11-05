@@ -4,7 +4,7 @@ import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { monotonicUnixMicros } from '../internal/clock'
 import { type AudioLevel, readLocHeader } from '../internal/loc'
-import { AdaptiveBitrate, bitrateLadder } from './adaptiveBitrate'
+import { AdaptiveBitrate, bitrateLadder, renditionAboveHeight } from './adaptiveBitrate'
 import type { MseTrackSource } from '../internal/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
 import type { CatchUp } from './livePlayout'
@@ -147,6 +147,9 @@ export class LivePlayer {
   private readonly adaptiveBitrate = new AdaptiveBitrate()
   private adaptiveVideo = true
   private nextAdaptAtMs = 0
+  /// The container's height in device pixels, the unit a rendition's height
+  /// compares to; undefined before it is laid out.
+  private pictureHeightPx: number | undefined
   private catalogStatus: PlayerStatus = { text: 'Catalog not loaded yet', state: 'idle' }
   private playbackStatus: PlayerStatus = { text: 'Playback idle', state: 'idle' }
   private rewindStatus: PlayerStatus = { text: 'Live', state: 'ok' }
@@ -176,6 +179,10 @@ export class LivePlayer {
       this.adaptVideo()
     })
     this.stage = new PictureStage(options.container)
+    new ResizeObserver(([entry]) => {
+      const heightPx = entry.contentRect.height * window.devicePixelRatio
+      this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
+    }).observe(options.container)
     this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
       onPresented: (picture) => this.notePresentedFrame(picture),
       onFrameShown: (ids, captureMicros) => {
@@ -615,8 +622,19 @@ export class LivePlayer {
     if (names.length === previous.length && names.every((name, index) => name === previous[index])) {
       return false
     }
-    this.selected[kind] = names.includes(this.selected[kind]) ? this.selected[kind] : (names[0] ?? '')
+    this.selected[kind] = names.includes(this.selected[kind]) ? this.selected[kind] : this.startingTrack(kind, tracks)
     return true
+  }
+
+  private startingTrack(kind: MediaKind, tracks: MediaCatalogTrack[]): string {
+    const [first] = tracks
+    if (!first) {
+      return ''
+    }
+    if (kind !== 'video' || !this.adaptiveVideo) {
+      return first.name
+    }
+    return renditionAboveHeight(bitrateLadder(tracks, first), first.name, this.pictureHeightPx) ?? first.name
   }
 
   private async subscribeMediaTimeline(catalog: unknown): Promise<void> {
@@ -876,7 +894,13 @@ export class LivePlayer {
     }
     this.nextAdaptAtMs = nowMs + ADAPT_INTERVAL_MS
     const ladder = bitrateLadder(this.tracks.video, current.track)
-    const choice = this.adaptiveBitrate.decide(nowMs, ladder, current.name, this.stallWatch.stalled)
+    const choice = this.adaptiveBitrate.decideUnderHeight(
+      nowMs,
+      ladder,
+      current.name,
+      this.stallWatch.stalled,
+      this.pictureHeightPx
+    )
     if (choice) {
       this.context.log('info', `adaptive quality: ${current.name} -> ${choice}`)
       this.selectTrack('video', choice).catch((error) => {
