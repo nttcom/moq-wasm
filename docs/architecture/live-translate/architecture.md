@@ -52,7 +52,8 @@ main (Router)                one task; the only reader of Session::receive_event
      ├─ CatalogPublication         one per catalog subscriber; re-sends the catalog every 10 s and
      │                             whenever a source catalog changes the translated one
      ├─ SourceAudio                SUBSCRIBE the highest-bitrate Opus track, decode to 16 kHz,
-     │                             broadcast (latest input timestamp, PCM) to the languages
+     │                             broadcast (latest input timestamp, PCM) to the languages;
+     │                             subscribes again a second after the subscription ends or fails
      └─ LanguageTranslation        one per subscribed language
          ├─ RunningTranslation     Gemini WebSocket session or echo, PCM in / PCM out
          ├─ TranslatedAudioSequencer   timestamps (see below)

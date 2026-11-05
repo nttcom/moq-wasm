@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use mediapack::loc::{LocObject, from_extension_headers};
@@ -11,6 +11,7 @@ use tokio::{
 use crate::opus_codec::OpusDecoder;
 
 const SOURCE_PCM_CAPACITY: usize = 256;
+const RESUBSCRIBE_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub(crate) struct SourcePcm {
@@ -32,9 +33,18 @@ impl SourceAudio {
     ) -> Self {
         let (source_pcm_sender, _) = broadcast::channel(SOURCE_PCM_CAPACITY);
         let sender = source_pcm_sender.clone();
+        // The subscription is renewed whenever it ends or fails, so the languages
+        // keep their receivers and a refused SUBSCRIBE does not silence the
+        // broadcast for good.
         let join_handle = tokio::spawn(async move {
-            if let Err(error) = receive(session, &namespace, &track_name, channels, sender).await {
-                tracing::warn!(%namespace, %track_name, ?error, "source audio stopped");
+            loop {
+                match receive(&session, &namespace, &track_name, channels, &sender).await {
+                    Ok(()) => tracing::info!(%namespace, %track_name, "source audio ended"),
+                    Err(error) => {
+                        tracing::warn!(%namespace, %track_name, ?error, "source audio stopped")
+                    }
+                }
+                tokio::time::sleep(RESUBSCRIBE_DELAY).await;
             }
         });
         Self {
@@ -55,11 +65,11 @@ impl Drop for SourceAudio {
 }
 
 async fn receive(
-    session: Arc<Session>,
+    session: &Session,
     namespace: &str,
     track_name: &str,
     channels: u32,
-    source_pcm_sender: broadcast::Sender<SourcePcm>,
+    source_pcm_sender: &broadcast::Sender<SourcePcm>,
 ) -> Result<()> {
     let mut subscriber = session.subscriber();
     let subscription = subscriber
@@ -80,7 +90,7 @@ async fn decode(
     subscriber: &mut moqt::Subscriber,
     subscription: &moqt::Subscription,
     channels: u32,
-    source_pcm_sender: broadcast::Sender<SourcePcm>,
+    source_pcm_sender: &broadcast::Sender<SourcePcm>,
 ) -> Result<()> {
     let DataReceiver::Stream(factory) = subscriber.accept_data_receiver(subscription).await? else {
         bail!("source audio arrived as datagrams");
