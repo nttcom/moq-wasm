@@ -227,6 +227,12 @@ export async function expectTrackStatus(
   await expect(getMemberChip(page, memberName)).toHaveAttribute(`data-${role}-status`, status, { timeout })
 }
 
+// Slow the page's main thread by `rate` times (Chrome DevTools Protocol).
+export async function throttleCpu(page: Page, rate: number): Promise<void> {
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate })
+}
+
 // Send a chat message from this client.
 export async function sendChatMessage(model: MeetingClientPageModel, text: string): Promise<void> {
   await openChat(model)
