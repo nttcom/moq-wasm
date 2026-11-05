@@ -19,7 +19,8 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.access-switch [
 
 switch (access.kind) {
   case 'public':
-    description.textContent = '誰でも視聴できる anon namespace を全員で共有します。送信したメディアは公開されます。'
+    description.textContent =
+      '誰でも視聴できる anon namespace を全員で共有します。送信したメディアは公開されます。機密情報やプライバシーに関わる情報は入力しないでください。'
     break
   case 'given':
     description.textContent = `URL のトークン（app ${access.namespaceRoot}）で Example を使います。`
@@ -29,12 +30,14 @@ switch (access.kind) {
     break
   case 'temporary': {
     description.textContent =
-      'あなた専用の namespace で Example を使います。共有リンクを知っている人だけが参加・視聴できます（リンクは 1 時間で無効になります）。'
+      '検証用の一時トークンを使用します。URL 及びトークンを共有すると参加・視聴が可能になります。検証用の認証認可機能であるため、機密情報やプライバシーに関わる情報は入力しないでください。'
     const shown = temporaryStatus(access, (minutes) => `リンクの有効期限 残り ${minutes} 分`)
-    const renew = button('新しいルームにする', async () => {
+    const renew = button('トークンを作り直す', async () => {
       await startNewTemporaryApp()
       reloadWithoutToken()
     })
+    renew.title =
+      '今開いている会議はそのまま続きます。これから開く Example は、今の共有リンクや録画とは別の場所になります'
     status.replaceChildren(...shown, renew)
   }
 }

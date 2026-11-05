@@ -142,7 +142,7 @@ async function resolveAccess(): Promise<Access> {
   try {
     if (!token || token.expiresAt <= nowSeconds()) {
       if (fragment) {
-        return unavailable('このリンクは期限が切れています。一覧ページで新しいルームを作ってください')
+        return unavailable('このリンクは期限が切れています。一覧ページでトークンを作り直してください')
       }
       token = await startNewTemporaryApp()
     } else if (token.expiresAt - nowSeconds() < REFRESH_MARGIN_SECONDS) {
