@@ -4,13 +4,16 @@ use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
 use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::{
-    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config, tungstenite::Message,
+    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
+    tungstenite::{Message, client::IntoClientRequest, http::header::AUTHORIZATION},
 };
 
-use super::messages::{ServerEvent, audio_message, parse_server_message, setup_message};
+use super::{
+    AgentPlatform,
+    messages::{ServerEvent, audio_message, parse_server_message, setup_message},
+};
 use crate::{pcm_framer::PcmFramer, translation_engine::TranslationOutput};
 
-const ENDPOINT: &str = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const INPUT_CHUNK_SAMPLES: usize = 1_600;
 
@@ -27,13 +30,13 @@ pub(crate) struct GeminiTranslation {
 
 impl GeminiTranslation {
     pub(crate) fn run(
-        api_key: String,
+        platform: Arc<AgentPlatform>,
         target_language_code: &'static str,
         pcm_receiver: mpsc::Receiver<Vec<i16>>,
         translated_sender: mpsc::Sender<TranslationOutput>,
     ) -> Self {
         let join_handle = tokio::spawn(translate(
-            api_key,
+            platform,
             target_language_code,
             pcm_receiver,
             translated_sender,
@@ -49,7 +52,7 @@ impl Drop for GeminiTranslation {
 }
 
 async fn translate(
-    api_key: String,
+    platform: Arc<AgentPlatform>,
     target_language_code: &'static str,
     mut pcm_receiver: mpsc::Receiver<Vec<i16>>,
     translated_sender: mpsc::Sender<TranslationOutput>,
@@ -57,7 +60,7 @@ async fn translate(
     let mut resumption_handle = None;
     loop {
         match translate_over_one_connection(
-            &api_key,
+            &platform,
             target_language_code,
             &mut resumption_handle,
             &mut pcm_receiver,
@@ -85,15 +88,16 @@ async fn translate(
 }
 
 async fn translate_over_one_connection(
-    api_key: &str,
+    platform: &AgentPlatform,
     target_language_code: &str,
     resumption_handle: &mut Option<String>,
     pcm_receiver: &mut mpsc::Receiver<Vec<i16>>,
     translated_sender: &mpsc::Sender<TranslationOutput>,
 ) -> Result<ConnectionEnd> {
-    let mut socket = connect(api_key).await?;
+    let mut socket = connect(platform).await?;
     socket
         .send(Message::text(setup_message(
+            &platform.model,
             target_language_code,
             resumption_handle.as_deref(),
         )))
@@ -158,11 +162,27 @@ async fn translate_over_one_connection(
     }
 }
 
-async fn connect(api_key: &str) -> Result<GeminiSocket> {
-    let url = format!("{ENDPOINT}?key={api_key}");
-    let (socket, _) = connect_async_tls_with_config(url, None, false, Some(tls_connector()?))
+/// A token is fetched per connection: a session lasts about ten minutes and
+/// the service account's token an hour.
+async fn connect(platform: &AgentPlatform) -> Result<GeminiSocket> {
+    let token = platform
+        .bearer_token()
         .await
-        .context("connect to Gemini Live API")?;
+        .context("get the Agent Platform access token")?;
+    let mut request = platform
+        .endpoint
+        .as_str()
+        .into_client_request()
+        .context("build the Gemini Live API request")?;
+    request.headers_mut().insert(
+        AUTHORIZATION,
+        format!("Bearer {token}")
+            .parse()
+            .context("the access token is not a valid header value")?,
+    );
+    let (socket, _) = connect_async_tls_with_config(request, None, false, Some(tls_connector()?))
+        .await
+        .context("connect to the Gemini Live API")?;
     Ok(socket)
 }
 

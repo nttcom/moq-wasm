@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use crate::{
-    echo_translation::EchoTranslation, gemini::GeminiTranslation, target_language::TargetLanguage,
+    echo_translation::EchoTranslation,
+    gemini::{AgentPlatform, GeminiTranslation},
+    target_language::TargetLanguage,
 };
 
 pub(crate) enum TranslationOutput {
@@ -11,7 +15,7 @@ pub(crate) enum TranslationOutput {
 
 #[derive(Clone)]
 pub(crate) enum TranslationEngine {
-    Gemini { api_key: String },
+    Gemini { platform: Arc<AgentPlatform> },
     Echo,
 }
 
@@ -28,9 +32,9 @@ impl TranslationEngine {
         translated_sender: mpsc::Sender<TranslationOutput>,
     ) -> RunningTranslation {
         match self {
-            Self::Gemini { api_key } => RunningTranslation::Gemini {
+            Self::Gemini { platform } => RunningTranslation::Gemini {
                 _translation: GeminiTranslation::run(
-                    api_key.clone(),
+                    platform.clone(),
                     language.code,
                     pcm_receiver,
                     translated_sender,

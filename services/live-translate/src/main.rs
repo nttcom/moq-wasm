@@ -17,6 +17,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use metadata_token::MetadataToken;
 use moqt::{
     ClientConfig, Endpoint, QUIC, RequestErrorCode, Session, SessionEvent,
     subscribe::SubscribeHandler,
@@ -27,6 +28,7 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use crate::{
     broadcast_namespace::{BROADCAST_PREFIX, broadcast_of_translated, is_broadcast},
     broadcast_translation::BroadcastTranslation,
+    gemini::{AgentPlatform, GeminiCredentials},
     translation_engine::TranslationEngine,
 };
 
@@ -35,7 +37,7 @@ use crate::{
 struct Args {
     #[arg(
         long,
-        env = "TRANSLATOR_RELAY_URL",
+        env = "LIVE_TRANSLATE_RELAY_URL",
         default_value = "moqt://localhost:4433"
     )]
     relay: String,
@@ -43,16 +45,36 @@ struct Args {
     #[arg(long)]
     insecure: bool,
 
-    #[arg(long, env = "GEMINI_API_KEY", hide_env_values = true)]
-    gemini_api_key: Option<String>,
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_GCP_PROJECT",
+        help = "The Google Cloud project whose Agent Platform serves Gemini"
+    )]
+    gcp_project: Option<String>,
 
     #[arg(
         long,
-        help = "Return the source audio after each language's fixed delay instead of calling Gemini, to test without an API key"
+        env = "LIVE_TRANSLATE_GCP_LOCATION",
+        default_value = "global",
+        help = "The Agent Platform location; the translate model is served from global only"
+    )]
+    gcp_location: String,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_GCLOUD_IMPERSONATE",
+        value_name = "SERVICE_ACCOUNT_EMAIL",
+        help = "Impersonate this service account through gcloud for a fresh token per connection, for running outside Google Cloud; on Cloud Run the metadata server is used instead"
+    )]
+    gcloud_impersonate: Option<String>,
+
+    #[arg(
+        long,
+        help = "Return the source audio after each language's fixed delay instead of calling Gemini, to test without Google Cloud"
     )]
     echo: bool,
 
-    #[arg(long, env = "TRANSLATOR_MAX_SESSIONS", default_value_t = 3)]
+    #[arg(long, env = "LIVE_TRANSLATE_MAX_SESSIONS", default_value_t = 3)]
     max_sessions: usize,
 }
 
@@ -73,7 +95,7 @@ async fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
-    let engine = translation_engine(args.echo, args.gemini_api_key)?;
+    let engine = translation_engine(&args)?;
     let config = ClientConfig {
         port: 0,
         verify_certificate: !args.insecure,
@@ -97,15 +119,38 @@ async fn main() -> Result<()> {
     router.route_events().await
 }
 
-fn translation_engine(echo: bool, gemini_api_key: Option<String>) -> Result<TranslationEngine> {
-    if echo {
+fn translation_engine(args: &Args) -> Result<TranslationEngine> {
+    if args.echo {
         tracing::warn!("--echo: returning the source audio instead of translating");
         return Ok(TranslationEngine::Echo);
     }
-    match gemini_api_key.filter(|api_key| !api_key.is_empty()) {
-        Some(api_key) => Ok(TranslationEngine::Gemini { api_key }),
-        None => bail!("GEMINI_API_KEY is not set; pass --echo to run without Gemini"),
-    }
+    let Some(project) = args
+        .gcp_project
+        .as_deref()
+        .filter(|project| !project.is_empty())
+    else {
+        bail!("LIVE_TRANSLATE_GCP_PROJECT is not set; pass --echo to run without Gemini");
+    };
+    let credentials = match args
+        .gcloud_impersonate
+        .as_deref()
+        .filter(|account| !account.is_empty())
+    {
+        Some(service_account) => GeminiCredentials::Gcloud {
+            service_account: service_account.to_string(),
+        },
+        None => GeminiCredentials::MetadataServer(MetadataToken::new(reqwest::Client::new())),
+    };
+    let platform = AgentPlatform::new(project, &args.gcp_location, credentials);
+    tracing::info!(
+        endpoint = %platform.endpoint,
+        model = %platform.model,
+        credentials = platform.credentials_source(),
+        "Gemini on the Agent Platform"
+    );
+    Ok(TranslationEngine::Gemini {
+        platform: Arc::new(platform),
+    })
 }
 
 impl Router {

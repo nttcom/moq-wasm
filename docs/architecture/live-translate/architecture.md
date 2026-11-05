@@ -10,10 +10,15 @@ module boundaries, runtime flow, or invariants described here change.
 that references the broadcast's own video and audio, plus one Opus track per
 target language (`audio_en`, `audio_es`, `audio_de`, `audio_ko`,
 `audio_zh-Hans`). A language is translated by Gemini Live Translate only while
-someone subscribes to its track. `--echo` returns the source audio after each
-language's fixed delay instead of calling Gemini, which keeps the whole path
-testable without an API key; without either `--echo` or `GEMINI_API_KEY` the
-translator refuses to start.
+someone subscribes to its track. Gemini is called on the Gemini Enterprise
+Agent Platform (`gemini/platform.rs`): the `global` location's Live API over a
+WebSocket with `Authorization: Bearer`, as the service account the Cloud Run
+runs as (`metadata-token`) or, outside Google Cloud, as that account
+impersonated through `gcloud` per connection
+(`LIVE_TRANSLATE_GCLOUD_IMPERSONATE`). `--echo` returns the
+source audio after each language's fixed delay instead of calling Gemini, which
+keeps the whole path testable without Google Cloud; without either `--echo` or
+`LIVE_TRANSLATE_GCP_PROJECT` the translator refuses to start.
 
 ## Runtime flow
 

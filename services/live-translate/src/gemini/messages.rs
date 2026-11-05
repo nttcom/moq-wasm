@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 
-const MODEL: &str = "models/gemini-3.5-live-translate-preview";
 const INPUT_MIME_TYPE: &str = "audio/pcm;rate=16000";
 
 #[derive(Serialize)]
@@ -129,10 +128,14 @@ pub(crate) enum ServerEvent {
     ResumptionHandle(String),
 }
 
-pub(crate) fn setup_message(target_language_code: &str, resumption_handle: Option<&str>) -> String {
+pub(crate) fn setup_message(
+    model: &str,
+    target_language_code: &str,
+    resumption_handle: Option<&str>,
+) -> String {
     let message = SetupMessage {
         setup: Setup {
-            model: MODEL,
+            model,
             generation_config: GenerationConfig {
                 response_modalities: ["AUDIO"],
                 translation_config: TranslationConfig {
@@ -224,11 +227,18 @@ mod tests {
     #[test]
     fn setup_selects_the_translate_model_and_target_language() {
         // Act
-        let json: serde_json::Value =
-            serde_json::from_str(&setup_message("en", None)).expect("valid json");
+        let json: serde_json::Value = serde_json::from_str(&setup_message(
+            "projects/p/locations/global/publishers/google/models/m",
+            "en",
+            None,
+        ))
+        .expect("valid json");
 
         // Assert
-        assert_eq!(json["setup"]["model"], MODEL);
+        assert_eq!(
+            json["setup"]["model"],
+            "projects/p/locations/global/publishers/google/models/m"
+        );
         let translation = &json["setup"]["generationConfig"]["translationConfig"];
         assert_eq!(translation["targetLanguageCode"], "en");
         assert_eq!(translation["echoTargetLanguage"], true);
@@ -247,8 +257,12 @@ mod tests {
     #[test]
     fn setup_carries_the_resumption_handle_when_reconnecting() {
         // Act
-        let json: serde_json::Value =
-            serde_json::from_str(&setup_message("ko", Some("handle-1"))).expect("valid json");
+        let json: serde_json::Value = serde_json::from_str(&setup_message(
+            "projects/p/locations/global/publishers/google/models/m",
+            "ko",
+            Some("handle-1"),
+        ))
+        .expect("valid json");
 
         // Assert
         assert_eq!(json["setup"]["sessionResumption"]["handle"], "handle-1");
