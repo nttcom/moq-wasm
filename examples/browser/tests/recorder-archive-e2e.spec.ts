@@ -2,7 +2,7 @@ import { expect } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { test } from './recorder-e2e-arrange'
+import { recordingPlayerPath, test } from './recorder-e2e-arrange'
 import { createLargeRecording } from './large-recording'
 import { arrangeMeetingClient, enableMedia, joinRoom, sendChatMessage, startScreenShare } from './meeting-e2e-arrange'
 
@@ -36,9 +36,7 @@ test('records a room and plays and seeks through the relay', async ({ recorderSe
       return start.apply(this, args)
     }
   })
-  await page.goto(
-    `/moq-wasm/examples/recording-player/?recorder=${encodeURIComponent(recorderServe.url)}&id=${recording.id}`
-  )
+  await page.goto(recordingPlayerPath(recorderServe.url, recording.id))
   await page.locator('#load').click()
   await expect(page.locator('#status')).toHaveText('Ready', { timeout: 30_000 })
   await page.locator('#play').click()
@@ -59,9 +57,7 @@ test('records a room and plays and seeks through the relay', async ({ recorderSe
   // Assert: a logical recording larger than 256 MiB opens and seeks without downloading it all.
   const large = await createLargeRecording(recorderServe.storeDir, recording.id)
   expect(large.bytes).toBeGreaterThan(256 * 1024 * 1024)
-  await page.goto(
-    `/moq-wasm/examples/recording-player/?recorder=${encodeURIComponent(recorderServe.url)}&id=${large.id}`
-  )
+  await page.goto(recordingPlayerPath(recorderServe.url, large.id))
   await page.evaluate(async () => {
     const moduleUrl = '/moq-wasm/tests/recording-publisher.ts'
     const { measureFetchBytes } = await import(/* @vite-ignore */ moduleUrl)
@@ -147,9 +143,7 @@ test('records and replays participants, screen share, chat and transcript', asyn
     await expect(alice.page.page.getByTestId('record-moq')).toBeVisible()
     await expect(alice.page.page.getByTestId('record-play')).toBeVisible()
 
-    await page.goto(
-      `/moq-wasm/examples/recording-player/?recorder=${encodeURIComponent(recorderServe.url)}&id=${recording.id}`
-    )
+    await page.goto(recordingPlayerPath(recorderServe.url, recording.id))
     await page.locator('#load').click()
     await expect(page.locator('#status')).toHaveText('Ready', { timeout: 30_000 })
     expect(await page.locator('canvas').count()).toBeGreaterThanOrEqual(3)

@@ -23,8 +23,13 @@ export interface RoomRecordingControls {
 }
 
 /// `null` until the recorder has answered once, so a recorder that is not
-/// running hides recording.
-export function useRoomRecording(recorderUrl: string, namespacePrefix: string): RoomRecordingControls | null {
+/// running hides recording. `relayUrl` is the relay the player opens the
+/// recording through.
+export function useRoomRecording(
+  recorderUrl: string,
+  relayUrl: string,
+  namespacePrefix: string
+): RoomRecordingControls | null {
   const [reachable, setReachable] = useState(false)
   const [active, setActive] = useState<RoomRecording | undefined>()
   const [busy, setBusy] = useState(false)
@@ -39,6 +44,7 @@ export function useRoomRecording(recorderUrl: string, namespacePrefix: string): 
       const url = new URL('../recording-player/', window.location.href)
       if (latest) {
         url.searchParams.set('recorder', recorderUrl)
+        url.searchParams.set('relayUrl', relayUrl)
         url.searchParams.set('id', latest.id)
       }
       setPlaybackUrl(latest ? url.href : undefined)
@@ -47,7 +53,7 @@ export function useRoomRecording(recorderUrl: string, namespacePrefix: string): 
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [namespacePrefix, recorderUrl])
+  }, [namespacePrefix, recorderUrl, relayUrl])
 
   useEffect(() => {
     void refresh()

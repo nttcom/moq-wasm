@@ -401,6 +401,30 @@
             </p>
             <span class="arrow" aria-hidden="true"></span>
           </a>
+          <a class="card" href="examples/recording-player/index.html">
+            <div class="card-head">
+              <h3>Recording Player</h3>
+              <p>MoQ のまま保存した会議録画の再生</p>
+            </div>
+            <p class="flow">
+              <span class="node cloud"
+                ><svg><use href="/icons.svg#icon-cloud" /></svg>Object Store</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="/icons.svg#icon-workflow" /></svg>Recorder<small>FETCH で再配信</small></span
+              >
+              <span class="link">→</span>
+              <span class="node relay"
+                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+              >
+            </p>
+            <span class="arrow" aria-hidden="true"></span>
+          </a>
           <a class="card" href="examples/onvif/index.html">
             <div class="card-head">
               <h3>Onvif</h3>
@@ -460,7 +484,9 @@
               >
               <span class="link">→</span>
               <span class="node"
-                ><svg><use href="/icons.svg#icon-workflow" /></svg>gstreamer moqtsink<small>RTMP / SRT → MoQ</small></span
+                ><svg><use href="/icons.svg#icon-workflow" /></svg>gstreamer moqtsink<small
+                  >RTMP / SRT → MoQ</small
+                ></span
               >
               <span class="link">→</span>
               <span class="node relay"

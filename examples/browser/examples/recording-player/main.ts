@@ -11,6 +11,7 @@ import {
   type IndexedChunk
 } from './timeline'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
+import { setUpRelayUrlControls } from '../../utils/relayPresets'
 
 type Track = {
   namespace: string
@@ -25,6 +26,8 @@ type Media = {
   config: MediaCatalogTrack
   chunks: IndexedChunk[]
   canvas?: HTMLCanvasElement
+  tile?: HTMLElement
+  caption?: HTMLElement
   enabled?: HTMLInputElement
   playout?: VideoPlayout
   state?: HTMLOutputElement
@@ -35,15 +38,18 @@ const play = element<HTMLButtonElement>('play')
 const seek = element<HTMLInputElement>('seek')
 const position = element<HTMLOutputElement>('position')
 const recorder = element<HTMLInputElement>('recorder')
+const relay = element<HTMLInputElement>('relay')
 const recording = element<HTMLInputElement>('recording')
 const token = element<HTMLInputElement>('token')
+const openDialog = element('open-dialog')
+const openError = element('open-error')
+const sidebar = element('sidebar')
 const params = new URLSearchParams(location.search)
 recorder.value = params.get('recorder') ?? recorder.value
 recording.value = params.get('id') ?? ''
+setUpRelayUrlControls(relay, element('relayPresets'))
 let session: MoqSession | undefined
-/// Empty until the recorder's replay answer names the relay.
-let relayUrl = ''
-startPageTelemetry('recording-player', () => relayUrl)
+startPageTelemetry('recording-player', () => relay.value)
 let presence: MoqSubscription | undefined
 let generation = 0
 let media: Media[] = []
@@ -71,6 +77,54 @@ async function acquireFetch(): Promise<() => void> {
   }
 }
 
+/// How long a transcribed utterance stays on its speaker's tile.
+const CAPTION_US = 4_000_000
+
+const memberName = (track: Track) => track.source_namespace.split('/').at(-1)!
+
+function clock(seconds: number): string {
+  const whole = Math.floor(seconds)
+  const minutes = String(Math.floor(whole / 60) % 60).padStart(2, '0')
+  const rest = `${minutes}:${String(whole % 60).padStart(2, '0')}`
+  return whole >= 3600 ? `${Math.floor(whole / 3600)}:${rest}` : rest
+}
+
+function showPosition(): void {
+  position.value = `${clock(Number(seek.value))} / ${clock(Number(seek.max))}`
+}
+
+function showPlaying(value: boolean): void {
+  play.ariaLabel = play.title = value ? 'Pause' : 'Play'
+  element('play-icon').setAttribute(
+    'points',
+    value ? '6 4 10 4 10 20 6 20 6 4 14 4 18 4 18 20 14 20 14 4' : '6 3 20 12 6 21 6 3'
+  )
+}
+
+function avatar(name: string, size: string): HTMLElement {
+  const chip = document.createElement('span')
+  chip.className = `flex shrink-0 items-center justify-center rounded-full bg-blue-600 font-semibold text-white ${size}`
+  chip.textContent = name.slice(0, 1).toUpperCase()
+  chip.title = name
+  return chip
+}
+
+function showRoom(prefix: string): void {
+  element('room-name').textContent = prefix.split('/recordings/')[0].split('/').at(-1) || 'Recording'
+  element('recorded-at').textContent = new Date(origin / 1000).toLocaleString()
+  const members = [...new Set(media.map((track) => memberName(track.descriptor)))]
+  element('participants').textContent = `${members.length} participants`
+  element('member-chips').replaceChildren(
+    ...members.map((name) => {
+      const chip = avatar(name, 'h-6 w-6 text-[11px]')
+      chip.classList.add('ring-2', 'ring-slate-950')
+      return chip
+    })
+  )
+  const tiles = media.filter((track) => track.tile).length
+  element('videos').style.gridTemplateColumns = `repeat(${Math.ceil(Math.sqrt(tiles))}, minmax(0, 1fr))`
+}
+
 function failure(error: unknown): void {
   status.value = error instanceof Error ? error.message : String(error)
 }
@@ -87,7 +141,7 @@ function stop(): void {
   }
   sources.clear()
   for (const track of media) track.playout?.flush()
-  play.textContent = 'Play'
+  showPlaying(false)
 }
 
 async function readRange(
@@ -191,23 +245,42 @@ async function prepareTrack(track: Media, current: number, at: number): Promise<
 }
 
 function addVideo(track: Media): void {
-  const figure = document.createElement('figure')
-  const caption = document.createElement('figcaption')
-  const label = document.createElement('label')
-  const enabled = document.createElement('input')
-  enabled.type = 'checkbox'
-  enabled.checked = media.filter((entry) => entry.canvas).length < 8
-  label.append(enabled, ` ${track.descriptor.source_namespace.split('/').at(-1)} · ${track.descriptor.content}`)
-  const state = document.createElement('output')
-  caption.append(label, state)
+  const name = memberName(track.descriptor)
+  const tile = document.createElement('div')
+  tile.className =
+    'group relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-2 ring-white/5 transition'
+  const placeholder = document.createElement('div')
+  placeholder.className = 'absolute inset-0 flex items-center justify-center'
+  placeholder.append(avatar(name, 'h-16 w-16 text-2xl'))
   const canvas = document.createElement('canvas')
+  canvas.className = 'absolute inset-0 h-full w-full object-contain'
   canvas.width = track.config.width ?? 640
   canvas.height = track.config.height ?? 360
   canvas.dataset.source = track.descriptor.source_namespace
   canvas.dataset.content = track.descriptor.content
-  figure.append(caption, canvas)
-  element('videos').append(figure)
+  const caption = document.createElement('div')
+  caption.className =
+    'pointer-events-none absolute bottom-9 left-1/2 hidden max-w-[90%] -translate-x-1/2 rounded-md bg-black/70 px-3 py-1 text-center text-sm text-white'
+  const label = document.createElement('div')
+  label.className =
+    'pointer-events-none absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/60 px-2 py-0.5 text-xs font-medium text-white'
+  label.textContent = track.descriptor.content === 'camera' ? name : `${name} · ${track.descriptor.content}`
+  const state = document.createElement('output')
+  state.className =
+    'pointer-events-none absolute bottom-2 right-2 max-w-[60%] truncate rounded bg-black/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-200 opacity-0 transition group-hover:opacity-100'
+  const toggle = document.createElement('label')
+  toggle.className =
+    'absolute right-2 top-2 flex cursor-pointer items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs text-white opacity-0 transition focus-within:opacity-100 group-hover:opacity-100'
+  const enabled = document.createElement('input')
+  enabled.type = 'checkbox'
+  enabled.className = 'accent-blue-500'
+  enabled.checked = media.filter((entry) => entry.canvas).length < 8
+  toggle.append(enabled, 'Show')
+  tile.append(placeholder, canvas, caption, label, state, toggle)
+  element('videos').append(tile)
   track.canvas = canvas
+  track.tile = tile
+  track.caption = caption
   track.enabled = enabled
   track.state = state
   track.playout = new VideoPlayout((frame) => {
@@ -237,6 +310,7 @@ element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
   delete element('chat').dataset.position
   delete element('transcript').dataset.position
   play.disabled = seek.disabled = true
+  openError.classList.add('hidden')
   element<HTMLButtonElement>('load').disabled = true
   status.value = 'Opening recording'
   try {
@@ -249,8 +323,7 @@ element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
     )
     const replay = await response.json()
     if (!response.ok) throw new Error(replay.error ?? `Recorder returned ${response.status}`)
-    relayUrl = replay.relay
-    session = await MoqSession.connect(replay.relay, { token: token.value || undefined })
+    session = await MoqSession.connect(relay.value, { token: token.value || undefined })
     const tracks: Track[] = replay.tracks
     const presenceTrack = tracks.find((track) => track.name === 'catalog') ?? tracks[0]
     if (!presenceTrack) throw new Error('Recording has no tracks')
@@ -324,12 +397,17 @@ element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
     )
     seek.max = String((end - origin) / 1_000_000)
     seek.value = '0'
+    showPosition()
+    showRoom(replay.namespace_prefix)
     renderEvents(origin)
     status.value = 'Ready'
+    openDialog.classList.add('hidden')
     play.disabled = seek.disabled = false
   } catch (error) {
     session?.close()
     failure(error)
+    openError.textContent = status.value
+    openError.classList.remove('hidden')
   } finally {
     element<HTMLButtonElement>('load').disabled = false
   }
@@ -344,11 +422,35 @@ function renderEvents(at: number): void {
     list.replaceChildren(
       ...visible.map((event) => {
         const item = document.createElement('li')
-        item.textContent = `${event.speaker}: ${event.text}`
+        item.className = 'rounded-xl border border-white/10 bg-gray-900/70 px-4 py-3'
         item.dataset.timeUs = String(event.at)
+        const heading = document.createElement('div')
+        heading.className = 'flex items-center justify-between text-sm text-blue-200'
+        const speaker = document.createElement('span')
+        speaker.className = 'font-semibold'
+        speaker.textContent = event.speaker
+        const time = document.createElement('span')
+        time.textContent = new Date(event.at / 1000).toLocaleTimeString()
+        heading.append(speaker, time)
+        const text = document.createElement('p')
+        text.className = 'mt-2 whitespace-pre-wrap break-words text-base text-white'
+        text.textContent = event.text
+        item.append(heading, text)
         return item
       })
     )
+    list.scrollTop = list.scrollHeight
+  }
+  for (const track of media) {
+    if (!track.tile || !track.caption) continue
+    const name = memberName(track.descriptor)
+    const utterance = events.findLast(
+      (event) => event.kind === 'transcript' && event.speaker === name && event.at <= at && at - event.at < CAPTION_US
+    )
+    track.caption.textContent = utterance?.text ?? ''
+    track.caption.classList.toggle('hidden', !utterance)
+    track.tile.classList.toggle('ring-emerald-400', !!utterance)
+    track.tile.classList.toggle('ring-white/5', !utterance)
   }
 }
 
@@ -459,7 +561,7 @@ async function start(): Promise<void> {
   await audioContext.resume()
   if (generation !== current) return
   playing = true
-  play.textContent = 'Pause'
+  showPlaying(true)
   status.value = 'Buffering'
   const prepared: PreparedTrack[] = []
   for (const track of media) {
@@ -475,12 +577,12 @@ async function start(): Promise<void> {
       delete track.canvas.dataset.captureUs
     }
   }
-  play.textContent = 'Pause'
+  showPlaying(true)
   status.value = 'Playing'
   tick = setInterval(() => {
     const at = Math.min(end, target + Math.max(0, performance.now() - anchorMs) * 1000)
     seek.value = String((at - origin) / 1_000_000)
-    position.value = `${Number(seek.value).toFixed(1)} s`
+    showPosition()
     renderEvents(at)
     for (const track of media) {
       if (track.canvas && track.enabled?.checked && at > Number(track.canvas.dataset.captureUs ?? at) + 1_000_000)
@@ -507,10 +609,28 @@ play.addEventListener('click', () => {
   if (playing) stop()
   else void start().catch(failure)
 })
+seek.addEventListener('input', showPosition)
 seek.addEventListener('change', () => {
   renderEvents(origin + Number(seek.value) * 1_000_000)
   void start().catch(failure)
 })
+element('reopen').addEventListener('click', () => openDialog.classList.remove('hidden'))
+openDialog.addEventListener('click', (event) => {
+  if (event.target === openDialog && media.length) openDialog.classList.add('hidden')
+})
+element('toggle-sidebar').addEventListener('click', (event) => {
+  const open = sidebar.classList.toggle('hidden') === false
+  ;(event.currentTarget as HTMLElement).ariaPressed = String(open)
+})
+for (const tab of document.querySelectorAll<HTMLButtonElement>('.sidebar-tab')) {
+  tab.addEventListener('click', () => {
+    for (const other of document.querySelectorAll<HTMLButtonElement>('.sidebar-tab')) {
+      const selected = other === tab
+      other.ariaSelected = String(selected)
+      element(other.dataset.tab!).classList.toggle('hidden', !selected)
+    }
+  })
+}
 window.addEventListener('pagehide', () => {
   stop()
   void presence?.close().catch(() => undefined)

@@ -45,6 +45,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const userName = session.localMember.name
   const recording = useRoomRecording(
     resolveRecorderUrl(window.location.search, session.relayUrl),
+    session.relayUrl,
     session.trackNamespacePrefix.join('/')
   )
   const [transcriberPresent, setTranscriberPresent] = useState(false)
