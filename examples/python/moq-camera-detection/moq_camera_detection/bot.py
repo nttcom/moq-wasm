@@ -7,6 +7,7 @@ import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_rooms.rooms import BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
@@ -27,7 +28,7 @@ DEFAULT_PORT = 8098
 # system-one-server answers one request at a time, and one camera already sends it a picture every
 # SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
-NAMESPACE_ROOT = ["anon", "moq-camera-detection"]
+DEMO_NAME = "moq-camera-detection"
 VIDEO_TRACK = "video"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
@@ -54,8 +55,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def room_namespace(room_id: str) -> list[str]:
-    return [*NAMESPACE_ROOT, room_id]
+def room_namespace(room: BotRoom) -> list[str]:
+    return [room.namespace_root, DEMO_NAME, room.room_id]
 
 
 class LatestPrompt:
@@ -122,22 +123,22 @@ async def forward_camera(session: moqt.Session, camera_namespace: list[str], wor
 
 
 async def detect_in_session(
-    session: moqt.Session, room_id: str, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
+    session: moqt.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
 ) -> bool:
     """True once no page has published the room's camera for the grace period; False when the relay session closed."""
-    detector_namespace = [*room_namespace(room_id), "detector"]
+    detector_namespace = [*room_namespace(room), "detector"]
     # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
     for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
         await publisher.publish_on(
             await session.track(detector_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
     await session.publish_namespace(detector_namespace)
-    camera_namespace = [*room_namespace(room_id), "camera"]
+    camera_namespace = [*room_namespace(room), "camera"]
     return await until_room_empty(session, camera_namespace, partial(forward_camera, session, camera_namespace, worker))
 
 
 async def detect_in_room(
-    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
+    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
 ) -> None:
     timeline = EventTimeline()
     status = SystemOneStatus()
@@ -152,8 +153,8 @@ async def detect_in_room(
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
-        in_session = partial(detect_in_session, room_id=room_id, timeline=timeline, status=status, worker=worker)
-        await stay_connected(args, in_session, f"room {room_id}: ")
+        in_session = partial(detect_in_session, room=room, timeline=timeline, status=status, worker=worker)
+        await stay_connected(args, room, in_session)
         await runner.cancel()
 
 

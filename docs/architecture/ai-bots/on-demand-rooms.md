@@ -69,9 +69,13 @@ accepts no other room.
 
 ### The room request
 `GET /rooms/{room}` answers with `text/event-stream` and keeps the response
-open. The page opens it with `EventSource` when the user presses Join, before
-it connects to the relay, so the bot's start overlaps with the page's own
-connect. The page closes it on Leave or `pagehide`.
+open. The page opens it when the user presses Join, before it connects to the
+relay, so the bot's start overlaps with the page's own connect. The page
+closes it on Leave or `pagehide`. The page reads the stream with `fetch` and
+reopens it when it drops, 3 s later as `EventSource` would, because
+`EventSource` cannot send the token of a temporary app in a header (see
+"Temporary apps"). A response that is not an event stream (400, 401, 503) ends
+the request instead.
 
 The stream starts with a `member` event that names the hold. When the page
 closes the stream, it also sends `POST /rooms/{room}/leave?member={id}`,
@@ -108,8 +112,8 @@ The stream carries the server's own events, each of which ends the response:
 | `failed` | the bot stopped with an exception |
 | `stopped` | a page that holds the room stopped it |
 
-The page closes the `EventSource` on any of them, since `EventSource` reopens
-any stream the server ends, and shows why the bot left. `closed` shows the
+The page closes the request on any of them, since it reopens any stream the
+server ends, and shows why the bot left. `closed` shows the
 off-hours notice the pages show today.
 
 ```mermaid
@@ -153,7 +157,7 @@ requests for it.
 - When the count drops to zero, the server waits 30 s and then cancels the
   task. The task closes its relay session before it ends. A request that
   arrives within the 30 s keeps the bot running, so a page reload or an
-  `EventSource` retry does not restart it.
+  stream the page reopens does not restart it.
 - The bot follows the namespace its room's pages publish (`.../chat`,
   `.../camera`, the PTZ `viewer`, a Meeting participant's
   `{root}/{room}/{user}`). When it has gone unpublished for the grace period,
@@ -166,7 +170,7 @@ requests for it.
   counted from the first request, so a tab left open does not keep a bot, and
   through it the System One service, running for the rest of the day. Every open request gets `expired`.
   The expired room stays in the map, answering `expired` at once, until its
-  last request has been gone for the grace period. An `EventSource` that
+  last request has been gone for the grace period. A page that
   reconnects in that window therefore does not start the room again. A page
   that joins the same room ID later starts a new bot.
 - Outside the opening hours (`--open-hours`) a request for a new room gets
@@ -186,7 +190,7 @@ are concurrent (`concurrency` well above the expected number of open pages).
 | --- | --- | --- |
 | Billing | request-based (`--cpu-throttling`) | A room runs only while a page holds its request, so the room keeps the CPU. The 30 s grace period and the teardown after the last page leaves run throttled. |
 | Instances | min 0, max 1 | Zero rooms means zero instances. The room map needs a single instance. |
-| Request timeout | 3600 s (the maximum) | A request is held for the whole time a page stays in the room, which `--max-room-seconds` keeps within this. If a request still drops, `EventSource` opens a new one and the grace period covers the gap. |
+| Request timeout | 3600 s (the maximum) | A request is held for the whole time a page stays in the room, which `--max-room-seconds` keeps within this. If a request still drops, the page opens a new one and the grace period covers the gap. |
 | Ingress | all, unauthenticated | A browser opens the request directly. See "Limits" for abuse. |
 | Service account | own, with `roles/run.invoker` on the System One service | The bot keeps sending the identity token it gets from the metadata server (`--metadata-auth`), which Cloud Run provides as GCE does. |
 
@@ -197,6 +201,68 @@ requests starts an instance.
 
 The throttled teardown may not reach the relay. The relay then ends the bot's session at its idle timeout, and the
 bot's namespaces outlive the room until then.
+
+### Temporary apps
+A page in temporary mode (examples/browser/README.md "Relay and
+authentication") runs under the namespace root of its own app, `temp-…`,
+instead of `anon`, and its bot must join the same app. The bot service does
+not hold the secret temporary tokens are signed with; only the token mint
+and the VTS do. The page therefore hands its token to the service, and the
+service keeps a token of its own alive with the issuer's `POST
+/tokens/refresh`.
+
+- **Handing over.** The room request carries the token as
+  `Authorization: Bearer <token>`. The service answers the CORS preflight
+  this needs (`OPTIONS /rooms/{room}`, allowing `Authorization`). A query
+  parameter would avoid the preflight and keep `EventSource`, but the URL of
+  every request lands in the access logs of Cloud Run and of any proxy, and a
+  temporary token can be refreshed without limit, so a logged token would
+  open the app to whoever reads the logs for as long as they keep refreshing
+  it. A ticket from a separate `POST` would leave a credential to the room in
+  the URL as well. The header costs one preflight per request and
+  `EventSource`'s reconnection, which the page does itself; in exchange
+  each reconnection sends the page's current token. `leave` and `stop` carry
+  no token: the member ID the stream named is the capability.
+- **Validating.** The service refreshes the token it was handed. The issuer
+  refreshes only a token it signed that has not expired, so the answer both
+  proves the token and names its app: the room's namespace root is the
+  `appId` of that answer, never a value the page sends separately. A refusal
+  answers 401 and an issuer that does not answer 503, both before the stream
+  starts, and no bot starts. A request without `Authorization` is a public
+  request, handled as before under `anon`. The service does not tell a
+  registered app's `?jwt=` token from a forged one: the issuer refuses both,
+  so the page does not send one.
+- **Room key.** Rooms are told apart by namespace root and room ID, so room
+  `abc` of two apps, or of an app and `anon`, runs two bots. The join that
+  starts a room hands its token to the bot; later joins to the running room
+  are validated the same way, and their tokens are dropped.
+- **Connecting.** The bot connects with its token, and the Python module
+  presents the latest one on every connection it opens by itself (GOAWAY, an
+  expired-token close).
+- **Staying past the hour.** Five minutes before its token expires, as the
+  pages do, the bot refreshes it on the issuer and sends the new one to the
+  relay on its open session (`Session.refresh_token`: the relay's
+  in-session refresh, docs/architecture/relay/architecture.md "Token
+  refresh"), so the session never reaches the relay's EXPIRED_AUTH_TOKEN and
+  the room does not reconnect. A relay that refuses the new token leaves the
+  session to expire; the bot then connects again with the new token.
+- **When refreshing fails.** An issuer that does not answer is retried every
+  30 s while the token is still valid. Once the issuer refuses the token, or
+  has not answered by the time it expires, the bot raises and the room ends
+  with `failed`, which every page holding it sees. A bot cannot stay in an
+  app without a valid token, and a page that is still there can start the
+  room again with its own, fresher token.
+- **Configuration.** `--token-mint-url`, else the environment variable
+  `TOKEN_MINT_URL`, else the issuer next to the relay: `http://localhost:8083`
+  for a local relay and `https://token-mint.moqt.research.skyway.io`
+  otherwise, the same rule the bot's telemetry follows.
+
+`--max-room-seconds` (1 h by default) usually ends a room before the bot's
+first token, issued when the room starts, expires; the refresh keeps a room
+that is configured to run longer, or whose clock drifts, connected.
+
+PTZ tracking follows the page's root as well, but its camera publishes under
+`anon/onvif/client` only, so a temporary PTZ room has no camera to follow.
 
 ### Limits
 The endpoint has no authentication, so the server bounds what a request can

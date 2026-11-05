@@ -19,6 +19,8 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
   | `stopped` | ルームを保持しているページが `stop` を送った |
 
 - ルーム ID は既定で `[a-z0-9-]` の 1〜32 文字で、bot が `serve_rooms` に別の規則を渡せます。namespace の 1 要素になります。
+- 一時アプリのページは、ルームの要求に `Authorization: Bearer <トークン>` を付けます（このためサーバーは `OPTIONS /rooms/{room}` の CORS preflight に答えます）。サーバーはそのトークンを token mint の `POST /tokens/refresh` で更新し、答えの `appId` をルームの namespace root にします。issuer が拒んだら 401、答えなければ 503 を返し、bot は起動しません。トークンのない要求は今までどおり `anon` のルームです。ルームは namespace root とルーム ID の組で区別します。
+- bot は自分のトークンで relay につなぎ、期限の 5 分前に issuer で更新して、開いているセッションに `Session.refresh_token` で渡します。issuer に拒まれたとき、または期限まで答えがなかったときは、ルームを `failed` で終えます。設計は [Temporary apps](../../../docs/architecture/ai-bots/on-demand-rooms.md#temporary-apps) にあります。
 - bot が `serve_rooms` に `bot_from_query` を渡すと、ルームを始めたリクエストのクエリでそのルームの bot を選べます（例: 書き起こしのモデル）。受け付けないクエリには 400 を返します。
 
 ## オプション
@@ -32,6 +34,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 | `--allowed-origin` | なし（すべて） | ルームを要求できるページの origin。複数指定できる |
 | `--telemetry-url` | relay がローカルなら `http://localhost:8095`、それ以外は `https://observability.moqt.research.skyway.io` | ログを送る observability サーバー |
 | `--no-telemetry` | なし | ログを送らない |
+| `--token-mint-url` | 環境変数 `TOKEN_MINT_URL`、なければ relay がローカルなら `http://localhost:8083`、それ以外は `https://token-mint.moqt.research.skyway.io` | 一時アプリのトークンを更新する token mint |
 
 ## テレメトリー
 

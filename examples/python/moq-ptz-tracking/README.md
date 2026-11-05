@@ -135,6 +135,8 @@ bot は Cloud Run（`https://moq-ptz-tracking.moqt.research.skyway.io`）で動�
 
 ## トラック
 
+一時アプリのページでは、`anon` の代わりにその appId（`temp-…`）が namespace root になります（[moq-bot-rooms](../moq-bot-rooms/README.md)）。ただし `onvif-ingest` はカメラを `anon/onvif/client` にだけ publish するので、一時アプリの PTZ ルームにはカメラがありません。
+
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
 | `anon/moq-ptz-tracking/viewer` | `prompt` | ブラウザ | `{"targets": ["...", ...], "video": "<映像トラック名>"}` で追従を始め、`{"targets": []}` で止める。1 件 1 group。対象は 1〜16 個、それぞれ 100 文字以内。重複は 1 つにまとめる |

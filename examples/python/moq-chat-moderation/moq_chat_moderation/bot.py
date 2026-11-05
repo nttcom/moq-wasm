@@ -6,6 +6,7 @@ import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_rooms.rooms import BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
@@ -23,7 +24,7 @@ from moq_chat_moderation.moderator import ChatModerator
 
 DEFAULT_PORT = 8097
 DEFAULT_MAX_ROOMS = 10
-NAMESPACE_ROOT = ["anon", "moq-chat-moderation"]
+DEMO_NAME = "moq-chat-moderation"
 CHAT_TRACK = "chat"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
@@ -44,8 +45,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def room_namespace(room_id: str) -> list[str]:
-    return [*NAMESPACE_ROOT, room_id]
+def room_namespace(room: BotRoom) -> list[str]:
+    return [room.namespace_root, DEMO_NAME, room.room_id]
 
 
 async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker: PipelineWorker) -> None:
@@ -68,22 +69,22 @@ async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker:
 
 
 async def moderate_session(
-    session: moqt.Session, room_id: str, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
+    session: moqt.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
 ) -> bool:
     """True once no page has published the room's chat for the grace period; False when the relay session closed."""
-    moderator_namespace = [*room_namespace(room_id), "moderator"]
+    moderator_namespace = [*room_namespace(room), "moderator"]
     # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
     for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
         await publisher.publish_on(
             await session.track(moderator_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
     await session.publish_namespace(moderator_namespace)
-    chat_namespace = [*room_namespace(room_id), "chat"]
+    chat_namespace = [*room_namespace(room), "chat"]
     return await until_room_empty(session, chat_namespace, partial(forward_chat, session, chat_namespace, worker))
 
 
 async def moderate_room(
-    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
+    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
 ) -> None:
     timeline = EventTimeline(replay=True)
     status = SystemOneStatus()
@@ -98,8 +99,8 @@ async def moderate_room(
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
-        in_session = partial(moderate_session, room_id=room_id, timeline=timeline, status=status, worker=worker)
-        await stay_connected(args, in_session, f"room {room_id}: ")
+        in_session = partial(moderate_session, room=room, timeline=timeline, status=status, worker=worker)
+        await stay_connected(args, room, in_session)
         await runner.cancel()
 
 

@@ -8,6 +8,7 @@ import aiohttp
 from faster_whisper import WhisperModel
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
+from moq_bot_rooms.rooms import BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
@@ -86,8 +87,8 @@ def bot_from_query(args: argparse.Namespace, recognizers: Mapping[str, Recognize
     return partial(transcribe_room, args, recognizer)
 
 
-async def transcribe_room(args: argparse.Namespace, recognizer: Recognizer, room_id: str):
-    await Room(args.relay_url, not args.insecure, recognizer, room_id).run()
+async def transcribe_room(args: argparse.Namespace, recognizer: Recognizer, room: BotRoom):
+    await Room(args.relay_url, not args.insecure, recognizer, room).run()
 
 
 async def load_whisper(name: str) -> WhisperModel:

@@ -1,14 +1,23 @@
 import argparse
 import asyncio
+import os
 import re
 import signal
 from collections.abc import Awaitable, Callable, Mapping
 
+import aiohttp
 from aiohttp import web
 from loguru import logger
 
+from moq_bot_rooms.app_token import (
+    AppToken,
+    TokenMint,
+    TokenMintUnavailable,
+    TokenRejected,
+    token_mint_url,
+)
 from moq_bot_rooms.open_hours import OpenHours
-from moq_bot_rooms.rooms import Membership, RoomEnd, Rooms, RunBot
+from moq_bot_rooms.rooms import BotRoom, Membership, RoomEnd, Rooms, RunBot
 from moq_bot_rooms.telemetry import (
     add_telemetry_arguments,
     report_logs,
@@ -19,6 +28,7 @@ from moq_bot_rooms.telemetry import (
 ROOM_ID_PATTERN = re.compile(r"[a-z0-9-]{1,32}")
 HEARTBEAT_SECONDS = 15.0
 HOURS_CHECK_SECONDS = 10.0
+BEARER_PREFIX = "Bearer "
 
 
 def add_serve_arguments(
@@ -47,11 +57,18 @@ def add_serve_arguments(
         default=[],
         help="a page origin that may request rooms, repeatable; any origin without it",
     )
+    parser.add_argument(
+        "--token-mint-url",
+        default=os.environ.get("TOKEN_MINT_URL"),
+        help="token mint that refreshes the tokens of the temporary apps pages request rooms in "
+        "(environment TOKEN_MINT_URL); the local one for a local relay and the deployed one otherwise",
+    )
 
 
 def room_app(
     rooms: Rooms,
     allowed_origins: list[str],
+    token_mint: TokenMint,
     only_room: str | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
@@ -61,9 +78,32 @@ def room_app(
     with a `member` event naming the hold. `POST /rooms/{room}/leave?member=` ends that hold at once.
     `POST /rooms/{room}/stop?member=` ends the room for every page that holds it.
 
+    A request with `Authorization: Bearer <token>` holds the room under the token's temporary app,
+    which `token_mint` vouches for by refreshing the token: 401 if it refuses, 503 if it does not
+    answer. A request without one holds the room under the public root.
+
     With `bot_from_query`, the query of the request that starts a room picks the room's bot; it
     raises `ValueError` for a query it refuses, which the page gets as 400.
     """
+
+    def allow_origin(origin: str | None) -> str:
+        return origin if allowed_origins else "*"
+
+    async def bot_room(request: web.Request, room_id: str) -> BotRoom:
+        authorization = request.headers.get("Authorization")
+        if authorization is None:
+            return BotRoom(room_id)
+        if not authorization.startswith(BEARER_PREFIX):
+            raise web.HTTPUnauthorized(text="a bearer token is expected")
+        try:
+            page_token = authorization.removeprefix(BEARER_PREFIX).strip()
+            token = AppToken(token_mint, await token_mint.refresh(page_token))
+        except TokenRejected as error:
+            raise web.HTTPUnauthorized(text=f"token refused: {error}") from error
+        except TokenMintUnavailable as error:
+            logger.warning(f"cannot check a room token: {error}")
+            raise web.HTTPServiceUnavailable(text="token mint unavailable") from error
+        return BotRoom.of_app(room_id, token)
 
     async def room_events(request: web.Request) -> web.StreamResponse:
         origin = request.headers.get("Origin")
@@ -77,15 +117,16 @@ def room_app(
             run_bot = bot_from_query(request.query) if bot_from_query else None
         except ValueError as error:
             raise web.HTTPBadRequest(text=str(error)) from error
+        room = await bot_room(request, room_id)
         response = web.StreamResponse(
             headers={
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
-                "Access-Control-Allow-Origin": origin if allowed_origins else "*",
+                "Access-Control-Allow-Origin": allow_origin(origin),
             }
         )
         await response.prepare(request)
-        membership = rooms.join(room_id, run_bot)
+        membership = rooms.join(room, run_bot)
         try:
             await response.write(f"event: member\ndata: {membership.id}\n\n".encode())
             reason = await hold(response, membership, heartbeat_seconds)
@@ -108,8 +149,34 @@ def room_app(
 
         return handle
 
-    app = web.Application()
+    async def room_preflight(request: web.Request) -> web.Response:
+        origin = request.headers.get("Origin")
+        if allowed_origins and origin not in allowed_origins:
+            raise web.HTTPForbidden()
+        return web.Response(
+            status=204,
+            headers={
+                "Access-Control-Allow-Origin": allow_origin(origin),
+                "Access-Control-Allow-Methods": "GET",
+                "Access-Control-Allow-Headers": "Authorization",
+                "Access-Control-Max-Age": "600",
+            },
+        )
+
+    @web.middleware
+    async def readable_errors(request: web.Request, handler):
+        """Lets the page read why its request failed, so it does not take the failure for a dropped
+        stream and retry."""
+        try:
+            return await handler(request)
+        except web.HTTPException as error:
+            error.headers.setdefault("Access-Control-Allow-Origin", "*")
+            raise
+
+    app = web.Application(middlewares=[readable_errors])
     app.router.add_get("/rooms/{room}", room_events)
+    # A page in a temporary app sends its token in a header, which needs a CORS preflight.
+    app.router.add_route("OPTIONS", "/rooms/{room}", room_preflight)
     # The page sends these without a body or headers, so the browser needs no CORS preflight.
     app.router.add_post("/rooms/{room}/leave", member_action(rooms.leave))
     app.router.add_post("/rooms/{room}/stop", member_action(rooms.stop))
@@ -135,7 +202,8 @@ async def serve_rooms(
 ) -> None:
     """Serves rooms until SIGINT or SIGTERM, then stops every bot before it returns."""
     endpoint = telemetry_endpoint(args.telemetry_url, args.no_telemetry, args.relay_url)
-    async with report_logs(endpoint, args.bot):
+    async with report_logs(endpoint, args.bot), aiohttp.ClientSession() as http:
+        token_mint = TokenMint(http, token_mint_url(args.token_mint_url, args.relay_url))
         rooms = Rooms(
             run_bot,
             max_rooms=args.max_rooms,
@@ -144,7 +212,12 @@ async def serve_rooms(
         )
         runner = web.AppRunner(
             room_app(
-                rooms, args.allowed_origin, only_room, room_id_pattern=room_id_pattern, bot_from_query=bot_from_query
+                rooms,
+                args.allowed_origin,
+                token_mint,
+                only_room,
+                room_id_pattern=room_id_pattern,
+                bot_from_query=bot_from_query,
             )
         )
         await runner.setup()

@@ -1,12 +1,14 @@
 import argparse
 import asyncio
 import time
+from dataclasses import dataclass
 from functools import partial
 
 import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_rooms.rooms import BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
@@ -27,11 +29,7 @@ from moq_ptz_tracking.vision import SystemOneVisionClient
 DEFAULT_PORT = 8099
 # There is one ONVIF camera, so there is one room.
 ROOM_ID = "onvif"
-CAMERA_NAMESPACE = ["anon", "onvif", "client"]
-COMMAND_NAMESPACE = ["anon", "onvif", "viewer"]
 COMMAND_TRACK = "command"
-VIEWER_NAMESPACE = ["anon", "moq-ptz-tracking", "viewer"]
-TRACKER_NAMESPACE = ["anon", "moq-ptz-tracking", "tracker"]
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
@@ -39,6 +37,26 @@ STATUS_TRACK = "status"
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 SAMPLE_INTERVAL_SECONDS = 0.1
+
+
+@dataclass(frozen=True)
+class RoomNamespaces:
+    """The room's namespaces under its root, the same ones examples/browser/examples/moq-ptz-tracking/main.ts uses."""
+
+    camera: list[str]
+    command: list[str]
+    viewer: list[str]
+    tracker: list[str]
+
+    @classmethod
+    def of(cls, room: BotRoom) -> "RoomNamespaces":
+        root = room.namespace_root
+        return cls(
+            camera=[root, "onvif", "client"],
+            command=[root, "onvif", "viewer"],
+            viewer=[root, "moq-ptz-tracking", "viewer"],
+            tracker=[root, "moq-ptz-tracking", "tracker"],
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,10 +98,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def follow_prompts(session: moqt.Session, latest_target: LatestTarget):
+async def follow_prompts(session: moqt.Session, viewer_namespace: list[str], latest_target: LatestTarget):
     while True:
         try:
-            async for prompt_object in await session.subscribe(VIEWER_NAMESPACE, PROMPT_TRACK):
+            async for prompt_object in await session.subscribe(viewer_namespace, PROMPT_TRACK):
                 location = (prompt_object.group_id, prompt_object.object_id)
                 try:
                     target = parse_prompt(prompt_object.payload, location)
@@ -100,10 +118,16 @@ async def follow_prompts(session: moqt.Session, latest_target: LatestTarget):
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
-async def forward_video(session: moqt.Session, video_track: str, latest_target: LatestTarget, worker: PipelineWorker):
+async def forward_video(
+    session: moqt.Session,
+    camera_namespace: list[str],
+    video_track: str,
+    latest_target: LatestTarget,
+    worker: PipelineWorker,
+):
     try:
-        video = await session.subscribe(CAMERA_NAMESPACE, video_track)
-        logger.info(f"watching {'/'.join(CAMERA_NAMESPACE)}/{video_track}")
+        video = await session.subscribe(camera_namespace, video_track)
+        logger.info(f"watching {'/'.join(camera_namespace)}/{video_track}")
         next_sample_at = 0.0
         decoder: GroupDecoder | None = None
         group_id: int | None = None
@@ -132,7 +156,9 @@ async def forward_video(session: moqt.Session, video_track: str, latest_target: 
         logger.info(f"camera track ended: {error}")
 
 
-async def forward_camera(session: moqt.Session, latest_target: LatestTarget, worker: PipelineWorker):
+async def forward_camera(
+    session: moqt.Session, camera_namespace: list[str], latest_target: LatestTarget, worker: PipelineWorker
+):
     """Subscribes to the camera only while a target is set, because onvif-ingest streams the profile
     its first subscriber picks and rejects the others."""
     while True:
@@ -140,7 +166,7 @@ async def forward_camera(session: moqt.Session, latest_target: LatestTarget, wor
         if target is None:
             await latest_target.changed()
             continue
-        watching = asyncio.create_task(forward_video(session, target.video_track, latest_target, worker))
+        watching = asyncio.create_task(forward_video(session, camera_namespace, target.video_track, latest_target, worker))
         leaving = asyncio.create_task(latest_target.leaves(target.video_track))
         try:
             done, _ = await asyncio.wait({watching, leaving}, return_when=asyncio.FIRST_COMPLETED)
@@ -153,34 +179,39 @@ async def forward_camera(session: moqt.Session, latest_target: LatestTarget, wor
 
 async def track_in_session(
     session: moqt.Session,
+    namespaces: RoomNamespaces,
     timeline: EventTimeline,
     status: SystemOneStatus,
     commands: PtzCommands,
     latest_target: LatestTarget,
     worker: PipelineWorker,
 ) -> bool:
-    """True once no viewer has published `VIEWER_NAMESPACE` for the grace period; False when the relay
+    """True once no viewer has published `namespaces.viewer` for the grace period; False when the relay
     session closed."""
     # Registered before the namespaces are published, since the relay may forward a SUBSCRIBE at once.
     for namespace, track_name, publisher in (
-        (TRACKER_NAMESPACE, EVENT_TIMELINE_TRACK, timeline),
-        (TRACKER_NAMESPACE, STATUS_TRACK, status),
-        (COMMAND_NAMESPACE, COMMAND_TRACK, commands),
+        (namespaces.tracker, EVENT_TIMELINE_TRACK, timeline),
+        (namespaces.tracker, STATUS_TRACK, status),
+        (namespaces.command, COMMAND_TRACK, commands),
     ):
         await publisher.publish_on(await session.track(namespace, track_name, retention_seconds=RETENTION_SECONDS))
-    await session.publish_namespace(TRACKER_NAMESPACE)
-    await session.publish_namespace(COMMAND_NAMESPACE)
+    await session.publish_namespace(namespaces.tracker)
+    await session.publish_namespace(namespaces.command)
     forwarding = asyncio.create_task(
-        while_published(session, CAMERA_NAMESPACE, partial(forward_camera, session, latest_target, worker))
+        while_published(
+            session, namespaces.camera, partial(forward_camera, session, namespaces.camera, latest_target, worker)
+        )
     )
     try:
-        return await until_room_empty(session, VIEWER_NAMESPACE, partial(follow_prompts, session, latest_target))
+        return await until_room_empty(
+            session, namespaces.viewer, partial(follow_prompts, session, namespaces.viewer, latest_target)
+        )
     finally:
         forwarding.cancel()
 
 
 async def track_in_room(
-    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, _room_id: str
+    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
 ) -> None:
     timeline = EventTimeline()
     status = SystemOneStatus()
@@ -197,13 +228,14 @@ async def track_in_room(
         tasks.create_task(runner.run())
         in_session = partial(
             track_in_session,
+            namespaces=RoomNamespaces.of(room),
             timeline=timeline,
             status=status,
             commands=commands,
             latest_target=latest_target,
             worker=worker,
         )
-        await stay_connected(args, in_session)
+        await stay_connected(args, room, in_session)
         await runner.cancel()
 
 
