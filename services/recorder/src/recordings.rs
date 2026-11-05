@@ -16,7 +16,7 @@ use crate::{
     archive_reader::StoredRecording,
     launcher::{Job, Launcher},
     recording::Layout,
-    replay::ReplayTask,
+    replay::{ReplayLease, ReplayTask},
     room_state::{CompositeState, MemberStatus, RecordingFormat, RoomRecord, RoomState},
     state_sync_task::{HEARTBEAT_INTERVAL, now_ms},
     store::RecordingStore,
@@ -57,8 +57,13 @@ impl From<anyhow::Error> for PublishRejection {
     }
 }
 
+pub(crate) struct Publication {
+    pub(crate) description: Value,
+    pub(crate) lease: ReplayLease,
+}
+
 /// Recording state belongs to the store and independent jobs. Replay
-/// publications belong to this API process for their bounded lifetime.
+/// publications belong to this API process while a lease on them exists.
 pub(crate) struct Recordings {
     config: ServeArgs,
     store: RecordingStore,
@@ -106,52 +111,67 @@ impl Recordings {
         &self.config.namespace_root
     }
 
-    pub(crate) async fn publish(&self, id: &str) -> Result<Option<Value>, PublishRejection> {
+    pub(crate) async fn publish(&self, id: &str) -> Result<Option<Publication>, PublishRejection> {
         let Some(record) = self.store.read_state(id).await? else {
             return Ok(None);
         };
         if record.state != RoomState::Finished {
             return Err(PublishRejection::NotReady);
         }
-        let cell = {
-            let mut replays = self.replays.lock().await;
-            replays.retain(|_, cell| cell.get().is_none_or(ReplayTask::is_active));
-            if !replays.contains_key(id) && replays.len() >= self.config.max_recordings {
-                return Err(PublishRejection::Capacity);
-            }
-            Arc::clone(replays.entry(id.to_string()).or_default())
-        };
-        let replay = cell
-            .get_or_try_init(|| async {
-                let archive =
-                    StoredRecording::open(&self.store, id, &record.namespace_prefix).await?;
-                ReplayTask::run(
-                    archive,
-                    &self.config.room.relay,
-                    !self.config.room.insecure_skip_tls_verify,
-                )
-                .await
-            })
-            .await;
-        let replay = match replay {
-            Ok(replay) => replay,
-            Err(error) => {
+        loop {
+            let cell = {
                 let mut replays = self.replays.lock().await;
-                if replays
-                    .get(id)
-                    .is_some_and(|current| Arc::ptr_eq(current, &cell))
-                {
-                    replays.remove(id);
+                replays.retain(|_, cell| cell.get().is_none_or(ReplayTask::is_active));
+                if !replays.contains_key(id) && replays.len() >= self.config.max_recordings {
+                    return Err(PublishRejection::Capacity);
                 }
-                return Err(error.into());
-            }
-        };
-        let mut description = replay.description();
-        description["recording_id"] = id.into();
-        description["relay"] = self.config.room.relay.clone().into();
-        description["namespace_prefix"] =
-            format!("{}/recordings/{id}", record.namespace_prefix).into();
-        Ok(Some(description))
+                Arc::clone(replays.entry(id.to_string()).or_default())
+            };
+            let mut first_lease = None;
+            let replay = cell
+                .get_or_try_init(|| async {
+                    let archive =
+                        StoredRecording::open(&self.store, id, &record.namespace_prefix).await?;
+                    let (replay, lease) = ReplayTask::run(
+                        archive,
+                        &self.config.room.relay,
+                        !self.config.room.insecure_skip_tls_verify,
+                    )
+                    .await?;
+                    first_lease = Some(lease);
+                    anyhow::Ok(replay)
+                })
+                .await;
+            let (mut description, lease) = match replay {
+                Ok(replay) => (replay.description(), first_lease.or_else(|| replay.lease())),
+                Err(error) => {
+                    self.forget_replay(id, &cell).await;
+                    return Err(error.into());
+                }
+            };
+            let Some(lease) = lease else {
+                // The replay is ending: its last lease is gone but its task
+                // has not finished, so `retain` kept it. Forget it; the next
+                // turn starts a new replay.
+                self.forget_replay(id, &cell).await;
+                continue;
+            };
+            description["recording_id"] = id.into();
+            description["relay"] = self.config.room.relay.clone().into();
+            description["namespace_prefix"] =
+                format!("{}/recordings/{id}", record.namespace_prefix).into();
+            return Ok(Some(Publication { description, lease }));
+        }
+    }
+
+    async fn forget_replay(&self, id: &str, cell: &Arc<OnceCell<ReplayTask>>) {
+        let mut replays = self.replays.lock().await;
+        if replays
+            .get(id)
+            .is_some_and(|current| Arc::ptr_eq(current, cell))
+        {
+            replays.remove(id);
+        }
     }
 
     pub(crate) async fn start(

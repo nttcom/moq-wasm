@@ -85,14 +85,15 @@ screen-share and chat tracks, and the meeting transcriber's transcript, as
 object-store chunks instead of MP4. Omitting `format` retains MP4 behavior.
 
 To replay a finished MoQ or MP4 recording, send `POST /recordings/<id>/publish`.
-The response names the relay and tracks under
-`<room>/recordings/<id>/...`, with each track's original first and last object
-locations. Use standalone MoQ FETCH for those ranges. The recorder reads and
-checks the stored chunks without generating an MP4. The namespace remains
-available while it has Subscribers or active FETCH requests. After the last
-Subscriber leaves and all FETCH requests finish, 15 idle minutes close the
-publication. The recorder API process must remain running. The recording
-player holds a subscription while its page is open, including while paused.
+The response is an NDJSON stream that stays open. Its first line names the
+relay and tracks under `<room>/recordings/<id>/...`, with each track's original
+first and last object locations; empty keepalive lines follow. Use standalone
+MoQ FETCH for those ranges. The recorder reads and checks the stored chunks
+without generating an MP4. The namespace stays available while at least one
+response is open and closes when the last one closes. Open the next response
+after `renew_after_seconds`, before Cloud Run's request timeout ends the current
+one, and close the previous one once no FETCH request is in flight.
+The recording player holds one while its page is open, including while paused.
 
 For MP4 recordings, the first publish request reads the original files and
 creates reusable MoQ chunks under `<id>/mp4-replay/`, without re-encoding or

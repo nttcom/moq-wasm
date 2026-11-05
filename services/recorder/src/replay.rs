@@ -13,8 +13,8 @@ use moqt::{
 };
 use serde_json::Value;
 use tokio::{
+    sync::mpsc,
     task::{AbortHandle, JoinError, JoinHandle, JoinSet},
-    time::Instant,
 };
 
 use crate::{
@@ -22,23 +22,41 @@ use crate::{
     relay::RelayConnection,
 };
 
-const REPLAY_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// Shorter than the Cloud Run request timeout (60 minutes, its maximum), so a
+/// client opens the next answer before Cloud Run ends the current one.
+const RENEW_AFTER: Duration = Duration::from_secs(45 * 60);
 const MAX_FETCHES: usize = 4;
 
-/// Serves immutable recorded tracks until no subscription or FETCH remains
-/// for the idle timeout.
+/// Serves immutable recorded tracks while a [`ReplayLease`] exists.
 pub(crate) struct ReplayTask {
     handle: JoinHandle<()>,
     session: Arc<Session>,
     description: Value,
+    lease_sender: mpsc::WeakSender<()>,
+}
+
+/// The replay ends when the last lease is dropped, which closes the channel;
+/// nothing is sent on it.
+pub(crate) struct ReplayLease {
+    _lease_sender: mpsc::Sender<()>,
+}
+
+impl ReplayLease {
+    pub(crate) fn new(lease_sender: mpsc::Sender<()>) -> Self {
+        Self {
+            _lease_sender: lease_sender,
+        }
+    }
 }
 
 impl ReplayTask {
+    /// The replay ends once the returned lease and every lease taken with
+    /// [`Self::lease`] are dropped.
     pub(crate) async fn run(
         recording: StoredRecording,
         relay: &str,
         verify_certificate: bool,
-    ) -> Result<Self> {
+    ) -> Result<(Self, ReplayLease)> {
         let namespace = &recording
             .tracks
             .first()
@@ -61,23 +79,27 @@ impl ReplayTask {
         }
         let description = recording.description();
         let session = connection.session.clone();
+        let (lease_sender, lease_receiver) = mpsc::channel(1);
         let handle = tokio::spawn(async move {
-            if let Err(error) = serve(
-                &connection.session,
-                Arc::new(recording),
-                REPLAY_IDLE_TIMEOUT,
-            )
-            .await
+            if let Err(error) =
+                serve(&connection.session, Arc::new(recording), lease_receiver).await
             {
                 tracing::warn!(%error, "recording replay stopped");
             }
             connection.close().await;
         });
-        Ok(Self {
+        let task = Self {
             handle,
             session,
             description,
-        })
+            lease_sender: lease_sender.downgrade(),
+        };
+        Ok((task, ReplayLease::new(lease_sender)))
+    }
+
+    /// `None` once the last lease is gone and the replay is ending.
+    pub(crate) fn lease(&self) -> Option<ReplayLease> {
+        self.lease_sender.upgrade().map(ReplayLease::new)
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -86,7 +108,7 @@ impl ReplayTask {
 
     pub(crate) fn description(&self) -> Value {
         let mut description = self.description.clone();
-        description["idle_timeout_seconds"] = REPLAY_IDLE_TIMEOUT.as_secs().into();
+        description["renew_after_seconds"] = RENEW_AFTER.as_secs().into();
         description
     }
 }
@@ -102,19 +124,16 @@ impl Drop for ReplayTask {
 async fn serve(
     session: &Arc<Session>,
     recording: Arc<StoredRecording>,
-    idle_timeout: Duration,
+    mut lease_receiver: mpsc::Receiver<()>,
 ) -> Result<()> {
     let mut fetches = JoinSet::new();
     let mut active: HashMap<u64, AbortHandle> = HashMap::new();
-    let mut subscribers = HashSet::new();
-    let mut idle_since = Instant::now();
     loop {
         let event = tokio::select! {
-            _ = tokio::time::sleep_until(idle_since + idle_timeout), if subscribers.is_empty() && active.is_empty() => break,
+            None = lease_receiver.recv() => break,
             _ = session.closed() => break,
             Some(result) = fetches.join_next(), if !fetches.is_empty() => {
                 fetch_finished(result, &mut active);
-                idle_since = Instant::now();
                 continue;
             },
             event = session.receive_event() => event?,
@@ -184,7 +203,6 @@ async fn serve(
             SessionEvent::FetchCancel(handler) => {
                 if let Some(task) = active.remove(&handler.request_id()) {
                     task.abort();
-                    idle_since = Instant::now();
                 }
             }
             SessionEvent::Subscribe(handler) => {
@@ -200,7 +218,6 @@ async fn serve(
                                 },
                             )
                             .await?;
-                        subscribers.insert(handler.request_id());
                     }
                     Some(_) => {
                         handler
@@ -218,11 +235,6 @@ async fn serve(
                             )
                             .await?
                     }
-                }
-            }
-            SessionEvent::Unsubscribe(handler) => {
-                if subscribers.remove(&handler.subscribe_id()) {
-                    idle_since = Instant::now();
                 }
             }
             SessionEvent::TrackStatus(handler) => {
@@ -373,7 +385,6 @@ mod tests {
     use moqt::{
         fetch::{Fetch, FetchOption},
         object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
-        subscribe::SubscribeOption,
     };
     use object_store::{ObjectStoreExt, PutPayload};
 
@@ -414,7 +425,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscribers_keep_replay_alive_until_the_last_one_leaves_and_fetch_preserves_objects() {
+    async fn leases_keep_replay_alive_until_the_last_one_is_dropped_and_fetch_preserves_objects() {
         // Arrange
         let store = RecordingStore::open(&url::Url::parse("memory:///").unwrap()).unwrap();
         let backend = store.object_store();
@@ -468,10 +479,9 @@ mod tests {
             .await
             .expect("connect sessions");
         let server = pair.server.clone();
-        let serving =
-            tokio::spawn(
-                async move { serve(&server, recording, Duration::from_millis(200)).await },
-            );
+        let (lease_sender, lease_receiver) = mpsc::channel(1);
+        let other_lease_sender = lease_sender.clone();
+        let serving = tokio::spawn(async move { serve(&server, recording, lease_receiver).await });
         let start = Location {
             group_id: 0,
             object_id: 0,
@@ -483,33 +493,6 @@ mod tests {
         let mut subscriber = pair.client.session.subscriber();
 
         // Act
-        let presence = subscriber
-            .subscribe(
-                namespace.clone(),
-                "video".into(),
-                SubscribeOption {
-                    forward: false,
-                    ..SubscribeOption::default()
-                },
-            )
-            .await
-            .unwrap();
-        let other_presence = subscriber
-            .subscribe(
-                namespace.clone(),
-                "video".into(),
-                SubscribeOption {
-                    forward: false,
-                    ..SubscribeOption::default()
-                },
-            )
-            .await
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(
-            !serving.is_finished(),
-            "active subscribers must prevent idle expiry"
-        );
         let handle = tokio::time::timeout(
             Duration::from_secs(5),
             subscriber.fetch(
@@ -562,13 +545,13 @@ mod tests {
         .await
         .expect("second FETCH response");
         assert!(rejected.is_err());
-        subscriber.unsubscribe(&presence).await.unwrap();
+        drop(lease_sender);
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(
             !serving.is_finished(),
-            "one remaining subscriber must keep replay alive"
+            "one remaining lease must keep replay alive"
         );
-        subscriber.unsubscribe(&other_presence).await.unwrap();
+        drop(other_lease_sender);
         tokio::time::timeout(Duration::from_secs(5), serving)
             .await
             .expect("server close")
