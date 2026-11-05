@@ -92,10 +92,15 @@ cleanup() {
 trap cleanup EXIT
 
 # E2E runs use Chrome's fake camera and microphone; MOQT_FAKE_MEDIA=0 uses the real ones to try a page by hand.
+# MOQT_FAKE_AUDIO_FILE names a WAV (16-bit PCM) the fake microphone plays in a loop, to try a page with
+# prepared speech instead of one's own voice.
 if [[ "${MOQT_FAKE_MEDIA:-1}" == "0" ]]; then
   MEDIA_FLAGS=()
 else
   MEDIA_FLAGS=(--use-fake-device-for-media-stream --use-fake-ui-for-media-stream)
+  if [[ -n "${MOQT_FAKE_AUDIO_FILE:-}" ]]; then
+    MEDIA_FLAGS+=(--use-file-for-fake-audio-capture="${MOQT_FAKE_AUDIO_FILE}")
+  fi
 fi
 
 echo "Launching Chrome with certificate: ${CERT_PEM}"

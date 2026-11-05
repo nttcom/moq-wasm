@@ -20,4 +20,14 @@ A language is translated for at most 60 minutes at a stretch (`--language-time-l
 
 The viewer plays every track 5 s after capture; `?delay=4.5` on its URL tries another delay. Its Stats line shows the delay, the A/V offset, how long the last switch took and the samples dropped late; every 10 s the same numbers go to the page telemetry (`viewer stats` in HyperDX, or in ClickHouse's `otel.otel_logs` with `docker compose up -d observability` locally).
 
-Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chrome` for the real camera and microphone), press 配信開始, and open the viewer link it shows. In a browser without an H.264 encoder add `?videoCodec=vp8&videoEncoderHardwareAcceleration=prefer-software` to the streamer URL.
+Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chrome` for the real camera and microphone), press 配信開始, and open the viewer link it shows.
+
+To judge a translation without hearing your own voice five seconds later, let the fake microphone play prepared speech instead (a 16-bit PCM WAV, looped):
+
+```shell
+say -v Kyoko -o /tmp/speech.aiff "こんにちは。今日はリアルタイム翻訳のデモをお見せします。"
+afconvert -f WAVE -d LEI16@48000 -c 1 /tmp/speech.aiff /tmp/speech.wav
+MOQT_FAKE_AUDIO_FILE=/tmp/speech.wav make chrome
+```
+
+In a browser without an H.264 encoder add `?videoCodec=vp8&videoEncoderHardwareAcceleration=prefer-software` to the streamer URL.
