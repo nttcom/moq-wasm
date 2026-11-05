@@ -7,14 +7,15 @@ import { UNOBSERVED_DELIVERIES } from 'moq-wasm/media/player/deliveryObserver'
 import { LocLive, type LocObject } from 'moq-wasm/media/player/locLive'
 import { PictureStage } from 'moq-wasm/media/player/pictureStage'
 import { TextTracks } from 'moq-wasm/media/player/textTrack'
-import { type LogLevel, type TrackContext, readGroups, streamId } from 'moq-wasm/media/player/trackContext'
+import { type LogLevel, type TrackContext, readJoinedObjects, streamId } from 'moq-wasm/media/player/trackContext'
 import { getErrorMessage } from '../../../utils/page'
 import { translatedNamespace } from '../liveTranslate'
 import { type LanguageOption, ORIGINAL_LANGUAGE, languageOptions } from './languages'
 
 /// Every track plays this long after its capture timestamp, so a translation
 /// that arrives a few seconds after the speech still plays with its picture.
-export const PLAYBACK_DELAY_MS = 5_000
+/// It must exceed Gemini's delay (about 3.7 s); the rest absorbs the jitter.
+const DEFAULT_PLAYBACK_DELAY_MS = 5_000
 const CROSSFADE_TIME_CONSTANT_SECONDS = 0.08
 const RETIRED_LANE_CLOSE_DELAY_MS = 500
 const MONITORED_ORIGINAL_VOLUME = 0.5
@@ -33,6 +34,10 @@ type Translation = {
 export type TranslationPlayerCallbacks = {
   onStateChange(): void
   onLog(level: LogLevel, message: string): void
+}
+
+export type TranslationPlayerOptions = {
+  playbackDelayMs?: number
 }
 
 export type TranslationPlayerStats = {
@@ -74,10 +79,14 @@ export class TranslationPlayer {
   private lastSwitchSeconds: number | undefined
   languages: LanguageOption[] = []
 
+  readonly playbackDelayMs: number
+
   constructor(
     container: HTMLElement,
-    private readonly callbacks: TranslationPlayerCallbacks
+    private readonly callbacks: TranslationPlayerCallbacks,
+    options: TranslationPlayerOptions = {}
   ) {
+    this.playbackDelayMs = options.playbackDelayMs ?? DEFAULT_PLAYBACK_DELAY_MS
     this.context = {
       session: undefined,
       namespace: [],
@@ -95,7 +104,7 @@ export class TranslationPlayer {
       onPresented: (picture) => this.stage.show(picture),
       onFrameShown: () => undefined
     })
-    this.locLive.setBufferPolicy({ minimumMs: PLAYBACK_DELAY_MS, maximumMs: PLAYBACK_DELAY_MS })
+    this.locLive.setBufferPolicy({ minimumMs: this.playbackDelayMs, maximumMs: this.playbackDelayMs })
     this.locLive.playout.setCatchUp('off')
     this.locLive.playout.setLateSamples('drop')
     this.stage.show(this.locLive.picture.element)
@@ -213,8 +222,8 @@ export class TranslationPlayer {
     }
     this.incoming = translation
     try {
-      translation.subscribed = await this.subscribe(option.track, (groupId, object) => {
-        translation.lane.push(groupId, object)
+      translation.subscribed = await this.subscribe(option.track, (groupId, object, cached) => {
+        translation.lane.push(groupId, object, cached)
         this.countForwarded(option.track.name)
       })
       void translation.subscribed.handle.done.then((done) => {
@@ -310,7 +319,9 @@ export class TranslationPlayer {
     this.languages = languageOptions(extractCatalogTracks(catalog, 'audio').filter(isLocTrack))
     if (!this.video && videoTrack) {
       this.locLive.configureTrack('video', videoTrack)
-      this.video = await this.subscribe(videoTrack, (groupId, object) => this.locLive.push('video', groupId, object))
+      this.video = await this.subscribe(videoTrack, (groupId, object, cached) =>
+        this.locLive.push('video', groupId, object, cached)
+      )
     }
     const original = this.languages.find((option) => option.lang === ORIGINAL_LANGUAGE)?.track
     if (!this.original && original) {
@@ -327,17 +338,21 @@ export class TranslationPlayer {
     this.forwardedAudioObjects[trackName] = (this.forwardedAudioObjects[trackName] ?? 0) + 1
   }
 
+  /// Subscribes with a joining FETCH, so the relay's cache of the current group
+  /// comes first and the picture and a translation start without waiting up to
+  /// a group's length for the next keyframe or group start. Objects from before
+  /// the live edge are flagged `cached`.
   private async subscribe(
     track: MediaCatalogTrack,
-    onObject: (groupId: bigint, object: LocObject) => void
+    onObject: (groupId: bigint, object: LocObject, cached: boolean) => void
   ): Promise<Subscribed> {
     const session = this.context.session
     if (!session) {
       throw new Error('the player has not started')
     }
     const namespace = catalogTrackNamespace(track, this.context.namespace)
-    const handle = await session.subscribe(namespace, track.name, { forward: true })
-    void readGroups(this.context, streamId(), handle, onObject)
+    const handle = await session.subscribeCurrentGroup(namespace, track.name)
+    void readJoinedObjects(this.context, streamId(), handle, onObject)
     this.callbacks.onLog('info', `subscribed ${namespace.join('/')}/${track.name}`)
     return { handle, name: track.name }
   }
