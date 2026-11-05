@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `init({ telemetry: { url, page } })` sends the wasm module's logs (at
+  `logLevel` or above) and spans to the observability server at `url` every
+  10 s and when the page is hidden, each session's under its token. The page's
+  own logs are not sent.
+
 - `init({ onLog, onSpan })` calls both with the token of the record's
   `MoqSession` as a second argument (the provider's newest), and `undefined`
   for a record of no session or of a session without a token, so a page can

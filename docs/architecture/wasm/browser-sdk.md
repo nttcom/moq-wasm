@@ -364,6 +364,15 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
     span は親の scope を継ぐ。
   - session を持たない `Mp4Broadcast`（トークンなしで自分で接続する）や、
     scope の外で生まれたレコードは、トークンなしで渡る。
+- `init({ telemetry: { url, page } })` を渡すと、SDK が自分で wasm のログ（`logLevel` 以上）と
+  span を observability サーバの `/api/client-telemetry` に送る（`core/telemetry.ts` の
+  `ClientTelemetry`）。10秒ごとと `pagehide` のとき（`sendBeacon`）に、session のトークンごとに
+  1レポートにまとめる。401 が返ったトークンのレコードは、以後トークンなしで送る。アプリ自身の
+  ログは送らない。`onLog` と `onSpan` も渡せば両方に届く。
+  - 送り先を OTel Collector ではなく observability サーバにするのは、Collector が VPC の中でしか
+    待ち受けず、ブラウザに Collector の資格情報を置けないから。トークンの検証、`app_id` の付与、
+    レート制限はサーバが受け持つ（`docs/architecture/observability/architecture.md` の
+    「Client telemetry」）。
 
 形（TypeScript、抜粋）:
 
@@ -373,6 +382,7 @@ export function init(options?: {
   onLog?: (record: LogRecord, token: string | undefined) => void
   logLevel?: LogLevel                                          // 既定は 'warn'
   onSpan?: (record: SpanRecord, token: string | undefined) => void
+  telemetry?: { url: string; page: string }                   // observability サーバへ送る
 }): Promise<void>
 export function connect(url: string, options?: ConnectOptions): Promise<Session>
 
