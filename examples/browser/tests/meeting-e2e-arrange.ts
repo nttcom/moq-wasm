@@ -27,7 +27,7 @@ const E2E_VIDEO_BITRATE = 100_000
 let meetingClientCounter = 0
 
 const FORWARDED_CONSOLE_TEXT_PATTERN =
-  /\[meeting\]\[publisher\]\[video\]|\[meeting\]\[catalog\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
+  /\[meeting\]\[publisher\]\[video\]|\[meeting\]\[catalog\]|\[meeting\]\[chat\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
 async function openMeetingPage(page: Page, jwt: string | undefined, extra: Record<string, string>): Promise<void> {
   const params = new URLSearchParams({

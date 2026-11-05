@@ -223,7 +223,7 @@ export class LocalSession {
     const id = this.track(handle, () => onEnded(id))
 
     if (role === 'chat') {
-      this.read(id, handle, (object) => this.receiveChat(remoteUser, trackNamespace, object))
+      this.read(id, handle, (object) => this.receiveChat(id, remoteUser, trackNamespace, object))
       return id
     }
     if (role === 'audio') {
@@ -245,7 +245,15 @@ export class LocalSession {
     return id
   }
 
-  private receiveChat(sender: string, trackNamespace: string[], object: ReceivedObject): void {
+  private receiveChat(subscriptionId: bigint, sender: string, trackNamespace: string[], object: ReceivedObject): void {
+    // The subscription id next to the location tells a second subscription from a second delivery of one object.
+    console.info('[meeting][chat] receive', {
+      sender,
+      subscriptionId: subscriptionId.toString(),
+      groupId: object.groupId.toString(),
+      subgroupId: object.subgroupId.toString(),
+      objectId: object.objectId.toString()
+    })
     try {
       const { text, timestamp } = decodeChatPayload(new TextDecoder().decode(object.objectPayload))
       this.chatMessageHandler?.({
