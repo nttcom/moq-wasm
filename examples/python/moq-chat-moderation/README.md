@@ -69,6 +69,8 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
 
 ## トラック
 
+一時アプリのページでは、`anon` の代わりにその appId（`temp-…`）が namespace root になります（[moq-bot-rooms](../moq-bot-rooms/README.md)）。
+
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
 | `anon/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | `{"text": "...", "labels": [{"name": "喜", "description": "..."}]}` の JSON。1 メッセージ 1 group |

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { temporaryAppToken } from '../../../../utils/access'
 import { type BotRoomEnd, BotRoomRequest } from '../../../../utils/botRoom'
 import { resolveServiceUrl } from '../../../../utils/serviceUrl'
 import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
@@ -75,7 +76,8 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       setError(TRANSCRIBER_END_TEXT[reason])
     })
     request.open(resolveServiceUrl(window.location.search, session.relayUrl, TRANSCRIBER_SERVICE), session.roomName, {
-      asr: heldAsr
+      query: { asr: heldAsr },
+      token: temporaryAppToken
     })
     holding.current = request
     return () => {

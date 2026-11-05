@@ -73,6 +73,8 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
 
 ## トラック
 
+一時アプリのページでは、`anon` の代わりにその appId（`temp-…`）が namespace root になります（[moq-bot-rooms](../moq-bot-rooms/README.md)）。
+
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
 | `anon/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"questions": [...]}`。適用するたびに 1 件 1 group で送る。質問は 1〜8 個。選択式 `{"type": "choice", "question", "choices"}` は質問 200 文字以内、選択肢 2〜9 個で各 40 文字以内。枠 `{"type": "boxes", "target"}` は 100 文字以内 |

@@ -74,10 +74,28 @@ await session.close()
 ```
 
 Left out: the server side (`listen`), raw request handlers, datagram tracks,
-extension headers (the transcriber reads no LOC property), authorization
-tokens (the Meeting rooms are anonymous), PUBLISH from a peer (rejected as
-`Uninterested`, as the recorder does), SUBSCRIBE_UPDATE, standalone FETCH and
-token refresh.
+extension headers (the transcriber reads no LOC property), PUBLISH from a peer
+(rejected as `Uninterested`, as the recorder does), SUBSCRIBE_UPDATE and
+standalone FETCH.
+
+### Authorization tokens
+A bot that serves a temporary app's room connects with that app's token and
+must outlive it (docs/architecture/ai-bots/on-demand-rooms.md "Temporary
+apps"):
+
+```python
+session = await moqt.connect(url, token=jwt)
+await session.refresh_token(later_jwt, app_id="temp-3f9a…")
+```
+
+`connect` hands `moqt` an `AuthorizationTokenSource::provider` that reads the
+session's current token, so a connection the session opens by itself (to
+follow GOAWAY, or after the relay closed it for an expired token) presents the
+latest one. `refresh_token` sends the relay's in-session refresh, a
+TRACK_STATUS for `[app_id]` that carries the token (docs/architecture/relay/
+architecture.md "Token refresh"), and makes the token current once the relay
+accepts it. Getting a later token is the caller's job: the module knows
+nothing of the token mint.
 
 ### One event loop per session
 A session has one event receiver, so the module runs one loop per session:

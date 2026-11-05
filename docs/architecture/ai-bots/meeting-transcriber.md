@@ -63,14 +63,16 @@ sequenceDiagram
 ```
 
 ### Rooms it serves
-The transcriber serves rooms of the anonymous app only, whose namespace root
-is `anon`. A page that joined with `?jwt=` hides the captions button: a room
-under another app's root would need a token for the bot, which the service
-does not have.
+The transcriber serves rooms of the anonymous app, whose namespace root is
+`anon`, and rooms of a temporary app, whose page hands the service its token
+(see "Temporary apps" in [on-demand-rooms.md](on-demand-rooms.md)). A page that
+joined with `?jwt=` hides the captions button: the bot can refresh only the
+token mint's tokens, so a room of a registered app would outlive the bot's
+token.
 
 ### Starting and stopping
 The Meeting page gains a captions button in the bottom bar. Choosing a model
-from it opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and
+from it opens `GET {transcriberUrl}/rooms/{room}` as an event stream and
 keeps it open. While the transcriber is in the room, every other page in the
 room opens the same request with the model the transcriber's status names, so
 one page leaving does not take the captions from the others. Leave or closing
