@@ -4,13 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoQT Playground</title>
-    <script>
-      // Mirrors readAccessMode() in utils/access.ts so the colors are right before the first paint;
-      // utils/access.ts corrects them once the access resolves.
-      document.documentElement.dataset.accessMode =
-        localStorage.getItem('moqt.accessMode') ??
-        (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'public' : 'temporary')
-    </script>
     <style>
       /* Temporary mode, the default; public mode overrides below. */
       :root {

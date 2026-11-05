@@ -68,9 +68,6 @@ export function shareUrl(token: TemporaryToken): string {
   return url.toString()
 }
 
-// Set before the await below, so the page paints in the mode's colors while the token is fetched.
-document.documentElement.dataset.accessMode = fragmentToken() ? 'temporary' : readAccessMode()
-
 /// The page's access, resolved once when the module loads. In temporary mode it adopts a token from
 /// the link's fragment, otherwise uses the stored one or issues a new app, and keeps refreshing the
 /// token while the page is open.
