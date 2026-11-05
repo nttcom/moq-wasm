@@ -374,12 +374,16 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 | --- | --- | --- |
 | track の選び方 | 画面共有を名前（`screenshare` で始まる）で見分ける。チャットは `chat` と決め打ち | catalog の `renderGroup` ごとに1ソースとして録画し、`altGroup` の中から1本を選ぶ。チャットは `eventtimeline` の track を catalog から選ぶ |
 | catalog | 元の catalog の Object をそのまま流す。track の `namespace` 欄は元の publisher のもの | replay の namespace ごとに、保存した track を並べた catalog を1つ作って流す。各 track は元の catalog から codec、幅、高さなどを引き継ぎ、`isLive: false` と `trackDuration` を付ける。catalog 全体は `isComplete: true` にし、`generatedAt` は付けない（§5.1.2） |
-| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | ソースごとに全期間の media timeline track を出す。entry は保存した group の先頭ごとに `[presentation ms, [group, 0], wallclock ms]`。索引の `capture_us` から作る。元の timeline は直近 60 秒分の一覧しか持たないので、保存しても使わない |
+| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | 元の publisher の timeline track もほかの track と同じく録画する。replay は、保存した timeline の Object の entry を位置ごとにまとめ、保存した group を指すものだけを残して、ソースごとに全期間の media timeline を1つ出す。元の Object は1つに直近 60 秒分しか持たないので、そのまま流さない。presentation time は元の publisher の値をそのまま使う（§7.1.1） |
 | joining FETCH | 断る | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
 | 終わり | FETCH_OK の `end_of_track` だけ | catalog の `isLive: false` で示す。SUBSCRIBE は今どおり Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
 | 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の最後の要素（参加者名）を `<member-index>` の代わりに入れる |
 | transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の namespace にも catalog を作り、`transcript` を event timeline として載せる |
 | HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）と `renew_after_seconds` だけにする |
+
+録画中に timeline の Object を取りこぼしても、次の Object が直近 60 秒分を持つので、
+60 秒より短い抜けは埋まる。それより長く届かなかった区間には entry が無く、その区間へは
+手前の entry からシークする。
 
 replay が作る catalog と timeline は、保存したデータだけから決める。draft-ietf-moq-transport-14
 §2.1 は、Object がどこから取っても同じバイト列で、中身が時間で変わらないことを求める
@@ -418,35 +422,37 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 ### 移行の手順
 publisher の timeline から始め、recorder の replay を VOD にしてから、録画の再生を
 `LivePlayer` に移す。手順 2 はライブの巻き戻しだけに効き、手順 1 の後ならいつでもよい。
-1手順を1 PR にする。3〜8 の間は、HTTP の応答の `tracks` と `chunks` を残し、今の
-recording-player を動かし続ける。
+1手順を1 PR にする。後方互換は持たない。手順 4 で replay の HTTP 応答と catalog が変わり、
+今の recording-player は再生できなくなる。手順 4 で recorder の再生 E2E
+（`recorder-archive-e2e` の再生部分、`recorder-mp4-replay-e2e`）を外し、手順 9 で
+`LivePlayer` 版として戻す。
 
 1. **feat(broadcast): すべてのソースに media timeline を出す。** entry をソースの group の
    始まりごとに書く。
 2. **feat(wasm): ライブの巻き戻しで、見たことのない group へも timeline でシークする。**
 3. **refactor(recorder): track を `renderGroup` と `altGroup` で選ぶ。** 名前の規則を消す。
-4. **feat(recorder): replay が VOD の catalog と media timeline を出し、joining FETCH を受ける。**
+4. **feat(recorder): replay を MSF の VOD broadcast にする。** timeline を録画し、VOD の
+   catalog と全期間の timeline を出し、joining FETCH を受け、HTTP の応答を prefix と
+   `renew_after_seconds` だけにする。MP4 で保存した録画の replay（`mp4_replay`）は消す。
 5. **feat(recorder): replay の namespace に参加者名を入れ、transcriber の catalog を作る。**
 6. **feat(wasm): `isLive: false` の catalog を、timeline を使って最後まで再生する。**
 7. **feat(wasm): `PlaybackGroup`。**
 8. **feat(wasm): `moq-wasm/recording` の `openRecording`。**
-9. **refactor(browser): recording-player を `LivePlayer` に移す。** 独自の再生エンジンを消す。
-   recorder の E2E（`recorder-archive-e2e`、`recorder-mp4-replay-e2e`）で守る。
-10. **refactor(recorder): HTTP の応答から `tracks` と `chunks` を消す。**
+9. **refactor(browser): recording-player を `LivePlayer` に移す。** 独自の再生エンジンを消し、
+   手順 4 で外した E2E を戻す。
 
 ### 範囲外
-- MP4 で保存した録画の replay。生成する catalog に幅、高さ、ビットレートが無く、音声が
-  すべて group 0 に入るので、group 単位の FETCH と timeline に合わない。今の recording-player
-  が再生できる状態は手順 9 まで残すが、`LivePlayer` での再生は別に決める。
+- MP4 で保存した録画の replay。MP4 には元の catalog も timeline も残らないので、VOD の
+  broadcast にするには、サンプルの時刻から catalog と timeline を作る経路を MoQ 形式とは別に
+  持つことになる。手順 4 で replay ごと消す。MP4 の録画ファイルと合成はそのまま残る。
 - 録画の途中での codec や設定の変化。今の recording-player と同じく、再生を断る。
+- timeline を録画していない録画（手順 4 より前の録画と、timeline を出さない publisher の録画）。
+  後方互換は持たず、`LivePlayer` では再生しない。
 - 録画の途中で選ばれた rendition が変わった track の切り替え。別の track として並ぶ。
 - カメラか画面共有かを catalog で示すこと。今は `renderGroup` と `label` で足りる。
   画面共有だけ高い解像度で録画するなど、種類で振る舞いを変える必要が出たときに決める。
 
 ### 未決事項
-- media timeline の presentation time。MSF は「最初のサンプルの presentation timestamp」と
-  定めるが、recorder の索引には capture timestamp しか無い。録画の始まりからの経過時間で
-  代えてよいか。
 - 参加者が入り直して session-index が分かれたとき、1人の参加者を時間ごとに別の namespace
   で再生することになる。`PlaybackGroup` が、ある時刻に該当する player だけを鳴らすか。
 - `PlaybackGroup` を、ライブ会議の巻き戻しにも使うか。
