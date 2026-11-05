@@ -22,15 +22,21 @@ pub struct VtsServer {
     _accept_handle: JoinHandle<()>,
 }
 
+pub struct Secrets {
+    pub registry: Registry,
+    /// The secret every temporary app's tokens are signed with.
+    pub temporary_app_secret: Option<String>,
+}
+
 impl VtsServer {
-    pub fn run(listener: TcpListener, registry: Arc<Registry>) -> Self {
+    pub fn run(listener: TcpListener, secrets: Arc<Secrets>) -> Self {
         Self {
-            _accept_handle: tokio::spawn(accept_connections(listener, registry)),
+            _accept_handle: tokio::spawn(accept_connections(listener, secrets)),
         }
     }
 }
 
-async fn accept_connections(listener: TcpListener, registry: Arc<Registry>) {
+async fn accept_connections(listener: TcpListener, secrets: Arc<Secrets>) {
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -39,9 +45,9 @@ async fn accept_connections(listener: TcpListener, registry: Arc<Registry>) {
                 continue;
             }
         };
-        let registry = registry.clone();
+        let secrets = secrets.clone();
         tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, registry.clone()));
+            let service = service_fn(move |request| handle(request, secrets.clone()));
             if let Err(error) = http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), service)
                 .await
@@ -61,7 +67,7 @@ struct VerifyRequest {
 
 async fn handle(
     request: Request<Incoming>,
-    registry: Arc<Registry>,
+    secrets: Arc<Secrets>,
 ) -> Result<JsonResponse, Infallible> {
     let (head, body) = request.into_parts();
     let span = tracing::info_span!(
@@ -77,7 +83,7 @@ async fn handle(
     let response = async {
         match (head.method, head.uri.path()) {
             (Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
-            (Method::POST, "/verify") => verify(body, &registry).await,
+            (Method::POST, "/verify") => verify(body, &secrets).await,
             _ => error_response(StatusCode::NOT_FOUND, "not_found"),
         }
     }
@@ -87,7 +93,7 @@ async fn handle(
     Ok(response)
 }
 
-async fn verify(body: Incoming, registry: &Registry) -> JsonResponse {
+async fn verify(body: Incoming, secrets: &Secrets) -> JsonResponse {
     let request = match Limited::new(body, MAX_BODY_BYTES).collect().await {
         Ok(collected) => serde_json::from_slice::<VerifyRequest>(&collected.to_bytes()).ok(),
         Err(_) => None,
@@ -95,9 +101,13 @@ async fn verify(body: Incoming, registry: &Registry) -> JsonResponse {
     let Some(request) = request else {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
-    let apps = registry.current().await;
+    let apps = secrets.registry.current().await;
     let span = tracing::Span::current();
-    match verify_token(&request.token, &apps) {
+    match verify_token(
+        &request.token,
+        &apps,
+        secrets.temporary_app_secret.as_deref(),
+    ) {
         Ok(verified) => {
             span.record("app_id", verified.app_id.as_str());
             span.record("is_relay", verified.is_relay);
@@ -139,7 +149,8 @@ mod tests {
 
     use super::*;
     use crate::test_support::{
-        APP_SECRET, app_claims, capture_recorded_fields, test_apps_json, token,
+        APP_SECRET, TEMPORARY_APP_ID, TEMPORARY_SECRET, app_claims, capture_recorded_fields,
+        temporary_app_claims, test_apps_json, token,
     };
 
     struct TestServer {
@@ -157,7 +168,13 @@ mod tests {
         TestServer {
             base_url,
             _registry_file: registry_file,
-            _server: VtsServer::run(listener, Arc::new(registry)),
+            _server: VtsServer::run(
+                listener,
+                Arc::new(Secrets {
+                    registry,
+                    temporary_app_secret: Some(TEMPORARY_SECRET.into()),
+                }),
+            ),
         }
     }
 
@@ -189,6 +206,24 @@ mod tests {
         assert_eq!(
             response.json::<Value>().await.unwrap(),
             json!({ "appId": "APP", "isRelay": false, "claims": claims })
+        );
+    }
+
+    #[tokio::test]
+    async fn post_verify_returns_200_for_a_temporary_app_token() {
+        // Arrange
+        let server = start_server().await;
+        let body = json!({ "token": token(&temporary_app_claims(), TEMPORARY_SECRET) }).to_string();
+
+        // Act
+        let response = post_verify(&server, body).await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.json::<Value>().await.unwrap();
+        assert_eq!(
+            (&body["appId"], &body["isRelay"]),
+            (&json!(TEMPORARY_APP_ID), &json!(false))
         );
     }
 

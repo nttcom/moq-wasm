@@ -1,5 +1,7 @@
 use app_registry::Apps;
-use auth_token::{SignatureError, decode_unverified_payload, verify_signature};
+use auth_token::{
+    SignatureError, TEMPORARY_APP_ID_PREFIX, decode_unverified_payload, verify_signature,
+};
 use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,18 +37,28 @@ pub(crate) struct VerifiedToken {
     pub(crate) claims: Map<String, Value>,
 }
 
-pub(crate) fn verify_token(token: &str, apps: &Apps) -> Result<VerifiedToken, RejectReason> {
+pub(crate) fn verify_token(
+    token: &str,
+    apps: &Apps,
+    temporary_secret: Option<&str>,
+) -> Result<VerifiedToken, RejectReason> {
     let claims = decode_unverified_payload(token).ok_or(RejectReason::MalformedToken)?;
     let app_id = claims
         .get("appId")
         .and_then(Value::as_str)
         .filter(|app_id| !app_id.is_empty())
         .ok_or(RejectReason::MalformedToken)?;
-    let app = apps.get(app_id).ok_or(RejectReason::UnknownApp)?;
-    verify_signature(token, &app.secret)?;
+    let (secret, is_relay) = match temporary_secret {
+        Some(secret) if app_id.starts_with(TEMPORARY_APP_ID_PREFIX) => (secret, false),
+        _ => {
+            let app = apps.get(app_id).ok_or(RejectReason::UnknownApp)?;
+            (app.secret.as_str(), app.is_relay)
+        }
+    };
+    verify_signature(token, secret)?;
     Ok(VerifiedToken {
         app_id: app_id.to_owned(),
-        is_relay: app.is_relay,
+        is_relay,
         claims,
     })
 }
@@ -57,7 +69,8 @@ mod tests {
 
     use super::*;
     use crate::test_support::{
-        APP_ID, APP_SECRET, NOW, RELAY_ID, RELAY_SECRET, app_claims, test_apps, token,
+        APP_ID, APP_SECRET, NOW, RELAY_ID, RELAY_SECRET, TEMPORARY_APP_ID, TEMPORARY_SECRET,
+        app_claims, temporary_app_claims, test_apps, token,
     };
 
     #[test]
@@ -69,7 +82,7 @@ mod tests {
         let signed = token(&claims, APP_SECRET);
 
         // Act
-        let verified = verify_token(&signed, &apps).unwrap();
+        let verified = verify_token(&signed, &apps, None).unwrap();
 
         // Assert
         assert_eq!(
@@ -92,7 +105,7 @@ mod tests {
         );
 
         // Act
-        let verified = verify_token(&signed, &apps).unwrap();
+        let verified = verify_token(&signed, &apps, None).unwrap();
 
         // Assert
         assert!(verified.is_relay);
@@ -108,7 +121,7 @@ mod tests {
         let expired = token(&claims, APP_SECRET);
 
         // Act
-        let verified = verify_token(&expired, &apps).unwrap();
+        let verified = verify_token(&expired, &apps, None).unwrap();
 
         // Assert
         assert_eq!(verified.claims["exp"], json!(NOW - 7200 + 60));
@@ -118,7 +131,7 @@ mod tests {
     fn token_that_is_not_a_jwt_is_malformed() {
         // Act / Assert
         assert_eq!(
-            verify_token("not-a-jwt", &test_apps()),
+            verify_token("not-a-jwt", &test_apps(), None),
             Err(RejectReason::MalformedToken)
         );
     }
@@ -133,7 +146,7 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            verify_token(&signed, &test_apps()),
+            verify_token(&signed, &test_apps(), None),
             Err(RejectReason::MalformedToken)
         );
     }
@@ -147,7 +160,7 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            verify_token(&signed, &test_apps()),
+            verify_token(&signed, &test_apps(), None),
             Err(RejectReason::UnknownApp)
         );
     }
@@ -159,7 +172,7 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            verify_token(&signed, &test_apps()),
+            verify_token(&signed, &test_apps(), None),
             Err(RejectReason::InvalidSignature)
         );
     }
@@ -173,7 +186,63 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            verify_token(&unsigned, &test_apps()),
+            verify_token(&unsigned, &test_apps(), None),
+            Err(RejectReason::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn temporary_app_is_verified_with_the_temporary_secret_as_a_client() {
+        // Arrange
+        let claims = temporary_app_claims();
+        let signed = token(&claims, TEMPORARY_SECRET);
+
+        // Act
+        let verified = verify_token(&signed, &test_apps(), Some(TEMPORARY_SECRET)).unwrap();
+
+        // Assert
+        assert_eq!(
+            verified,
+            VerifiedToken {
+                app_id: TEMPORARY_APP_ID.into(),
+                is_relay: false,
+                claims: claims.as_object().unwrap().clone(),
+            }
+        );
+    }
+
+    #[test]
+    fn temporary_app_signed_with_another_secret_is_rejected() {
+        // Arrange
+        let signed = token(&temporary_app_claims(), "wrong-secret");
+
+        // Act / Assert
+        assert_eq!(
+            verify_token(&signed, &test_apps(), Some(TEMPORARY_SECRET)),
+            Err(RejectReason::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn temporary_app_is_unknown_without_the_temporary_secret() {
+        // Arrange
+        let signed = token(&temporary_app_claims(), TEMPORARY_SECRET);
+
+        // Act / Assert
+        assert_eq!(
+            verify_token(&signed, &test_apps(), None),
+            Err(RejectReason::UnknownApp)
+        );
+    }
+
+    #[test]
+    fn registered_app_is_not_verified_with_the_temporary_secret() {
+        // Arrange
+        let signed = token(&app_claims(), TEMPORARY_SECRET);
+
+        // Act / Assert
+        assert_eq!(
+            verify_token(&signed, &test_apps(), Some(TEMPORARY_SECRET)),
             Err(RejectReason::InvalidSignature)
         );
     }

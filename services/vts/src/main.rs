@@ -6,7 +6,7 @@ use tokio::{
     net::TcpListener,
     signal::unix::{SignalKind, signal},
 };
-use vts::{Registry, VtsServer};
+use vts::{Registry, Secrets, VtsServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,9 +26,18 @@ async fn main() -> anyhow::Result<()> {
         .context("VTS_PORT must be a port number")?;
 
     let registry = Registry::load(RegistryStore::new(registry_location()?)?).await?;
+    let temporary_app_secret = std::env::var("VTS_TEMPORARY_APP_SECRET")
+        .ok()
+        .filter(|secret| !secret.is_empty());
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    let _server = VtsServer::run(listener, Arc::new(registry));
+    let _server = VtsServer::run(
+        listener,
+        Arc::new(Secrets {
+            registry,
+            temporary_app_secret,
+        }),
+    );
     tracing::info!(port, "vts listening");
 
     // As PID 1 in a container the process has no default SIGTERM action, so
