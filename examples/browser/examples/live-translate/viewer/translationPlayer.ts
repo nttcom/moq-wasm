@@ -1,7 +1,9 @@
 import type { MoqSession, MoqSubscription, PublishDone } from 'moq-wasm'
 import { type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from 'moq-wasm/media'
 import { catalogTrackNamespace } from 'moq-wasm/media/catalog'
+import { readLocHeader } from 'moq-wasm/media/internal/loc'
 import { AudioLane } from 'moq-wasm/media/player/audioLane'
+import { CaptionLane } from './captionLane'
 import { CatalogFollower } from 'moq-wasm/media/player/catalogFollower'
 import { UNOBSERVED_DELIVERIES } from 'moq-wasm/media/player/deliveryObserver'
 import { LocLive, type LocObject } from 'moq-wasm/media/player/locLive'
@@ -34,6 +36,8 @@ type Translation = {
 export type TranslationPlayerCallbacks = {
   onStateChange(): void
   onLog(level: LogLevel, message: string): void
+  /// The caption line of the language heard; empty when there is none.
+  onCaption(text: string): void
 }
 
 export type TranslationPlayerOptions = {
@@ -81,6 +85,8 @@ export class TranslationPlayer {
   private monitorOriginal = false
   private lastSwitchSeconds: number | undefined
   languages: LanguageOption[] = []
+  private transcriptTracks = new Map<string, MediaCatalogTrack>()
+  private captions: { lang: string; subscribed: Subscribed; lane: CaptionLane } | undefined
 
   readonly playbackDelayMs: number
 
@@ -175,6 +181,8 @@ export class TranslationPlayer {
         await this.unsubscribe(subscribed)
       }
       this.video = this.original = undefined
+      await this.showCaptions(undefined)
+      this.transcriptTracks.clear()
       await this.textTracks.unsubscribeAll()
       this.catalog.reset()
       this.locLive.reset()
@@ -211,6 +219,7 @@ export class TranslationPlayer {
         this.translation = undefined
         this.callbacks.onLog('info', `switched audio to ${lang}`)
         this.callbacks.onStateChange()
+        await this.showCaptions(ORIGINAL_LANGUAGE)
         return
       }
       await this.subscribeTranslation(option)
@@ -255,6 +264,7 @@ export class TranslationPlayer {
     if (this.translation === translation) {
       this.locLive.playout.setVolume(1, CROSSFADE_TIME_CONSTANT_SECONDS)
       this.translation = undefined
+      await this.showCaptions(ORIGINAL_LANGUAGE)
     }
     if (this.incoming === translation) {
       this.incoming = undefined
@@ -283,6 +293,7 @@ export class TranslationPlayer {
       `switched audio to ${translation.lang} ${this.lastSwitchSeconds.toFixed(1)} s after selecting it`
     )
     this.callbacks.onStateChange()
+    void this.queue(() => this.showCaptions(translation.lang))
   }
 
   private originalVolumeUnderTranslation(): number {
@@ -322,6 +333,11 @@ export class TranslationPlayer {
     const catalog = parseCatalog(text)
     const [videoTrack] = extractCatalogTracks(catalog, 'video').filter(isLocTrack)
     this.languages = languageOptions(extractCatalogTracks(catalog, 'audio').filter(isLocTrack))
+    for (const track of extractCatalogTracks(catalog)) {
+      if (track.role === 'subtitle' && track.lang) {
+        this.transcriptTracks.set(track.lang, track)
+      }
+    }
     if (!this.video && videoTrack) {
       this.locLive.configureTrack('video', videoTrack)
       this.video = await this.subscribe(videoTrack, (groupId, object, cached) =>
@@ -335,8 +351,38 @@ export class TranslationPlayer {
         this.locLive.push('audio', groupId, object)
         this.countForwarded(original.name)
       })
+      await this.showCaptions(ORIGINAL_LANGUAGE)
     }
     this.callbacks.onStateChange()
+  }
+
+  /// Follows the language heard with its transcript; the source's (`text_ja`)
+  /// is served only while some language is being translated, so a refusal
+  /// is logged and leaves the picture without captions.
+  private async showCaptions(lang: string | undefined): Promise<void> {
+    if (this.captions?.lang === lang) {
+      return
+    }
+    const previous = this.captions
+    this.captions = undefined
+    if (previous) {
+      previous.lane.close()
+      await this.unsubscribe(previous.subscribed)
+    }
+    const track = lang === undefined ? undefined : this.transcriptTracks.get(lang)
+    if (!track) {
+      return
+    }
+    const lane = new CaptionLane(this.locLive.playout, (text) => this.callbacks.onCaption(text))
+    try {
+      const subscribed = await this.subscribe(track, (_groupId, object) =>
+        lane.push(object.objectPayload, readLocHeader(object.locHeader).captureTimestampMicros)
+      )
+      this.captions = { lang: lang!, subscribed, lane }
+    } catch (error) {
+      lane.close()
+      this.callbacks.onLog('info', `no captions for ${lang}: ${getErrorMessage(error)}`)
+    }
   }
 
   private countForwarded(trackName: string): void {

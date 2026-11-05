@@ -213,3 +213,24 @@
   font-family: var(--font-mono);
   font-size: 0.8rem;
 }
+
+/* Captions sit above the language bar, in the band broadcast subtitles use. */
+.viewer-captions {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 84px;
+  margin: 0;
+  text-align: center;
+  font-size: clamp(1rem, 2.2vw, 1.5rem);
+  line-height: 1.4;
+  color: #fff;
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 0.9),
+    0 2px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+.viewer-captions[hidden] {
+  display: none;
+}

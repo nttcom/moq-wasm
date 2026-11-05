@@ -30,7 +30,8 @@ const player = new TranslationPlayer(
   element<HTMLDivElement>('stage'),
   {
     onStateChange: () => renderLanguages(),
-    onLog: (level, message) => appendLog(level, message)
+    onLog: (level, message) => appendLog(level, message),
+    onCaption: (text) => renderCaption(text)
   },
   { playbackDelayMs: delaySeconds > 0 ? delaySeconds * 1_000 : undefined }
 )
@@ -79,6 +80,12 @@ async function stop(): Promise<void> {
   languageBar.hidden = true
   watchOverlay.hidden = false
   element<HTMLElement>('viewer-stats').hidden = true
+}
+
+function renderCaption(text: string): void {
+  const captions = element<HTMLElement>('captions')
+  captions.textContent = text
+  captions.hidden = text.length === 0
 }
 
 function renderTitle(): void {

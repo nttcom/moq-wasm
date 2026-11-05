@@ -18,7 +18,7 @@ cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --gcp-pr
 
 A language is translated for at most 60 minutes at a stretch (`--language-time-limit-minutes`) and, with `--open-hours 'Mon-Fri 09:00-17:30 +09:00'`, only inside those hours; the viewer returns to the original audio when the translation ends. `--always-on en,ko` keeps those languages translating for the whole broadcast, so switching to them takes about a second instead of waiting for Gemini's first answer.
 
-The viewer plays every track 5 s after capture; `?delay=4.5` on its URL tries another delay. Its Stats line shows the delay, the A/V offset, how long the last switch took and the samples dropped late; every 10 s the same numbers go to the page telemetry (`viewer stats` in HyperDX, or in ClickHouse's `otel.otel_logs` with `docker compose up -d observability` locally).
+The viewer shows captions on the picture: the transcript of the language heard (`text_<lang>`), or of the Japanese (`text_ja`) while some language is being translated. The viewer plays every track 5 s after capture; `?delay=4.5` on its URL tries another delay. Its Stats line shows the delay, the A/V offset, how long the last switch took and the samples dropped late; every 10 s the same numbers go to the page telemetry (`viewer stats` in HyperDX, or in ClickHouse's `otel.otel_logs` with `docker compose up -d observability` locally).
 
 Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chrome` for the real camera and microphone), press 配信開始, and open the viewer link it shows.
 
