@@ -1,4 +1,4 @@
-import type { MoqSession, MoqSubscription } from 'moq-wasm'
+import type { MoqSession, MoqSubscription, PublishDone } from 'moq-wasm'
 import { type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from 'moq-wasm/media'
 import { catalogTrackNamespace } from 'moq-wasm/media/catalog'
 import { AudioLane } from 'moq-wasm/media/player/audioLane'
@@ -217,6 +217,11 @@ export class TranslationPlayer {
         translation.lane.push(groupId, object)
         this.countForwarded(option.track.name)
       })
+      void translation.subscribed.handle.done.then((done) => {
+        if (done) {
+          void this.queue(() => this.translationEnded(translation, done))
+        }
+      })
     } catch (error) {
       if (this.incoming === translation) {
         this.incoming = undefined
@@ -224,6 +229,24 @@ export class TranslationPlayer {
       translation.lane.close()
       this.callbacks.onLog('error', `${option.label} is unavailable: ${getErrorMessage(error)}`)
     }
+  }
+
+  /// The translator ends a language after its time limit or when its open
+  /// hours close, so the original audio comes back on its own.
+  private async translationEnded(translation: Translation, done: PublishDone): Promise<void> {
+    if (translation.closed) {
+      return
+    }
+    this.callbacks.onLog('warn', `${translation.lang} ended by the translator: ${done.reason || `status ${done.code}`}`)
+    if (this.translation === translation) {
+      this.locLive.playout.setVolume(1, CROSSFADE_TIME_CONSTANT_SECONDS)
+      this.translation = undefined
+    }
+    if (this.incoming === translation) {
+      this.incoming = undefined
+    }
+    await this.close(translation)
+    this.callbacks.onStateChange()
   }
 
   private crossfadeAt(translation: Translation, dueMs: number): void {
