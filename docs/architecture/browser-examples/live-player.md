@@ -442,6 +442,11 @@ A track's init data is the `initDataList` entry its `initRef` names
 missing or not `inline`, the only type the draft defines, leaves the track
 without init data and logs a warning instead of rejecting the catalog.
 
+A track that names a `namespace` (draft-ietf-moq-msf-01 §5.2.2) is subscribed
+to there instead of under the catalog's, so a catalog can refer to the tracks
+of another broadcast, as the live translation's catalog does for the source's
+video and original audio.
+
 ### Audio / video synchronisation
 
 In LOC mode the two decoder workers hand every sample over as soon as it is

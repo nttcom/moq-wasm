@@ -10,7 +10,7 @@ import {
   streamId
 } from './trackContext'
 import { getErrorMessage } from '../internal/status'
-import type { MediaCatalogTrack } from '../catalog'
+import { type MediaCatalogTrack, catalogTrackNamespace } from '../catalog'
 
 /// draft-14 §7.2: the relay sends the lower subscriber priority value first,
 /// so audio takes the downlink ahead of video.
@@ -74,7 +74,7 @@ export class TrackSubscriptions {
     handler: ObjectHandler,
     currentGroup = false
   ): Promise<TrackSubscription> {
-    const { namespace } = this.context
+    const namespace = catalogTrackNamespace(track, this.context.namespace)
     const session = sessionOf(this.context)
     const joining = currentGroup && !this.forwardPaused
     const handle = joining
