@@ -5,6 +5,9 @@ import { CaptureTimestamps } from './captureTimestamps'
 import { encoderConfigForInput } from './audioInputFormat'
 import { pcmFrames } from './pcmCapture'
 import { EncoderSamplePosition } from './encoderSamplePosition'
+import { workerLog } from '../../../core/log'
+
+const TARGET = 'moq-wasm::media::audio_encoder'
 
 let audioEncoder: AudioEncoder | undefined
 let encoderConfig: AudioEncoderConfig = {
@@ -36,7 +39,7 @@ async function initializeAudioEncoder() {
   const init: AudioEncoderInit = {
     output: sendAudioChunkMessage,
     error: (e: any) => {
-      console.log(e.message)
+      workerLog('error', TARGET, 'encoder error', { error: e })
     }
   }
 
@@ -52,7 +55,7 @@ async function initializeAudioEncoder() {
     return undefined
   }
   configure(encoder)
-  console.info('[audioEncoder] initialized', encoderConfig)
+  workerLog('info', TARGET, 'encoder initialized', { config: encoderConfig })
   return encoder
 }
 
@@ -84,7 +87,7 @@ function configure(encoder: AudioEncoder): void {
 async function encoderFor(audio: AudioData): Promise<AudioEncoder | undefined> {
   const inputConfig = encoderConfigForInput(encoderConfig, audio)
   if (inputConfig !== encoderConfig) {
-    console.info('[audioEncoder] input format changed', {
+    workerLog('info', TARGET, 'input format changed', {
       sampleRate: audio.sampleRate,
       numberOfChannels: audio.numberOfChannels
     })
@@ -95,7 +98,7 @@ async function encoderFor(audio: AudioData): Promise<AudioEncoder | undefined> {
   }
   if (!audioEncoder || audioEncoder.state === 'closed') {
     if (audioEncoder) {
-      console.info('[audioEncoder] re-initializing a closed encoder')
+      workerLog('info', TARGET, 'encoder closed, re-initializing')
     }
     audioEncoder = await initializeAudioEncoder()
   }
@@ -117,7 +120,7 @@ self.onmessage = async (event) => {
           return
         }
         configure(audioEncoder)
-        console.info('[audioEncoder] reconfigured', encoderConfig)
+        workerLog('info', TARGET, 'encoder reconfigured', { config: encoderConfig })
       } catch (e) {
         self.postMessage({ type: 'configError', media: 'audio', reason: 'unsupported', config: encoderConfig })
         return
@@ -129,7 +132,7 @@ self.onmessage = async (event) => {
   const audioReadableStream: ReadableStream<AudioData> | undefined =
     event.data.audioStream ?? (event.data.audioPort && pcmFrames(event.data.audioPort))
   if (!audioReadableStream) {
-    console.error('MediaStreamTrack が渡されていません')
+    workerLog('error', TARGET, 'no audio stream or port given')
     return
   }
   await startAudioEncode(audioReadableStream)

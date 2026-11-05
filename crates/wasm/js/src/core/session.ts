@@ -1,6 +1,9 @@
 import type * as Moqt from '../../pkg/moqt'
 import { loadMoqt } from './init'
 import { RequestError } from './requestError'
+import { sdkLog } from './log'
+
+const TARGET = 'moq-wasm::core::session'
 
 /// An object as the player reads it, copied out of the wasm memory.
 export type ReceivedObject = {
@@ -90,7 +93,7 @@ export class MoqSession {
     const startedAtMs = performance.now()
     const session = await moqt.Session.connect(url, options.token, Math.round(startedAtMs - calledAtMs))
     const elapsedMs = Math.round(performance.now() - startedAtMs)
-    console.info(`[moqt] session established over ${session.transport} in ${elapsedMs} ms`)
+    sdkLog('info', TARGET, 'session established', { transport: session.transport, duration_ms: elapsedMs })
     return new MoqSession(session)
   }
 
@@ -193,9 +196,9 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
         return
       }
       const received = new MoqGroup(group)
-      console.debug('[moqt] received subgroup header', {
-        groupId: received.groupId.toString(),
-        subgroupId: received.subgroupId.toString()
+      sdkLog('debug', TARGET, 'subgroup header received', {
+        group_id: received.groupId,
+        subgroup_id: received.subgroupId
       })
       yield received
     }

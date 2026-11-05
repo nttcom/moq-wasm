@@ -1,3 +1,4 @@
+import { forwardSdkLog } from '../../core/log'
 import { RequestError, RequestErrorCode } from '../../core/requestError'
 import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
@@ -155,7 +156,10 @@ export class LivePlayer {
       session: undefined,
       namespace: [],
       observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
-      log: (level, message) => options.callbacks.onLog(level, message)
+      log: (level, message) => {
+        forwardSdkLog(level, 'moq-wasm::media::live_player', message)
+        options.callbacks.onLog(level, message)
+      }
     }
     this.textTracks = new TextTracks(this.context)
     this.catalog = new CatalogFollower(

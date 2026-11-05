@@ -3,6 +3,9 @@ import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
 import { withLengthPrefixes } from './lengthPrefixes'
+import { workerLog } from '../../../core/log'
+
+const TARGET = 'moq-wasm::media::video_decoder'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
@@ -31,7 +34,7 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
   const init: VideoDecoderInit = {
     output: postDecodedFrame,
     error: (e: any) => {
-      console.warn('[videoDecoder] decoder error', e)
+      workerLog('warn', TARGET, 'decoder error', { error: e })
       videoDecoder = undefined
       cachedVideoConfig = null
       waitingForKeyFrame = true
@@ -41,18 +44,18 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
   try {
     const supported = await VideoDecoder.isConfigSupported(config)
     if (!supported.supported) {
-      console.error('[videoDecoder] unsupported decoder config', config)
+      workerLog('error', TARGET, 'decoder config unsupported', { config })
       return undefined
     }
   } catch (error) {
-    console.error('[videoDecoder] failed to check decoder config support', error, config)
+    workerLog('error', TARGET, 'decoder config support check failed', { error, config })
     return undefined
   }
   const decoder = new VideoDecoder(init)
   try {
     decoder.configure(config)
   } catch (error) {
-    console.error('[videoDecoder] configure failed', error, config)
+    workerLog('error', TARGET, 'decoder configure failed', { error, config })
     try {
       decoder.close()
     } catch {
@@ -182,7 +185,7 @@ function postDecodedFrame(frame: VideoFrame): void {
   const ids = takeOutputIds(frame.timestamp)
   if (!ids) {
     if (performance.now() - lastOutputMetaResetAtMs > MISSING_META_WARN_SUPPRESS_AFTER_RESET_MS) {
-      console.warn('[videoDecoder][output] missing meta for decoded frame', { timestampUs: frame.timestamp })
+      workerLog('warn', TARGET, 'decoded frame has no metadata', { timestamp_us: frame.timestamp })
     }
     frame.close()
     return
@@ -255,7 +258,7 @@ function enqueueDirectDecode(entry: VideoJitterBufferEntry): void {
   directDecodeQueue = directDecodeQueue
     .then(() => submitForDecode(entry))
     .catch((error) => {
-      console.error('[videoDecoder] direct decode failed', error)
+      workerLog('error', TARGET, 'decode failed', { error })
     })
 }
 
@@ -298,10 +301,10 @@ async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBuff
     if (isKeyFrameRequiredError(error)) {
       waitingForKeyFrame = true
       clearOutputQueue()
-      console.warn('[videoDecoder] decode requires key frame; waiting for next key frame', {
-        groupId: groupId.toString(),
-        objectId: objectId.toString(),
-        chunkType: chunk.type
+      workerLog('warn', TARGET, 'decode needs a key frame, waiting for the next one', {
+        group_id: groupId,
+        object_id: objectId,
+        chunk_type: chunk.type
       })
       return
     }
@@ -339,9 +342,9 @@ function applyCatalogInfo(codec?: string, descriptionBase64?: string): void {
   }
   catalogCodec = codec
   if (cachedVideoConfig && cachedVideoConfig.codec !== codec) {
-    console.warn('[videoDecoder] catalog codec changed after decoder initialization; ignoring new codec', {
-      initializedCodec: cachedVideoConfig.codec,
-      catalogCodec: codec
+    workerLog('warn', TARGET, 'catalog codec changed after the decoder started, ignored', {
+      initialized_codec: cachedVideoConfig.codec,
+      catalog_codec: codec
     })
   }
 }
@@ -353,7 +356,7 @@ function resolveVideoConfig(videoConfig: Uint8Array | undefined): VideoDecoderCo
   if (!catalogCodec) {
     if (!missingCatalogCodecWarned) {
       missingCatalogCodecWarned = true
-      console.warn('[videoDecoder] skip decode until catalog codec is available')
+      workerLog('warn', TARGET, 'decode skipped until the catalog gives a codec')
     }
     return null
   }

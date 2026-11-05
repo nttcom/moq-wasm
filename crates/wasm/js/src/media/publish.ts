@@ -3,6 +3,9 @@ import type { MediaSource } from '../../pkg/moqt'
 import type { AudioLevel } from './internal/loc'
 import { capturePcm } from './internal/encoders/pcmCapture'
 import { EncoderTimeline } from './internal/encoders/encoderTimeline'
+import { forwardSdkLog, receiveWorkerLog, sdkLog } from '../core/log'
+
+const TARGET = 'moq-wasm::media::publish'
 
 export type SourceOptions = {
   /// The video's label in the catalog.
@@ -93,7 +96,14 @@ export async function publish(
   if (options.offerChat) {
     await broadcast.offerChat()
   }
-  const report = options.onError ?? ((error: unknown) => console.error('[publish]', error))
+  const report = (error: unknown) => {
+    if (options.onError) {
+      forwardSdkLog('error', TARGET, 'publish failed', { error })
+      options.onError(error)
+    } else {
+      sdkLog('error', TARGET, 'publish failed', { error })
+    }
+  }
   // A new encoder worker stamps its first chunk 0, so the chunks of a worker
   // started after an unmute or a replaced track are placed from the
   // publication's start (see `EncoderTimeline`): a source's timestamps never
@@ -256,6 +266,9 @@ function encodeVideo(
       }
     >
   ) => {
+    if (receiveWorkerLog(event.data)) {
+      return
+    }
     if (event.data.type === 'configError' || event.data.type === 'encoderError') {
       report(new Error(`video encoder ${event.data.rendition}: ${event.data.type}`))
       return
@@ -336,7 +349,7 @@ function encodeAudio(
   worker.onmessage = (
     event: MessageEvent<ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel }>
   ) => {
-    if (event.data.type !== 'chunk') {
+    if (receiveWorkerLog(event.data) || event.data.type !== 'chunk') {
       return
     }
     const { chunk, metadata, audioLevel, captureTimestampMicros } = event.data

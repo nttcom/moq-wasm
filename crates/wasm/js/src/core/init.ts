@@ -1,3 +1,6 @@
+import { setSdkLogSink } from './log'
+import { ClientTelemetry, type TelemetryOptions } from './telemetry'
+
 type MoqtModule = typeof import('../../pkg/moqt')
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace'
@@ -29,27 +32,51 @@ export interface InitOptions {
   /// Overrides where the `.wasm` file is fetched from, for bundlers that do not
   /// rewrite `new URL('moqt_bg.wasm', import.meta.url)`.
   wasmUrl?: string | URL
-  /// Receives the wasm module's logs. Without it, they are discarded. `token` is the one
-  /// the record's `MoqSession` connected with (its provider's newest), `undefined` for a
-  /// record of no session or of a session without one. Put it only in the telemetry
-  /// report's `token`: the server stores a record's fields as they are.
+  /// Receives the SDK's logs, from both the wasm module and its TypeScript. Without it or
+  /// `telemetry`, they are discarded. `token` is the one the record's `MoqSession` connected
+  /// with (its provider's newest). It is `undefined` for every TypeScript log, and for a record
+  /// of no session or of a session without one. Put it only in the telemetry report's `token`:
+  /// the server stores a record's fields as they are.
   onLog?: (record: LogRecord, token: string | undefined) => void
-  /// The lowest level passed to `onLog`. Defaults to `'warn'`.
+  /// The lowest level passed to `onLog` and sent with `telemetry`. Defaults to `'warn'`.
   logLevel?: LogLevel
-  /// Receives the wasm module's closed spans, with `token` as for `onLog`. Without it,
-  /// they are discarded.
+  /// Receives the wasm module's closed spans, with `token` as for `onLog`. Without it or
+  /// `telemetry`, they are discarded.
   onSpan?: (record: SpanRecord, token: string | undefined) => void
+  /// Sends the SDK's logs and the wasm module's spans to an observability server every 10 s, each
+  /// session's under its token. The page's own logs are not sent.
+  telemetry?: TelemetryOptions
 }
 
 let loading: Promise<MoqtModule> | null = null
 
-/// Loads the wasm module and, with `onLog` or `onSpan`, installs its log sink.
-/// The sink is page-wide, so a second call with either rejects. Call it before the first
+/// Loads the wasm module and, with `onLog`, `onSpan` or `telemetry`, installs its log sink.
+/// The sink is page-wide, so a second call with any of them rejects. Call it before the first
 /// `MoqSession.connect` to override `wasmUrl`: the first load decides the URL.
 export async function init(options: InitOptions = {}): Promise<void> {
   const moqt = await loadMoqt(options.wasmUrl)
-  if (options.onLog || options.onSpan) {
-    moqt.setLogSink(options.onLog ?? (() => {}), options.logLevel ?? 'warn', options.onSpan)
+  const telemetry = options.telemetry && new ClientTelemetry(options.telemetry)
+  const onLog = both(options.onLog, telemetry?.log)
+  const onSpan = both(options.onSpan, telemetry?.span)
+  if (onLog || onSpan) {
+    moqt.setLogSink(onLog ?? (() => {}), options.logLevel ?? 'warn', onSpan)
+  }
+  if (onLog) {
+    setSdkLogSink(onLog, options.logLevel ?? 'warn')
+  }
+  telemetry?.start()
+}
+
+function both<A extends unknown[]>(
+  first: ((...args: A) => void) | undefined,
+  second: ((...args: A) => void) | undefined
+): ((...args: A) => void) | undefined {
+  if (!first || !second) {
+    return first ?? second
+  }
+  return (...args) => {
+    first(...args)
+    second(...args)
   }
 }
 

@@ -3,6 +3,9 @@ import { GroupOrderGate } from '../groupOrderGate'
 import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
+import { workerLog } from '../../../core/log'
+
+const TARGET = 'moq-wasm::media::audio_decoder'
 
 type AudioConfig = {
   codec: string
@@ -38,7 +41,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
   const init: AudioDecoderInit = {
     output: (audioData) => postAudioData(audioData, pendingCaptureTimestamps.shift()),
     error: (e: any) => {
-      console.warn('[audioDecoder] decoder error', e)
+      workerLog('warn', TARGET, 'decoder error', { error: e })
     }
   }
   const decoder = new AudioDecoder(init)
@@ -85,7 +88,7 @@ function enqueueDirectDecode(object: SubgroupObjectWithLoc): void {
   directDecodeQueue = directDecodeQueue
     .then(() => decode(object.objectPayload, readLocHeader(object.locHeader).captureTimestampMicros))
     .catch((error) => {
-      console.error('[audioDecoder] direct decode failed', error)
+      workerLog('error', TARGET, 'decode failed', { error })
     })
 }
 
@@ -99,7 +102,7 @@ async function decode(payload: Uint8Array, captureTimestampMicros: number | unde
       }
       audioDecoder = undefined
     } catch (error) {
-      console.error('[audioDecoder] pcm alaw decode failed', error)
+      workerLog('error', TARGET, 'PCM A-law decode failed', { error })
     }
     return
   }
@@ -112,7 +115,7 @@ async function decode(payload: Uint8Array, captureTimestampMicros: number | unde
       }
       audioDecoder = await createAudioDecoder(buildDecoderConfig(audioConfig), desiredSignature)
     } catch (e) {
-      console.error('[audioDecoder] configure failed', e)
+      workerLog('error', TARGET, 'decoder configure failed', { error: e })
       return
     }
   }
