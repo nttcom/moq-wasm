@@ -21,6 +21,7 @@ const urlInput = element<HTMLInputElement>('url')
 const broadcastIdInput = element<HTMLInputElement>('broadcast-id')
 const monitorOriginal = element<HTMLInputElement>('monitor-original')
 const watchOverlay = element<HTMLDivElement>('watch-overlay')
+const watchButton = element<HTMLButtonElement>('watchBtn')
 const languageBar = element<HTMLElement>('language-bar')
 const languageOptions = element<HTMLDivElement>('language-options')
 const connection = element<HTMLDetailsElement>('connection')
@@ -29,7 +30,10 @@ const delaySeconds = Number(new URLSearchParams(location.search).get(DELAY_SECON
 const player = new TranslationPlayer(
   element<HTMLDivElement>('stage'),
   {
-    onStateChange: () => renderLanguages(),
+    onStateChange: () => {
+      renderOverlay()
+      renderLanguages()
+    },
     onLog: (level, message) => appendLog(level, message),
     onCaption: (text) => renderCaption(text)
   },
@@ -44,7 +48,7 @@ broadcastIdInput.value = new URLSearchParams(location.search).get(BROADCAST_ID_P
 connection.open = !(broadcastIdInput.value && firstSearchParam(RELAY_URL_PARAM_NAMES))
 renderTitle()
 broadcastIdInput.addEventListener('input', renderTitle)
-element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watch())
+watchButton.addEventListener('click', () => void watch())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stop())
 monitorOriginal.checked = new URLSearchParams(location.search).get(MONITOR_ORIGINAL_PARAM) === '1'
 player.setMonitorOriginal(monitorOriginal.checked)
@@ -65,9 +69,7 @@ async function watch(): Promise<void> {
     setStatusText('viewer-status', '接続しています')
     session = await MoqSession.connect(url)
     await player.start(session, broadcastId)
-    setStatusText('viewer-status', '')
-    watchOverlay.hidden = true
-    languageBar.hidden = false
+    renderOverlay()
   } catch (error) {
     setStatusText('viewer-status', `接続できませんでした: ${getErrorMessage(error)}`)
   }
@@ -79,7 +81,20 @@ async function stop(): Promise<void> {
   session = undefined
   languageBar.hidden = true
   watchOverlay.hidden = false
+  watchButton.hidden = false
   element<HTMLElement>('viewer-stats').hidden = true
+}
+
+/// While the broadcast is not there yet the overlay stays, saying so, without its button.
+function renderOverlay(): void {
+  if (!player.watching) {
+    return
+  }
+  const waiting = player.waiting
+  watchOverlay.hidden = !waiting
+  watchButton.hidden = waiting
+  languageBar.hidden = waiting
+  setStatusText('viewer-status', waiting ? '配信が始まるのを待っています' : '')
 }
 
 function renderCaption(text: string): void {

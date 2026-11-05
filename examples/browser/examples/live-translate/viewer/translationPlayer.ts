@@ -1,4 +1,4 @@
-import type { MoqSession, MoqSubscription, PublishDone } from 'moq-wasm'
+import { type MoqSession, type MoqSubscription, type PublishDone, RequestError, RequestErrorCode } from 'moq-wasm'
 import { type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from 'moq-wasm/media'
 import { catalogTrackNamespace } from 'moq-wasm/media/catalog'
 import { readLocHeader } from 'moq-wasm/media/internal/loc'
@@ -19,6 +19,7 @@ import { type LanguageOption, ORIGINAL_LANGUAGE, languageOptions } from './langu
 /// It must exceed Gemini's delay (about 3.7 s); the rest absorbs the jitter.
 const DEFAULT_PLAYBACK_DELAY_MS = 5_000
 const CROSSFADE_TIME_CONSTANT_SECONDS = 0.08
+const BROADCAST_RETRY_MS = 2_000
 const RETIRED_LANE_CLOSE_DELAY_MS = 500
 const MONITORED_ORIGINAL_VOLUME = 0.5
 
@@ -77,6 +78,8 @@ export class TranslationPlayer {
   private readonly forwardedAudioObjects: Record<string, number> = {}
   private changes: Promise<void> = Promise.resolve()
   private started = false
+  private followed = false
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
   private video: Subscribed | undefined
   private original: Subscribed | undefined
   private translation: Translation | undefined
@@ -106,7 +109,16 @@ export class TranslationPlayer {
     this.catalog = new CatalogFollower(
       this.textTracks,
       (text) => void this.queue(() => this.applyCatalog(text)),
-      (done) => callbacks.onLog('warn', `the catalog ended (status ${done.code})`)
+      (done) => {
+        callbacks.onLog('warn', `the catalog ended (status ${done.code})`)
+        void this.queue(async () => {
+          this.catalog.reset()
+          this.followed = false
+          this.callbacks.onStateChange()
+        })
+          .then(() => (this.started ? this.followBroadcast() : undefined))
+          .catch((error: unknown) => callbacks.onLog('error', `following the catalog again: ${getErrorMessage(error)}`))
+      }
     )
     this.stage = new PictureStage(container)
     this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, undefined, {
@@ -117,6 +129,15 @@ export class TranslationPlayer {
     this.locLive.playout.setCatchUp('off')
     this.locLive.playout.setLateSamples('drop')
     this.stage.show(this.locLive.picture.element)
+  }
+
+  get watching(): boolean {
+    return this.started
+  }
+
+  /// Started, but the broadcast's translated namespace is not published yet.
+  get waiting(): boolean {
+    return this.started && !this.followed
   }
 
   get language(): string {
@@ -166,13 +187,41 @@ export class TranslationPlayer {
       this.context.session = session
       this.context.namespace = translatedNamespace(broadcastId)
       this.started = true
+      this.followed = false
     })
-    await this.catalog.follow()
+    await this.followBroadcast()
+  }
+
+  /// The relay answers the SUBSCRIBE of a namespace nobody publishes with
+  /// TRACK_DOES_NOT_EXIST: the link was opened before the streamer started, or
+  /// the translator has not announced the broadcast yet. The catalog is then
+  /// tried again every 2 s while the player runs. Any other failure of the
+  /// first attempt is the caller's; a later one is logged.
+  private async followBroadcast(): Promise<void> {
+    try {
+      await this.catalog.follow()
+      this.followed = true
+      this.callbacks.onStateChange()
+    } catch (error) {
+      if (!this.started || !(error instanceof RequestError && error.errorCode === RequestErrorCode.TrackDoesNotExist)) {
+        throw error
+      }
+      this.callbacks.onStateChange()
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = undefined
+        this.followBroadcast().catch((error: unknown) =>
+          this.callbacks.onLog('error', `waiting for the broadcast: ${getErrorMessage(error)}`)
+        )
+      }, BROADCAST_RETRY_MS)
+    }
   }
 
   stop(): Promise<void> {
     return this.queue(async () => {
       this.started = false
+      this.followed = false
+      clearTimeout(this.retryTimer)
+      this.retryTimer = undefined
       for (const translation of [this.translation, this.incoming]) {
         await this.close(translation)
       }
