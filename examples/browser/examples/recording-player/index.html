@@ -19,6 +19,7 @@
         margin: auto;
       }
       form,
+      #relayPresets,
       .controls {
         display: flex;
         flex-wrap: wrap;
@@ -87,10 +88,12 @@
       <h1>MoQ recording player</h1>
       <form id="open">
         <label>Recorder URL <input id="recorder" type="url" value="http://127.0.0.1:8096" required /></label>
+        <label>Relay URL <input id="relay" type="url" required /></label>
         <label>Recording ID <input id="recording" required /></label>
         <label>Access token <input id="token" type="password" autocomplete="off" /></label>
         <button id="load">Open recording</button>
       </form>
+      <div id="relayPresets"></div>
       <output id="status" role="status">Choose a recording.</output>
       <p id="alignment">Approximate alignment: source clocks have not been calibrated.</p>
       <div class="controls">

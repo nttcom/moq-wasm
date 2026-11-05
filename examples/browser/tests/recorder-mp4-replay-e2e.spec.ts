@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { createProgressiveRecording, test } from './recorder-e2e-arrange'
+import { createProgressiveRecording, recordingPlayerPath, test } from './recorder-e2e-arrange'
 
 test.setTimeout(120_000)
 
@@ -21,7 +21,7 @@ test('replays recorded fMP4 and progressive MP4 with audio and seeking', async (
 
   for (const id of [recording.id, progressiveId]) {
     // Act
-    await page.goto(`/moq-wasm/examples/recording-player/?recorder=${encodeURIComponent(recorderServe.url)}&id=${id}`)
+    await page.goto(recordingPlayerPath(recorderServe.url, id))
     await page.locator('#load').click()
     await expect(page.locator('#status')).toHaveText('Ready', { timeout: 30_000 })
     await page.locator('#play').click()

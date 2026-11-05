@@ -11,6 +11,7 @@ import {
   type IndexedChunk
 } from './timeline'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
+import { setUpRelayUrlControls } from '../../utils/relayPresets'
 
 type Track = {
   namespace: string
@@ -35,15 +36,15 @@ const play = element<HTMLButtonElement>('play')
 const seek = element<HTMLInputElement>('seek')
 const position = element<HTMLOutputElement>('position')
 const recorder = element<HTMLInputElement>('recorder')
+const relay = element<HTMLInputElement>('relay')
 const recording = element<HTMLInputElement>('recording')
 const token = element<HTMLInputElement>('token')
 const params = new URLSearchParams(location.search)
 recorder.value = params.get('recorder') ?? recorder.value
 recording.value = params.get('id') ?? ''
+setUpRelayUrlControls(relay, element('relayPresets'))
 let session: MoqSession | undefined
-/// Empty until the recorder's replay answer names the relay.
-let relayUrl = ''
-startPageTelemetry('recording-player', () => relayUrl)
+startPageTelemetry('recording-player', () => relay.value)
 let presence: MoqSubscription | undefined
 let generation = 0
 let media: Media[] = []
@@ -249,8 +250,7 @@ element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
     )
     const replay = await response.json()
     if (!response.ok) throw new Error(replay.error ?? `Recorder returned ${response.status}`)
-    relayUrl = replay.relay
-    session = await MoqSession.connect(replay.relay, { token: token.value || undefined })
+    session = await MoqSession.connect(relay.value, { token: token.value || undefined })
     const tracks: Track[] = replay.tracks
     const presenceTrack = tracks.find((track) => track.name === 'catalog') ?? tracks[0]
     if (!presenceTrack) throw new Error('Recording has no tracks')

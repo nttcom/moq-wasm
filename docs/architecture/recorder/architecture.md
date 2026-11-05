@@ -383,8 +383,11 @@ to its source room and starts `replay::ReplayTask`. It announces namespaces unde
 `<room>/recordings/<id>/<member-index>/<content>/<session-index>` and returns
 the relay URL and each track's original first and last object locations. Raw
 catalogs and media retain their object identities. The player issues standalone
-FETCH for these ranges. This is historical playback; a live-only player that
-expects newly published frames needs a replay adapter.
+FETCH for these ranges through the relay URL given in its form, not the
+returned one. The returned URL is the one the recorder connects to the relay
+with and may be `moqt://`, which a browser cannot open. This is historical
+playback; a live-only player that expects newly published frames needs a
+replay adapter.
 
 For an MP4 recording, `mp4_replay` reads the original room manifest and converts
 each listed camera or screen-share file into a separate archived broadcast.
