@@ -31,7 +31,7 @@ LIVE_EGRESS_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -223,6 +223,9 @@ browser-e2e-media:
 # Two-relay meeting E2E: brings up relay-a/relay-b via docker compose, then Playwright.
 browser-e2e-live-viewer:
 	node tests/browser-e2e/run-live-viewer-e2e.mjs
+
+browser-e2e-live-translate:
+	node tests/browser-e2e/run-live-translate-e2e.mjs
 
 browser-e2e-meeting:
 	node tests/browser-e2e/setup-media-e2e.mjs
