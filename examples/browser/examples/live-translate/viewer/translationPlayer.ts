@@ -54,6 +54,9 @@ export type TranslationPlayerStats = {
   syncOffsetMs: number | undefined
   translationOffsetMs: number | undefined
   viewerDelayMs: number | undefined
+  /// Capture-to-arrival delay of the window's fastest sample; with `bufferMs` it makes up `viewerDelayMs`.
+  arrivalDelayMs: number | undefined
+  bufferMs: number | undefined
 }
 
 /// Plays a live translation broadcast: the source's video and original audio
@@ -138,7 +141,9 @@ export class TranslationPlayer {
         : this.locLive.playout.audioPositionMicros(),
       syncOffsetMs: live.syncOffsetMs,
       translationOffsetMs: this.translationOffsetMs(),
-      viewerDelayMs: live.viewerDelayMs
+      viewerDelayMs: live.viewerDelayMs,
+      arrivalDelayMs: live.fastestArrivalDelayMs,
+      bufferMs: live.bufferMs
     }
   }
 

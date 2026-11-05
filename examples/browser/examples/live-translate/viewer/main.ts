@@ -2,7 +2,7 @@ import { MoqSession } from 'moq-wasm'
 import 'moq-wasm/media/player.css'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
-import { setUpRelayUrlControls } from '../../../utils/relayPresets'
+import { RELAY_URL_PARAM_NAMES, firstSearchParam, setUpRelayUrlControls } from '../../../utils/relayPresets'
 import { BROADCAST_ID_PARAM } from '../liveTranslate'
 import { TranslationPlayer, type TranslationPlayerStats } from './translationPlayer'
 
@@ -18,8 +18,12 @@ const STATS_INTERVAL_MS = 500
 const STATS_LOG_INTERVAL_MS = 10_000
 
 const urlInput = element<HTMLInputElement>('url')
-const languageSelect = element<HTMLSelectElement>('language')
+const broadcastIdInput = element<HTMLInputElement>('broadcast-id')
 const monitorOriginal = element<HTMLInputElement>('monitor-original')
+const watchOverlay = element<HTMLDivElement>('watch-overlay')
+const languageBar = element<HTMLElement>('language-bar')
+const languageOptions = element<HTMLDivElement>('language-options')
+const connection = element<HTMLDetailsElement>('connection')
 let session: MoqSession | undefined
 const delaySeconds = Number(new URLSearchParams(location.search).get(DELAY_SECONDS_PARAM))
 const player = new TranslationPlayer(
@@ -34,10 +38,13 @@ window.liveTranslateViewer = { stats: () => player.stats(), selectLanguage: (lan
 
 const telemetry = startPageTelemetry('live-translate-viewer', () => urlInput.value)
 setUpRelayUrlControls(urlInput, element('urlPresets'))
-element<HTMLInputElement>('broadcast-id').value = new URLSearchParams(location.search).get(BROADCAST_ID_PARAM) ?? ''
+broadcastIdInput.value = new URLSearchParams(location.search).get(BROADCAST_ID_PARAM) ?? ''
+// The streamer's link carries the broadcast ID and the relay URL; a viewer who typed the URL by hand sees the form.
+connection.open = !(broadcastIdInput.value && firstSearchParam(RELAY_URL_PARAM_NAMES))
+renderTitle()
+broadcastIdInput.addEventListener('input', renderTitle)
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watch())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stop())
-languageSelect.addEventListener('change', () => void player.selectLanguage(languageSelect.value))
 monitorOriginal.checked = new URLSearchParams(location.search).get(MONITOR_ORIGINAL_PARAM) === '1'
 player.setMonitorOriginal(monitorOriginal.checked)
 monitorOriginal.addEventListener('change', () => player.setMonitorOriginal(monitorOriginal.checked))
@@ -45,19 +52,23 @@ setInterval(renderStats, STATS_INTERVAL_MS)
 setInterval(logStats, STATS_LOG_INTERVAL_MS)
 
 async function watch(): Promise<void> {
-  const broadcastId = element<HTMLInputElement>('broadcast-id').value.trim()
+  const broadcastId = broadcastIdInput.value.trim()
   const url = urlInput.value.trim()
   if (!broadcastId) {
-    setStatusText('viewer-status', 'Enter a broadcast ID')
+    setStatusText('viewer-status', '配信 ID を入れてください（下の「接続」）')
+    connection.open = true
     return
   }
   try {
     await stop()
+    setStatusText('viewer-status', '接続しています')
     session = await MoqSession.connect(url)
-    setStatusText('viewer-status', `Watching ${broadcastId}`)
     await player.start(session, broadcastId)
+    setStatusText('viewer-status', '')
+    watchOverlay.hidden = true
+    languageBar.hidden = false
   } catch (error) {
-    setStatusText('viewer-status', `Failed: ${getErrorMessage(error)}`)
+    setStatusText('viewer-status', `接続できませんでした: ${getErrorMessage(error)}`)
   }
 }
 
@@ -65,43 +76,77 @@ async function stop(): Promise<void> {
   await player.stop()
   session?.close()
   session = undefined
+  languageBar.hidden = true
+  watchOverlay.hidden = false
+  element<HTMLElement>('viewer-stats').hidden = true
+}
+
+function renderTitle(): void {
+  const broadcastId = broadcastIdInput.value.trim()
+  element<HTMLElement>('broadcast-title').textContent = broadcastId ? `配信 ${broadcastId}` : '配信を見る'
 }
 
 function renderLanguages(): void {
   const options = player.languages
-  if (languageSelect.options.length !== options.length) {
-    languageSelect.replaceChildren(
-      ...options.map((option) => new Option(option.label, option.lang, false, option.lang === player.language))
+  if (languageOptions.childElementCount !== options.length) {
+    languageOptions.replaceChildren(
+      ...options.map((option) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'viewer-language'
+        button.textContent = option.label
+        button.dataset.testid = 'viewer-language-option'
+        button.dataset.lang = option.lang
+        button.addEventListener('click', () => void player.selectLanguage(option.lang))
+        return button
+      })
     )
   }
-  languageSelect.value = player.pendingLanguage ?? player.language
+  for (const button of languageOptions.querySelectorAll<HTMLButtonElement>('.viewer-language')) {
+    button.setAttribute('aria-pressed', String(button.dataset.lang === player.language))
+    button.dataset.pending = String(button.dataset.lang === player.pendingLanguage)
+  }
   setStatusText(
     'language-status',
-    player.pendingLanguage ? `Switching to ${player.pendingLanguage}…` : `Listening: ${player.language}`
+    player.pendingLanguage ? `${player.pendingLanguage} に切り替えています` : `聞いている言語: ${player.language}`
   )
 }
 
 function renderStats(): void {
   const stats = player.stats()
+  const statsList = element<HTMLElement>('viewer-stats')
   if (stats.playingAudioMicros === undefined) {
-    setStatusText('viewer-stats', '')
+    statsList.hidden = true
     return
   }
   const ms = (value: number | undefined) =>
     value === undefined ? '--' : `${value >= 0 ? '+' : '-'}${Math.abs(Math.round(value))} ms`
-  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : 'no video yet'
-  setStatusText(
-    'viewer-stats',
+  const entries: [string, string][] = [
+    ['遅延', stats.viewerDelayMs === undefined ? '--' : `${(stats.viewerDelayMs / 1_000).toFixed(2)} s`],
+    ['うち届くまで', stats.arrivalDelayMs === undefined ? '--' : `${(stats.arrivalDelayMs / 1_000).toFixed(2)} s`],
+    ['うちバッファ', stats.bufferMs === undefined ? '--' : `${(stats.bufferMs / 1_000).toFixed(2)} s`],
+    ['映像と音声のずれ', ms(stats.syncOffsetMs)],
+    ['訳と原音声のずれ', ms(stats.translationOffsetMs)],
+    ['直近の切り替え', stats.lastSwitchSeconds === undefined ? '--' : `${stats.lastSwitchSeconds.toFixed(1)} s`],
+    ['遅れて捨てた音声', String(stats.droppedLateAudio)],
+    ['遅れて捨てた映像', String(stats.droppedLateVideo)],
     [
-      `遅延 ${stats.viewerDelayMs === undefined ? '--' : (stats.viewerDelayMs / 1_000).toFixed(2)} s`,
-      `A/V ${ms(stats.syncOffsetMs)}`,
-      `訳と原音声のずれ ${ms(stats.translationOffsetMs)}`,
-      `聞いている言語 ${stats.language}${stats.pendingLanguage ? `（${stats.pendingLanguage} へ切替中）` : ''}`,
-      `直近の切替 ${stats.lastSwitchSeconds === undefined ? '--' : `${stats.lastSwitchSeconds.toFixed(1)} s`}`,
-      `遅れて捨てた 音声 ${stats.droppedLateAudio} / 映像 ${stats.droppedLateVideo}`,
-      `映像 ${size} ${Math.round(stats.receivedVideoKbps)} kbps`
-    ].join(' · ')
+      '映像',
+      `${stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : '--'} ${Math.round(stats.receivedVideoKbps)} kbps`
+    ]
+  ]
+  statsList.replaceChildren(
+    ...entries.map(([label, value]) => {
+      const item = document.createElement('div')
+      const term = document.createElement('dt')
+      term.textContent = label
+      const detail = document.createElement('dd')
+      detail.textContent = value
+      item.append(term, detail)
+      return item
+    })
   )
+  statsList.hidden = false
 }
 
 /// Sent to the observability server so runs can be compared afterwards.
@@ -116,6 +161,8 @@ function logStats(): void {
     pending_language: stats.pendingLanguage ?? '',
     playback_delay_ms: player.playbackDelayMs,
     viewer_delay_ms: defined(stats.viewerDelayMs),
+    arrival_delay_ms: defined(stats.arrivalDelayMs),
+    buffer_ms: defined(stats.bufferMs),
     sync_offset_ms: defined(stats.syncOffsetMs),
     translation_offset_ms: defined(stats.translationOffsetMs),
     last_switch_seconds: defined(stats.lastSwitchSeconds),

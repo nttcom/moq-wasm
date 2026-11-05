@@ -5,51 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Live Translate Viewer</title>
     <link rel="stylesheet" href="../../media/media.css" />
+    <link rel="stylesheet" href="./viewer.css" />
   </head>
   <body>
-    <div class="page">
-      <header class="hero">
-        <div>
-          <span class="pill">Live Translate</span>
-          <h1>視聴する</h1>
-          <p>言語を選ぶと、その言語に翻訳された音声で視聴できます。</p>
-        </div>
+    <div class="page viewer-page">
+      <header class="viewer-header">
+        <span class="pill">Live Translate</span>
+        <span id="broadcast-title" class="viewer-title" data-testid="viewer-title">配信を見る</span>
       </header>
-      <div id="app" class="control-grid">
-        <section class="card stack">
-          <h2>接続</h2>
-          <label for="url">Relay URL:</label>
+
+      <section class="viewer-stage-frame">
+        <div id="stage" class="viewer-stage" data-testid="viewer-stage"></div>
+        <div id="watch-overlay" class="viewer-overlay viewer-overlay-center">
+          <button type="button" id="watchBtn" class="viewer-watch" data-testid="viewer-watch-button">視聴する</button>
+          <p id="viewer-status" class="viewer-overlay-status" data-testid="viewer-status"></p>
+        </div>
+        <nav id="language-bar" class="viewer-overlay viewer-language-bar" aria-label="音声の言語" hidden>
+          <span id="language-status" class="viewer-language-status" data-testid="viewer-language-status"></span>
+          <div id="language-options" class="viewer-language-options" data-testid="viewer-language-select"></div>
+        </nav>
+      </section>
+
+      <dl id="viewer-stats" class="viewer-stats" data-testid="viewer-stats" hidden></dl>
+
+      <details id="connection" class="viewer-details">
+        <summary>接続</summary>
+        <div class="viewer-details-body">
+          <label for="url">Relay URL</label>
           <input type="url" id="url" data-testid="viewer-url-input" />
           <div id="urlPresets" class="preset-bar">Preset:</div>
-          <label for="broadcast-id">配信 ID:</label>
+          <label for="broadcast-id">配信 ID</label>
           <input type="text" id="broadcast-id" data-testid="viewer-broadcast-id" />
-          <div class="button-row">
-            <button type="button" id="watchBtn" data-testid="viewer-watch-button">視聴開始</button>
-            <button type="button" id="stopBtn">停止</button>
-          </div>
-          <p id="viewer-status" class="hint" data-testid="viewer-status"></p>
-        </section>
-        <section class="card stack">
-          <h2>言語</h2>
-          <select id="language" data-testid="viewer-language-select"></select>
-          <p id="language-status" class="hint" data-testid="viewer-language-status"></p>
           <label class="checkbox-row">
             <input type="checkbox" id="monitor-original" data-testid="viewer-monitor-original" />
             元の音声も小さく重ねる（デバッグ）
           </label>
-        </section>
-        <section class="card stack full">
-          <h2>Stats</h2>
-          <p id="viewer-stats" class="hint" data-testid="viewer-stats"></p>
-        </section>
-        <section class="card stack full">
-          <div id="stage" data-testid="viewer-stage"></div>
-        </section>
-        <section class="card stack full">
-          <h2>Console</h2>
-          <div id="logPanel" data-testid="viewer-log-panel"></div>
-        </section>
-      </div>
+          <div class="button-row">
+            <button type="button" id="stopBtn">視聴をやめる</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="viewer-details">
+        <summary>Console</summary>
+        <div id="logPanel" class="viewer-console" data-testid="viewer-log-panel"></div>
+      </details>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

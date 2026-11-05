@@ -35,12 +35,16 @@ async function watch(context: BrowserContext, viewerHref: string): Promise<Page>
   const viewer = await context.newPage()
   await viewer.goto(viewerHref)
   await viewer.getByTestId('viewer-watch-button').click()
-  await expect(viewer.getByTestId('viewer-language-select').locator('option')).toHaveCount(6, { timeout: 30_000 })
+  await expect(viewer.getByTestId('viewer-language-option')).toHaveCount(6, { timeout: 30_000 })
   return viewer
 }
 
+function languageButton(viewer: Page, lang: string) {
+  return viewer.locator(`[data-testid="viewer-language-option"][data-lang="${lang}"]`)
+}
+
 async function listenTo(viewer: Page, lang: string): Promise<void> {
-  await viewer.getByTestId('viewer-language-select').selectOption(lang)
+  await languageButton(viewer, lang).click()
   await expect.poll(async () => (await viewerStats(viewer)).language, { timeout: 30_000 }).toBe(lang)
 }
 
@@ -56,7 +60,7 @@ test('a viewer switches from the original audio to English, hears it with the pi
 
   try {
     // Act
-    await viewer.getByTestId('viewer-language-select').selectOption('en')
+    await languageButton(viewer, 'en').click()
 
     // Assert
     await expect.poll(async () => (await viewerStats(viewer)).language, { timeout: 30_000 }).toBe('en')
@@ -67,7 +71,7 @@ test('a viewer switches from the original audio to English, hears it with the pi
     await expect
       .poll(async () => ((await viewerStats(viewer)).playingAudioMicros ?? 0) - before, { timeout: 10_000 })
       .toBeGreaterThan(1_000_000)
-    await expect(viewer.getByTestId('viewer-language-status')).toHaveText('Listening: en')
+    await expect(viewer.getByTestId('viewer-language-status')).toHaveText('聞いている言語: en')
 
     // Assert: the picture runs the fixed playback delay behind the streamer and the translation plays with it.
     // The first picture shows a few seconds after the sound: the video waits for a keyframe and is held
@@ -85,7 +89,7 @@ test('a viewer switches from the original audio to English, hears it with the pi
 
     // Act
     const switchedBackAt = Date.now()
-    await viewer.getByTestId('viewer-language-select').selectOption('ja')
+    await languageButton(viewer, 'ja').click()
 
     // Assert
     await expect.poll(async () => (await viewerStats(viewer)).language, { timeout: 5_000 }).toBe('ja')
