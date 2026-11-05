@@ -626,8 +626,6 @@ export class LivePlayer {
     return true
   }
 
-  /// The first track, or under automatic quality the highest rendition its
-  /// picture's height needs when the first track is taller.
   private startingTrack(kind: MediaKind, tracks: MediaCatalogTrack[]): string {
     const [first] = tracks
     if (!first) {
