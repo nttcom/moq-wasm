@@ -27,6 +27,12 @@ both, each app's pages show only its own appId, a token passes only as the
 app whose secret signed it, and rotating or deleting one app leaves the
 other's tokens valid. Set `VTS_PORT` when 8081 is taken.
 
+`node tests/browser-e2e/run-live-translate-e2e.mjs` starts live-translate in
+`--echo` mode next to the relay, then drives the live translation streamer and
+viewer: a viewer switches to English, hears it in sync with the picture at the
+fixed delay and returns to the original at once, and a viewer joining after the
+translation started still receives the original audio.
+
 `node tests/browser-e2e/run-ptz-tracking-e2e.mjs` runs the PTZ tracking bot
 without a camera: `browser-e2e/fake-onvif-ingest.py` streams a synthetic H.264
 picture through `moq-cli publish` as `anon/onvif/client` and records the
