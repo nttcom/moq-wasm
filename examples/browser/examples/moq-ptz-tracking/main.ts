@@ -1,4 +1,5 @@
 import type { TrackWriter } from 'moq-wasm'
+import { withNamespaceRoot } from '../../utils/access'
 import { LivePlayer } from 'moq-wasm/media'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
@@ -6,9 +7,9 @@ import { element, setStatus } from '../../utils/page'
 import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
 
-const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
-const VIEWER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'viewer']
-const TRACKER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'tracker']
+const CAMERA_NAMESPACE = withNamespaceRoot(['anon', 'onvif', 'client'])
+const VIEWER_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking', 'viewer'])
+const TRACKER_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking', 'tracker'])
 // There is one ONVIF camera, so the bot service runs this one room only.
 const ROOM = 'onvif'
 const BOT_SERVICE = {

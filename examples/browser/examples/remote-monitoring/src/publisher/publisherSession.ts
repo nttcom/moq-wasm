@@ -1,4 +1,5 @@
 import { MoqSession } from 'moq-wasm'
+import { connectToken, withNamespaceRoot } from '../../../../utils/access'
 import { reportRelay } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
 
@@ -9,13 +10,13 @@ export class PublisherSession {
   readonly namespace: string[]
 
   constructor(location: string, camId: CameraId) {
-    this.namespace = ['anon', location, camId]
+    this.namespace = withNamespaceRoot(['anon', location, camId])
     log('created', { namespace: this.namespace })
   }
 
   async connect(relayUrl: string): Promise<void> {
     reportRelay(relayUrl)
-    const session = await MoqSession.connect(relayUrl)
+    const session = await MoqSession.connect(relayUrl, { token: connectToken() })
     this.session = session
     log('connected', { relayUrl })
     void session.closed.then(() => log('connection closed'))

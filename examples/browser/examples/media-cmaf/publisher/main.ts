@@ -1,4 +1,5 @@
 import { MoqSession, type TrackWriter } from 'moq-wasm'
+import { connectToken } from '../../../utils/access'
 import { CATALOG_TRACK_NAME } from 'moq-wasm/media'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'
@@ -226,7 +227,7 @@ const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
   const url = form.url.value
 
-  session = await MoqSession.connect(url)
+  session = await MoqSession.connect(url, { token: connectToken() })
   resetMoqSendVisualizationState()
   if (isMoqSendVisualizerVisible()) {
     renderMoqSendVisualization()

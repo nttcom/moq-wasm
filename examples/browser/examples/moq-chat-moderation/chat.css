@@ -51,7 +51,7 @@
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface-solid);
   cursor: pointer;
 }
 
@@ -119,7 +119,7 @@
   padding: 20px 22px;
   overflow-y: auto;
   border-left: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface-solid);
   box-shadow: var(--shadow);
 }
 

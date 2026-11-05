@@ -19,7 +19,7 @@ import {
   type TranscriptRecord
 } from '../media/transcript'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
-import { readMeetingAuth } from './authToken'
+import { connectToken } from '../../../../utils/access'
 import {
   buildNamespacePrefix,
   buildTrackNamespace,
@@ -111,7 +111,7 @@ export class LocalSession {
 
     this.transitionToState(LocalSessionState.Connecting)
     try {
-      const session = await MoqSession.connect(this.relayUrl, { token: readMeetingAuth().token })
+      const session = await MoqSession.connect(this.relayUrl, { token: connectToken() })
       this.session = session
       void session.closed.then((close) => {
         if (this.session === session) {

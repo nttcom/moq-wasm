@@ -1,4 +1,5 @@
 import { MoqSession, type MoqSubscription, type ReceivedObject } from 'moq-wasm'
+import { connectToken } from '../../../utils/access'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../../media/catalogPicker'
 import { readObjects } from '../../media/readObjects'
@@ -586,7 +587,7 @@ const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
   const url = form.url.value
 
-  session = await MoqSession.connect(url)
+  session = await MoqSession.connect(url, { token: connectToken() })
   setStatusText('catalog-track-status', 'Connected')
 })
 

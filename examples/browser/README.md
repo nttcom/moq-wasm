@@ -26,13 +26,29 @@ make chrome         # Chrome trusting the local relay certificate (make chrome:l
 
 ## Relay and authentication
 
-Relays always authenticate. A session without a token is limited to
-`anon/**`, so every example connects tokenless and defaults to namespaces
-such as `anon/live/test`; keep that prefix when typing your own.
+Relays always authenticate. The tabs at the top right of the example list
+choose how every example connects, and the choice is kept in localStorage:
 
-The meeting example also accepts an app-scoped JWT via `?jwt=<token>` (signed
-with the `auth-token` CLI). Its namespace root then becomes the token's
-appId, and a rejected token is reported with the relay's close code and reason.
+- **一時トークン** (temporary): the page gets a one-hour token for a new
+  temporary app from `services/token-mint` and uses `temp-…` as its
+  namespace root, so only the people a page's link reaches join its rooms or
+  see its recordings. The current token stays in the address bar as
+  `#jwt=<token>`, so a copied link (or 共有リンクをコピー) joins the same app;
+  opening one switches the visitor to that app. Pages refresh the token
+  before it expires; a link stops working an hour after its token was signed.
+  The issuer is `?tokenMintUrl=`, else `http://localhost:8083` for a page
+  served from this machine and the deployed one otherwise.
+- **Public**: tokenless, limited to `anon/**`, which everyone can see.
+
+A page served from this machine starts public, a deployed one temporary,
+until a tab is chosen. Namespace inputs default under the page's root, for
+example `anon/live/test` or `temp-…/live/test`; keep that root when typing
+your own. `utils/access.ts` resolves the mode once per page, and
+`utils/accessBar.ts` shows it at the top of every example.
+
+`?jwt=<token>` connects with any app-scoped JWT instead (for example one
+signed with the `auth-token` CLI or by the console). Its namespace root then
+becomes the token's appId; the token is used as is and never refreshed.
 
 ## Safari
 
