@@ -20,6 +20,15 @@ source audio after each language's fixed delay instead of calling Gemini, which
 keeps the whole path testable without Google Cloud; without either `--echo` or
 `LIVE_TRANSLATE_GCP_PROJECT` the translator refuses to start.
 
+Three limits bound the Gemini cost besides the `--max-sessions` cap
+(`translation_limits.rs`): a language is translated only inside
+`--open-hours` (the bots' notation, `Mon-Fri 09:00-17:30 +09:00`; a SUBSCRIBE
+outside them gets SUBSCRIBE_ERROR), for at most
+`--language-time-limit-minutes` at a stretch, and the `BroadcastTranslation`
+checks both every minute, ending the language's subscriptions with
+PUBLISH_DONE so the viewers fall back to the original audio and may subscribe
+again.
+
 ## Runtime flow
 
 ```

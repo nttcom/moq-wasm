@@ -4,6 +4,7 @@ mod catalog_publication;
 mod echo_translation;
 mod gemini;
 mod language_translation;
+mod open_hours;
 mod opus_codec;
 mod pcm_framer;
 mod source_audio;
@@ -12,8 +13,9 @@ mod target_language;
 mod translated_audio;
 mod translated_catalog;
 mod translation_engine;
+mod translation_limits;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -29,7 +31,9 @@ use crate::{
     broadcast_namespace::{BROADCAST_PREFIX, broadcast_of_translated, is_broadcast},
     broadcast_translation::BroadcastTranslation,
     gemini::{AgentPlatform, GeminiCredentials},
+    open_hours::OpenHours,
     translation_engine::TranslationEngine,
+    translation_limits::TranslationLimits,
 };
 
 #[derive(Parser, Debug)]
@@ -76,12 +80,28 @@ struct Args {
 
     #[arg(long, env = "LIVE_TRANSLATE_MAX_SESSIONS", default_value_t = 3)]
     max_sessions: usize,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_OPEN_HOURS",
+        help = "Translate only inside these weekly hours, like 'Mon-Fri 09:00-17:30 +09:00'; always when unset"
+    )]
+    open_hours: Option<OpenHours>,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_LANGUAGE_TIME_LIMIT_MINUTES",
+        default_value_t = 60,
+        help = "Stop a language's translation after this many minutes at a stretch; its viewers may subscribe again"
+    )]
+    language_time_limit_minutes: u64,
 }
 
 struct Router {
     session: Arc<Session>,
     engine: TranslationEngine,
     capacity: Arc<Semaphore>,
+    limits: Arc<TranslationLimits>,
     broadcasts: HashMap<String, BroadcastTranslation>,
 }
 
@@ -114,6 +134,10 @@ async fn main() -> Result<()> {
         session,
         engine,
         capacity: Arc::new(Semaphore::new(args.max_sessions)),
+        limits: Arc::new(TranslationLimits {
+            open_hours: args.open_hours.clone(),
+            language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
+        }),
         broadcasts: HashMap::new(),
     };
     router.route_events().await
@@ -189,6 +213,7 @@ impl Router {
             self.session.clone(),
             self.engine.clone(),
             self.capacity.clone(),
+            self.limits.clone(),
             namespace.clone(),
         );
         self.broadcasts.insert(namespace, broadcast);

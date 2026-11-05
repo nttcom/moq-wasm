@@ -3,8 +3,10 @@ use std::{collections::HashMap, future::pending, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use moqt::{
-    RequestErrorCode, Session, TrackWriter, object::ContentExists, subscribe::SubscribeHandler,
+    RequestErrorCode, Session, Subscription, TrackWriter, object::ContentExists,
+    publish::PublishDoneCode, subscribe::SubscribeHandler,
 };
+use time::OffsetDateTime;
 use tokio::{
     sync::{Semaphore, mpsc},
     task::JoinHandle,
@@ -20,10 +22,12 @@ use crate::{
     target_language::{TARGET_LANGUAGES, TargetLanguage, find_by_track_name},
     translated_catalog::{build_translated_catalog, source_audio_track},
     translation_engine::TranslationEngine,
+    translation_limits::TranslationLimits,
 };
 
 const SUBSCRIPTION_NEVER_EXPIRES: u64 = 0;
 const LANGUAGE_IDLE_GRACE: Duration = Duration::from_secs(5);
+const LIMITS_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// Covers the source catalog's SUBSCRIBE retries and the wait for the audio
 /// track to be listed.
 const FIRST_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
@@ -45,6 +49,7 @@ impl BroadcastTranslation {
         session: Arc<Session>,
         engine: TranslationEngine,
         capacity: Arc<Semaphore>,
+        limits: Arc<TranslationLimits>,
         broadcast_namespace: String,
     ) -> Self {
         let translated_namespace = translated_namespace(&broadcast_namespace);
@@ -56,6 +61,7 @@ impl BroadcastTranslation {
                     session,
                     engine,
                     capacity,
+                    limits,
                     &broadcast_namespace,
                     command_receiver,
                 )
@@ -100,12 +106,16 @@ impl Drop for BroadcastTranslation {
 struct LanguageSlot {
     translation: LanguageTranslation,
     idle_since: Option<Instant>,
+    started_at: Instant,
+    /// The viewers' subscriptions the relay forwarded, to end with PUBLISH_DONE.
+    subscriptions: HashMap<u64, Subscription>,
 }
 
 struct Serving {
     session: Arc<Session>,
     engine: TranslationEngine,
     capacity: Arc<Semaphore>,
+    limits: Arc<TranslationLimits>,
     broadcast_namespace: String,
     source_track_name: String,
     source_channels: u32,
@@ -120,6 +130,7 @@ async fn serve(
     session: Arc<Session>,
     engine: TranslationEngine,
     capacity: Arc<Semaphore>,
+    limits: Arc<TranslationLimits>,
     broadcast_namespace: &str,
     mut command_receiver: mpsc::UnboundedReceiver<BroadcastCommand>,
 ) -> Result<()> {
@@ -145,6 +156,7 @@ async fn serve(
         session: session.clone(),
         engine,
         capacity,
+        limits,
         broadcast_namespace: broadcast_namespace.to_string(),
         source_track_name: source_track.name.clone(),
         source_channels: channel_count(source_track.channel_config.as_deref()),
@@ -161,9 +173,11 @@ async fn serve(
         .await
         .context("announce the translated namespace")?;
     tracing::info!(%namespace, source_track = %serving.source_track_name, "translation ready");
+    let mut limits_check = tokio::time::interval(LIMITS_CHECK_INTERVAL);
     loop {
         let idle_deadline = serving.earliest_idle_deadline();
         tokio::select! {
+            _ = limits_check.tick() => serving.enforce_limits().await,
             command = command_receiver.recv() => match command {
                 Some(BroadcastCommand::Subscribe(handler)) => serving.subscribe(*handler).await,
                 Some(BroadcastCommand::Unsubscribe(request_id)) => serving.unsubscribe(request_id),
@@ -199,7 +213,7 @@ impl Serving {
     }
 
     async fn subscribe_catalog(&mut self, handler: &SubscribeHandler) -> Result<()> {
-        let writer = self.accept(handler).await?;
+        let (_, writer) = self.accept(handler).await?;
         self.catalog_publications.insert(
             handler.request_id(),
             CatalogPublication::run(writer, self.catalog_payload.clone()),
@@ -212,6 +226,17 @@ impl Serving {
         handler: &SubscribeHandler,
         language: &'static crate::target_language::TargetLanguage,
     ) -> Result<()> {
+        if let Some(open_hours) = &self.limits.open_hours
+            && !open_hours.contains(OffsetDateTime::now_utc())
+        {
+            reject(
+                handler,
+                RequestErrorCode::InternalError,
+                &format!("closed outside the open hours {open_hours}"),
+            )
+            .await;
+            return Ok(());
+        }
         if !self.languages.contains_key(language.code) {
             let Ok(capacity_permit) = self.capacity.clone().try_acquire_owned() else {
                 reject(
@@ -252,13 +277,17 @@ impl Serving {
                 LanguageSlot {
                     translation,
                     idle_since: None,
+                    started_at: Instant::now(),
+                    subscriptions: HashMap::new(),
                 },
             );
         }
-        let writer = self.accept(handler).await?;
+        let (subscription, writer) = self.accept(handler).await?;
         if let Some(slot) = self.languages.get_mut(language.code) {
             slot.translation.replace_writer(Some(writer));
             slot.idle_since = None;
+            slot.subscriptions
+                .insert(handler.request_id(), subscription);
         }
         self.request_languages
             .insert(handler.request_id(), language.code);
@@ -300,6 +329,60 @@ impl Serving {
         if let Some(slot) = self.languages.get_mut(code) {
             slot.translation.replace_writer(None);
             slot.idle_since = Some(Instant::now());
+            slot.subscriptions.remove(&request_id);
+        }
+    }
+
+    /// Viewers of an ended language get PUBLISH_DONE and may subscribe again.
+    async fn enforce_limits(&mut self) {
+        let now = Instant::now();
+        let closed = self
+            .limits
+            .open_hours
+            .as_ref()
+            .is_some_and(|open_hours| !open_hours.contains(OffsetDateTime::now_utc()));
+        let ended: Vec<(&'static str, &'static str)> = self
+            .languages
+            .iter()
+            .filter_map(|(code, slot)| {
+                if now >= slot.started_at + self.limits.language_time_limit {
+                    Some((*code, "time limit"))
+                } else if closed {
+                    Some((*code, "closed"))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (code, reason) in ended {
+            let Some(slot) = self.languages.remove(code) else {
+                continue;
+            };
+            for (request_id, subscription) in slot.subscriptions {
+                self.request_languages.remove(&request_id);
+                if let Err(error) = self
+                    .session
+                    .publisher()
+                    .publish_done(
+                        &subscription,
+                        PublishDoneCode::TrackEnded,
+                        0,
+                        reason.to_string(),
+                    )
+                    .await
+                {
+                    tracing::warn!(request_id, ?error, "send PUBLISH_DONE");
+                }
+            }
+            tracing::info!(
+                language = code,
+                reason,
+                ran_minutes = (now - slot.started_at).as_secs() / 60,
+                "translation stopped"
+            );
+        }
+        if self.languages.is_empty() {
+            self.source_audio = None;
         }
     }
 
@@ -327,16 +410,14 @@ impl Serving {
         }
     }
 
-    async fn accept(&self, handler: &SubscribeHandler) -> Result<TrackWriter> {
+    async fn accept(&self, handler: &SubscribeHandler) -> Result<(Subscription, TrackWriter)> {
         let track_alias = handler
             .ok(SUBSCRIPTION_NEVER_EXPIRES, ContentExists::False)
             .await
             .context("send SUBSCRIBE_OK")?;
         let subscription = handler.into_subscription(track_alias);
-        Ok(TrackWriter::new(
-            self.session.publisher().create_stream(&subscription),
-            0,
-        ))
+        let writer = TrackWriter::new(self.session.publisher().create_stream(&subscription), 0);
+        Ok((subscription, writer))
     }
 }
 
