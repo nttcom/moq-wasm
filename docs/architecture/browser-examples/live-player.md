@@ -655,8 +655,11 @@ start of the broadcast, and the label at its left end the elapsed time at the ax
 start. The numbers come from the MSF media timeline track
 (draft-ietf-moq-msf-01 section 7), which the bridge publishes as a JSON array of
 `[presentation time, [group id, object id], encode wallclock]` records covering
-the groups the relay still caches. The viewer finds it in the catalog by its
-`mediatimeline` packaging and subscribes to it alongside the media tracks.
+the groups the relay still caches. Every source of a broadcast has its own; the
+viewer finds the one of the source it plays in the catalog by its
+`mediatimeline` packaging and a `depends` that names one of the source's tracks,
+and subscribes to it alongside the media tracks. A later catalog updates that
+`depends`, which follows the source's tracks as they come and go.
 
 A capture timestamp resolves to a presentation time by offsetting from the
 newest record at or before it. The renditions share the source's keyframe times

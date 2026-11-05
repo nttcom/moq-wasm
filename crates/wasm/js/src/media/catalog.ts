@@ -109,6 +109,14 @@ export function sourceTracks(tracks: MediaCatalogTrack[], source: LiveSource): M
   return [...own, ...tracks.filter((track) => track.packaging === 'cmaf' && cmafNames.has(track.name))]
 }
 
+/// The media timeline of the source `trackNames` belong to: each source has
+/// its own, which depends on the source's tracks.
+export function mediaTimelineOf(catalog: unknown, trackNames: string[]): MediaCatalogTrack | undefined {
+  return extractCatalogTracks(catalog, 'mediatimeline').find(({ depends }) =>
+    depends?.some((name) => trackNames.includes(name))
+  )
+}
+
 export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaCatalogTrack[] {
   const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
     ? ((catalog as { tracks: unknown[] }).tracks ?? [])
