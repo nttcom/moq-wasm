@@ -1,17 +1,21 @@
 import type { MediaCatalogTrack } from '../catalog'
+import { readLocHeader } from '../internal/loc'
 import type { AudioPlayout } from './audioPlayout'
 import type { LivePlayout } from './livePlayout'
 import { type LocObject, audioCatalogMessage, objectMessage } from './locLive'
 
 /// A second audio track, such as a translation of the main one, played on a
 /// live playout's clock. It starts silent; `fadeTo` fades it in. A chunk that
-/// is due before it can be heard is dropped and counted in `droppedLate`.
+/// is due before it can be heard is dropped and, unless it came from the
+/// relay's cache of the group the subscription joined, counted in
+/// `droppedLate`.
 export class AudioLane {
   private readonly worker = new Worker(new URL('../internal/decoders/audioDecoder.ts', import.meta.url), {
     type: 'module'
   })
   private readonly audio: AudioPlayout
   private newestCaptureMicros: number | undefined
+  private cachedUpToMicros: number | undefined
   private firstScheduledReported = false
   droppedLate = 0
 
@@ -30,7 +34,15 @@ export class AudioLane {
     }
   }
 
-  push(groupId: bigint, object: LocObject): void {
+  /// `cached` marks an object a joining FETCH delivered from before the
+  /// subscription started.
+  push(groupId: bigint, object: LocObject, cached = false): void {
+    if (cached) {
+      const captureMicros = readLocHeader(object.locHeader).captureTimestampMicros
+      if (captureMicros !== undefined) {
+        this.cachedUpToMicros = Math.max(this.cachedUpToMicros ?? 0, captureMicros)
+      }
+    }
     const [message, transfer] = objectMessage(groupId, object)
     this.worker.postMessage(message, transfer)
   }
@@ -61,7 +73,9 @@ export class AudioLane {
     this.newestCaptureMicros = captureMicros
     if (dueMs < performance.now() + this.audio.outputLatencyMs()) {
       audioData.close()
-      this.droppedLate += 1
+      if (this.cachedUpToMicros === undefined || captureMicros > this.cachedUpToMicros) {
+        this.droppedLate += 1
+      }
       return
     }
     this.audio.play(audioData, captureMicros, () => dueMs)
