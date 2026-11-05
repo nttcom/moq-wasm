@@ -10,7 +10,7 @@ its HS256 signing and verification, and a CLI that signs one.
 
 | Module | Responsibility |
 | --- | --- |
-| `lib.rs` | `Claims`, and `Claims::issued`, which sets `iat` and an `exp` a lifetime later. |
+| `lib.rs` | `Claims`, `Claims::issued`, which sets `iat` and an `exp` a lifetime later, and `TEMPORARY_APP_ID_PREFIX`, the `appId` prefix of a temporary app (see the VTS architecture). |
 | `lifetime.rs` | `parse_lifetime` for `15s` / `30m` / `12h` / `365d`. |
 | `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_unverified_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `ring`. |
 | `bin/auth-token.rs` | The `auth-token` CLI, built only with the `cli` feature: `--app-id`, `--publish`, `--subscribe`, `--ttl` and `--relay-id`, signed with the secret in `AUTH_TOKEN_SECRET`. |

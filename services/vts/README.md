@@ -39,6 +39,7 @@ any algorithm other than HS256).
 | `VTS_REGISTRY_BUCKET`   | unset                | Read the registered apps from this Cloud Storage bucket instead |
 | `VTS_REGISTRY_OBJECT`   | `registry.json`      | Object in `VTS_REGISTRY_BUCKET`                                 |
 | `STORAGE_EMULATOR_HOST` | unset                | Cloud Storage emulator URL, e.g. `http://localhost:4443`        |
+| `VTS_TEMPORARY_APP_SECRET` | unset             | Secret of every temporary app (see below); unset disables them  |
 | `VTS_PORT`              | `8081`               | Listen port                                                     |
 | `VTS_STDOUT_FILTER`     | `vts=info`           | `tracing` filter for stdout; falls back to `RUST_LOG`           |
 | `VTS_OTEL_FILTER`       | `vts=info`           | `tracing` filter for OpenTelemetry traces                       |
@@ -68,6 +69,15 @@ The registered apps are a JSON array, the format `app-registry` reads;
 
 Tokens are HS256 JWTs signed with the app's `secret` (UTF-8 bytes). Generate
 secrets with e.g. `openssl rand -base64 32`.
+
+### Temporary apps
+
+An `appId` starting with `temp-` names a temporary app: it is not in the
+registry, and its tokens are signed with `VTS_TEMPORARY_APP_SECRET` by
+whoever issues them. A temporary app is never a relay. While
+`VTS_TEMPORARY_APP_SECRET` is set, a registered app whose `appId` starts with
+`temp-` cannot be verified with its registered secret; the console never
+creates one.
 
 ## Signing tokens
 

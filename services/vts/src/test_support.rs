@@ -19,6 +19,8 @@ pub(crate) const APP_SECRET: &str = "app-secret";
 pub(crate) const RELAY_ID: &str = "RELAY";
 pub(crate) const RELAY_SECRET: &str = "relay-secret";
 pub(crate) const NOW: u64 = 1_759_600_000;
+pub(crate) const TEMPORARY_APP_ID: &str = "temp-0123456789abcdef";
+pub(crate) const TEMPORARY_SECRET: &str = "temporary-secret";
 
 pub(crate) fn test_apps_json() -> String {
     json!([
@@ -37,6 +39,16 @@ pub(crate) fn app_claims() -> Value {
         "appId": APP_ID,
         "publish": "site1",
         "subscribe": "site1",
+        "iat": NOW,
+        "exp": NOW + 3600,
+    })
+}
+
+pub(crate) fn temporary_app_claims() -> Value {
+    json!({
+        "appId": TEMPORARY_APP_ID,
+        "publish": "",
+        "subscribe": "",
         "iat": NOW,
         "exp": NOW + 3600,
     })
