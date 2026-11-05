@@ -1,4 +1,5 @@
 import { MoqSession } from 'moq-wasm'
+import { connectToken } from '../../../utils/access'
 import { type Publication, type SourcePublication, publish } from 'moq-wasm/media'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { getMediaVideoEncodingOverrides } from '../common'
@@ -22,7 +23,7 @@ function initializeStatuses(): void {
 async function connect(): Promise<void> {
   await close()
   const url = form.url.value
-  session = await MoqSession.connect(url)
+  session = await MoqSession.connect(url, { token: connectToken() })
   setStatusText('publisher-connection-status', `Connected: ${url}`)
 }
 

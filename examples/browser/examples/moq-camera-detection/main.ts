@@ -1,4 +1,5 @@
 import type { TrackWriter } from 'moq-wasm'
+import { withNamespaceRoot } from '../../utils/access'
 import { publish } from 'moq-wasm/media'
 import { pageRoomId } from '../../utils/botRoom'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
@@ -8,8 +9,8 @@ import { startPageTelemetry } from '../../utils/pageTelemetry'
 
 startPageTelemetry('moq-camera-detection', () => element<HTMLInputElement>('url').value.trim())
 const ROOM = pageRoomId()
-const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', ROOM, 'camera']
-const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', ROOM, 'detector']
+const CAMERA_NAMESPACE = withNamespaceRoot(['anon', 'moq-camera-detection', ROOM, 'camera'])
+const DETECTOR_NAMESPACE = withNamespaceRoot(['anon', 'moq-camera-detection', ROOM, 'detector'])
 const BOT_SERVICE = {
   param: 'botUrl',
   local: 'http://127.0.0.1:8098',

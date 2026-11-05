@@ -1,4 +1,5 @@
 import type { PlayerStatus } from 'moq-wasm/media'
+import { access } from './access'
 import { firstSearchParam, setUpRelayUrlControls } from './relayPresets'
 
 export type StatusState = PlayerStatus['state']
@@ -69,5 +70,5 @@ function applyNamespaceOverride(namespaceInputId: string): void {
 export function buildDefaultTrackNamespace(date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, '0')
   const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
-  return `anon/nttcom/${day}/${pad(date.getHours())}${pad(date.getMinutes())}`
+  return `${access.namespaceRoot}/nttcom/${day}/${pad(date.getHours())}${pad(date.getMinutes())}`
 }

@@ -6,7 +6,7 @@ export type ServiceUrls = {
   cloud: string
 }
 
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+export const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /// The `param` query parameter, or the service that reaches the relay:
 /// the local one for a local relay, the deployed one otherwise.

@@ -10,6 +10,7 @@ import {
   type RecordingLayout,
   type RecordingFormat,
   type RoomRecording,
+  type Recorder,
   listRecordings,
   startRecording,
   stopRecording
@@ -167,8 +168,10 @@ async function startRecorderServe() {
     }
     await sleep(POLL_INTERVAL_MS)
   }
+  // The rooms these tests record are under the public root, which needs no token.
+  const api: Recorder = { url, token: () => undefined }
   const current = async (recording: RoomRecording) =>
-    (await listRecordings(url, recording.namespace_prefix)).find((candidate) => candidate.id === recording.id)
+    (await listRecordings(api, recording.namespace_prefix)).find((candidate) => candidate.id === recording.id)
   return {
     url,
     storeDir,
@@ -179,7 +182,7 @@ async function startRecorderServe() {
       composite = false,
       format: RecordingFormat = 'mp4'
     ): Promise<RoomRecording> {
-      const recording = await startRecording(url, namespacePrefix, layout, composite, format)
+      const recording = await startRecording(api, namespacePrefix, layout, composite, format)
       const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
       while ((await current(recording))?.state === 'starting') {
         if (Date.now() > deadline) {
@@ -191,7 +194,7 @@ async function startRecorderServe() {
     },
     /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
     async stop(recording: RoomRecording): Promise<string[]> {
-      await stopRecording(url, recording.id)
+      await stopRecording(api, recording.id)
       const deadline = Date.now() + RECORDING_FINISH_TIMEOUT_MS
       for (;;) {
         const state = (await current(recording))?.state

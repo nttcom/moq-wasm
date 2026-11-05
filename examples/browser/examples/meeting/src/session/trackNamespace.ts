@@ -1,6 +1,6 @@
-import { readMeetingAuth } from './authToken'
+import { access } from '../../../../utils/access'
 
-const MEETING_NAMESPACE_ROOT = readMeetingAuth().namespaceRoot
+const MEETING_NAMESPACE_ROOT = access.namespaceRoot
 
 export type ParsedTrackNamespace = {
   roomName: string
@@ -32,5 +32,5 @@ export function isTranscriberNamespace(trackNamespace: string[] | undefined, roo
   return trackNamespace?.join('/') === buildTranscriberNamespace(roomName).join('/')
 }
 
-/// The transcriber serves rooms of the anonymous app only, whose root a page without a JWT uses.
-export const TRANSCRIBER_AVAILABLE = !readMeetingAuth().token
+/// The transcriber serves rooms of the anonymous app only.
+export const TRANSCRIBER_AVAILABLE = access.kind === 'public'

@@ -1,4 +1,5 @@
 import type { TrackWriter } from 'moq-wasm'
+import { withNamespaceRoot } from '../../utils/access'
 import { pageRoomId } from '../../utils/botRoom'
 import { onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
@@ -17,8 +18,8 @@ import {
 
 startPageTelemetry('moq-chat-moderation', () => element<HTMLInputElement>('url').value.trim())
 const ROOM = pageRoomId()
-const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', ROOM, 'chat']
-const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', ROOM, 'moderator']
+const CHAT_NAMESPACE = withNamespaceRoot(['anon', 'moq-chat-moderation', ROOM, 'chat'])
+const MODERATOR_NAMESPACE = withNamespaceRoot(['anon', 'moq-chat-moderation', ROOM, 'moderator'])
 const BOT_SERVICE = {
   param: 'botUrl',
   local: 'http://127.0.0.1:8097',
