@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use metadata_token::MetadataToken;
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url, header::CONTENT_TYPE};
-use tokio::sync::Mutex;
 
 use crate::{
     app::Apps,
@@ -46,10 +46,11 @@ pub(crate) struct CloudStorageObject {
 
 impl CloudStorageObject {
     pub(crate) fn new(endpoint: Endpoint, bucket: &str, object: &str) -> anyhow::Result<Self> {
+        let http = Client::builder().timeout(REQUEST_TIMEOUT).build()?;
         let (base, credentials) = match endpoint {
             Endpoint::CloudStorage => (
                 Url::parse(CLOUD_STORAGE_URL).expect("CLOUD_STORAGE_URL is a valid URL"),
-                Credentials::MetadataServer(Mutex::new(None)),
+                Credentials::MetadataServer(MetadataToken::new(http.clone())),
             ),
             Endpoint::Emulator(url) => (url, Credentials::None),
         };
@@ -73,7 +74,7 @@ impl CloudStorageObject {
             .append_pair("uploadType", "media")
             .append_pair("name", object);
         Ok(Self {
-            http: Client::builder().timeout(REQUEST_TIMEOUT).build()?,
+            http,
             object_url,
             upload_url,
             credentials,
@@ -135,7 +136,7 @@ impl CloudStorageObject {
     }
 
     async fn authorize(&self, request: RequestBuilder) -> anyhow::Result<RequestBuilder> {
-        Ok(match self.credentials.bearer_token(&self.http).await? {
+        Ok(match self.credentials.bearer_token().await? {
             Some(token) => request.bearer_auth(token),
             None => request,
         })
