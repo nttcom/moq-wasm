@@ -25,11 +25,11 @@ rendition of a writer's source video into a track of its own; `live-ingest`
 adds its transcoded renditions this way. A writer writes into `video` and
 `audio` by default; `onvif-ingest` runs one writer per camera profile in one
 broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
-The media timeline and the chat describe the default `video` and `audio`, so
-the catalog lists them, and the `audio` placeholder sent before the AAC config
-arrives, only while a default track exists. `Broadcast::offer_chat` lists the chat
-without one, for a broadcast whose publisher writes the chat while it sends no
-media.
+The chat describes the default `video` and `audio`, so the catalog lists it,
+and the `audio` placeholder sent before the AAC config arrives, only while a
+default track exists. `Broadcast::offer_chat` lists the chat without one, for a
+broadcast whose publisher writes the chat while it sends no media. Every
+writer publishes a media timeline of its own (see "Media timeline").
 
 Tasks are spawned, timers run and clocks read only through `moqt::executor`, so the crate
 also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
@@ -58,11 +58,12 @@ namespace no broadcast publishes (see "Sharing a session").
 
 A source that stops, such as a muted microphone or an ended screen share,
 leaves with `Broadcast::remove_track`: the catalog without the track is sent
-first, then every track that catalog no longer lists, the CMAF sibling and,
-with the last default track, the audio placeholder, the media timeline and
-the chat, ends with PUBLISH_DONE through `Origin::end_track`. The numbering
-stays in `Origin`, so a track whose catalog is updated again is published
-again from the next group, without reusing a location.
+first, then every track that catalog no longer lists, the CMAF sibling, the
+media timeline of a writer left without tracks and, with the last default
+track, the audio placeholder and the chat, ends with PUBLISH_DONE through
+`Origin::end_track`. The numbering stays in `Origin`, so a track whose
+catalog is updated again is published again from the next group, without
+reusing a location.
 `BroadcastWriter::remove_track` takes the removal after the media pushed
 before it, so a configuration still in the queue does not publish the track
 again.
@@ -91,8 +92,8 @@ estimate the CMAF track's vpcC box gives.
 ## CMAF tracks
 A writer whose `SourceTracks::cmaf` is off publishes its tracks as LOC alone:
 the catalog lists no CMAF sibling for them, nothing is muxed into fMP4, and the
-media timeline depends on `video` only. Otherwise every media track has a CMAF
-sibling named with a `_cmaf` suffix, except A-law,
+media timeline depends on the LOC tracks only. Otherwise every media track
+has a CMAF sibling named with a `_cmaf` suffix, except A-law,
 Opus and MP3 audio, which travel as LOC alone (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
 (draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
@@ -209,9 +210,21 @@ that reuses a known location as malformed, so a restarted publisher must never
 produce a location an earlier run already used.
 
 ## Media timeline
-The `timeline` track (draft-ietf-moq-msf-01 §7) carries, at every video
-keyframe, the records `[presentation time, [group id, 0], encode wallclock]`
-accumulated so far as one object in a new group. Records older than the relay's
-cache retention are dropped. Viewers use it to place groups on a seek axis;
-since every track of the switching set shares the source's group ids (see
-Group alignment), the same records hold across rendition changes.
+Every writer publishes a media timeline track (draft-ietf-moq-msf-01 §7) named
+after its video track, `<video>_timeline` (`video_timeline` for the default
+names), even a writer that never publishes video. Its `depends` lists the
+writer's tracks the catalog lists: the video, the renditions and the audio,
+with their CMAF siblings. One timeline covers them all because they share the
+writer's group ids (see Group alignment), so its records also hold across
+rendition changes. The timeline is listed while the catalog lists any of those
+tracks.
+
+At the start of every group of the writer, the writer adds the record
+`[presentation time, [group id, 0], encode wallclock]` of the group's first
+sample and sends the records accumulated so far as one object in a new group
+of the timeline. The video starts the groups while it is published; while it
+is muted or absent the audio does, so a mute leaves no group without a record.
+Records older than the relay's cache retention are dropped and the others are
+kept for as long as the writer publishes; a restarted publisher starts a new
+writer, and with it an empty timeline. Viewers use the timeline to place
+groups on a seek axis.

@@ -14,8 +14,8 @@ use moqt::{
 
 use crate::{
     broadcast::{
-        AudioTrackInfo, Broadcast, SourceTracks, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME,
-        VideoTrackInfo, cmaf_track_name,
+        AudioTrackInfo, Broadcast, SourceTracks, VideoTrackInfo, cmaf_track_name,
+        timeline_track_name,
     },
     group_alignment::GroupAlignment,
     media_timeline::MediaTimeline,
@@ -117,6 +117,7 @@ impl TrackPublisher {
                 let info = VideoTrackInfo {
                     cmaf: self.tracks.cmaf,
                     switching_set: self.tracks.switching_set.clone(),
+                    source: self.tracks.video.clone(),
                     bitrate: self.tracks.video_bitrate,
                     ..VideoTrackInfo::from_config(config, self.tracks.video_label.clone())?
                 };
@@ -136,6 +137,7 @@ impl TrackPublisher {
                     config: config.clone(),
                     cmaf: self.tracks.cmaf,
                     switching_set: self.tracks.switching_set.clone(),
+                    source: self.tracks.video.clone(),
                 };
                 self.broadcast
                     .update_audio_catalog(&self.tracks.audio, info)
@@ -204,9 +206,6 @@ impl TrackPublisher {
         let (Some(group_id), Some(captured_at)) = (keyframe_group, captured_at) else {
             return Ok(());
         };
-        if self.tracks.video != VIDEO_TRACK_NAME {
-            return Ok(());
-        }
         self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
             .await
     }
@@ -246,7 +245,7 @@ impl TrackPublisher {
             .record(group_id, presentation_us, encoded_at_ms);
         self.broadcast
             .send_object(
-                TIMELINE_TRACK_NAME,
+                &timeline_track_name(&self.tracks.video),
                 OutgoingObject::plain(GroupBoundary::Next, Bytes::from(self.timeline.document()?)),
             )
             .await?;
@@ -255,7 +254,8 @@ impl TrackPublisher {
 
     /// Audio pushed after the video's configuration and before its first
     /// keyframe has no group to belong to and is dropped, as the video before
-    /// its first keyframe is.
+    /// its first keyframe is. Without video the audio starts the source's
+    /// groups, so it writes their media timeline records.
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
         self.audio_config
             .as_ref()
@@ -279,7 +279,7 @@ impl TrackPublisher {
         else {
             return Ok(());
         };
-        let capture_us = object.capture_timestamp().map_or(0, |at| at.micros());
+        let captured_at = object.capture_timestamp();
         let bytes = object.payload.len();
         let written = self
             .broadcast
@@ -299,12 +299,19 @@ impl TrackPublisher {
                 namespace = %self.broadcast.namespace().join("/"),
                 track = %self.tracks.audio,
                 group_id = self.audio_group_id.unwrap_or_default(),
-                capture_us,
+                capture_us = captured_at.map_or(0, |at| at.micros()),
                 pts_us = sample.pts.micros(),
                 bytes
             );
         }
-        self.publish_cmaf_audio(sample, group).await
+        self.publish_cmaf_audio(sample, group).await?;
+        let (GroupBoundary::At(group_id), false, Some(captured_at)) =
+            (group, self.video_published, captured_at)
+        else {
+            return Ok(());
+        };
+        self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
+            .await
     }
 
     async fn publish_cmaf_audio(
@@ -367,13 +374,80 @@ fn wall_clock() -> Timestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::relay_connection::RelayConnection;
+    use crate::{broadcast::VIDEO_TRACK_NAME, relay_connection::RelayConnection};
 
     fn publisher() -> TrackPublisher {
         TrackPublisher::new(
             Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]),
             SourceTracks::default(),
         )
+    }
+
+    fn opus_config() -> MediaEvent {
+        MediaEvent::AudioConfig(AudioConfig::Opus {
+            sample_rate: 48_000,
+            channels: 1,
+        })
+    }
+
+    fn audio_at(pts_us: u64) -> MediaEvent {
+        MediaEvent::Audio(AudioSample {
+            data: Bytes::from_static(b"opus"),
+            pts: Timestamp::from_micros(pts_us),
+            audio_level: None,
+        })
+    }
+
+    fn keyframe_at(pts_us: u64) -> MediaEvent {
+        MediaEvent::Video(VideoSample {
+            data: Bytes::from_static(b"nal"),
+            is_keyframe: true,
+            pts: Timestamp::from_micros(pts_us),
+            dts: Timestamp::from_micros(pts_us),
+        })
+    }
+
+    fn recorded(publisher: &TrackPublisher) -> Vec<(u64, u64)> {
+        let records: Vec<(u64, (u64, u64), u64)> =
+            serde_json::from_slice(&publisher.timeline.document().unwrap()).unwrap();
+        records
+            .into_iter()
+            .map(|(presentation_ms, (group_id, _), _)| (presentation_ms, group_id))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn without_video_the_audio_records_each_group_it_starts() {
+        // Arrange
+        let mut publisher = publisher();
+        publisher.push(&opus_config()).await.unwrap();
+
+        // Act
+        for pts in [0, 20_000, 1_000_000] {
+            publisher.push(&audio_at(pts)).await.unwrap();
+        }
+
+        // Assert
+        let first = publisher.timing.alignment.aligned(0).unwrap();
+        assert_eq!(recorded(&publisher), [(0, first), (1_000, first + 1)]);
+    }
+
+    #[tokio::test]
+    async fn the_audio_continues_the_timeline_once_the_video_is_removed() {
+        // Arrange: the audio at 20 ms takes the group of the video keyframe at 0
+        let mut publisher = publisher();
+        publisher.push(&opus_config()).await.unwrap();
+        publisher.video_published = true;
+        publisher.push(&keyframe_at(0)).await.unwrap();
+        publisher.push(&audio_at(20_000)).await.unwrap();
+
+        // Act
+        publisher.remove_track(VIDEO_TRACK_NAME).await.unwrap();
+        publisher.push(&audio_at(1_500_000)).await.unwrap();
+
+        // Assert
+        let keyframe = publisher.timing.alignment.aligned(0).unwrap();
+        assert_eq!(recorded(&publisher), [(0, keyframe), (1_500, keyframe + 1)]);
     }
 
     #[test]

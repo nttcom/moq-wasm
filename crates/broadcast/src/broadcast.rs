@@ -13,8 +13,8 @@ use crate::relay_connection::RelayConnection;
 
 pub const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
-pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
 const CMAF_TRACK_SUFFIX: &str = "_cmaf";
+const TIMELINE_TRACK_SUFFIX: &str = "_timeline";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
 
@@ -114,10 +114,10 @@ impl Broadcast {
 
     /// Sends the catalog without the video or audio track, then ends with
     /// PUBLISH_DONE every track that catalog no longer lists: the track, its
-    /// CMAF sibling and, when it was the last default track, the `audio`
-    /// placeholder, the media timeline and the chat. Stop sending the track's
-    /// objects first. Updating its catalog again publishes it again. Fails
-    /// when the relay session has ended.
+    /// CMAF sibling, the media timeline of a source left without tracks and,
+    /// when it was the last default track, the `audio` placeholder and the
+    /// chat. Stop sending the track's objects first. Updating its catalog
+    /// again publishes it again. Fails when the relay session has ended.
     pub async fn remove_track(&self, track_name: &str) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
@@ -126,11 +126,13 @@ impl Broadcast {
     }
 }
 
-/// The tracks one `BroadcastWriter` writes its source into. The media
-/// timeline and the chat belong to the default `video` and `audio` tracks, so
-/// a writer under other names publishes neither.
+/// The tracks one `BroadcastWriter` writes its source into. The chat belongs
+/// to the default `video` and `audio` tracks, so a writer under other names
+/// does not publish it.
 #[derive(Debug, Clone)]
 pub struct SourceTracks {
+    /// Also names the source's media timeline, `<video>_timeline`, which a
+    /// source without video publishes as well.
     pub video: String,
     pub video_label: String,
     pub audio: String,
@@ -170,6 +172,9 @@ pub struct AudioTrackInfo {
     /// `SourceTracks::switching_set` of the track's source, whose render
     /// group the track joins.
     pub switching_set: String,
+    /// `SourceTracks::video` of the track's source, whose media timeline
+    /// lists the track's groups.
+    pub source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +190,8 @@ pub struct VideoTrackInfo {
     pub cmaf: bool,
     /// `SourceTracks::switching_set` of the track's source.
     pub switching_set: String,
+    /// `SourceTracks::video` of the track's source.
+    pub source: String,
 }
 
 impl VideoTrackInfo {
@@ -208,12 +215,17 @@ impl VideoTrackInfo {
             bitrate: None,
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
+            source: VIDEO_TRACK_NAME.to_string(),
         })
     }
 }
 
 pub fn cmaf_track_name(track_name: &str) -> String {
     format!("{track_name}{CMAF_TRACK_SUFFIX}")
+}
+
+pub(crate) fn timeline_track_name(source: &str) -> String {
+    format!("{source}{TIMELINE_TRACK_SUFFIX}")
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -263,6 +275,8 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
 
     let mut tracks = Vec::new();
     let mut init_data_list = Vec::new();
+    // Per source, the tracks its media timeline depends on (draft-ietf-moq-msf-01 §7.2).
+    let mut source_track_names = BTreeMap::<&str, Vec<String>>::new();
     for (name, info) in &metadata.video_tracks {
         let alt_group = alt_groups.get(info.switching_set.as_str()).copied();
         let cmaf_alt_group = alt_group.map(|group| group + 1);
@@ -281,6 +295,9 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
             init_data_list.push(cmaf.set_inline_init_data(info.init_segment.clone()));
             cmaf
         });
+        let names = source_track_names.entry(info.source.as_str()).or_default();
+        names.push(loc.name.clone());
+        names.extend(cmaf.as_ref().map(|cmaf| cmaf.name.clone()));
         tracks.push(loc);
         tracks.extend(cmaf);
     }
@@ -304,13 +321,29 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
                 .push(cmaf.set_inline_init_data(general_purpose::STANDARD.encode(init_segment)));
             audio_cmaf = Some(cmaf);
         }
+        let names = source_track_names.entry(info.source.as_str()).or_default();
+        names.push(audio.name.clone());
+        names.extend(audio_cmaf.as_ref().map(|cmaf| cmaf.name.clone()));
         tracks.push(audio);
         tracks.extend(audio_cmaf);
     }
-    if metadata.has_default_tracks() {
-        let default_render_group = render_groups.get(VIDEO_TRACK_NAME).copied();
-        tracks.extend(default_tracks(&namespace, metadata, default_render_group));
-    } else if metadata.chat_offered {
+    if let Some(placeholder) = audio_placeholder(
+        &namespace,
+        metadata,
+        render_groups.get(VIDEO_TRACK_NAME).copied(),
+    ) {
+        source_track_names
+            .entry(VIDEO_TRACK_NAME)
+            .or_default()
+            .push(placeholder.name.clone());
+        tracks.push(placeholder);
+    }
+    tracks.extend(
+        source_track_names
+            .into_iter()
+            .map(|(source, depends)| timeline_track(&namespace, source, depends)),
+    );
+    if metadata.has_default_tracks() || metadata.chat_offered {
         tracks.push(chat_track(&namespace, metadata));
     }
 
@@ -319,44 +352,39 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     Ok(catalog)
 }
 
-/// The tracks that come with the default `video` and `audio`: the `audio`
-/// placeholder listed before its config arrives, so it is published together
-/// with `video`, the media timeline and the chat.
-fn default_tracks(
+/// Listed with the default `video` before the `audio` config arrives, so the
+/// two are published together.
+fn audio_placeholder(
     namespace: &Option<String>,
     metadata: &CatalogMetadata,
     render_group: Option<u64>,
-) -> Vec<Track> {
-    let mut tracks = Vec::new();
-    if !metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME) && !metadata.default_audio_removed {
-        let mut audio = audio_track(namespace, AUDIO_TRACK_NAME, "Audio");
-        audio.render_group = render_group;
-        audio.codec = Some("mp4a.40.2".to_string());
-        audio.mime_type = Some("audio/aac".to_string());
-        tracks.push(audio);
+) -> Option<Track> {
+    if !metadata.has_default_tracks()
+        || metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME)
+        || metadata.default_audio_removed
+    {
+        return None;
     }
+    let mut audio = audio_track(namespace, AUDIO_TRACK_NAME, "Audio");
+    audio.render_group = render_group;
+    audio.codec = Some("mp4a.40.2".to_string());
+    audio.mime_type = Some("audio/aac".to_string());
+    Some(audio)
+}
 
+/// A source's media timeline (draft-ietf-moq-msf-01 §7), listed while the
+/// catalog lists any of the source's tracks.
+fn timeline_track(namespace: &Option<String>, source: &str, depends: Vec<String>) -> Track {
     let mut timeline = track(
         namespace,
-        TIMELINE_TRACK_NAME,
+        &timeline_track_name(source),
         KnownPackaging::MediaTimeline,
         TrackRole::Known(KnownTrackRole::MediaTimeline),
     );
     timeline.label = Some("Media timeline".to_string());
-    let mut depends = vec![VIDEO_TRACK_NAME.to_string()];
-    if metadata
-        .video_tracks
-        .get(VIDEO_TRACK_NAME)
-        .is_none_or(|video| video.cmaf)
-    {
-        depends.push(cmaf_track_name(VIDEO_TRACK_NAME));
-    }
     timeline.depends = Some(depends);
     timeline.mime_type = Some("application/json".to_string());
-    tracks.push(timeline);
-
-    tracks.push(chat_track(namespace, metadata));
-    tracks
+    timeline
 }
 
 /// The chat depends on the default tracks the catalog lists (draft-ietf-moq-msf-01
@@ -513,6 +541,7 @@ mod tests {
                     config: AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1)),
                     cmaf: true,
                     switching_set: VIDEO_TRACK_NAME.to_string(),
+                    source: VIDEO_TRACK_NAME.to_string(),
                 },
             )]),
             ..CatalogMetadata::default()
@@ -548,7 +577,7 @@ mod tests {
         assert!(awaits_subscribe(&catalog, "video_cmaf"));
         assert!(awaits_subscribe(&catalog, "audio_cmaf"));
         assert!(!awaits_subscribe(&catalog, "video"));
-        assert!(!awaits_subscribe(&catalog, "timeline"));
+        assert!(!awaits_subscribe(&catalog, "video_timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
     }
 
@@ -587,6 +616,7 @@ mod tests {
             bitrate: None,
             cmaf: true,
             switching_set: switching_set.to_string(),
+            source: switching_set.to_string(),
         }
     }
 
@@ -596,6 +626,7 @@ mod tests {
             config: AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1)),
             cmaf: true,
             switching_set: switching_set.to_string(),
+            source: switching_set.to_string(),
         }
     }
 
@@ -651,6 +682,59 @@ mod tests {
         }
         assert_eq!(render_group("screen_audio"), render_group("screen"));
         assert_ne!(render_group("screen"), render_group("video"));
+    }
+
+    #[test]
+    fn each_source_has_a_media_timeline_that_depends_on_its_tracks() {
+        // Arrange: a camera with a rendition, a shared screen and a source with audio only
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([
+                ("video".to_string(), video("video")),
+                ("video_low".to_string(), video("video")),
+                ("screen".to_string(), video("screen")),
+            ]),
+            audio_tracks: BTreeMap::from([
+                ("audio".to_string(), aac_audio("video")),
+                ("mic_audio".to_string(), aac_audio("mic")),
+            ]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let timelines: Vec<(&str, Vec<String>)> = catalog
+            .tracks
+            .iter()
+            .flatten()
+            .filter(|track| track.packaging == Packaging::Known(KnownPackaging::MediaTimeline))
+            .map(|track| {
+                (
+                    track.name.as_str(),
+                    track.depends.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        let names = |names: &[&str]| names.iter().map(|name| name.to_string()).collect();
+        assert_eq!(
+            timelines,
+            [
+                ("mic_timeline", names(&["mic_audio", "mic_audio_cmaf"])),
+                ("screen_timeline", names(&["screen", "screen_cmaf"])),
+                (
+                    "video_timeline",
+                    names(&[
+                        "video",
+                        "video_cmaf",
+                        "video_low",
+                        "video_low_cmaf",
+                        "audio",
+                        "audio_cmaf"
+                    ])
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -733,8 +817,11 @@ mod tests {
             "{names:?}"
         );
         assert_eq!(
-            track_named(&catalog, TIMELINE_TRACK_NAME).depends,
-            Some(vec![VIDEO_TRACK_NAME.to_string()])
+            track_named(&catalog, "video_timeline").depends,
+            Some(vec![
+                VIDEO_TRACK_NAME.to_string(),
+                AUDIO_TRACK_NAME.to_string()
+            ])
         );
         assert!(init_data_of(&catalog, track_named(&catalog, AUDIO_TRACK_NAME)).is_some());
     }
@@ -857,6 +944,7 @@ mod tests {
                 },
                 cmaf: true,
                 switching_set: VIDEO_TRACK_NAME.to_string(),
+                source: VIDEO_TRACK_NAME.to_string(),
             },
         );
 
@@ -880,17 +968,23 @@ mod tests {
     }
 
     #[test]
-    fn a_source_under_other_names_brings_neither_the_timeline_nor_the_default_audio() {
+    fn a_source_under_other_names_brings_its_own_timeline_but_not_the_default_audio() {
         // Arrange
         let mut metadata = metadata_with_video_and_audio();
+        let source = "video/profile_1".to_string();
         let video = metadata.video_tracks.remove(VIDEO_TRACK_NAME).unwrap();
         let audio = metadata.audio_tracks.remove(AUDIO_TRACK_NAME).unwrap();
-        metadata
-            .video_tracks
-            .insert("video/profile_1".to_string(), video);
-        metadata
-            .audio_tracks
-            .insert("audio/profile_1".to_string(), audio);
+        metadata.video_tracks.insert(
+            "video/profile_1".to_string(),
+            VideoTrackInfo {
+                source: source.clone(),
+                ..video
+            },
+        );
+        metadata.audio_tracks.insert(
+            "audio/profile_1".to_string(),
+            AudioTrackInfo { source, ..audio },
+        );
 
         // Act
         let catalog = build_catalog("onvif/client", &metadata).unwrap();
@@ -908,7 +1002,8 @@ mod tests {
                 "video/profile_1",
                 "video/profile_1_cmaf",
                 "audio/profile_1",
-                "audio/profile_1_cmaf"
+                "audio/profile_1_cmaf",
+                "video/profile_1_timeline"
             ]
         );
     }

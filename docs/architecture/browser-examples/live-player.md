@@ -211,7 +211,7 @@ where they are used, not as options, until a publisher differs:
 | --- | --- | --- |
 | LOC capture timestamps on one wall clock for all tracks | yes | yes |
 | CMAF sibling named `<track>_cmaf` | live-ingest only | none |
-| MSF media timeline track | yes | none (the seek axis falls back to the replayable window) |
+| MSF media timeline track, one per source | yes | yes, one per camera profile |
 | Audio groups start at the video keyframes with the same ids | yes | **no**: audio rotates every 2 s with its own ids |
 | Codec in the catalog from the first catalog | yes | only once the track's stream has started; a catalog update fills it in |
 | Relay cache TTL 60 s, join group holds no keyframe | yes | yes |
