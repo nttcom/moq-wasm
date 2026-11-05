@@ -1,4 +1,4 @@
-import type { MoqSession, MoqSubscription, ReceivedObject } from '../../core/session'
+import type { MoqLocation, MoqSession, MoqSubscription, ReceivedObject } from '../../core/session'
 import { readLocHeader } from '../internal/loc'
 import type { DeliveryObserver } from './deliveryObserver'
 
@@ -8,7 +8,9 @@ export type MediaKind = 'video' | 'audio'
 
 export type LogLevel = 'info' | 'warn' | 'error'
 
-export type ObjectHandler = (groupId: bigint, object: ReceivedObject) => void
+/// `cached` marks an object a joining FETCH brought: it predates the
+/// subscription, so its arrival says nothing about the delivery.
+export type ObjectHandler = (groupId: bigint, object: ReceivedObject, cached: boolean) => void
 
 export type TrackContext = {
   /// Set by `LivePlayer.start`.
@@ -40,7 +42,7 @@ export function observedObjectHandler(
   handler: ObjectHandler
 ): ObjectHandler {
   context.observer.label(id, track)
-  return (groupId, object) => {
+  return (groupId, object, cached) => {
     context.observer.object(
       id,
       groupId,
@@ -50,7 +52,7 @@ export function observedObjectHandler(
       Date.now(),
       readLocHeader(object.locHeader).captureTimestampMicros
     )
-    handler(groupId, object)
+    handler(groupId, object, cached)
   }
 }
 
@@ -69,7 +71,7 @@ export async function readGroups(
       streams.push(
         (async () => {
           for await (const object of group) {
-            handler(group.groupId, object)
+            handler(group.groupId, object, false)
           }
         })().catch((error: unknown) => context.log('info', `group ${group.groupId} ended early: ${error}`))
       )
@@ -78,4 +80,33 @@ export async function readGroups(
     context.log('warn', `subscription read failed: ${error}`)
   }
   await Promise.all(streams)
+}
+
+/// Reads a subscription that started with a joining FETCH, object by object:
+/// the objects up to the largest one SUBSCRIBE_OK reported come from the FETCH.
+export async function readJoinedObjects(
+  context: TrackContext,
+  id: bigint,
+  subscription: MoqSubscription,
+  handler: ObjectHandler
+): Promise<void> {
+  let openedGroupId: bigint | undefined
+  try {
+    for await (const object of subscription) {
+      if (object.groupId !== openedGroupId) {
+        openedGroupId = object.groupId
+        context.observer.opened(id, object.groupId)
+      }
+      handler(object.groupId, object, isAtOrBefore(object, subscription.largest))
+    }
+  } catch (error) {
+    context.log('warn', `subscription read failed: ${error}`)
+  }
+}
+
+function isAtOrBefore(object: ReceivedObject, location: MoqLocation | undefined): boolean {
+  return (
+    location !== undefined &&
+    (object.groupId < location.groupId || (object.groupId === location.groupId && object.objectId <= location.objectId))
+  )
 }

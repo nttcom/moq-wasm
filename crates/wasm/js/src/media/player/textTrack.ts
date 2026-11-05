@@ -31,7 +31,7 @@ export class TextTracks {
     void (async () => {
       for await (const object of handle) {
         if (this.subscribed.includes(subscription)) {
-          observed(object.groupId, object)
+          observed(object.groupId, object, false)
         }
       }
     })().catch((error: unknown) => this.context.log('info', `${name} read ended: ${error}`))

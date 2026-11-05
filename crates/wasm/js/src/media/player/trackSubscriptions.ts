@@ -5,6 +5,7 @@ import {
   type TrackContext,
   observedObjectHandler,
   readGroups,
+  readJoinedObjects,
   sessionOf,
   streamId
 } from './trackContext'
@@ -49,8 +50,18 @@ export class TrackSubscriptions {
     return this.forwardPaused
   }
 
-  async subscribe(kind: MediaKind, wireName: string, track: MediaCatalogTrack, handler: ObjectHandler): Promise<void> {
-    this.subscriptions.set(kind, await this.open(kind, wireName, track, handler))
+  /// `currentGroup` starts the subscription at the first object of the group
+  /// the largest object is in, through a joining FETCH (draft-14 §9.16.2).
+  /// While forwarding is paused the subscription starts with the next group
+  /// instead.
+  async subscribe(
+    kind: MediaKind,
+    wireName: string,
+    track: MediaCatalogTrack,
+    handler: ObjectHandler,
+    currentGroup = false
+  ): Promise<void> {
+    this.subscriptions.set(kind, await this.open(kind, wireName, track, handler, currentGroup))
   }
 
   /// Subscribes without making the subscription the one of its kind, so a
@@ -60,18 +71,24 @@ export class TrackSubscriptions {
     kind: MediaKind,
     wireName: string,
     track: MediaCatalogTrack,
-    handler: ObjectHandler
+    handler: ObjectHandler,
+    currentGroup = false
   ): Promise<TrackSubscription> {
     const { namespace } = this.context
-    const handle = await sessionOf(this.context).subscribe(namespace, wireName, {
-      forward: !this.forwardPaused,
-      priority: SUBSCRIBER_PRIORITY[kind]
-    })
+    const session = sessionOf(this.context)
+    const joining = currentGroup && !this.forwardPaused
+    const handle = joining
+      ? await session.subscribeCurrentGroup(namespace, wireName)
+      : await session.subscribe(namespace, wireName, {
+          forward: !this.forwardPaused,
+          priority: SUBSCRIBER_PRIORITY[kind]
+        })
     const subscription: TrackSubscription = { id: streamId(), handle, name: wireName, track, forgotten: false }
     const observed = observedObjectHandler(this.context, subscription.id, wireName, handler)
-    void readGroups(this.context, subscription.id, handle, (groupId, object) => {
+    const read = joining ? readJoinedObjects : readGroups
+    void read(this.context, subscription.id, handle, (groupId, object, cached) => {
       if (!subscription.forgotten) {
-        observed(groupId, object)
+        observed(groupId, object, cached)
       }
     })
     void handle.done.then((done) => done && this.end(kind, subscription, done))
