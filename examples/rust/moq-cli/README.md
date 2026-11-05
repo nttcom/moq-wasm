@@ -46,7 +46,7 @@ other publishers:
 - `catalog`
 - `video` (LOC)
 - `video_cmaf` (CMAF, sent while the relay subscribes to it)
-- `timeline`
+- `video_timeline`
 
 The stream carries no timestamps; each access unit is stamped with the time
 it was read.
