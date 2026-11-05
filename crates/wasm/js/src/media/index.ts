@@ -21,7 +21,7 @@ export {
   LivePlayer
 } from './player/livePlayer'
 export type { BufferPolicy } from './player/jitterBuffer'
-export type { CatchUp } from './player/livePlayout'
+export type { CatchUp, LateSamples } from './player/livePlayout'
 export type { LivePictureKind } from './player/livePictureSink'
 export { type LiveStats, formatLiveStats } from './player/locLive'
 export type { DeliveryObserver, Playhead, StreamKind } from './player/deliveryObserver'

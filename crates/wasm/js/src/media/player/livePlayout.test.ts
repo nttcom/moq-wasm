@@ -197,3 +197,31 @@ test('audio joining a playing picture with a cached burst leaves the picture run
   expect(playout.positionMicros()).toBeDefined()
   expect(playout.audioBreaks()).toBe(0)
 })
+
+test('with late samples dropped, a sample whose time has passed is discarded and the clock stays', () => {
+  // Arrange: a settled playout that then receives nothing for a while
+  const shown: number[] = []
+  const playout = new LivePlayout((frame) => {
+    shown.push(frame.timestamp)
+    frame.close()
+  })
+  playout.setLateSamples('drop')
+  streamLive(playout, SETTLE_MS, LIVE_VIDEO_DELAY_MS)
+  const lastCaptureMicros = (environment.nowMs - AUDIO_DELAY_MS) * MICROS_PER_MILLI
+  const nextCaptureMicros = lastCaptureMicros + AUDIO_CHUNK_MS * MICROS_PER_MILLI
+  const dueBeforeMs = playout.dueAt(nextCaptureMicros)
+  environment.advanceTo(environment.nowMs + 2_000)
+  const shownBefore = shown.length
+  const { droppedLateAudio, droppedLateVideo } = playout
+
+  // Act
+  playout.playAudio(fakeAudioData(SAMPLE_RATE, (SAMPLE_RATE * AUDIO_CHUNK_MS) / 1_000), nextCaptureMicros)
+  playout.presentVideo(fakeVideoFrame(nextCaptureMicros), environment.nowMs)
+  environment.advanceTo(environment.nowMs + 1_000)
+
+  // Assert
+  expect(playout.droppedLateAudio).toBe(droppedLateAudio + 1)
+  expect(playout.droppedLateVideo).toBe(droppedLateVideo + 1)
+  expect(shown.length).toBe(shownBefore)
+  expect(playout.dueAt(nextCaptureMicros)).toBe(dueBeforeMs)
+})

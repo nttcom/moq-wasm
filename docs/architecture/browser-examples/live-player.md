@@ -503,7 +503,9 @@ is more than 20 ms over, without changing its pitch: where the waveform
 repeats, one period of 2.5–10 ms is overlapped onto the next with a 5 ms
 crossfade (the time-scale modification WebRTC's NetEq calls accelerate), and
 it skips like `Skip (trim + crossfade)` once the buffer is more than 400 ms over. `Off` never
-shrinks it. The stats line shows the buffer and its target as
+shrinks it. A player that holds a fixed delay sets late samples to `drop`: a
+sample whose time has passed is then discarded instead of moving the clock, so
+the delay never grows. The stats line shows the buffer and its target as
 `buffer N ms (target M)` and how much latency the catch-up has taken out as
 `shed N ms`.
 The stats line shows the offset between the picture on screen and the sound as
