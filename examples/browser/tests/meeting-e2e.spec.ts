@@ -16,7 +16,8 @@ import {
   openChat,
   openMemberDetails,
   sendChatMessage,
-  startScreenShare
+  startScreenShare,
+  throttleCpu
 } from './meeting-e2e-arrange'
 
 // 4:3, unlike the 16:9 screen share renditions, so a share stretched to a rendition changes the aspect ratio bob decodes.
@@ -699,6 +700,8 @@ test('chat message sent by one client is displayed on the receiving client', asy
   // Arrange: relay-a に alice と bob を参加させる。
   const alice = await arrangeMeetingClient(browser)
   const bob = await arrangeMeetingClient(browser)
+  // Arrange: bob の描画を遅らせ、自動購読の effect が購読完了より後に走る CI の遅さを再現する。
+  await throttleCpu(bob.page.page, 2)
 
   try {
     const roomName = `e2e-chat-${Date.now()}`
@@ -722,6 +725,8 @@ test('chat message sent by one client is displayed on the receiving client', asy
     // Assert: 受信側 bob のチャットに alice からのメッセージが表示される。
     await openChat(bob.page)
     await expect(getChatMessageByText(bob.page.page, message)).toBeVisible({ timeout: 30_000 })
+    // Assert: chat トラックの購読は 1 本だけなので、メッセージは 1 件だけ表示される。
+    await expect(getChatMessageByText(bob.page.page, message)).toHaveCount(1)
     // Assert: 送信側 alice のチャットにも自分のメッセージが表示される。
     await expect(getChatMessageByText(alice.page.page, message)).toBeVisible()
   } finally {
