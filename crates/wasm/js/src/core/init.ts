@@ -1,3 +1,4 @@
+import { setSdkLogSink } from './log'
 import { ClientTelemetry, type TelemetryOptions } from './telemetry'
 
 type MoqtModule = typeof import('../../pkg/moqt')
@@ -31,17 +32,18 @@ export interface InitOptions {
   /// Overrides where the `.wasm` file is fetched from, for bundlers that do not
   /// rewrite `new URL('moqt_bg.wasm', import.meta.url)`.
   wasmUrl?: string | URL
-  /// Receives the wasm module's logs. Without it, they are discarded. `token` is the one
-  /// the record's `MoqSession` connected with (its provider's newest), `undefined` for a
-  /// record of no session or of a session without one. Put it only in the telemetry
-  /// report's `token`: the server stores a record's fields as they are.
+  /// Receives the SDK's logs, from both the wasm module and its TypeScript. Without it or
+  /// `telemetry`, they are discarded. `token` is the one the record's `MoqSession` connected
+  /// with (its provider's newest). It is `undefined` for every TypeScript log, and for a record
+  /// of no session or of a session without one. Put it only in the telemetry report's `token`:
+  /// the server stores a record's fields as they are.
   onLog?: (record: LogRecord, token: string | undefined) => void
   /// The lowest level passed to `onLog` and sent with `telemetry`. Defaults to `'warn'`.
   logLevel?: LogLevel
-  /// Receives the wasm module's closed spans, with `token` as for `onLog`. Without it,
-  /// they are discarded.
+  /// Receives the wasm module's closed spans, with `token` as for `onLog`. Without it or
+  /// `telemetry`, they are discarded.
   onSpan?: (record: SpanRecord, token: string | undefined) => void
-  /// Sends the wasm module's logs and spans to an observability server every 10 s, each
+  /// Sends the SDK's logs and the wasm module's spans to an observability server every 10 s, each
   /// session's under its token. The page's own logs are not sent.
   telemetry?: TelemetryOptions
 }
@@ -58,6 +60,9 @@ export async function init(options: InitOptions = {}): Promise<void> {
   const onSpan = both(options.onSpan, telemetry?.span)
   if (onLog || onSpan) {
     moqt.setLogSink(onLog ?? (() => {}), options.logLevel ?? 'warn', onSpan)
+  }
+  if (onLog) {
+    setSdkLogSink(onLog, options.logLevel ?? 'warn')
   }
   telemetry?.start()
 }

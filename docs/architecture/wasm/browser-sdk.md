@@ -373,6 +373,13 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
     待ち受けず、ブラウザに Collector の資格情報を置けないから。トークンの検証、`app_id` の付与、
     レート制限はサーバが受け持つ（`docs/architecture/observability/architecture.md` の
     「Client telemetry」）。
+- SDK の TypeScript 層のログも `onLog`（と `telemetry`）に届く（`core/log.ts`）。`sdkLog` は
+  コンソールに書いたうえで、`init` が置いた sink に `LogRecord` で渡す。`target` は
+  `moq-wasm::media::live_player` のようなモジュール名、トークンは常に `undefined`。
+  - worker（エンコーダとデコーダ）には sink がないので、`workerLog` が `{ type: 'log', … }` を
+    postMessage し、ページ側の `onmessage` が `receiveWorkerLog` で `sdkLog` に渡す。
+  - `LivePlayerCallbacks.onLog` と `PlayerControls` の `onLog` に渡すログは、ページが自分で
+    表示するので、`forwardSdkLog` でコンソールに書かずに sink にだけ渡す。
 
 形（TypeScript、抜粋）:
 

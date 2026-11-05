@@ -6,6 +6,11 @@
   `logLevel` or above) and spans to the observability server at `url` every
   10 s and when the page is hidden, each session's under its token. The page's
   own logs are not sent.
+- `onLog` (and `telemetry`) also receives the logs of the SDK's TypeScript,
+  including its encoder and decoder workers and what `LivePlayer` and
+  `PlayerControls` hand their `onLog`, with a `moq-wasm::…` `target` and no
+  token. The console messages they replace now read
+  `[<target>] <message> <field>=<value>…`.
 
 - `init({ onLog, onSpan })` calls both with the token of the record's
   `MoqSession` as a second argument (the provider's newest), and `undefined`

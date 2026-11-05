@@ -2,6 +2,9 @@ import { createBitrateLogger } from '../bitrate'
 import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
 import { fitEncodeSize } from './encodeSize'
+import { workerLog } from '../../../core/log'
+
+const TARGET = 'moq-wasm::media::video_encoder'
 
 /// The track a `videoTrack` message transferred; `stop` stops it.
 let capturedTrack: MediaStreamTrack | undefined
@@ -39,7 +42,7 @@ class Rendition {
     const init: VideoEncoderInit = {
       output: (chunk, metadata) => this.send(chunk, metadata),
       error: (e: DOMException) => {
-        console.error('[videoEncoder] encoder error', e)
+        workerLog('error', TARGET, 'encoder error', { error: e, rendition: this.index })
         self.postMessage({ type: 'encoderError', message: e.message, rendition: this.index })
       }
     }
@@ -47,12 +50,12 @@ class Rendition {
     try {
       const supported = await VideoEncoder.isConfigSupported(config)
       if (!supported.supported) {
-        console.error('[videoEncoder] unsupported encoder config', config)
+        workerLog('error', TARGET, 'encoder config unsupported', { config, rendition: this.index })
         self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
         return false
       }
     } catch (e) {
-      console.error('[videoEncoder] failed to check encoder config support', e, config)
+      workerLog('error', TARGET, 'encoder config support check failed', { error: e, config, rendition: this.index })
       self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
       return false
     }
@@ -60,7 +63,7 @@ class Rendition {
     try {
       encoder.configure(config)
     } catch (e) {
-      console.error('[videoEncoder] configure failed', e)
+      workerLog('error', TARGET, 'encoder configure failed', { error: e, config, rendition: this.index })
       self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
       return false
     }
@@ -84,7 +87,7 @@ class Rendition {
     try {
       this.encoder.configure(config)
     } catch (e) {
-      console.error('[videoEncoder] reconfigure failed', e)
+      workerLog('error', TARGET, 'encoder reconfigure failed', { error: e, config, rendition: this.index })
       self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config, rendition: this.index })
       return false
     }
@@ -151,10 +154,10 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     const videoFrame = videoResult.value
 
     if (renditions.some(needsEncoder)) {
-      console.log('Re-initialize video encoder')
+      workerLog('info', TARGET, 'encoders re-initializing')
       frameCounter = 0
       if (!(await initializeEncoders())) {
-        console.error('Failed to initialize video encoder, dropping frame')
+        workerLog('error', TARGET, 'encoders failed to initialize, frame dropped')
         videoFrame.close()
         continue
       }
@@ -163,7 +166,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     // A frame any encoder cannot take is dropped for all, so the renditions keep the same frames.
     const busiest = Math.max(...renditions.map((rendition) => rendition.encoder?.encodeQueueSize ?? 0))
     if (busiest > 5) {
-      console.error('videoEncoder.encodeQueueSize > 5', busiest)
+      workerLog('debug', TARGET, 'encode queue full, frame dropped', { encode_queue_size: busiest })
       videoFrame.close()
       continue
     }
@@ -204,7 +207,7 @@ self.onmessage = async (event) => {
   } else if (event.data.type === 'videoStream') {
     const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream
     if (!videoReadableStream) {
-      console.error('MediaStreamTrack が渡されていません')
+      workerLog('error', TARGET, 'no video stream given')
       return
     }
     await startVideoEncode(videoReadableStream)
