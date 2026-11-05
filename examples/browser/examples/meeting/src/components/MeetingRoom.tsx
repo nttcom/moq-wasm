@@ -452,16 +452,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       return
     }
     const memberId = member.id
-    const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
-    if (!resolved) {
-      return
-    }
-    const trackMediaConfig = resolved.config
     const trackState = member.subscribedTracks[role]
     const trackKey = buildTrackActionKey(memberId, role)
     if (trackState.isSubscribed || trackState.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
       return
     }
+    // Set before the first await: an effect of a render committed in that gap could otherwise
+    // run after this subscribe finished, see neither flag and subscribe again.
     setRoom((currentRoom) =>
       updateMemberSubscriptionStateByRole(currentRoom, memberId, role, () => ({
         ...trackState,
@@ -470,13 +467,25 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         subscribeId: undefined
       }))
     )
+    const stopSubscribing = () =>
+      setRoom((currentRoom) =>
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
+          ...track,
+          isSubscribing: false
+        }))
+      )
 
     try {
+      const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
+      if (!resolved) {
+        stopSubscribing()
+        return
+      }
       const subscribeId = await session.subscribe(
         member.trackNamespace,
         trackName,
         role,
-        trackMediaConfig,
+        resolved.config,
         subscriptionEnded(memberId, role),
         buildVideoAdaptation(memberId, role, trackName)
       )
@@ -489,12 +498,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         }))
       )
     } catch (error) {
-      setRoom((currentRoom) =>
-        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
-          ...track,
-          isSubscribing: false
-        }))
-      )
+      stopSubscribing()
       throw error
     }
   }
