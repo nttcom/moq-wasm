@@ -116,6 +116,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
 | `media_source` | Which of a member's videos a browser plays: `camera` or `screenshare` |
 | `track_alias` | The track alias on the session the log is about |
+| `supported_versions` / `selected_version` | The MoQT versions a CLIENT_SETUP offers, and the one its SERVER_SETUP picks |
 | `error` | The failure, as `%error` or `?error` |
 | `is_relay` | Whether a token's app is a relay |
 | `outcome` | How a call between services ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`; `vts.request`: `verified`, `malformed_token`, `unknown_app` or `invalid_signature`) |

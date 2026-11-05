@@ -121,7 +121,14 @@ pub(crate) fn spawn_native_server_handshake(
 /// incoming session; returns the port and the accept task.
 pub(crate) fn spawn_native_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
     let (port, handshake) = spawn_native_server_handshake(name);
-    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    let accept = tokio::spawn(async move {
+        handshake
+            .await
+            .unwrap()
+            .accept(&tracing::Span::current())
+            .await
+            .unwrap()
+    });
     (port, accept)
 }
 

@@ -318,8 +318,9 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
   (`authorization_tokens()`) so the application can decide before
   SERVER_SETUP is sent:
-  - `Handshake::accept()` answers the setup (SERVER_SETUP for draft-14) and
-    creates the `Session`.
+  - `Handshake::accept(session_span)` answers the setup (SERVER_SETUP for
+    draft-14) in the current span and creates the `Session`, whose tasks
+    run under `session_span`.
   - `Handshake::reject(code, reason)` closes the transport with the given
     termination code without sending SERVER_SETUP.
 

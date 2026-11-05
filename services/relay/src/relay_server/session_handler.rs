@@ -71,10 +71,7 @@ impl SessionIntake {
                 return;
             }
         };
-        // Sent outside `setup_span` because the session's tasks start in the span
-        // current here; the span still closes only after SERVER_SETUP is sent.
-        let accepted = handshake.accept().await;
-        drop(setup_span);
+        let accepted = handshake.accept(&session_span).instrument(setup_span).await;
         let session = match accepted {
             Ok(session) => session,
             Err(error) => {
@@ -253,7 +250,7 @@ mod tests {
             verified_token::VerifiedToken,
         },
         domain::session_peer::SessionPeer,
-        test_support::closed_spans::ClosedSpans,
+        test_support::{closed_spans::ClosedSpans, event_spans::EventSpans},
     };
 
     const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
@@ -297,6 +294,24 @@ mod tests {
             closed_spans.contains("relay.session.setup"),
             "closed spans: {:?}",
             closed_spans.names()
+        );
+    }
+
+    #[tokio::test]
+    async fn server_setup_is_sent_inside_the_setup_span() {
+        // Arrange
+        let event_spans = EventSpans::default();
+        let _default = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(event_spans.clone()),
+        );
+
+        // Act
+        let (_relay, _session) = spawn_relay_and_connect_client(VerifiedToken::anonymous()).await;
+
+        // Assert
+        assert_eq!(
+            event_spans.spans_of("SERVER_SETUP sent"),
+            [Some("relay.session.setup")]
         );
     }
 

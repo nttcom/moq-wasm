@@ -758,7 +758,7 @@ mod tests {
                 let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
                 let mut published_tracks = HashMap::new();
                 let handshake = endpoint.accept().await.unwrap().await.unwrap();
-                let session = Arc::new(handshake.accept().await.unwrap());
+                let session = Arc::new(handshake.accept(&tracing::Span::current()).await.unwrap());
                 let _ = session_sender.send(session.clone());
                 while let Ok(event) = session.receive_event().await {
                     match event {

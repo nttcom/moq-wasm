@@ -144,6 +144,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                         connection_events,
                     }),
                     Some(Arc::new(creator.clone())),
+                    Span::current(),
                 )
             } else {
                 let (connection, control_receiver, server_setup) = creator
@@ -156,6 +157,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     Some(server_setup),
                     None,
                     Some(Arc::new(creator.clone())),
+                    Span::current(),
                 )
             };
             tracing::info!("session established");
@@ -364,7 +366,10 @@ mod tests {
         AuthorizationTokenSource, ClientConfig, Endpoint, NATIVE, Session, TerminationErrorCode,
         WebSocketFallback,
         modules::{
-            moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
+            moqt::control_plane::{
+                constants::MOQ_TRANSPORT_VERSION,
+                control_messages::messages::parameters::authorization_token::AuthorizationToken,
+            },
             test_support::{
                 HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, capture_telemetry, native_client,
                 native_client_with_config, self_signed_server_config, slow_udp_path,
@@ -399,7 +404,12 @@ mod tests {
         let (session_sender, session_receiver) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
             while let Ok(accepting) = server.accept().await {
-                let session = accepting.await.unwrap().accept().await.unwrap();
+                let session = accepting
+                    .await
+                    .unwrap()
+                    .accept(&tracing::Span::current())
+                    .await
+                    .unwrap();
                 if session_sender.send(session).is_err() {
                     return;
                 }
@@ -701,6 +711,34 @@ mod tests {
         let spans = telemetry.closed_spans("moqt.session.connect");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].field("outcome"), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn each_side_logs_the_setup_it_sends_and_receives() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let version = MOQ_TRANSPORT_VERSION.to_string();
+
+        // Act
+        let (_client, _server) =
+            spawn_connected_native_sessions("session-creator-setup-logs").await;
+
+        // Assert
+        for (message, field) in [
+            ("CLIENT_SETUP sent", "supported_versions"),
+            ("CLIENT_SETUP received", "supported_versions"),
+            ("SERVER_SETUP sent", "selected_version"),
+            ("SERVER_SETUP received", "selected_version"),
+        ] {
+            let logged = telemetry.events(message);
+            assert_eq!(logged.len(), 1, "{message}");
+            assert!(
+                logged[0]
+                    .field(field)
+                    .is_some_and(|value| value.contains(&version)),
+                "{message}"
+            );
+        }
     }
 
     #[tokio::test]
