@@ -184,6 +184,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
 | `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
+| `audioLane` | A second audio track on a `LivePlayout`'s clock: its own decoder worker and input, scheduled at the time its capture timestamps are due, for a page that crossfades a translation with the original |
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
@@ -442,6 +443,11 @@ A track's init data is the `initDataList` entry its `initRef` names
 missing or not `inline`, the only type the draft defines, leaves the track
 without init data and logs a warning instead of rejecting the catalog.
 
+A track that names a `namespace` (draft-ietf-moq-msf-01 §5.2.2) is subscribed
+to there instead of under the catalog's, so a catalog can refer to the tracks
+of another broadcast, as the live translation's catalog does for the source's
+video and original audio.
+
 ### Audio / video synchronisation
 
 In LOC mode the two decoder workers hand every sample over as soon as it is
@@ -482,7 +488,11 @@ so a chunk placed on its own target would leave a gap or an overlap each time.
 The distance between the write head and the target is fed back to the clock,
 which makes the audio device the master the picture follows; a late chunk is
 not trimmed but starts at once and moves the clock the same way, so the chunks
-behind it stay contiguous; that is how the buffer grows. When the scheduled
+behind it stay contiguous; that is how the buffer grows. Another stream that
+shares the timeline, such as a translated audio track, is scheduled as a second
+input of the same `AudioContext` with a gain of its own: it is placed at the
+time the clock gives for its capture timestamp and reports no drift, so the
+main audio stays the only master and the two can be crossfaded. When the scheduled
 sound is about to run out (within 20 ms) and no chunk follows, its last pitch
 period is repeated, fading out to silence over 300 ms (what NetEq calls
 expand); the chunk that ends the repetition fades in from it and starts where
@@ -498,7 +508,9 @@ is more than 20 ms over, without changing its pitch: where the waveform
 repeats, one period of 2.5–10 ms is overlapped onto the next with a 5 ms
 crossfade (the time-scale modification WebRTC's NetEq calls accelerate), and
 it skips like `Skip (trim + crossfade)` once the buffer is more than 400 ms over. `Off` never
-shrinks it. The stats line shows the buffer and its target as
+shrinks it. A player that holds a fixed delay sets late samples to `drop`: a
+sample whose time has passed is then discarded instead of moving the clock, so
+the delay never grows. The stats line shows the buffer and its target as
 `buffer N ms (target M)` and how much latency the catch-up has taken out as
 `shed N ms`.
 The stats line shows the offset between the picture on screen and the sound as

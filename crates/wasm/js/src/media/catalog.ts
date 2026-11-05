@@ -41,6 +41,9 @@ type MsfCatalog = {
 export type CatalogTrackRole = 'video' | 'audio' | 'mediatimeline'
 
 export type MediaCatalogTrack = {
+  /// The namespace the track is subscribed under when it is not the catalog's
+  /// (draft-ietf-moq-msf-01 §5.2.2), as a `/`-joined tuple.
+  namespace?: string
   name: string
   label: string
   packaging?: string
@@ -54,6 +57,7 @@ export type MediaCatalogTrack = {
   height?: number
   initData?: string
   depends?: string[]
+  lang?: string
 }
 
 export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitData[] = []): string {
@@ -122,6 +126,7 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       return acc
     }
     acc.push({
+      namespace: asString(track.namespace),
       name,
       label: asString(track.label) ?? name,
       packaging: asString(track.packaging),
@@ -134,10 +139,15 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       width: asNumber(track.width),
       height: asNumber(track.height),
       initData: resolveInitData(catalog, track),
-      depends: asStrings(track.depends)
+      depends: asStrings(track.depends),
+      lang: asString(track.lang)
     })
     return acc
   }, [])
+}
+
+export function catalogTrackNamespace(track: MediaCatalogTrack, catalogNamespace: string[]): string[] {
+  return track.namespace ? track.namespace.split('/') : catalogNamespace
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

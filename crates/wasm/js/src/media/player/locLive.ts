@@ -19,6 +19,14 @@ export type LocObject = Pick<
   'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus' | 'locHeader'
 >
 
+type AudioCatalogMessage = {
+  type: 'catalog'
+  codec?: string
+  sampleRate?: number
+  channels?: number
+  descriptionBase64?: string
+}
+
 export type LocLiveCallbacks = {
   onPresented(picture: HTMLElement): void
   onFrameShown(ids: DecodedFrameIds | undefined, captureMicros: number): void
@@ -134,13 +142,7 @@ export class LocLive {
       this.videoWorker.postMessage({ type: 'catalog', codec: track.codec, descriptionBase64: track.initData })
       return
     }
-    this.audioWorker.postMessage({
-      type: 'catalog',
-      codec: track.codec,
-      sampleRate: track.samplerate,
-      channels: parseAudioChannelCount(track.channelConfig),
-      descriptionBase64: track.initData
-    })
+    this.audioWorker.postMessage(audioCatalogMessage(track))
   }
 
   /// `cached` marks a video object that predates the subscription, such as one
@@ -156,21 +158,9 @@ export class LocLive {
         arrivals.shift()
       }
     }
-    const objectPayload = new Uint8Array(object.objectPayload)
-    const message: SubgroupWorkerMessage = {
-      type: 'object',
-      groupId,
-      subgroupStreamObject: {
-        subgroupId: object.subgroupId,
-        objectId: object.objectId,
-        objectPayloadLength: object.objectPayloadLength,
-        objectPayload,
-        objectStatus: object.objectStatus,
-        locHeader: object.locHeader
-      }
-    }
+    const [message, transfer] = objectMessage(groupId, object)
     const worker = kind === 'video' ? this.videoWorker : this.audioWorker
-    worker.postMessage(message, [objectPayload.buffer])
+    worker.postMessage(message, transfer)
   }
 
   setBufferPolicy(policy: BufferPolicy): void {
@@ -240,6 +230,33 @@ export class LocLive {
     const holdMs = Math.max(0, this.playout.bufferPolicy().minimumMs - PRESENTATION_MARGIN_MS)
     this.videoWorker.postMessage({ type: 'config', holdMs, releaseMarginMs: PRESENTATION_MARGIN_MS })
   }
+}
+
+export function audioCatalogMessage(track: MediaCatalogTrack): AudioCatalogMessage {
+  return {
+    type: 'catalog',
+    codec: track.codec,
+    sampleRate: track.samplerate,
+    channels: parseAudioChannelCount(track.channelConfig),
+    descriptionBase64: track.initData
+  }
+}
+
+export function objectMessage(groupId: bigint, object: LocObject): [SubgroupWorkerMessage, Transferable[]] {
+  const objectPayload = new Uint8Array(object.objectPayload)
+  const message: SubgroupWorkerMessage = {
+    type: 'object',
+    groupId,
+    subgroupStreamObject: {
+      subgroupId: object.subgroupId,
+      objectId: object.objectId,
+      objectPayloadLength: object.objectPayloadLength,
+      objectPayload,
+      objectStatus: object.objectStatus,
+      locHeader: object.locHeader
+    }
+  }
+  return [message, [objectPayload.buffer]]
 }
 
 export function formatSyncOffset(offsetMs: number | undefined): string {

@@ -6,6 +6,9 @@ import { VideoPlayout } from './videoPlayout'
 
 export const DEFAULT_BUFFER_POLICY: BufferPolicy = { minimumMs: 200, maximumMs: Number.POSITIVE_INFINITY }
 export type CatchUp = 'speed-up' | 'skip' | 'off'
+/// What a sample whose time has passed does: moves the clock back by its
+/// miss, or is dropped so a fixed delay never grows.
+export type LateSamples = 'move-clock' | 'drop'
 const WARMUP_MS = 400
 const CATCH_UP_COMPRESSION_RATE = 1.1
 const CATCH_UP_EXCESS_MS = 20
@@ -57,7 +60,10 @@ export class LivePlayout {
   private audioJoin: { beforeMicros: number; untilMs: number } | undefined
   private paused = false
   private catchUp: CatchUp = 'skip'
+  private lateSamples: LateSamples = 'move-clock'
   private videoShedMs = 0
+  droppedLateAudio = 0
+  droppedLateVideo = 0
 
   constructor(showVideo: (frame: VideoFrame) => void, onTimeline?: (origin: PlayoutOrigin | undefined) => void) {
     this.video = new VideoPlayout(showVideo)
@@ -91,6 +97,11 @@ export class LivePlayout {
         this.shiftClock(-excessMs, captureMicros)
         this.videoShedMs += excessMs
       }
+    }
+    if (this.lateSamples === 'drop' && this.isLate(captureMicros, nowMs, 0)) {
+      frame.close()
+      this.droppedLateVideo += 1
+      return
     }
     this.video.present(frame, this.playoutTime(captureMicros, nowMs, master))
   }
@@ -138,8 +149,13 @@ export class LivePlayout {
     this.newestAudioCaptureMicros = undefined
   }
 
-  setVolume(volume: number): void {
-    this.audio.setVolume(volume)
+  setVolume(volume: number, rampSeconds?: number): void {
+    this.audio.setVolume(volume, rampSeconds)
+  }
+
+  /// A second audio stream, to be scheduled at `dueAt` of its capture timestamps.
+  openAudioInput(): AudioPlayout {
+    return this.audio.openInput()
   }
 
   /// Warms up again so a larger buffer applies to what arrives from now on;
@@ -160,6 +176,20 @@ export class LivePlayout {
 
   setCatchUp(catchUp: CatchUp): void {
     this.catchUp = catchUp
+  }
+
+  setLateSamples(lateSamples: LateSamples): void {
+    this.lateSamples = lateSamples
+  }
+
+  /// When a sample captured at `captureMicros` is due, on the page clock;
+  /// undefined until the clock is anchored.
+  dueAt(captureMicros: number): number | undefined {
+    return this.clock.dueAt(captureMicros)
+  }
+
+  audioPositionMicros(): number | undefined {
+    return this.audio.positionMicrosAt(performance.now())
   }
 
   targetBufferMs(): number {
@@ -284,6 +314,11 @@ export class LivePlayout {
       return false
     }
     this.newestAudioCaptureMicros = captureMicros
+    if (this.lateSamples === 'drop' && this.isLate(captureMicros, performance.now(), this.audio.outputLatencyMs())) {
+      audioData.close()
+      this.droppedLateAudio += 1
+      return false
+    }
     const excessMs = this.excessMs() ?? 0
     const durationMs = audioData.duration / MICROS_PER_MILLI
     if (excessMs > durationMs && (this.catchUp === 'skip' || excessMs > MAX_CATCH_UP_MS)) {
@@ -296,6 +331,11 @@ export class LivePlayout {
     this.audio.play(audioData, captureMicros, (nowMs) => this.playoutTime(captureMicros, nowMs, true))
     audioData.close()
     return true
+  }
+
+  private isLate(captureMicros: number, nowMs: number, leadMs: number): boolean {
+    const due = this.clock.dueAt(captureMicros)
+    return due !== undefined && due < nowMs + leadMs
   }
 
   private compressionRateFor(excessMs: number): number {
