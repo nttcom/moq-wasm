@@ -125,8 +125,21 @@ function showRoom(prefix: string): void {
   element('videos').style.gridTemplateColumns = `repeat(${Math.ceil(Math.sqrt(tiles))}, minmax(0, 1fr))`
 }
 
+function showNotice(text: string, kind: 'progress' | 'error'): void {
+  const notice = element('stage-notice')
+  notice.textContent = text
+  notice.classList.remove('hidden')
+  notice.classList.toggle('bg-slate-800/90', kind === 'progress')
+  notice.classList.toggle('bg-red-600/90', kind === 'error')
+}
+
+function hideNotice(): void {
+  element('stage-notice').classList.add('hidden')
+}
+
 function failure(error: unknown): void {
   status.value = error instanceof Error ? error.message : String(error)
+  showNotice(status.value, 'error')
 }
 function stop(): void {
   generation++
@@ -142,6 +155,7 @@ function stop(): void {
   sources.clear()
   for (const track of media) track.playout?.flush()
   showPlaying(false)
+  hideNotice()
 }
 
 async function readRange(
@@ -563,6 +577,7 @@ async function start(): Promise<void> {
   playing = true
   showPlaying(true)
   status.value = 'Buffering'
+  showNotice('Buffering…', 'progress')
   const prepared: PreparedTrack[] = []
   for (const track of media) {
     const input = await prepareTrack(track, current, target)
@@ -579,6 +594,7 @@ async function start(): Promise<void> {
   }
   showPlaying(true)
   status.value = 'Playing'
+  hideNotice()
   tick = setInterval(() => {
     const at = Math.min(end, target + Math.max(0, performance.now() - anchorMs) * 1000)
     seek.value = String((at - origin) / 1_000_000)
