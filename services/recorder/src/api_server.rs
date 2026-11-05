@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
+    api_auth::bearer_token,
     recording::Layout,
     recordings::{Publication, PublishRejection, Recordings, StartRejection},
     replay_stream::ReplayStream,
@@ -155,7 +156,7 @@ async fn handle(
                         origin,
                     ));
                 }
-                start(&state.recordings, &body).await
+                start(&state.recordings, &body, bearer_token(&headers)).await
             }
             Err(error) => error_response(StatusCode::BAD_REQUEST, &format!("{error:#}")),
         },
@@ -177,12 +178,16 @@ async fn handle(
             Err(error) => internal_error(&error),
         },
         (&Method::POST, ["recordings", id, "publish"]) => {
-            match state.recordings.publish(id).await {
+            match state.recordings.publish(id, bearer_token(&headers)).await {
                 Ok(Some(publication)) => replay_response(publication),
                 Ok(None) => error_response(StatusCode::NOT_FOUND, "no such recording"),
                 Err(PublishRejection::NotReady) => error_response(
                     StatusCode::CONFLICT,
                     "only finished recordings can be published",
+                ),
+                Err(PublishRejection::OutsideRoot) => error_response(
+                    StatusCode::FORBIDDEN,
+                    "the recording's room cannot be replayed here",
                 ),
                 Err(PublishRejection::Capacity) => error_response(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -196,7 +201,7 @@ async fn handle(
     Ok(with_cors(response, origin))
 }
 
-async fn start(recordings: &Recordings, body: &Value) -> ApiResponse {
+async fn start(recordings: &Recordings, body: &Value, bearer: Option<&str>) -> ApiResponse {
     let Some(namespace_prefix) = body.get("namespace_prefix").and_then(Value::as_str) else {
         return error_response(StatusCode::BAD_REQUEST, "namespace_prefix is required");
     };
@@ -226,7 +231,7 @@ async fn start(recordings: &Recordings, body: &Value) -> ApiResponse {
         Some(_) => return error_response(StatusCode::BAD_REQUEST, "format must be mp4 or moq"),
     };
     match recordings
-        .start(namespace_prefix, layout, composite, format)
+        .start(namespace_prefix, layout, composite, format, bearer)
         .await
     {
         Ok(recording) => json_response(StatusCode::CREATED, &recording),
@@ -356,13 +361,21 @@ mod tests {
         let recordings = recordings(1, false);
 
         // Act
-        let missing = error_of(start(&recordings, &json!({})).await).await;
-        let outside =
-            error_of(start(&recordings, &json!({ "namespace_prefix": "app/room" })).await).await;
+        let missing = error_of(start(&recordings, &json!({}), None).await).await;
+        let outside = error_of(
+            start(
+                &recordings,
+                &json!({ "namespace_prefix": "app/room" }),
+                None,
+            )
+            .await,
+        )
+        .await;
         let layout = error_of(
             start(
                 &recordings,
                 &json!({ "namespace_prefix": "anon/room", "layout": "grid" }),
+                None,
             )
             .await,
         )
@@ -371,6 +384,7 @@ mod tests {
             start(
                 &recordings,
                 &json!({ "namespace_prefix": "anon/room", "composite": "yes" }),
+                None,
             )
             .await,
         )
@@ -379,6 +393,7 @@ mod tests {
             start(
                 &recordings,
                 &json!({ "namespace_prefix": "anon/room", "composite": true }),
+                None,
             )
             .await,
         )
@@ -408,6 +423,7 @@ mod tests {
                 &json!({
                     "namespace_prefix": "anon/room", "format": "moq", "composite": true
                 }),
+                None,
             )
             .await,
         )
@@ -418,6 +434,7 @@ mod tests {
                 &json!({
                     "namespace_prefix": "anon/room", "format": "moq"
                 }),
+                None,
             )
             .await,
         )

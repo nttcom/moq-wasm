@@ -163,7 +163,10 @@ pub(crate) fn write_fixture_fmp4(path: &std::path::Path) {
     std::fs::write(path, output).unwrap();
 }
 
-/// A recording API over an in-memory store, whose jobs exit at once.
+pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";
+
+/// A recording API over an in-memory store, whose jobs exit at once, that
+/// records temporary apps' rooms with `TOKEN_MINT_URL`.
 pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
     let store_url = url::Url::parse("memory:///").unwrap();
     let config = ServeArgs {
@@ -173,6 +176,7 @@ pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
         auth_vts_url: None,
         max_recordings,
         composite,
+        token_mint_url: Some(TOKEN_MINT_URL.to_string()),
         store: store_url.clone(),
         output_dir: std::env::temp_dir(),
         room: RoomArgs {

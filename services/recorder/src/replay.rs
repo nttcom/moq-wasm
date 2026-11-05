@@ -19,7 +19,7 @@ use tokio::{
 
 use crate::{
     archive_reader::{StoredRecording, StoredTrack, decode_object},
-    relay::RelayConnection,
+    relay::{RelayConnection, ServiceToken},
 };
 
 /// Shorter than the Cloud Run request timeout (60 minutes, its maximum), so a
@@ -56,6 +56,7 @@ impl ReplayTask {
         recording: StoredRecording,
         relay: &str,
         verify_certificate: bool,
+        token: &ServiceToken,
     ) -> Result<(Self, ReplayLease)> {
         let namespace = &recording
             .tracks
@@ -63,7 +64,7 @@ impl ReplayTask {
             .context("recording has no tracks")?
             .source_namespace;
         let connection =
-            RelayConnection::connect_service(relay, verify_certificate, namespace).await?;
+            RelayConnection::connect_service(relay, verify_certificate, namespace, token).await?;
         let mut namespaces = HashSet::new();
         for track in &recording.tracks {
             if namespaces.insert(track.namespace.clone())

@@ -358,7 +358,13 @@ claim to cover the room, while start and stop require `publish`. Namespace
 claims use component boundaries, not a string-prefix match. VTS failures deny
 access. Tokens are never stored in the recording. The recorder's relay identity
 comes from `MOQT_AUTH_TOKEN` or `MOQT_AUTH_TOKEN_FILE`; a token file is refreshed
-the same way as in standalone recording. A POST whose `Origin` is not an `--allowed-origin` is refused, since
+the same way as in standalone recording. With `--token-mint-url`, a prefix whose root
+is a temporary app (`auth_token::TEMPORARY_APP_ID_PREFIX`) is accepted too, and
+`Recordings::service_token` picks the caller's bearer token as the relay
+identity of its recording and replay (`relay::ServiceToken::Temporary`): the
+API hands it to the recording job as `--temporary-token` with the issuer URL,
+and the job's `TokenRefreshTask` renews it there (`TokenRenewal::Issuer`)
+instead of re-reading a file. A POST whose `Origin` is not an `--allowed-origin` is refused, since
 CORS alone only hides the answer from that page and a `text/plain` POST needs
 no preflight. The relay URL, the store and the track choice are server
 settings, so a request cannot point the recorder at another relay or bucket.
@@ -496,8 +502,11 @@ The recording's JSON carries `composite` (`null` when not requested) with
 `skipped` (the recording failed) or `failed`, and `error`.
 
 ## Token refresh
-With `--auth-token-file` a `TokenRefreshTask` re-reads the file every 10 s and
-sends a changed token with the relay's in-session refresh convention: a
+A `TokenRefreshTask` polls a `TokenRenewal` every 10 s: `File` re-reads a token
+file (`--auth-token-file`), and `Issuer` asks the token mint's
+`POST /tokens/refresh` for a new token once the current one expires within
+five minutes, keeping the current one when the mint refuses or is unreachable.
+It sends a changed token with the relay's in-session refresh convention: a
 TRACK_STATUS for namespace `[app id]` and track `update_auth_token` carrying
 the token as its AUTHORIZATION TOKEN (see the relay architecture document,
 "Token refresh"). The app id is the namespace's first element. moq-cli does

@@ -162,6 +162,12 @@ pub(crate) struct ServeArgs {
     #[arg(long)]
     pub(crate) composite: bool,
 
+    /// Token mint that renews temporary app tokens. With it, the rooms of
+    /// temporary apps (`temp-…` roots) may be recorded and replayed too, with
+    /// the token of the page that asks
+    #[arg(long, env = "TOKEN_MINT_URL")]
+    pub(crate) token_mint_url: Option<String>,
+
     #[command(flatten)]
     pub(crate) room: RoomArgs,
 
@@ -185,6 +191,15 @@ pub(crate) struct RecordArgs {
     /// Directory the files are written to until they are uploaded
     #[arg(long, default_value = "recordings")]
     pub(crate) output_dir: PathBuf,
+
+    /// Token of the temporary app that owns the room, presented instead of
+    /// the recorder's own and renewed at `--token-mint-url`
+    #[arg(long, requires = "token_mint_url")]
+    pub(crate) temporary_token: Option<String>,
+
+    /// Token mint that renews `--temporary-token`
+    #[arg(long)]
+    pub(crate) token_mint_url: Option<String>,
 
     #[command(flatten)]
     pub(crate) room: RoomArgs,

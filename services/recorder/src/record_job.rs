@@ -10,6 +10,7 @@ use crate::{
     RecordArgs,
     launcher::{Job, Launcher},
     recorder::{BroadcastOptions, Content},
+    relay::{ServiceToken, TemporaryToken},
     room_recording::{RoomConfig, RoomStatus, lock, record},
     room_state::{CompositeState, RoomRecord, RoomState},
     state_sync_task::{StateSyncTask, now_ms, with_status},
@@ -50,6 +51,13 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
         relay: args.room.relay.clone(),
         verify_certificate: !args.room.insecure_skip_tls_verify,
         namespace_prefix: record_state.namespace_prefix.clone(),
+        token: args
+            .temporary_token
+            .clone()
+            .zip(args.token_mint_url.clone())
+            .map_or(ServiceToken::Environment, |(token, issuer_url)| {
+                ServiceToken::Temporary(TemporaryToken { token, issuer_url })
+            }),
         output_dir: args.output_dir.join(&args.id),
         store: store.object_store(),
         prefix: store.recording_prefix(&args.id),

@@ -8,7 +8,25 @@ use moqt::{
     subscribe::{FilterType, SubscribeOption},
 };
 
-use crate::token_refresh_task::{TokenRefreshTask, read_token_file};
+use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal, read_token_file};
+
+/// The token a recording or a replay presents to the relay.
+#[derive(Debug, Clone)]
+pub(crate) enum ServiceToken {
+    /// The recorder's own: `MOQT_AUTH_TOKEN_FILE`, re-read while connected,
+    /// else `MOQT_AUTH_TOKEN`, else none.
+    Environment,
+    /// The token of the temporary app that owns the room, given by the page
+    /// that asked for the recording or the replay.
+    Temporary(TemporaryToken),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TemporaryToken {
+    pub(crate) token: String,
+    /// The token mint that renews `token`.
+    pub(crate) issuer_url: String,
+}
 
 /// The session follows the relay's GOAWAY by itself, so a recording outlives
 /// a relay drain.
@@ -44,17 +62,28 @@ impl RelayConnection {
         url: &str,
         verify_certificate: bool,
         namespace: &str,
+        token: &ServiceToken,
     ) -> Result<Self> {
-        let token_file = std::env::var_os("MOQT_AUTH_TOKEN_FILE").map(PathBuf::from);
-        let token = match &token_file {
-            Some(path) => Some(read_token_file(path).await?),
-            None => std::env::var("MOQT_AUTH_TOKEN").ok(),
+        let (token, renewal) = match token {
+            ServiceToken::Environment => {
+                match std::env::var_os("MOQT_AUTH_TOKEN_FILE").map(PathBuf::from) {
+                    Some(path) => (
+                        Some(read_token_file(&path).await?),
+                        Some(TokenRenewal::File(path)),
+                    ),
+                    None => (std::env::var("MOQT_AUTH_TOKEN").ok(), None),
+                }
+            }
+            ServiceToken::Temporary(temporary) => (
+                Some(temporary.token.clone()),
+                Some(TokenRenewal::Issuer(temporary.issuer_url.clone())),
+            ),
         };
         let mut connection = Self::connect(url, verify_certificate, token.clone()).await?;
-        if let (Some(path), Some(token)) = (token_file, token) {
+        if let (Some(renewal), Some(token)) = (renewal, token) {
             connection._token_refresh = Some(TokenRefreshTask::run(
                 connection.session.clone(),
-                path,
+                renewal,
                 namespace.split('/').next().unwrap_or_default().to_string(),
                 token,
             ));

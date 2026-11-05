@@ -27,7 +27,7 @@ pub(crate) async fn authorize(
     namespace: &str,
     write: bool,
 ) -> Result<(), AuthError> {
-    let Some(header) = headers.get(AUTHORIZATION) else {
+    if headers.get(AUTHORIZATION).is_none() {
         return if namespace == "anon" || namespace.starts_with("anon/") {
             Ok(())
         } else {
@@ -36,12 +36,8 @@ pub(crate) async fn authorize(
                 "a bearer token is required",
             ))
         };
-    };
-    let token = header
-        .to_str()
-        .ok()
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty())
+    }
+    let token = bearer_token(headers)
         .ok_or_else(|| rejected(StatusCode::UNAUTHORIZED, "invalid bearer token"))?;
     let vts = vts.ok_or_else(|| {
         rejected(
@@ -80,6 +76,15 @@ pub(crate) async fn authorize(
         )
     })?;
     check_claims(&verified, namespace, write, now_ms() / 1000)
+}
+
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .filter(|value| !value.is_empty())
 }
 
 fn check_claims(verified: &Value, namespace: &str, write: bool, now: u64) -> Result<(), AuthError> {
