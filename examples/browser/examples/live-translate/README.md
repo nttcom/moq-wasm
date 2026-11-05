@@ -18,4 +18,4 @@ cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --gcp-pr
 
 A language is translated for at most 60 minutes at a stretch (`--language-time-limit-minutes`) and, with `--open-hours 'Mon-Fri 09:00-17:30 +09:00'`, only inside those hours; the viewer returns to the original audio when the translation ends.
 
-Open `examples/live-translate/streamer/index.html`, press 配信開始, and open the viewer link it shows. In a browser without an H.264 encoder add `?videoCodec=vp8&videoEncoderHardwareAcceleration=prefer-software` to the streamer URL.
+Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chrome` for the real camera and microphone), press 配信開始, and open the viewer link it shows. In a browser without an H.264 encoder add `?videoCodec=vp8&videoEncoderHardwareAcceleration=prefer-software` to the streamer URL.

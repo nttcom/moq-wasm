@@ -91,6 +91,13 @@ cleanup() {
 
 trap cleanup EXIT
 
+# E2E runs use Chrome's fake camera and microphone; MOQT_FAKE_MEDIA=0 uses the real ones to try a page by hand.
+if [[ "${MOQT_FAKE_MEDIA:-1}" == "0" ]]; then
+  MEDIA_FLAGS=()
+else
+  MEDIA_FLAGS=(--use-fake-device-for-media-stream --use-fake-ui-for-media-stream)
+fi
+
 echo "Launching Chrome with certificate: ${CERT_PEM}"
 echo "Using relay URLs: ${RELAY_A_URL}, ${RELAY_B_URL}"
 echo "Opening browser example: ${BROWSER_APP_URL_WITH_RELAYS}"
@@ -101,7 +108,6 @@ echo "Opening browser example: ${BROWSER_APP_URL_WITH_RELAYS}"
   --origin-to-force-quic-on=127.0.0.1:4433,localhost:4433,127.0.0.1:4434,localhost:4434,${RELAY_A_AUTHORITY},${RELAY_B_AUTHORITY} \
   --ignore-certificate-errors-spki-list="${CERT_SPKI_BASE64}" \
   --ignore-certificate-errors \
-  --use-fake-device-for-media-stream \
-  --use-fake-ui-for-media-stream \
+  ${MEDIA_FLAGS[@]+"${MEDIA_FLAGS[@]}"} \
   --autoplay-policy=no-user-gesture-required \
   "${BROWSER_APP_URL_WITH_RELAYS}"

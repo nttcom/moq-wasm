@@ -61,7 +61,8 @@ make browser        # 4. wasm build and the example hub on http://localhost:5173
 
 Then `make chrome` (`make chrome:linux` on Linux) opens Chrome trusting the
 relay's self-signed certificate. Open Live Viewer from the hub and watch
-`anon/live/test`.
+`anon/live/test`. Chrome gets a fake camera and microphone, as the E2E runs
+do; `MOQT_FAKE_MEDIA=0 make chrome` uses the real ones.
 
 ### Two relays
 
