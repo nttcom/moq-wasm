@@ -97,6 +97,13 @@ export function bearerToken(): string | undefined {
   }
 }
 
+/// For a bot service (utils/botRoom.ts): the current temporary token, which it can keep refreshing on
+/// the token mint. A token given in the URL is not one the token mint refreshes, so it is not handed
+/// over.
+export function temporaryAppToken(): string | undefined {
+  return access.kind === 'temporary' ? access.current().token : undefined
+}
+
 export function withNamespaceRoot(namespace: string[]): string[] {
   return namespace[0] === PUBLIC_NAMESPACE_ROOT ? [access.namespaceRoot, ...namespace.slice(1)] : namespace
 }

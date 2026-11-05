@@ -50,6 +50,15 @@ your own. `utils/access.ts` resolves the mode once per page, and
 signed with the `auth-token` CLI or by the console). Its namespace root then
 becomes the token's appId; the token is used as is and never refreshed.
 
+The bot-backed examples (chat moderation, camera detection, PTZ tracking and
+the Meeting captions) hand a temporary page's token to the bot service in the
+`Authorization` header of the room request (`utils/botRoom.ts`), and the bot
+joins the room under the same app, refreshing its own copy of the token on
+the token mint (docs/architecture/ai-bots/on-demand-rooms.md "Temporary
+apps"). A public page's request carries no token, and its bot runs under
+`anon`. A `?jwt=` token is not handed over, since the issuer cannot refresh
+it: those pages' bots stay under `anon`, and the Meeting hides its captions.
+
 ## Safari
 
 Playwright's WebKit has no WebTransport, so check Safari on a Mac by hand.
