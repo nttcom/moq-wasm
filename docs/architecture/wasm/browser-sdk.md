@@ -416,8 +416,10 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 に入れる。チャットと字幕は、catalog の event timeline track をアプリが FETCH して並べる。
 
 ### 移行の手順
-publisher、recorder、player の順に進める。1手順を1 PR にする。3〜8 の間は、HTTP の応答の
-`tracks` と `chunks` を残し、今の recording-player を動かし続ける。
+publisher の timeline から始め、recorder の replay を VOD にしてから、録画の再生を
+`LivePlayer` に移す。手順 2 はライブの巻き戻しだけに効き、手順 1 の後ならいつでもよい。
+1手順を1 PR にする。3〜8 の間は、HTTP の応答の `tracks` と `chunks` を残し、今の
+recording-player を動かし続ける。
 
 1. **feat(broadcast): すべてのソースに media timeline を出す。** entry をソースの group の
    始まりごとに書く。
