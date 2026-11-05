@@ -18,7 +18,7 @@ function render(bar: HTMLElement, access: Access): void {
       bar.replaceChildren(
         label('🌐 Public'),
         text(
-          '誰でも視聴できる anon namespace に Publish します。送信したメディアは公開されます。一覧ページで一時トークンに切り替えられます'
+          '誰でも視聴できる anon namespace に Publish します。送信したメディアは公開されます。機密情報やプライバシーに関わる情報は入力しないでください。一覧ページで一時トークンに切り替えられます'
         )
       )
       return
@@ -34,7 +34,7 @@ function render(bar: HTMLElement, access: Access): void {
         ...temporaryStatus(
           access,
           (minutes) =>
-            `このリンクを知っている人は誰でも参加・録画の閲覧ができます · リンクの有効期限 残り ${minutes} 分`
+            `URL 及びトークンを共有すると参加・視聴が可能になります。検証用の認証認可機能であるため、機密情報やプライバシーに関わる情報は入力しないでください · 有効期限 残り ${minutes} 分`
         )
       )
   }
