@@ -13,7 +13,7 @@ mod target_language;
 mod translated_audio;
 mod translated_catalog;
 mod translation_engine;
-mod translation_limits;
+mod translation_policy;
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -32,8 +32,9 @@ use crate::{
     broadcast_translation::BroadcastTranslation,
     gemini::{AgentPlatform, GeminiCredentials},
     open_hours::OpenHours,
+    target_language::find_by_code,
     translation_engine::TranslationEngine,
-    translation_limits::TranslationLimits,
+    translation_policy::TranslationPolicy,
 };
 
 #[derive(Parser, Debug)]
@@ -95,13 +96,22 @@ struct Args {
         help = "Stop a language's translation after this many minutes at a stretch; its viewers may subscribe again"
     )]
     language_time_limit_minutes: u64,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_ALWAYS_ON",
+        value_delimiter = ',',
+        value_name = "LANGUAGE_CODES",
+        help = "Languages translated for the whole broadcast whether or not anyone listens, like 'en,es', so their first viewer hears them at once; each costs a Gemini session"
+    )]
+    always_on: Vec<String>,
 }
 
 struct Router {
     session: Arc<Session>,
     engine: TranslationEngine,
     capacity: Arc<Semaphore>,
-    limits: Arc<TranslationLimits>,
+    policy: Arc<TranslationPolicy>,
     broadcasts: HashMap<String, BroadcastTranslation>,
 }
 
@@ -116,6 +126,14 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
     let engine = translation_engine(&args)?;
+    let always_on = args
+        .always_on
+        .iter()
+        .filter(|code| !code.is_empty())
+        .map(|code| {
+            find_by_code(code).with_context(|| format!("--always-on: unknown language {code}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let config = ClientConfig {
         port: 0,
         verify_certificate: !args.insecure,
@@ -134,9 +152,10 @@ async fn main() -> Result<()> {
         session,
         engine,
         capacity: Arc::new(Semaphore::new(args.max_sessions)),
-        limits: Arc::new(TranslationLimits {
+        policy: Arc::new(TranslationPolicy {
             open_hours: args.open_hours.clone(),
             language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
+            always_on,
         }),
         broadcasts: HashMap::new(),
     };
@@ -213,7 +232,7 @@ impl Router {
             self.session.clone(),
             self.engine.clone(),
             self.capacity.clone(),
-            self.limits.clone(),
+            self.policy.clone(),
             namespace.clone(),
         );
         self.broadcasts.insert(namespace, broadcast);

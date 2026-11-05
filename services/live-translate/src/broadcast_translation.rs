@@ -6,7 +6,6 @@ use moqt::{
     RequestErrorCode, Session, Subscription, TrackWriter, object::ContentExists,
     publish::PublishDoneCode, subscribe::SubscribeHandler,
 };
-use time::OffsetDateTime;
 use tokio::{
     sync::{Semaphore, mpsc},
     task::JoinHandle,
@@ -22,12 +21,12 @@ use crate::{
     target_language::{TARGET_LANGUAGES, TargetLanguage, find_by_track_name},
     translated_catalog::{build_translated_catalog, source_audio_track},
     translation_engine::TranslationEngine,
-    translation_limits::TranslationLimits,
+    translation_policy::TranslationPolicy,
 };
 
 const SUBSCRIPTION_NEVER_EXPIRES: u64 = 0;
 const LANGUAGE_IDLE_GRACE: Duration = Duration::from_secs(5);
-const LIMITS_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+const POLICY_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// Covers the source catalog's SUBSCRIBE retries and the wait for the audio
 /// track to be listed.
 const FIRST_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
@@ -35,6 +34,12 @@ const FIRST_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
 enum BroadcastCommand {
     Subscribe(Box<SubscribeHandler>),
     Unsubscribe(u64),
+}
+
+enum StartRefusal {
+    Closed,
+    Capacity,
+    Failed(anyhow::Error),
 }
 
 pub(crate) struct BroadcastTranslation {
@@ -49,7 +54,7 @@ impl BroadcastTranslation {
         session: Arc<Session>,
         engine: TranslationEngine,
         capacity: Arc<Semaphore>,
-        limits: Arc<TranslationLimits>,
+        policy: Arc<TranslationPolicy>,
         broadcast_namespace: String,
     ) -> Self {
         let translated_namespace = translated_namespace(&broadcast_namespace);
@@ -61,7 +66,7 @@ impl BroadcastTranslation {
                     session,
                     engine,
                     capacity,
-                    limits,
+                    policy,
                     &broadcast_namespace,
                     command_receiver,
                 )
@@ -107,6 +112,8 @@ struct LanguageSlot {
     translation: LanguageTranslation,
     idle_since: Option<Instant>,
     started_at: Instant,
+    /// An always-on language: neither viewers leaving nor the time limit stop it.
+    pinned: bool,
     /// The viewers' subscriptions the relay forwarded, to end with PUBLISH_DONE.
     subscriptions: HashMap<u64, Subscription>,
 }
@@ -115,7 +122,7 @@ struct Serving {
     session: Arc<Session>,
     engine: TranslationEngine,
     capacity: Arc<Semaphore>,
-    limits: Arc<TranslationLimits>,
+    policy: Arc<TranslationPolicy>,
     broadcast_namespace: String,
     source_track_name: String,
     source_channels: u32,
@@ -130,7 +137,7 @@ async fn serve(
     session: Arc<Session>,
     engine: TranslationEngine,
     capacity: Arc<Semaphore>,
-    limits: Arc<TranslationLimits>,
+    policy: Arc<TranslationPolicy>,
     broadcast_namespace: &str,
     mut command_receiver: mpsc::UnboundedReceiver<BroadcastCommand>,
 ) -> Result<()> {
@@ -156,7 +163,7 @@ async fn serve(
         session: session.clone(),
         engine,
         capacity,
-        limits,
+        policy,
         broadcast_namespace: broadcast_namespace.to_string(),
         source_track_name: source_track.name.clone(),
         source_channels: channel_count(source_track.channel_config.as_deref()),
@@ -173,11 +180,15 @@ async fn serve(
         .await
         .context("announce the translated namespace")?;
     tracing::info!(%namespace, source_track = %serving.source_track_name, "translation ready");
-    let mut limits_check = tokio::time::interval(LIMITS_CHECK_INTERVAL);
+    serving.start_always_on();
+    let mut policy_check = tokio::time::interval(POLICY_CHECK_INTERVAL);
     loop {
         let idle_deadline = serving.earliest_idle_deadline();
         tokio::select! {
-            _ = limits_check.tick() => serving.enforce_limits().await,
+            _ = policy_check.tick() => {
+                serving.enforce_limits().await;
+                serving.start_always_on();
+            }
             command = command_receiver.recv() => match command {
                 Some(BroadcastCommand::Subscribe(handler)) => serving.subscribe(*handler).await,
                 Some(BroadcastCommand::Unsubscribe(request_id)) => serving.unsubscribe(request_id),
@@ -224,63 +235,27 @@ impl Serving {
     async fn subscribe_language(
         &mut self,
         handler: &SubscribeHandler,
-        language: &'static crate::target_language::TargetLanguage,
+        language: &'static TargetLanguage,
     ) -> Result<()> {
-        if let Some(open_hours) = &self.limits.open_hours
-            && !open_hours.contains(OffsetDateTime::now_utc())
-        {
-            reject(
-                handler,
-                RequestErrorCode::InternalError,
-                &format!("closed outside the open hours {open_hours}"),
-            )
-            .await;
-            return Ok(());
-        }
-        if !self.languages.contains_key(language.code) {
-            let Ok(capacity_permit) = self.capacity.clone().try_acquire_owned() else {
-                reject(
-                    handler,
-                    RequestErrorCode::InternalError,
-                    "translation capacity reached",
-                )
-                .await;
-                return Ok(());
-            };
-            let source_audio = self.source_audio.get_or_insert_with(|| {
-                SourceAudio::run(
-                    self.session.clone(),
-                    self.broadcast_namespace.clone(),
-                    self.source_track_name.clone(),
-                    self.source_channels,
-                )
-            });
-            let translation = match LanguageTranslation::run(
-                &self.engine,
-                language,
-                source_audio.subscribe(),
-                capacity_permit,
-            ) {
-                Ok(translation) => translation,
-                Err(error) => {
-                    reject(
-                        handler,
-                        RequestErrorCode::InternalError,
-                        "translation failed to start",
+        if let Err(refusal) = self.start_language(language, false) {
+            let reason = match &refusal {
+                StartRefusal::Closed => {
+                    format!(
+                        "closed outside the open hours {}",
+                        self.policy
+                            .open_hours
+                            .as_ref()
+                            .expect("closed only with open hours")
                     )
-                    .await;
-                    return Err(error);
                 }
+                StartRefusal::Capacity => "translation capacity reached".to_string(),
+                StartRefusal::Failed(_) => "translation failed to start".to_string(),
             };
-            self.languages.insert(
-                language.code,
-                LanguageSlot {
-                    translation,
-                    idle_since: None,
-                    started_at: Instant::now(),
-                    subscriptions: HashMap::new(),
-                },
-            );
+            reject(handler, RequestErrorCode::InternalError, &reason).await;
+            return match refusal {
+                StartRefusal::Failed(error) => Err(error),
+                _ => Ok(()),
+            };
         }
         let (subscription, writer) = self.accept(handler).await?;
         if let Some(slot) = self.languages.get_mut(language.code) {
@@ -292,6 +267,79 @@ impl Serving {
         self.request_languages
             .insert(handler.request_id(), language.code);
         Ok(())
+    }
+
+    /// Starts the language's Gemini session unless it runs already. A pinned
+    /// start is an always-on language's; a later subscriber keeps it pinned.
+    fn start_language(
+        &mut self,
+        language: &'static TargetLanguage,
+        pinned: bool,
+    ) -> Result<(), StartRefusal> {
+        if !self.policy.is_open() {
+            return Err(StartRefusal::Closed);
+        }
+        if self.languages.contains_key(language.code) {
+            return Ok(());
+        }
+        let Ok(capacity_permit) = self.capacity.clone().try_acquire_owned() else {
+            return Err(StartRefusal::Capacity);
+        };
+        let source_audio = self.source_audio.get_or_insert_with(|| {
+            SourceAudio::run(
+                self.session.clone(),
+                self.broadcast_namespace.clone(),
+                self.source_track_name.clone(),
+                self.source_channels,
+            )
+        });
+        let translation = LanguageTranslation::run(
+            &self.engine,
+            language,
+            source_audio.subscribe(),
+            capacity_permit,
+        )
+        .map_err(StartRefusal::Failed)?;
+        self.languages.insert(
+            language.code,
+            LanguageSlot {
+                translation,
+                idle_since: None,
+                started_at: Instant::now(),
+                pinned,
+                subscriptions: HashMap::new(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Also called at every policy check, so a start refused while closed, or
+    /// failed, is retried.
+    fn start_always_on(&mut self) {
+        for language in self.policy.always_on.clone() {
+            if self.languages.contains_key(language.code) {
+                continue;
+            }
+            match self.start_language(language, true) {
+                Ok(()) => {
+                    tracing::info!(language = language.code, "translation started, always on")
+                }
+                Err(StartRefusal::Closed) => {}
+                Err(StartRefusal::Capacity) => {
+                    tracing::warn!(
+                        language = language.code,
+                        "always-on translation waits for capacity"
+                    )
+                }
+                Err(StartRefusal::Failed(error)) => {
+                    tracing::warn!(
+                        language = language.code,
+                        ?error,
+                        "always-on translation failed to start"
+                    )
+                }
+            }
+        }
     }
 
     /// A source catalog that lists more tracks, such as the video once its
@@ -336,16 +384,12 @@ impl Serving {
     /// Viewers of an ended language get PUBLISH_DONE and may subscribe again.
     async fn enforce_limits(&mut self) {
         let now = Instant::now();
-        let closed = self
-            .limits
-            .open_hours
-            .as_ref()
-            .is_some_and(|open_hours| !open_hours.contains(OffsetDateTime::now_utc()));
+        let closed = !self.policy.is_open();
         let ended: Vec<(&'static str, &'static str)> = self
             .languages
             .iter()
             .filter_map(|(code, slot)| {
-                if now >= slot.started_at + self.limits.language_time_limit {
+                if !slot.pinned && now >= slot.started_at + self.policy.language_time_limit {
                     Some((*code, "time limit"))
                 } else if closed {
                     Some((*code, "closed"))
@@ -389,6 +433,7 @@ impl Serving {
     fn earliest_idle_deadline(&self) -> Option<Instant> {
         self.languages
             .values()
+            .filter(|slot| !slot.pinned)
             .filter_map(|slot| slot.idle_since)
             .min()
             .map(|idle_since| idle_since + LANGUAGE_IDLE_GRACE)
@@ -397,9 +442,10 @@ impl Serving {
     fn stop_idle_languages(&mut self) {
         let now = Instant::now();
         self.languages.retain(|code, slot| {
-            let expired = slot
-                .idle_since
-                .is_some_and(|idle_since| idle_since + LANGUAGE_IDLE_GRACE <= now);
+            let expired = !slot.pinned
+                && slot
+                    .idle_since
+                    .is_some_and(|idle_since| idle_since + LANGUAGE_IDLE_GRACE <= now);
             if expired {
                 tracing::info!(language = code, "translation stopped, no viewers");
             }

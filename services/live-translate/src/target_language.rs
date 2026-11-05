@@ -36,6 +36,12 @@ impl TargetLanguage {
     }
 }
 
+pub(crate) fn find_by_code(code: &str) -> Option<&'static TargetLanguage> {
+    TARGET_LANGUAGES
+        .iter()
+        .find(|language| language.code == code)
+}
+
 pub(crate) fn find_by_track_name(track_name: &str) -> Option<&'static TargetLanguage> {
     find_by_code(track_name.strip_prefix(TRANSLATED_TRACK_PREFIX)?)
 }
