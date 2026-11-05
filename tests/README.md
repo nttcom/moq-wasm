@@ -13,6 +13,7 @@ down.
 | `./tests/multiple-publishers-e2e/run.sh` | A second publisher of the same track is ignored |
 | `./tests/object-dedup-e2e/run.sh` | Republishing a group does not duplicate objects for FETCH |
 | `./tests/moqtsink-e2e/run.sh` | The GStreamer `moqtsink` publishes the expected tracks |
+| `./tests/live-translate-e2e/run.sh` | live-translate lists the languages in its catalog and stamps translated audio with the source time |
 
 Browser E2E: the Playwright specs live in `examples/browser/tests`, and the
 runners in `browser-e2e/` start the relay, VTS and Vite around them. Run them

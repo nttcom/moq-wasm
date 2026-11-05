@@ -135,6 +135,22 @@ services:
       timeout: 3s
       retries: 20
 
+  live-translate:
+    image: moqt-live-translate:local
+    build:
+      context: .
+      dockerfile: services/live-translate/Dockerfile
+    profiles:
+      - live-translate
+    env_file:
+      - path: .env.live-translate
+        required: false
+    environment:
+      LIVE_TRANSLATE_RELAY_URL: moqt://relay-a:443
+    command: ["/usr/local/bin/live-translate", "--insecure"]
+    depends_on:
+      - relay-a
+
   observability:
     image: moqt-observability:local
     build:

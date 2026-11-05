@@ -1,0 +1,30 @@
+[package]
+name = "live-translate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+base64 = "0.22.1"
+bytes = "1"
+clap = { version = "4.6.1", features = ["derive", "env"] }
+futures-util = "0.3.32"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
+metadata-token = { path = "../../crates/metadata-token" }
+moqt = { path = "../../crates/moqt" }
+msf = { path = "../../crates/msf" }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+time = { version = "0.3.47", features = ["macros"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = ["full", "test-util"] }

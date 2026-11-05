@@ -47,6 +47,8 @@ on:
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
+      - "tests/live-translate-e2e/**"
+      - "services/live-translate/**"
       - "tests/object-dedup-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -102,6 +104,8 @@ on:
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
+      - "tests/live-translate-e2e/**"
+      - "services/live-translate/**"
       - "tests/object-dedup-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -163,7 +167,7 @@ jobs:
             live_viewer=true
             meeting=true
             console=true
-            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup)
+            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup live-translate)
           else
             base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
 
@@ -277,6 +281,12 @@ jobs:
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/gst-plugin-moqt/*|tests/moqtsink-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(moqtsink)
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain|services/live-translate/*|tests/live-translate-e2e/*)
+                  compose_suites+=(live-translate)
                   ;;
               esac
 
@@ -1113,7 +1123,7 @@ jobs:
         run: docker logout ghcr.io
 
       - name: Install GStreamer
-        if: ${{ matrix.suite == 'moqtsink' }}
+        if: ${{ matrix.suite == 'moqtsink' || matrix.suite == 'live-translate' }}
         uses: ./.github/actions/install-ffmpeg-deps
 
       - name: Run ${{ matrix.suite }} E2E
