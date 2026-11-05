@@ -33,6 +33,29 @@ export type StreamRecord = {
   captureAtByGroup: Map<bigint, Map<bigint, number>>
 }
 
+function newStreamRecord(
+  kind: StreamKind,
+  trackAlias: bigint,
+  track: string,
+  groupId: bigint,
+  openedAt: number
+): StreamRecord {
+  return {
+    kind,
+    trackAlias,
+    track,
+    groupId,
+    lastGroupId: groupId,
+    openedAt,
+    bytes: 0,
+    objects: 0,
+    receivedAtByObjectId: new Map(),
+    captureAtByObjectId: new Map(),
+    receivedAtByGroup: new Map(),
+    captureAtByGroup: new Map()
+  }
+}
+
 /// Subgroup streams the viewer has received, keyed by track alias and group;
 /// a stream counts as finished when its end-of-group status object arrives,
 /// and the transport closing it without one is not observable from JS. Only
@@ -71,20 +94,13 @@ export class StreamMonitor implements DeliveryObserver {
     const key = `${trackAlias}:${groupId}`
     let record = this.records.get(key)
     if (!record) {
-      record = {
-        kind: 'subscribe',
+      record = newStreamRecord(
+        'subscribe',
         trackAlias,
-        track: this.labels.get(trackAlias) ?? `alias ${trackAlias}`,
+        this.labels.get(trackAlias) ?? `alias ${trackAlias}`,
         groupId,
-        lastGroupId: groupId,
-        openedAt: now,
-        bytes: 0,
-        objects: 0,
-        receivedAtByObjectId: new Map(),
-        captureAtByObjectId: new Map(),
-        receivedAtByGroup: new Map(),
-        captureAtByGroup: new Map()
-      }
+        now
+      )
       this.records.set(key, record)
     }
     return record
@@ -124,20 +140,7 @@ export class StreamMonitor implements DeliveryObserver {
     const key = `fetch:${requestId}`
     let record = this.records.get(key)
     if (!record) {
-      record = {
-        kind: 'fetch',
-        trackAlias: requestId,
-        track: `fetch ${track}`,
-        groupId: groupId,
-        lastGroupId: groupId,
-        openedAt: now,
-        bytes: 0,
-        objects: 0,
-        receivedAtByObjectId: new Map(),
-        captureAtByObjectId: new Map(),
-        receivedAtByGroup: new Map(),
-        captureAtByGroup: new Map()
-      }
+      record = newStreamRecord('fetch', requestId, `fetch ${track}`, groupId, now)
       this.records.set(key, record)
     }
     record.lastGroupId = groupId

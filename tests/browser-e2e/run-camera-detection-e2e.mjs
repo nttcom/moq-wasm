@@ -1,78 +1,11 @@
 #!/usr/bin/env node
 
-import { once } from "node:events";
-import { createServer } from "node:http";
-import { resolve } from "node:path";
-import { text } from "node:stream/consumers";
-import { setTimeout } from "node:timers/promises";
-
-import {
-  registerSignalHandlers,
-  runCommand,
-  spawnProcess,
-  spawnViteServer,
-  terminateProcess,
-  waitForOutput,
-} from "./process.mjs";
-import {
-  ensureLinuxEnvironment,
-  getErrorMessage,
-  repoRoot,
-  resolveCommandName,
-} from "../../scripts/dev-env.mjs";
-import {
-  assertE2EPrerequisites,
-  findFreePort,
-  cameraDetectionPath,
-  getDefaultBaseUrl,
-  getDefaultMoqtUrl,
-  getDefaultWebPort,
-  jsDir,
-  waitForHttpOk,
-} from "./helpers.mjs";
-import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
-
-const botDir = resolve(repoRoot, "examples/python/moq-camera-detection");
-const childProcesses = [];
+import { runSystemOneBotE2E } from "./system-one-bot-e2e.mjs";
 
 /// Answers every choice question with the choice `PUT /answer` set, and every boxes question
 /// (`Every <target>.`) with the boxes `PUT /boxes` set for its target: `{"<target>": [[left, top,
-/// right, bottom], ...]}`. `PUT /delay` delays every answer by the given milliseconds.
-async function startFakeSystemOne() {
-  let answer = "はい";
-  let boxes = {};
-  let delayMs = 0;
-  const server = createServer(async (request, response) => {
-    if (request.method === "PUT" && request.url === "/delay") {
-      delayMs = Number(await text(request));
-      response.statusCode = 204;
-      response.end();
-      return;
-    }
-    if (request.method === "PUT" && request.url === "/answer") {
-      answer = await text(request);
-      response.statusCode = 204;
-      response.end();
-      return;
-    }
-    if (request.method === "PUT" && request.url === "/boxes") {
-      boxes = JSON.parse(await text(request));
-      response.statusCode = 204;
-      response.end();
-      return;
-    }
-    const { questions } = JSON.parse(await text(request));
-    await setTimeout(delayMs);
-    response.setHeader("content-type", "application/json");
-    response.end(
-      JSON.stringify({ answers: answerQuestions(questions, answer, boxes) }),
-    );
-  });
-  await once(server.listen(0, "127.0.0.1"), "listening");
-  return server;
-}
-
-function answerQuestions(questions, answer, boxes) {
+/// right, bottom], ...]}`.
+function answerQuestions({ questions }, { answer, boxes }) {
   return Object.fromEntries(
     Object.entries(questions).map(([id, question]) => {
       if (question.type !== "boxes") {
@@ -88,83 +21,8 @@ function answerQuestions(questions, answer, boxes) {
   );
 }
 
-async function main() {
-  ensureLinuxEnvironment();
-  assertE2EPrerequisites();
-
-  const webPort = getDefaultWebPort();
-  const baseUrl = getDefaultBaseUrl();
-  const moqtUrl = getDefaultMoqtUrl();
-  const fakeSystemOne = await startFakeSystemOne();
-  const fakeSystemOneOrigin = `http://127.0.0.1:${fakeSystemOne.address().port}`;
-
-  const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
-    fakeSystemOne.close();
-  };
-
-  registerSignalHandlers(cleanup);
-
-  try {
-    const vts = await startVts();
-    childProcesses.push(vts);
-    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
-      cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayAuthEnv() },
-    });
-    const vite = spawnViteServer(webPort);
-
-    childProcesses.push(server, vite);
-
-    await Promise.all([
-      waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(`${baseUrl}${cameraDetectionPath}`, 120_000),
-    ]);
-
-    const botPort = await findFreePort();
-    const bot = spawnProcess(
-      "bot",
-      "uv",
-      [
-        "run",
-        "python",
-        "-m",
-        "moq_camera_detection.bot",
-        "--port",
-        String(botPort),
-        "--relay-url",
-        moqtUrl,
-        "--insecure",
-        "--system-one-url",
-        `${fakeSystemOneOrigin}/v1/systemone`,
-      ],
-      { cwd: botDir },
-    );
-    childProcesses.push(bot);
-    await waitForOutput(bot, /serving rooms on/, "bot", 180_000);
-
-    await runCommand(
-      resolveCommandName("npm"),
-      ["run", "e2e:camera-detection"],
-      {
-        cwd: jsDir,
-        env: {
-          ...process.env,
-          MEDIA_E2E_BASE_URL: baseUrl,
-          CAMERA_DETECTION_E2E_MOQT_URL: moqtUrl,
-          CAMERA_DETECTION_E2E_BOT_URL: `http://127.0.0.1:${botPort}`,
-          CAMERA_DETECTION_E2E_SYSTEM_ONE_ORIGIN: fakeSystemOneOrigin,
-        },
-      },
-    );
-  } finally {
-    await cleanup();
-  }
-}
-
-main().catch((error) => {
-  console.error(getErrorMessage(error));
-  process.exitCode = 1;
+runSystemOneBotE2E({
+  name: "camera-detection",
+  answer: answerQuestions,
+  settings: { answer: "はい", boxes: {} },
 });
