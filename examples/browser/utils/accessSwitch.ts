@@ -31,10 +31,12 @@ switch (access.kind) {
     description.textContent =
       'あなた専用の namespace で Example を使います。共有リンクを知っている人だけが参加・視聴できます（リンクは 1 時間で無効になります）。'
     const shown = temporaryStatus(access, (minutes) => `リンクの有効期限 残り ${minutes} 分`)
-    const renew = button('新しいルームにする', async () => {
+    const renew = button('トークンを作り直す', async () => {
       await startNewTemporaryApp()
       reloadWithoutToken()
     })
+    renew.title =
+      '今開いている会議はそのまま続きます。これから開く Example は、今の共有リンクや録画とは別の場所になります'
     status.replaceChildren(...shown, renew)
   }
 }
