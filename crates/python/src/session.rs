@@ -1,28 +1,46 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use moqt::{
-    ClientConfig, Endpoint, NATIVE, RequestErrorCode, SessionEvent,
+    AuthorizationToken, AuthorizationTokenSource, ClientConfig, Endpoint, NATIVE, RequestErrorCode,
+    SessionEvent,
     executor::{self, JoinHandle},
     namespace::NamespaceWatchers,
     publish::{Origin, Retention},
 };
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::{namespaces::NamespaceEvents, publication::TrackPublication, track::Track};
 
+/// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
+/// token refresh; it reads neither the namespace `[app id]` nor this name.
+const REFRESH_TRACK_NAME: &str = "update_auth_token";
+
 /// Connects to a relay: `moqt://` for raw QUIC, `https://` for WebTransport.
-/// The session follows the relay's GOAWAY by itself.
+/// The session follows the relay's GOAWAY by itself, presenting the latest
+/// token given to `connect` or `refresh_token`.
 #[pyfunction]
-#[pyo3(signature = (url, *, verify_certificate = true))]
+#[pyo3(signature = (url, *, verify_certificate = true, token = None))]
 pub fn connect(
     py: Python<'_>,
     url: String,
     verify_certificate: bool,
+    token: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
+    let token = token.map(|token| Arc::new(Mutex::new(token)));
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let authorization_token = token.clone().map(|current| {
+            AuthorizationTokenSource::provider(move || {
+                let token = current.lock().unwrap().clone();
+                async move { Ok(token) }
+            })
+        });
         // quinn binds the endpoint's socket through the ambient runtime, which this future runs on.
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
             verify_certificate,
+            authorization_token,
             ..ClientConfig::default()
         })?;
         let session = Arc::new(endpoint.connect(&url).await?.await?);
@@ -37,6 +55,7 @@ pub fn connect(
             origin,
             watchers,
             event_loop,
+            token,
         })
     })
 }
@@ -92,6 +111,8 @@ pub struct Session {
     origin: Origin,
     watchers: NamespaceWatchers,
     event_loop: JoinHandle,
+    /// The token the session presents when it follows a GOAWAY.
+    token: Option<Arc<Mutex<String>>>,
 }
 
 // The event loop holds the session, so a Session dropped without `close` would
@@ -180,6 +201,39 @@ impl Session {
                 namespace,
                 name,
             })
+        })
+    }
+
+    /// Sends `token` to the relay as the session's new authorization token
+    /// (docs/architecture/relay/architecture.md "Token refresh"), and presents
+    /// it on the connections the session opens from now on. Fails for a
+    /// session connected without a token, or when the relay rejects `token`;
+    /// the relay then keeps the session's current token.
+    #[pyo3(signature = (token, *, app_id))]
+    fn refresh_token<'py>(
+        &self,
+        py: Python<'py>,
+        token: String,
+        app_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let Some(current) = self.token.clone() else {
+            return Err(PyRuntimeError::new_err(
+                "the session was connected without a token",
+            ));
+        };
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            session
+                .subscriber()
+                .track_status(
+                    app_id,
+                    REFRESH_TRACK_NAME.to_string(),
+                    vec![AuthorizationToken::use_value_utf8(&token)],
+                )
+                .await
+                .map_err(anyhow::Error::from)?;
+            *current.lock().unwrap() = token;
+            Ok(())
         })
     }
 
