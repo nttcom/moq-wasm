@@ -43,6 +43,7 @@ Application and integration components (draft reference is normally not required
 | `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
 | `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
 | `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
+| `services/token-mint` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under |
 | `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
 | `examples/` | Usage examples and test clients |
 
