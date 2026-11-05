@@ -62,6 +62,16 @@ export function capLadderToHeight(ladder: Rung[], height: number | undefined): R
   return fitting < 0 ? ladder : ladder.slice(0, fitting + 1)
 }
 
+/// The top of the ladder capped to `height` when `current` lies above it, or
+/// undefined when `current` fits or is not on the ladder.
+export function renditionAboveHeight(ladder: Rung[], current: string, height: number | undefined): string | undefined {
+  const capped = capLadderToHeight(ladder, height)
+  if (!ladder.some((rung) => rung.name === current) || capped.some((rung) => rung.name === current)) {
+    return undefined
+  }
+  return capped.at(-1)?.name
+}
+
 function pixels(track: MediaCatalogTrack): number | undefined {
   return track.width && track.height ? track.width * track.height : undefined
 }
@@ -96,6 +106,7 @@ export class AdaptiveBitrate {
   private upHoldChangedAtMs = 0
   private lastUpAtMs: number | undefined
   private lastCongestedAtMs: number | undefined
+  private ceilingBitrate: number | undefined
 
   constructor(private readonly targetLagMs?: () => number) {}
 
@@ -138,6 +149,28 @@ export class AdaptiveBitrate {
       return ladder[index + 1].name
     }
     return undefined
+  }
+
+  /// `decide` over the ladder capped to the picture's `height`: a rendition
+  /// above the cap steps down to it at once, and a cap raised by a taller
+  /// picture is taken as `raiseTo` allows.
+  decideUnderHeight(
+    nowMs: number,
+    ladder: Rung[],
+    current: string,
+    stalled: boolean,
+    height: number | undefined
+  ): string | undefined {
+    const capped = capLadderToHeight(ladder, height)
+    const ceilingBitrate = capped.at(-1)?.bitrate
+    const raised =
+      this.ceilingBitrate !== undefined && ceilingBitrate !== undefined && ceilingBitrate > this.ceilingBitrate
+    this.ceilingBitrate = ceilingBitrate
+    return (
+      renditionAboveHeight(ladder, current, height) ??
+      (raised ? this.raiseTo(nowMs, capped, current) : undefined) ??
+      this.decide(nowMs, capped, current, stalled)
+    )
   }
 
   /// Returns the top of `ladder` when it lies above `current`, after something other than

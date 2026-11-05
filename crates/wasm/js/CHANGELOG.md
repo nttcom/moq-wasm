@@ -16,6 +16,9 @@
 - `LivePlayerCallbacks.onAudioLevel` receives the LOC Audio Level of each
   live audio object that carries one, and `moq-wasm/media` exports its type
   `AudioLevel`, so a page can tell who is speaking.
+- `LivePlayer` under automatic quality plays no rendition taller than its
+  `container` needs: it watches the container's height in device pixels and
+  starts on, steps down to or raises to the first rendition at least that tall.
 - `init({ onLog, onSpan })` calls both with the token of the record's
   `MoqSession` as a second argument (the provider's newest), and `undefined`
   for a record of no session or of a session without a token, so a page can
