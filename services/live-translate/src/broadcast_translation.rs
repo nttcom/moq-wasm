@@ -121,6 +121,14 @@ struct LanguageSlot {
     subscriptions: HashMap<u64, Subscription>,
 }
 
+/// The `text_ja` subscription: the language writing it, and the subscription
+/// to end with PUBLISH_DONE when that language ends.
+struct SourceText {
+    request_id: u64,
+    code: &'static str,
+    subscription: Subscription,
+}
+
 struct Serving {
     session: Arc<Session>,
     engine: TranslationEngine,
@@ -133,8 +141,7 @@ struct Serving {
     catalog_publications: HashMap<u64, CatalogPublication>,
     languages: HashMap<&'static str, LanguageSlot>,
     request_languages: HashMap<u64, &'static str>,
-    /// The `text_ja` subscription and the language writing it.
-    source_text: Option<(u64, &'static str)>,
+    source_text: Option<SourceText>,
     source_audio: Option<SourceAudio>,
 }
 
@@ -208,7 +215,7 @@ async fn serve(
             catalog = catalog_receiver.recv() => if let Some(catalog) = catalog {
                 serving.update_catalog(&catalog)?;
             },
-            _ = sleep_until(idle_deadline) => serving.stop_idle_languages(),
+            _ = sleep_until(idle_deadline) => serving.stop_idle_languages().await,
         }
     }
 }
@@ -292,9 +299,16 @@ impl Serving {
 
     /// The source transcript comes with every Gemini session, so one running
     /// language writes it; without any, the track is refused rather than
-    /// paying for a session only to transcribe.
+    /// paying for a session only to transcribe. The subscription is kept out
+    /// of the language's own, so it does not keep the language from idling.
     async fn subscribe_source_text(&mut self, handler: &SubscribeHandler) -> Result<()> {
-        let Some(code) = self.languages.keys().next().copied() else {
+        let Some(code) = self
+            .languages
+            .iter()
+            .find(|(_, slot)| slot.idle_since.is_none())
+            .or_else(|| self.languages.iter().next())
+            .map(|(code, _)| *code)
+        else {
             reject(
                 handler,
                 RequestErrorCode::InternalError,
@@ -303,18 +317,26 @@ impl Serving {
             .await;
             return Ok(());
         };
-        if let Some((request_id, _)) = self.source_text.take() {
-            self.request_languages.remove(&request_id);
+        if let Some(previous) = self.source_text.take() {
+            self.request_languages.remove(&previous.request_id);
+            if previous.code != code
+                && let Some(slot) = self.languages.get_mut(previous.code)
+            {
+                slot.translation
+                    .replace_writer(WriterUpdate::SourceText(None));
+            }
         }
         let (subscription, writer) = self.accept(handler).await?;
         if let Some(slot) = self.languages.get_mut(code) {
             slot.translation
                 .replace_writer(WriterUpdate::SourceText(Some(writer)));
-            slot.subscriptions
-                .insert(handler.request_id(), subscription);
         }
         self.request_languages.insert(handler.request_id(), code);
-        self.source_text = Some((handler.request_id(), code));
+        self.source_text = Some(SourceText {
+            request_id: handler.request_id(),
+            code,
+            subscription,
+        });
         Ok(())
     }
 
@@ -423,22 +445,23 @@ impl Serving {
         let Some(code) = self.request_languages.remove(&request_id) else {
             return;
         };
-        let source_text = self
+        let Some(slot) = self.languages.get_mut(code) else {
+            return;
+        };
+        if self
             .source_text
-            .is_some_and(|(source_request_id, _)| source_request_id == request_id);
-        if source_text {
-            self.source_text = None;
+            .take_if(|source_text| source_text.request_id == request_id)
+            .is_some()
+        {
+            slot.translation
+                .replace_writer(WriterUpdate::SourceText(None));
+            return;
         }
-        if let Some(slot) = self.languages.get_mut(code) {
-            slot.subscriptions.remove(&request_id);
-            if source_text {
-                slot.translation
-                    .replace_writer(WriterUpdate::SourceText(None));
-            } else if slot.subscriptions.is_empty() {
-                slot.translation.replace_writer(WriterUpdate::Audio(None));
-                slot.translation.replace_writer(WriterUpdate::Text(None));
-                slot.idle_since = Some(Instant::now());
-            }
+        slot.subscriptions.remove(&request_id);
+        if slot.subscriptions.is_empty() {
+            slot.translation.replace_writer(WriterUpdate::Audio(None));
+            slot.translation.replace_writer(WriterUpdate::Text(None));
+            slot.idle_since = Some(Instant::now());
         }
     }
 
@@ -460,37 +483,7 @@ impl Serving {
             })
             .collect();
         for (code, reason) in ended {
-            let Some(slot) = self.languages.remove(code) else {
-                continue;
-            };
-            if self.source_text.is_some_and(|(_, source)| source == code) {
-                self.source_text = None;
-            }
-            for (request_id, subscription) in slot.subscriptions {
-                self.request_languages.remove(&request_id);
-                if let Err(error) = self
-                    .session
-                    .publisher()
-                    .publish_done(
-                        &subscription,
-                        PublishDoneCode::TrackEnded,
-                        0,
-                        reason.to_string(),
-                    )
-                    .await
-                {
-                    tracing::warn!(request_id, ?error, "send PUBLISH_DONE");
-                }
-            }
-            tracing::info!(
-                language = code,
-                reason,
-                ran_minutes = (now - slot.started_at).as_secs() / 60,
-                "translation stopped"
-            );
-        }
-        if self.languages.is_empty() {
-            self.source_audio = None;
+            self.end_language(code, reason).await;
         }
     }
 
@@ -503,24 +496,60 @@ impl Serving {
             .map(|idle_since| idle_since + LANGUAGE_IDLE_GRACE)
     }
 
-    fn stop_idle_languages(&mut self) {
+    async fn stop_idle_languages(&mut self) {
         let now = Instant::now();
-        let source_text = self.source_text;
-        self.languages.retain(|code, slot| {
-            let expired = !slot.pinned
-                && slot
-                    .idle_since
-                    .is_some_and(|idle_since| idle_since + LANGUAGE_IDLE_GRACE <= now);
-            if expired {
-                tracing::info!(language = code, "translation stopped, no viewers");
-            }
-            !expired
-        });
-        if let Some((_, code)) = source_text
-            && !self.languages.contains_key(code)
-        {
-            self.source_text = None;
+        let expired: Vec<&'static str> = self
+            .languages
+            .iter()
+            .filter(|(_, slot)| {
+                !slot.pinned
+                    && slot
+                        .idle_since
+                        .is_some_and(|idle_since| idle_since + LANGUAGE_IDLE_GRACE <= now)
+            })
+            .map(|(code, _)| *code)
+            .collect();
+        for code in expired {
+            self.end_language(code, "no viewers").await;
         }
+    }
+
+    /// Drops the language, which stops its Gemini session, and ends its
+    /// subscriptions, the `text_ja` one included when this language wrote it,
+    /// with PUBLISH_DONE so the viewers fall back and may subscribe again.
+    async fn end_language(&mut self, code: &'static str, reason: &str) {
+        let Some(slot) = self.languages.remove(code) else {
+            return;
+        };
+        let mut subscriptions: Vec<(u64, Subscription)> = slot.subscriptions.into_iter().collect();
+        if let Some(source_text) = self
+            .source_text
+            .take_if(|source_text| source_text.code == code)
+        {
+            subscriptions.push((source_text.request_id, source_text.subscription));
+        }
+        for (request_id, subscription) in subscriptions {
+            self.request_languages.remove(&request_id);
+            if let Err(error) = self
+                .session
+                .publisher()
+                .publish_done(
+                    &subscription,
+                    PublishDoneCode::TrackEnded,
+                    0,
+                    reason.to_string(),
+                )
+                .await
+            {
+                tracing::warn!(request_id, ?error, "send PUBLISH_DONE");
+            }
+        }
+        tracing::info!(
+            language = code,
+            reason,
+            ran_minutes = slot.started_at.elapsed().as_secs() / 60,
+            "translation stopped"
+        );
         if self.languages.is_empty() {
             self.source_audio = None;
         }

@@ -88,7 +88,9 @@ difference between the actual and the estimated delay.
 - Exactly one task calls `Session::receive_event`.
 - A `LanguageTranslation` owns its `TrackWriter`; after the last viewer leaves
   it keeps the Gemini session for 5 s and resumes with a new writer if a
-  SUBSCRIBE returns in time.
+  SUBSCRIBE returns in time. The `text_ja` subscription is held beside the
+  languages, not among a language's own, so a transcript viewer never keeps a
+  language from idling; it ends with the language that writes it.
 - At most `--max-sessions` languages are translated at once across all
   broadcasts (the Gemini free tier allows 3 concurrent sessions); a SUBSCRIBE
   beyond that is rejected.
