@@ -21,7 +21,7 @@ use crate::{
     manifest::{MANIFEST_NAME, manifest_json},
     recorder::{BroadcastOptions, Content, UploadTarget, default_output_path, record_broadcast},
     recording::RecordedFile,
-    relay::RelayConnection,
+    relay::{RelayConnection, ServiceToken},
     room_state::{MemberStatus, RecordingFormat, RoomState},
     upload_task::UploadTask,
 };
@@ -33,6 +33,7 @@ pub(crate) struct RoomConfig {
     pub(crate) relay: String,
     pub(crate) verify_certificate: bool,
     pub(crate) namespace_prefix: String,
+    pub(crate) token: ServiceToken,
     pub(crate) output_dir: PathBuf,
     /// The store the room's files are uploaded to, under `prefix`.
     pub(crate) store: Arc<dyn ObjectStore>,
@@ -81,6 +82,7 @@ pub(crate) async fn record(
         &config.relay,
         config.verify_certificate,
         &config.namespace_prefix,
+        &config.token,
     )
     .await?;
     let result = follow_members(

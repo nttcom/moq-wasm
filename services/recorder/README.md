@@ -117,6 +117,16 @@ viewing/replay, `publish` grants starting/stopping, each covering the source
 room. Configure the recorder's relay credentials through `MOQT_AUTH_TOKEN` or
 `MOQT_AUTH_TOKEN_FILE`. Tokens do not enter the archive.
 
+With `--token-mint-url` (`TOKEN_MINT_URL`), the rooms of temporary apps
+(`temp-…` roots, see `services/token-mint`) are accepted besides
+`--namespace-root`. Such a room is recorded and replayed with the caller's
+bearer token instead of the recorder's own: the recording job gets it as
+`--temporary-token` and renews it at the token mint five minutes before it
+expires, sending each new one to the relay in-session, so a recording outlives
+the page that started it. A token that cannot be renewed is kept until the
+relay closes the session at its expiry. The token passes through the job's
+arguments, so whoever can read the launched job's configuration can read it.
+
 The player fetches media by indexed chunk, releases consumed payloads, and has
 no total recording-size limit. Seeking fetches the target interval and its
 preceding video access point. Catalogs and text history remain in memory.
@@ -135,6 +145,7 @@ LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
 | `--namespace-root` | `anon` | First element every recorded prefix must have |
 | `--auth-vts-url` (`AUTH_VTS_URL`) | — | VTS verification endpoint for private rooms |
+| `--token-mint-url` (`TOKEN_MINT_URL`) | — | Token mint renewing temporary apps' tokens; without it their rooms are refused |
 | `--max-recordings` | `4` | Rooms recorded at once |
 | `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state |
 | `--output-dir` | `recordings` | Where a recording job writes its files until they are uploaded, and a composite job downloads them |

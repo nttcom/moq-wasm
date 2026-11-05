@@ -23,7 +23,7 @@ use crate::{
     catalog_reader::CatalogReader,
     recording::{Layout, RecordedFile, Recording, Uploader},
     relay::{self, RelayConnection, Track},
-    token_refresh_task::{TokenRefreshTask, read_token_file},
+    token_refresh_task::{TokenRefreshTask, TokenRenewal, read_token_file},
     track_list::track_table,
     track_selection::{
         AudioChoice, Selection, VideoChoice, select_audio, select_tracks, select_video,
@@ -50,7 +50,7 @@ pub(crate) async fn run(args: Args) -> Result<()> {
         .map(|(path, token)| {
             TokenRefreshTask::run(
                 session.clone(),
-                path,
+                TokenRenewal::File(path),
                 app_id(&args.namespace).to_string(),
                 token,
             )
