@@ -14,15 +14,23 @@ use crate::{
     source_audio::SourcePcm,
     target_language::TargetLanguage,
     translated_audio::{TranslatedAudioSequencer, TranslatedFrame},
-    translation_engine::{RunningTranslation, TranslationEngine, TranslationOutput},
+    translation_engine::{RunningTranslation, Transcript, TranslationEngine, TranslationOutput},
 };
 
 const GROUP_DURATION_MICROS: u64 = 2_000_000;
 const ENGINE_CHANNEL_CAPACITY: usize = 64;
 
 pub(crate) struct LanguageTranslation {
-    writer_sender: mpsc::UnboundedSender<Option<TrackWriter>>,
+    writer_sender: mpsc::UnboundedSender<WriterUpdate>,
     join_handle: JoinHandle<()>,
+}
+
+/// Which of the language's tracks a subscription opened (`Some`) or closed
+/// (`None`).
+pub(crate) enum WriterUpdate {
+    Audio(Option<TrackWriter>),
+    Text(Option<TrackWriter>),
+    SourceText(Option<TrackWriter>),
 }
 
 impl LanguageTranslation {
@@ -46,6 +54,8 @@ impl LanguageTranslation {
             pending_timestamps: VecDeque::new(),
             pcm_sender,
             writer: None,
+            text_writer: None,
+            source_text_writer: None,
         };
         let running = engine.start(language, pcm_receiver, translated_sender);
         let join_handle = tokio::spawn(translation.translate(
@@ -64,8 +74,8 @@ impl LanguageTranslation {
         })
     }
 
-    pub(crate) fn replace_writer(&self, writer: Option<TrackWriter>) {
-        let _ = self.writer_sender.send(writer);
+    pub(crate) fn replace_writer(&self, update: WriterUpdate) {
+        let _ = self.writer_sender.send(update);
     }
 }
 
@@ -79,7 +89,7 @@ struct Channels {
     source_pcm_receiver: broadcast::Receiver<SourcePcm>,
     translated_receiver: mpsc::Receiver<TranslationOutput>,
     packet_receiver: mpsc::UnboundedReceiver<Vec<u8>>,
-    writer_receiver: mpsc::UnboundedReceiver<Option<TrackWriter>>,
+    writer_receiver: mpsc::UnboundedReceiver<WriterUpdate>,
 }
 
 struct Translation {
@@ -89,6 +99,8 @@ struct Translation {
     pending_timestamps: VecDeque<u64>,
     pcm_sender: mpsc::Sender<Vec<i16>>,
     writer: Option<TrackWriter>,
+    text_writer: Option<TrackWriter>,
+    source_text_writer: Option<TrackWriter>,
 }
 
 impl Translation {
@@ -122,9 +134,23 @@ impl Translation {
                         let frames = self.sequencer.push_chunk(&samples);
                         self.encode(frames);
                     }
+                    TranslationOutput::TranslatedTranscript(transcript) => {
+                        // Spoken at the point the translated audio has reached.
+                        let timestamp = self.sequencer.translated_timestamp_micros();
+                        self.publish_text(Track::Translated, timestamp, transcript).await;
+                    }
+                    TranslationOutput::SourceTranscript(transcript) => {
+                        // Heard up to the newest source audio sent.
+                        let timestamp = self.sequencer.input_timestamp_micros();
+                        self.publish_text(Track::Source, timestamp, transcript).await;
+                    }
                 },
                 Some(packet) = channels.packet_receiver.recv() => self.publish(packet).await,
-                Some(writer) = channels.writer_receiver.recv() => self.writer = writer,
+                Some(update) = channels.writer_receiver.recv() => match update {
+                    WriterUpdate::Audio(writer) => self.writer = writer,
+                    WriterUpdate::Text(writer) => self.text_writer = writer,
+                    WriterUpdate::SourceText(writer) => self.source_text_writer = writer,
+                },
                 else => return,
             }
         }
@@ -162,7 +188,7 @@ impl Translation {
         let Some(writer) = self.writer.as_mut() else {
             return;
         };
-        if let Err(error) = write_packet(writer, timestamp_micros, packet).await {
+        if let Err(error) = write_object(writer, timestamp_micros, Bytes::from(packet)).await {
             tracing::warn!(
                 language = self.language.code,
                 ?error,
@@ -171,12 +197,48 @@ impl Translation {
             self.writer = None;
         }
     }
+
+    /// Stamped like the audio, so the viewer shows it when that audio plays.
+    async fn publish_text(
+        &mut self,
+        track: Track,
+        timestamp_micros: Option<u64>,
+        transcript: Transcript,
+    ) {
+        let writer = match track {
+            Track::Translated => &mut self.text_writer,
+            Track::Source => &mut self.source_text_writer,
+        };
+        let (Some(writer_ref), Some(timestamp_micros)) = (writer.as_mut(), timestamp_micros) else {
+            return;
+        };
+        let payload = serde_json::json!({ "text": transcript.text, "final": transcript.finished });
+        if let Err(error) = write_object(
+            writer_ref,
+            timestamp_micros,
+            Bytes::from(payload.to_string()),
+        )
+        .await
+        {
+            tracing::warn!(
+                language = self.language.code,
+                ?error,
+                "transcript write failed"
+            );
+            *writer = None;
+        }
+    }
 }
 
-async fn write_packet(
+enum Track {
+    Translated,
+    Source,
+}
+
+async fn write_object(
     writer: &mut TrackWriter,
     timestamp_micros: u64,
-    packet: Vec<u8>,
+    payload: Bytes,
 ) -> Result<()> {
     let group_id = timestamp_micros / GROUP_DURATION_MICROS;
     if writer.current_group_id() != Some(group_id) {
@@ -184,9 +246,6 @@ async fn write_packet(
     }
     let capture_timestamp = LocExtension::varint(TIMESTAMP_ID, timestamp_micros);
     writer
-        .write_with_extension_headers(
-            Bytes::from(packet),
-            to_extension_headers(&[capture_timestamp]),
-        )
+        .write_with_extension_headers(payload, to_extension_headers(&[capture_timestamp]))
         .await
 }

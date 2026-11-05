@@ -147,11 +147,19 @@ async fn translate_over_one_connection(
                                 return Ok(ConnectionEnd::InputClosed);
                             }
                         }
-                        ServerEvent::InputTranscript(text) => {
-                            tracing::debug!(target_language_code, %text, "Gemini heard");
+                        ServerEvent::InputTranscript(transcript) => {
+                            tracing::debug!(target_language_code, text = %transcript.text, "Gemini heard");
+                            if translated_sender.send(TranslationOutput::SourceTranscript(transcript)).await.is_err() {
+                                let _ = socket.close(None).await;
+                                return Ok(ConnectionEnd::InputClosed);
+                            }
                         }
-                        ServerEvent::OutputTranscript(text) => {
-                            tracing::debug!(target_language_code, %text, "Gemini said");
+                        ServerEvent::OutputTranscript(transcript) => {
+                            tracing::debug!(target_language_code, text = %transcript.text, "Gemini said");
+                            if translated_sender.send(TranslationOutput::TranslatedTranscript(transcript)).await.is_err() {
+                                let _ = socket.close(None).await;
+                                return Ok(ConnectionEnd::InputClosed);
+                            }
                         }
                         ServerEvent::ResumptionHandle(handle) => *resumption_handle = Some(handle),
                         ServerEvent::GoAway => return Ok(ConnectionEnd::Reconnect),

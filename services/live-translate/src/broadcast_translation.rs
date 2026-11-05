@@ -15,10 +15,13 @@ use tokio::{
 use crate::{
     broadcast_namespace::translated_namespace,
     catalog_publication::CatalogPublication,
-    language_translation::LanguageTranslation,
+    language_translation::{LanguageTranslation, WriterUpdate},
     source_audio::SourceAudio,
     source_catalog::{CATALOG_TRACK, SourceCatalog},
-    target_language::{TARGET_LANGUAGES, TargetLanguage, find_by_track_name},
+    target_language::{
+        SOURCE_TEXT_TRACK, TARGET_LANGUAGES, TargetLanguage, find_by_text_track_name,
+        find_by_track_name,
+    },
     translated_catalog::{build_translated_catalog, source_audio_track},
     translation_engine::TranslationEngine,
     translation_policy::TranslationPolicy,
@@ -130,7 +133,14 @@ struct Serving {
     catalog_publications: HashMap<u64, CatalogPublication>,
     languages: HashMap<&'static str, LanguageSlot>,
     request_languages: HashMap<u64, &'static str>,
+    /// The `text_ja` subscription and the language writing it.
+    source_text: Option<(u64, &'static str)>,
     source_audio: Option<SourceAudio>,
+}
+
+enum LanguageTrack {
+    Audio,
+    Text,
 }
 
 async fn serve(
@@ -171,6 +181,7 @@ async fn serve(
         catalog_publications: HashMap::new(),
         languages: HashMap::new(),
         request_languages: HashMap::new(),
+        source_text: None,
         source_audio: None,
     };
     let namespace = translated_namespace(broadcast_namespace);
@@ -207,8 +218,14 @@ impl Serving {
         let track_name = handler.track_name.clone();
         let result = if track_name == CATALOG_TRACK {
             self.subscribe_catalog(&handler).await
+        } else if track_name == SOURCE_TEXT_TRACK {
+            self.subscribe_source_text(&handler).await
         } else if let Some(language) = find_by_track_name(&track_name) {
-            self.subscribe_language(&handler, language).await
+            self.subscribe_language(&handler, language, LanguageTrack::Audio)
+                .await
+        } else if let Some(language) = find_by_text_track_name(&track_name) {
+            self.subscribe_language(&handler, language, LanguageTrack::Text)
+                .await
         } else {
             reject(
                 &handler,
@@ -236,6 +253,7 @@ impl Serving {
         &mut self,
         handler: &SubscribeHandler,
         language: &'static TargetLanguage,
+        track: LanguageTrack,
     ) -> Result<()> {
         if let Err(refusal) = self.start_language(language, false) {
             let reason = match &refusal {
@@ -259,7 +277,10 @@ impl Serving {
         }
         let (subscription, writer) = self.accept(handler).await?;
         if let Some(slot) = self.languages.get_mut(language.code) {
-            slot.translation.replace_writer(Some(writer));
+            slot.translation.replace_writer(match track {
+                LanguageTrack::Audio => WriterUpdate::Audio(Some(writer)),
+                LanguageTrack::Text => WriterUpdate::Text(Some(writer)),
+            });
             slot.idle_since = None;
             slot.subscriptions
                 .insert(handler.request_id(), subscription);
@@ -269,8 +290,36 @@ impl Serving {
         Ok(())
     }
 
-    /// Starts the language's Gemini session unless it runs already. A pinned
-    /// start is an always-on language's; a later subscriber keeps it pinned.
+    /// The source transcript comes with every Gemini session, so one running
+    /// language writes it; without any, the track is refused rather than
+    /// paying for a session only to transcribe.
+    async fn subscribe_source_text(&mut self, handler: &SubscribeHandler) -> Result<()> {
+        let Some(code) = self.languages.keys().next().copied() else {
+            reject(
+                handler,
+                RequestErrorCode::InternalError,
+                "no translation is running to transcribe the source",
+            )
+            .await;
+            return Ok(());
+        };
+        if let Some((request_id, _)) = self.source_text.take() {
+            self.request_languages.remove(&request_id);
+        }
+        let (subscription, writer) = self.accept(handler).await?;
+        if let Some(slot) = self.languages.get_mut(code) {
+            slot.translation
+                .replace_writer(WriterUpdate::SourceText(Some(writer)));
+            slot.subscriptions
+                .insert(handler.request_id(), subscription);
+        }
+        self.request_languages.insert(handler.request_id(), code);
+        self.source_text = Some((handler.request_id(), code));
+        Ok(())
+    }
+
+    /// `pinned` marks an always-on language; a start for a language that
+    /// already runs leaves its `pinned` as it is.
     fn start_language(
         &mut self,
         language: &'static TargetLanguage,
@@ -374,10 +423,22 @@ impl Serving {
         let Some(code) = self.request_languages.remove(&request_id) else {
             return;
         };
+        let source_text = self
+            .source_text
+            .is_some_and(|(source_request_id, _)| source_request_id == request_id);
+        if source_text {
+            self.source_text = None;
+        }
         if let Some(slot) = self.languages.get_mut(code) {
-            slot.translation.replace_writer(None);
-            slot.idle_since = Some(Instant::now());
             slot.subscriptions.remove(&request_id);
+            if source_text {
+                slot.translation
+                    .replace_writer(WriterUpdate::SourceText(None));
+            } else if slot.subscriptions.is_empty() {
+                slot.translation.replace_writer(WriterUpdate::Audio(None));
+                slot.translation.replace_writer(WriterUpdate::Text(None));
+                slot.idle_since = Some(Instant::now());
+            }
         }
     }
 
@@ -402,6 +463,9 @@ impl Serving {
             let Some(slot) = self.languages.remove(code) else {
                 continue;
             };
+            if self.source_text.is_some_and(|(_, source)| source == code) {
+                self.source_text = None;
+            }
             for (request_id, subscription) in slot.subscriptions {
                 self.request_languages.remove(&request_id);
                 if let Err(error) = self
@@ -441,6 +505,7 @@ impl Serving {
 
     fn stop_idle_languages(&mut self) {
         let now = Instant::now();
+        let source_text = self.source_text;
         self.languages.retain(|code, slot| {
             let expired = !slot.pinned
                 && slot
@@ -451,6 +516,11 @@ impl Serving {
             }
             !expired
         });
+        if let Some((_, code)) = source_text
+            && !self.languages.contains_key(code)
+        {
+            self.source_text = None;
+        }
         if self.languages.is_empty() {
             self.source_audio = None;
         }
@@ -538,7 +608,10 @@ mod tests {
         assert_eq!(source.tracks.as_ref().map(Vec::len), Some(2));
         let translated_tracks = translated.tracks.expect("tracks");
         assert!(translated_tracks.iter().any(|track| track.name == "video"));
-        assert_eq!(translated_tracks.len(), 2 + TARGET_LANGUAGES.len());
+        assert_eq!(
+            translated_tracks.len(),
+            2 + TARGET_LANGUAGES.len() + 1 + TARGET_LANGUAGES.len()
+        );
     }
 
     #[test]

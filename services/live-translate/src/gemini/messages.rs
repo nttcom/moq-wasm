@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 
+use crate::translation_engine::Transcript;
+
 const INPUT_MIME_TYPE: &str = "audio/pcm;rate=16000";
 
 #[derive(Serialize)]
@@ -91,6 +93,8 @@ struct ServerContent {
 struct Transcription {
     #[serde(default)]
     text: String,
+    #[serde(default)]
+    finished: bool,
 }
 
 #[derive(Deserialize)]
@@ -122,8 +126,8 @@ struct SessionResumptionUpdate {
 pub(crate) enum ServerEvent {
     SetupComplete,
     TranslatedAudio(Vec<i16>),
-    InputTranscript(String),
-    OutputTranscript(String),
+    InputTranscript(Transcript),
+    OutputTranscript(Transcript),
     GoAway,
     ResumptionHandle(String),
 }
@@ -154,6 +158,13 @@ pub(crate) fn setup_message(
         },
     };
     serde_json::to_string(&message).expect("setup message is always serializable")
+}
+
+fn transcript(transcription: Transcription) -> Transcript {
+    Transcript {
+        text: transcription.text,
+        finished: transcription.finished,
+    }
 }
 
 pub(crate) fn audio_message(samples: &[i16]) -> String {
@@ -191,10 +202,10 @@ pub(crate) fn parse_server_message(text: &str) -> Result<Vec<ServerEvent>> {
         None => (Vec::new(), None, None),
     };
     if let Some(transcription) = input_transcription {
-        events.push(ServerEvent::InputTranscript(transcription.text));
+        events.push(ServerEvent::InputTranscript(transcript(transcription)));
     }
     if let Some(transcription) = output_transcription {
-        events.push(ServerEvent::OutputTranscript(transcription.text));
+        events.push(ServerEvent::OutputTranscript(transcript(transcription)));
     }
     for inline_data in parts.into_iter().filter_map(|part| part.inline_data) {
         let bytes = STANDARD
@@ -307,8 +318,14 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                ServerEvent::InputTranscript("こんにちは".to_string()),
-                ServerEvent::OutputTranscript("Hello".to_string()),
+                ServerEvent::InputTranscript(Transcript {
+                    text: "こんにちは".to_string(),
+                    finished: false
+                }),
+                ServerEvent::OutputTranscript(Transcript {
+                    text: "Hello".to_string(),
+                    finished: false
+                }),
             ]
         );
     }

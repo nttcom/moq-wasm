@@ -30,6 +30,14 @@ impl TranslatedAudioSequencer {
         self.timeline.record_input(timestamp_micros);
     }
 
+    pub(crate) fn translated_timestamp_micros(&self) -> Option<u64> {
+        self.timeline.peek_frame_timestamp_micros()
+    }
+
+    pub(crate) fn input_timestamp_micros(&self) -> Option<u64> {
+        self.timeline.input_cursor_micros()
+    }
+
     pub(crate) fn restart(&mut self) -> Vec<TranslatedFrame> {
         let frames = self
             .framer

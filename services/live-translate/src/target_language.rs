@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+pub(crate) const TEXT_TRACK_PREFIX: &str = "text_";
+pub(crate) const SOURCE_TEXT_TRACK: &str = "text_ja";
 const TRANSLATED_TRACK_PREFIX: &str = "audio_";
 
 pub(crate) struct TargetLanguage {
@@ -34,6 +36,14 @@ impl TargetLanguage {
     pub(crate) fn track_name(&self) -> String {
         format!("{TRANSLATED_TRACK_PREFIX}{}", self.code)
     }
+
+    pub(crate) fn text_track_name(&self) -> String {
+        format!("{TEXT_TRACK_PREFIX}{}", self.code)
+    }
+}
+
+pub(crate) fn find_by_text_track_name(track_name: &str) -> Option<&'static TargetLanguage> {
+    find_by_code(track_name.strip_prefix(TEXT_TRACK_PREFIX)?)
 }
 
 pub(crate) fn find_by_code(code: &str) -> Option<&'static TargetLanguage> {

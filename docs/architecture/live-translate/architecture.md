@@ -9,7 +9,11 @@ module boundaries, runtime flow, or invariants described here change.
 `anon/live-translate/{id}` publishes `anon/live-translate/{id}/translated`: an MSF catalog
 that references the broadcast's own video and audio, plus one Opus track per
 target language (`audio_en`, `audio_es`, `audio_de`, `audio_ko`,
-`audio_zh-Hans`). A language is translated by Gemini Live Translate only while
+`audio_zh-Hans`), and the transcripts as `text_<lang>` (what Gemini said) and
+`text_ja` (what it heard), one JSON object `{"text", "final"}` per piece,
+stamped like the translated audio so a viewer shows each piece when that
+audio plays; `text_ja` is written by one running language and refused while
+none runs. A language is translated by Gemini Live Translate only while
 someone subscribes to its track. Gemini is called on the Gemini Enterprise
 Agent Platform (`gemini/platform.rs`): the `global` location's Live API over a
 WebSocket with `Authorization: Bearer`, as the service account the Cloud Run

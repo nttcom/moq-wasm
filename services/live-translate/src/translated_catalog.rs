@@ -1,9 +1,15 @@
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 
-use crate::{opus_codec::TRANSLATED_BITRATE, target_language::TargetLanguage};
+use crate::{
+    opus_codec::TRANSLATED_BITRATE,
+    target_language::{SOURCE_TEXT_TRACK, TargetLanguage},
+};
 
 const SOURCE_LANGUAGE: &str = "ja";
 const LANGUAGE_ALT_GROUP: u64 = 1;
+const TEXT_ALT_GROUP: u64 = 2;
+/// A transcript object is JSON `{"text": "...", "final": bool}`.
+const TEXT_MIME_TYPE: &str = "application/json";
 
 pub(crate) fn source_audio_track(source: &Catalog) -> Option<&Track> {
     source
@@ -46,6 +52,13 @@ pub(crate) fn build_translated_catalog(
         init_ref: None,
         ..source_audio.clone()
     });
+    let texts = std::iter::once((SOURCE_TEXT_TRACK.to_string(), SOURCE_LANGUAGE))
+        .chain(
+            languages
+                .iter()
+                .map(|language| (language.text_track_name(), language.code)),
+        )
+        .map(|(name, lang)| text_track(source_audio, name, lang));
     Some(Catalog {
         version: source.version,
         delta_update: None,
@@ -55,8 +68,34 @@ pub(crate) fn build_translated_catalog(
         generated_at: None,
         is_complete: None,
         init_data_list: None,
-        tracks: Some(video.chain(original_audio).chain(translated).collect()),
+        tracks: Some(
+            video
+                .chain(original_audio)
+                .chain(translated)
+                .chain(texts)
+                .collect(),
+        ),
     })
+}
+
+/// `lang` equals the audio track's, so a viewer pairs a transcript with its audio.
+fn text_track(source_audio: &Track, name: String, lang: &str) -> Track {
+    Track {
+        namespace: None,
+        name,
+        packaging: Packaging::Known(KnownPackaging::Loc),
+        role: Some(TrackRole::Known(KnownTrackRole::Subtitle)),
+        label: Some(lang.to_string()),
+        lang: Some(lang.to_string()),
+        alt_group: Some(TEXT_ALT_GROUP),
+        codec: None,
+        mime_type: Some(TEXT_MIME_TYPE.to_string()),
+        bitrate: None,
+        sample_rate: None,
+        channel_config: None,
+        init_ref: None,
+        ..source_audio.clone()
+    }
 }
 
 fn referencing(track: &Track, source_namespace: &str) -> Track {
@@ -161,8 +200,33 @@ mod tests {
         assert_eq!(english.bitrate, Some(32_000));
         assert_eq!(
             catalog.tracks.as_ref().map(Vec::len),
-            Some(3 + TARGET_LANGUAGES.len())
+            Some(3 + TARGET_LANGUAGES.len() + 1 + TARGET_LANGUAGES.len())
         );
+    }
+
+    #[test]
+    fn each_language_and_the_source_get_a_transcript_track() {
+        // Arrange
+        let source = browser_publisher_catalog();
+
+        // Act
+        let catalog = build_translated_catalog(&source, SOURCE_NAMESPACE, &TARGET_LANGUAGES)
+            .expect("source has audio");
+
+        // Assert: text tracks are subtitles paired with the audio by lang, without audio fields
+        let english = track(&catalog, "text_en");
+        assert_eq!(
+            english.role,
+            Some(TrackRole::Known(KnownTrackRole::Subtitle))
+        );
+        assert_eq!(english.lang.as_deref(), Some("en"));
+        assert_eq!(english.alt_group, Some(2));
+        assert_eq!(english.mime_type.as_deref(), Some("application/json"));
+        assert_eq!(english.codec, None);
+        assert_eq!(english.bitrate, None);
+        let japanese = track(&catalog, "text_ja");
+        assert_eq!(japanese.lang.as_deref(), Some("ja"));
+        assert_eq!(japanese.namespace, None);
     }
 
     #[test]

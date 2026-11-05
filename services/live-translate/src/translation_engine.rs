@@ -11,6 +11,15 @@ use crate::{
 pub(crate) enum TranslationOutput {
     ConnectionStarted,
     Audio(Vec<i16>),
+    SourceTranscript(Transcript),
+    TranslatedTranscript(Transcript),
+}
+
+/// A piece of an utterance's text; `finished` marks the last piece.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Transcript {
+    pub(crate) text: String,
+    pub(crate) finished: bool,
 }
 
 #[derive(Clone)]

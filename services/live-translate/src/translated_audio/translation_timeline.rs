@@ -25,6 +25,17 @@ impl TranslationTimeline {
         self.translation_cursor_micros = None;
     }
 
+    pub(crate) fn peek_frame_timestamp_micros(&self) -> Option<u64> {
+        let cursor_micros = self
+            .translation_cursor_micros
+            .or(self.input_cursor_micros)?;
+        Some(cursor_micros.saturating_sub(self.gemini_delay_micros))
+    }
+
+    pub(crate) fn input_cursor_micros(&self) -> Option<u64> {
+        self.input_cursor_micros
+    }
+
     pub(crate) fn next_frame_timestamp_micros(&mut self) -> Option<u64> {
         let cursor_micros = self
             .translation_cursor_micros
