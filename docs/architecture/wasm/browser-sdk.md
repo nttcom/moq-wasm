@@ -422,26 +422,29 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 ### 移行の手順
 publisher の timeline から始め、recorder の replay を VOD にしてから、録画の再生を
 `LivePlayer` に移す。手順 2 はライブの巻き戻しだけに効き、手順 1 の後ならいつでもよい。
-1手順を1 PR にする。3〜8 の間は、HTTP の応答の `tracks` と `chunks` を残し、今の
-recording-player を動かし続ける。
+1手順を1 PR にする。後方互換は持たない。手順 4 で replay の HTTP 応答と catalog が変わり、
+今の recording-player は再生できなくなる。手順 4 で recorder の再生 E2E
+（`recorder-archive-e2e` の再生部分、`recorder-mp4-replay-e2e`）を外し、手順 9 で
+`LivePlayer` 版として戻す。
 
 1. **feat(broadcast): すべてのソースに media timeline を出す。** entry をソースの group の
    始まりごとに書く。
 2. **feat(wasm): ライブの巻き戻しで、見たことのない group へも timeline でシークする。**
 3. **refactor(recorder): track を `renderGroup` と `altGroup` で選ぶ。** 名前の規則を消す。
-4. **feat(recorder): timeline を録画し、replay が VOD の catalog と全期間の media timeline を出し、joining FETCH を受ける。**
+4. **feat(recorder): replay を MSF の VOD broadcast にする。** timeline を録画し、VOD の
+   catalog と全期間の timeline を出し、joining FETCH を受け、HTTP の応答を prefix と
+   `renew_after_seconds` だけにする。MP4 で保存した録画の replay（`mp4_replay`）は消す。
 5. **feat(recorder): replay の namespace に参加者名を入れ、transcriber の catalog を作る。**
 6. **feat(wasm): `isLive: false` の catalog を、timeline を使って最後まで再生する。**
 7. **feat(wasm): `PlaybackGroup`。**
 8. **feat(wasm): `moq-wasm/recording` の `openRecording`。**
-9. **refactor(browser): recording-player を `LivePlayer` に移す。** 独自の再生エンジンを消す。
-   recorder の E2E（`recorder-archive-e2e`、`recorder-mp4-replay-e2e`）で守る。
-10. **refactor(recorder): HTTP の応答から `tracks` と `chunks` を消す。**
+9. **refactor(browser): recording-player を `LivePlayer` に移す。** 独自の再生エンジンを消し、
+   手順 4 で外した E2E を戻す。
 
 ### 範囲外
-- MP4 で保存した録画の replay。生成する catalog に幅、高さ、ビットレートが無く、音声が
-  すべて group 0 に入るので、group 単位の FETCH と timeline に合わない。今の recording-player
-  が再生できる状態は手順 9 まで残すが、`LivePlayer` での再生は別に決める。
+- MP4 で保存した録画の replay。MP4 には元の catalog も timeline も残らないので、VOD の
+  broadcast にするには、サンプルの時刻から catalog と timeline を作る経路を MoQ 形式とは別に
+  持つことになる。手順 4 で replay ごと消す。MP4 の録画ファイルと合成はそのまま残る。
 - 録画の途中での codec や設定の変化。今の recording-player と同じく、再生を断る。
 - timeline を録画していない録画（手順 4 より前の録画と、timeline を出さない publisher の録画）。
   後方互換は持たず、`LivePlayer` では再生しない。
