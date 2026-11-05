@@ -2,7 +2,7 @@ use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use anyhow::{Context, Result};
 use clap::ValueEnum;
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::{BodyExt, Either, Full, Limited};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -19,7 +19,8 @@ use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
     recording::Layout,
-    recordings::{PublishRejection, Recordings, StartRejection},
+    recordings::{Publication, PublishRejection, Recordings, StartRejection},
+    replay_stream::ReplayStream,
     room_state::RecordingFormat,
 };
 
@@ -33,6 +34,7 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 ///   `--composite` accepts it
 /// - `POST /recordings/{id}/stop` stops it
 /// - `POST /recordings/{id}/publish` exposes a finished recording through relay FETCH
+///   while its answer stays open (see [`ReplayStream`])
 /// - `GET /recordings/{id}` and `GET /recordings?namespace_prefix=` report it
 ///
 /// A POST from a page outside `allowed_origins` is refused: CORS alone would
@@ -92,12 +94,12 @@ async fn accept_connections(listener: TcpListener, state: Arc<ApiState>) {
     }
 }
 
-type JsonResponse = Response<Full<Bytes>>;
+type ApiResponse = Response<Either<Full<Bytes>, ReplayStream>>;
 
 async fn handle(
     request: Request<Incoming>,
     state: Arc<ApiState>,
-) -> Result<JsonResponse, Infallible> {
+) -> Result<ApiResponse, Infallible> {
     let origin = allowed_origin(request.headers(), &state.allowed_origins);
     let method = request.method().clone();
     let path = request.uri().path().to_string();
@@ -176,7 +178,7 @@ async fn handle(
         },
         (&Method::POST, ["recordings", id, "publish"]) => {
             match state.recordings.publish(id).await {
-                Ok(Some(replay)) => json_response(StatusCode::OK, &replay),
+                Ok(Some(publication)) => replay_response(publication),
                 Ok(None) => error_response(StatusCode::NOT_FOUND, "no such recording"),
                 Err(PublishRejection::NotReady) => error_response(
                     StatusCode::CONFLICT,
@@ -194,7 +196,7 @@ async fn handle(
     Ok(with_cors(response, origin))
 }
 
-async fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
+async fn start(recordings: &Recordings, body: &Value) -> ApiResponse {
     let Some(namespace_prefix) = body.get("namespace_prefix").and_then(Value::as_str) else {
         return error_response(StatusCode::BAD_REQUEST, "namespace_prefix is required");
     };
@@ -250,7 +252,7 @@ async fn start(recordings: &Recordings, body: &Value) -> JsonResponse {
     }
 }
 
-fn internal_error(error: &anyhow::Error) -> JsonResponse {
+fn internal_error(error: &anyhow::Error) -> ApiResponse {
     tracing::error!(error = format!("{error:#}"), "recording API request failed");
     error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{error:#}"))
 }
@@ -282,7 +284,7 @@ fn allowed_origin(headers: &HeaderMap, allowed: &[String]) -> Option<HeaderValue
         .then(|| origin.clone())
 }
 
-fn with_cors(mut response: JsonResponse, origin: Option<HeaderValue>) -> JsonResponse {
+fn with_cors(mut response: ApiResponse, origin: Option<HeaderValue>) -> ApiResponse {
     let headers = response.headers_mut();
     headers.insert(VARY, HeaderValue::from_static("Origin"));
     if let Some(origin) = origin {
@@ -299,15 +301,27 @@ fn with_cors(mut response: JsonResponse, origin: Option<HeaderValue>) -> JsonRes
     response
 }
 
-fn found(value: Option<Value>) -> JsonResponse {
+fn found(value: Option<Value>) -> ApiResponse {
     match value {
         Some(value) => json_response(StatusCode::OK, &value),
         None => error_response(StatusCode::NOT_FOUND, "no such recording"),
     }
 }
 
-fn json_response(status: StatusCode, body: &Value) -> JsonResponse {
-    let mut response = Response::new(Full::new(Bytes::from(body.to_string())));
+fn replay_response(publication: Publication) -> ApiResponse {
+    let mut response = Response::new(Either::Right(ReplayStream::new(
+        &publication.description,
+        publication.lease,
+    )));
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/x-ndjson"),
+    );
+    response
+}
+
+fn json_response(status: StatusCode, body: &Value) -> ApiResponse {
+    let mut response = Response::new(Either::Left(Full::new(Bytes::from(body.to_string()))));
     *response.status_mut() = status;
     response
         .headers_mut()
@@ -315,13 +329,13 @@ fn json_response(status: StatusCode, body: &Value) -> JsonResponse {
     response
 }
 
-fn empty_response(status: StatusCode) -> JsonResponse {
-    let mut response = Response::new(Full::new(Bytes::new()));
+fn empty_response(status: StatusCode) -> ApiResponse {
+    let mut response = Response::new(Either::Left(Full::new(Bytes::new())));
     *response.status_mut() = status;
     response
 }
 
-fn error_response(status: StatusCode, message: &str) -> JsonResponse {
+fn error_response(status: StatusCode, message: &str) -> ApiResponse {
     json_response(status, &json!({ "error": message }))
 }
 
@@ -330,7 +344,7 @@ mod tests {
     use super::*;
     use crate::test_support::recordings;
 
-    async fn error_of(response: JsonResponse) -> (StatusCode, Value) {
+    async fn error_of(response: ApiResponse) -> (StatusCode, Value) {
         let status = response.status();
         let body = response.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&body).unwrap())

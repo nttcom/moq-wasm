@@ -378,16 +378,18 @@ recording fails if a subscription, task or upload fails, and its final room
 manifest is written only after its broadcast manifests are committed. An MP4
 room recording instead leaves out a participant whose task failed.
 
-`POST /recordings/{id}/publish` accepts a finished MoQ or MP4 recording, verifies access
-to its source room and starts `replay::ReplayTask`. It announces namespaces under
-`<room>/recordings/<id>/<member-index>/<content>/<session-index>` and returns
-the relay URL and each track's original first and last object locations. Raw
-catalogs and media retain their object identities. The player issues standalone
-FETCH for these ranges through the relay URL given in its form, not the
-returned one. The returned URL is the one the recorder connects to the relay
-with and may be `moqt://`, which a browser cannot open. This is historical
-playback; a live-only player that expects newly published frames needs a
-replay adapter.
+`POST /recordings/{id}/publish` accepts a finished MoQ or MP4 recording,
+verifies access to its source room and starts `replay::ReplayTask`. It announces
+namespaces under
+`<room>/recordings/<id>/<member-index>/<content>/<session-index>` and answers
+with an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one line
+with the relay URL and each track's original first and last object locations,
+then an empty line every 15 s. Raw catalogs and media retain their object
+identities. The player issues standalone FETCH for these ranges through the
+relay URL given in its form, not the returned one. The returned URL is the one
+the recorder connects to the relay with and may be `moqt://`, which a browser
+cannot open. This is historical playback; a live-only player that expects newly
+published frames needs a replay adapter.
 
 For an MP4 recording, `mp4_replay` reads the original room manifest and converts
 each listed camera or screen-share file into a separate archived broadcast.
@@ -413,23 +415,30 @@ boundaries, supports ascending and descending group order and handles
 cancellation; the writer already rejected conflicting duplicates. Data and
 index checksums are verified before FETCH_OK so damaged data is rejected with a
 control response rather than an unreadable stream reset. This reads selected
-payload chunks twice, once for validation and once for sending. Four FETCH requests can run at once
-per replay. Active subscriptions and FETCH requests keep a replay alive. Once
-the last subscription leaves and all FETCH requests finish, it closes its
-relay session after 15 idle minutes, or at once on server shutdown. A new FETCH
-resets the idle period when it finishes or is cancelled. Repeated HTTP requests
-on that API instance reuse its publication. A request reserves its recording's
-slot under a lock and opens the recording outside it, so a long MP4 conversion
-delays only the requests for that recording. The browser holds one catalog
-subscription while its recording page remains open, including during pauses,
-and closes it when another recording opens or the page closes. The response's
-`idle_timeout_seconds` states the inactivity timeout rather than an absolute
-publication expiry.
+payload chunks twice, once for validation and once for sending. Four FETCH
+requests can run at once per replay.
 
-Replay publications are process-local. Deploy a single replay-serving API
-instance with CPU allocated for its lifetime; recording jobs remain independent
-and their stored state stays shared. Multi-instance replay ownership is not
-implemented. The number of active publications is capped by `--max-recordings`.
+A replay runs while an answer to `publish` is open: each open answer holds a
+`ReplayLease`, and the replay closes its relay session as soon as the last one
+is dropped, or at once on server shutdown. Hyper drops an answer when its
+connection closes; a keepalive write fails once the client has gone away.
+Repeated HTTP requests on that API instance share its publication. A request
+reserves its recording's slot under a lock and opens the recording outside it,
+so a long MP4 conversion delays only the requests for that recording.
+
+The lease exists for Cloud Run with CPU allocated only during requests: an open
+answer keeps CPU on the instance that serves the replay, and a replay whose last
+answer closed ends instead of keeping its namespaces announced on an instance
+whose CPU is throttled. Cloud Run ends a request at its timeout (at most 60
+minutes; the deployment must set 60), so the answer's `renew_after_seconds` (45
+minutes) tells the player when to open the next one. The player keeps the
+previous answer until no FETCH request is in flight: the relay sends a FETCH to
+the newest publisher of a namespace first, so the new replay takes the later
+ones even when it runs on another instance. Several instances may each run a
+replay of the same recording; they serve the same objects. The player also opens
+a new answer when the current one ends without the player closing it. The number
+of active publications per instance is capped by `--max-recordings`; recording
+jobs remain independent and their stored state stays shared.
 
 The recording player uses one audio context and a common capture-to-playback
 mapping for every source. It detects video access points in the H.264, VP8, VP9

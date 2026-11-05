@@ -18,6 +18,7 @@ mod recording;
 mod recordings;
 mod relay;
 mod replay;
+mod replay_stream;
 mod room_recording;
 mod room_state;
 mod serve;

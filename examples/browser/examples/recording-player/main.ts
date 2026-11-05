@@ -1,4 +1,4 @@
-import { MoqSession, type MoqSubscription, type ReceivedObject } from 'moq-wasm'
+import { MoqSession, type ReceivedObject } from 'moq-wasm'
 import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
 import { readLocHeader } from 'moq-wasm/media/internal/loc'
 import { VideoPlayout } from 'moq-wasm/media/player/videoPlayout'
@@ -50,7 +50,14 @@ recording.value = params.get('id') ?? ''
 setUpRelayUrlControls(relay, element('relayPresets'))
 let session: MoqSession | undefined
 startPageTelemetry('recording-player', () => relay.value)
-let presence: MoqSubscription | undefined
+/// The recorder keeps a replay running while a `publish` answer to it is open.
+type Lease = {
+  replay: { tracks: Track[]; namespace_prefix: string; renew_after_seconds: number }
+  reader: ReadableStreamDefaultReader<Uint8Array>
+}
+let lease: Lease | undefined
+let renewal: ReturnType<typeof setTimeout> | undefined
+let publish: { url: string; headers: HeadersInit } | undefined
 let generation = 0
 let media: Media[] = []
 let events: TimelineEvent[] = []
@@ -65,6 +72,7 @@ let tick: ReturnType<typeof setInterval> | undefined
 const sources = new Set<AudioBufferSourceNode>()
 const decoders = new Set<VideoDecoder | AudioDecoder>()
 const fetchWaiters: (() => void)[] = []
+const idleWaiters: (() => void)[] = []
 let activeFetches = 0
 
 async function acquireFetch(): Promise<() => void> {
@@ -73,8 +81,60 @@ async function acquireFetch(): Promise<() => void> {
   return () => {
     const next = fetchWaiters.shift()
     if (next) next()
-    else activeFetches--
+    else if (--activeFetches === 0) for (const waiter of idleWaiters.splice(0)) waiter()
   }
+}
+
+function whenFetchesIdle(action: () => void): void {
+  if (activeFetches === 0) action()
+  else idleWaiters.push(action)
+}
+
+async function openLease(): Promise<Lease> {
+  const response = await fetch(publish!.url, { method: 'POST', headers: publish!.headers })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body.error ?? `Recorder returned ${response.status}`)
+  }
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  while (!text.includes('\n')) {
+    const { value, done } = await reader.read()
+    if (done) throw new Error('The recorder closed the replay')
+    text += decoder.decode(value, { stream: true })
+  }
+  return { replay: JSON.parse(text.slice(0, text.indexOf('\n'))), reader }
+}
+
+/// Reads `held` until it ends; if it is still the current lease then, takes a new one.
+async function hold(held: Lease): Promise<void> {
+  try {
+    while (!(await held.reader.read()).done);
+  } catch {
+    // A cancelled or broken answer counts as ended.
+  }
+  if (held === lease) await renew().catch(failure)
+}
+
+/// Takes a new lease, then cancels the previous one once no FETCH is in flight:
+/// the relay sends new FETCHes to the newest replay first, so a replay that only
+/// the previous lease kept can end without cutting a FETCH off.
+async function renew(): Promise<void> {
+  clearTimeout(renewal)
+  const next = await openLease()
+  const previous = lease
+  lease = next
+  void hold(next)
+  renewal = setTimeout(() => void renew().catch(failure), next.replay.renew_after_seconds * 1000)
+  if (previous) whenFetchesIdle(() => void previous.reader.cancel())
+}
+
+function releaseLease(): void {
+  clearTimeout(renewal)
+  const held = lease
+  lease = undefined
+  void held?.reader.cancel()
 }
 
 /// How long a transcribed utterance stays on its speaker's tile.
@@ -299,8 +359,7 @@ function addVideo(track: Media): void {
 element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
   event.preventDefault()
   stop()
-  await presence?.close().catch(() => undefined)
-  presence = undefined
+  releaseLease()
   session?.close()
   media = []
   events = []
@@ -314,20 +373,14 @@ element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
   element<HTMLButtonElement>('load').disabled = true
   status.value = 'Opening recording'
   try {
-    const response = await fetch(
-      `${recorder.value.replace(/\/$/, '')}/recordings/${encodeURIComponent(recording.value)}/publish`,
-      {
-        method: 'POST',
-        headers: token.value ? { Authorization: `Bearer ${token.value}` } : {}
-      }
-    )
-    const replay = await response.json()
-    if (!response.ok) throw new Error(replay.error ?? `Recorder returned ${response.status}`)
+    publish = {
+      url: `${recorder.value.replace(/\/$/, '')}/recordings/${encodeURIComponent(recording.value)}/publish`,
+      headers: token.value ? { Authorization: `Bearer ${token.value}` } : {}
+    }
+    await renew()
+    const replay = lease!.replay
     session = await MoqSession.connect(relay.value, { token: token.value || undefined })
-    const tracks: Track[] = replay.tracks
-    const presenceTrack = tracks.find((track) => track.name === 'catalog') ?? tracks[0]
-    if (!presenceTrack) throw new Error('Recording has no tracks')
-    presence = await session.subscribe(presenceTrack.namespace.split('/'), presenceTrack.name, { forward: false })
+    const tracks = replay.tracks
     const catalogs = new Map<string, MediaCatalogTrack[]>()
     for (const track of tracks.filter((track) => track.name === 'catalog')) {
       const definitions: MediaCatalogTrack[] = []
@@ -404,6 +457,7 @@ element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
     openDialog.classList.add('hidden')
     play.disabled = seek.disabled = false
   } catch (error) {
+    releaseLease()
     session?.close()
     failure(error)
     openError.textContent = status.value
@@ -633,7 +687,7 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.sidebar-tab')) 
 }
 window.addEventListener('pagehide', () => {
   stop()
-  void presence?.close().catch(() => undefined)
+  releaseLease()
   session?.close()
   void audioContext?.close()
 })
