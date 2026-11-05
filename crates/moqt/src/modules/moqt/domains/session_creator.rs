@@ -170,15 +170,26 @@ impl<T: TransportProtocol> SessionCreator<T> {
 
     /// Opens the transport outside `connect_span`: quinn runs a connection's
     /// driver in the span current when it connects, which would hold the
-    /// connect span open for as long as the connection lives.
+    /// connect span open for as long as the connection lives. The
+    /// "transport connected" event uses `in_scope` rather than `parent:`
+    /// because the browser's telemetry attaches a log to the current span.
     async fn open_transport_for(
         &self,
         url: &str,
         connect_span: &Span,
     ) -> anyhow::Result<BoxedConnection> {
         let opened = self.open_transport(url).await;
-        if opened.is_err() {
-            connect_span.record("outcome", "failed");
+        match &opened {
+            Ok(connection) => connect_span.in_scope(|| {
+                tracing::info!(
+                    transport = connection.negotiated_protocol().transport_name(),
+                    remote_address = ?connection.addresses().remote,
+                    "transport connected"
+                )
+            }),
+            Err(_) => {
+                connect_span.record("outcome", "failed");
+            }
         }
         opened
     }
@@ -711,6 +722,24 @@ mod tests {
         let spans = telemetry.closed_spans("moqt.session.connect");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].field("outcome"), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn the_connect_span_records_when_the_transport_opened_and_client_setup_was_sent() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+
+        // Act
+        let (_client, _server) =
+            spawn_connected_native_sessions("session-creator-connect-events").await;
+
+        // Assert
+        let connected = telemetry.events("transport connected");
+        assert_eq!(connected.len(), 1);
+        assert_eq!(connected[0].span(), Some("moqt.session.connect"));
+        assert_eq!(connected[0].field("transport"), Some("QUIC"));
+        let client_setup = telemetry.events("CLIENT_SETUP sent");
+        assert_eq!(client_setup[0].span(), Some("moqt.session.connect"));
     }
 
     #[tokio::test]

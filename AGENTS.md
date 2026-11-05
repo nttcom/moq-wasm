@@ -123,6 +123,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
 | `url` | The URL a client connects to |
 | `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |
+| `transport` | The transport a connection opened: `QUIC`, `WebTransport` or `WebSocket` |
 | `remote_address` / `previous_remote_address` | The peer's address on a session's connection, and the one it replaced when the peer migrated |
 | `duration_ms` | Milliseconds from writing a request to receiving its response |
 | `wasm_load_wait_ms` | Milliseconds a browser's `MoqSession.connect` waited for the wasm module to load |

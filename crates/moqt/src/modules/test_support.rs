@@ -739,17 +739,23 @@ pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
     }
 }
 
-/// A captured span or event: its name (an event's message) and its fields,
-/// formatted with `Debug`.
+/// A captured span or event: its name (an event's message), its fields
+/// formatted with `Debug`, and, for an event, the name of the span it was
+/// written in.
 #[derive(Clone)]
 pub(crate) struct Captured {
     name: String,
     fields: HashMap<String, String>,
+    span: Option<String>,
 }
 
 impl Captured {
     pub(crate) fn field(&self, name: &str) -> Option<&str> {
         self.fields.get(name).map(String::as_str)
+    }
+
+    pub(crate) fn span(&self) -> Option<&str> {
+        self.span.as_deref()
     }
 }
 
@@ -821,13 +827,14 @@ where
         }
     }
 
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let mut fields = FieldMap::default();
         event.record(&mut fields);
         let name = fields.0.remove("message").unwrap_or_default();
         self.events.lock().unwrap().push(Captured {
             name,
             fields: fields.0,
+            span: ctx.event_span(event).map(|span| span.name().to_string()),
         });
     }
 
@@ -842,6 +849,7 @@ where
         self.closed_spans.lock().unwrap().push(Captured {
             name: span.name().to_string(),
             fields: fields.0,
+            span: None,
         });
     }
 }
