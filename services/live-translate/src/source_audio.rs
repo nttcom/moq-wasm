@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use mediapack::loc::{LocObject, from_extension_headers};
-use moqt::{Session, TrackReader, object::DataReceiver, subscribe::SubscribeOption};
+use moqt::{Session, subscribe::SubscribeOption};
 use tokio::{
     sync::{broadcast, mpsc},
     task::JoinHandle,
@@ -92,10 +92,7 @@ async fn decode(
     channels: u32,
     source_pcm_sender: &broadcast::Sender<SourcePcm>,
 ) -> Result<()> {
-    let DataReceiver::Stream(factory) = subscriber.accept_data_receiver(subscription).await? else {
-        bail!("source audio arrived as datagrams");
-    };
-    let mut reader = TrackReader::new(factory);
+    let mut reader = subscriber.track_reader(subscription);
     let (pcm_sender, mut pcm_receiver) = mpsc::unbounded_channel();
     let decoder = OpusDecoder::new(channels, pcm_sender)?;
     let mut latest_input_timestamp_micros = None;

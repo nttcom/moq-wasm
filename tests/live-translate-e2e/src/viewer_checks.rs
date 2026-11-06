@@ -1,12 +1,11 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use mediapack::loc::{LocObject, from_extension_headers};
 use moqt::{
-    CertificateVerification, ClientConfig, Endpoint, QUIC, Session, TrackReader,
-    object::DataReceiver, subscribe::SubscribeOption,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, Session, subscribe::SubscribeOption,
 };
-use msf::Catalog;
+use msf::{CATALOG_TRACK_NAME, Catalog};
 
 use crate::{source_streamer::SOURCE_AUDIO_TRACK, unix_micros};
 
@@ -43,7 +42,7 @@ pub(crate) async fn run(relay_url: &str, broadcast_namespace: &str) -> Result<()
 
 async fn read_catalog_with_retry(session: &Session, namespace: &str) -> Result<Catalog> {
     loop {
-        match first_object(session, namespace, "catalog").await {
+        match first_catalog_object(session, namespace).await {
             Ok(object) => {
                 return serde_json::from_slice(&object.payload).context("parse translated catalog");
             }
@@ -55,24 +54,12 @@ async fn read_catalog_with_retry(session: &Session, namespace: &str) -> Result<C
     }
 }
 
-async fn first_object(
-    session: &Session,
-    namespace: &str,
-    track: &str,
-) -> Result<moqt::TrackObject> {
+async fn first_catalog_object(session: &Session, namespace: &str) -> Result<moqt::TrackObject> {
     let mut subscriber = session.subscriber();
-    let subscription = subscriber
-        .subscribe(
-            namespace.to_string(),
-            track.to_string(),
-            SubscribeOption::default(),
-        )
+    let (subscription, mut reader) = subscriber
+        .subscribe_current_group(namespace.to_string(), CATALOG_TRACK_NAME.to_string())
         .await?;
-    let DataReceiver::Stream(factory) = subscriber.accept_data_receiver(&subscription).await?
-    else {
-        bail!("{track} arrived as datagrams");
-    };
-    let object = TrackReader::new(factory)
+    let object = reader
         .next_object()
         .await?
         .context("track ended without an object")?;
@@ -132,11 +119,7 @@ async fn check_translated_timestamps(session: &Session, namespace: &str) -> Resu
             SubscribeOption::default(),
         )
         .await?;
-    let DataReceiver::Stream(factory) = subscriber.accept_data_receiver(&subscription).await?
-    else {
-        bail!("translated audio arrived as datagrams");
-    };
-    let mut reader = TrackReader::new(factory);
+    let mut reader = subscriber.track_reader(&subscription);
     let mut previous = None;
     let mut delays = Vec::with_capacity(TRANSLATED_OBJECTS_TO_CHECK);
     while delays.len() < TRANSLATED_OBJECTS_TO_CHECK {

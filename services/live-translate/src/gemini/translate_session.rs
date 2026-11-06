@@ -142,37 +142,30 @@ async fn translate_over_one_connection(
                     None => bail!("Gemini connection ended"),
                 };
                 for event in parse_server_message(&text)? {
-                    match event {
+                    let output = match event {
                         ServerEvent::SetupComplete => {
                             tracing::info!(target_language_code, "Gemini session ready");
                             setup_complete = true;
-                            if translated_sender.send(TranslationOutput::ConnectionStarted).await.is_err() {
-                                let _ = socket.close(None).await;
-                                return Ok(ConnectionEnd::InputClosed);
-                            }
+                            TranslationOutput::ConnectionStarted
                         }
-                        ServerEvent::TranslatedAudio(samples) => {
-                            if translated_sender.send(TranslationOutput::Audio(samples)).await.is_err() {
-                                let _ = socket.close(None).await;
-                                return Ok(ConnectionEnd::InputClosed);
-                            }
-                        }
+                        ServerEvent::TranslatedAudio(samples) => TranslationOutput::Audio(samples),
                         ServerEvent::InputTranscript(transcript) => {
                             tracing::debug!(target_language_code, text = %transcript.text, "Gemini heard");
-                            if translated_sender.send(TranslationOutput::SourceTranscript(transcript)).await.is_err() {
-                                let _ = socket.close(None).await;
-                                return Ok(ConnectionEnd::InputClosed);
-                            }
+                            TranslationOutput::SourceTranscript(transcript)
                         }
                         ServerEvent::OutputTranscript(transcript) => {
                             tracing::debug!(target_language_code, text = %transcript.text, "Gemini said");
-                            if translated_sender.send(TranslationOutput::TranslatedTranscript(transcript)).await.is_err() {
-                                let _ = socket.close(None).await;
-                                return Ok(ConnectionEnd::InputClosed);
-                            }
+                            TranslationOutput::TranslatedTranscript(transcript)
                         }
-                        ServerEvent::ResumptionHandle(handle) => *resumption_handle = Some(handle),
+                        ServerEvent::ResumptionHandle(handle) => {
+                            *resumption_handle = Some(handle);
+                            continue;
+                        }
                         ServerEvent::GoAway => return Ok(ConnectionEnd::Reconnect),
+                    };
+                    if translated_sender.send(output).await.is_err() {
+                        let _ = socket.close(None).await;
+                        return Ok(ConnectionEnd::InputClosed);
                     }
                 }
             }

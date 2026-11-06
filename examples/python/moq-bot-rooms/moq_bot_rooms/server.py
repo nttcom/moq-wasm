@@ -103,7 +103,7 @@ def room_app(
         except TokenMintUnavailable as error:
             logger.warning(f"cannot check a room token: {error}")
             raise web.HTTPServiceUnavailable(text="token mint unavailable") from error
-        return BotRoom.of_app(room_id, token)
+        return BotRoom(room_id, token.app_id, token)
 
     async def room_events(request: web.Request) -> web.StreamResponse:
         origin = request.headers.get("Origin")
