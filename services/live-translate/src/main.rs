@@ -1,3 +1,4 @@
+mod app_access;
 mod broadcast_namespace;
 mod broadcast_translation;
 mod catalog_publication;
@@ -21,14 +22,15 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use metadata_token::MetadataToken;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestErrorCode, Session, SessionEvent,
-    subscribe::SubscribeHandler,
+    AuthorizationTokenSource, ClientConfig, Endpoint, QUIC, RequestErrorCode, Session,
+    SessionEvent, subscribe::SubscribeHandler,
 };
 use tokio::sync::Semaphore;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{
-    broadcast_namespace::{BROADCAST_PREFIX, broadcast_of_translated, is_broadcast},
+    app_access::AppAccess,
+    broadcast_namespace::BroadcastNamespaces,
     broadcast_translation::BroadcastTranslation,
     gemini::{AgentPlatform, GeminiCredentials},
     open_hours::OpenHours,
@@ -49,6 +51,23 @@ struct Args {
 
     #[arg(long)]
     insecure: bool,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_APP_ID",
+        requires = "app_secret",
+        help = "The relay app the broadcasts live under; without it they are read from the public anon/live-translate"
+    )]
+    app_id: Option<String>,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_APP_SECRET",
+        hide_env_values = true,
+        requires = "app_id",
+        help = "The app's secret, which signs the translator's and the pages' relay tokens"
+    )]
+    app_secret: Option<String>,
 
     #[arg(
         long,
@@ -79,7 +98,7 @@ struct Args {
     )]
     echo: bool,
 
-    #[arg(long, env = "LIVE_TRANSLATE_MAX_SESSIONS", default_value_t = 3)]
+    #[arg(long, env = "LIVE_TRANSLATE_MAX_SESSIONS", default_value_t = 5)]
     max_sessions: usize,
 
     #[arg(
@@ -109,6 +128,7 @@ struct Args {
 
 struct Router {
     session: Arc<Session>,
+    namespaces: BroadcastNamespaces,
     engine: TranslationEngine,
     capacity: Arc<Semaphore>,
     policy: Arc<TranslationPolicy>,
@@ -134,9 +154,22 @@ async fn main() -> Result<()> {
             find_by_code(code).with_context(|| format!("--always-on: unknown language {code}"))
         })
         .collect::<Result<Vec<_>>>()?;
+    let app = app_access(&args);
+    let namespaces = BroadcastNamespaces::new(
+        app.as_ref()
+            .map(|app| app.app_id.clone())
+            .unwrap_or_else(|| BroadcastNamespaces::PUBLIC_ROOT.to_string()),
+    );
     let config = ClientConfig {
         port: 0,
         verify_certificate: !args.insecure,
+        authorization_token: app.as_ref().map(|app| {
+            let app = app.clone();
+            AuthorizationTokenSource::provider(move || {
+                let app = app.clone();
+                async move { app.translator_token() }
+            })
+        }),
         ..ClientConfig::default()
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
@@ -144,12 +177,16 @@ async fn main() -> Result<()> {
     tracing::info!(relay = %args.relay, "connected to relay");
     session
         .subscriber()
-        .subscribe_namespace(BROADCAST_PREFIX.to_string())
+        .subscribe_namespace(namespaces.root().to_string())
         .await
-        .context("subscribe to the live-translate namespace")?;
-    tracing::info!(prefix = BROADCAST_PREFIX, "waiting for broadcasts");
+        .context("subscribe to the broadcasts' namespace")?;
+    tracing::info!(
+        track_namespace_prefix = namespaces.root(),
+        "waiting for broadcasts"
+    );
     let mut router = Router {
         session,
+        namespaces,
         engine,
         capacity: Arc::new(Semaphore::new(args.max_sessions)),
         policy: Arc::new(TranslationPolicy {
@@ -160,6 +197,13 @@ async fn main() -> Result<()> {
         broadcasts: HashMap::new(),
     };
     router.route_events().await
+}
+
+fn app_access(args: &Args) -> Option<Arc<AppAccess>> {
+    args.app_id
+        .clone()
+        .zip(args.app_secret.clone())
+        .map(|(app_id, secret)| Arc::new(AppAccess::new(app_id, secret)))
 }
 
 fn translation_engine(args: &Args) -> Result<TranslationEngine> {
@@ -224,7 +268,7 @@ impl Router {
     }
 
     fn start_broadcast(&mut self, namespace: String) {
-        if !is_broadcast(&namespace) || self.broadcasts.contains_key(&namespace) {
+        if !self.namespaces.is_broadcast(&namespace) || self.broadcasts.contains_key(&namespace) {
             return;
         }
         tracing::info!(%namespace, "broadcast started");
@@ -245,7 +289,9 @@ impl Router {
     }
 
     async fn route_subscribe(&mut self, handler: SubscribeHandler) {
-        let target = broadcast_of_translated(&handler.track_namespace)
+        let target = self
+            .namespaces
+            .broadcast_of_translated(&handler.track_namespace)
             .filter(|namespace| self.broadcasts.contains_key(*namespace))
             .map(str::to_string);
         let Some(namespace) = target else {

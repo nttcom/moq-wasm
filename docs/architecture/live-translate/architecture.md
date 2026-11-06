@@ -5,8 +5,8 @@ Living document. Update this file in the same change whenever the design intent,
 module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
-`live-translate` watches `anon/live-translate` on a relay, and for every broadcast
-`anon/live-translate/{id}` publishes `anon/live-translate/{id}/translated`: an MSF catalog
+`live-translate` watches a root namespace on a relay, and for every broadcast
+`{root}/{id}` publishes `{root}/{id}/translated`: an MSF catalog
 that references the broadcast's own video and audio, plus one Opus track per
 target language (`audio_en`, `audio_es`, `audio_de`, `audio_ko`,
 `audio_zh-Hans`), and the transcripts as `text_<lang>` (what Gemini said) and
@@ -41,7 +41,7 @@ restarts when the open hours resume.
 
 ```
 main (Router)                one task; the only reader of Session::receive_event
- ├─ PUBLISH_NAMESPACE        direct children of anon/live-translate start a BroadcastTranslation
+ ├─ PUBLISH_NAMESPACE        direct children of the root start a BroadcastTranslation
  ├─ PUBLISH_NAMESPACE_DONE   drops it
  ├─ SUBSCRIBE                routed to the BroadcastTranslation by namespace
  ├─ UNSUBSCRIBE              offered to every BroadcastTranslation; the one holding the request id acts
@@ -92,9 +92,16 @@ difference between the actual and the estimated delay.
   SUBSCRIBE returns in time. The `text_ja` subscription is held beside the
   languages, not among a language's own, so a transcript viewer never keeps a
   language from idling; it ends with the language that writes it.
-- At most `--max-sessions` languages are translated at once across all
-  broadcasts (the Gemini free tier allows 3 concurrent sessions); a SUBSCRIBE
-  beyond that is rejected.
+- At most `--max-sessions` languages (5) are translated at once across all
+  broadcasts, so the Gemini cost has a ceiling; a SUBSCRIBE beyond that is
+  rejected at once rather than left waiting on a connection the project's
+  quota, set to the same number, would refuse.
+- The root is the served app's id (`LIVE_TRANSLATE_APP_ID`), under which the
+  relay admits only tokens signed with the app's secret: the translator signs
+  its own (`app_access.rs`, publish and subscribe the whole app) and presents it
+  through the session's token provider, so a reconnect gets a fresh one.
+  Without an app the root is the public `anon/live-translate`, which needs no
+  token; that is how the e2e suites and local development run.
 - Translated timestamps never decrease, so group ids never decrease.
 
 ## Testing conventions
