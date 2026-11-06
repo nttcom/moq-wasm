@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `PlaybackGroup` plays several `LivePlayer`s at one position, a LOC capture
+  timestamp, on one clock and one AudioContext: `add`, `remove`, `play`,
+  `pause`, `seek`, `skip`, `goLive` and `state` (`mode`, `positionMicros`,
+  `paused`, `ended`). While live every player plays at its own live edge;
+  rewinding and VOD align them. A player whose range does not cover the
+  position fetches nothing and reports `LivePlayerState.inRange` false. A
+  player's own `seek`, `skip`, `goLive` and `setPaused` act on its group while
+  it is in one.
 - `LivePlayer` plays a broadcast none of whose catalog tracks is live
   (`isLive: false`), such as a recorder replay, as VOD: it subscribes to no
   media track, reads the media timeline with a joining FETCH, plays from the

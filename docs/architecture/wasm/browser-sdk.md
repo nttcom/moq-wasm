@@ -315,7 +315,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 から 6 を実装した。
+ステータス: 承認済み。移行の手順 1 から 7 を実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
@@ -429,10 +429,13 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
   1つずつの配信は、1つの player の中で揃うので使わない。
   - group は1つの AudioContext と、wallclock（LOC の capture timestamp）で表した1つの
     再生位置を持つ。`play`、`pause`、`seek`、`skip`、`goLive` を全 player に当てる。
+    揃えている間の音声はこの AudioContext で鳴らし、ライブの間はそれぞれの player の
+    ライブの再生経路で鳴らす。
   - ライブの間、player はそれぞれのライブの先端で再生する。揃えるのは巻き戻している間と、
     録画（`isLive: false`）を再生している間だけにする。
   - `group.add(player)` と `group.remove(player)` で途中から出入りできる。group の player は
     group から操作し、1人だけ巻き戻すときは group から外す。戻すと group の再生位置に揃う。
+    group にいる player の `seek`、`skip`、`goLive`、`setPaused` は group に当たる。
   - 再生位置が player の範囲の外にある player は、何も FETCH せず、状態で範囲外を示す。
     範囲は、録画では timeline の最初の entry から `trackDuration` まで、ライブでは timeline
     の最初の entry からライブの先端まで。timeline にあっても relay のキャッシュから消えた
