@@ -37,9 +37,27 @@ PUBLISH_DONE so the viewers fall back to the original audio and may subscribe
 again. An always-on language ignores the time limit and viewers leaving, and
 restarts when the open hours resume.
 
+With `PORT` set the process also serves HTTP (`page_server.rs`): the built
+Streamer and Viewer pages from `LIVE_TRANSLATE_STATIC_DIR` (through the
+`static-files` crate), `GET /token?id&role` for a page's token to publish
+(streamer) or subscribe (viewer) its one broadcast of the served app, with the
+namespace and the relay URL (`LIVE_TRANSLATE_PUBLIC_RELAY_URL`) to use, and
+`GET /events`, a server-sent event stream that only sends a comment every 15 s.
+A page holds `/events` while it is in use: a Cloud Run instance lives while a
+request is in flight, so that stream is what keeps the translator running
+between the pages' other requests, and lets the service scale to zero when
+every page is closed. Only IAP can reach the service, so `/token` trusts the
+`x-goog-authenticated-user-email` header IAP sets and logs it with each token.
+Anyone IAP lets in may publish or watch any broadcast id; the ids are random
+and the audience is the company, so the service does not tie an id to the
+person who first used it.
+The server listens before the relay is dialed, so the port is open as soon as
+the container is.
+
 ## Runtime flow
 
 ```
+PageServer                   one accept loop; pages, /token, /events, /healthz
 main (Router)                one task; the only reader of Session::receive_event
  ├─ PUBLISH_NAMESPACE        direct children of the root start a BroadcastTranslation
  ├─ PUBLISH_NAMESPACE_DONE   drops it

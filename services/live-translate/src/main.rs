@@ -7,6 +7,7 @@ mod gemini;
 mod language_translation;
 mod open_hours;
 mod opus_codec;
+mod page_server;
 mod pcm_framer;
 mod source_audio;
 mod source_catalog;
@@ -16,7 +17,7 @@ mod translated_catalog;
 mod translation_engine;
 mod translation_policy;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -25,7 +26,8 @@ use moqt::{
     AuthorizationTokenSource, ClientConfig, Endpoint, QUIC, RequestErrorCode, Session,
     SessionEvent, subscribe::SubscribeHandler,
 };
-use tokio::sync::Semaphore;
+use static_files::StaticFiles;
+use tokio::{net::TcpListener, sync::Semaphore};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{
@@ -34,6 +36,7 @@ use crate::{
     broadcast_translation::BroadcastTranslation,
     gemini::{AgentPlatform, GeminiCredentials},
     open_hours::OpenHours,
+    page_server::{PageServer, PageServerState},
     target_language::find_by_code,
     translation_engine::TranslationEngine,
     translation_policy::TranslationPolicy,
@@ -68,6 +71,27 @@ struct Args {
         help = "The app's secret, which signs the translator's and the pages' relay tokens"
     )]
     app_secret: Option<String>,
+
+    #[arg(
+        long,
+        env = "PORT",
+        help = "Serve the pages, their relay tokens and the keep-alive stream on this port; without it only the relay is served"
+    )]
+    http_port: Option<u16>,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_STATIC_DIR",
+        help = "The built pages to serve, with examples/live-translate/{streamer,viewer}/index.html and assets/ under it"
+    )]
+    static_dir: Option<PathBuf>,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_PUBLIC_RELAY_URL",
+        help = "The relay URL the pages connect to; defaults to --relay"
+    )]
+    public_relay_url: Option<String>,
 
     #[arg(
         long,
@@ -160,6 +184,28 @@ async fn main() -> Result<()> {
             .map(|app| app.app_id.clone())
             .unwrap_or_else(|| BroadcastNamespaces::PUBLIC_ROOT.to_string()),
     );
+    let _page_server = match args.http_port {
+        Some(port) => {
+            let listener = TcpListener::bind(("0.0.0.0", port))
+                .await
+                .with_context(|| format!("listen on port {port}"))?;
+            tracing::info!(port, "serving the pages");
+            Some(PageServer::run(
+                listener,
+                PageServerState {
+                    static_files: args.static_dir.clone().map(StaticFiles::new),
+                    app: app.clone(),
+                    namespaces: namespaces.clone(),
+                    public_relay_url: args
+                        .public_relay_url
+                        .clone()
+                        .filter(|url| !url.is_empty())
+                        .unwrap_or_else(|| args.relay.clone()),
+                },
+            ))
+        }
+        None => None,
+    };
     let config = ClientConfig {
         port: 0,
         verify_certificate: !args.insecure,
