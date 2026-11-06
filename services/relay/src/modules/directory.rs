@@ -132,13 +132,25 @@ fn remove_peer_from_namespaces(
     last_client_left
 }
 
-fn unregister_peer(namespaces: &PeersByNamespace, session_id: SessionId, namespace: &str) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PeerRemoval {
+    /// Nothing changed.
+    NotRegistered,
+    ClientsRemain,
+    NoClientsRemain,
+}
+
+fn unregister_peer(
+    namespaces: &PeersByNamespace,
+    session_id: SessionId,
+    namespace: &str,
+) -> PeerRemoval {
     let Some(peers) = namespaces.get(namespace) else {
-        return true;
+        return PeerRemoval::NotRegistered;
     };
 
-    peers.remove(&session_id);
-    let no_clients_remain = !has_client(&peers);
+    let removed = peers.remove(&session_id).is_some();
+    let clients_remain = has_client(&peers);
     let is_empty = peers.is_empty();
     drop(peers);
 
@@ -146,7 +158,11 @@ fn unregister_peer(namespaces: &PeersByNamespace, session_id: SessionId, namespa
         namespaces.remove(namespace);
     }
 
-    no_clients_remain
+    match (removed, clients_remain) {
+        (false, _) => PeerRemoval::NotRegistered,
+        (true, true) => PeerRemoval::ClientsRemain,
+        (true, false) => PeerRemoval::NoClientsRemain,
+    }
 }
 
 pub(crate) struct InMemoryLocalPubSubDirectory {
@@ -305,8 +321,7 @@ impl InMemoryLocalPubSubDirectory {
             .insert(session_id, peer);
     }
 
-    /// Returns true when no client publisher remains for the namespace,
-    /// i.e. the caller may clean up the Redis route.
+    /// `NoClientsRemain` tells the caller it may clean up the Redis route.
     #[tracing::instrument(
         level = "debug",
         name = "relay.local_pub_sub_directory.unregister_publish_namespace",
@@ -317,7 +332,7 @@ impl InMemoryLocalPubSubDirectory {
         &self,
         session_id: SessionId,
         track_namespace: &str,
-    ) -> bool {
+    ) -> PeerRemoval {
         unregister_peer(&self.publisher_namespaces, session_id, track_namespace)
     }
 
@@ -431,11 +446,18 @@ impl InMemoryLocalPubSubDirectory {
         session_id: SessionId,
         track_namespace_prefix: &str,
     ) -> bool {
-        unregister_peer(
+        match unregister_peer(
             &self.subscriber_namespaces,
             session_id,
             track_namespace_prefix,
-        )
+        ) {
+            PeerRemoval::ClientsRemain => false,
+            PeerRemoval::NoClientsRemain => true,
+            PeerRemoval::NotRegistered => self
+                .subscriber_namespaces
+                .get(track_namespace_prefix)
+                .is_none_or(|peers| !has_client(&peers)),
+        }
     }
 
     #[tracing::instrument(
@@ -1297,13 +1319,34 @@ mod tests {
         table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Client);
 
         // Act: Remove publishers one by one.
-        let still_has_clients = table.unregister_publish_namespace(1, "room/member");
-        let clients_became_empty = table.unregister_publish_namespace(2, "room/member");
+        let first = table.unregister_publish_namespace(1, "room/member");
+        let last = table.unregister_publish_namespace(2, "room/member");
 
         // Assert: Only the final withdrawal reports that no client remains.
-        assert!(!still_has_clients);
-        assert!(clients_became_empty);
+        assert_eq!(first, PeerRemoval::ClientsRemain);
+        assert_eq!(last, PeerRemoval::NoClientsRemain);
         assert!(table.publisher_namespaces.get("room/member").is_none());
+    }
+
+    #[test]
+    fn unregister_publish_namespace_reports_a_session_that_never_published_it() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Relay);
+
+        // Act
+        let unknown_namespace = table.unregister_publish_namespace(2, "room/other");
+        let other_publisher = table.unregister_publish_namespace(2, "room/member");
+
+        // Assert: the relay publisher is left registered
+        assert_eq!(unknown_namespace, PeerRemoval::NotRegistered);
+        assert_eq!(other_publisher, PeerRemoval::NotRegistered);
+        assert!(
+            table
+                .publisher_namespaces
+                .get("room/member")
+                .is_some_and(|publishers| publishers.contains_key(&1))
+        );
     }
 
     #[test]
@@ -1314,10 +1357,10 @@ mod tests {
         table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Relay);
 
         // Act: Withdraw the final client publisher while the relay publisher remains.
-        let clients_became_empty = table.unregister_publish_namespace(1, "room/member");
+        let removal = table.unregister_publish_namespace(1, "room/member");
 
         // Assert: Route cleanup is allowed while the relay publisher stays registered.
-        assert!(clients_became_empty);
+        assert_eq!(removal, PeerRemoval::NoClientsRemain);
         assert!(
             table
                 .publisher_namespaces
