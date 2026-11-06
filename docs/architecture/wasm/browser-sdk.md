@@ -315,7 +315,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 から 4 を実装した。
+ステータス: 承認済み。移行の手順 1 から 5 を実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
@@ -377,9 +377,16 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 | 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | 元の publisher の timeline track もほかの track と同じく録画する。replay は、保存した timeline の Object の entry を位置ごとにまとめ、保存した group を指すものだけを残して、ソースごとに全期間の media timeline を1つ出す。元の Object は1つに直近 60 秒分しか持たないので、そのまま流さない。presentation time は元の publisher の値をそのまま使う（§7.1.1） |
 | joining FETCH | 断る | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
 | 終わり | FETCH_OK の `end_of_track` だけ | catalog の `isLive: false` で示す。SUBSCRIBE は今どおり Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
-| 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の最後の要素（参加者名）を `<member-index>` の代わりに入れる |
-| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の namespace にも catalog を作り、`transcript` を event timeline として載せる |
+| 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の、room より後の要素（会議では参加者名）を `<member-index>` の代わりに入れる。最後の要素だけにしないのは、room より深い namespace どうしで名前が重ならないようにするため |
+| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。§8.2 は event timeline の `depends` に当てはまる track を並べることを求め（MUST）、§5.2.14 はその名前を同じ namespace で引くので、音声のある namespace に置く |
 | HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）と `renew_after_seconds` だけにする |
+
+transcript の記録は、話者（room の直下の要素が話者名の参加者）のカメラの session のうち、録画した
+メディアの範囲が記録の `t` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
+録画していない session の記録は捨てる。catalog では `packaging` を `eventtimeline`、role を
+`subtitle`（Table 4）、`eventType` を `com.skyway.transcript.v1`、`depends` をその session の音声
+track にし、`trackDuration` はほかの track と同じにする。track は group 0 の Object 1つで、その
+session の記録を `t` の順に並べ、同じ記録は1つにまとめる。
 
 `trackDuration` は replay の namespace の全 track で同じ値にし、timeline の最初の entry
 （それより前の media があればその capture timestamp）から最後の media の capture timestamp

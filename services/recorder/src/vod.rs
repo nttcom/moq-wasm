@@ -1,13 +1,21 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus};
 use msf::{
-    CATALOG_TRACK_NAME, Catalog, InitData, KnownPackaging, MediaTimelineRecord, Packaging, Track,
+    CATALOG_TRACK_NAME, Catalog, InitData, KnownPackaging, KnownTrackRole, MediaTimelineRecord,
+    Packaging, Track,
+};
+use serde_json::Value;
+
+use crate::{
+    archive_reader::{StoredRecording, StoredTrack},
+    recorder::Content,
+    room_recording::TRANSCRIPT_TRACK_NAME,
 };
 
-use crate::archive_reader::{StoredRecording, StoredTrack};
+const TRANSCRIPT_EVENT_TYPE: &str = "com.skyway.transcript.v1";
 
 const BUILT_LOCATION: Location = Location {
     group_id: 0,
@@ -41,14 +49,26 @@ impl BuiltTrack {
     }
 }
 
-/// The VOD catalog and the full-length media timelines the replay namespace
-/// `namespace` serves in place of the stored ones; none when it recorded no
-/// catalog. They are built from the stored objects alone, so every instance
-/// replaying the recording serves the same bytes at the same location
-/// (draft-ietf-moq-transport-14 §2.1).
-pub(crate) async fn build_tracks(
+/// The VOD catalog and full-length media timelines each replay namespace
+/// serves in place of the stored ones, and its speaker's part of the
+/// transcriber's transcript. They are built from the stored objects alone, so every instance replaying the recording serves the
+/// same bytes at the same location (draft-ietf-moq-transport-14 §2.1).
+pub(crate) async fn build_tracks(recording: &StoredRecording) -> Result<Vec<BuiltTrack>> {
+    let mut transcripts = transcripts(recording).await?;
+    let mut built = Vec::new();
+    for namespace in recording.namespaces() {
+        let transcript = transcripts.remove(namespace).unwrap_or_default();
+        built.extend(namespace_tracks(recording, namespace, transcript).await?);
+    }
+    Ok(built)
+}
+
+/// The tracks `build_tracks` builds for one namespace; none when it recorded
+/// no catalog. `transcript` is left out when the catalog lists no audio track.
+async fn namespace_tracks(
     recording: &StoredRecording,
     namespace: &str,
+    transcript: Vec<Value>,
 ) -> Result<Vec<BuiltTrack>> {
     let stored: Vec<&StoredTrack> = recording
         .tracks
@@ -100,6 +120,20 @@ pub(crate) async fn build_tracks(
         .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
         .filter_map(|track| stored_track(&track.name)?.capture_range_us());
     let duration_ms = duration_ms(media, first_records_ms.into_iter().min());
+    let audio: Vec<String> = listed
+        .tracks
+        .iter()
+        .filter(|track| track.has_role(KnownTrackRole::Audio))
+        .map(|track| track.name.clone())
+        .collect();
+    if !transcript.is_empty() && !audio.is_empty() {
+        listed.tracks.push(transcript_track(audio));
+        built.push(BuiltTrack::new(
+            namespace,
+            TRANSCRIPT_TRACK_NAME,
+            serde_json::to_vec(&transcript)?,
+        ));
+    }
     for track in &mut listed.tracks {
         track.is_live = false;
         track.track_duration = duration_ms;
@@ -123,9 +157,79 @@ pub(crate) async fn build_tracks(
     tracing::debug!(
         track_namespace = namespace,
         tracks = built.len(),
-        "replay catalog and media timelines built"
+        "replay catalog, media timelines and transcript built"
     );
     Ok(built)
+}
+
+/// The transcriber's records, split by the camera replay namespace of the
+/// speaker's first session whose captured media spans the record's `t`, each
+/// list sorted by `t` with a record stored twice kept once. `t` and the LOC
+/// capture timestamps are both Unix wallclock time. The transcriber names a
+/// speaker after the one namespace element below the room, so a record is
+/// left out when `<room>/<speaker>` is no member or `t` falls outside all of
+/// that member's sessions.
+async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Value>>> {
+    let mut records = BTreeMap::new();
+    for track in recording
+        .transcriber
+        .iter()
+        .filter(|track| track.name == TRANSCRIPT_TRACK_NAME)
+    {
+        let documents: Vec<Vec<Value>> =
+            documents(recording, track, |payload| serde_json::from_slice(payload)).await?;
+        for record in documents.into_iter().flatten() {
+            if let Some(t) = record["t"].as_u64() {
+                records.insert((t, record.to_string()), record);
+            }
+        }
+    }
+    let sessions: Vec<(&str, &str, (u64, u64))> = recording
+        .namespaces()
+        .into_iter()
+        .filter_map(|namespace| {
+            let tracks: Vec<&StoredTrack> = recording
+                .tracks
+                .iter()
+                .filter(|track| track.namespace == namespace)
+                .map(AsRef::as_ref)
+                .collect();
+            let first = tracks
+                .first()
+                .filter(|track| track.content == Content::Camera)?;
+            let captured = span(tracks.iter().filter_map(|track| track.capture_range_us()))?;
+            Some((namespace, first.source_namespace.as_str(), captured))
+        })
+        .collect();
+    let mut split: HashMap<&str, Vec<Value>> = HashMap::new();
+    for ((t, _), record) in records {
+        let Some(speaker) = record["data"]["speaker"].as_str() else {
+            continue;
+        };
+        let member = format!("{}/{speaker}", recording.room);
+        let t_us = t.saturating_mul(1000);
+        if let Some((namespace, _, _)) = sessions
+            .iter()
+            .find(|(_, source, (start, end))| *source == member && (*start..=*end).contains(&t_us))
+        {
+            split.entry(namespace).or_default().push(record);
+        }
+    }
+    Ok(split)
+}
+
+/// A participant's part of the transcript as an event timeline
+/// (draft-ietf-moq-msf-01 §8.2). It is listed in their own catalog because
+/// `depends`, which §8.2 requires, names tracks of the timeline's own
+/// namespace (§5.2.14).
+fn transcript_track(audio: Vec<String>) -> Track {
+    let mut track = Track::new(TRANSCRIPT_TRACK_NAME, KnownPackaging::EventTimeline, false);
+    track.event_type = Some(TRANSCRIPT_EVENT_TYPE.to_string());
+    track.role = Some(KnownTrackRole::Subtitle.into());
+    track.label = Some("Transcript".to_string());
+    track.depends = Some(audio);
+    track.mime_type = Some("application/json".to_string());
+    track
 }
 
 /// Every stored object of `track` as `parse` reads it, in location order;
@@ -243,14 +347,17 @@ fn full_timeline(
     records.into_values().collect()
 }
 
+fn span(ranges: impl Iterator<Item = (u64, u64)>) -> Option<(u64, u64)> {
+    ranges.reduce(|(first, last), (start, end)| (first.min(start), last.max(end)))
+}
+
 /// Milliseconds from the earlier of the first timeline record and the first
 /// captured media object to the last captured one; `None` without media.
 fn duration_ms(
     media_capture_us: impl Iterator<Item = (u64, u64)>,
     first_record_ms: Option<u64>,
 ) -> Option<u64> {
-    let (first_us, last_us) =
-        media_capture_us.reduce(|(first, last), (start, end)| (first.min(start), last.max(end)))?;
+    let (first_us, last_us) = span(media_capture_us)?;
     let start_ms = first_record_ms.map_or(first_us / 1000, |record| record.min(first_us / 1000));
     Some((last_us / 1000).saturating_sub(start_ms))
 }
@@ -258,7 +365,8 @@ fn duration_ms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::recorded_camera;
+    use crate::test_support::{recorded_camera, recorded_meeting, transcript_record};
+    use serde_json::json;
 
     fn track(name: &str, packaging: KnownPackaging) -> Track {
         Track::new(name, packaging, true)
@@ -380,10 +488,9 @@ mod tests {
     async fn builds_a_complete_vod_catalog_and_a_full_timeline_from_the_stored_tracks() {
         // Arrange
         let recording = recorded_camera().await;
-        let namespace = recording.tracks[0].namespace.clone();
 
         // Act
-        let built = build_tracks(&recording, &namespace).await.unwrap();
+        let built = build_tracks(&recording).await.unwrap();
 
         // Assert
         let names: Vec<&str> = built.iter().map(|track| track.name.as_str()).collect();
@@ -418,18 +525,128 @@ mod tests {
     #[tokio::test]
     async fn another_replay_of_the_recording_builds_the_same_bytes() {
         // Arrange
-        let first = recorded_camera().await;
-        let second = recorded_camera().await;
-        let namespace = first.tracks[0].namespace.clone();
+        let transcript = || {
+            vec![
+                json!([]),
+                json!([transcript_record(1_700_000_001_500, "alice")]),
+                json!([transcript_record(1_700_000_001_000, "alice")]),
+            ]
+        };
+        let recordings = [
+            (recorded_camera().await, recorded_camera().await),
+            (
+                recorded_meeting(transcript()).await,
+                recorded_meeting(transcript()).await,
+            ),
+        ];
+
+        for (first, second) in recordings {
+            // Act
+            let built = build_tracks(&first).await.unwrap();
+            let again = build_tracks(&second).await.unwrap();
+
+            // Assert
+            let objects = |tracks: &[BuiltTrack]| -> Vec<(String, Object)> {
+                tracks
+                    .iter()
+                    .map(|track| (track.namespace.clone(), track.object.clone()))
+                    .collect()
+            };
+            assert_eq!(objects(&built), objects(&again));
+        }
+    }
+
+    const ALICE_FIRST: &str = "anon/room/recordings/id/alice/camera/0";
+    const ALICE_SECOND: &str = "anon/room/recordings/id/alice/camera/1";
+
+    fn transcript_in(built: &[BuiltTrack], namespace: &str) -> Option<Vec<Value>> {
+        let track = built
+            .iter()
+            .find(|track| track.namespace == namespace && track.name == "transcript")?;
+        Some(serde_json::from_slice(&track.object.payload).unwrap())
+    }
+
+    #[tokio::test]
+    async fn puts_each_record_in_the_speakers_session_whose_media_covers_it() {
+        // Arrange: records out of order across objects, one stored twice
+        let recording = recorded_meeting(vec![
+            json!([]),
+            json!([transcript_record(1_700_000_001_500, "alice")]),
+            json!([transcript_record(1_700_000_011_000, "alice")]),
+            json!([transcript_record(1_700_000_001_000, "alice")]),
+            json!([transcript_record(1_700_000_001_000, "alice")]),
+        ])
+        .await;
 
         // Act
-        let built = build_tracks(&first, &namespace).await.unwrap();
-        let again = build_tracks(&second, &namespace).await.unwrap();
+        let built = build_tracks(&recording).await.unwrap();
 
         // Assert
-        let objects = |tracks: &[BuiltTrack]| -> Vec<Object> {
-            tracks.iter().map(|track| track.object.clone()).collect()
-        };
-        assert_eq!(objects(&built), objects(&again));
+        assert_eq!(
+            transcript_in(&built, ALICE_FIRST),
+            Some(vec![
+                transcript_record(1_700_000_001_000, "alice"),
+                transcript_record(1_700_000_001_500, "alice"),
+            ])
+        );
+        assert_eq!(
+            transcript_in(&built, ALICE_SECOND),
+            Some(vec![transcript_record(1_700_000_011_000, "alice")])
+        );
+        let transcript = built
+            .iter()
+            .find(|track| track.name == "transcript")
+            .unwrap();
+        assert_eq!(transcript.object.location, BUILT_LOCATION);
+    }
+
+    #[tokio::test]
+    async fn leaves_out_records_of_no_participant_no_session_or_no_audio() {
+        // Arrange: alice between her sessions, bob without a microphone,
+        // carol never joined, the transcriber's own notice
+        let recording = recorded_meeting(vec![json!([
+            transcript_record(1_700_000_005_000, "alice"),
+            transcript_record(1_700_000_001_000, "bob"),
+            transcript_record(1_700_000_001_000, "carol"),
+            transcript_record(1_700_000_001_000, "transcriber"),
+        ])])
+        .await;
+
+        // Act
+        let built = build_tracks(&recording).await.unwrap();
+
+        // Assert
+        assert!(built.iter().all(|track| track.name != "transcript"));
+    }
+
+    #[tokio::test]
+    async fn lists_a_participants_transcript_as_a_subtitle_timeline_of_their_audio() {
+        // Arrange
+        let recording =
+            recorded_meeting(vec![json!([transcript_record(1_700_000_001_000, "alice")])]).await;
+
+        // Act
+        let built = build_tracks(&recording).await.unwrap();
+
+        // Assert: the transcript and every other track last as long as the session's media
+        let catalog = built
+            .iter()
+            .find(|track| track.namespace == ALICE_FIRST && track.name == CATALOG_TRACK_NAME)
+            .unwrap();
+        let catalog: Catalog = serde_json::from_slice(&catalog.object.payload).unwrap();
+        let tracks = catalog.tracks.unwrap();
+        let mut transcript = Track::new("transcript", KnownPackaging::EventTimeline, false);
+        transcript.event_type = Some("com.skyway.transcript.v1".to_string());
+        transcript.role = Some(KnownTrackRole::Subtitle.into());
+        transcript.label = Some("Transcript".to_string());
+        transcript.depends = Some(vec!["audio".to_string()]);
+        transcript.mime_type = Some("application/json".to_string());
+        transcript.track_duration = Some(2_000);
+        assert_eq!(tracks.last(), Some(&transcript));
+        assert!(
+            tracks
+                .iter()
+                .all(|track| track.track_duration == Some(2_000))
+        );
     }
 }

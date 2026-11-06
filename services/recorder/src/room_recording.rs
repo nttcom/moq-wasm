@@ -26,6 +26,12 @@ use crate::{
     upload_task::UploadTask,
 };
 
+/// The meeting transcriber's namespace elements after the room.
+pub(crate) const TRANSCRIBER_MEMBER: &str = "bots/transcriber";
+
+/// The track the meeting transcriber publishes, without a catalog to name it.
+pub(crate) const TRANSCRIPT_TRACK_NAME: &str = "transcript";
+
 /// Where a room recording connects and what it records. Every broadcast whose
 /// namespace starts with `namespace_prefix` is recorded on its own, from the
 /// moment it is published until it ends or the recording stops.
@@ -203,7 +209,7 @@ async fn follow_members(
                 if is_recording_namespace(namespace_prefix, &namespace) {
                     continue;
                 }
-                if namespace == format!("{namespace_prefix}/bots/transcriber")
+                if namespace == format!("{namespace_prefix}/{TRANSCRIBER_MEMBER}")
                     && let Some(target) = &archive_target
                 {
                     if event_sources.insert(namespace.clone()) {
@@ -535,7 +541,7 @@ fn record_transcript(
         let result = record_event_track(
             &session,
             &namespace,
-            "transcript",
+            TRANSCRIPT_TRACK_NAME,
             None,
             chunks,
             async move {

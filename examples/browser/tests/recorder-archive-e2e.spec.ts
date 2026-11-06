@@ -30,18 +30,19 @@ test('records a room and replays it through the relay as a VOD broadcast', async
   const replay = await recorderServe.publish(recording)
   try {
     await page.goto('/moq-wasm/')
-    const { catalog, timeline } = await page.evaluate(
-      async ({ relay, prefix }) => {
+    const prefix = `anon/live/recordings/${recording.id}`
+    const [catalog, timeline] = await page.evaluate(
+      async ({ relay, prefix, namespace }) => {
         const moduleUrl = '/moq-wasm/tests/recording-replay.ts'
         const { readReplay } = await import(/* @vite-ignore */ moduleUrl)
-        return readReplay(relay, prefix.split('/'), 'video_timeline')
+        return readReplay(relay, prefix.split('/'), namespace.split('/'), ['catalog', 'video_timeline'])
       },
-      { relay: liveViewerE2EConfig.moqtUrl, prefix: `anon/live/recordings/${recording.id}` }
+      { relay: liveViewerE2EConfig.moqtUrl, prefix, namespace: `${prefix}/e2e/camera/0` }
     )
 
     // Assert: the catalog and the timeline cover the recording
     expect(replay.answer).toEqual({
-      namespace_prefix: `anon/live/recordings/${recording.id}`,
+      namespace_prefix: prefix,
       renew_after_seconds: 2700
     })
     expect(catalog.isComplete).toBe(true)
@@ -60,7 +61,10 @@ test('records a room and replays it through the relay as a VOD broadcast', async
   }
 })
 
-test('records participants, screen share, chat and transcript', async ({ recorderServe, browser }) => {
+test('records participants, screen share, chat and transcript and replays the transcript with the speaker', async ({
+  recorderServe,
+  browser
+}) => {
   // Arrange
   const roomName = `archive-${Date.now()}`
   const recording = await recorderServe.start(`anon/${roomName}`, 'combined', false, 'moq')
@@ -86,6 +90,26 @@ test('records participants, screen share, chat and transcript', async ({ recorde
 
     // Act
     await recorderServe.stop(recording)
+    const replay = await recorderServe.publish(recording)
+    const prefix = `anon/${roomName}/recordings/${recording.id}`
+    const { aliceCatalog, aliceTranscript, namespaces } = await alice.page.page
+      .evaluate(
+        async ({ relay, prefix, alice }) => {
+          const moduleUrl = '/moq-wasm/tests/recording-replay.ts'
+          const { readReplay, announcedNamespaces } = await import(/* @vite-ignore */ moduleUrl)
+          const [aliceCatalog, aliceTranscript] = await readReplay(relay, prefix.split('/'), alice.split('/'), [
+            'catalog',
+            'transcript'
+          ])
+          return {
+            aliceCatalog,
+            aliceTranscript,
+            namespaces: await announcedNamespaces(relay, prefix.split('/'), 2_000)
+          }
+        },
+        { relay: liveViewerE2EConfig.moqtUrl, prefix, alice: `${prefix}/alice/camera/0` }
+      )
+      .finally(() => replay.close())
 
     // Assert
     const room = JSON.parse(await readFile(join(recorderServe.storeDir, recording.id, 'manifest.json'), 'utf8'))
@@ -114,6 +138,21 @@ test('records participants, screen share, chat and transcript', async ({ recorde
       }
     }
     expect(payloads.some((payload) => payload.includes('archive chat message'))).toBe(true)
+    const aliceTracks: Track[] = aliceCatalog.tracks
+    const aliceAudio = aliceTracks.filter((track) => track.role === 'audio').map((track) => track.name)
+    expect(aliceAudio.length).toBeGreaterThan(0)
+    expect(aliceTracks.find((track) => track.name === 'transcript')).toMatchObject({
+      packaging: 'eventtimeline',
+      role: 'subtitle',
+      eventType: 'com.skyway.transcript.v1',
+      depends: aliceAudio,
+      isLive: false
+    })
+    expect(aliceTranscript).toEqual([
+      expect.objectContaining({ data: { speaker: 'alice', text: 'archived transcript' } })
+    ])
+    expect(namespaces).toContain(`${prefix}/alice/camera/0`)
+    expect(namespaces.filter((namespace: string) => namespace.startsWith(`${prefix}/bots/`))).toEqual([])
     await alice.page.page.getByTestId('activities-button').click()
     await expect(alice.page.page.getByTestId('record-moq')).toBeVisible()
     await expect(alice.page.page.getByTestId('record-play')).toBeVisible()
