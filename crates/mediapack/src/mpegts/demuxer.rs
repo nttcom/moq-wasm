@@ -16,12 +16,20 @@ use crate::{
     },
 };
 
+/// The bytes all streams together may hold in incomplete PES packets. A PES
+/// packet ends only when the next one starts, so a sender that never starts
+/// one would otherwise grow memory without end. One bound covers all streams
+/// because repeated PMTs can register thousands of them.
+const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
+
 #[derive(Default)]
 pub struct Demuxer {
     packets: PacketReader,
     pmt_pid: Option<u16>,
     sections: HashMap<u16, BytesMut>,
     streams: HashMap<u16, PesStream>,
+    /// The sum of every stream's `pending` length.
+    pending_bytes: usize,
     video: VideoTrack,
     audio_config: Option<AudioSpecificConfig>,
     discontinuities: u64,
@@ -107,6 +115,11 @@ impl Demuxer {
             self.flush_pes(packet.pid, events)?;
         }
         if let Some(stream) = self.streams.get_mut(&packet.pid) {
+            anyhow::ensure!(
+                self.pending_bytes + packet.payload.len() <= MAX_PENDING_BYTES,
+                "incomplete PES packets exceed {MAX_PENDING_BYTES} bytes"
+            );
+            self.pending_bytes += packet.payload.len();
             stream.pending.extend_from_slice(packet.payload);
         }
         Ok(())
@@ -172,6 +185,7 @@ impl Demuxer {
             return Ok(());
         };
         let pes = std::mem::take(&mut stream.pending);
+        self.pending_bytes -= pes.len();
         if std::mem::take(&mut stream.corrupt) {
             match stream.kind {
                 StreamKind::H264 => self.video.awaiting_keyframe = true,
@@ -453,6 +467,30 @@ mod tests {
         assert_eq!(video[0].pts, Timestamp::from_micros(1_066_666));
         assert!(!video[1].is_keyframe);
         assert_eq!(demuxer.discontinuities(), 1);
+    }
+
+    #[test]
+    fn rejects_pes_data_that_outgrows_the_pending_limit_across_streams() {
+        // Arrange: two streams whose PES packets never end; neither alone reaches the limit
+        let over_half = vec![0u8; MAX_PENDING_BYTES / 2 + 1];
+        let stream = TsStreamBuilder::default()
+            .push(PAT_PID, &pat_section(0x1000))
+            .push(
+                0x1000,
+                &pmt_section(&[
+                    (VIDEO_PID, STREAM_TYPE_H264),
+                    (AUDIO_PID, STREAM_TYPE_AAC_ADTS),
+                ]),
+            )
+            .push(VIDEO_PID, &over_half)
+            .push(AUDIO_PID, &over_half)
+            .build();
+
+        // Act
+        let error = Demuxer::new().push(&stream).unwrap_err().to_string();
+
+        // Assert
+        assert!(error.contains("incomplete PES packets"), "{error}");
     }
 
     #[test]
