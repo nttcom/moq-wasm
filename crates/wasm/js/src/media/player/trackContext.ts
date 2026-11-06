@@ -1,12 +1,17 @@
 import type { MoqLocation, MoqSession, MoqSubscription, ReceivedObject } from '../../core/session'
 import { readLocHeader } from '../internal/loc'
 import type { DeliveryObserver } from './deliveryObserver'
+import type { MediaCatalogTrack } from '../catalog'
 
 export type Packaging = 'loc' | 'cmaf'
 
 export type MediaKind = 'video' | 'audio'
 
 export type LogLevel = 'info' | 'warn' | 'error'
+
+/// A track playback reads: `name` is the track on the wire, the CMAF sibling
+/// of the catalog `track` in CMAF mode.
+export type PlayedTrack = { name: string; track: MediaCatalogTrack }
 
 /// `cached` marks an object a joining FETCH brought: it predates the
 /// subscription, so its arrival says nothing about the delivery.

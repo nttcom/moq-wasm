@@ -21,7 +21,7 @@ import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWind
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { TextTracks } from './textTrack'
-import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
+import type { LogLevel, MediaKind, Packaging, PlayedTrack, TrackContext } from './trackContext'
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../internal/status'
 import {
@@ -206,6 +206,7 @@ export class LivePlayer {
       onLog: this.context.log
     })
     this.reviewHost = {
+      playedTrack: (kind) => this.playedTrack(kind),
       playWindow: (window, session) => this.playReviewWindow(window, session),
       windowStarted: () => this.renderReviewStatus(),
       fastForwardDrained: () => this.playbackRateAdjustable() && this.playbackRate > 1 && this.cmafReview.drained(),
@@ -950,9 +951,12 @@ export class LivePlayer {
     }
   }
 
-  private subscribedCmafSource(kind: MediaKind): MseTrackSource | undefined {
-    const name = this.subscriptions.get(kind)?.name
-    const track = this.cmafTracks.find((candidate) => candidate.name === name)
+  private playedTrack(kind: MediaKind): PlayedTrack | undefined {
+    return this.subscriptions.get(kind)
+  }
+
+  private cmafSourceOf(played: PlayedTrack | undefined): MseTrackSource | undefined {
+    const track = this.cmafTracks.find((candidate) => candidate.name === played?.name)
     return track && cmafSource(track)
   }
 
@@ -960,13 +964,13 @@ export class LivePlayer {
     if (this.packaging !== 'cmaf') {
       return
     }
-    const video = this.subscribedCmafSource('video')
+    const video = this.cmafSourceOf(this.subscriptions.get('video'))
     if (!video) {
       return
     }
     const previous = await this.cmafLive.open(this.stage.freeMseElement(), {
       video,
-      audio: this.subscribedCmafSource('audio')
+      audio: this.cmafSourceOf(this.subscriptions.get('audio'))
     })
     const next = this.cmafLive.sink
     this.applyVolume()
@@ -1045,7 +1049,7 @@ export class LivePlayer {
 
   private async playCmafReviewWindow(window: ReviewWindow, session: ReviewSession): Promise<boolean> {
     if (this.cmafReview.needsOpen) {
-      const video = this.subscribedCmafSource('video')
+      const video = this.cmafSourceOf(this.playedTrack('video'))
       if (!video) {
         this.setRewindStatus('Rewind unavailable: the CMAF track has no init segment', 'error')
         return false
@@ -1055,7 +1059,7 @@ export class LivePlayer {
         this.stage.freeMseElement(),
         {
           video,
-          audio: this.subscribedCmafSource('audio'),
+          audio: this.cmafSourceOf(this.playedTrack('audio')),
           startAtSeconds: (session.anchorMicros - origin) / MICROS_PER_SECOND
         },
         (secondsFromStart) => {
@@ -1075,7 +1079,7 @@ export class LivePlayer {
   }
 
   private reviewVideoConfig(): VideoDecoderConfig | undefined {
-    const track = this.subscriptions.get('video')?.track
+    const track = this.playedTrack('video')?.track
     if (!track?.codec) {
       return undefined
     }
@@ -1083,7 +1087,7 @@ export class LivePlayer {
   }
 
   private reviewAudioConfig(): AudioDecoderConfig | undefined {
-    const track = this.subscriptions.get('audio')?.track
+    const track = this.playedTrack('audio')?.track
     if (!track?.codec || !track.samplerate) {
       return undefined
     }
