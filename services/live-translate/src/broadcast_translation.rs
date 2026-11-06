@@ -19,8 +19,7 @@ use crate::{
     source_audio::SourceAudio,
     source_catalog::SourceCatalog,
     target_language::{
-        SOURCE_TEXT_TRACK, TARGET_LANGUAGES, TargetLanguage, find_by_text_track_name,
-        find_by_track_name,
+        SOURCE_TEXT_TRACK, TargetLanguage, find_by_text_track_name, find_by_track_name,
     },
     translated_catalog::{build_translated_catalog, source_audio_track},
     translation_engine::TranslationEngine,
@@ -166,11 +165,7 @@ async fn serve(
     );
     let (source_catalog, translated_catalog) = tokio::time::timeout(
         FIRST_CATALOG_TIMEOUT,
-        first_translatable_catalog(
-            &mut catalog_receiver,
-            broadcast_namespace,
-            &TARGET_LANGUAGES,
-        ),
+        first_translatable_catalog(&mut catalog_receiver, broadcast_namespace),
     )
     .await
     .context("source catalog did not list Opus audio in time")??;
@@ -417,9 +412,7 @@ impl Serving {
     /// codec is known, reaches every catalog subscriber at once. The audio
     /// track being translated stays the one of the first catalog.
     fn update_catalog(&mut self, source: &msf::Catalog) -> Result<()> {
-        let Some(translated) =
-            build_translated_catalog(source, &self.broadcast_namespace, &TARGET_LANGUAGES)
-        else {
+        let Some(translated) = build_translated_catalog(source, &self.broadcast_namespace) else {
             return Ok(());
         };
         let payload = Bytes::from(serde_json::to_vec(&translated)?);
@@ -584,11 +577,9 @@ pub(crate) async fn sleep_until(deadline: Option<Instant>) {
 async fn first_translatable_catalog(
     catalog_receiver: &mut mpsc::UnboundedReceiver<msf::Catalog>,
     broadcast_namespace: &str,
-    languages: &[TargetLanguage],
 ) -> Result<(msf::Catalog, msf::Catalog)> {
     while let Some(source) = catalog_receiver.recv().await {
-        if let Some(translated) = build_translated_catalog(&source, broadcast_namespace, languages)
-        {
+        if let Some(translated) = build_translated_catalog(&source, broadcast_namespace) {
             return Ok((source, translated));
         }
         tracing::debug!(%broadcast_namespace, "source catalog lists no Opus audio yet");
@@ -606,6 +597,7 @@ fn channel_count(channel_config: Option<&str>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::target_language::TARGET_LANGUAGES;
 
     fn catalog(json: &str) -> msf::Catalog {
         serde_json::from_str(json).expect("catalog")
@@ -625,13 +617,10 @@ mod tests {
         catalog_sender.send(with_audio).expect("sent");
 
         // Act
-        let (source, translated) = first_translatable_catalog(
-            &mut catalog_receiver,
-            "anon/live-translate/brave-otter",
-            &TARGET_LANGUAGES,
-        )
-        .await
-        .expect("a translatable catalog");
+        let (source, translated) =
+            first_translatable_catalog(&mut catalog_receiver, "anon/live-translate/brave-otter")
+                .await
+                .expect("a translatable catalog");
 
         // Assert: the second catalog is used, and its video is referenced by the translated one
         assert_eq!(source.tracks.as_ref().map(Vec::len), Some(2));

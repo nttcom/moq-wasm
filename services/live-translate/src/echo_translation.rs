@@ -2,10 +2,14 @@ use std::{collections::VecDeque, time::Duration};
 
 use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 
-use crate::{broadcast_translation::sleep_until, translation_engine::TranslationOutput};
+use crate::{
+    broadcast_translation::sleep_until,
+    opus_codec::{GEMINI_INPUT_SAMPLE_RATE, GEMINI_OUTPUT_SAMPLE_RATE},
+    translation_engine::TranslationOutput,
+};
 
-const INPUT_SAMPLE_RATE: usize = 16_000;
-const OUTPUT_SAMPLE_RATE: usize = 24_000;
+const INPUT_SAMPLE_RATE: usize = GEMINI_INPUT_SAMPLE_RATE as usize;
+const OUTPUT_SAMPLE_RATE: usize = GEMINI_OUTPUT_SAMPLE_RATE as usize;
 
 pub(crate) struct EchoTranslation {
     join_handle: JoinHandle<()>,

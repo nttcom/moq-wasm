@@ -2,7 +2,7 @@ use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 
 use crate::{
     opus_codec::TRANSLATED_BITRATE,
-    target_language::{SOURCE_TEXT_TRACK, TargetLanguage},
+    target_language::{SOURCE_TEXT_TRACK, TARGET_LANGUAGES},
 };
 
 const SOURCE_LANGUAGE: &str = "ja";
@@ -23,7 +23,6 @@ pub(crate) fn source_audio_track(source: &Catalog) -> Option<&Track> {
 pub(crate) fn build_translated_catalog(
     source: &Catalog,
     source_namespace: &str,
-    languages: &[TargetLanguage],
 ) -> Option<Catalog> {
     let source_audio = source_audio_track(source)?;
     let video = source
@@ -42,7 +41,7 @@ pub(crate) fn build_translated_catalog(
             alt_group: Some(LANGUAGE_ALT_GROUP),
             ..referencing(track, source_namespace)
         });
-    let translated = languages.iter().map(|language| Track {
+    let translated = TARGET_LANGUAGES.iter().map(|language| Track {
         namespace: None,
         name: language.track_name(),
         label: Some(language.code.to_string()),
@@ -54,27 +53,20 @@ pub(crate) fn build_translated_catalog(
     });
     let texts = std::iter::once((SOURCE_TEXT_TRACK.to_string(), SOURCE_LANGUAGE))
         .chain(
-            languages
+            TARGET_LANGUAGES
                 .iter()
                 .map(|language| (language.text_track_name(), language.code)),
         )
         .map(|(name, lang)| text_track(source_audio, name, lang));
+    let tracks = video
+        .chain(original_audio)
+        .chain(translated)
+        .chain(texts)
+        .collect();
     Some(Catalog {
         version: source.version,
-        delta_update: None,
-        add_tracks: None,
-        remove_tracks: None,
-        clone_tracks: None,
         generated_at: None,
-        is_complete: None,
-        init_data_list: None,
-        tracks: Some(
-            video
-                .chain(original_audio)
-                .chain(translated)
-                .chain(texts)
-                .collect(),
-        ),
+        ..Catalog::new(tracks, 0)
     })
 }
 
@@ -123,7 +115,6 @@ fn has_role(track: &Track, role: KnownTrackRole) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::target_language::TARGET_LANGUAGES;
 
     const SOURCE_NAMESPACE: &str = "anon/live-translate/brave-otter";
 
@@ -168,8 +159,8 @@ mod tests {
         let source = browser_publisher_catalog();
 
         // Act
-        let catalog = build_translated_catalog(&source, SOURCE_NAMESPACE, &TARGET_LANGUAGES)
-            .expect("source has audio");
+        let catalog =
+            build_translated_catalog(&source, SOURCE_NAMESPACE).expect("source has audio");
 
         // Assert
         assert_eq!(
@@ -188,8 +179,8 @@ mod tests {
         let source = browser_publisher_catalog();
 
         // Act
-        let catalog = build_translated_catalog(&source, SOURCE_NAMESPACE, &TARGET_LANGUAGES)
-            .expect("source has audio");
+        let catalog =
+            build_translated_catalog(&source, SOURCE_NAMESPACE).expect("source has audio");
 
         // Assert
         let english = track(&catalog, "audio_en");
@@ -210,8 +201,8 @@ mod tests {
         let source = browser_publisher_catalog();
 
         // Act
-        let catalog = build_translated_catalog(&source, SOURCE_NAMESPACE, &TARGET_LANGUAGES)
-            .expect("source has audio");
+        let catalog =
+            build_translated_catalog(&source, SOURCE_NAMESPACE).expect("source has audio");
 
         // Assert: text tracks are subtitles paired with the audio by lang, without audio fields
         let english = track(&catalog, "text_en");
@@ -241,6 +232,6 @@ mod tests {
         });
 
         // Act / Assert
-        assert!(build_translated_catalog(&source, SOURCE_NAMESPACE, &TARGET_LANGUAGES).is_none());
+        assert!(build_translated_catalog(&source, SOURCE_NAMESPACE).is_none());
     }
 }
