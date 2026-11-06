@@ -24,6 +24,8 @@ export type PublishOptions = SourceOptions & {
   /// Lists the `chat` track in the catalog even while nothing is published on
   /// `video` or `audio`.
   offerChat?: boolean
+  /// Skips a failure whose `String()` equals the previous one, such as the
+  /// "media publishing stopped" every chunk fails with after publishing stops.
   onError?: (error: unknown) => void
 }
 
@@ -96,7 +98,13 @@ export async function publish(
   if (options.offerChat) {
     await broadcast.offerChat()
   }
+  let lastReported: string | undefined
   const report = (error: unknown) => {
+    const message = String(error)
+    if (message === lastReported) {
+      return
+    }
+    lastReported = message
     if (options.onError) {
       forwardSdkLog('error', TARGET, 'publish failed', { error })
       options.onError(error)
