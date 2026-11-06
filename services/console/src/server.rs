@@ -21,13 +21,13 @@ use hyper_util::rt::TokioIo;
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use static_files::StaticFiles;
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
     apps::{self, Creation},
     identity::{Caller, Identity},
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
-    static_files::StaticFiles,
 };
 
 pub const CSRF_HEADER: &str = "x-console-request";
@@ -172,17 +172,11 @@ async fn static_file(path: &str, state: &ConsoleState) -> JsonResponse {
     let Some(file) = file else {
         return error_response(StatusCode::NOT_FOUND, "not_found");
     };
+    let cache_control = file.cache_control();
     let mut response = Response::new(Full::from(file.bytes));
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static(file.content_type));
-    headers.insert(
-        CACHE_CONTROL,
-        HeaderValue::from_static(if file.immutable {
-            "public, max-age=31536000, immutable"
-        } else {
-            "no-cache"
-        }),
-    );
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
     response
 }
 

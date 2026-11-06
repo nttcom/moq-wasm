@@ -5,8 +5,8 @@ Living document. Update this file in the same change whenever the design intent,
 module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
-`live-translate` watches `anon/live-translate` on a relay, and for every broadcast
-`anon/live-translate/{id}` publishes `anon/live-translate/{id}/translated`: an MSF catalog
+`live-translate` watches a root namespace on a relay, and for every broadcast
+`{root}/{id}` publishes `{root}/{id}/translated`: an MSF catalog
 that references the broadcast's own video and audio, plus one Opus track per
 target language (`audio_en`, `audio_es`, `audio_de`, `audio_ko`,
 `audio_zh-Hans`), and the transcripts as `text_<lang>` (what Gemini said) and
@@ -37,11 +37,29 @@ PUBLISH_DONE so the viewers fall back to the original audio and may subscribe
 again. An always-on language ignores the time limit and viewers leaving, and
 restarts when the open hours resume.
 
+With `PORT` set the process also serves HTTP (`page_server.rs`): the built
+Streamer and Viewer pages from `LIVE_TRANSLATE_STATIC_DIR` (through the
+`static-files` crate), `GET /token?id&role` for a page's token to publish
+(streamer) or subscribe (viewer) its one broadcast of the served app, with the
+namespace and the relay URL (`LIVE_TRANSLATE_PUBLIC_RELAY_URL`) to use, and
+`GET /events`, a server-sent event stream that only sends a comment every 15 s.
+A page holds `/events` while it is in use: a Cloud Run instance lives while a
+request is in flight, so that stream is what keeps the translator running
+between the pages' other requests, and lets the service scale to zero when
+every page is closed. Only IAP can reach the service, so `/token` trusts the
+`x-goog-authenticated-user-email` header IAP sets and logs it with each token.
+Anyone IAP lets in may publish or watch any broadcast id; the ids are random
+and the audience is the company, so the service does not tie an id to the
+person who first used it.
+The server listens before the relay is dialed, so the port is open as soon as
+the container is.
+
 ## Runtime flow
 
 ```
+PageServer                   one accept loop; pages, /token, /events, /healthz
 main (Router)                one task; the only reader of Session::receive_event
- ├─ PUBLISH_NAMESPACE        direct children of anon/live-translate start a BroadcastTranslation
+ ├─ PUBLISH_NAMESPACE        direct children of the root start a BroadcastTranslation
  ├─ PUBLISH_NAMESPACE_DONE   drops it
  ├─ SUBSCRIBE                routed to the BroadcastTranslation by namespace
  ├─ UNSUBSCRIBE              offered to every BroadcastTranslation; the one holding the request id acts
@@ -92,9 +110,16 @@ difference between the actual and the estimated delay.
   SUBSCRIBE returns in time. The `text_ja` subscription is held beside the
   languages, not among a language's own, so a transcript viewer never keeps a
   language from idling; it ends with the language that writes it.
-- At most `--max-sessions` languages are translated at once across all
-  broadcasts (the Gemini free tier allows 3 concurrent sessions); a SUBSCRIBE
-  beyond that is rejected.
+- At most `--max-sessions` languages (5) are translated at once across all
+  broadcasts, so the Gemini cost has a ceiling; a SUBSCRIBE beyond that is
+  rejected at once rather than left waiting on a connection the project's
+  quota, set to the same number, would refuse.
+- The root is the served app's id (`LIVE_TRANSLATE_APP_ID`), under which the
+  relay admits only tokens signed with the app's secret: the translator signs
+  its own (`app_access.rs`, publish and subscribe the whole app) and presents it
+  through the session's token provider, so a reconnect gets a fresh one.
+  Without an app the root is the public `anon/live-translate`, which needs no
+  token; that is how the e2e suites and local development run.
 - Translated timestamps never decrease, so group ids never decrease.
 
 ## Testing conventions

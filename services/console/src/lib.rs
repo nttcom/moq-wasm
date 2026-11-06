@@ -3,7 +3,6 @@ mod iap;
 mod identity;
 mod input;
 mod server;
-mod static_files;
 #[cfg(test)]
 mod test_support;
 

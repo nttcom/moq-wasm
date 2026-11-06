@@ -5,7 +5,7 @@ import { startPageTelemetry } from '../../../utils/pageTelemetry'
 import { setUpRelayUrlControls } from '../../../utils/relayPresets'
 import { buildVideoEncoderConfig } from '../../media/videoEncoderConfig'
 import { generateBroadcastId } from '../broadcastId'
-import { broadcastNamespace, viewerUrl } from '../liveTranslate'
+import { type BroadcastAccess, openBroadcastAccess, viewerUrl } from '../liveTranslate'
 
 const COPIED_LABEL_MS = 1_500
 
@@ -14,6 +14,7 @@ const urlInput = element<HTMLInputElement>('url')
 let mediaStream: MediaStream | undefined
 let session: MoqSession | undefined
 let publication: Publication | undefined
+let access: BroadcastAccess | undefined
 
 startPageTelemetry('live-translate-streamer', () => urlInput.value)
 setUpRelayUrlControls(urlInput, element('urlPresets'))
@@ -30,17 +31,21 @@ element<HTMLButtonElement>('startBtn').addEventListener('click', () => void star
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopBroadcast())
 
 async function startBroadcast(): Promise<void> {
-  const url = urlInput.value.trim()
   try {
     await stopBroadcast()
+    access = await openBroadcastAccess(broadcastId, 'streamer')
+    if (access.relayUrl) {
+      urlInput.value = access.relayUrl
+    }
+    const url = urlInput.value.trim()
     setStatusText('streamer-status', 'Requesting camera and microphone')
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
       video: { width: { ideal: 1280 }, height: { ideal: 720 } }
     })
     element<HTMLVideoElement>('preview').srcObject = mediaStream
-    session = await MoqSession.connect(url)
-    const namespace = broadcastNamespace(broadcastId)
+    session = await MoqSession.connect(url, { token: access.token })
+    const namespace = access.namespace
     publication = await publish(session, namespace, mediaStream, {
       videoEncoderConfig: buildVideoEncoderConfig(mediaStream),
       onError: (error) => setStatusText('streamer-status', `Publish failed: ${getErrorMessage(error)}`)
@@ -48,6 +53,8 @@ async function startBroadcast(): Promise<void> {
     setStatusText('streamer-status', `Broadcasting ${namespace.join('/')}`)
     showViewerLink(viewerUrl(broadcastId, url))
   } catch (error) {
+    access?.release()
+    access = undefined
     setStatusText('streamer-status', `Failed: ${getErrorMessage(error)}`)
   }
 }
@@ -58,6 +65,8 @@ async function stopBroadcast(): Promise<void> {
   publication = undefined
   session?.close()
   session = undefined
+  access?.release()
+  access = undefined
   for (const track of mediaStream?.getTracks() ?? []) {
     track.stop()
   }
