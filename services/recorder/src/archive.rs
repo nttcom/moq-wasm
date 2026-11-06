@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::SystemTime};
+use std::{path::PathBuf, task::Poll, time::SystemTime};
 
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -14,7 +14,7 @@ use crate::{
     Args,
     archive_chunks::ChunkWriter,
     archive_receiver::{ArchiveTrack, Event},
-    recorder::{BroadcastOptions, Content, audio_choice, default_output_path, video_choice},
+    recorder::{BroadcastOptions, Content, choice, default_output_path},
     track_selection,
 };
 
@@ -86,27 +86,7 @@ pub(crate) async fn record_broadcast(
     )
     .await?;
     let (mut video, mut audio): (Option<ArchiveTrack>, Option<ArchiveTrack>) = (None, None);
-    let mut chat = if options.content == Content::Camera {
-        match ArchiveTrack::subscribe(session, namespace, "chat", FilterType::LargestObject, true)
-            .await
-        {
-            Ok(track) => Some(track),
-            Err(error)
-                if matches!(
-                    error.downcast_ref::<moqt::RequestFailure>(),
-                    Some(moqt::RequestFailure::Rejected {
-                        code: moqt::RequestErrorCode::TrackDoesNotExist,
-                        ..
-                    })
-                ) =>
-            {
-                None
-            }
-            Err(error) => return Err(error),
-        }
-    } else {
-        None
-    };
+    let mut events: Vec<ArchiveTrack> = Vec::new();
     let mut catalog_open = true;
     loop {
         tokio::select! {
@@ -122,7 +102,10 @@ pub(crate) async fn record_broadcast(
                     };
                     archive.write_event("catalog", event).await?;
                     let Some(document) = document else { continue };
-                    let selection = track_selection::select_tracks(&document, video_choice(options), audio_choice(options))?;
+                    if options.content == Content::Camera {
+                        subscribe_event_timelines(session, namespace, &document, &mut events).await?;
+                    }
+                    let selection = track_selection::select_tracks(&document, choice(options))?;
                     let video_name = selection.as_ref().and_then(|s| s.video.as_ref()).map(|v| v.name.as_str());
                     let audio_name = selection.as_ref().and_then(|s| s.audio.as_ref()).map(|a| a.name.as_str());
                     if video.as_ref().map(|t| t.subscription.track_name()) != video_name {
@@ -152,12 +135,12 @@ pub(crate) async fn record_broadcast(
                 },
                 None => audio = None,
             },
-            item = next(&mut chat) => match item? {
-                Some(event) => archive.write_event("chat", event).await?,
-                None => chat = None,
+            (index, item) = next_of(&mut events) => match item? {
+                Some(event) => archive.write_event(events[index].subscription.track_name(), event).await?,
+                None => drop(events.remove(index)),
             },
         }
-        if !catalog_open && video.is_none() && audio.is_none() && chat.is_none() {
+        if !catalog_open && video.is_none() && audio.is_none() && events.is_empty() {
             break;
         }
     }
@@ -194,6 +177,64 @@ async fn next(track: &mut Option<ArchiveTrack>) -> Result<Option<Event>> {
         Some(track) => track.next().await,
         None => std::future::pending().await,
     }
+}
+
+/// Subscribes each event timeline track that `catalog` lists and `events`
+/// lacks, from its current group. A track the relay does not know yet is
+/// tried again at the next catalog.
+async fn subscribe_event_timelines(
+    session: &Session,
+    namespace: &str,
+    catalog: &msf::Catalog,
+    events: &mut Vec<ArchiveTrack>,
+) -> Result<()> {
+    for timeline in track_selection::event_timelines(catalog) {
+        let name = timeline.name.as_str();
+        if events
+            .iter()
+            .any(|track| track.subscription.track_name() == name)
+        {
+            continue;
+        }
+        match ArchiveTrack::subscribe(session, namespace, name, FilterType::LargestObject, true)
+            .await
+        {
+            Ok(track) => events.push(track),
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<moqt::RequestFailure>(),
+                    Some(moqt::RequestFailure::Rejected {
+                        code: moqt::RequestErrorCode::TrackDoesNotExist,
+                        ..
+                    })
+                ) =>
+            {
+                tracing::debug!(
+                    track_namespace = namespace,
+                    track_name = name,
+                    "event timeline track does not exist yet"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// The next event of any of `tracks`, with its track's index; pending while
+/// `tracks` is empty.
+async fn next_of(tracks: &mut [ArchiveTrack]) -> (usize, Result<Option<Event>>) {
+    std::future::poll_fn(|cx| {
+        tracks
+            .iter_mut()
+            .enumerate()
+            .find_map(|(index, track)| match track.poll_next(cx) {
+                Poll::Ready(event) => Some((index, event)),
+                Poll::Pending => None,
+            })
+            .map_or(Poll::Pending, Poll::Ready)
+    })
+    .await
 }
 
 /// Writes to the local JSON Lines file, the object store chunks, or both.
@@ -426,7 +467,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn records_catalog_and_video_over_a_real_session() {
+    async fn records_the_catalog_the_video_and_the_listed_chat_over_a_real_session() {
         // Arrange
         let dir = scratch_dir();
         let path = dir.join("archive.jsonl");
@@ -445,7 +486,9 @@ mod tests {
         let mut video = msf::Track::new("video", KnownPackaging::Loc, true);
         video.role = Some(KnownTrackRole::Video.into());
         video.codec = Some("avc1.42C01E".into());
-        let catalog = serde_json::to_vec(&Catalog::new(vec![video], 0)).unwrap();
+        let mut chat = msf::Track::new("chat", KnownPackaging::EventTimeline, true);
+        chat.depends = Some(vec!["video".into()]);
+        let catalog = serde_json::to_vec(&Catalog::new(vec![video, chat], 0)).unwrap();
         origin
             .write(
                 namespace,

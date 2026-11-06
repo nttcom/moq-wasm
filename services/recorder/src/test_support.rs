@@ -184,7 +184,7 @@ pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
             segment_seconds: None,
             max_recording_seconds: 7200,
             empty_room_seconds: 300,
-            max_video_height: 480,
+            max_video_height: 720,
             insecure_skip_tls_verify: false,
         },
         launcher: LauncherArgs {
